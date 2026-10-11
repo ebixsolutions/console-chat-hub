@@ -1,4 +1,5 @@
 import sys,json,time,unittest,importlib.util
+sys.dont_write_bytecode=True
 from pathlib import Path
 p=Path(__file__).resolve().parents[2]/'integrations/singapore-kb/shared_attempt_guard.py'
 spec=importlib.util.spec_from_file_location('guard',p);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)

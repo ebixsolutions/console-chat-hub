@@ -532,7 +532,7 @@
     "tests/model-accounting/callback.test.ts": "420deecf01f0e446e8a732718c301422c9a98a2ead5aa5f6ae20a705763f8893",
     "tests/model-accounting/native-postgres.py": "c16157fcb143961d0e812903da696caf89bf5552725f2dce81b4d12ba0391a6c",
     "tests/model-accounting/provider-fixture.ts": "e1a0ed9f5a1a9d6ce490ef6567a175168d3ebb23e90726bd04cbe98d0c297345",
-    "tests/model-accounting/remote-python.test.py": "6f1b6e751011c37357938bae6d4fd9d2fae75e038f952625f7a3cb28be0659e3",
+    "tests/model-accounting/remote-python.test.py": "e70aa5bcf40f4bc7922f5dc182e03acf7740891ada51476edd9ef1c69fefea10",
     "tests/model-accounting/router.test.ts": "b2a928e0d37b7676358dfd6298b32f1b13ad63571374808eeabb9451b9585087",
     "tests/model-accounting/source-coverage.test.mjs": "4384c043bd0d38af709764b70051a6c8e47e8e0401870b736f57ed767ee2dc89"
   },
