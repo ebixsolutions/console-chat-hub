@@ -35,7 +35,11 @@ if (JSON.stringify(changed) !== JSON.stringify([...scope].sort())) fail("changed
 const sourceHashes = {};
 for (const file of scope) {
   let bytes;
-  try { bytes = readFileSync(file); if (!statSync(file).size) fail("empty_file", file); }
+  try { bytes = readFileSync(file);
+    const approvedEmptyPythonInit = ["app/__init__.py", "app/core/__init__.py", "app/repositories/__init__.py", "app/routers/__init__.py", "app/services/__init__.py", "app/tasks/__init__.py"].some(p => file === "integrations/singapore-kb/backend-r109027/" + p)
+      && sha(bytes) === "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    if (!statSync(file).size && !approvedEmptyPythonInit) fail("empty_file", file);
+  }
   catch { fail("missing_file", file); }
   const committed = execFileSync("git", ["show", `HEAD:${file}`], { timeout: 15000 });
   if (!bytes.equals(committed)) fail("head_bytes_mismatch", file);

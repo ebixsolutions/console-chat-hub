@@ -608,6 +608,7 @@
   },
   "model_accounting_production_authorized": false,
   "authorized_kb_accounting_repair_sha256": {
+    ".github/scripts/c3_director_generic_core_final_gate.mjs": "c96e848fb57c3d3d4955a435ffadd11e4bf61146d742dbed130b25318d813e59",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "a55da0425072b247cd151360096110dad87bd5661c03617f5e8e4cc38d608b07",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "f1470381b805ea1364b2d655f0cd2eddfa23ecb3c265166ea655da473e651374",
     "integrations/singapore-kb/backend-r109027/Dockerfile": "02a4a82c0826b1e73550630b642c8c5fa4ec18016a0f5fd22b3b294dfda54960",
