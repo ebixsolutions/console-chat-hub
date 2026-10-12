@@ -16,6 +16,7 @@
  *    through to the existing authoritative KB retrieval path.
  */
 
+import { matchesReferenceLabel } from "./industry-agent-registry.ts";
 import {
   type ConversationCommerceState,
   createEmptyConversationCommerceState,
@@ -39,6 +40,7 @@ import {
   isCurrentRequirementsRecap,
   customerBusinessText,
   requirementMutationText,
+  splitCustomerOperationClauses,
   isReadOnlyCurrentStateAggregateQuery,
   isReadOnlyMemoryOrCurrentStateRecall,
   parseCommerceDimensionMeasurement,
@@ -193,7 +195,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * ------------------------------------------------------------------ */
 
 function matchedAliases(lower: string, aliases: readonly string[]): string[] {
-  return aliases.filter((alias) => alias.trim().length >= 2 && lower.includes(alias.trim().toLowerCase()));
+  return aliases.filter((alias) => matchesReferenceLabel(lower,alias));
 }
 
 function detectCategories(text: string) {
@@ -827,7 +829,7 @@ function hintsMentionedInTurn(text: string, hints: CommerceTurnEntityHint[]): Co
     if (hint.entity_id.startsWith("generic:")) {
       return (hint.aliases ?? []).some((alias) => {
         const normalized = clean(alias, 80).toLowerCase();
-        return normalized.length >= 2 && lower.includes(normalized);
+        return matchesReferenceLabel(lower,normalized);
       });
     }
     const [, roomKey] = hint.entity_id.split(":");
@@ -1819,7 +1821,7 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
   const named = active.filter((entity) => categories.some((category) => category.key === entity.category));
   const provenance = { source_type: "customer" as const, source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null };
   const generic = active.filter(entity=>entity.entity_id.startsWith("generic:") &&
-    [entity.attributes.product_name,entity.category].some(name=>typeof name === "string" && input.text.toLowerCase().includes(name.toLowerCase())));
+    [entity.attributes.product_name,entity.category].some(name=>typeof name === "string" && matchesReferenceLabel(input.text,name)));
   const date = input.text.match(/\b20\d{2}-\d{2}-\d{2}\b/)?.[0];
   const explicitQuantity=parseCount(input.text);
   if (generic.length===1 && explicitQuantity!==null && generic[0].quantity===explicitQuantity &&
@@ -2035,10 +2037,16 @@ function reduceSingleTurn(
   });
   // An authorized materialization must precede field updates. Unknown targets
   // still throw; no proposed mutation is silently dropped or guessed.
-  let reduced = reduceCommerceState(previous, [
+  const orderedEvents = [
     ...quantityEvents.filter(event => event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY"),
     ...quantityEvents.filter(event => event.type !== "ENSURE_ENTITY" && event.type !== "ADD_ENTITY"),
-  ]);
+  ];
+  const withoutCorrections=orderedEvents.filter(event=>event.type!=="ADD_CORRECTION");
+  const candidate=reduceCommerceState(previous,withoutCorrections);
+  // A source replay with identical field/provenance readback must not append
+  // the raw clause again beside its already normalized correction ledger.
+  let reduced = JSON.stringify(candidate)===JSON.stringify(previous)
+    ? candidate : reduceCommerceState(previous,orderedEvents);
   reduced = enrichExplicitCustomerFacts(input,reduced,hints);
   const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
@@ -2048,20 +2056,54 @@ function restoreExplicitReturnTopic(
   state: ConversationCommerceState,
   text: string,
 ): ConversationCommerceState {
-  const clause = text.split(/[，；;。!?！？]/).find((part) =>
+  const clause = splitCustomerOperationClauses(text).find((part) =>
     /(?:講返|说回|講回|返去|回到|back to|return to|about that)/i.test(part)
   );
   if (!clause) return state;
   const lower = clause.toLowerCase();
   const matches = state.entities.filter((entity) =>
-    entity.status !== "deferred" && entity.status !== "cancelled" &&
+    !["deferred","cancelled","superseded"].includes(entity.status) &&
     [entity.category, entity.model, entity.attributes.product_name].some((value) =>
       typeof value === "string" && value.trim().length >= 2 &&
-      lower.includes(value.trim().toLowerCase()))
+      matchesReferenceLabel(lower,value))
   );
   return matches.length === 1
     ? reduceCommerceState(state, [{ type: "SET_CONTEXT", topic: matches[0].category }])
     : state;
+}
+
+/** Preflight all explicit counted replacements against the same before-state.
+ * No earlier defer may turn an unknown later target into a single-item fallback.
+ * Conflicting or inactive targets reject the entire compound transition.
+ */
+function compoundQuantityBindingsValid(
+  clauses: string[], state: ConversationCommerceState, hints: CommerceTurnEntityHint[],
+): boolean {
+  const assignments=new Map<string,number>();
+  for(const clause of clauses){
+    const quantity=parseCount(clause);
+    if(quantity===null || !detectQuantityCorrectionSignal(clause) || isReadOnlyCommerceQuestion(clause)) continue;
+    const identities=(entity:ConversationCommerceState["entities"][number])=>
+      [entity.model,entity.attributes.sku,entity.attributes.product_name,
+        ...hints.filter(h=>h.entity_id===entity.entity_id).flatMap(h=>h.aliases??[])]
+      .filter((v):v is string=>typeof v==="string"&&v.length>=2&&v!==entity.category);
+    let targets=state.entities.filter(e=>identities(e).some(label=>matchesReferenceLabel(clause,label)));
+    if(!targets.length) targets=state.entities.filter(e=>matchesReferenceLabel(clause,e.category));
+    const namedSubject=clause.match(/\bchange\s+(.{1,80}?)\s+to\s+\d/iu)?.[1]
+      ?? clause.match(/^(?:請|请|麻煩|麻烦)?(?:把|將|将)?(.{2,80}?)(?:改(?:做|成|為|为)|更正(?:為|为)?)\s*\d/u)?.[1];
+    if(!targets.length){
+      if(namedSubject && !/^(?:it|that|the quantity|quantity|數量|数量)$/iu.test(namedSubject.trim()))return false;
+      targets=state.entities.filter(e=>!["deferred","cancelled","superseded"].includes(e.status));
+    }
+    if(targets.length!==1 || ["deferred","cancelled","superseded"].includes(targets[0].status)) return false;
+    const prior=assignments.get(targets[0].entity_id);
+    if(prior!==undefined&&prior!==quantity)return false;
+    assignments.set(targets[0].entity_id,quantity);
+    const lifecycle=resolveEntityLifecyclePlan(clauses.join("。"),state);
+    if(lifecycle.kind==="mutation"&&lifecycle.plans.some(p=>p.target_entity_id
+      ? p.target_entity_id===targets[0].entity_id : p.target_category===targets[0].category)) return false;
+  }
+  return true;
 }
 
 /** Reduce independent clauses in one CAS write, retaining the same source ID.
@@ -2075,9 +2117,7 @@ function reduceTurnOperations(
 ): ConversationCommerceState {
   // Resolve conflicting lifecycle clauses before reducing any one of them.
   if (resolveEntityLifecyclePlan(input.text, previous).kind === "ambiguous") return previous;
-  const segmented = input.text.replace(/\.\s+/g, "。").replace(/,(?=\s*[^\d])/g, "，");
-  const clauses = (segmented.match(/[^，；;。!?！？]+[!?！？]?/g) ?? [])
-    .map((part) => part.trim()).filter(Boolean);
+  const clauses = splitCustomerOperationClauses(input.text);
   if (clauses.length === 1 && /[?？]/.test(clauses[0]) &&
     /(?:暫緩|暂缓|defer|pause|cancel|取消|唔要|不要)/i.test(clauses[0]) &&
     resolveEntityLifecyclePlan(clauses[0], previous).kind === "none") return previous;
@@ -2091,6 +2131,10 @@ function reduceTurnOperations(
   const independentOperations = clauses.filter((clause) =>
     /(?:暫緩|暂缓|先擺低|先放低|defer|pause|hold off|取消|cancel|更正|改咗|改為|改做|量錯|其實係|actually|correct|change|最多|上限|at most|maximum|想|需要|want|need)/i.test(clause)
   ).length;
+  if (clauses.length > 8 && independentOperations >= 2) return previous;
+  if ((independentOperations >= 2 || independentOperations >= 1 &&
+    previous.entities.some(entity=>entity.entity_id.startsWith("generic:"))) &&
+    !compoundQuantityBindingsValid(clauses,previous,rawHints)) return previous;
   if (clauses.length < 2 || clauses.length > 8 ||
     independentOperations < 2 && !semanticCustomerConditions) {
     let whole = reduceSingleTurn(previous, input, rawHints);
@@ -2134,7 +2178,7 @@ function reduceTurnOperations(
       if (candidate.confidence < 0.75) continue;
       const names = [candidate.name, candidate.category_hint, candidate.entity_ref]
         .filter((value): value is string => typeof value === "string" && value.length >= 2);
-      if (!names.some((name) => input.text.toLowerCase().includes(name.toLowerCase()))) continue;
+      if (!names.some((name) => matchesReferenceLabel(input.text,name))) continue;
       const targets = state.entities.filter((entity) =>
         entity.status !== "cancelled" && entity.status !== "deferred" &&
         (entity.category === candidate.category_hint || names.includes(entity.category))
@@ -2171,6 +2215,7 @@ function reduceTurnOperations(
 
 /** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
 export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[]): ConversationCommerceState {
+  if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
   let state = reduceTurnOperations(previous,input,hints);
   if (detectQuantityCorrectionSignal(input.text)) {
     for (const entity of state.entities.filter(e=>e.entity_id.startsWith("generic:"))) {
@@ -2179,7 +2224,7 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
       const unit=String(entity.attributes.unit ?? "units");
       state={...state,latest_corrections:state.latest_corrections.filter(entry=>entry !== input.text &&
         !(input.text.includes(entry) && /change/i.test(entry) && entry.includes(String(entity.attributes.product_name))))};
-      state=reduceCommerceState(state,[{type:"ADD_CORRECTION",correction:`${entity.attributes.product_name} quantity: change from ${old.quantity} ${unit} to ${entity.quantity} ${unit}`}]);
+      state=reduceCommerceState(state,[{type:"ADD_CORRECTION",correction:`${entity.attributes.product_name ?? entity.model ?? entity.category} quantity: change from ${old.quantity} ${unit} to ${entity.quantity} ${unit}`}]);
     }
   }
   return state;
@@ -2814,7 +2859,8 @@ export async function runCommerceStateRuntime(
     revision: contextualBefore.revision, persist_result: "read_only",
     reason: "read_only_handoff_control", route: "commerce_state_answer" };
   input = { ...input, text };
-  if (isCurrentRequirementsRecap(text)) {
+  if (isCurrentRequirementsRecap(text) &&
+    resolveEntityLifecyclePlan(text,contextualBefore.state).kind === "none") {
     return { authority: "CONVERSATION_STATE", reply: null,
       revision: contextualBefore.revision, persist_result: "read_only",
       reason: "read_only_current_requirements_recap", route: "commerce_state_answer" };
@@ -2863,7 +2909,8 @@ export async function runCommerceStateRuntime(
   }
   // Repeating the same final lifecycle instruction is a source-bound read-only
   // acknowledgement. Preserve the original mutation provenance and revisions.
-  if (lifecycleIntent.kind === "mutation" && lifecycleIntent.plans.every(plan=>
+  if (lifecycleIntent.kind === "mutation" && !splitCustomerOperationClauses(text).some(clause=>
+    resolveEntityLifecyclePlan(clause,contextualBefore.state).kind === "none" && hasExplicitSupportedMutation(clause)) && lifecycleIntent.plans.every(plan=>
     contextualBefore.state.entities.some(entity=>(plan.target_entity_id?entity.entity_id===plan.target_entity_id:entity.category===plan.target_category) && entity.status===plan.action)) && !lifecycleIntent.plans.some(plan=>plan.focus_category && plan.focus_category!==contextualBefore.state.current_topic)) {
     // Preserve the existing exact-source durable reply receipt on replay. A
     // later customer turn remains a read-only lifecycle acknowledgement.
@@ -3018,10 +3065,25 @@ export async function runCommerceStateRuntime(
     semantic_frame: input.semantic_frame,
     industry_identifier: input.industry_identifier,
   });
-  const hints = mergeCommerceEntityHints(
+  const proposedHints = mergeCommerceEntityHints(
     semanticHints,
     mergeCommerceEntityHints(industry.hints, deterministicHints),
   );
+  const canonicalHints: CommerceTurnEntityHint[] = contextualBefore.state.entities.map(entity=>({
+    entity_id:entity.entity_id,category:entity.category,model:entity.model,brand:entity.brand,
+    aliases:[entity.category,entity.model,entity.attributes.sku,entity.attributes.product_name]
+      .filter((v):v is string=>typeof v==="string"&&v.length>=2),
+  }));
+  const hints = mergeCommerceEntityHints(proposedHints.map(hint=>{
+    const identities=[hint.model,hint.attributes?.sku,hint.attributes?.product_name]
+      .filter((v):v is string=>typeof v==="string"&&v.length>=2);
+    // An unknown explicit identity cannot fall back to its category alias.
+    const labels=identities.length ? identities : hint.aliases??[];
+    const targets=canonicalHints.filter(canonical=>canonical.category===hint.category &&
+      labels.some(label=>typeof label==="string" && canonical.aliases?.some(alias=>alias.toLowerCase()===label.toLowerCase())));
+    return targets.length===1 && detectQuantityCorrectionSignal(text)
+      ? {...hint,entity_id:targets[0].entity_id} : hint;
+  }),canonicalHints);
   const runtimeInput = industry.industry_id && !input.industry_identifier
     ? { ...input, industry_identifier: industry.industry_id }
     : input;

@@ -1,4 +1,4 @@
-import type { IndustryProfile } from "../industry-agent-registry.ts";
+import { matchesReferenceLabel, type IndustryProfile } from "../industry-agent-registry.ts";
 import type { ConversationCommerceState } from "../commerce-state-contract.ts";
 import type { ContextualCandidate } from "../contextual-customer-update.ts";
 import { activeCustomerGoal, type CustomerJourneySignal } from "../customer-journey-orchestration.ts";
@@ -224,7 +224,7 @@ export function homeApplianceCustomerJourneySignal(input: {
   if (!text || /(?:取消|唔要|不要|暫時唔|暂时不|defer|hold off|cancel)/iu.test(text)) return null;
   if (hasOneEachBedroomAllocation(text) || hasOneLivingRoomAllocation(text)) return null;
   const explicit = HOME_APPLIANCE_CATEGORIES.filter((category) =>
-    category.aliases.some((alias) => alias.length >= 2 && text.toLowerCase().includes(alias.toLowerCase()))
+    category.aliases.some((alias) => matchesReferenceLabel(text,alias))
   );
   if (explicit.length > 1) return null;
   const prior = activeCustomerGoal(input.state);
@@ -284,7 +284,7 @@ export function homeApplianceContextualCandidate(input: {
   const text = input.text.normalize("NFKC").trim();
   const customerHistory = input.history.join(" ");
   const explicit = HOME_APPLIANCE_CATEGORIES.filter((category) =>
-    category.aliases.some((alias) => alias.length >= 2 && text.toLowerCase().includes(alias.toLowerCase()))
+    category.aliases.some((alias) => matchesReferenceLabel(text,alias))
   );
   if (explicit.length > 1) return null;
   const topic = explicit[0]?.key ?? input.state.current_topic;

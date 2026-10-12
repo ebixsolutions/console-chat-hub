@@ -1,9 +1,10 @@
+import { matchesReferenceLabel } from "./industry-agent-registry.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { ScopedCustomerValue } from "./contextual-customer-update.ts";
 import { sameCanonicalJson } from "./canonical-json.ts";
 import type { CustomerJourneyResponseIntent } from "./customer-journey-orchestration.ts";
 import { HOME_APPLIANCE_CATEGORIES } from "./industry-profiles/home-appliance-v1.ts";
-import { requirementMutationText } from "./commerce-state-authority.ts";
+import { requirementMutationText, splitCustomerOperationClauses } from "./commerce-state-authority.ts";
 
 export interface B2LifecyclePlan {
   action: "deferred" | "cancelled";
@@ -25,12 +26,13 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
 
   const aliases = (part: string) => [...new Set([
     ...HOME_APPLIANCE_CATEGORIES.filter((spec) =>
-      spec.aliases.some((alias) => alias.trim().length >= 2 && part.includes(alias.toLowerCase()))
+      state.entities.some(entity=>entity.category===spec.key) &&
+      spec.aliases.some((alias) => matchesReferenceLabel(part,alias))
     ).map((spec) => spec.key),
     ...state.entities.filter((entity) =>
       [entity.category, entity.model, entity.attributes.product_name]
         .some((value) => typeof value === "string" && value.trim().length >= 2 &&
-          part.includes(value.trim().toLowerCase())) || identifiers(part).some(id=>identityValues(entity).some(value=>identifiers(value).includes(id)))
+          matchesReferenceLabel(part,value)) || identifiers(part).some(id=>identityValues(entity).some(value=>identifiers(value).includes(id)))
     ).map((entity) => entity.category),
   ])];
   const lifecycle = /暫時唔|暫時不|暂时不|暫緩|暂缓|先擺低|先放低|稍後先|稍后再|hold off|defer|pause|取消|唔要|不要|cancel\b/i;
@@ -40,7 +42,7 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
   // Room-scoped cancellation and service/installation actions keep their
   // existing entity/field resolution contract, never become category lifecycle.
   if (/(?:排水|檢查|检查|送貨|送货|delivery|闊度|宽度|高度|深度|尺寸|width|height|depth)/i.test(normalized)) return { kind: "none" };
-  const clauses = normalized.split(/[，,；;。]|\.(?=\s|$)|(?=先搞)|(?=先處理)|(?=先处理)/).map((s) => s.trim()).filter(Boolean);
+  const clauses = splitCustomerOperationClauses(normalized.replace(/(?=先搞)|(?=先處理)|(?=先处理)/gu,"；"));
   const lifecycleClauses = clauses.filter((part) => lifecycle.test(part) && !/[?？]/.test(part));
   // A question such as "我要唔要考慮？" contains a negated verb, but does not
   // authorize a lifecycle mutation. Preserve a separate imperative clause if
@@ -65,13 +67,13 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
     }
     if (keys.length !== 1 && !/兩樣都|两样都|both\b/i.test(part)) return ambiguous();
     for (const key of keys) {
-      if (plans.some((plan) => plan.target_category === key)) return ambiguous();
       const action=operation(part), explicitIds=identifiers(part);
-      const namedEntities=state.entities.filter(entity=>identityValues(entity).some(value=>part.includes(value)) || explicitIds.some(id=>identityValues(entity).some(value=>identifiers(value).includes(id))));
+      const namedEntities=state.entities.filter(entity=>identityValues(entity).some(value=>matchesReferenceLabel(part,value)) || explicitIds.some(id=>identityValues(entity).some(value=>identifiers(value).includes(id))));
       if(explicitIds.length && explicitIds.some(id=>!namedEntities.some(entity=>identityValues(entity).some(value=>identifiers(value).includes(id)))))return ambiguous();
       const candidates=(namedEntities.length?namedEntities:state.entities.filter(entity=>entity.category===key)).filter(entity=>entity.category===key && (action==="cancelled" || entity.status!=="cancelled"));
       if(candidates.length!==1)return ambiguous();
       const target=candidates[0];
+      if(plans.some(plan=>plan.target_entity_id ? plan.target_entity_id===target.entity_id : plan.target_category===target.category))return ambiguous();
       plans.push({target_category:key,action,focus_category:focusKeys[0]??null,...(state.entities.filter(entity=>entity.category===key).length>1?{target_entity_id:target.entity_id}:{})});
     }
   }

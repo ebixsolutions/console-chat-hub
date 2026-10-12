@@ -75,6 +75,7 @@ const commands = [
   ["git", ["diff", "--check", baseline, "HEAD"]],
   ["deno", ["test", "--no-lock", "--allow-read", "--node-modules-dir=manual", "supabase/functions/_shared/natural-dialogue-generic-core.test.ts",
     "tests/edge/verified-widget-auth.test.ts"]],
+  ["deno", ["test", "--no-lock", "--allow-read", "--node-modules-dir=manual", "tests/section15/compound-dialogue-state.test.ts"]],
   ["deno", ["test", "--no-lock", "--allow-read", "--node-modules-dir=manual", "supabase/functions/_shared/contextual-customer-update.test.ts"]],
   ["deno", ["test", "--no-lock", "--allow-read", "--node-modules-dir=manual", "supabase/functions/_shared/conversation-recall.integration.test.ts",
     "supabase/functions/_shared/transaction-closure-handoff.test.ts",

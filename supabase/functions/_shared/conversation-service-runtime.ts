@@ -30,7 +30,7 @@ export interface TypedCustomerCalculation {
   result?: number;
 }
 
-const CALCULATION_REQUEST = /(?:試算|试算|假設|假设|計算|计算|加埋|合共|總共|总共|一共|總數|总数|計下|计下|算下|計幾錢|计多少钱|算幾錢|算多少钱|calculate|estimate|total|altogether|how much)/i;
+const CALCULATION_REQUEST = /(?:試算|试算|假設|假设|計算|计算|加埋|合共|總共|总共|一共|總數|总数|計下|计下|算下|計幾錢|计多少钱|算幾錢|算多少钱|calculate|estimate|total|altogether|how much|what\s+would.{0,80}\bcost\b)/i;
 const HISTORICAL_OR_CONDITIONAL = /(?:舊|旧|之前|以前|頭先|刚才|剛才|用返|歷史|历史|假設|假设|如果|若果|若按|按你提供|historical|previous|earlier|conditional|hypothetical|\bif\b|\bassuming\b)/i;
 
 function calcClean(value: unknown, limit = 2400): string {
@@ -90,7 +90,7 @@ export function deriveTypedCustomerCalculation(input: {
   })),...recalled];
   if (!terms.length) return { terms: [], status: "no_typed_amounts" };
   if (new Set(terms.map((term) => term.currency)).size > 1) return { terms: [], status: "mixed_currency" };
-  const qtyMatch = question.match(/(?:共|總共|总共|數量|数量|qty|quantity)?\s*(一|二|兩|两|三|四|五|六|七|八|九|十|one|two|three|four|five|six|seven|eight|nine|ten|\d{1,4})\s*(?:部|台|件|個|个|份|位|晚|夜|日|天|次|unit|units|item|items|session|sessions|night|nights)/i);
+  const qtyMatch = question.match(/(?:共|總共|总共|數量|数量|qty|quantity)?\s*(一|二|兩|两|三|四|五|六|七|八|九|十|one|two|three|four|five|six|seven|eight|nine|ten|\d{1,4})\s*(?:部|台|件|個|个|份|位|晚|夜|日|天|次|unit|units|item|items|session|sessions|night|nights|seat|seats)/i);
   const explicit = qtyMatch ? quantityValue(qtyMatch[1]) : null;
   const fallback = Number.isInteger(input.fallback_quantity) && Number(input.fallback_quantity) > 0 ? Number(input.fallback_quantity) : null;
   const quantity = explicit ?? fallback ?? undefined;

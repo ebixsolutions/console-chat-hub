@@ -907,3 +907,14 @@ export function customerBusinessText(value: unknown): string {
     clause && !isControl(clause) && !/(?:交給他|交给他|交畀佢|pass (?:it|them|this|on)|不要把舊|不要把旧|do not (?:use|revive) the old)/i.test(clause) && !/(?:唔好|不要|别|別|stop|do not|don't).{0,16}(?:再問|再问|問需求|问需求|ask|question)|(?:no more|不要|唔要).{0,8}(?:AI|機器人|机器人)/i.test(clause)
   ).join("; ");
 }
+
+/** One bounded clause grammar for lifecycle validation and canonical reduction.
+ * A conjunction separates operations only before a command verb, never an
+ * enumeration of products, spaces or quantities. Decimal values remain intact.
+ */
+export function splitCustomerOperationClauses(text: string): string[] {
+  const separated=text.replace(/\.(?=\s|$)/g,"。").replace(/,(?=\s*[^\d])/g,"，")
+    .replace(/\band\s+(?=(?:change|defer|pause|cancel|return|back\s+to|give|summari[sz]e)\b)/giu,"；")
+    .replace(/(?:同埋|並且|并且)(?=(?:將|将|把|更正|改|暫緩|暂缓|取消|講返|回到|總結|总结))/gu,"；");
+  return (separated.match(/[^，；;。!?！？]+[!?！？]?/g)??[]).map(part=>part.trim()).filter(Boolean);
+}

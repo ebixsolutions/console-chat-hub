@@ -3,7 +3,7 @@ import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { ContextualCandidate } from "./contextual-customer-update.ts";
 import type { CustomerJourneySignal } from "./customer-journey-orchestration.ts";
 import type { CommerceTurnEntityHint } from "./commerce-state-reducer.ts";
-import { createIndustryRegistry, type IndustryProfile } from "./industry-agent-registry.ts";
+import { createIndustryRegistry, matchesReferenceLabel, type IndustryProfile } from "./industry-agent-registry.ts";
 import { validateIndustrySchemaValues } from "./industry-schema.ts";
 import {
   HOME_APPLIANCE_CATEGORIES,
@@ -62,7 +62,7 @@ function clean(value: unknown): string {
 function matches(text: string, aliases: readonly string[]): boolean {
   const lower = clean(text).toLowerCase();
   return aliases.some(
-    (alias) => alias.trim().length >= 2 && lower.includes(alias.trim().toLowerCase()),
+    (alias) => matchesReferenceLabel(lower,alias),
   );
 }
 
@@ -126,7 +126,7 @@ export function resolveIndustryRuntime(input: {
     if (!validateIndustrySchemaValues(profile.schema, values).valid) continue;
     const semanticHint = [...hints.values()].find((hint) =>
       (hint.aliases ?? []).some((alias) =>
-        clean(entity.name).toLowerCase().includes(clean(alias).toLowerCase()),
+        matchesReferenceLabel(clean(entity.name),clean(alias)),
       ),
     );
     if (semanticHint)
