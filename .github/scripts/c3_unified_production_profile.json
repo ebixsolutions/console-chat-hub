@@ -334,6 +334,7 @@
     "supabase/functions/_shared/commerce-semantic-interpreter.ts",
     "supabase/functions/_shared/commerce-state-authority.ts",
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
+    "supabase/functions/_shared/contextual-customer-update.test.ts",
     "supabase/functions/_shared/conversation-intelligence.ts",
     "supabase/functions/_shared/conversation-long-memory.ts",
     "supabase/functions/_shared/conversation-recall.ts",
@@ -711,5 +712,12 @@
     "supabase/functions/_shared/transaction-closure-handoff.integration.test.ts": "5c02660284d6cc35b492d235af90af41af0e6ee5f473a8d551133d77054e96e4",
     "supabase/functions/generate-reply/index.ts": "8fa8b07ca8123a440955f577f968c7b1a67d399cf6b48a2958fa82696806f561",
     "tests/section15/generic-reference-resolution.test.ts": "b5f011a15ca89e89bf341ffc84d029a354028a45fdd3a91885b4ccd370d4e6f5"
+  },
+  "authorized_w19_compatibility_repair_sha256": {
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "dff98d930aded5c1af4faa31c5ee64673dc732b83565ed0ae8cc203eea3a1748",
+    "supabase/functions/_shared/contextual-customer-update.test.ts": "a43db32c970bdd02c767caed394b715141211499694cfe93a4ae4841bc9b79f8",
+    "supabase/functions/_shared/natural-customer-response.ts": "e47df7d10697ba1e1f1e75a2ba0df43b3b06626675c332116a0fdf97d06fe852",
+    "supabase/functions/generate-reply/index.ts": "f434526aabdf5e43a09d49b582a283a85c3734b5719f9c444650cc302114eea6",
+    "tests/section15/generic-reference-resolution.test.ts": "1bf2bc6113d1c357e6111483898f4b25dac2f9feb5c016f4d30b00aeaea9c257"
   }
 }

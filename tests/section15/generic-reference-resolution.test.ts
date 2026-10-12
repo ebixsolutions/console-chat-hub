@@ -1,4 +1,4 @@
-import { arbitrateAnaphoricProductFollowUp as resolve, classifyNaturalCustomerIntent, type ProductReferenceContext } from '../../supabase/functions/_shared/natural-customer-response.ts';
+import { arbitrateAnaphoricProductFollowUp as resolve, arbitrateCanonicalProductFollowUp as canonical, classifyNaturalCustomerIntent, type ProductReferenceContext } from '../../supabase/functions/_shared/natural-customer-response.ts';
 const scope={company_id:'tenant-one',conversation_id:'ticket-one'};
 const entity=(model:string,category:string,status='researching')=>({entity_id:`entity:${model}`,model,category,status,attributes:{}});
 const history=(content:string)=>({role:'visitor',content,...scope});
@@ -97,4 +97,35 @@ Deno.test('current supplied clarification identity outranks stale semantic sugge
   const rows=[{role:'assistant',content:'Which current product or model do you mean?',...scope},history('it, how much is it?')];
   const r=resolve('NEW-202',rows,scope,c);
   assert(r.kind==='resolved'&&r.intent.product==='NEW-202'&&r.grounded_question.includes('how much'));
+});
+
+// The deployed caller resolves only after the existing scoped Commerce readback.
+Deno.test('canonical compatibility binds a return to the committed entity without mutation',()=>{
+ const c=context([entity('BOOK-101','booking'),entity('ALT-902','subscription')],'booking');
+ const snapshot={...scope,revision:4,state:c.state};const before=JSON.stringify(snapshot);
+ const r=canonical('講返之前嗰個預約，價錢幾多？',[history('BOOK-101'),history('ALT-902')],scope,snapshot,c.category_aliases);
+ assert(r.kind==='resolved'&&r.intent.product==='BOOK-101'&&r.resolved_topic==='booking'&&r.resolution_strategy==='PER_TOPIC_REFERENT_HISTORY');
+ assert(JSON.stringify(snapshot)===before);
+});
+for(const key of ['company_id','conversation_id'] as const) Deno.test(`canonical compatibility rejects foreign readback ${key}`,()=>{
+ const c=context([entity('BOOK-101','booking')],'booking');
+ const snapshot={...scope,revision:1,state:c.state,[key]:'foreign'};
+ assert(canonical('佢價錢幾多？',[history('BOOK-101')],scope,snapshot,c.category_aliases).kind==='clarification');
+});
+for(const revision of [0,-1,1.5,NaN]) Deno.test(`canonical compatibility rejects unproven revision ${revision}`,()=>{
+ const c=context([entity('BOOK-101','booking')],'booking');
+ assert(canonical('佢價錢幾多？',[],scope,{...scope,revision,state:c.state},c.category_aliases).kind==='clarification');
+});
+Deno.test('canonical compatibility cannot restore cancelled product from history',()=>{
+ const c=context([entity('BOOK-101','booking','cancelled')],'booking');
+ assert(canonical('講返之前嗰個預約，價錢幾多？',[history('BOOK-101')],scope,{...scope,revision:2,state:c.state},c.category_aliases).kind==='clarification');
+});
+Deno.test('canonical compatibility cannot guess an unknown category without industry binding',()=>{
+ const c=context([entity('BOOK-101','booking')],'booking');
+ assert(canonical('back to that unknown service, how much is it?',[],scope,{...scope,revision:2,state:c.state}).kind==='clarification');
+});
+
+Deno.test('canonical compatibility preserves non-reference routing before the first commit',()=>{
+ const c=context([],null);
+ assert(canonical('hello',[],scope,{...scope,revision:0,state:c.state}).kind==='not_applicable');
 });

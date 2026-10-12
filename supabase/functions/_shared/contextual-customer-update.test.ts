@@ -1,3 +1,4 @@
+import { resolveIndustryProfile } from "./industry-runtime-adapter.ts";
 import {
   type ContextualCandidate,
   contextualUpdateEvents,
@@ -20,6 +21,7 @@ import { prepareConversationRecall } from "./conversation-recall.ts";
 import { buildCanonicalConversationMemory, verifyCommittedRoomCorrectionMemory, verifyCommittedLifecycleMemory, type CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import {
   arbitrateAnaphoricProductFollowUp,
+  arbitrateCanonicalProductFollowUp,
   classifyNaturalCustomerIntent,
   requiresCurrentMerchantEvidence,
 } from "./natural-customer-response.ts";
@@ -746,11 +748,19 @@ Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB an
   assert(t8.route === "product_guidance" && acAfterSwitch?.quantity === 3 && fridgeAfterSwitch?.quantity === 1 && !JSON.stringify(fridgeAfterSwitch).includes("180") && !JSON.stringify(fridgeAfterSwitch).includes("sunlight"), JSON.stringify({ t8, entities: switched.entities }));
 
   const t9 = "講返頭先嗰部冷氣，細房研究緊邊個型號同幾多匹？";
-  const t9Result = arbitrateAnaphoricProductFollowUp(t9, turns.slice().reverse().map((content) => ({ role: "visitor", content, conversation_id: "conversation", company_id: "company" })), { conversation_id: "conversation", company_id: "company" });
   const t9Focus = { topic: "air_conditioner", product: "CW-SUL70BA", resolution_strategy: "PER_TOPIC_REFERENT_HISTORY" as const };
   const focusValidation = validateTrustedProductTopicFocus({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t9", text: t9, language: "zh-TW", history: turns.slice().reverse().map((content) => ({ role: "visitor", content })), trusted_product_topic_focus: t9Focus }, f.snapshot().state);
   assert(focusValidation.valid, JSON.stringify(focusValidation));
-  const t9State = await f.ask(t9, turns.slice().reverse(), t9Focus); turns.push(t9);
+  const t9State = await f.ask(t9, turns.slice().reverse(), t9Focus);
+  // Mirror the real generation call chain: verified focus -> canonical commit
+  // -> scoped readback -> factual query binding. Do not infer a category from HP.
+  const t9Readback = {...f.snapshot(),conversation_id:"conversation",company_id:"company"};
+  const t9Result = arbitrateCanonicalProductFollowUp(t9,
+    turns.slice().reverse().map(content=>({role:"visitor",content,conversation_id:"conversation",company_id:"company"})),
+    {conversation_id:"conversation",company_id:"company"},t9Readback,
+    resolveIndustryProfile(t9Readback.state.current_industry)?.category_bindings
+      ? [...resolveIndustryProfile(t9Readback.state.current_industry)!.category_bindings!] : undefined);
+  turns.push(t9);
   assert(t9Result.kind === "resolved" && t9Result.intent.product === "CW-SUL70BA" && t9Result.intent.facts.includes("model_info") && t9Result.intent.facts.includes("horsepower") && t9Result.resolved_topic === "air_conditioner" && f.snapshot().state.current_topic === "air_conditioner", JSON.stringify({ t9Result, t9State }));
 
   const t10 = await ask("大房唔係100呎，應該係110呎。");

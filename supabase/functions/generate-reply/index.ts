@@ -58,6 +58,7 @@ import {
 } from "../_shared/current-fact-evidence.ts";
 import {
   arbitrateAnaphoricProductFollowUp,
+  arbitrateCanonicalProductFollowUp,
   classifyNaturalCustomerIntent,
   classifySocialTurn,
   renderSocialTurn,
@@ -4624,15 +4625,15 @@ async function orchestrationGenerateReply(
   // Rebind after the canonical scoped state read. Lifecycle/revision authority
   // outranks history; semantic references select existing identities only.
   if (_criticalE2ExpectedTenantId && _c3CommerceSnapshot?.state) {
-    _productFollowUpArbitration = arbitrateAnaphoricProductFollowUp(
+    _productFollowUpArbitration = arbitrateCanonicalProductFollowUp(
       _h1LastMsg, ((_pr5HistoryRows ?? []) as MemoryHistoryRow[]).map(row => ({
         role: String(row.role ?? ""), content: String(row.content ?? ""),
         conversation_id, company_id: _criticalE2ExpectedTenantId!,
       })), { conversation_id, company_id: _criticalE2ExpectedTenantId },
-      { conversation_id, company_id: _criticalE2ExpectedTenantId,
-        state: _c3CommerceSnapshot.state, semantic: _a3SemanticFrame,
-        category_aliases: resolveIndustryProfile(_c3CommerceSnapshot.state.current_industry)?.category_bindings
-          ? [...resolveIndustryProfile(_c3CommerceSnapshot.state.current_industry)!.category_bindings!] : undefined },
+      _c3CommerceSnapshot,
+      resolveIndustryProfile(_c3CommerceSnapshot.state.current_industry)?.category_bindings
+        ? [...resolveIndustryProfile(_c3CommerceSnapshot.state.current_industry)!.category_bindings!] : undefined,
+      _a3SemanticFrame,
     );
     _effectiveNaturalCustomerIntent = _productFollowUpArbitration.kind === "not_applicable"
       ? _naturalCustomerIntent : _productFollowUpArbitration.intent;

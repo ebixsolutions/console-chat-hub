@@ -276,6 +276,28 @@ export function arbitrateAnaphoricProductFollowUp(
   return resolve(model,value.topic,value.offset,requestedTopics.length?"PER_TOPIC_REFERENT_HISTORY":"RECENT_GLOBAL_REFERENT");
 }
 
+/** Canonical caller contract: bind the readback's tenant/ticket before query resolution.
+ * History alone can prove a supplied identifier, never manufacture its category.
+ * Readback must follow the existing verified Commerce commit/read path.
+ */
+export function arbitrateCanonicalProductFollowUp(
+  text: string, history: ProductFollowUpHistoryMessage[], scope: ProductFollowUpScope,
+  snapshot: ProductFollowUpScope & { revision: number; state: ProductReferenceContext["state"] },
+  categoryAliases?: ProductReferenceContext["category_aliases"],
+  semantic?: ProductReferenceContext["semantic"],
+): ProductFollowUpArbitration {
+  // An initial empty revision must not preempt greetings or other non-reference routes.
+  if (arbitrateAnaphoricProductFollowUp(text,history,scope).kind === "not_applicable")
+    return {kind:"not_applicable"};
+  if (snapshot.company_id!==scope.company_id || snapshot.conversation_id!==scope.conversation_id ||
+    !Number.isSafeInteger(snapshot.revision) || snapshot.revision<1 || !snapshot.state) {
+    return {kind:"clarification",intent:{kind:"product_factual_clarification",product:null,candidates:[],reason:"CANONICAL_REFERENCE_READBACK_UNPROVEN"}};
+  }
+  return arbitrateAnaphoricProductFollowUp(text,history,scope,{
+    ...scope,state:snapshot.state,category_aliases:categoryAliases,semantic,
+  });
+}
+
 export function isProductSupportProblem(text: string): boolean {
   return isProductOperationFailure(text) ||
     /(?:故障|維修|维修|壞咗|坏了|損壞|损坏|缺少功能|缺失功能|功能失效|兼容問題|兼容问题|相容問題|賣家投訴|卖家投诉|malfunction|broken|damaged|missing\s+(?:advertised\s+)?(?:features?|parts?)|compatibility\s+issue|seller\s+(?:problem|complaint)|product\s+support)/i
