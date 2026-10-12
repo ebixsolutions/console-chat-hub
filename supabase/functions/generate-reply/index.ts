@@ -1,3 +1,4 @@
+import { phase1CoachAllowed } from "../_shared/remote-model-accounting.ts";
 import {
   prepareConversationRecall,
   type RecallCommerceSnapshot,
@@ -4108,6 +4109,8 @@ async function orchestrationGenerateReply(
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+
+  flags = { ...flags, ENABLE_COACH: phase1CoachAllowed(conversation.company_id, flags.ENABLE_COACH) };
 
   if (conversation.status === "resolved" || conversation.status === "closed") {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);

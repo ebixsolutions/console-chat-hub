@@ -17,6 +17,7 @@ export interface RemoteScope {
   expires: number;
   nonce: string;
   service?: "kb" | "coach_sync";
+  request_sha256?: string;
 }
 const encoder = new TextEncoder();
 export async function signRemote(
@@ -66,6 +67,7 @@ export async function prepareRemoteRetrieval(
   upstream: typeof fetch = fetch,
   signal?: AbortSignal,
   service: "kb" | "coach_sync" = "kb",
+  requestBody?: string,
 ): Promise<Record<string, string>> {
   // The bounded synthetic scope alone requires the new remote contract; other tenants retain their accepted authority.
   if (company !== "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec") return {};
@@ -77,6 +79,17 @@ export async function prepareRemoteRetrieval(
     nonce: crypto.randomUUID(),
     service,
   };
+  if (service === "kb") {
+    if (!requestBody) {
+      throw new ModelAccountingError("KB_REQUEST_BINDING_REQUIRED");
+    }
+    scope.request_sha256 = Array.from(
+      new Uint8Array(
+        await crypto.subtle.digest("SHA-256", encoder.encode(requestBody)),
+      ),
+      (v) => v.toString(16).padStart(2, "0"),
+    ).join("");
+  }
   const payload = JSON.stringify(scope);
   const signature = await signRemote(payload, credential);
   let response: Response;
@@ -87,6 +100,7 @@ export async function prepareRemoteRetrieval(
         method: "GET",
         redirect: "error",
         headers: {
+          "x-ai-company-id": company,
           "x-c3-accounting-scope": payload,
           "x-c3-accounting-signature": signature,
         },
@@ -118,13 +132,16 @@ export async function prepareRemoteRetrieval(
   if (
     body.protocol !== "c3-shared-attempt-v1" || body.nonce !== scope.nonce ||
     body.company !== company || body.tenant !== tenant ||
-    body.expires !== scope.expires ||
+    body.expires !== scope.expires || body.operation !== scope.operation ||
+    body.service !== scope.service ||
+    body.request_sha256 !== scope.request_sha256 ||
     !["retrieval_only", "shared_atomic_attempts"].includes(body.mode) ||
     !/^[a-f0-9]{64}$/.test(body.runtime_sha256 ?? "")
   ) {
     throw new ModelAccountingError("KB_DOWNSTREAM_ACCOUNTING_UNPROVEN");
   }
   return {
+    "x-ai-company-id": company,
     "x-c3-accounting-scope": payload,
     "x-c3-accounting-signature": signature,
     "x-c3-accounting-mode": body.mode,
@@ -175,4 +192,9 @@ export async function remoteAccountingAction(
     throw new ModelAccountingError("REMOTE_ACCOUNTING_DENIED");
   }
   return result.data;
+}
+
+/** Phase-2 Coach is excluded only from the Director-authorized Phase-1 synthetic run. */
+export function phase1CoachAllowed(company: string, enabled: boolean): boolean {
+  return enabled && company !== "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec";
 }

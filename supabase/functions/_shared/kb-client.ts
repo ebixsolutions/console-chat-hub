@@ -1,4 +1,7 @@
-import { prepareRemoteRetrieval, remoteAccountingSecret } from "./remote-model-accounting.ts";
+import {
+  prepareRemoteRetrieval,
+  remoteAccountingSecret,
+} from "./remote-model-accounting.ts";
 // supabase/functions/_shared/kb-client.ts
 // Canonical Singapore KB adapter + secure pre-activation scope.
 //
@@ -359,9 +362,11 @@ export async function resolveTenantScope(
     const resolvedCompanyId = conversationCompanyId ?? channelCompanyId;
     // The calling runtime has already loaded the authoritative conversation.
     // A second lookup must agree before mapping that company to Singapore KB.
-    if (authoritativeCompanyId != null &&
+    if (
+      authoritativeCompanyId != null &&
       (typeof authoritativeCompanyId !== "string" ||
-        authoritativeCompanyId !== resolvedCompanyId)) {
+        authoritativeCompanyId !== resolvedCompanyId)
+    ) {
       return { resolved: false, reason: "KB_TENANT_IDENTITY_CONFLICT" };
     }
     if (!resolvedCompanyId) {
@@ -493,7 +498,11 @@ export async function fetchKBRag(
   }
 
   const credential = endpointCfg.localProjectAuth
-    ? { ok: true as const, kind: "bearer" as const, value: getSupabaseAdminKey() }
+    ? {
+      ok: true as const,
+      kind: "bearer" as const,
+      value: getSupabaseAdminKey(),
+    }
     : await resolveSingaporeCredential(scope, endpointCfg);
   if (!credential.ok) {
     return {
@@ -505,12 +514,35 @@ export async function fetchKBRag(
     };
   }
 
-  let accountingHeaders: Record<string,string>;
+  const requestBody = JSON.stringify({
+    query,
+    company_id: companyId,
+    candidate_top_k: Math.max(queryInput.top_k, 10),
+    max_documents: KB_MAX_DOCUMENT_CANDIDATES,
+    max_summary_chunks: 1,
+    max_full_content_chunks: 3,
+    score_threshold: 0.05,
+  });
+  let accountingHeaders: Record<string, string>;
   try {
-    accountingHeaders = await prepareRemoteRetrieval(scope.aiCompanyId, scope.singaporeTenantId,
-      remoteAccountingSecret(credential, endpointCfg), endpointCfg.ragUrl, fetch, opts?.signal);
+    accountingHeaders = await prepareRemoteRetrieval(
+      scope.aiCompanyId,
+      scope.singaporeTenantId,
+      remoteAccountingSecret(credential, endpointCfg),
+      endpointCfg.ragUrl,
+      fetch,
+      opts?.signal,
+      "kb",
+      requestBody,
+    );
   } catch {
-    return { success:false,chunks:[],citations:[],documents:[],error_code:"KB_DOWNSTREAM_ACCOUNTING_UNPROVEN" };
+    return {
+      success: false,
+      chunks: [],
+      citations: [],
+      documents: [],
+      error_code: "KB_DOWNSTREAM_ACCOUNTING_UNPROVEN",
+    };
   }
   const controller = new AbortController();
   const abortFromRequest = () => controller.abort(opts?.signal?.reason);
@@ -532,15 +564,7 @@ export async function fetchKBRag(
         ...singaporeCredentialHeaders(credential, endpointCfg),
         ...accountingHeaders,
       },
-      body: JSON.stringify({
-        query,
-        company_id: companyId,
-        candidate_top_k: Math.max(queryInput.top_k, 10),
-        max_documents: KB_MAX_DOCUMENT_CANDIDATES,
-        max_summary_chunks: 1,
-        max_full_content_chunks: 3,
-        score_threshold: 0.05,
-      }),
+      body: requestBody,
       signal: controller.signal,
     });
   } catch (err) {
@@ -598,9 +622,12 @@ export async function fetchKBRag(
 
   // A tenant mismatch returned by the remote service is an integrity failure.
   // Do not expose even candidate snippets to the answer or trace pipeline.
-  if (parsed.documents.some((doc) =>
-    doc.authority.tenant_id && doc.authority.tenant_id !== scope.singaporeTenantId
-  )) {
+  if (
+    parsed.documents.some((doc) =>
+      doc.authority.tenant_id &&
+      doc.authority.tenant_id !== scope.singaporeTenantId
+    )
+  ) {
     return {
       success: false,
       chunks: [],

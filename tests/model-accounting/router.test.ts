@@ -3,6 +3,7 @@ import {
   type LlmCall,
 } from "../../supabase/functions/_shared/llm-router.ts";
 import {
+  phase1CoachAllowed,
   prepareRemoteRetrieval,
   remoteAccountingAction,
   signRemote,
@@ -163,6 +164,9 @@ Deno.test("remote ordinary retrieval attestation does not reserve/count a model;
     secret,
     "https://kb.mock/rag",
     up,
+    undefined,
+    "kb",
+    JSON.stringify({ query: "policy" }),
   );
   assert(calls === 1 && h["x-c3-accounting-mode"] === "retrieval_only");
   let denied = false;
@@ -307,4 +311,11 @@ Deno.test("actual grounding verifier retry counts; cap denial propagates without
       prev[i] === undefined ? Deno.env.delete(n) : Deno.env.set(n, prev[i]!)
     );
   }
+});
+
+Deno.test("Phase-1 synthetic run excludes Phase-2 Coach regardless of global flag; other tenants unchanged", () => {
+  assert(!phase1CoachAllowed("4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec", true));
+  assert(!phase1CoachAllowed("4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec", false));
+  assert(phase1CoachAllowed("other-tenant", true));
+  assert(!phase1CoachAllowed("other-tenant", false));
 });

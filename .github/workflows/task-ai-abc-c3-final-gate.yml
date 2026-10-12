@@ -2051,6 +2051,13 @@ jobs:
           psql "$C3_ISOLATED_DB_URL" -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE c3modelaccounting'
           export C3_ACCOUNTING_TEST_DB_URL=postgres://postgres:c3-isolated-only@127.0.0.1:5432/c3modelaccounting
           python3 tests/model-accounting/native-postgres.py | tee "$RUNNER_TEMP/c3-model-accounting-native.json"
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: KB r109027 native FastAPI and shared PostgreSQL accounting integration
+        run: |
+          set -euo pipefail
+          python -m pip install -r integrations/singapore-kb/backend-r109027/requirements-validation.lock.txt
+          C3_KB_TEST_SERVER_URL="$C3_ISOLATED_DB_URL" python integrations/singapore-kb/validate-native.py
       - name: Preserve actual accounting database assertions
         if: always()
         uses: actions/upload-artifact@v4
