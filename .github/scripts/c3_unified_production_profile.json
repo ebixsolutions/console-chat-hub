@@ -222,6 +222,7 @@
   "authorized_changes": [
     ".github/scripts/c3_candidate_identity_build_check.mjs",
     ".github/scripts/c3_director_generic_core_final_gate.mjs",
+    ".github/scripts/c3_section15_runtime_leakage.mjs",
     ".github/scripts/c3_unified_production_profile.json",
     ".github/scripts/c3_unified_production_source_gate.mjs",
     ".github/scripts/c3_unified_production_source_gate.test.mjs",
@@ -344,6 +345,8 @@
     "supabase/functions/_shared/f13-runtime-recovery.test.ts",
     "supabase/functions/_shared/generation-terminal-guard.ts",
     "supabase/functions/_shared/handoff-intent.ts",
+    "supabase/functions/_shared/industry-agent-registry.ts",
+    "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts",
     "supabase/functions/_shared/kb-client.ts",
     "supabase/functions/_shared/llm-router.ts",
     "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
@@ -351,9 +354,11 @@
     "supabase/functions/_shared/natural-customer-response.test.ts",
     "supabase/functions/_shared/natural-customer-response.ts",
     "supabase/functions/_shared/product-factual-query.test.ts",
+    "supabase/functions/_shared/product-referent-history.test.ts",
     "supabase/functions/_shared/remote-model-accounting.ts",
     "supabase/functions/_shared/service-semantic-routing.test.ts",
     "supabase/functions/_shared/service-semantic-routing.ts",
+    "supabase/functions/_shared/transaction-closure-handoff.integration.test.ts",
     "supabase/functions/ce-evaluation-control/index.ts",
     "supabase/functions/ce-evaluation-worker/index.ts",
     "supabase/functions/conversation-evaluate/index.ts",
@@ -410,6 +415,7 @@
     "tests/section15/early-r1-native.py",
     "tests/section15/early-r1-runtime.fixture.json",
     "tests/section15/early-r1-summary.test.ts",
+    "tests/section15/generic-reference-resolution.test.ts",
     "tests/section15/handoff-service.test.ts",
     "tests/section15/human-service-routing.test.mjs",
     "vite.candidate-identity.d.mts",
@@ -693,5 +699,17 @@
     "vite.preview-environment.mjs": "ecdfce8412c45c0a1aec418f424dc2600a8941b9151f832d35e392cd7aa6771e",
     "tests/phase1/preview-startup.test.mjs": "5ee4a59288224b1695eda684d3ac3b7b7068ad1689a9d134a9bced1a86701b5a",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "1d8d036a592659d99852b8956bfcbfd9a9924f64f167f4a60a8bd6f79f273999"
+  },
+  "authorized_section15_reference_repair_sha256": {
+    ".github/scripts/c3_section15_runtime_leakage.mjs": "cbdce81f9cce6ca9a3bf4b0876b4439bb187367a00ba5369cc7afd567a137c19",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "94b619508ac363b8af533c94d3ed8afcb76cfdf8d25d7528b3c61b732aa15f80",
+    "supabase/functions/_shared/industry-agent-registry.ts": "06512ddbb65fba42bfb72321beec3b589608912c906efab02d727230786ec446",
+    "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts": "c84560e6dac47c9ce0016e555d24a3d9f101501857c8692cce7cb87765a08c3e",
+    "supabase/functions/_shared/natural-customer-response.ts": "b41c6448dd92013dd7ff3e981d6817356020c8afb692e373bebe57d1215d781f",
+    "supabase/functions/_shared/product-factual-query.test.ts": "6696947dd05e5232da61dcf9e8b68ccb2a0a284301e328f835d3982730ac7b14",
+    "supabase/functions/_shared/product-referent-history.test.ts": "b5e24a9e1345aa7c70fe3d5155080acf6f6fb619a5b0e29d29091b3695a36c5f",
+    "supabase/functions/_shared/transaction-closure-handoff.integration.test.ts": "5c02660284d6cc35b492d235af90af41af0e6ee5f473a8d551133d77054e96e4",
+    "supabase/functions/generate-reply/index.ts": "8fa8b07ca8123a440955f577f968c7b1a67d399cf6b48a2958fa82696806f561",
+    "tests/section15/generic-reference-resolution.test.ts": "b5f011a15ca89e89bf341ffc84d029a354028a45fdd3a91885b4ccd370d4e6f5"
   }
 }

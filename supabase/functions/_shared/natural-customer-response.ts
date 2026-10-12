@@ -17,7 +17,6 @@ export type NaturalCustomerIntent =
   | {
     kind: "product_guidance";
     product: string | null;
-    two_bedrooms_and_living_room?: boolean;
   }
   | { kind: "product_availability"; product: string | null }
   | {
@@ -138,248 +137,143 @@ export type ProductFollowUpArbitration =
     >;
   };
 
-const PRODUCT_ANAPHOR =
-  /(?:呢|這|这|嗰|那)(?:一)?(?:部|款|個|个)|(?:頭先|头先|之前)(?:嗰|那)?(?:部|款|個|个)|(?:佢|它)(?!們|们)|\b(?:this\s+one|that\s+(?:one|model)|it|the\s+AC\s+we\s+discussed\s+earlier)\b/iu;
-const PRODUCT_CONTEXT_SWITCH =
-  /(?:轉(?:去|睇|問)|转(?:去|看|问)|講返|讲回|switch(?:ing)?\s+to|move(?:ing)?\s+to|back\s+to)\s*(?:另一|另一个|another|the)?\s*(?:產品|产品|product|category)?|(?:雪櫃|冰箱|refrigerator|fridge|洗衣機|洗衣机|washer|washing\s+machine|電視|电视|television|\bTV\b|焗爐|烤箱|oven)/iu;
-const INACTIVE_REFERENT =
-  /(?:取消|唔要|不要|刪除|删除|先擺低|先放低|暫時唔跟|暫時唔搞|暫緩|暂缓|遲啲先|迟点再|cancel(?:led)?|defer(?:red)?|no\s+longer|not\s+that)/iu;
-
-const PRODUCT_TOPIC_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
-  ["air_conditioner", /(?:冷氣(?:機)?|冷气(?:机)?|空調|空调|air\s*conditioner|\bAC\b)/iu],
-  ["refrigerator", /(?:雪櫃|雪柜|冰箱|refrigerator|fridge)/iu],
-  ["washing_machine", /(?:洗衣機|洗衣机|washing\s*machine|washer)/iu],
-  ["television", /(?:電視|电视|television|\bTV\b)/iu],
-  ["oven", /(?:焗爐|焗炉|烤箱|oven)/iu],
-];
-
-function explicitProductTopics(text: string): string[] {
-  return PRODUCT_TOPIC_PATTERNS.filter(([, pattern]) => pattern.test(text))
-    .map(([topic]) => topic);
+// Meaning/category values come from scoped canonical state or explicit profile
+// bindings supplied by the caller. No default industry or category inference.
+export interface ProductReferenceContext extends ProductFollowUpScope {
+  state?: {
+    current_topic?: string | null;
+    entities: Array<{ entity_id: string; category: string; model?: string | null;
+      status: string; attributes: Record<string, unknown> }>;
+  } | null;
+  category_aliases?: Array<{ key: string; aliases: readonly string[] }>;
+  semantic?: { confidence: number; topic: string | null;
+    ambiguity: { is_ambiguous: boolean };
+    referents: Array<{ ref: string; source: string; confidence: number }> } | null;
 }
-
-function inferredProductTopic(text: string): string | null {
-  const explicit = explicitProductTopics(text);
-  if (explicit.length === 1) return explicit[0];
-  if (/(?:幾多匹|几多匹|多少匹|幾匹|几匹|匹數|匹数|horsepower|\bHP\b|冷房|製冷|制冷)/iu.test(text)) {
-    return "air_conditioner";
-  }
-  return null;
+const PRODUCT_ANAPHOR = /(?:呢|這|这|嗰|那)(?:一)?(?:部|款|個|个|件|項|项)|(?:頭先|头先|之前)(?:嗰|那)?(?:部|款|個|个|件|項|项)|(?:佢|它)(?!們|们)|\b(?:this\s+(?:one|item|service)|that\s+(?:one|model|item|service)|it|the\s+.+?\s+we\s+(?:discussed|were discussing))\b/iu;
+const PRODUCT_CONTEXT_SWITCH = /(?:轉(?:去|睇|問)|转(?:去|看|问)|講返|讲回|回到|返回|switch(?:ing)?\s+to|mov(?:e|ing)\s+to|back\s+to|return\s+to)/iu;
+const INACTIVE_REFERENT = /(?:取消|唔要|不要|刪除|删除|先擺低|先放低|暫時唔跟|暫時唔搞|暫緩|暂缓|遲啲先|迟点再|cancel(?:led)?|defer(?:red)?|no\s+longer|not\s+that)/iu;
+const NEGATED_LIFECYCLE = /(?:唔好|不要|別|别|not|don't|do not|never).{0,12}(?:取消|刪|删|cancel|defer)/iu;
+function removesHistoryIdentity(text: string): boolean {
+  return INACTIVE_REFERENT.test(text) && !NEGATED_LIFECYCLE.test(text) &&
+    !/(?:政策|policy|如果|假設|假设|\bif\b|hypothetical|quoted|[「“"].*(?:取消|cancel).*[」”"])/iu.test(text);
 }
-
-function scopedProductHistory(
-  history: ProductFollowUpHistoryMessage[],
-  scope?: ProductFollowUpScope,
-): ProductFollowUpHistoryMessage[] {
-  if (!scope) return history;
-  return history.filter((row) =>
-    (row.conversation_id === undefined || row.conversation_id === scope.conversation_id) &&
-    (row.company_id === undefined || row.company_id === scope.company_id)
-  );
+const norm = (text: string) => text.normalize("NFKC").trim().toLowerCase();
+function containsLabel(text: string, label: string): boolean {
+  const a=norm(text), b=norm(label);
+  if (!b) return false;
+  let offset=a.indexOf(b);
+  while (offset>=0) {
+    if (!/^[a-z0-9]/u.test(b) ||
+      (!/[a-z0-9]/u.test(a[offset-1]??"") && !/[a-z0-9]/u.test(a[offset+b.length]??""))) return true;
+    offset=a.indexOf(b,offset+1);
+  }
+  return false;
 }
-
-function arbitratePerTopicProductReferent(
-  normalized: string,
-  facts: ProductFactualFacet[],
-  visitors: ProductFollowUpHistoryMessage[],
-): ProductFollowUpArbitration | null {
-  const requestedTopics = explicitProductTopics(normalized);
-  if (!requestedTopics.length) return null;
-  if (requestedTopics.length !== 1) {
-    return { kind: "clarification", intent: { kind: "product_factual_clarification", product: null, candidates: [], reason: "MULTIPLE_REQUESTED_PRODUCT_TOPICS" } };
-  }
-  const requestedTopic = requestedTopics[0];
-  const activeByTopic = new Map<string, Map<string, number>>();
-  let focusTopic: string | null = null;
-  for (let offset = visitors.length - 1; offset >= 0; offset -= 1) {
-    const prior = visitors[offset].content.normalize("NFKC");
-    const explicitTopics = explicitProductTopics(prior);
-    if (explicitTopics.length === 1) focusTopic = explicitTopics[0];
-    else if (explicitTopics.length > 1) focusTopic = null;
-    const topic = explicitTopics.length === 1 ? explicitTopics[0] : inferredProductTopic(prior) ?? focusTopic;
-    if (!topic) continue;
-    const models = exactProductIdentifiers(prior);
-    const bucket = activeByTopic.get(topic) ?? new Map<string, number>();
-    activeByTopic.set(topic, bucket);
-    if (INACTIVE_REFERENT.test(prior)) {
-      if (models.length) for (const model of models) bucket.delete(model);
-      else if (explicitTopics.length === 1 && (PRODUCT_ANAPHOR.test(prior) || /(?:產品|产品|product|item)/iu.test(prior))) bucket.clear();
-      continue;
-    }
-    for (const model of models) bucket.set(model, offset);
-  }
-  const candidates = [...(activeByTopic.get(requestedTopic)?.keys() ?? [])];
-  if (candidates.length !== 1) {
-    return { kind: "clarification", intent: { kind: "product_factual_clarification", product: null, candidates, reason: candidates.length > 1 ? "MULTIPLE_COMPATIBLE_PRODUCT_REFERENTS_FOR_TOPIC" : "NO_ACTIVE_PRODUCT_REFERENT_FOR_REQUESTED_TOPIC" } };
-  }
-  const product = candidates[0];
-  return {
-    kind: "resolved",
-    intent: productFactualIntent(product, facts),
-    grounded_question: `${product} ${normalized}`,
-    source_turn_offset: activeByTopic.get(requestedTopic)?.get(product) ?? visitors.length,
-    resolved_topic: requestedTopic,
-    resolution_strategy: "PER_TOPIC_REFERENT_HISTORY",
-  };
+function scopedProductHistory(history: ProductFollowUpHistoryMessage[], scope?: ProductFollowUpScope) {
+  return history.filter(row => !scope ||
+    (row.conversation_id===scope.conversation_id && row.company_id===scope.company_id));
 }
-
-/**
- * Resolve product identity and requested factual attribute independently.
- * This is deliberately read-only: it may bind a recent explicit model to a
- * factual KB query, but it cannot create a product, revive an inactive item,
- * or choose between competing models.
- */
+/** Identity binding is read-only and never constitutes merchant fact evidence. */
 export function arbitrateAnaphoricProductFollowUp(
-  text: string,
-  newestFirstHistory: ProductFollowUpHistoryMessage[],
-  scope?: ProductFollowUpScope,
+  text: string, newestFirstHistory: ProductFollowUpHistoryMessage[],
+  scope?: ProductFollowUpScope, context?: ProductReferenceContext,
 ): ProductFollowUpArbitration {
-  const original = text.normalize("NFKC").trim();
-  // A minimal answer to our last model clarification keeps the pending factual
-  // question. This is query binding only: it supplies no merchant fact or state.
-  const models = exactProductIdentifiers(original);
-  if (models.length === 1 && !productFactualFacets(original).length) {
-    const remainder = original.toUpperCase().replace(models[0].toUpperCase(), "").trim();
-    if (/^(?:(?:我指|係|是|就係|就是|the\s+model\s+is|i\s+mean)\s*)?(?:嗰款|呢款|that\s+one)?[。.!！\s]*$/iu.test(remainder)) {
-      const history = scopedProductHistory(newestFirstHistory, scope)
-        .filter((row, index) => index !== 0 || row.role !== "visitor" || row.content.normalize("NFKC").trim() !== original);
-      const last = history[0], previous = history[1];
-      if (last?.role === "assistant" && previous?.role === "visitor" &&
-          /^(?:你指邊個(?:現行產品或)?型號|你指的是哪個|你指的是哪个|Which (?:current product or model|model) do you mean)/iu.test(last.content.trim())) {
-        const pendingFacts = productFactualFacets(previous.content);
-        if (pendingFacts.length && PRODUCT_ANAPHOR.test(previous.content)) {
-          return { kind: "resolved", intent: productFactualIntent(models[0], pendingFacts),
-            grounded_question: `${models[0]} ${previous.content}`, source_turn_offset: 1,
-            resolved_topic: inferredProductTopic(previous.content), resolution_strategy: "RECENT_GLOBAL_REFERENT" };
-        }
-      }
+  const original=text.normalize("NFKC").trim();
+  const clarification=(reason:string,candidates:string[]=[]):ProductFollowUpArbitration =>
+    ({kind:"clarification",intent:{kind:"product_factual_clarification",product:null,candidates,reason}});
+  const history=scopedProductHistory(newestFirstHistory,scope).filter((r,i)=>
+    i!==0 || r.role!=="visitor" || r.content.normalize("NFKC").trim()!==original);
+  const supplied=exactProductIdentifiers(original);
+  let question=original, facts=productFactualFacets(original);
+  // A supplied identifier answers an outstanding identity clarification. The
+  // pending question is retained; no price/specification is inferred from it.
+  if (supplied.length===1 && !facts.length) {
+    const last=history[0], previous=history[1];
+    const remainder=original.toUpperCase().replace(supplied[0].toUpperCase(),"").trim();
+    if (/^(?:(?:我指|係|是|就係|就是|the\s+model\s+is|i\s+mean)\s*)?(?:嗰款|呢款|that\s+one)?[。.!！\s]*$/iu.test(remainder) &&
+      last?.role==="assistant" && previous?.role==="visitor" &&
+      /^(?:你指邊個(?:現行產品或)?型號|你指的是哪個|你指的是哪个|Which (?:current product or model|model) do you mean)/iu.test(last.content.trim()) &&
+      PRODUCT_ANAPHOR.test(previous.content)) {
+      question=previous.content; facts=productFactualFacets(question);
     }
   }
-  const clauses = original.split(/[。;；]/).map((clause) => clause.trim()).filter(Boolean);
-  const normalized = clauses.length > 1 && /講返|讲回|back\s+to|return\s+to/iu.test(original)
-    ? clauses.filter((clause) => !(INACTIVE_REFERENT.test(clause) && explicitProductTopics(clause).length === 1)).join("。")
-    : original;
-  if (
-    !PRODUCT_ANAPHOR.test(normalized) || isProductSupportProblem(normalized)
-  ) {
-    return { kind: "not_applicable" };
+  if (!facts.length || isProductSupportProblem(original) ||
+    (question===original && (!PRODUCT_ANAPHOR.test(original) || supplied.length))) return {kind:"not_applicable"};
+  if (context && (!scope || context.company_id!==scope.company_id || context.conversation_id!==scope.conversation_id))
+    return clarification("REFERENCE_CONTEXT_SCOPE_MISMATCH");
+  const visitors=history.filter(r=>r.role==="visitor" && r.content.trim()).slice(0,32);
+  const entities=context?.state?.entities??[];
+  const inactive=new Set(entities.filter(e=>["cancelled","deferred","superseded"].includes(e.status))
+    .flatMap(e=>[e.entity_id,e.model??"",String(e.attributes.model??"")]).filter(Boolean).map(norm));
+  const active=entities.filter(e=>["researching","tentative","confirmed"].includes(e.status));
+  const identity=(e:typeof active[number])=>[e.entity_id,e.model??"",String(e.attributes.model??""),String(e.attributes.name??""),String(e.attributes.product_name??"")].filter(Boolean);
+  const product=(e:typeof active[number])=>[e.model,e.attributes.model,e.attributes.product_name,e.attributes.name].find(v=>typeof v==="string" && v.trim()) as string|undefined ?? "";
+  const aliases=new Map<string,string[]>();
+  for (const e of entities) aliases.set(e.category,[...(aliases.get(e.category)??[]),e.category]);
+  for (const c of context?.category_aliases??[]) aliases.set(c.key,[...(aliases.get(c.key)??[]),c.key,...c.aliases]);
+  const topics=(value:string)=>[...aliases].filter(([,names])=>names.some(n=>containsLabel(value,n))).map(([key])=>key);
+  // Per-category history is possible only with authoritative category bindings.
+  // An attribute such as horsepower never supplies a category by itself.
+  const requestedTopics=topics(question);
+  const resolve=(model:string,topic:string|null,offset:number,strategy:"RECENT_GLOBAL_REFERENT"|"PER_TOPIC_REFERENT_HISTORY"):ProductFollowUpArbitration=>
+    ({kind:"resolved",intent:productFactualIntent(model,facts),grounded_question:`${model} ${question}`,
+      source_turn_offset:offset,resolved_topic:topic,resolution_strategy:strategy});
+  if (supplied.length) {
+    if (inactive.has(norm(supplied[0]))) return clarification("INACTIVE_OR_SUPERSEDED_PRODUCT_REFERENT");
+    const current=active.filter(e=>identity(e).some(id=>norm(id)===norm(supplied[0])));
+    return resolve(supplied[0],current.length===1?current[0].category:null,0,"RECENT_GLOBAL_REFERENT");
   }
-  const facts = productFactualFacets(normalized);
-  if (!facts.length || exactProductIdentifiers(normalized).length > 0) {
-    return { kind: "not_applicable" };
+  const frame=context?.semantic;
+  const refs=frame && frame.confidence>=0.62 && !frame.ambiguity.is_ambiguous
+    ? frame.referents.filter(r=>r.confidence>=0.62 && r.source!=="unknown").map(r=>norm(r.ref)):[];
+  if (frame?.ambiguity.is_ambiguous) return clarification("AMBIGUOUS_SEMANTIC_REFERENT",active.map(product));
+  if (frame?.referents.length && (refs.length!==frame.referents.length)) return clarification("UNPROVEN_SEMANTIC_REFERENT");
+  let chosen:typeof active=active.filter(e=>refs.some(ref=>identity(e).some(id=>norm(id)===ref)));
+  if (refs.length && (!chosen.length || refs.some(ref=>inactive.has(ref) || !active.some(e=>identity(e).some(id=>norm(id)===ref))))) return clarification("UNKNOWN_OR_INACTIVE_SEMANTIC_REFERENT");
+  if (!chosen.length && requestedTopics.length===1) chosen=active.filter(e=>e.category===requestedTopics[0]);
+  if (requestedTopics.length>1) return clarification("MULTIPLE_REQUESTED_PRODUCT_TOPICS");
+  if (!chosen.length && active.length && !requestedTopics.length && !PRODUCT_CONTEXT_SWITCH.test(question)) {
+    chosen=active.filter(e=>e.category===context?.state?.current_topic);
+    if (!chosen.length && active.length===1 && (!frame?.topic || frame.topic===active[0].category)) chosen=active;
   }
-
-  const visitors = scopedProductHistory(newestFirstHistory, scope).filter((row) =>
-    row.role === "visitor" && row.content.trim().length > 0
-  ).filter((row, index) => index !== 0 || row.content.normalize("NFKC").trim() !== original).slice(0, 8);
-  // A named category has its own chronological active/inactive ledger. Check
-  // it before an explicit return can bind a model from older history.
-  const perTopic = arbitratePerTopicProductReferent(normalized, facts, visitors);
-  if (perTopic) return perTopic;
-  // An explicit return to a prior item crosses a newer category-only turn.
-  // Resolve only when the bounded customer history contains exactly one
-  // non-deferred model; competing models still require clarification.
-  if (/(?:講返|讲回|回到|返回|back\s+to|return\s+to)/iu.test(normalized)) {
-    const inactiveModels = new Set<string>();
-    const priorModels = visitors.flatMap((row, offset) => {
-      const models = exactProductIdentifiers(row.content);
-      if (INACTIVE_REFERENT.test(row.content)) {
-        for (const model of models) inactiveModels.add(model);
-        return [];
-      }
-      return models.filter((model) => !inactiveModels.has(model))
-        .map((model) => ({ model, offset, topic: inferredProductTopic(row.content) }));
-    });
-    const distinct = [...new Set(priorModels.map((item) => item.model))];
-    if (distinct.length === 1) {
-      const prior = priorModels.find((item) => item.model === distinct[0])!;
-      return {
-        kind: "resolved", intent: productFactualIntent(prior.model, facts),
-        grounded_question: `${prior.model} ${normalized}`,
-        source_turn_offset: prior.offset, resolved_topic: prior.topic,
-        resolution_strategy: "PER_TOPIC_REFERENT_HISTORY",
-      };
+  if (chosen.length && requestedTopics.length===1 && chosen.some(e=>e.category!==requestedTopics[0]))
+    return clarification("SEMANTIC_TOPIC_IDENTITY_CONFLICT");
+  if (chosen.length>1) return clarification("MULTIPLE_COMPATIBLE_PRODUCT_REFERENTS",chosen.map(product));
+  if (chosen.length===1) {
+    const model=product(chosen[0]);
+    if (!model) return clarification("CUSTOMER_VISIBLE_IDENTITY_MISSING");
+    if (supplied.length && norm(supplied[0])!==norm(model)) return clarification("SUPPLIED_IDENTITY_CONFLICT");
+    return resolve(model,chosen[0].category,visitors.findIndex(r=>identity(chosen[0]).some(id=>containsLabel(r.content,id))),"PER_TOPIC_REFERENT_HISTORY");
+  }
+  // Canonical lifecycle state outranks textual history, including older mentions.
+  if (context?.state && !supplied.length) return clarification("NO_ACTIVE_PRODUCT_REFERENT_FOR_REQUESTED_TOPIC");
+  const ledger=new Map<string,{offset:number;topic:string|null}>();
+  let focus:string|null=null, barrier=false;
+  for (let offset=visitors.length-1;offset>=0;offset--) {
+    const row=visitors[offset], ts=topics(row.content), ids=exactProductIdentifiers(row.content);
+    if (ts.length===1) focus=ts[0];
+    else if (ts.length>1) focus=null;
+    if (PRODUCT_CONTEXT_SWITCH.test(row.content) && !ids.length) barrier=true;
+    const corrected=ids.length===2 && /(?:更正|改為|改成|唔係.{0,40}係|不是.{0,40}是|replace|instead|change.{0,40}to)/iu.test(row.content);
+    if (corrected) ledger.delete(norm(ids[0]));
+    for (const model of corrected?ids.slice(1):ids) {
+      if (removesHistoryIdentity(row.content) || inactive.has(norm(model))) ledger.delete(norm(model));
+      else if (!inactive.has(norm(model))) { ledger.set(norm(model),{offset,topic:focus}); barrier=false; }
+    }
+    if (!ids.length && removesHistoryIdentity(row.content) && PRODUCT_ANAPHOR.test(row.content)) {
+      for (const [id,value] of ledger) if (!focus || value.topic===focus) ledger.delete(id);
     }
   }
-  let focusBarrier = false;
-  for (let offset = 0; offset < visitors.length; offset += 1) {
-    const prior = visitors[offset].content.normalize("NFKC");
-    const models = exactProductIdentifiers(prior);
-    if (!models.length) {
-      // A later category switch without an explicit model invalidates an older
-      // model focus. It must not inherit the previous category's product.
-      if (PRODUCT_CONTEXT_SWITCH.test(prior)) focusBarrier = true;
-      continue;
-    }
-    if (focusBarrier) {
-      return {
-        kind: "clarification",
-        intent: {
-          kind: "product_factual_clarification",
-          product: null,
-          candidates: [],
-          reason: "INCOMPATIBLE_RECENT_PRODUCT_CONTEXT",
-        },
-      };
-    }
-    if (models.length !== 1) {
-      return {
-        kind: "clarification",
-        intent: {
-          kind: "product_factual_clarification",
-          product: null,
-          candidates: models,
-          reason: "MULTIPLE_COMPATIBLE_PRODUCT_REFERENTS",
-        },
-      };
-    }
-    const product = models[0];
-    if (INACTIVE_REFERENT.test(prior)) {
-      return {
-        kind: "clarification",
-        intent: {
-          kind: "product_factual_clarification",
-          product: null,
-          candidates: [],
-          reason: "INACTIVE_OR_SUPERSEDED_PRODUCT_REFERENT",
-        },
-      };
-    }
-    const newerTurns = visitors.slice(0, offset).map((row) => row.content).join(
-      "\n",
-    );
-    if (
-      INACTIVE_REFERENT.test(newerTurns) &&
-      (newerTurns.includes(product) || PRODUCT_ANAPHOR.test(newerTurns))
-    ) {
-      return {
-        kind: "clarification",
-        intent: {
-          kind: "product_factual_clarification",
-          product: null,
-          candidates: [],
-          reason: "INACTIVE_OR_SUPERSEDED_PRODUCT_REFERENT",
-        },
-      };
-    }
-    return {
-      kind: "resolved",
-      intent: productFactualIntent(product, facts),
-      grounded_question: `${product} ${normalized}`,
-      source_turn_offset: offset,
-      resolved_topic: inferredProductTopic(prior),
-      resolution_strategy: "RECENT_GLOBAL_REFERENT",
-    };
-  }
-  return {
-    kind: "clarification",
-    intent: {
-      kind: "product_factual_clarification",
-      product: null,
-      candidates: [],
-      reason: "NO_RECENT_EXPLICIT_PRODUCT_REFERENT",
-    },
-  };
+  let candidates=[...ledger].filter(([,value])=>!requestedTopics.length || value.topic===requestedTopics[0]);
+  if (supplied.length) candidates=[[norm(supplied[0]),{offset:0,topic:null}]];
+  if (barrier && !requestedTopics.length && !supplied.length) return clarification("INCOMPATIBLE_RECENT_PRODUCT_CONTEXT");
+  if (candidates.length!==1) return clarification(candidates.length?"MULTIPLE_COMPATIBLE_PRODUCT_REFERENTS":"NO_RECENT_EXPLICIT_PRODUCT_REFERENT",candidates.map(([id])=>id.toUpperCase()));
+  const [id,value]=candidates[0];
+  if (inactive.has(id)) return clarification("INACTIVE_OR_SUPERSEDED_PRODUCT_REFERENT");
+  // Keep customer's actual identifier spelling; never invent a semantic alias.
+  const model=supplied[0]??visitors.flatMap(r=>exactProductIdentifiers(r.content)).find(m=>norm(m)===id)!;
+  return resolve(model,value.topic,value.offset,requestedTopics.length?"PER_TOPIC_REFERENT_HISTORY":"RECENT_GLOBAL_REFERENT");
 }
 
 export function isProductSupportProblem(text: string): boolean {
@@ -569,8 +463,6 @@ export function classifyNaturalCustomerIntent(
     return {
       kind: "product_guidance",
       product,
-      two_bedrooms_and_living_room:
-        /(?:兩|两|2)\s*間?房.{0,20}(?:廳|厅|客廳|客厅)/i.test(meaningful),
     };
   }
 

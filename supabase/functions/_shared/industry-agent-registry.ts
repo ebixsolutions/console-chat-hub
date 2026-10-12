@@ -5,6 +5,7 @@ export interface IndustryProfile {
   version: string;
   aliases: readonly string[];
   schema: IndustrySchema;
+  category_bindings?: readonly { key: string; aliases: readonly string[] }[];
 }
 
 export interface IndustryRegistry {

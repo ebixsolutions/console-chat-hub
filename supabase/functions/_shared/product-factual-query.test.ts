@@ -1,3 +1,4 @@
+import { HOME_APPLIANCE_PROFILE_V1 } from "./industry-profiles/home-appliance-v1.ts";
 import {
   deriveCurrentGroundingTarget,
   selectCanonicalGrounding,
@@ -28,6 +29,11 @@ const assert: (condition: unknown, detail: string) => asserts condition = (
 ) => {
   if (!condition) throw new Error(detail);
 };
+
+const referenceScope={conversation_id:"fixture-conversation",company_id:"fixture-company"};
+const canonicalFixtureReference={...referenceScope,state:{current_topic:"refrigerator",entities:[
+  {entity_id:"fixture-cw",model:"CW-SUL70BA",category:"air_conditioner",status:"researching",attributes:{}},
+]},category_aliases:[...HOME_APPLIANCE_PROFILE_V1.category_bindings!]};
 
 Deno.test("hosted stock-count queries require merchant evidence rather than customer quantity recall", () => {
   for (const question of ["CW-SUL70BA 依家有幾多部現貨？", "How many CW-SUL70BA units are in stock?", "CW-SUL70BA 的庫存有多少？"]) {
@@ -197,7 +203,7 @@ Deno.test("W17 T9 restores AC referent after refrigerator and answers model plus
     { role: "visitor", content: "另外雪櫃都想換，擺位闊度最多595mm，想搵雙門款。", conversation_id: "fixture-conversation", company_id: "fixture-company" },
     { role: "visitor", content: "細房我見到 CW-SUL70BA，佢有咩功能、係幾多匹？80呎用落夠唔夠？", conversation_id: "fixture-conversation", company_id: "fixture-company" },
     { role: "visitor", content: "屋企想換冷氣，兩間睡房加個客廳。", conversation_id: "fixture-conversation", company_id: "fixture-company" },
-  ], { conversation_id: "fixture-conversation", company_id: "fixture-company" });
+  ], referenceScope, canonicalFixtureReference);
   assert(arbitration.kind === "resolved", JSON.stringify(arbitration));
   const { intent, selection, answer, citation } = routeAndAnswer(arbitration.grounded_question);
   assert(intent.kind === "product_factual_query" && intent.product === "CW-SUL70BA" && intent.facts.includes("model_info") && intent.facts.includes("horsepower"), JSON.stringify(intent));
@@ -213,7 +219,7 @@ Deno.test("W19 live T9 canonical referent/facets bind query and KB evidence desp
     { role: "visitor", content: "另外雪櫃都想換，擺位闊度最多595mm，想搵雙門款。" },
     { role: "visitor", content: "細房我見到 CW-SUL70BA，佢有咩功能、係幾多匹？80呎用落夠唔夠？" },
   ];
-  const resolved = arbitrateAnaphoricProductFollowUp(question, history);
+  const resolved = arbitrateAnaphoricProductFollowUp(question, history.map(row=>({...row,...referenceScope})), referenceScope, canonicalFixtureReference);
   assert(resolved.kind === "resolved", JSON.stringify(resolved));
   const contract = productKbSemanticContract(resolved.intent, resolved.resolved_topic, question);
   assert(contract?.referent === "CW-SUL70BA" && contract.category === "air_conditioner" &&

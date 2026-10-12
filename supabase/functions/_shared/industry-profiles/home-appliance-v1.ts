@@ -29,6 +29,7 @@ export const HOME_APPLIANCE_CATEGORIES: readonly HomeApplianceCategory[] = [
       "air-con",
       "air conditioner",
       "ac unit",
+      "AC",
     ],
   },
   {
@@ -75,6 +76,7 @@ export const HOME_APPLIANCE_PROFILE_V1: IndustryProfile = Object.freeze({
   id: "home_appliance",
   version: "1.0.0",
   aliases: ["home_appliances", "appliance", "appliances", "家電", "家电"],
+  category_bindings: HOME_APPLIANCE_CATEGORIES,
   schema: Object.freeze({
     id: "home_appliance",
     version: "1.0.0",

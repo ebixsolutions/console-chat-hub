@@ -1,4 +1,5 @@
-import { arbitrateAnaphoricProductFollowUp } from "./natural-customer-response.ts";
+import { HOME_APPLIANCE_PROFILE_V1 } from "./industry-profiles/home-appliance-v1.ts";
+import { arbitrateAnaphoricProductFollowUp as resolveReference } from "./natural-customer-response.ts";
 
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
@@ -11,6 +12,16 @@ const row = (content: string, extra: Record<string, string> = {}) => ({
   ...scope,
   ...extra,
 });
+
+// Explicit industry fixture binding; never a runtime default. Canonical identity
+// metadata belongs to these historical fixture products, not inferred attributes.
+const fixtureCategories: Record<string,string> = { "CW-SUL70BA":"air_conditioner", "CS-XY12345":"air_conditioner", "RF-AB12345":"refrigerator" };
+const arbitrateAnaphoricProductFollowUp: typeof resolveReference = (text, history, selectedScope) => {
+  const scoped = history.filter(r => r.company_id===scope.company_id && r.conversation_id===scope.conversation_id);
+  const entities=Object.entries(fixtureCategories).filter(([id])=>scoped.some(r=>r.content.includes(id))).map(([model,category])=>({
+    entity_id:model,model,category,status:scoped.some(r=>r.content.includes(model) && /取消/u.test(r.content))?"cancelled":"researching",attributes:{} }));
+  return resolveReference(text,history,selectedScope,{...scope,state:{current_topic:null,entities},category_aliases:[...HOME_APPLIANCE_PROFILE_V1.category_bindings!]});
+};
 
 Deno.test("W17 A restores the one active AC referent after refrigerator switch", () => {
   const result = arbitrateAnaphoricProductFollowUp(

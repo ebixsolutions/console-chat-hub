@@ -1,3 +1,4 @@
+import { resolveIndustryProfile } from "../_shared/industry-runtime-adapter.ts";
 import { phase1CoachAllowed } from "../_shared/remote-model-accounting.ts";
 import {
   prepareConversationRecall,
@@ -4356,7 +4357,7 @@ async function orchestrationGenerateReply(
     return (await persistNaturalImmediateResponse(supabaseAdmin,conversation_id,_h1SourceMessageId,
       {kind:"greeting",product:null},_visitorLang,_h1LastMsg))!;
   }
-  const _productFollowUpArbitration = arbitrateAnaphoricProductFollowUp(
+  let _productFollowUpArbitration = arbitrateAnaphoricProductFollowUp(
     _h1LastMsg,
     ((_pr5HistoryRows ?? []) as MemoryHistoryRow[]).map((row) => ({
       role: String(row.role ?? ""),
@@ -4366,14 +4367,14 @@ async function orchestrationGenerateReply(
     })),
     _criticalE2ExpectedTenantId ? { conversation_id, company_id: _criticalE2ExpectedTenantId } : undefined,
   );
-  const _effectiveNaturalCustomerIntent: NaturalCustomerIntent =
+  let _effectiveNaturalCustomerIntent: NaturalCustomerIntent =
     _productFollowUpArbitration.kind === "resolved" ||
       _productFollowUpArbitration.kind === "clarification"
       ? _productFollowUpArbitration.intent
       : _naturalCustomerIntent;
   // This query is server-derived from a recent explicit model. It affects
   // factual routing/retrieval/proof only; customer history remains unchanged.
-  const _productFactualRequest = _productFollowUpArbitration.kind === "resolved"
+  let _productFactualRequest = _productFollowUpArbitration.kind === "resolved"
     ? _productFollowUpArbitration.grounded_question
     : _h1LastMsg;
   // A request for merchant facts can also carry customer-owned constraints.
@@ -4619,6 +4620,24 @@ async function orchestrationGenerateReply(
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(JSON.stringify({success:false,error:"canonical_memory_commit_failed",retryable:true}),
       {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
+  }
+  // Rebind after the canonical scoped state read. Lifecycle/revision authority
+  // outranks history; semantic references select existing identities only.
+  if (_criticalE2ExpectedTenantId && _c3CommerceSnapshot?.state) {
+    _productFollowUpArbitration = arbitrateAnaphoricProductFollowUp(
+      _h1LastMsg, ((_pr5HistoryRows ?? []) as MemoryHistoryRow[]).map(row => ({
+        role: String(row.role ?? ""), content: String(row.content ?? ""),
+        conversation_id, company_id: _criticalE2ExpectedTenantId!,
+      })), { conversation_id, company_id: _criticalE2ExpectedTenantId },
+      { conversation_id, company_id: _criticalE2ExpectedTenantId,
+        state: _c3CommerceSnapshot.state, semantic: _a3SemanticFrame,
+        category_aliases: resolveIndustryProfile(_c3CommerceSnapshot.state.current_industry)?.category_bindings
+          ? [...resolveIndustryProfile(_c3CommerceSnapshot.state.current_industry)!.category_bindings!] : undefined },
+    );
+    _effectiveNaturalCustomerIntent = _productFollowUpArbitration.kind === "not_applicable"
+      ? _naturalCustomerIntent : _productFollowUpArbitration.intent;
+    _productFactualRequest = _productFollowUpArbitration.kind === "resolved"
+      ? _productFollowUpArbitration.grounded_question : _h1LastMsg;
   }
   // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
   // If Commerce and Memory already committed this exact source on a prior
