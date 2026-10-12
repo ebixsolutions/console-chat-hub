@@ -407,7 +407,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -434,7 +434,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -447,7 +447,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -460,7 +460,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -483,7 +483,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -547,7 +547,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -611,7 +611,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -629,7 +629,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -695,7 +695,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -725,7 +725,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -762,7 +762,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -785,7 +785,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -807,7 +807,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -832,7 +832,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -852,7 +852,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -872,7 +872,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -903,7 +903,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -933,7 +933,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -975,7 +975,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -1001,7 +1001,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -1024,7 +1024,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -1060,7 +1060,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -1077,7 +1077,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -1096,7 +1096,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
     op.create_table(
@@ -1110,7 +1110,7 @@ def upgrade() -> None:
         sa.Column('created_date', TS),
         sa.Column('updated_date', TS),
         sa.Column('created_by', sa.String()),
-        sa.Column('tenant_id', sa.String()),    
+        sa.Column('tenant_id', sa.String()),
         sa.Column('company_id', sa.Numeric()),
     )
 
@@ -1139,7 +1139,7 @@ def downgrade() -> None:
     op.drop_table('kb_platform_llm_request_log')
     op.drop_table('kb_platform_llm_provider_config')
     op.drop_table('kb_platform_llm_model_option')
-    op.drop_table('kb_platform_llm_credit_budget')      
+    op.drop_table('kb_platform_llm_credit_budget')
     op.drop_table('kb_vector_chunk')
     op.drop_table('kb_user_publish_confirmation')
     op.drop_table('kb_sync_log')

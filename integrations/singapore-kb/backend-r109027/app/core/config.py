@@ -21,7 +21,7 @@ class Settings:
     app_name: str = "knowledge-base"
     app_id: str = os.getenv("NEXUS_APP_ID", "6a12c8b68d8278b4c735e9eb")
     env: str = os.getenv("ENV", "production")
-    
+
     # ── Database（Singapore PostgreSQL）──
     database_url: str = os.getenv(
         "DATABASE_URL",

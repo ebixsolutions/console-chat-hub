@@ -104,6 +104,3 @@ def get_service_role_user(
     if ctx.is_service_role:
         ctx.role = "admin"
     return ctx
-
-
-
