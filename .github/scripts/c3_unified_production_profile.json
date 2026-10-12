@@ -393,6 +393,7 @@
     "tests/model-accounting/remote-python.test.py",
     "tests/model-accounting/router.test.ts",
     "tests/model-accounting/source-coverage.test.mjs",
+    "tests/phase1/preview-startup.test.mjs",
     "tests/quality95/frozen-inputs.json",
     "tests/quality95/retained-failures.test.ts",
     "tests/section15/compound-handoff.test.mjs",
@@ -413,7 +414,8 @@
     "tests/section15/human-service-routing.test.mjs",
     "vite.candidate-identity.d.mts",
     "vite.candidate-identity.mjs",
-    "vite.config.ts"
+    "vite.config.ts",
+    "vite.preview-environment.mjs"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -686,5 +688,10 @@
     "supabase/functions/generate-reply/index.ts": "2ebad1bf3eb6a9e3060c9c2f7e4b548356eae83c2c7dca5a1a248c705d48a19f",
     "tests/model-accounting/router.test.ts": "93a666e8329e257eedd396b0bae4d9957cc03df05342223910a1a13d80a3bc79"
   },
-  "kb_accounting_production_authorized": false
+  "kb_accounting_production_authorized": false,
+  "authorized_nonproduction_preview_repair_sha256": {
+    "vite.preview-environment.mjs": "ecdfce8412c45c0a1aec418f424dc2600a8941b9151f832d35e392cd7aa6771e",
+    "tests/phase1/preview-startup.test.mjs": "5ee4a59288224b1695eda684d3ac3b7b7068ad1689a9d134a9bced1a86701b5a",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "1d8d036a592659d99852b8956bfcbfd9a9924f64f167f4a60a8bd6f79f273999"
+  }
 }
