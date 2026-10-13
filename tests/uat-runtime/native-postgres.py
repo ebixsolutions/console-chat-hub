@@ -82,7 +82,7 @@ if '--compatibility' in __import__('sys').argv:
  policy.update(state='active',attempt_limit=640,budget_microusd=64000000,per_request_attempt_limit=32,allowed_operation_prefixes=['generate-reply-','agent-assist-','ce:','kb:','grounding-verifier:'])
  sql("insert into upstream_call_log(id,company_id,request_payload) values('cccccccc-cccc-4ccc-8ccc-cccccccccccc','"+company+"','"+json.dumps(policy)+"');update upstream_call_log set request_payload=request_payload||jsonb_build_object('issued_at',clock_timestamp()-interval '1 hour','expires',clock_timestamp()+interval '1 hour') where id='cccccccc-cccc-4ccc-8ccc-cccccccccccc'")
  env={**os.environ,'C3_UAT_BASELINES_DIR':fixtures}
- args=[os.environ.get('C3_UAT_DENO','deno'),'test','--no-lock','--allow-env','--allow-read','--allow-run']
+ args=[os.environ.get('C3_UAT_DENO','deno'),'test','--no-lock','--node-modules-dir=auto','--allow-env','--allow-read','--allow-run']
  if os.environ.get('C3_UAT_DENO_CONFIG'):args+=['--config',os.environ['C3_UAT_DENO_CONFIG']]
  args+=[str(root/'tests/uat-runtime/native-compatibility.ts')]
  subprocess.run(args,cwd=root,env=env,check=True)
