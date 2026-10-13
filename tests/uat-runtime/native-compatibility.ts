@@ -1,31 +1,33 @@
 import {callModel} from '../../supabase/functions/_shared/llm-router.ts';
 import {accountedModelFetch} from '../../supabase/functions/_shared/model-attempt-accounting.ts';
 import {uatMap,UAT_COMPANY,UAT_REVISION,legacyPreactivationAuthority} from '../../supabase/functions/_shared/uat-execution-contract.ts';
-import {createClient,GoTrueClient} from 'npm:@supabase/supabase-js@2.45.0';
+import {createClient} from 'npm:@supabase/supabase-js@2.45.0';
 import {fetchKBRag} from '../../supabase/functions/_shared/kb-client.ts';
 import {GoogleAuth} from 'npm:google-auth-library@9.15.0';
 const company='11111111-1111-4111-8111-111111111111',conv='99999999-9999-4999-8999-999999999999',uatConv='22222222-2222-4222-8222-222222222222',run='cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 function assert(v:unknown,message='assertion'):asserts v{if(!v)throw Error(message)}
 const equal=(a:unknown,b:unknown)=>assert(JSON.stringify(a)===JSON.stringify(b),`${JSON.stringify(a)} != ${JSON.stringify(b)}`);
-// Captured and candidate handlers allocate real Supabase Auth clients. Keep
-// their normal initialization/auth behavior, then release owned refresh timers
-// before Deno's operation sanitizer checks each native comparison.
-const authClients=new Set<GoTrueClient>();
-const authPrototype=GoTrueClient.prototype as any;
-const startAutoRefresh=authPrototype._startAutoRefresh;
-authPrototype._startAutoRefresh=async function(...args:unknown[]){
- authClients.add(this);
- return await startAutoRefresh.apply(this,args);
-};
+// Captured handlers can load different pinned Supabase Auth package instances.
+// Own only their refresh timers for this comparison; keep all other application
+// timers and Deno sanitizers intact so genuine resource leaks still fail.
 function nativeTest(name:string,fn:()=>Promise<void>){
  Deno.test(name,async()=>{
-  assert(authClients.size===0,'previous native comparison retained Auth clients');
+  const interval=globalThis.setInterval,timeout=globalThis.setTimeout;
+  const refreshIntervals=new Set<number>(),refreshTimeouts=new Set<number>();
+  globalThis.setInterval=((callback:any,delay?:number,...args:any[])=>{
+   const owned=new Error().stack?.includes('_startAutoRefresh');
+   const id=interval(callback,delay,...args);if(owned)refreshIntervals.add(id);return id;
+  }) as typeof setInterval;
+  globalThis.setTimeout=((callback:any,delay?:number,...args:any[])=>{
+   const owned=new Error().stack?.includes('_startAutoRefresh');
+   const id=timeout(callback,delay,...args);if(owned)refreshTimeouts.add(id);return id;
+  }) as typeof setTimeout;
   try{await fn()}finally{
-   for(const client of authClients)await (client as any).initializePromise;
-   // Auth schedules its first refresh tick in the next event-loop pass.
-   await new Promise(resolve=>setTimeout(resolve,0));
-   for(const client of authClients){await client.stopAutoRefresh();assert((client as any).autoRefreshTicker===null,'Auth refresh timer not stopped')}
-   authClients.clear();
+   // Drain the Auth initialization tick before releasing its background lease.
+   await new Promise(resolve=>timeout(resolve,0));
+   for(const id of refreshIntervals)clearInterval(id);
+   for(const id of refreshTimeouts)clearTimeout(id);
+   globalThis.setInterval=interval;globalThis.setTimeout=timeout;
   }
  });
 }
