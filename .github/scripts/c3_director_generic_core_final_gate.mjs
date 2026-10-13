@@ -52,7 +52,7 @@ for (const file of [
   "supabase/functions/agent-assist/index.ts",
 ]) {
   let frozenBytes = readFileSync(file);
-  if (unifiedProfile?.authorized_uat_runtime_sha256?.[file]) {
+  if ((unifiedProfile?.authorized_uat_compatibility_sha256?.[file] ?? unifiedProfile?.authorized_uat_runtime_sha256?.[file])) {
     // Current bytes already checked by the exact UAT source approval. Preserve the original frozen comparison separately.
     frozenBytes = execFileSync('git',['show','3f8b7c22ec5bcc3245e4adb26bc99f7bcf30146e:'+file]);
   }

@@ -72,7 +72,7 @@ Deno.test('compact semantic transport uses bounded complete-delta budget, curren
    calls++;const request=JSON.parse(String(init?.body));assert(request.max_tokens===4096,'budget changed');assert(request.system.includes('Omit unchanged/default fields'),'full snapshot still required');
    return new Response(JSON.stringify({content:[{type:'text',text:JSON.stringify({operation:'NO_STATE_CHANGE',confidence:0.96,customer_facts:[{key:'auto_renew',value:false},{key:'seats',value:{amount:0,unit:'users'}},{key:'appointment_date',value:null}]})}],stop_reason:'end_turn',usage:{output_tokens:100}}));
   });
-  const input={company_id:'isolated-company',conversation_id:'isolated-conversation',source_message_id:'isolated-source',latest:'No automatic renewal; zero users; appointment date is unknown.',history:Array.from({length:120},(_,i)=>({role:'visitor',content:`Past topic ${i}`}))};
+  const input={company_id:'11111111-1111-4111-8111-111111111111',conversation_id:'22222222-2222-4222-8222-222222222222',source_message_id:'isolated-source',latest:'No automatic renewal; zero users; appointment date is unknown.',history:Array.from({length:120},(_,i)=>({role:'visitor',content:`Past topic ${i}`}))};
   const result=await interpretCommerceSemantics(input);assert(result.frame?.customer_facts?.[0].value===false&&result.frame.customer_facts[2].value===null&&calls===1,JSON.stringify(result));
   globalThis.fetch=withMockAccounting(async()=>new Response(JSON.stringify({content:[{type:'text',text:'{"operation":"NO_STATE_CHANGE","confidence":0.9}'}],stop_reason:'max_tokens',usage:{output_tokens:1783}})));
   const truncated=await interpretCommerceSemantics(input);assert(!truncated.frame&&truncated.failure_stage==='truncated','truncated valid-looking JSON accepted');

@@ -72,7 +72,7 @@ export async function prepareRemoteRetrieval(
 ): Promise<Record<string, string>> {
   // The bounded synthetic scope alone requires the new remote contract; other tenants retain their accepted authority.
   if (company !== "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec") return {};
-  if (service === "kb" && uatRun(company)) return {}; // uatFetch must admit the actual POST.
+  if (service === "kb") { uatRun(company); return {}; } // Absent/invalid run denies; actual POST uses durable admission.
   const scope: RemoteScope = {
     company,
     tenant,
@@ -81,17 +81,6 @@ export async function prepareRemoteRetrieval(
     nonce: crypto.randomUUID(),
     service,
   };
-  if (service === "kb") {
-    if (!requestBody) {
-      throw new ModelAccountingError("KB_REQUEST_BINDING_REQUIRED");
-    }
-    scope.request_sha256 = Array.from(
-      new Uint8Array(
-        await crypto.subtle.digest("SHA-256", encoder.encode(requestBody)),
-      ),
-      (v) => v.toString(16).padStart(2, "0"),
-    ).join("");
-  }
   const payload = JSON.stringify(scope);
   const signature = await signRemote(payload, credential);
   let response: Response;

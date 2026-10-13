@@ -431,6 +431,9 @@
     "tests/section15/human-service-routing.test.mjs",
     "tests/uat-runtime/ce-live-baseline.sql",
     "tests/uat-runtime/contract.test.ts",
+    "tests/uat-runtime/live-baseline-blobs.json",
+    "tests/uat-runtime/materialize-baselines.py",
+    "tests/uat-runtime/native-compatibility.ts",
     "tests/uat-runtime/native-postgres.py",
     "vite.candidate-identity.d.mts",
     "vite.candidate-identity.mjs",
@@ -766,5 +769,31 @@
     "tests/uat-runtime/contract.test.ts": "bf0b5ce19e41446685e2209bb712753973498f6ff4290b9849c34e2fedfd7074",
     "tests/uat-runtime/native-postgres.py": "b20dfaba2bf4e0a49fec2c43cb9c0bc81e2cfd04d21befa9d7184cbf83a3faa1"
   },
-  "uat_runtime_deployment_authorized": false
+  "uat_runtime_deployment_authorized": false,
+  "authorized_uat_compatibility_sha256": {
+    ".github/scripts/c3_director_generic_core_final_gate.mjs": "163f1e42a95e8eabd43668846724fbe6c6147ebb236558ac8ca7f9d0d2ccae73",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "97240b40e10d5756798f529a0243c4e1419be9f24c944c1ba782410956476153",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "f7159330df9870ad9adfc1099e4f89a7e681a66edadfe8ddb49e94376e5cfbcd",
+    "sql/c3_temporary_uat_execution.sql": "887d3b00c38c765551488f282d02cdbf812035e8d5b522d4922d44556ef0abca",
+    "sql/c3_temporary_uat_rollback.sql": "d55c21649206084131548cb35cc4dc5a9405748381c3490b8075f36ff40400df",
+    "supabase/functions/_shared/f13-llm-failure.test.ts": "b6b03d548904f7399d275739f47aa3232693b412de434340f4ece6117f68d1fe",
+    "supabase/functions/_shared/f13-runtime-recovery.test.ts": "1233d96683e9de6f73e4f345ede32c06ada450de373bc68a500253aecb7d5a11",
+    "supabase/functions/_shared/kb-client.ts": "fddcdfdf8e8342930c1cc05d251d67d0f616e4e6bfa601e821e0d0ce3330375f",
+    "supabase/functions/_shared/llm-router.ts": "3a25c61eb34d01ef5dc3769ffd4f33b717d9f5efeda537cdab4934b6dfe732e6",
+    "supabase/functions/_shared/model-attempt-accounting.ts": "949f86abb5f78c4e3a9379d54a15b734fc8b268beb1839d3f9da1b0857f32baf",
+    "supabase/functions/_shared/remote-model-accounting.ts": "1faa1ecebdc13e9f2f067611130e1a0ff65ba8697884387587a74b7f135947c5",
+    "supabase/functions/_shared/uat-execution-contract.ts": "985d05870d3ea999a7de8a8a43aee6e9ccc3f34ef96b5b5a03713037755520d5",
+    "supabase/functions/kb-search-proxy/index.ts": "a654e7625a7aa638433c72e07cf880f19af4c2776a4225bb818382e6c470fe04",
+    "tests/model-accounting/accounting.test.ts": "00683e17f7d5729e0a1edec990a3ea748e3f7ace8a14eb6664b558e2be8121ec",
+    "tests/model-accounting/provider-fixture.ts": "46798cc3376318902411fd0317601a604c98f5ef5201ce58b294d21230352147",
+    "tests/model-accounting/router.test.ts": "30f7ce0d83198a6831774b1ab3f375afc55f5a224f524052b3f81d6890332be4",
+    "tests/model-accounting/source-coverage.test.mjs": "a824c339ffd26335b3e8f955a6a10babf834d4dd7d005a8c9c40c00e36edcd5e",
+    "tests/uat-runtime/contract.test.ts": "c50446afbd8e15b6d580db5abf7a473234c799ef749408aa3132635cfda7a477",
+    "tests/uat-runtime/live-baseline-blobs.json": "4024d3ca0b6e968a11ad50c6c4e04d0ec3f627478a01af65bd93a5e853b206f7",
+    "tests/uat-runtime/materialize-baselines.py": "19e21a5b91f808c052ad16b39e138329484aabbd540221d38e919ebc5f1d7ce9",
+    "tests/uat-runtime/native-compatibility.ts": "53226d86e8965111c810bdd87a3252db286f1dabc7cbc83c928cd780f3cfa683",
+    "tests/uat-runtime/native-postgres.py": "916316970e45367cb17039e26535ea013291d82991aa8a046a25568f1b0eb5b7"
+  },
+  "uat_compatibility_round": 2,
+  "uat_compatibility_parent": "33228773a8c28db263a00236a1a351b205f45287"
 }

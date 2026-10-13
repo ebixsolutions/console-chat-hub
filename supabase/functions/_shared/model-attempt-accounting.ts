@@ -1,6 +1,7 @@
-import { uatRun, uatFetch, UatDenied } from "./uat-execution-contract.ts";
+import { uatFetch, UatDenied, trustedDispatchScope } from "./uat-execution-contract.ts";
 /** Shared pre-dispatch model boundary. No scoped fail-open path. */
 export type AccountingRpc = {
+  from?: (table: string)=>any;
   rpc(
     name: string,
     args: Record<string, unknown>,
@@ -14,6 +15,7 @@ export class ModelAccountingError extends Error {
 }
 export interface ModelAttempt {
   companyId: string | null;
+  legacyAuthority?: object;
   conversationId: string | null;
   operationId: string;
   provider: string;
@@ -41,8 +43,20 @@ export async function accountedModelFetch(
   onDispatch?: () => void,
 ): Promise<Response> {
   try {
-    if (uatRun(meta.companyId)) return await uatFetch(db, {...meta, operationId: `${meta.slot}:${meta.operationId}`}, url, init, upstream, onDispatch);
+    const mode = await trustedDispatchScope(db, meta.companyId, meta.conversationId, meta.legacyAuthority);
+    if (mode === "uat") return await uatFetch(db, {...meta, operationId: `${meta.slot}:${meta.operationId}`}, url, init, upstream, onDispatch);
   } catch (e) { throw new ModelAccountingError(e instanceof UatDenied ? e.code : "UAT_DISPATCH_DENIED"); }
+  // Established authenticated Production path: preserve exact provider request/response.
+  // Permanent Guard is deferred; no new endpoint, provider, credential or tenant scope.
+  onDispatch?.();
+  return await upstream(url, init);
+}
+
+/** Historical deferred Guard contract. No six-Function runtime caller uses this API. */
+export async function deferredAccountedModelFetch(
+  db: AccountingRpc, meta: ModelAttempt, url: string, init: RequestInit,
+  upstream: typeof fetch = fetch, onDispatch?: ()=>void,
+): Promise<Response> {
   // Request hash is durable; provider payload/secrets/customer text are not stored.
   const identity = await sha256(
     JSON.stringify([meta.operationId, meta.slot, meta.attempt, meta.provider]),

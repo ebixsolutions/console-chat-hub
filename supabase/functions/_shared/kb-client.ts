@@ -1,4 +1,5 @@
-import { uatRun, uatFetch } from "./uat-execution-contract.ts";
+import { legacyPreactivationAuthority } from "./uat-execution-contract.ts";
+import { accountedModelFetch } from "./model-attempt-accounting.ts";
 import {
   prepareRemoteRetrieval,
   remoteAccountingSecret,
@@ -37,6 +38,7 @@ export interface KBResolvedScope {
   mode: KBScopeMode;
   aiCompanyId: string | null;
   singaporeTenantId: string;
+  legacyAuthority?: object;
 }
 export interface KBFullChunk {
   document_id: string;
@@ -264,6 +266,7 @@ function trustedWidgetLiveTestActor(
 async function resolvePreActivationScope(
   sb: QueryDbClient,
   actor: KBPreActivationActor | undefined,
+  conversation: string,
 ): Promise<TenantResolutionResult> {
   if (!actor?.allowPreActivation) {
     return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
@@ -304,6 +307,7 @@ async function resolvePreActivationScope(
     resolved: true,
     scope: {
       mode: "pre_activation",
+      legacyAuthority: await legacyPreactivationAuthority(sb as any, actor.userId, tenantId, conversation),
       aiCompanyId: null,
       singaporeTenantId: tenantId,
     },
@@ -373,7 +377,7 @@ export async function resolveTenantScope(
     if (!resolvedCompanyId) {
       const trustedActor = actor ??
         trustedWidgetLiveTestActor(conv.metadata_source);
-      return await resolvePreActivationScope(sb, trustedActor);
+      return await resolvePreActivationScope(sb, trustedActor, conversationId);
     }
 
     const { data: company, error: companyErr } = await sb
@@ -568,9 +572,8 @@ export async function fetchKBRag(
       body: requestBody,
       signal: controller.signal,
     };
-    if (uatRun(scope.aiCompanyId)) {
-      response = await uatFetch(createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey()), {companyId:scope.aiCompanyId, conversationId:opts?.uatContext?.conversationId ?? null, operationId:opts?.uatContext?.operationId ?? "", provider:"singapore-kb",purpose:"kb_embedding",slot:"context-search",attempt:1,request:requestBody},endpointCfg.ragUrl,init);
-    } else response = await fetch(endpointCfg.ragUrl, init);
+    response = await accountedModelFetch(createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey()), {companyId:scope.aiCompanyId, legacyAuthority:scope.legacyAuthority, conversationId:opts?.uatContext?.conversationId ?? null, operationId:opts?.uatContext?.operationId ?? "", provider:"singapore-kb",purpose:"kb_embedding",slot:"context-search",attempt:1,request:requestBody},endpointCfg.ragUrl,init);
+
   } catch (err) {
     clearTimeout(timeout);
     opts?.signal?.removeEventListener("abort", abortFromRequest);

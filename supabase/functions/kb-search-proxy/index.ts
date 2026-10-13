@@ -1,3 +1,4 @@
+import { legacyPreactivationAuthority } from "../_shared/uat-execution-contract.ts";
 import { uatMap } from "../_shared/uat-execution-contract.ts";
 import {
   resolveKBEndpoint,
@@ -221,7 +222,7 @@ async function resolveStandaloneScope(
   if (!tenant) return { ok: false, status: 503, error: "kb_preactivation_config_missing" };
   return {
     ok: true,
-    scope: { mode: "pre_activation", aiCompanyId: null, singaporeTenantId: tenant },
+    scope: { mode: "pre_activation", aiCompanyId: null, singaporeTenantId: tenant, legacyAuthority: await legacyPreactivationAuthority(admin, userId, tenant, null) },
   };
 }
 
@@ -238,6 +239,7 @@ async function deriveRetrievalExpansions(params: {
     maxTokens: RETRIEVAL_EXPANSION_MAX_TOKENS,
     operationId: crypto.randomUUID(),
     companyId: params.scope.aiCompanyId,
+    legacyAuthority: params.scope.legacyAuthority,
     conversationId: params.conversationId,
     tag: "kb-query-expansion",
     responseFormat: "json",
@@ -345,6 +347,7 @@ async function rerankForDisplay(params: {
     maxTokens: RERANK_MAX_TOKENS,
     operationId: crypto.randomUUID(),
     companyId: scope.aiCompanyId,
+    legacyAuthority: scope.legacyAuthority,
     conversationId,
     tag: "kb-relevance-rerank",
     responseFormat: "json",

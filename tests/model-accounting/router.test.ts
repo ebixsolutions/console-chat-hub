@@ -11,7 +11,7 @@ import {
 function assert(v: unknown, m = "assertion"): asserts v {
   if (!v) throw Error(m);
 }
-Deno.test("actual router generation/semantic/assist/evaluation/retries + denial suppresses provider", async () => {
+Deno.test("actual router generation/semantic/assist/evaluation/retries preserve legacy dispatch; identity denial suppresses provider", async () => {
   const old = globalThis.fetch;
   const env = [
     "SUPABASE_URL",
@@ -41,6 +41,8 @@ Deno.test("actual router generation/semantic/assist/evaluation/retries + denial 
   globalThis.fetch = async (input, init) => {
     const url = String(input instanceof Request ? input.url : input);
     const body = init?.body ? JSON.parse(String(init.body)) : {};
+    if(url.includes('/companies?')) return deny?Response.json({message:'identity unavailable'},{status:403}):Response.json({id:'11111111-1111-4111-8111-111111111111'});
+    if(url.includes('/conversations?')) return Response.json({id:'22222222-2222-4222-8222-222222222222',company_id:'11111111-1111-4111-8111-111111111111'});
     if (url.includes("/rpc/c3_reserve")) {
       events.push("reserve");
       if (deny) return Response.json({ message: "limit" }, { status: 400 });
@@ -90,7 +92,7 @@ Deno.test("actual router generation/semantic/assist/evaluation/retries + denial 
     system: "safe",
     user: "hello",
     maxTokens: 20,
-    companyId: "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+    companyId: "11111111-1111-4111-8111-111111111111",
     conversationId: "22222222-2222-4222-8222-222222222222",
     operationId: "op",
     tag: "generation",
@@ -115,10 +117,10 @@ Deno.test("actual router generation/semantic/assist/evaluation/retries + denial 
       assert(result.ok);
       assert(result.usage.attempts === (tag === "generation" ? 2 : 1));
     }
-    assert(count === 6 && providers === 6);
+    assert(count === 0 && providers === 6);
     assert(
       events.filter((x) => x === "provider").every((_, i) =>
-        events.indexOf("reserve") >= 0
+        events.indexOf("reserve") === -1
       ),
     );
     deny = true;
@@ -129,7 +131,7 @@ Deno.test("actual router generation/semantic/assist/evaluation/retries + denial 
     );
     assert(providers === 6);
     for (let i = 0; i < events.length; i++) {
-      if (events[i] === "provider") assert(events[i - 1] === "reserve");
+      if (events[i] === "provider") assert(!events.includes("reserve"));
     }
   } finally {
     globalThis.fetch = old;
@@ -140,48 +142,10 @@ Deno.test("actual router generation/semantic/assist/evaluation/retries + denial 
     );
   }
 });
-Deno.test("remote ordinary retrieval attestation does not reserve/count a model; unknown is denied", async () => {
-  const company = "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
-    secret = "mock-tenant-key";
-  let calls = 0;
-  const up: typeof fetch = async (_input, init) => {
-    calls++;
-    const headers = new Headers(init?.headers);
-    const scope = JSON.parse(headers.get("x-c3-accounting-scope")!);
-    const text = JSON.stringify({
-      ...scope,
-      protocol: "c3-shared-attempt-v1",
-      mode: "retrieval_only",
-      runtime_sha256: "a".repeat(64),
-    });
-    return new Response(text, {
-      headers: { "x-c3-accounting-signature": await signRemote(text, secret) },
-    });
-  };
-  const h = await prepareRemoteRetrieval(
-    company,
-    "tenant",
-    secret,
-    "https://kb.mock/rag",
-    up,
-    undefined,
-    "kb",
-    JSON.stringify({ query: "policy" }),
-  );
-  assert(calls === 1 && h["x-c3-accounting-mode"] === "retrieval_only");
-  let denied = false;
-  try {
-    await prepareRemoteRetrieval(
-      company,
-      "tenant",
-      secret,
-      "https://kb.mock/rag",
-      async () => Response.json({ mode: "unknown" }),
-    );
-  } catch {
-    denied = true;
-  }
-  assert(denied);
+Deno.test("non-UAT retrieval retains headers; synthetic absent run denies before remote HTTP", async()=>{
+ Deno.env.delete('C3_TEMP_UAT_RUN_ID');let calls=0;const up:typeof fetch=async()=>{calls++;throw Error('remote contract must not be called')};
+ const legacy=await prepareRemoteRetrieval('11111111-1111-4111-8111-111111111111','34','mock-key','https://kb.mock/rag',up);assert(Object.keys(legacy).length===0);
+ let denied=false;try{await prepareRemoteRetrieval('4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec','34','mock-key','https://kb.mock/rag',up)}catch{denied=true}assert(denied&&calls===0);
 });
 Deno.test("remote callback uses shared exact run and rejects expired/foreign scope", async () => {
   const now = Math.floor(Date.now() / 1000);
@@ -227,7 +191,7 @@ Deno.test("remote callback uses shared exact run and rejects expired/foreign sco
   }
   assert(reserves === 1);
 });
-Deno.test("actual grounding verifier retry counts; cap denial propagates without model fallback", async () => {
+Deno.test("actual grounding verifier retry remains legacy; identity denial prohibits model fallback", async () => {
   const old = globalThis.fetch;
   const names = [
     "SUPABASE_URL",
@@ -254,6 +218,8 @@ Deno.test("actual grounding verifier retry counts; cap denial propagates without
       globalThis.fetch = async (input, init) => {
         const url = String(input instanceof Request ? input.url : input);
         const body = init?.body ? JSON.parse(String(init.body)) : {};
+        if(url.includes('/companies?')) return cap===2&&providers>=2?Response.json({message:'identity unavailable'},{status:403}):Response.json({id:'11111111-1111-4111-8111-111111111111'});
+        if(url.includes('/conversations?')) return Response.json({id:'22222222-2222-4222-8222-222222222222',company_id:'11111111-1111-4111-8111-111111111111'});
         if (url.includes("/rpc/c3_reserve")) {
           if (reserved >= cap) {
             return Response.json({ message: "cap" }, { status: 400 });
@@ -291,16 +257,15 @@ Deno.test("actual grounding verifier retry counts; cap denial propagates without
           "Knowledge Base grounding rules:\nFull Content Evidence:\n[chunk:chunkA]\n可以提供保養協助。",
         user: "想問保養安排",
         maxTokens: 40,
-        companyId: "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+        companyId: "11111111-1111-4111-8111-111111111111",
         conversationId: "22222222-2222-4222-8222-222222222222",
         operationId: "verifier-" + cap,
         tag: "generation",
         responseFormat: "text",
       });
-      assert(providers === cap && reserved === cap);
+      assert(providers === cap && reserved === 0);
       assert(
-        slots[0] === "generation" &&
-          slots.slice(1).every((x) => x === "evaluation"),
+        slots.length === 0,
       );
       if (cap === 3) assert(result.ok);
       else assert(!result.ok && result.code === "LLM_ACCOUNTING_DENIED");

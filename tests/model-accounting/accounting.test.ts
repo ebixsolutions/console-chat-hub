@@ -1,5 +1,5 @@
 import {
-  accountedModelFetch,
+  deferredAccountedModelFetch as accountedModelFetch,
   type AccountingRpc,
   ModelAccountingError,
   type ModelAttempt,

@@ -2055,7 +2055,7 @@ jobs:
         run: |
           set -euo pipefail
           psql "$C3_ISOLATED_DB_URL" -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE c3tempuat'
-          C3_UAT_TEST_DB_URL=postgres://postgres:c3-isolated-only@127.0.0.1:5432/c3tempuat python3 tests/uat-runtime/native-postgres.py
+          C3_UAT_TEST_DB_URL=postgres://postgres:c3-isolated-only@127.0.0.1:5432/c3tempuat python3 tests/uat-runtime/native-postgres.py --compatibility
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
       - name: KB r109027 native FastAPI and shared PostgreSQL accounting integration

@@ -1,18 +1,46 @@
 /** Temporary synthetic UAT admission. Existing log persistence, not the deferred shared Guard. */
 export const UAT_COMPANY = "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec";
-export const UAT_REVISION = "c3-3f8b7c2-bounded-uat-v1";
+export const UAT_REVISION = "c3-3322877-bounded-uat-r2";
 export const UAT_MAX_INPUT = 20000;
 export const UAT_MAX_OUTPUT = 8192;
 export const UAT_THINKING = 1024;
-type Db = { rpc(name: string, args: Record<string, unknown>): PromiseLike<{data: any; error: any}> };
+export type Db = { from?: (table: string)=>any; rpc(name: string, args: Record<string, unknown>): PromiseLike<{data: any; error: any}> };
 export type UatContext = { companyId: string | null; conversationId: string | null; operationId: string; provider: string; purpose: string; slot: string; attempt: number; request: string };
 export class UatDenied extends Error { constructor(public code: string) { super(code); } }
 export function uatRun(company: string | null): string | null {
   if (company !== UAT_COMPANY) return null;
   const id = Deno.env.get("C3_TEMP_UAT_RUN_ID");
-  if (!id) return null;
+  if (!id) throw new UatDenied("UAT_AUTHORIZATION_ABSENT");
   if (!/^[a-f0-9-]{36}$/.test(id) || Deno.env.get("C3_TEMP_UAT_SOURCE_REVISION") !== UAT_REVISION) throw new UatDenied("UAT_SOURCE_OR_RUN_DENIED");
   return id;
+}
+// Opaque server-only authority for the already existing authenticated KB pre-activation path.
+// Never reconstructed from JSON/browser fields, and never usable for a company-bound UAT ticket.
+const preactivation = new WeakMap<object,{conversation:string|null;tenant:string;expires:number}>();
+export async function legacyPreactivationAuthority(db: {from:(table:string)=>any}, user: string, tenant: string, conversation: string|null): Promise<object> {
+  if(Deno.env.get("KB_PREACTIVATION_ENABLED")!=="true" || tenant!==Deno.env.get("KB_PREACTIVATION_TENANT_ID")?.trim())throw new UatDenied("PREACTIVATION_SCOPE_DENIED");
+  const memberships=await db.from("company_membership").select("company_id").eq("user_id",user);
+  const roles=await db.from("user_roles").select("role").eq("user_id",user);
+  if(memberships.error || roles.error || !Array.isArray(memberships.data) || memberships.data.length || !roles.data?.some((r:any)=>["admin","supervisor"].includes(r.role)))throw new UatDenied("PREACTIVATION_ACTOR_DENIED");
+  if(conversation){const ticket=await db.from("conversations").select("id,company_id").eq("id",conversation).maybeSingle();if(ticket.error || ticket.data?.id!==conversation || ticket.data.company_id!==null)throw new UatDenied("PREACTIVATION_TICKET_DENIED");}
+  const token={};preactivation.set(token,{conversation,tenant,expires:Date.now()+60000});return token;
+}
+/** Identity comes from service-side persistence and existing authenticated caller scopes.
+ * The fixed Director synthetic company never falls through to legacy dispatch.
+ * A request body flag, tenant UUID or missing lease cannot grant UAT privileges. */
+export async function trustedDispatchScope(db: Db, company: string | null, conversation: string | null, authority?: object): Promise<"legacy" | "uat"> {
+  if(company===null && authority){const grant=preactivation.get(authority);if(grant && grant.conversation===conversation && grant.expires>Date.now() && Deno.env.get("KB_PREACTIVATION_ENABLED")==="true" && grant.tenant===Deno.env.get("KB_PREACTIVATION_TENANT_ID")?.trim()){if(conversation){if(!db.from)throw new UatDenied("PREACTIVATION_TICKET_DENIED");const ticket=await db.from("conversations").select("id,company_id").eq("id",conversation).maybeSingle();if(ticket.error || ticket.data?.id!==conversation || ticket.data.company_id!==null)throw new UatDenied("PREACTIVATION_TICKET_DENIED");}return "legacy";}throw new UatDenied("PREACTIVATION_AUTHORITY_DENIED");}
+  if (!company || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(company) || !db.from) throw new UatDenied("DISPATCH_COMPANY_UNPROVEN");
+  try {
+    const owner = await db.from("companies").select("id").eq("id", company).maybeSingle();
+    if (owner.error || owner.data?.id !== company) throw new UatDenied("DISPATCH_COMPANY_UNPROVEN");
+    if (conversation) {
+      const ticket = await db.from("conversations").select("id,company_id").eq("id", conversation).maybeSingle();
+      if (ticket.error || ticket.data?.id !== conversation || ticket.data?.company_id !== company) throw new UatDenied("DISPATCH_TENANT_MISMATCH");
+    }
+  } catch (error) { throw error instanceof UatDenied ? error : new UatDenied("DISPATCH_IDENTITY_UNAVAILABLE"); }
+  if (company === UAT_COMPANY) { if (!conversation) throw new UatDenied("UAT_CONVERSATION_REQUIRED"); uatRun(company); return "uat"; }
+  return "legacy";
 }
 const digest = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), b=>b.toString(16).padStart(2,"0")).join("");
 async function rpc(db: Db, name: string, args: Record<string, unknown>) {

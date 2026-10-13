@@ -69,6 +69,7 @@ export interface LlmCall {
   operationId: string;
   /** Written to upstream_call_log so spend is attributable to a tenant. */
   companyId: string | null;
+  legacyAuthority?: object;
   conversationId: string | null;
   tag: string;
   /**
@@ -690,7 +691,7 @@ async function verifyGroundedGeneration(
     try {
       const req = await verifierAdapter.buildRequest();
       const res = await accountedModelFetch(serviceClient(), {
-        companyId: call.companyId, conversationId: call.conversationId, operationId: call.operationId,
+        companyId: call.companyId, conversationId: call.conversationId, operationId: call.operationId, legacyAuthority: call.legacyAuthority,
         provider: verifierAdapter.id, purpose: "evaluation", slot: "grounding-verifier", attempt, request: req.body,
       }, req.url, {
         method: "POST",
@@ -955,7 +956,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       try {
         const req = await adapter.buildRequest();
         res = await accountedModelFetch(serviceClient(), {
-          companyId: call.companyId, conversationId: call.conversationId, operationId: call.operationId,
+          companyId: call.companyId, conversationId: call.conversationId, operationId: call.operationId, legacyAuthority: call.legacyAuthority,
           provider: adapter.id, purpose: call.purpose, slot: call.tag, attempt, request: req.body,
         }, req.url, {
           method: "POST",

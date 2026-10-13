@@ -7,7 +7,7 @@ assert(router.includes('verifierUsage.attempts++')&&router.includes('usage.attem
 assert(router.includes('error instanceof ModelAccountingError')&&router.includes('e instanceof ModelAccountingError'));
 const callers=['generate-reply/index.ts','agent-assist/index.ts','conversation-evaluate/index.ts','kb-search-proxy/index.ts','_shared/ce-automation-engine.ts','_shared/commerce-semantic-interpreter.ts','_shared/escalation-policy.ts'];
 for(const f of callers){assert(read(f).includes('callModel('));assert(read(f).includes('llm-router.ts'));}
-const guard=read('_shared/model-attempt-accounting.ts');assert(guard.indexOf('c3_reserve_model_attempt')<guard.indexOf('await upstream('));assert(guard.includes('MODEL_ACCOUNTING_FINALIZATION_UNAVAILABLE'));
+const guard=read('_shared/model-attempt-accounting.ts');const active=guard.slice(guard.indexOf('export async function accountedModelFetch'),guard.indexOf('export async function deferredAccountedModelFetch'));assert(active.includes('trustedDispatchScope')&&active.includes('uatFetch'));assert(!active.includes('c3_reserve_model_attempt'));assert(guard.includes('MODEL_ACCOUNTING_FINALIZATION_UNAVAILABLE'));
 for(const f of ['_shared/kb-client.ts','customer360-coach-sync/index.ts']){
  const s=read(f);assert(s.includes('prepareRemoteRetrieval'));assert(s.includes('accountingHeaders'));assert(s.includes('accounting_unproven')||s.includes('KB_DOWNSTREAM_ACCOUNTING_UNPROVEN'));
 }

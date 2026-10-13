@@ -19,14 +19,14 @@ ALTER TABLE upstream_call_log ENABLE ROW LEVEL SECURITY;CREATE POLICY fixture_au
 sql("CREATE TABLE c3_uat_conversation_scope(conversation_id uuid primary key); CREATE FUNCTION c3_uat_learning_excluded(p_conversation_id uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$ SELECT EXISTS(SELECT 1 FROM public.c3_uat_conversation_scope WHERE conversation_id=p_conversation_id) $$;")
 sql((root/'tests/uat-runtime/ce-live-baseline.sql').read_text())
 sql((root/'sql/c3_temporary_uat_execution.sql').read_text())
-policy={'kind':'c3_uat_run','revision':'c3-3f8b7c2-bounded-uat-v1','state':'active','issued_at':'2026-01-01T00:00:00Z','expires':'2026-01-01T23:59:59Z','allowed_conversations':[conv],'allowed_purposes':['generation','evaluation','assist','kb_embedding'],'allowed_operation_prefixes':['generate-reply:','agent-assist:','ce:','kb:'],'conversation_limit':20,'visitor_limit':20,'attempt_limit':17,'budget_microusd':64000000,'batch_size':20,'batch_visitor_limit':20,'per_request_attempt_limit':32,'stage':'calibration','kb_bounds_verified':False}
+policy={'kind':'c3_uat_run','revision':'c3-3322877-bounded-uat-r2','state':'active','issued_at':'2026-01-01T00:00:00Z','expires':'2026-01-01T23:59:59Z','allowed_conversations':[conv],'allowed_purposes':['generation','evaluation','assist','kb_embedding'],'allowed_operation_prefixes':['generate-reply:','agent-assist:','ce:','kb:'],'conversation_limit':20,'visitor_limit':20,'attempt_limit':17,'budget_microusd':64000000,'batch_size':20,'batch_visitor_limit':20,'per_request_attempt_limit':32,'stage':'calibration','kb_bounds_verified':False}
 sql(f"insert into conversations values('{conv}','{company}','{{\"exclude_training\":true}}',clock_timestamp());insert into messages(id,conversation_id,role,created_at) values('44444444-4444-4444-8444-444444444444','{conv}','visitor',clock_timestamp());insert into upstream_call_log(id,company_id,request_payload) values('{run}','{company}','{json.dumps(policy)}');update upstream_call_log set request_payload=request_payload||jsonb_build_object('issued_at',clock_timestamp()-interval '1 minute','expires',clock_timestamp()+interval '1 hour') where id='{run}'")
 sql(f"insert into messages(id,conversation_id,role) values('55555555-5555-4555-8555-555555555555','{conv}','assistant');insert into c3_uat_conversation_scope values('{conv}')")
 check('fresh scoped CE evaluation eligible under active protected lease',sql(f"select ce_conversation_evaluable_v1('{conv}')").stdout.strip()=='t')
 sql(f"insert into conversations values('33333333-3333-4333-8333-333333333333','{company}','{{\"exclude_training\":true}}','2026-01-01');insert into c3_uat_conversation_scope values('33333333-3333-4333-8333-333333333333');insert into messages(id,conversation_id,role) values('66666666-6666-4666-8666-666666666666','33333333-3333-4333-8333-333333333333','visitor'),('77777777-7777-4777-8777-777777777777','33333333-3333-4333-8333-333333333333','assistant')")
 check('historical excluded CE jobs remain excluded under new active lease',sql("select ce_conversation_evaluable_v1('33333333-3333-4333-8333-333333333333')").stdout.strip()=='f')
 check('CE learning exclusion remains active' ,sql(f"select c3_uat_learning_excluded('{conv}')").stdout.strip()=='t')
-def reserve(i,c=company,v=conv,revision='c3-3f8b7c2-bounded-uat-v1',provider='vertex',purpose='generation',model='gemini-2.5-flash',op='generate-reply:test',cost=8540,inp=20000,out=1016):
+def reserve(i,c=company,v=conv,revision='c3-3322877-bounded-uat-r2',provider='vertex',purpose='generation',model='gemini-2.5-flash',op='generate-reply:test',cost=8540,inp=20000,out=1016):
  return f"select c3_uat_reserve_dispatch('{run}','{revision}','{c}','{v}','{op}','generation','{i:064x}','{'a'*64}','{provider}','{purpose}','{model}',1,{inp},{out},{cost});"
 check('authenticated RPC denied',sql('set role authenticated;'+reserve(0),False).returncode!=0)
 check('authenticated lease forgery rejected by restrictive RLS',sql(f"set role authenticated;insert into upstream_call_log(company_id,request_payload) values('{company}','{{\"kind\":\"c3_uat_run\"}}');",False).returncode!=0)
@@ -71,3 +71,18 @@ check('rollback retains 19 durable reservations and paused lease',sql("select co
 check('exact original CE body restored',sql("select md5(prosrc) from pg_proc where oid='ce_conversation_evaluable_v1(uuid)'::regprocedure").stdout.strip()=='1cea72657a372172d7b06c557be30294')
 check('rollback removes only temporary functions' ,sql("select to_regprocedure('public.c3_uat_finalize_dispatch(uuid,uuid,text,text,integer,integer,integer)') is null").stdout.strip()=='t')
 print(json.dumps({'result':'PASS','assertions':checks,'count':len(checks),'scope':'real localhost PostgreSQL roles/RLS/concurrency and receipt-retaining rollback; no Hosted/provider dispatch'}))
+
+if '--compatibility' in __import__('sys').argv:
+ import tempfile
+ fixtures=tempfile.mkdtemp(prefix='c3-live-comparison-')
+ subprocess.run(['python3',str(root/'tests/uat-runtime/materialize-baselines.py'),fixtures],check=True)
+ sql("CREATE TABLE companies(id uuid primary key);insert into companies values('11111111-1111-4111-8111-111111111111'),('4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec');GRANT SELECT ON companies,conversations TO service_role;insert into conversations(id,company_id) values('99999999-9999-4999-8999-999999999999','11111111-1111-4111-8111-111111111111');")
+ sql("CREATE TABLE user_roles(user_id uuid,role text);CREATE TABLE company_membership(user_id uuid,company_id uuid,is_active boolean);insert into user_roles values('12345678-1234-4234-8234-123456789012','admin');GRANT SELECT ON user_roles,company_membership TO service_role;")
+ sql((root/'sql/c3_temporary_uat_execution.sql').read_text())
+ policy.update(state='active',attempt_limit=640,budget_microusd=64000000,per_request_attempt_limit=32,allowed_operation_prefixes=['generate-reply-','agent-assist-','ce:','kb:','grounding-verifier:'])
+ sql("insert into upstream_call_log(id,company_id,request_payload) values('cccccccc-cccc-4ccc-8ccc-cccccccccccc','"+company+"','"+json.dumps(policy)+"');update upstream_call_log set request_payload=request_payload||jsonb_build_object('issued_at',clock_timestamp()-interval '1 hour','expires',clock_timestamp()+interval '1 hour') where id='cccccccc-cccc-4ccc-8ccc-cccccccccccc'")
+ env={**os.environ,'C3_UAT_BASELINES_DIR':fixtures}
+ args=[os.environ.get('C3_UAT_DENO','deno'),'test','--no-lock','--allow-env','--allow-read','--allow-run']
+ if os.environ.get('C3_UAT_DENO_CONFIG'):args+=['--config',os.environ['C3_UAT_DENO_CONFIG']]
+ args+=[str(root/'tests/uat-runtime/native-compatibility.ts')]
+ subprocess.run(args,cwd=root,env=env,check=True)
