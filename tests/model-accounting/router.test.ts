@@ -41,7 +41,7 @@ Deno.test("actual router generation/semantic/assist/evaluation/retries preserve 
   globalThis.fetch = async (input, init) => {
     const url = String(input instanceof Request ? input.url : input);
     const body = init?.body ? JSON.parse(String(init.body)) : {};
-    if(url.includes('/companies?')) return deny?Response.json({message:'identity unavailable'},{status:403}):Response.json({id:'11111111-1111-4111-8111-111111111111'});
+    if(url.includes('/company?')) return deny?Response.json({message:'identity unavailable'},{status:403}):Response.json({id:'11111111-1111-4111-8111-111111111111'});
     if(url.includes('/conversations?')) return Response.json({id:'22222222-2222-4222-8222-222222222222',company_id:'11111111-1111-4111-8111-111111111111'});
     if (url.includes("/rpc/c3_reserve")) {
       events.push("reserve");
@@ -218,7 +218,7 @@ Deno.test("actual grounding verifier retry remains legacy; identity denial prohi
       globalThis.fetch = async (input, init) => {
         const url = String(input instanceof Request ? input.url : input);
         const body = init?.body ? JSON.parse(String(init.body)) : {};
-        if(url.includes('/companies?')) return cap===2&&providers>=2?Response.json({message:'identity unavailable'},{status:403}):Response.json({id:'11111111-1111-4111-8111-111111111111'});
+        if(url.includes('/company?')) return cap===2&&providers>=2?Response.json({message:'identity unavailable'},{status:403}):Response.json({id:'11111111-1111-4111-8111-111111111111'});
         if(url.includes('/conversations?')) return Response.json({id:'22222222-2222-4222-8222-222222222222',company_id:'11111111-1111-4111-8111-111111111111'});
         if (url.includes("/rpc/c3_reserve")) {
           if (reserved >= cap) {

@@ -3,7 +3,7 @@ export function withMockAccounting(provider: typeof fetch): typeof fetch {
   return async (input, init) => {
     const url = String(input instanceof Request ? input.url : input);
     if (url.startsWith("http://accounting.mock/rest/v1/")) {
-      if(url.includes('/companies?')) return Response.json({id:'11111111-1111-4111-8111-111111111111'});
+      if(url.includes('/company?')) return Response.json({id:'11111111-1111-4111-8111-111111111111'});
       if(url.includes('/conversations?')) return Response.json({id:'22222222-2222-4222-8222-222222222222',company_id:'11111111-1111-4111-8111-111111111111'});
       if (url.includes("/rpc/c3_reserve_model_attempt")) {
         return Response.json({
