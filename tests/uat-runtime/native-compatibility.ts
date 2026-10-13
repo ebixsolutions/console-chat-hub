@@ -1,7 +1,7 @@
 import {callModel} from '../../supabase/functions/_shared/llm-router.ts';
 import {accountedModelFetch} from '../../supabase/functions/_shared/model-attempt-accounting.ts';
 import {uatMap,UAT_COMPANY,UAT_REVISION,legacyPreactivationAuthority} from '../../supabase/functions/_shared/uat-execution-contract.ts';
-import {createClient} from 'npm:@supabase/supabase-js@2.45.0';
+import {createClient,GoTrueClient} from 'npm:@supabase/supabase-js@2.45.0';
 import {fetchKBRag} from '../../supabase/functions/_shared/kb-client.ts';
 import {GoogleAuth} from 'npm:google-auth-library@9.15.0';
 const company='11111111-1111-4111-8111-111111111111',conv='99999999-9999-4999-8999-999999999999',uatConv='22222222-2222-4222-8222-222222222222',run='cccccccc-cccc-4ccc-8ccc-cccccccccccc';
@@ -10,8 +10,16 @@ const equal=(a:unknown,b:unknown)=>assert(JSON.stringify(a)===JSON.stringify(b),
 // Captured handlers can load different pinned Supabase Auth package instances.
 // Own only their refresh timers for this comparison; keep all other application
 // timers and Deno sanitizers intact so genuine resource leaks still fail.
+const authClients=new Set<GoTrueClient>();
+const authPrototype=GoTrueClient.prototype as any;
+const startAutoRefresh=authPrototype._startAutoRefresh;
+authPrototype._startAutoRefresh=async function(...args:unknown[]){
+ authClients.add(this);
+ return await startAutoRefresh.apply(this,args);
+};
 function nativeTest(name:string,fn:()=>Promise<void>){
  Deno.test(name,async()=>{
+  assert(authClients.size===0,'previous comparison retained Auth clients');
   const interval=globalThis.setInterval,timeout=globalThis.setTimeout;
   const refreshIntervals=new Set<number>(),refreshTimeouts=new Set<number>();
   globalThis.setInterval=((callback:any,delay?:number,...args:any[])=>{
@@ -23,8 +31,12 @@ function nativeTest(name:string,fn:()=>Promise<void>){
    const id=timeout(callback,delay,...args);if(owned)refreshTimeouts.add(id);return id;
   }) as typeof setTimeout;
   try{await fn()}finally{
-   // Drain the Auth initialization tick before releasing its background lease.
+   // npm Auth uses Node timer bindings; captured esm Auth uses global timers.
+   // Await initialization and release both SDK-owned paths, never application timers.
+   for(const client of authClients)await (client as any).initializePromise;
    await new Promise(resolve=>timeout(resolve,0));
+   for(const client of authClients){await client.stopAutoRefresh();assert((client as any).autoRefreshTicker===null,'Auth refresh timer not stopped')}
+   authClients.clear();
    for(const id of refreshIntervals)clearInterval(id);
    for(const id of refreshTimeouts)clearTimeout(id);
    globalThis.setInterval=interval;globalThis.setTimeout=timeout;
