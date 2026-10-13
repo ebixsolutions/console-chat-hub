@@ -1,12 +1,35 @@
 import {callModel} from '../../supabase/functions/_shared/llm-router.ts';
 import {accountedModelFetch} from '../../supabase/functions/_shared/model-attempt-accounting.ts';
 import {uatMap,UAT_COMPANY,UAT_REVISION,legacyPreactivationAuthority} from '../../supabase/functions/_shared/uat-execution-contract.ts';
-import {createClient} from 'npm:@supabase/supabase-js@2.45.0';
+import {createClient,GoTrueClient} from 'npm:@supabase/supabase-js@2.45.0';
 import {fetchKBRag} from '../../supabase/functions/_shared/kb-client.ts';
 import {GoogleAuth} from 'npm:google-auth-library@9.15.0';
 const company='11111111-1111-4111-8111-111111111111',conv='99999999-9999-4999-8999-999999999999',uatConv='22222222-2222-4222-8222-222222222222',run='cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 function assert(v:unknown,message='assertion'):asserts v{if(!v)throw Error(message)}
 const equal=(a:unknown,b:unknown)=>assert(JSON.stringify(a)===JSON.stringify(b),`${JSON.stringify(a)} != ${JSON.stringify(b)}`);
+// Captured and candidate handlers allocate real Supabase Auth clients. Keep
+// their normal initialization/auth behavior, then release owned refresh timers
+// before Deno's operation sanitizer checks each native comparison.
+const authClients=new Set<GoTrueClient>();
+const authPrototype=GoTrueClient.prototype as any;
+const startAutoRefresh=authPrototype._startAutoRefresh;
+authPrototype._startAutoRefresh=async function(...args:unknown[]){
+ authClients.add(this);
+ return await startAutoRefresh.apply(this,args);
+};
+function nativeTest(name:string,fn:()=>Promise<void>){
+ Deno.test(name,async()=>{
+  assert(authClients.size===0,'previous native comparison retained Auth clients');
+  try{await fn()}finally{
+   for(const client of authClients)await (client as any).initializePromise;
+   // Auth schedules its first refresh tick in the next event-loop pass.
+   await new Promise(resolve=>setTimeout(resolve,0));
+   for(const client of authClients){await client.stopAutoRefresh();assert((client as any).autoRefreshTicker===null,'Auth refresh timer not stopped')}
+   authClients.clear();
+  }
+ });
+}
+
 const q=(s:string)=>"'"+s.replaceAll("'","''")+"'";
 async function sql(query:string){const r=await new Deno.Command('psql',{args:[Deno.env.get('C3_UAT_TEST_DB_URL')!,'-XAt','-v','ON_ERROR_STOP=1','-c',query],stdout:'piped',stderr:'piped'}).output();return {ok:r.success,text:new TextDecoder().decode(r.stdout).trim(),error:new TextDecoder().decode(r.stderr)}};
 let providerRequests:unknown[]=[],retry=0,unknown=false, permanentCalls=0;
@@ -45,7 +68,7 @@ globalThis.fetch=network;
 const dir=Deno.env.get('C3_UAT_BASELINES_DIR')!;
 const baseline=await import('file://'+dir+'/generate-reply/functions/_shared/llm-router.ts');
 const call={purpose:'generation' as const,system:'Return JSON only.',user:'An existing customer asks about service.',maxTokens:100,companyId:company,conversationId:conv,operationId:'native-compatibility',tag:'generate-reply-orchestration',responseFormat:'json' as const};
-Deno.test('captured live router and candidate execute equal non-UAT provider bytes/results for all six caller classes and retry with UAT off/valid/malformed',async()=>{
+nativeTest('captured live router and candidate execute equal non-UAT provider bytes/results for all six caller classes and retry with UAT off/valid/malformed',async()=>{
  const tokenClient=GoogleAuth.prototype.getClient;GoogleAuth.prototype.getClient=(async()=>({getAccessToken:async()=>({token:'native-fixture-token'})})) as any;Deno.env.set('GOOGLE_PROJECT_ID','native-project');Deno.env.set('GOOGLE_REGION','us-central1');Deno.env.set('GOOGLE_SERVICE_ACCOUNT_JSON','{}');
  try{for(const provider of ['anthropic','vertex']){Deno.env.set('LLM_PROVIDER',provider);for(const config of ['off','valid','malformed']){
   if(config==='off')Deno.env.delete('C3_TEMP_UAT_RUN_ID');else Deno.env.set('C3_TEMP_UAT_RUN_ID',config==='valid'?run:'malformed');Deno.env.set('C3_TEMP_UAT_SOURCE_REVISION',UAT_REVISION);
@@ -55,21 +78,21 @@ Deno.test('captured live router and candidate execute equal non-UAT provider byt
   }
  }}equal(permanentCalls,0);}finally{GoogleAuth.prototype.getClient=tokenClient;Deno.env.set('LLM_PROVIDER','anthropic')}
 });
-for(const slug of ['generate-reply','agent-assist','kb-search-proxy','conversation-evaluate','ce-evaluation-control','ce-evaluation-worker'])Deno.test(slug+': execute captured and candidate handlers; forged browser cohort without legal auth cannot reach provider',async()=>{
+for(const slug of ['generate-reply','agent-assist','kb-search-proxy','conversation-evaluate','ce-evaluation-control','ce-evaluation-worker'])nativeTest(slug+': execute captured and candidate handlers; forged browser cohort without legal auth cannot reach provider',async()=>{
  const rows=JSON.parse(await Deno.readTextFile(new URL('./live-baseline-blobs.json',import.meta.url)));const beforePath=dir+'/'+slug+'/'+rows[slug].entrypoint;let handler:((r:Request)=>Promise<Response>)|undefined;const original=Deno.serve;Object.defineProperty(Deno,'serve',{configurable:true,value:(h:any)=>{handler=h;return {}}});
  try{const statuses=[];for(const path of [beforePath,new URL('../../supabase/functions/'+slug+'/index.ts',import.meta.url).pathname]){
   handler=undefined;await import('file://'+path+'?native-handler=1');assert(handler,'handler not installed');providerRequests=[];
   const result=await (handler as unknown as (r:Request)=>Promise<Response>)(new Request('https://application.invalid/'+slug,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer forged-browser-token-with-no-authority'},body:JSON.stringify({company_id:UAT_COMPANY,uat:true,run_id:run,conversation_id:uatConv})}));assert(result.status>=400,'forged request accepted');equal(providerRequests.length,0);statuses.push(result.status);
  }equal(statuses[0],statuses[1]);}finally{Object.defineProperty(Deno,'serve',{configurable:true,value:original})}
 });
-Deno.test('live KB POST bytes remain equal; established owner pre-activation uses opaque server authority; browser/foreign scope cannot forge it',async()=>{
+nativeTest('live KB POST bytes remain equal; established owner pre-activation uses opaque server authority; browser/foreign scope cannot forge it',async()=>{
  const original=await import('file://'+dir+'/kb-search-proxy/_shared/kb-client.ts');const scope={mode:'canonical' as const,aiCompanyId:company,singaporeTenantId:'34'};const cfg={baseUrl:'https://py.ebixmall.com/py-knowledge-base',ragUrl:'https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search',jwtTtlSec:60,tenantTokens:{},tenantApiKeys:{},apiKeyHeaderMode:'x-api-key' as const,localProjectAuth:true};
  for(const id of [undefined,'invalid-run']){if(id)Deno.env.set('C3_TEMP_UAT_RUN_ID',id);else Deno.env.delete('C3_TEMP_UAT_RUN_ID');providerRequests=[];const before=await original.fetchKBRag({query:'published policy',top_k:3},scope,cfg);const requests=JSON.stringify(providerRequests);providerRequests=[];const after=await fetchKBRag({query:'published policy',top_k:3},scope,cfg);equal(providerRequests,JSON.parse(requests));equal(after,before)}
  Deno.env.set('KB_PREACTIVATION_ENABLED','true');Deno.env.set('KB_PREACTIVATION_TENANT_ID','34');const db=createClient('http://native.invalid','native-fixture-key');const authority=await legacyPreactivationAuthority(db,'12345678-1234-4234-8234-123456789012','34',null);const c={...call,purpose:'assist' as const,companyId:null,conversationId:null,legacyAuthority:authority,tag:'kb-query-expansion'};providerRequests=[];const before=await baseline.callModel(c);const request=JSON.stringify(providerRequests);providerRequests=[];const after=await callModel(c);assert(before.ok&&after.ok);equal(providerRequests,JSON.parse(request));equal(after.text,before.text);
  await sql("insert into public.conversations(id,company_id) values('88888888-8888-4888-8888-888888888888',null)");const bound=await legacyPreactivationAuthority(db,'12345678-1234-4234-8234-123456789012','34','88888888-8888-4888-8888-888888888888');await sql(`update public.conversations set company_id=${q(UAT_COMPANY)}::uuid where id='88888888-8888-4888-8888-888888888888'`);providerRequests=[];const moved=await callModel({...c,conversationId:'88888888-8888-4888-8888-888888888888',legacyAuthority:bound});assert(!moved.ok);equal(providerRequests.length,0);
  providerRequests=[];const forged=await callModel({...c,legacyAuthority:{uat:true,user_id:'12345678-1234-4234-8234-123456789012'}});assert(!forged.ok);equal(providerRequests.length,0);const cross=await callModel({...c,companyId:UAT_COMPANY,conversationId:uatConv});assert(!cross.ok);equal(providerRequests.length,0);equal(permanentCalls,0);
 });
-Deno.test('actual PostgreSQL UAT lease gates Vertex, KB bound, CE/Assist retries, replay, expiry and unknown outcome; never legacy fallback',async()=>{
+nativeTest('actual PostgreSQL UAT lease gates Vertex, KB bound, CE/Assist retries, replay, expiry and unknown outcome; never legacy fallback',async()=>{
  Deno.env.set('C3_TEMP_UAT_RUN_ID',run);Deno.env.set('C3_TEMP_UAT_SOURCE_REVISION',UAT_REVISION);Deno.env.set('GOOGLE_PROJECT_ID','native-project');Deno.env.set('GOOGLE_REGION','us-central1');
  const db=createClient('http://native.invalid','native-fixture-key');const url='https://us-central1-aiplatform.googleapis.com/v1/projects/native-project/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent';const request=JSON.stringify({contents:[{role:'user',parts:[{text:'safe native fixture'}]}],generationConfig:{maxOutputTokens:1024,thinkingConfig:{thinkingBudget:1024}}});
  const meta={companyId:UAT_COMPANY,conversationId:uatConv,operationId:'native',provider:'vertex',purpose:'generation',slot:'generate-reply-orchestration',attempt:1,request};

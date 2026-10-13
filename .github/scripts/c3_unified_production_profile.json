@@ -791,7 +791,7 @@
     "tests/uat-runtime/contract.test.ts": "c50446afbd8e15b6d580db5abf7a473234c799ef749408aa3132635cfda7a477",
     "tests/uat-runtime/live-baseline-blobs.json": "4024d3ca0b6e968a11ad50c6c4e04d0ec3f627478a01af65bd93a5e853b206f7",
     "tests/uat-runtime/materialize-baselines.py": "19e21a5b91f808c052ad16b39e138329484aabbd540221d38e919ebc5f1d7ce9",
-    "tests/uat-runtime/native-compatibility.ts": "53226d86e8965111c810bdd87a3252db286f1dabc7cbc83c928cd780f3cfa683",
+    "tests/uat-runtime/native-compatibility.ts": "96672687e13cc71df5f1ba258b2cb9804780f26cebb881416e9539c4a42582fd",
     "tests/uat-runtime/native-postgres.py": "8774702a686fce7ac78ddc21f56612577dd5458a0ffbbd354fb9218921835254"
   },
   "uat_compatibility_round": 2,
