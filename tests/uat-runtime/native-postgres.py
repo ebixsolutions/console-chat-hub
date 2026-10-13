@@ -84,6 +84,6 @@ if '--compatibility' in __import__('sys').argv:
  env={**os.environ,'C3_UAT_BASELINES_DIR':fixtures}
  args=[os.environ.get('C3_UAT_DENO','deno'),'test','--no-lock','--node-modules-dir=none','--allow-env','--allow-read','--allow-run']
  if os.environ.get('C3_UAT_DENO_CONFIG'):args+=['--config',os.environ['C3_UAT_DENO_CONFIG']]
-  else:args+=['--no-config']
+ else:args+=['--no-config']
  args+=[str(root/'tests/uat-runtime/native-compatibility.ts')]
  subprocess.run(args,cwd=fixtures,env=env,check=True)
