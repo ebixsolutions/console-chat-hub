@@ -76,7 +76,7 @@ if '--compatibility' in __import__('sys').argv:
  import tempfile
  fixtures=tempfile.mkdtemp(prefix='c3-live-comparison-')
  subprocess.run(['python3',str(root/'tests/uat-runtime/materialize-baselines.py'),fixtures],check=True)
- sql("CREATE TABLE companies(id uuid primary key);insert into companies values('11111111-1111-4111-8111-111111111111'),('4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec');GRANT SELECT ON companies,conversations TO service_role;insert into conversations(id,company_id) values('99999999-9999-4999-8999-999999999999','11111111-1111-4111-8111-111111111111');")
+ sql("CREATE TABLE company(id uuid primary key);insert into company values('11111111-1111-4111-8111-111111111111'),('4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec');GRANT SELECT ON company,conversations TO service_role;insert into conversations(id,company_id) values('99999999-9999-4999-8999-999999999999','11111111-1111-4111-8111-111111111111');")
  sql("CREATE TABLE user_roles(user_id uuid,role text);CREATE TABLE company_membership(user_id uuid,company_id uuid,is_active boolean);insert into user_roles values('12345678-1234-4234-8234-123456789012','admin');GRANT SELECT ON user_roles,company_membership TO service_role;")
  sql((root/'sql/c3_temporary_uat_execution.sql').read_text())
  policy.update(state='active',attempt_limit=640,budget_microusd=64000000,per_request_attempt_limit=32,allowed_operation_prefixes=['generate-reply-','agent-assist-','ce:','kb:','grounding-verifier:'])

@@ -58,9 +58,9 @@ const network=async(input:RequestInfo|URL,init?:RequestInit):Promise<Response>=>
    const args=keys.map(k=>body[k]===null?'NULL':typeof body[k]==='number'?String(body[k]):q(body[k])).join(',');
    const r=await sql(`set role service_role;select public.${fn}(${args});`);return r.ok?Response.json(JSON.parse(r.text.split('\n').at(-1)!)):Response.json({message:r.error},{status:400});
   }
-  if(url.pathname.endsWith('/companies')||url.pathname.endsWith('/conversations')){
+  if(url.pathname.endsWith('/company')||url.pathname.endsWith('/conversations')){
    const table=url.pathname.split('/').pop()!, id=(url.searchParams.get('id')||'').replace(/^eq\./,'');
-   const r=await sql(`set role service_role;select row_to_json(t) from (select ${table==='companies'?'id':'id,company_id'} from public.${table} where id=${q(id)}::uuid)t;`);
+   const r=await sql(`set role service_role;select row_to_json(t) from (select ${table==='company'?'id':'id,company_id'} from public.${table} where id=${q(id)}::uuid)t;`);
    if(!r.ok)console.error('NATIVE_IDENTITY_READ_FAILURE',r.error);return r.ok?Response.json(r.text?JSON.parse(r.text.split('\n').at(-1)!):null):Response.json({message:r.error},{status:400});
   }
   if(url.pathname.endsWith('/user_roles')||url.pathname.endsWith('/company_membership')){

@@ -32,7 +32,7 @@ export async function trustedDispatchScope(db: Db, company: string | null, conve
   if(company===null && authority){const grant=preactivation.get(authority);if(grant && grant.conversation===conversation && grant.expires>Date.now() && Deno.env.get("KB_PREACTIVATION_ENABLED")==="true" && grant.tenant===Deno.env.get("KB_PREACTIVATION_TENANT_ID")?.trim()){if(conversation){if(!db.from)throw new UatDenied("PREACTIVATION_TICKET_DENIED");const ticket=await db.from("conversations").select("id,company_id").eq("id",conversation).maybeSingle();if(ticket.error || ticket.data?.id!==conversation || ticket.data.company_id!==null)throw new UatDenied("PREACTIVATION_TICKET_DENIED");}return "legacy";}throw new UatDenied("PREACTIVATION_AUTHORITY_DENIED");}
   if (!company || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(company) || !db.from) throw new UatDenied("DISPATCH_COMPANY_UNPROVEN");
   try {
-    const owner = await db.from("companies").select("id").eq("id", company).maybeSingle();
+    const owner = await db.from("company").select("id").eq("id", company).maybeSingle();
     if (owner.error || owner.data?.id !== company) throw new UatDenied("DISPATCH_COMPANY_UNPROVEN");
     if (conversation) {
       const ticket = await db.from("conversations").select("id,company_id").eq("id", conversation).maybeSingle();

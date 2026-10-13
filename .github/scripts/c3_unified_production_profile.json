@@ -782,17 +782,17 @@
     "supabase/functions/_shared/llm-router.ts": "3a25c61eb34d01ef5dc3769ffd4f33b717d9f5efeda537cdab4934b6dfe732e6",
     "supabase/functions/_shared/model-attempt-accounting.ts": "949f86abb5f78c4e3a9379d54a15b734fc8b268beb1839d3f9da1b0857f32baf",
     "supabase/functions/_shared/remote-model-accounting.ts": "1faa1ecebdc13e9f2f067611130e1a0ff65ba8697884387587a74b7f135947c5",
-    "supabase/functions/_shared/uat-execution-contract.ts": "985d05870d3ea999a7de8a8a43aee6e9ccc3f34ef96b5b5a03713037755520d5",
+    "supabase/functions/_shared/uat-execution-contract.ts": "11f355a24a788982868b0ba99bd1d5e957a2f4d0d5157f89cda4023791d403ff",
     "supabase/functions/kb-search-proxy/index.ts": "a654e7625a7aa638433c72e07cf880f19af4c2776a4225bb818382e6c470fe04",
     "tests/model-accounting/accounting.test.ts": "00683e17f7d5729e0a1edec990a3ea748e3f7ace8a14eb6664b558e2be8121ec",
     "tests/model-accounting/provider-fixture.ts": "46798cc3376318902411fd0317601a604c98f5ef5201ce58b294d21230352147",
     "tests/model-accounting/router.test.ts": "30f7ce0d83198a6831774b1ab3f375afc55f5a224f524052b3f81d6890332be4",
     "tests/model-accounting/source-coverage.test.mjs": "a824c339ffd26335b3e8f955a6a10babf834d4dd7d005a8c9c40c00e36edcd5e",
-    "tests/uat-runtime/contract.test.ts": "c50446afbd8e15b6d580db5abf7a473234c799ef749408aa3132635cfda7a477",
+    "tests/uat-runtime/contract.test.ts": "472a816bf5942eab21c93e8c0d764453409876f926c82ee828fd4ef19713b695",
     "tests/uat-runtime/live-baseline-blobs.json": "4024d3ca0b6e968a11ad50c6c4e04d0ec3f627478a01af65bd93a5e853b206f7",
     "tests/uat-runtime/materialize-baselines.py": "19e21a5b91f808c052ad16b39e138329484aabbd540221d38e919ebc5f1d7ce9",
-    "tests/uat-runtime/native-compatibility.ts": "45b73b0776e7ec3a896182e5f33bf73788355a838f0995262f6d30eacb2ac274",
-    "tests/uat-runtime/native-postgres.py": "8774702a686fce7ac78ddc21f56612577dd5458a0ffbbd354fb9218921835254"
+    "tests/uat-runtime/native-compatibility.ts": "9200ed26b4cc16f47fe267a2fa3b1d5df4180e9d5fb755e0a15fbd30b0adc256",
+    "tests/uat-runtime/native-postgres.py": "2f6d7841d09eae1497293be6fc10df6a77f5aa316ae6cb2571d2db160628676f"
   },
   "uat_compatibility_round": 2,
   "uat_compatibility_parent": "33228773a8c28db263a00236a1a351b205f45287"
