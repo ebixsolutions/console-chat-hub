@@ -1,3 +1,4 @@
+import { uatRun } from "./uat-execution-contract.ts";
 import {
   type AccountingRpc,
   ModelAccountingError,
@@ -71,6 +72,7 @@ export async function prepareRemoteRetrieval(
 ): Promise<Record<string, string>> {
   // The bounded synthetic scope alone requires the new remote contract; other tenants retain their accepted authority.
   if (company !== "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec") return {};
+  if (service === "kb" && uatRun(company)) return {}; // uatFetch must admit the actual POST.
   const scope: RemoteScope = {
     company,
     tenant,

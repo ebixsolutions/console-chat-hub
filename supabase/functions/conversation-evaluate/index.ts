@@ -1,3 +1,4 @@
+import { uatMap } from "../_shared/uat-execution-contract.ts";
 import { verifyEvaluationEligibility } from "../_shared/ce-evaluation-scope.ts";
 /**
  * conversation-evaluate — the only callable surface for Conversation Evaluation.
@@ -960,8 +961,8 @@ async function handleEvaluate(
 
   const modelEligibilityError = await verifyEvaluationEligibility(admin, conversationId);
   if (modelEligibilityError) return fail("conflict", req, operationId, modelEligibilityError);
-  const settled = await Promise.all(
-    CE_DIMENSIONS.map((d) =>
+  const settled = await uatMap(company?.company_id ?? null,
+    CE_DIMENSIONS.map((d) => () =>
       runEvaluator(
         d,
         bundle.text,

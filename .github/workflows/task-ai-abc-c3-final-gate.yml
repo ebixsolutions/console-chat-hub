@@ -1514,7 +1514,7 @@ jobs:
             supabase/functions/_shared/conversation-recall.integration.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --allow-env --node-modules-dir=auto supabase/functions/_shared/f13-runtime-recovery.test.ts supabase/functions/_shared/f13-f14-root-cause.test.ts supabase/functions/_shared/f13-llm-failure.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/model-attempt-accounting/index.ts supabase/functions/customer360-coach-sync/index.ts supabase/functions/ce-evaluation-worker/index.ts supabase/functions/ce-evaluation-control/index.ts supabase/functions/kb-search-proxy/index.ts supabase/functions/conversation-evaluate/index.ts)
-          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-env --allow-read --node-modules-dir=auto tests/model-accounting/accounting.test.ts tests/model-accounting/router.test.ts tests/model-accounting/callback.test.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-env --allow-read --node-modules-dir=auto tests/model-accounting/accounting.test.ts tests/model-accounting/router.test.ts tests/model-accounting/callback.test.ts tests/uat-runtime/contract.test.ts)
           python3 tests/model-accounting/remote-python.test.py
           node tests/model-accounting/source-coverage.test.mjs
           c3_source_clean after_deno 1
@@ -2051,6 +2051,11 @@ jobs:
           psql "$C3_ISOLATED_DB_URL" -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE c3modelaccounting'
           export C3_ACCOUNTING_TEST_DB_URL=postgres://postgres:c3-isolated-only@127.0.0.1:5432/c3modelaccounting
           python3 tests/model-accounting/native-postgres.py | tee "$RUNNER_TEMP/c3-model-accounting-native.json"
+      - name: Temporary bounded UAT existing-log native admission
+        run: |
+          set -euo pipefail
+          psql "$C3_ISOLATED_DB_URL" -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE c3tempuat'
+          C3_UAT_TEST_DB_URL=postgres://postgres:c3-isolated-only@127.0.0.1:5432/c3tempuat python3 tests/uat-runtime/native-postgres.py
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
       - name: KB r109027 native FastAPI and shared PostgreSQL accounting integration

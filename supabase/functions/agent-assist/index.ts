@@ -403,7 +403,7 @@ Deno.serve(async (req) => {
           .filter(Boolean).join(" "),
         history,
       ).query.slice(0, 500);
-      const kb = await fetchKBRag({ query, top_k: 3 }, tenant.scope, endpoint);
+      const kb = await fetchKBRag({ query, top_k: 3 }, tenant.scope, endpoint, {uatContext:{conversationId,operationId:`kb:agent-assist:${conversationId}:${crypto.randomUUID()}`}});
       if (!kb.success) {
         return jsonRes(
           { success: false, error: "handoff_kb_unavailable" },
@@ -432,6 +432,7 @@ Deno.serve(async (req) => {
         { query: policyQuery, top_k: 8 },
         tenant.scope,
         endpoint,
+        {uatContext:{conversationId,operationId:`kb:agent-assist:${conversationId}:${crypto.randomUUID()}`}},
       );
       if (!policyKb.success) {
         return jsonRes(
@@ -810,6 +811,7 @@ Deno.serve(async (req) => {
       { query: retrievalQuery, top_k: 3 },
       tenant.scope,
       endpoint,
+      {uatContext:{conversationId,operationId:`kb:agent-assist:${conversationId}:${crypto.randomUUID()}`}},
     );
     if (!kb.success) {
       return jsonRes(

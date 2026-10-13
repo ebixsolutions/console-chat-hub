@@ -7250,7 +7250,7 @@ async function callKBAdapter(
     { query: userMessage, top_k: 5 },
     scope,
     endpointCfg,
-    { timeoutMs: 15000, signal },
+    { timeoutMs: 15000, signal, uatContext: { conversationId: _conversation_id, operationId: `kb:generate-reply:${_conversation_id}:${crypto.randomUUID()}` } },
   );
   if (!result.success) {
     return { success: false, no_answer: true, retrieval_quality: "failed" };

@@ -1,3 +1,4 @@
+import { uatRun, uatFetch } from "./uat-execution-contract.ts";
 import {
   prepareRemoteRetrieval,
   remoteAccountingSecret,
@@ -479,7 +480,7 @@ export async function fetchKBRag(
   queryInput: KBQueryInput,
   scope: KBResolvedScope,
   endpointCfg: KBEndpointConfig,
-  opts?: { timeoutMs?: number; signal?: AbortSignal },
+  opts?: { timeoutMs?: number; signal?: AbortSignal; uatContext?: {conversationId: string; operationId: string} },
 ): Promise<KBRagResponse> {
   const query = queryInput.query.trim();
   if (!query) {
@@ -556,7 +557,7 @@ export async function fetchKBRag(
   );
   let response: Response;
   try {
-    response = await fetch(endpointCfg.ragUrl, {
+    const init: RequestInit = {
       redirect: "error",
       method: "POST",
       headers: {
@@ -566,7 +567,10 @@ export async function fetchKBRag(
       },
       body: requestBody,
       signal: controller.signal,
-    });
+    };
+    if (uatRun(scope.aiCompanyId)) {
+      response = await uatFetch(createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey()), {companyId:scope.aiCompanyId, conversationId:opts?.uatContext?.conversationId ?? null, operationId:opts?.uatContext?.operationId ?? "", provider:"singapore-kb",purpose:"kb_embedding",slot:"context-search",attempt:1,request:requestBody},endpointCfg.ragUrl,init);
+    } else response = await fetch(endpointCfg.ragUrl, init);
   } catch (err) {
     clearTimeout(timeout);
     opts?.signal?.removeEventListener("abort", abortFromRequest);

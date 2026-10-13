@@ -1,3 +1,4 @@
+import { uatMap } from "./uat-execution-contract.ts";
 import { verifyEvaluationEligibility } from "./ce-evaluation-scope.ts";
 /**
  * PR29 Task 2 — shared automatic Conversation Evaluation engine.
@@ -577,8 +578,8 @@ export async function processEvaluationJob(
 
     const boundaryScope=await verifyEvaluationJobScope(admin,job);
     if(boundaryScope) return {ok:false,code:boundaryScope};
-    const settled = await Promise.all(
-      CE_DIMENSIONS.map((d) =>
+    const settled = await uatMap(job.company_id,
+      CE_DIMENSIONS.map((d) => () =>
         runEvaluator(
           d,
           bundle.text,

@@ -1,3 +1,4 @@
+import { uatRun, uatFetch, UatDenied } from "./uat-execution-contract.ts";
 /** Shared pre-dispatch model boundary. No scoped fail-open path. */
 export type AccountingRpc = {
   rpc(
@@ -39,6 +40,9 @@ export async function accountedModelFetch(
   upstream: typeof fetch = fetch,
   onDispatch?: () => void,
 ): Promise<Response> {
+  try {
+    if (uatRun(meta.companyId)) return await uatFetch(db, {...meta, operationId: `${meta.slot}:${meta.operationId}`}, url, init, upstream, onDispatch);
+  } catch (e) { throw new ModelAccountingError(e instanceof UatDenied ? e.code : "UAT_DISPATCH_DENIED"); }
   // Request hash is durable; provider payload/secrets/customer text are not stored.
   const identity = await sha256(
     JSON.stringify([meta.operationId, meta.slot, meta.attempt, meta.provider]),

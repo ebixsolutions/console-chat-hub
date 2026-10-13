@@ -1,3 +1,4 @@
+import { uatRun, UAT_THINKING } from "./uat-execution-contract.ts";
 import { accountedModelFetch, ModelAccountingError } from "./model-attempt-accounting.ts";
 /**
  * Governed model router — the single provider call site for Edge Functions.
@@ -643,7 +644,7 @@ async function verifyGroundedGeneration(
         },
         required: ["grounded", "unsupported_claims", "evidence_chunk_ids"],
       },
-      undefined,
+      uatRun(call.companyId) ? UAT_THINKING : undefined,
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");
@@ -899,7 +900,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       call.maxTokens,
       call.responseFormat === "json",
       call.responseSchema,
-      call.thinkingBudget,
+      uatRun(call.companyId) ? UAT_THINKING : call.thinkingBudget,
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");

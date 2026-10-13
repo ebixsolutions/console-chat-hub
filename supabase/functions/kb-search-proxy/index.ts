@@ -1,3 +1,4 @@
+import { uatMap } from "../_shared/uat-execution-contract.ts";
 import {
   resolveKBEndpoint,
   resolveTenantScope,
@@ -547,7 +548,7 @@ Deno.serve(async (req) => {
     const endpoint = resolveKBEndpoint();
     if (!endpoint) return jsonResponse({ error: "kb_config_missing" }, 500, req);
 
-    const result = await fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint);
+    const result = await fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint, {uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${crypto.randomUUID()}`}});
     if (!result.success) {
       if (result.error_code === "KB_TIMEOUT") {
         return jsonResponse({ error: "kb_api_timeout" }, 504, req);
@@ -565,9 +566,9 @@ Deno.serve(async (req) => {
       scope,
       conversationId,
     });
-    const expandedResults = await Promise.all(
-      expansions.map((expandedQuery) =>
-        fetchKBRag({ query: expandedQuery, top_k: topK }, scope, endpoint)
+    const expandedResults = await uatMap(scope.aiCompanyId,
+      expansions.map((expandedQuery) => () =>
+        fetchKBRag({ query: expandedQuery, top_k: topK }, scope, endpoint, {uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${crypto.randomUUID()}`}})
       ),
     );
     const successfulExpanded = expandedResults.filter((r) => r.success);
