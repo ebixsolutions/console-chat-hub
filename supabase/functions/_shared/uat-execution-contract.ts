@@ -1,3 +1,4 @@
+import { buildVertexEndpoint } from "./vertex-generation-config.ts";
 /** Temporary synthetic UAT admission. Existing log persistence, not the deferred shared Guard. */
 export const UAT_COMPANY = "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec";
 export const UAT_REVISION = "c3-3322877-bounded-uat-r2";
@@ -62,7 +63,9 @@ export async function uatFetch(db: Db, meta: UatContext, url: string, init: Requ
   } else {
     const u=new URL(url);
     const project=Deno.env.get("GOOGLE_PROJECT_ID")?.trim(), region=Deno.env.get("GOOGLE_REGION")?.trim();
-    if (!project || !region || (u.protocol!=="https:" || u.hostname!==`${region}-aiplatform.googleapis.com` || u.port!=="") || u.pathname!==`/v1/projects/${project}/locations/${region}/publishers/google/models/gemini-2.5-flash:generateContent` || u.search || meta.provider!=="vertex" || !["generation","evaluation","assist"].includes(meta.purpose)) throw new UatDenied("UAT_PROVIDER_DENIED");
+    let expectedEndpoint = "";
+    try { if (project && region) expectedEndpoint = buildVertexEndpoint(project, region, "gemini-2.5-flash"); } catch { /* Invalid server configuration remains denied. */ }
+    if (!expectedEndpoint || u.href !== expectedEndpoint || meta.provider!=="vertex" || !["generation","evaluation","assist"].includes(meta.purpose)) throw new UatDenied("UAT_PROVIDER_DENIED");
     if (new TextEncoder().encode(meta.request).length>80000 || body.tools || body.cachedContent || body.contents?.some((c:any)=>c.parts?.some((p:any)=>Object.keys(p).some(k=>k!=="text"))) || !Number.isInteger(body.generationConfig?.maxOutputTokens) || body.generationConfig.maxOutputTokens<1 || body.generationConfig.maxOutputTokens>UAT_MAX_OUTPUT || body.generationConfig?.thinkingConfig?.thinkingBudget!==UAT_THINKING) throw new UatDenied("UAT_TOKEN_EXPOSURE_DENIED");
     // CountTokens is pre-inference. Any failure denies before generateContent.
     const countRequest={contents:[...(body.contents ?? []),{role:"user",parts:[...(body.systemInstruction?.parts ?? []),{text:JSON.stringify(body.generationConfig?.responseSchema ?? {})}]}]};

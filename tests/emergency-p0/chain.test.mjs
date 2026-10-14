@@ -156,3 +156,30 @@ test('actual interpreter recovers from an isolated 400 using same call path and 
  const input={company_id:company,conversation_id:ticket,source_message_id:source,latest:'Defer the rental; not paid yet',persistent_state_summary:'{}'};
  assert.equal((await interpret(input)).failure_code,'LLM_NON_2XX');f.setMode('ok');const result=await interpret(input);assert.equal(result.failure_code,null);assert.equal(result.frame.operation,'DEFER');assert.deepEqual(result.frame.explicit_negations,['not paid']);assert.equal(f.logs.length,2);assert.equal(f.logs[0].request_payload.outcome,'failed');assert.equal(f.logs[1].request_payload.outcome,'success');
 });
+
+// Canonical endpoint compatibility at the actual protected provider caller.
+// Isolated transport only; existing admission/reservation/usage rules stay active.
+function endpointGuardFixture(region) {
+ const f=fixture('unused'),guard=f.load(path.join(root,'supabase/functions/_shared/uat-execution-contract.ts'));
+ const vertex=f.load(path.join(root,'supabase/functions/_shared/vertex-generation-config.ts'));
+ Object.assign(f.env,{C3_TEMP_UAT_RUN_ID:uuid(90),C3_TEMP_UAT_SOURCE_REVISION:guard.UAT_REVISION,GOOGLE_REGION:region});
+ const request=JSON.stringify({contents:[{role:'user',parts:[{text:'Change booking A to Saturday; booking B remains Friday.'}]}],generationConfig:vertex.buildVertexGenerationConfig(4096,true,{type:'object',properties:{operation:{type:'string'},confidence:{type:'number'},delta_json:{type:'string'}},required:['operation','confidence','delta_json']},guard.UAT_THINKING,'gemini-2.5-flash')});
+ const meta={companyId:guard.UAT_COMPANY,conversationId:ticket,operationId:'commerce-semantic:'+source,provider:'vertex',purpose:'evaluation',slot:'evaluation',attempt:1,request};
+ const events=[];let dispatches=0,deny=false;
+ const db={rpc:async(name,args)=>{events.push(name);return deny?{data:null,error:{code:'UAT_REMOTE_BOUND_UNVERIFIED'}}:{error:null,data:name==='c3_uat_reserve_dispatch'?{run_id:f.env.C3_TEMP_UAT_RUN_ID,identity:args.p_identity,state:'reserved',expires_epoch:Date.now()/1000+300,dispatch:true}:{state:args.p_state}};}};
+ const transport=async u=>{events.push(String(u).endsWith(':countTokens')?'countTokens':'provider');if(String(u).endsWith(':countTokens'))return Response.json({totalTokens:120});dispatches++;return Response.json({usageMetadata:{promptTokenCount:120,candidatesTokenCount:20,thoughtsTokenCount:0}});};
+ const url=vertex.buildVertexEndpoint(f.env.GOOGLE_PROJECT_ID,region,'gemini-2.5-flash');
+ return {f,url,meta,events,dispatches:()=>dispatches,deny:()=>deny=true,run:(u=url,m=meta)=>guard.uatFetch(db,m,u,{method:'POST',body:request},transport)};
+}
+test('protected Vertex caller accepts the same canonical regional and global endpoint as the request builder',async()=>{
+ for(const region of ['us-central1','global']){const f=endpointGuardFixture(region);await f.run();assert.equal(f.dispatches(),1);assert.deepEqual(f.events,['countTokens','c3_uat_reserve_dispatch','provider','c3_uat_finalize_dispatch']);}
+});
+test('canonical endpoint compatibility retains exact project, region, model, scheme and purpose denial',async()=>{
+ const f=endpointGuardFixture('global');
+ for(const url of [f.url.replace('aiplatform.googleapis.com','global-aiplatform.googleapis.com'),f.url.replace('isolated-project','foreign-project'),f.url.replace('/locations/global/','/locations/us-central1/'),f.url.replace('gemini-2.5-flash:','gemini-2.5-pro:'),f.url.replace('https:','http:'),f.url+'?override=true',f.url+'#override'])await assert.rejects(f.run(url),e=>e.code==='UAT_PROVIDER_DENIED');
+ for(const override of [{provider:'anthropic'},{purpose:'unknown'}])await assert.rejects(f.run(f.url,{...f.meta,...override}),e=>e.code==='UAT_PROVIDER_DENIED');
+ assert.equal(f.dispatches(),0);assert.deepEqual(f.events,[]);
+});
+test('global endpoint compatibility never bypasses the original remote-bound database admission',async()=>{
+ const f=endpointGuardFixture('global');f.deny();await assert.rejects(f.run(),e=>e.code==='UAT_ADMISSION_DENIED');assert.equal(f.dispatches(),0);assert.deepEqual(f.events,['countTokens','c3_uat_reserve_dispatch']);
+});

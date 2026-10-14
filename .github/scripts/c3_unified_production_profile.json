@@ -842,9 +842,10 @@
     "supabase/functions/_shared/natural-customer-response.ts": "eb3f564e33dfb12fe34397d9e533b4fa637d2722766f6a54cf6433146e561877",
     "supabase/functions/_shared/vertex-generation-config.ts": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6",
     "supabase/functions/generate-reply/index.ts": "c758eaef67357bd19722a4cd9bf67d06a43038d0ec109695b21880cbf675e39e",
-    "tests/emergency-p0/chain.test.mjs": "c2a8a53a17cafd2216ad561d983d8d8b059c277d593101e9f7de28ed151c4af4",
+    "tests/emergency-p0/chain.test.mjs": "802711d5245f59c892a3344294d01eb07a10afb9173d74d1bc5ec280bed5d384",
     "tests/emergency-p0/provider-request.test.ts": "8ac71c7d1c3f5933a3e217ddab6531d0756d2f4f5bd812bfc3d8454a0bb85b5e",
-    ".github/workflows/director-task2-semantic-regression-deploy.yml": "0dd7815670c960155fac6ef1bb1406d07428234871277719d5fd6aa896f09d56"
+    ".github/workflows/director-task2-semantic-regression-deploy.yml": "0dd7815670c960155fac6ef1bb1406d07428234871277719d5fd6aa896f09d56",
+    "supabase/functions/_shared/uat-execution-contract.ts": "99c14eeb655b497debce40984c824dd40bbd2240810394918650338df27aaccf"
   },
   "director_functional_deployment_authorized": false,
   "director_emergency_p0_scope": {
@@ -862,5 +863,12 @@
       "actual_error": "c3_validation_control_tests.mjs:433 legacy auto deployment path reactivated by canonical semantic source change",
       "fix": "Remove only push trigger from historical semantic regression deployment workflow; retain workflow_dispatch; frozen merge/deploy guard assertions unchanged"
     }
+  },
+  "director_research_grounded_service_continuation": {
+    "starting_head": "197748d092694676f41ab10eed8e0c8d0874659b",
+    "actual_failure": "Canonical global Vertex request builder URL rejected by protected UAT caller as UAT_PROVIDER_DENIED before provider dispatch",
+    "repair": "Same canonical endpoint builder for strict admission; no model, configured region, reservation, remote-bound guard or token-budget change",
+    "deployment_authorized": false,
+    "paid_dispatch_authorized": false
   }
 }
