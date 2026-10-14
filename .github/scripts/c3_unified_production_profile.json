@@ -813,7 +813,7 @@
     "src/lib/api/inbox-read.ts": "3d8f045830697b6128c0cdf9db91c9bd3bdded50f931c2287423a074d7c2796b",
     "tests/inbox-read.test.mjs": "c8bcefd0ed786792019091db182b981d7edc9da433756b5e863509494f00d241",
     "tests/c3-b12-registry/build-payloads.py": "275c35b1cbe5a8d6a44460cdca95f50466a39af923c9742bb46155af605923aa",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "e71a9c2f7e28a525a9ccaebf9d81a07440b883eaa92959392b8cb0986d41d6b7",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "59faa468e30c2e5a678bc2ada6d3d997fd144a9c580570c8491a400529d4793a",
     "supabase/functions/customer360-local/index.ts": "b5e1fc820275f1a69dca8a0bd15916bf86b2c4f94d85d3a76f25d5d2e5edbc2b",
     "supabase/functions/visitor-analytics/index.ts": "0140bfd9436187bae407e32052274a2d5172d6ba91e96c13deb754347fcde502",
     "supabase/functions/_shared/complete-scoped-read.ts": "c6ec3067df72ba1cfd7ca4b043bb451dc123cf2a191613193a2591a612d15e96",
@@ -824,7 +824,9 @@
     "src/components/console/VisitorAnalyticsDetail.tsx": "7c2cfc2b0e762d414ca4ce367d4a9e3f95ef0d46a0b263c2584605cfee1adede",
     "src/routes/_authenticated/console.conversation-evaluation.index.tsx": "95085ed0b74c6c2079f94f608fccd741abb07b38c512b0e9a1527e0053642248",
     "src/routes/_authenticated/console.visitor-analytics.tsx": "a45c899dc1a76e01d5a21d3b3d171680ad2e1a30314472048a2d6b0327045efa",
-    "tests/console-navigation/runtime.test.mjs": "128b0c882cab25471ecea457cea066685ec5a9f9171faf9726aa1a6976f7a703"
+    "tests/console-navigation/runtime.test.mjs": "128b0c882cab25471ecea457cea066685ec5a9f9171faf9726aa1a6976f7a703",
+    "vite.preview-environment.mjs": "b20f784faa5f4a52c2cbb29356974fa7de3169633990e69f73a4ebbd1d70b16d",
+    "tests/phase1/preview-startup.test.mjs": "faac1bcc6896cc49852262cceb462ff3937b6e26a940ef55d7bd1ed944affba4"
   },
   "director_functional_deployment_authorized": false
 }

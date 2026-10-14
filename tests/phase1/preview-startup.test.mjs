@@ -6,10 +6,10 @@ import { loadConfigFromFile } from 'vite';
 import { PREVIEW_HOST, resolveConsoleEnvironment as resolve } from '../../vite.preview-environment.mjs';
 const dev = { command: 'serve', mode: 'development' };
 const build = { command: 'build', mode: 'production' };
-test('actual Lovable dev-process markers select the authorized nonproduction authority', () => {
+test('Lovable dev-process markers preserve the canonical authority unless isolation is explicit', () => {
   for (const env of [{ LOVABLE_SANDBOX:'1' }, { DEV_SERVER__PROJECT_PATH:'/dev-server' }, { LOVABLE_PREVIEW_HOST:PREVIEW_HOST }]) {
-    assert.equal(resolve(dev,env),'nonproduction');
-    assert.equal(resolve(dev,env),'nonproduction'); // normal restart, no mutable session state
+    assert.equal(resolve(dev,env),undefined);
+    assert.equal(resolve(dev,env),undefined); // normal restart, no mutable session state
   }
 });
 test('explicit nonproduction works in local dev and separate nonproduction builds',()=> {
@@ -21,10 +21,10 @@ test('production builds preserve default and explicit production binding inside 
     assert.equal(resolve(build,{...markers,C3_CONSOLE_ENV:'production'}),'production');
   }
 });
-test('ordinary local dev is unchanged and hosted build:dev selects nonproduction',()=> {
+test('ordinary local dev and hosted build:dev preserve canonical binding',()=> {
   assert.equal(resolve(dev,{}),undefined);
   assert.equal(resolve({command:'build',mode:'development'},{}),undefined);
-  assert.equal(resolve({command:'build',mode:'development'},{LOVABLE_SANDBOX:'1'}),'nonproduction');
+  assert.equal(resolve({command:'build',mode:'development'},{LOVABLE_SANDBOX:'1'}),undefined);
 });
 test('Preview honors only an explicit server-controlled environment selector',()=> {
   for (const target of ['production','nonproduction']) {
@@ -50,12 +50,13 @@ test('Vite reuses one shared browser/SSR authority alias and existing Widget bin
   assert.match(source,/\}\)\(environment\)/);
   assert.doesNotMatch(source,/req\.(?:headers|query).*nonproduction|localStorage|location\.hostname/);
 });
-test('actual Vite config isolates Preview browser/SSR/Widget while preserving production builds',async()=> {
+test('actual Vite config uses canonical Preview browser/SSR and preserves explicitly isolated Demo',async()=> {
   const keys=['LOVABLE_SANDBOX','LOVABLE_PREVIEW_HOST','C3_CONSOLE_ENV'];
   const previous=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
   try {
     process.env.LOVABLE_SANDBOX='1';process.env.LOVABLE_PREVIEW_HOST=PREVIEW_HOST;delete process.env.C3_CONSOLE_ENV;
-    for(const [configuration,expected] of [[dev,true],[{command:'build',mode:'development'},true],[build,false]]) {
+    for(const [configuration,target,expected] of [[dev,undefined,false],[{command:'build',mode:'development'},undefined,false],[build,undefined,false],[dev,'nonproduction',true],[build,'nonproduction',true]]) {
+      if(target===undefined)delete process.env.C3_CONSOLE_ENV;else process.env.C3_CONSOLE_ENV=target;
       const loaded=await loadConfigFromFile(configuration,fileURLToPath(new URL('../../vite.config.ts',import.meta.url)));
       const rawAliases=loaded.config.resolve?.alias ?? [];
       const aliases=Array.isArray(rawAliases)?rawAliases:Object.entries(rawAliases).map(([find,replacement])=>({find,replacement}));
