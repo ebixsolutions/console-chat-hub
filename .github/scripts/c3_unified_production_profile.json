@@ -327,6 +327,7 @@
     "src/lib/api/inbox-read.ts",
     "src/lib/widget-message-merge.test.mjs",
     "src/lib/widget-message-merge.ts",
+    "src/lib/widget-response-status.ts",
     "src/routes/_authenticated/console.conversation-evaluation.index.tsx",
     "src/routes/_authenticated/console.conversations.index.tsx",
     "src/routes/_authenticated/console.feedback-settings.tsx",
@@ -836,16 +837,19 @@
     "supabase/functions/_shared/commerce-semantic-frame.ts": "79f63bfd4fd2898a06e468873f8699032174f7d48237ab8f4b5a15ee5aa64ceb",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "4875e16e9014b5362eb6e2de62f4df991a5bd8dda3f91ba7f1a231fef1589109",
     "supabase/functions/_shared/conversation-semantic-contract.ts": "1880fbb696b1ce3d7a68a9e47a18843186ebe25052f1a06d29297315803b336f",
-    "supabase/functions/_shared/conversational-routing.ts": "b67e482ef3363b0e4e543e179b167cb0209108f0ea4ad94db0e0ad2b7979a7df",
+    "supabase/functions/_shared/conversational-routing.ts": "a79deffae2e221cee326fbf5774e14d167036ffa52015d9c53e3bdc14c47dc7a",
     "supabase/functions/_shared/generation-terminal-guard.ts": "4576400a0c5ce6d3db2706d7fc3b0ca352d7d11152dffe72f345ecab228ea306",
     "supabase/functions/_shared/llm-router.ts": "14fab1bbaa9ff7bf0c08f13e160e3c025db169e8c289317606e249621b4b52c7",
     "supabase/functions/_shared/natural-customer-response.ts": "eb3f564e33dfb12fe34397d9e533b4fa637d2722766f6a54cf6433146e561877",
     "supabase/functions/_shared/vertex-generation-config.ts": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6",
     "supabase/functions/generate-reply/index.ts": "c758eaef67357bd19722a4cd9bf67d06a43038d0ec109695b21880cbf675e39e",
-    "tests/emergency-p0/chain.test.mjs": "802711d5245f59c892a3344294d01eb07a10afb9173d74d1bc5ec280bed5d384",
+    "tests/emergency-p0/chain.test.mjs": "66f2c86ef382aa510845e11f847e90df1985088d84b60f5f14374e8f4608246d",
     "tests/emergency-p0/provider-request.test.ts": "8ac71c7d1c3f5933a3e217ddab6531d0756d2f4f5bd812bfc3d8454a0bb85b5e",
     ".github/workflows/director-task2-semantic-regression-deploy.yml": "0dd7815670c960155fac6ef1bb1406d07428234871277719d5fd6aa896f09d56",
-    "supabase/functions/_shared/uat-execution-contract.ts": "99c14eeb655b497debce40984c824dd40bbd2240810394918650338df27aaccf"
+    "supabase/functions/_shared/uat-execution-contract.ts": "99c14eeb655b497debce40984c824dd40bbd2240810394918650338df27aaccf",
+    "supabase/functions/_shared/handoff-intent.ts": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262",
+    "src/routes/_authenticated/console.widget-preview.tsx": "f1e59323d2b35a1276e84108c47706ec92e85a16845dc897d782e9bdcde356c2",
+    "src/lib/widget-response-status.ts": "650f86569b28ce72b1ada2f4bcee9bf8806abcc7e3d066e550a420c90c311112"
   },
   "director_functional_deployment_authorized": false,
   "director_emergency_p0_scope": {
@@ -868,6 +872,13 @@
     "starting_head": "197748d092694676f41ab10eed8e0c8d0874659b",
     "actual_failure": "Canonical global Vertex request builder URL rejected by protected UAT caller as UAT_PROVIDER_DENIED before provider dispatch",
     "repair": "Same canonical endpoint builder for strict admission; no model, configured region, reservation, remote-bound guard or token-budget change",
+    "deployment_authorized": false,
+    "paid_dispatch_authorized": false
+  },
+  "director_natural_language_p0_20261014": {
+    "starting_head": "2c44016171249fae268be569e5d3ca486c1ad726",
+    "actual_counterexample": "hi hi how do you do -> technical recovery; complete handler reproduced",
+    "scope": "closed compositional social grammar, shared R1 person/someone recipient grammar and truthful Widget outcome label",
     "deployment_authorized": false,
     "paid_dispatch_authorized": false
   }

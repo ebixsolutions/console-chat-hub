@@ -44,6 +44,7 @@ import {
 } from "@/lib/api/config.service";
 import { supabase } from "@/integrations/supabase/client";
 import { mergeWidgetMessages } from "@/lib/widget-message-merge";
+import { widgetResponseStatus } from "@/lib/widget-response-status";
 
 export const Route = createFileRoute(
   "/_authenticated/console/widget-preview",
@@ -914,7 +915,7 @@ function PreviewWidget({
           row.role === "agent" ? (lang === "zh" ? "真人客服" : "Human agent") : row.role === "system" ? "System" :
           row.role === "assistant" && row.metadata
             ? [
-                row.metadata.grounded === true ? "grounded" : "clarification",
+                widgetResponseStatus(row.metadata),
                 typeof row.metadata.model === "string" ? row.metadata.model : null,
                 typeof row.metadata.full_content_evidence_count === "number"
                   ? `${row.metadata.full_content_evidence_count} full-content evidence`

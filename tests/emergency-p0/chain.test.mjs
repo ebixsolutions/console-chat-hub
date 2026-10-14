@@ -19,6 +19,7 @@ function fixture(text,options={}) {
  const visitor={id:source,conversation_id:ticket,role:'visitor',content:text,is_recalled:false,created_at:'2026-10-14T01:00:00.000Z',metadata:{}};
  const tables={company:[{id:company,is_active:true}],conversations:[conversation],messages:[visitor],conversation_commerce_state:[],conversation_memory_state:[],conversation_memory_state_event:[],c3_memory_reply_lifecycle_receipt:[]};
  if(options.retainedMemory)tables.conversation_memory_state.push({conversation_id:ticket,company_id:company,revision:7,memory:{current_customer_facts:[{key:'subscription_seats',value:17,source_message_id:uuid(30)}]}});
+ if(options.memory)tables.conversation_memory_state.push({conversation_id:ticket,company_id:company,revision:options.memory.memory_revision,source_message_id:options.memory.source_message_id,memory:options.memory});
  const env={SUPABASE_URL:'http://isolated.invalid',SUPABASE_SECRET_KEY:'isolated-fake-key',ENABLE_KB_ADAPTER:'true',LLM_PROVIDER:'vertex',LLM_MODEL_EVALUATION:'gemini-2.5-flash',LLM_MODEL_GENERATION:'gemini-2.5-flash',GOOGLE_PROJECT_ID:'isolated-project',GOOGLE_REGION:'us-central1',GOOGLE_SERVICE_ACCOUNT_JSON:'{}',LLM_TIMEOUT_MS:'5'};
  const network=async (input,init={})=>{
   const url=new URL(input instanceof Request?input.url:String(input)); const method=init.method||'GET';
@@ -86,6 +87,10 @@ function fixture(text,options={}) {
  return {run:async()=>{const response=await handler(new Request('http://isolated.invalid/functions/v1/generate-reply',{method:'POST',body:JSON.stringify({conversation_id:ticket,source_message_id:source})}));return {status:response.status,body:await response.json()};},requests,logs,commits,events,tables,env,load,setMode:v=>{mode=v},setForeign:()=>{foreign=true}};
 }
 const social=['hi how are you',"what's your name",'who are you?','Hey, how have you been?','hello and how are you doing today?','早晨！你今日好唔好？','你好，你是誰？','你叫咩名？','Are you a real person?','Are you an AI assistant?','What can you help me with?','Hi，你係真人嗎？','thank you','明白啦'];
+test('Director natural-language counterexample executes complete handler without semantic or KB dispatch',async()=>{
+ const f=fixture('hi hi how do you do',{mode:'400',retainedMemory:true});const before=JSON.stringify(f.tables.conversation_memory_state);
+ const r=await f.run();assert.equal(r.body.response_route,'natural_small_talk',JSON.stringify(r));assert.equal(r.body.degraded,undefined);assert.equal(f.commits.length,1);assert.equal(JSON.stringify(f.tables.conversation_memory_state),before);assert.equal(f.requests.filter(x=>x.url.includes('aiplatform')).length,0);assert.equal(f.logs.length,0);
+});
 for(const text of social)test('full handler social/identity no provider: '+text,async()=>{
  const f=fixture(text);const result=await f.run();assert.equal(result.status,200);assert.equal(f.commits.length,1);
  assert.equal(f.requests.filter(r=>r.url.includes('aiplatform')).length,0);assert.equal(f.logs.length,0);
@@ -182,4 +187,40 @@ test('canonical endpoint compatibility retains exact project, region, model, sch
 });
 test('global endpoint compatibility never bypasses the original remote-bound database admission',async()=>{
  const f=endpointGuardFixture('global');f.deny();await assert.rejects(f.run(),e=>e.code==='UAT_ADMISSION_DENIED');assert.equal(f.dispatches(),0);assert.deepEqual(f.events,['countTokens','c3_uat_reserve_dispatch']);
+});
+
+// Combinations exercise the bounded speech-act grammar through the real handler.
+// Public regression inputs are not fresh Quality95 holdouts.
+test('whole-turn social grammar generalizes repetitions, orthography and supported languages',async()=>{
+ const acts=['how do you do?','How are you feeling today?','how have you been keeping lately?','how are things going?','how is your day going?','你好嗎？','您最近過得怎麼樣？','近排點呀？','你今日好唔好？','how are u doing?'];
+ for(const act of acts)for(const opening of ['', 'Hi hi! ', 'HELLO\tHEY\n']) {
+  const f=fixture(opening+act,{mode:'400'}),r=await f.run();assert.equal(r.body.response_route,'natural_small_talk',opening+act);assert.equal(f.commits.length,1);assert.equal(f.logs.length,0);assert.equal(f.requests.filter(x=>/aiplatform|rag|context-search/.test(x.url)).length,0);assert.equal(f.commits[0].metadata.transaction_mutation,'NONE');
+ }
+ const f=fixture(Array(20).fill('hi').join(' ')+' how do you do?');assert.equal((await f.run()).body.response_route,'natural_small_talk');
+});
+test('minimal business, quotation, translation, negation and reference contrasts retain the complete semantic input',async()=>{
+ for(const text of ['Hi, how do you do refunds?',"What does ‘how do you do’ mean?",'Please translate "how do you do" into Cantonese.','Hi hi, change my booking to Saturday, but keep the other one.','你好，最近過得怎麼樣這句英文點講？','Hi, not Saturday; keep Friday for the second booking.','How are you doing the cancellation?','How do you do? The subscription is deferred, not cancelled.','Hi, what about the earlier option?','點樣','One person needs a Saturday booking.','Do not connect me to a person. Check the refund policy.','If this fails, connect me to someone.','What does "please connect me to a person" mean?','Hi, I am angry. Just tell me the return policy.']) {
+  const f=fixture(text,{mode:'400'}),r=await f.run();const req=f.requests.find(x=>x.url.includes('aiplatform'));assert(req,text);assert(req.body.contents[0].parts[0].text.includes(text.normalize("NFKC")),JSON.stringify(req.body.contents[0].parts[0].text));assert.equal(r.body.response_route,'terminal_failure_recovery');assert.equal(r.body.generation_success,false);assert.equal(f.commits.length,1);assert(!f.requests.some(x=>/explicit_handoff_tx|required_escalation_handoff_tx|rag|context-search/.test(x.url)));assert.doesNotMatch(r.body.reply,/booking.*(?:changed|updated)|refund.*completed/i);
+ }
+});
+test('canonical nonempty multi-entity memory and pending corrections survive social interruption and return to context',async()=>{
+ const seed=fixture('unused');const memoryModule=seed.load(path.join(root,'supabase/functions/_shared/conversation-long-memory.ts'));
+ const memory=memoryModule.buildCanonicalConversationMemory({conversation_id:ticket,company_id:company,source_message_id:uuid(30),commerce_state_revision:null,commerce_state:null,newest_first:[{id:uuid(30),role:'visitor',content:'Change only booking A to Saturday; keep booking B Friday. Defer the rental and cancel the add-on.',created_at:'2026-10-13T01:00:00Z'}],visitor_turn_count:120,source_created_at:'2026-10-13T01:00:00Z',next_memory_revision:7});
+ Object.assign(memory,{current_goal:'Change booking A only',latest_corrections:['booking A Saturday; booking B Friday'],customer_preferences:['no auto renewal'],cancelled_or_superseded:[{key:'addon',value:'cancelled',authority:'customer',source_message_id:uuid(30),entity_id:null,region:null}],pending_actions:['rental deferred','booking A change not committed'],open_questions:['current rental policy']});
+ assert.equal(memoryModule.isCanonicalConversationMemory(memory),true);const f=fixture('hi hi how do you do',{memory,mode:'400'}),before=JSON.stringify(f.tables.conversation_memory_state);assert.equal((await f.run()).body.response_route,'natural_small_talk');assert.equal(JSON.stringify(f.tables.conversation_memory_state),before);assert(!f.requests.some(x=>x.method==='POST'&&/memory|commerce/.test(x.url)));assert.equal(f.logs.length,0);
+ const follow=fixture('Hi, what about the earlier rental option?',{memory,mode:'400'});const r=await follow.run();assert.equal(r.body.generation_success,false);assert(follow.requests.some(x=>x.url.includes('aiplatform')));assert.equal(JSON.stringify(follow.tables.conversation_memory_state[0].memory),JSON.stringify(memory));
+ const rebuilt=memoryModule.buildCanonicalConversationMemory({previous:memory,conversation_id:ticket,company_id:company,source_message_id:source,commerce_state_revision:null,commerce_state:null,newest_first:[{id:source,role:'visitor',content:'hi hi how do you do',created_at:'2026-10-14T01:00:00Z'}],visitor_turn_count:121,source_created_at:'2026-10-14T01:00:00Z',next_memory_revision:8});assert.equal(rebuilt.current_goal,memory.current_goal);assert.deepEqual(rebuilt.latest_corrections,memory.latest_corrections);assert.deepEqual(rebuilt.cancelled_or_superseded,memory.cancelled_or_superseded);
+});
+test('new social grammar preserves R1, safety, control, revision and concurrent source persistence',async()=>{
+ const r1=fixture('Hi, I do not want to repeat myself. Please connect me to a person.',{mode:'400'});assert.equal((await r1.run()).body.escalation_rule,'R1');assert(r1.requests.some(x=>/explicit_handoff_tx/.test(x.url)));assert.equal(r1.logs.length,0);
+ const h=fixture('how do you do?',{human:true});assert.equal((await h.run()).body.skipped,'human_handling');assert.equal(h.commits.length,0);assert.equal(h.logs.length,0);
+ const foreign=fixture('how do you do?');foreign.setForeign();assert.equal((await foreign.run()).status,400);assert.equal(foreign.commits.length,0);
+ for(const result of ['superseded_source','stale_authorized_revision']){const f=fixture('how do you do?',{rpcResult:result});const r=await f.run();assert(r.body.skipped===result||r.status>=400);assert.equal(f.commits.length,0);}
+ const f=fixture('Hi hi how do you do?');await Promise.all([f.run(),f.run()]);assert.equal(f.commits.length,1);assert.equal(f.logs.length,0);assert.equal(f.commits[0].metadata.b2_expected_company_id,company);
+});
+test('Widget renders actual social, clarification and technical recovery metadata without inventing resolution',async()=>{
+ const f=fixture('how do you do?');await f.run();const status=f.load(path.join(root,'src/lib/widget-response-status.ts')).widgetResponseStatus;assert.equal(status(f.commits[0].metadata),'conversation');
+ for(const mode of ['400','timeout','malformed']){const failed=fixture('Hi, how do you do refunds?',{mode});await failed.run();assert.equal(status(failed.commits[0].metadata),'technical recovery');assert.equal(failed.commits[0].metadata.generation_success,false);}
+ assert.equal(status({response_route:'product_referent_clarification'}),'clarification');assert.equal(status({grounded:true}),'grounded');assert.equal(status({}),'response');assert.equal(status({grounded:true,degraded:true}),'technical recovery');
+ assert(fs.readFileSync(path.join(root,'src/routes/_authenticated/console.widget-preview.tsx'),'utf8').includes('widgetResponseStatus(row.metadata)'));
 });
