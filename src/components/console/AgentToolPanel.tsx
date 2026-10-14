@@ -76,12 +76,16 @@ export function AgentToolPanel({
   const [handoffContext, setHandoffContext] = useState<Record<string, any> | null>(null);
   const [handoffLoading, setHandoffLoading] = useState(false);
   const toolReqIdRef = useRef(0);
+  const handoffReqIdRef = useRef(0);
+  const handoffPendingRef = useRef(false);
 
   // Conversation changes must invalidate every visible/pending tool result.
   // This prevents a slow response from conversation A being rendered after
   // the operator has already switched to conversation B.
   useEffect(() => {
     toolReqIdRef.current += 1;
+    handoffReqIdRef.current += 1;
+    handoffPendingRef.current = false;
     setCs("custom");
     setCi("");
     setTr(null);
@@ -110,16 +114,25 @@ export function AgentToolPanel({
     if (cs === "custom") adjustHeight();
   }, [ci, cs, adjustHeight]);
 
-  useEffect(() => {
-    if (!autoLoadHandoffContext || convStatus === "resolved") return;
-    let cancelled = false;
+  async function prepareHandoffContext() {
+    if (!autoLoadHandoffContext || convStatus === "resolved" || handoffPendingRef.current) return;
+    const reqId = ++handoffReqIdRef.current;
+    handoffPendingRef.current = true;
     setHandoffLoading(true);
-    void supabase.functions.invoke("agent-assist", { body: { tool_type: "handoff_context", conversation_id: conversationId, content: "handoff" } }).then(({ data, error }) => {
-      if (cancelled) return;
+    setTe("");
+    try {
+      const { data, error } = await supabase.functions.invoke("agent-assist", {
+        body: { tool_type: "handoff_context", conversation_id: conversationId, content: "handoff" },
+      });
+      if (handoffReqIdRef.current !== reqId) return;
       if (!error && data?.success) setHandoffContext(data as Record<string, any>);
-    }).finally(() => { if (!cancelled) setHandoffLoading(false); });
-    return () => { cancelled = true; };
-  }, [autoLoadHandoffContext, conversationId, convStatus]);
+      else setTe(lang === "zh" ? "未能準備交接內容，請重試。" : "Could not prepare handoff context. Please retry.");
+    } catch {
+      if (handoffReqIdRef.current === reqId) setTe(lang === "zh" ? "未能準備交接內容，請重試。" : "Could not prepare handoff context. Please retry.");
+    } finally {
+      if (handoffReqIdRef.current === reqId) { handoffPendingRef.current = false; setHandoffLoading(false); }
+    }
+  }
 
   const gc = (): string => {
     if (cs === "draft") return draftText.trim();
@@ -345,6 +358,9 @@ export function AgentToolPanel({
         </>
       )}
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px", fontSize: 11 }}>
+        {autoLoadHandoffContext && <button type="button" disabled={handoffLoading || convStatus === "resolved"} onClick={() => void prepareHandoffContext()}>
+          {lang === "zh" ? "AI 準備交接內容" : "Prepare handoff context with AI"}
+        </button>}
         {autoLoadHandoffContext && (handoffLoading || handoffContext) && (
           <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, marginBottom: 10, background: "#fafafa" }}>
             <div style={{ fontWeight: 700, marginBottom: 6 }}>Warm Handoff Context / 真人接手摘要</div>

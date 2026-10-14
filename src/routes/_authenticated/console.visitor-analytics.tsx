@@ -4,6 +4,7 @@ import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { supabase } from "@/integrations/supabase/client";
 import { Users, AlertCircle, Loader2, MessageSquare, Star, BarChart3 } from "lucide-react";
+import { VisitorAnalyticsDetail } from "@/components/console/VisitorAnalyticsDetail";
 
 export const Route = createFileRoute("/_authenticated/console/visitor-analytics")({
   component: VisitorAnalyticsGuard,
@@ -283,6 +284,7 @@ function VisitorAnalyticsContent() {
           </table>
         </div>
       </div>
+      <VisitorAnalyticsDetail />
     </div>
   );
 }

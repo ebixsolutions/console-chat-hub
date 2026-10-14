@@ -175,6 +175,8 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   const [reloadKey, setReloadKey] = useState(0);
   const [detailReloadKey, setDetailReloadKey] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
+  const [autoEvaluationFor, setAutoEvaluationFor] = useState<string | null>(null);
+  useEffect(() => { if (!canRun) setAutoEvaluationFor(null); }, [canRun]);
   const [runId, setRunId] = useState("");
   const [running, setRunning] = useState(false);
   const [freshness, setFreshness] = useState<Record<string, FreshRow>>({});
@@ -266,6 +268,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
     viewEpoch.current++;
     setRunning(false);
     setSelected(next);
+    setAutoEvaluationFor(null);
     setRunId(next ?? "");
   }, [selected, pageRows]);
 
@@ -277,6 +280,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   const targetEvaluationAvailable = targetRow?.evaluation_available === true;
 
   const selectConversation = (conversationId: string) => {
+    setAutoEvaluationFor(null);
     dwellGeneration.current += 1;
     viewEpoch.current++;
     setRunning(false);
@@ -318,7 +322,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   const selectedRevision = selected ? freshness[selected]?.revision : undefined;
   useEffect(() => {
     // Failed/unknown outcomes never re-arm automatic work; no whole-object dependency.
-    if (!canRun || !selected || !selectedReady || selectedRevision === undefined ||
+    if (!canRun || !selected || autoEvaluationFor !== selected || !selectedReady || selectedRevision === undefined ||
         !["never_evaluated", "dirty", "stale_version"].includes(selectedState ?? "")) return;
     const tuple = ceExecution.capture(selected, String(selectedRevision), "ce_dwell");
     if (!ceExecution.canAuto(tuple)) return;
@@ -327,7 +331,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
       { setTimeout: (callback, delay) => window.setTimeout(callback, delay), clearTimeout: timer => window.clearTimeout(timer as number) },
       () => generation === dwellGeneration.current);
     return () => { cancel(); dwellGeneration.current++; };
-  }, [canRun, selected, selectedReady, selectedState, selectedRevision, executeEvaluation]);
+  }, [canRun, selected, autoEvaluationFor, selectedReady, selectedState, selectedRevision, executeEvaluation]);
 
   const runEvaluation = async () => {
     const id = runId.trim().toLowerCase();
@@ -351,7 +355,12 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
     <div className="h-[calc(100vh-4rem)] min-h-0 bg-[#f7f6f2] p-4">
       <div className="flex h-full min-h-0 flex-col gap-4 lg:flex-row">
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto lg:basis-[40%]">
-          <p className="text-xs text-slate-500">Selected row drives dwell; manual UUID is a separate draft. Transcript ready does not establish registry eligibility (unknown until server response).</p>
+          <label className="text-xs text-slate-600">
+            <input type="checkbox" disabled={!canRun || !selected || !selectedReady}
+              checked={Boolean(selected && autoEvaluationFor === selected)}
+              onChange={e => setAutoEvaluationFor(e.target.checked ? selected : null)} />
+            {t({ en: "Auto-refresh this conversation with AI", zh: "以 AI 自動更新這張對話評估" })}
+          </label>
           <div className="flex flex-wrap items-center gap-2">
             <TabPill label={t(C.pills.all)} count={error ? null : counts.total} active={pill === "all"} onClick={() => setPill("all")} />
             <TabPill label={t(C.pills.evaluated)} count={error ? null : counts.evaluated} active={pill === "evaluated"} onClick={() => setPill("evaluated")} />

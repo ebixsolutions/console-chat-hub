@@ -47,7 +47,7 @@ try{
  reject('generic repair profile cannot authorize different bytes',()=>verifyProductionSource({root:fixture,profile:{...profile,authorized_unified_generic_service_repair_sha256:{}},sourceOnly:true}),/generic_repair_scope_drift/);
  for(const f of Object.keys(profile.authorized_unified_generic_service_repair_sha256)) {
   const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unapproved generic service drift');
-  reject('generic repair source drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/(?:section15_source_drift|generic_repair_source_drift|widget_(?:stability|auth)_source_drift|memory_reply_source_drift)/);
+  reject('generic repair source drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),profile.authorized_director_functional_repair_sha256[f]?/director_functional_source_drift/:/(?:section15_source_drift|generic_repair_source_drift|widget_(?:stability|auth)_source_drift|memory_reply_source_drift)/);
   fs.writeFileSync(path.join(fixture,f),original);
  }
  reject('accepted Demo checkpoint cannot change',()=>verifyProductionSource({root:fixture,profile:{...profile,accepted_demo_checkpoint:{...profile.accepted_demo_checkpoint,head:'0'.repeat(40)}},sourceOnly:true}),/accepted_demo_profile_drift/);

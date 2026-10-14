@@ -886,6 +886,8 @@ jobs:
           set -euo pipefail
           npm install --prefix "$RUNNER_TEMP/c3-console-sdk" --no-audit --no-fund @supabase/supabase-js@2.45.0
           C3_CONSOLE_SDK_ROOT="$RUNNER_TEMP/c3-console-sdk" node --test tests/console-read/handlers.test.mjs
+          npm install --prefix "$RUNNER_TEMP/c3-console-react" --ignore-scripts --no-audit --no-fund react@19.2.0 react-test-renderer@19.2.0
+          C3_REACT_TEST_ROOT="$RUNNER_TEMP/c3-console-react" node --test tests/console-navigation/runtime.test.mjs
           deno check --no-lock --node-modules-dir=none supabase/functions/customer360-local/index.ts supabase/functions/visitor-analytics/index.ts
       - name: Download verified live snapshot outside checkout
         if: env.C3_UNIFIED_SOURCE_PROFILE != 'true'
