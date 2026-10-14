@@ -2313,6 +2313,10 @@ async function persistTerminalRecovery(
         factual_grounding_required: false,
         degraded: true,
         source_error_code: reason.slice(0, 120),
+        recovery_class: "technical_failure",
+        generation_success: false,
+        transaction_mutation: "NONE",
+        source_error_http_status: originalResponse?.status ?? null,
       },
     );
     await cleanupThinking(admin, conversationId, sourceMessageId);
@@ -2322,6 +2326,7 @@ async function persistTerminalRecovery(
           success: true,
           reply,
           degraded: true,
+          generation_success: false,
           response_route: "terminal_failure_recovery",
           idempotent: committed.idempotent,
         }),
@@ -3346,7 +3351,10 @@ async function persistNaturalImmediateResponse(
     (intent.kind === "product_shopping" && intent.product)) return null;
   const content = socialText ? renderSocialTurn(socialText,language) : renderNaturalImmediateResponse(intent, language);
   if (!content) return null;
-  const responseRoute = intent.kind === "greeting"
+  const socialKind = socialText ? classifySocialTurn(socialText) : null;
+  const responseRoute = socialKind === "identity" ? "natural_ai_identity"
+    : socialKind === "wellbeing" ? "natural_small_talk"
+    : intent.kind === "greeting"
     ? "natural_greeting"
     : intent.kind === "product_availability"
     ? "product_availability_clarification"
@@ -3361,7 +3369,8 @@ async function persistNaturalImmediateResponse(
     {
       response_route: responseRoute,
       natural_response_contract: "c3-natural-customer-response-v1",
-      natural_intent: intent.kind,
+      natural_intent: socialKind ?? intent.kind,
+      transaction_mutation: socialKind ? "NONE" : undefined,
       product_reference_present: Boolean(intent.product),
       product_referent_candidates:
         intent.kind === "product_factual_clarification"

@@ -89,10 +89,10 @@ export function terminalRecoveryReply(
   language: "zh-TW" | "zh-CN" | "en",
 ): string {
   if (language === "zh-CN") {
-    return "我目前无法安全完成这次资料核实。为免提供错误内容，请稍后再试，或者直接要求人工客服协助。";
+    return "抱歉，系统暂时未能处理这次消息。请稍后再试，或者直接要求人工客服协助。";
   }
   if (language === "en") {
-    return "I couldn't safely verify that information this time. Please try again, or ask for a human support agent.";
+    return "Sorry, a technical problem prevented me from processing this message. Please try again, or ask for a human support agent.";
   }
-  return "我而家未能安全完成呢次資料核實。為免提供錯誤內容，請稍後再試，或者直接要求真人客服協助。";
+  return "抱歉，系統暫時未能處理呢次訊息。請稍後再試，或者直接要求真人客服協助。";
 }

@@ -1,4 +1,4 @@
-import { classifyConversationalRoute } from "./conversational-routing.ts";
+import { classifyConversationalRoute, classifyNonFactualConversation, type NonFactualConversation } from "./conversational-routing.ts";
 
 export type NaturalResponseLanguage = "zh-TW" | "zh-CN" | "en";
 
@@ -510,15 +510,23 @@ export function requiresCurrentMerchantEvidence(
 }
 
 /** Whole social turns carry no business goal or transaction semantics. */
-export function classifySocialTurn(text: string): "opening" | "acknowledgement" | null {
-  const value = text.normalize("NFKC").trim();
-  if (/^(?:thanks(?:\s+(?:you|a lot))?|thank\s+you|ok(?:ay)?|got\s+it|understood|明白(?:了|啦)?|知道了|收到|好(?:的|呀|啊)?|多謝(?:你)?|謝謝(?:你)?|谢谢(?:你)?)[\s!！.。?？]*$/iu.test(value)) return "acknowledgement";
-  return classifyNaturalCustomerIntent(value).kind === "greeting" ? "opening" : null;
+export function classifySocialTurn(text: string): NonFactualConversation | null {
+  return classifyNonFactualConversation(text) ??
+    (classifyNaturalCustomerIntent(text).kind === "greeting" ? "opening" : null);
 }
 
 export function renderSocialTurn(text: string, language: NaturalResponseLanguage): string | null {
   const kind = classifySocialTurn(text);
   if (!kind) return null;
+  if (kind === "identity") {
+    // No configured name exists in this call path. Do not invent one or use
+    // a merchant/person name from untrusted conversation text.
+    return language === "en" ? "I'm an AI customer support assistant, not a human agent. I can help with your questions here, and you can ask for human support."
+      : language === "zh-CN" ? "我是 AI 客服助手，并非真人客服。我可以在这里协助你处理问题；你也可以要求人工客服。"
+      : "我係 AI 客服助手，並非真人客服。我可以喺呢度協助你處理問題；你亦可以要求真人客服。";
+  }
+  if (kind === "wellbeing") return language === "en" ? "Hi! I'm here and ready to help. What can I help you with?"
+    : language === "zh-CN" ? "你好！我在这里，可以帮你处理什么问题？" : "你好！我喺度，有咩可以幫你？";
   if (kind === "opening") return renderNaturalImmediateResponse({kind:"greeting",product:null},language);
   return language === "en" ? "You're welcome. I'm here if you need anything else." : language === "zh-CN" ? "好的，有需要可以再问我。" : "好，有需要可以再問我。";
 }

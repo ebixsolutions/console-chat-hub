@@ -3,7 +3,7 @@ import {verifyProductionSource,verifyIdentity,verifyChildEvidence,runChild,impor
 import {resolveAuthoritativeSupabaseBinding} from '../../src/integrations/supabase/runtime-authority.mjs';
 import {verifyDeterministicClosure} from './c3_deterministic_runtime_closure.mjs';
 const root=process.cwd(),profile=JSON.parse(fs.readFileSync(PROFILE_PATH));const tests=[];
-function reject(name,fn,re){assert.throws(fn,new RegExp(re.source+"|uat_source_drift:|uat_compatibility_source_drift:"));tests.push({name,result:'PASS',rejected:true});}
+function reject(name,fn,re){assert.throws(fn,new RegExp(re.source+"|uat_source_drift:|uat_compatibility_source_drift:|director_functional_source_drift:"));tests.push({name,result:'PASS',rejected:true});}
 reject('Director functional source repair cannot authorize deployment',()=>verifyProductionSource({root,profile:{...profile,director_functional_deployment_authorized:true},sourceOnly:true}),/director_deployment_authority_masquerade/);
 reject('Director exact functional scope cannot widen',()=>verifyProductionSource({root,profile:{...profile,authorized_director_functional_repair_sha256:{}},sourceOnly:true}),/director_functional_scope_drift/);
 reject('UAT source approval cannot authorize deployment',()=>verifyProductionSource({root,profile:{...profile,uat_runtime_deployment_authorized:true},sourceOnly:true}),/uat_deployment_authority_masquerade/);

@@ -22,7 +22,7 @@ import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { GoogleAuth } from "npm:google-auth-library@9.15.0";
 import { parseJsonObjectLoose, parseVertexResponse } from "./vertex-parse.ts";
-import { buildVertexGenerationConfig } from "./vertex-generation-config.ts";
+import { buildVertexGenerationConfig, buildVertexEndpoint, VertexRequestValidationError, safeVertexErrorDiagnostic } from "./vertex-generation-config.ts";
 
 export type LlmFailureCode =
   | "LLM_CONFIG_MISSING"
@@ -169,6 +169,7 @@ async function recordUsage(
   httpStatus: number,
   usage: LlmUsage,
   code?: string,
+  diagnostic?: Record<string, unknown>,
 ): Promise<void> {
   try {
     await serviceClient()
@@ -188,6 +189,7 @@ async function recordUsage(
           input_tokens: usage.input_tokens,
           output_tokens: usage.output_tokens,
           attempts: usage.attempts,
+          ...(diagnostic ? { provider_diagnostic: diagnostic } : {}),
         },
         response_status: httpStatus,
         response_latency_ms: usage.latency_ms,
@@ -324,13 +326,13 @@ function vertexAdapter(
   responseSchema: Record<string, unknown> | undefined,
   thinkingBudget: number | undefined,
 ): ProviderAdapter {
-  const url =
-    `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:generateContent`;
+  const url = buildVertexEndpoint(projectId, region, model);
 
   return {
     id: "vertex",
     model,
     buildRequest: async () => {
+      const generationConfig = buildVertexGenerationConfig(maxTokens, jsonOutput, responseSchema, thinkingBudget, model);
       const accessToken = await vertexAccessToken(serviceAccountJson);
       return {
         url,
@@ -341,12 +343,7 @@ function vertexAdapter(
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: safeSystem }] },
           contents: [{ role: "user", parts: [{ text: safeUser }] }],
-          generationConfig: buildVertexGenerationConfig(
-            maxTokens,
-            jsonOutput,
-            responseSchema,
-            thinkingBudget,
-          ),
+          generationConfig,
         }),
       };
     },
@@ -865,6 +862,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
   }
 
   let adapter: ProviderAdapter;
+  try {
   if (provider === "vertex") {
     const sa = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON");
     const projectId = Deno.env.get("GOOGLE_PROJECT_ID");
@@ -936,8 +934,18 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
     );
   }
 
+  } catch (error) {
+    if (!(error instanceof VertexRequestValidationError)) throw error;
+    usage.latency_ms = Date.now() - started;
+    const diagnostic = { request_validation: error.reason };
+    log(call.tag, {event:"request_invalid",request_id:requestId,...diagnostic});
+    await recordUsage(call,provider,model!,"failed",0,usage,"LLM_CONFIG_MISSING",diagnostic);
+    return {ok:false,code:"LLM_CONFIG_MISSING",request_id:requestId,usage};
+  }
+
   let lastCode: LlmFailureCode = "LLM_NETWORK";
   let lastStatus: number | undefined;
+  let providerDiagnostic: Record<string, unknown> | undefined;
   let invalidOutputReason: "response_json" | "response_schema" | "empty" | "truncated" | undefined;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -965,6 +973,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           signal: controller.signal,
         }, fetch, () => { usage.attempts++; });
       } catch (e) {
+        if (e instanceof VertexRequestValidationError) { lastCode = "LLM_CONFIG_MISSING"; providerDiagnostic = {request_validation:e.reason}; break; }
         if (e instanceof ModelAccountingError) { lastCode = "LLM_ACCOUNTING_DENIED"; break; }
         const aborted = e instanceof Error && e.name === "AbortError";
         lastCode = aborted ? "LLM_TIMEOUT" : "LLM_NETWORK";
@@ -1001,9 +1010,14 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         break;
       }
       if (!res.ok) {
+        if (adapter.id === "vertex") {
+          try { providerDiagnostic = safeVertexErrorDiagnostic(await res.json()); }
+          catch { providerDiagnostic = {provider_status:"UNKNOWN",provider_error_class:"unreadable"}; }
+        }
         lastCode = "LLM_NON_2XX";
         lastStatus = res.status;
         log(call.tag, {
+          ...(providerDiagnostic ? {provider_diagnostic:providerDiagnostic} : {}),
           event: "attempt_fatal",
           request_id: requestId,
           provider: adapter.id,
@@ -1160,6 +1174,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
     lastStatus ?? 0,
     usage,
     lastCode,
+    providerDiagnostic,
   );
   return {
     ok: false,

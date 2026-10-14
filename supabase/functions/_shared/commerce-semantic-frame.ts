@@ -404,7 +404,32 @@ export const COMMERCE_SEMANTIC_WIRE_SCHEMA: Record<string, unknown> = {
   },
 };
 
+/** Flatten only the provider grammar. All semantic fields remain typed and
+ * bounded by the same decoder/canonical validator after JSON decoding. */
+export const COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA: Record<string, unknown> = {
+  type: "OBJECT",
+  required: ["operation", "confidence", "delta_json"],
+  propertyOrdering: ["operation", "confidence", "delta_json"],
+  properties: {
+    operation: { type: "STRING", enum: [...OPERATIONS] },
+    confidence: { type: "NUMBER", minimum: 0, maximum: 1 },
+    delta_json: { type: "STRING", description: "JSON-encoded object containing this turn's optional semantic fields only; {} when none." },
+  },
+};
+
 export function decodeCommerceSemanticWire(value: unknown): unknown {
+  if (!isRecord(value)) return null;
+  if (Object.hasOwn(value, "delta_json")) {
+    try {
+      if (Object.keys(value).some(k => !["operation", "confidence", "delta_json"].includes(k)) ||
+          typeof value.delta_json !== "string" || value.delta_json.length > 24_000) return null;
+      const delta: unknown = JSON.parse(value.delta_json);
+      if (!isRecord(delta) || Object.keys(delta).some(k =>
+        !Object.hasOwn(COMMERCE_SEMANTIC_WIRE_SCHEMA.properties as object, k) ||
+        ["operation", "confidence"].includes(k))) return null;
+      value = { ...delta, operation: value.operation, confidence: value.confidence };
+    } catch { return null; }
+  }
   if (!isRecord(value)) return null;
   const decode = (raw: unknown): unknown => {
     if (typeof raw !== "string" || raw.length > 12_000)

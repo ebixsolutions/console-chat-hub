@@ -3,7 +3,7 @@ import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { requirementMutationText } from "./commerce-state-authority.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
-  COMMERCE_SEMANTIC_WIRE_SCHEMA,
+  COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,
   type CommerceSemanticFrame,
   decodeCommerceSemanticWire,
   normalizeCommerceSemanticFrame,
@@ -307,6 +307,7 @@ export async function interpretCommerceSemantics(
   const result = await callModel({
     purpose: "evaluation",
     system: SYSTEM +
+      "\nOuter JSON has exactly operation, confidence, delta_json in that order. delta_json is a JSON-encoded object containing ALL other supplied current-turn fields (language, intent, topic, entities, referents, customer_facts, lifecycle, correction, negations, requested_facts, ambiguity). Omit defaults there; use {} encoded as a string if no optional fields. Do not put operation or confidence inside delta_json. The following wire rules apply INSIDE delta_json.\n" +
       "\nProvider wire format: customer_facts records use value_json (a JSON-encoded typed value) instead of value. Entity attributes and constraints use attributes_json and constraints_json (JSON-encoded objects) instead of attributes/constraints. Preserve all named values/units, false, zero and null. All other fields use the stated contract. For corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraints and customer_correction=true. Output budget 4096 tokens; omit unchanged/default fields. Do not include reasoning.",
     user: buildUser(input, persistentStateSummary),
     maxTokens: 4096,
@@ -315,7 +316,7 @@ export async function interpretCommerceSemantics(
     conversationId: input.conversation_id,
     tag: "commerce-semantic-interpreter",
     responseFormat: "json",
-    responseSchema: COMMERCE_SEMANTIC_WIRE_SCHEMA,
+    responseSchema: COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,
     thinkingBudget: 0,
     signal: input.signal,
   });

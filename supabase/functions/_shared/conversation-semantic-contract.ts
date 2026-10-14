@@ -1,3 +1,4 @@
+import { classifyNonFactualConversation } from "./conversational-routing.ts";
 export type SemanticLanguage = "zh-TW" | "zh-CN" | "en";
 
 export type ConversationOperation =
@@ -187,7 +188,7 @@ export function classifyCanonicalConversationTurn(
       evidence_authority: "NONE",
     });
   }
-  if (!latest || TRIVIAL.test(latest)) {
+  if (!latest || TRIVIAL.test(latest) || classifyNonFactualConversation(latestInput)) {
     return base("TRIVIAL", "trivial_or_greeting", { requires_new_kb_retrieval: false, evidence_authority: "NONE" });
   }
   if (CURRENT_REQUIREMENTS_SUMMARY.test(latest)) {
