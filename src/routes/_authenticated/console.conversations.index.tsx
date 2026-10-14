@@ -19,6 +19,7 @@ import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { CRMPanel, RIGHT_COPY, buildBoundedContext, computeContextRevisionKey } from "@/components/console/CRMPanel";
 import { MessageAttachment, isAttachmentMessage, type AttachmentMeta } from "@/components/console/MessageAttachment";
 import { AttachmentButtons, EmojiPickerButton, insertAtCaret } from "@/components/console/ComposerTools";
+import { readInboxConversations, readInboxPreviews } from "@/lib/api/inbox-read";
 
 
 export const Route = createFileRoute("/_authenticated/console/conversations/")({
@@ -409,6 +410,7 @@ function SinglePageInbox() {
   const [activityRows, setActivityRows] = useState<ActivityEvent[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
+  const conversationLoadRef = useRef(0);
 
   const lang = useConsoleLang();
   const { role: currentRole } = useCurrentRole();
@@ -417,13 +419,18 @@ function SinglePageInbox() {
   const [pendingUseText, setPendingUseText] = useState("");
 
   async function loadConversations() {
-    const { data: convs, error: cErr } = await supabase
+    const loadId = ++conversationLoadRef.current;
+    const stale = () => loadId !== conversationLoadRef.current;
+    const { data: convs, error: cErr } = await readInboxConversations((from, to) => supabase
       .from("conversations")
       .select(
         `id,status,priority,updated_at,created_at,assigned_agent_id,channel_config:channel_config_id(name),visitor_session:visitor_session_id(id,visitor_metadata)`,
+        { count: "exact" },
       )
       .order("updated_at", { ascending: false })
-      .limit(50);
+      .order("id", { ascending: false })
+      .range(from, to));
+    if (stale()) return;
     if (cErr) {
       setError(cErr.message);
       return;
@@ -432,28 +439,24 @@ function SinglePageInbox() {
     const agentIds = [...new Set(list.filter((c) => c.assigned_agent_id).map((c) => c.assigned_agent_id as string))];
     const agentMap: Record<string, string> = {};
     if (agentIds.length > 0) {
-      const { data: ags } = await supabase.from("agent_profile").select("id,display_name").in("id", agentIds);
+      const { data: ags, error: agentError } = await supabase.from("agent_profile").select("id,display_name").in("id", agentIds);
+      if (stale()) return;
+      if (agentError) { setError(agentError.message); return; }
       ags?.forEach((a) => {
         agentMap[a.id] = a.display_name;
       });
     }
-    const previews: Record<string, string> = {};
-    if (list.length > 0) {
-      const { data: recent } = await supabase
+    const previewResult = await readInboxPreviews(list.map(c => c.id), (ids, from, to) => supabase
         .from("messages")
         .select("conversation_id,content,created_at,is_recalled")
-        .in(
-          "conversation_id",
-          list.map((c) => c.id),
-        )
+        .in("conversation_id", ids)
         .neq("content", "__THINKING__")
         .order("created_at", { ascending: false })
-        .limit(500);
-      recent?.forEach((m) => {
-        if (!previews[m.conversation_id])
-          previews[m.conversation_id] = m.is_recalled ? "[訊息已撤回]" : (m.content as string).slice(0, 80);
-      });
-    }
+        .order("id", { ascending: false })
+        .range(from, to));
+    if (stale()) return;
+    if (previewResult.error) { setError(previewResult.error.message); return; }
+    const previews = previewResult.data;
     setConversations(
       list.map((c) => ({
         ...c,
