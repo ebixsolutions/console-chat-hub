@@ -321,8 +321,10 @@
     "src/integrations/supabase/previewAuthStorage.ts",
     "src/lib/api/config.service.ts",
     "src/lib/api/feedback.service.ts",
+    "src/lib/api/inbox-read.ts",
     "src/lib/widget-message-merge.test.mjs",
     "src/lib/widget-message-merge.ts",
+    "src/routes/_authenticated/console.conversations.index.tsx",
     "src/routes/_authenticated/console.feedback-settings.tsx",
     "src/routes/_authenticated/console.widget-preview.tsx",
     "supabase/config.toml",
@@ -400,6 +402,7 @@
     "tests/c3-widget-live-auth/handler.test.mjs",
     "tests/e2e/c3_widget_isolated_auth.mjs",
     "tests/e2e/c3_widget_isolated_setup.sh",
+    "tests/inbox-read.test.mjs",
     "tests/model-accounting/accounting.test.ts",
     "tests/model-accounting/bootstrap.sql",
     "tests/model-accounting/callback.test.ts",
@@ -795,5 +798,13 @@
     "tests/uat-runtime/native-postgres.py": "2f6d7841d09eae1497293be6fc10df6a77f5aa316ae6cb2571d2db160628676f"
   },
   "uat_compatibility_round": 2,
-  "uat_compatibility_parent": "33228773a8c28db263a00236a1a351b205f45287"
+  "uat_compatibility_parent": "33228773a8c28db263a00236a1a351b205f45287",
+  "authorized_director_functional_repair_sha256": {
+    "src/routes/_authenticated/console.conversations.index.tsx": "0aebb930f8c4e5ebf6dc826b2dd786517b00aea711d757dc6428d889d1f49bff",
+    "src/lib/api/inbox-read.ts": "3d8f045830697b6128c0cdf9db91c9bd3bdded50f931c2287423a074d7c2796b",
+    "tests/inbox-read.test.mjs": "c8bcefd0ed786792019091db182b981d7edc9da433756b5e863509494f00d241",
+    "tests/c3-b12-registry/build-payloads.py": "275c35b1cbe5a8d6a44460cdca95f50466a39af923c9742bb46155af605923aa",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "63797a7962998f82f28d1188e7972e279afd7d626109181e7c38a99e738a20ef"
+  },
+  "director_functional_deployment_authorized": false
 }
