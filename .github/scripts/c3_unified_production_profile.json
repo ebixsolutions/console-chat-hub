@@ -340,6 +340,7 @@
     "supabase/functions/_shared/commerce-semantic-interpreter.ts",
     "supabase/functions/_shared/commerce-state-authority.ts",
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
+    "supabase/functions/_shared/complete-scoped-read.ts",
     "supabase/functions/_shared/contextual-customer-update.test.ts",
     "supabase/functions/_shared/conversation-intelligence.ts",
     "supabase/functions/_shared/conversation-long-memory.ts",
@@ -374,10 +375,12 @@
     "supabase/functions/ce-evaluation-worker/index.ts",
     "supabase/functions/conversation-evaluate/index.ts",
     "supabase/functions/customer360-coach-sync/index.ts",
+    "supabase/functions/customer360-local/index.ts",
     "supabase/functions/deliver-feedback-request/index.ts",
     "supabase/functions/generate-reply/index.ts",
     "supabase/functions/kb-search-proxy/index.ts",
     "supabase/functions/model-attempt-accounting/index.ts",
+    "supabase/functions/visitor-analytics/index.ts",
     "supabase/functions/widget-live-ai-test/index.ts",
     "supabase/migrations/20261006120000_c3_uat_learning_isolation.sql",
     "supabase/migrations/20261006120001_c3_uat_feedback_isolation.sql",
@@ -400,6 +403,7 @@
     "tests/c3-uat-isolation/current-schema.sql",
     "tests/c3-uat-isolation/native-guards.py",
     "tests/c3-widget-live-auth/handler.test.mjs",
+    "tests/console-read/handlers.test.mjs",
     "tests/e2e/c3_widget_isolated_auth.mjs",
     "tests/e2e/c3_widget_isolated_setup.sh",
     "tests/inbox-read.test.mjs",
@@ -804,7 +808,12 @@
     "src/lib/api/inbox-read.ts": "3d8f045830697b6128c0cdf9db91c9bd3bdded50f931c2287423a074d7c2796b",
     "tests/inbox-read.test.mjs": "c8bcefd0ed786792019091db182b981d7edc9da433756b5e863509494f00d241",
     "tests/c3-b12-registry/build-payloads.py": "275c35b1cbe5a8d6a44460cdca95f50466a39af923c9742bb46155af605923aa",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "63797a7962998f82f28d1188e7972e279afd7d626109181e7c38a99e738a20ef"
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "6abbbea924db15f5450c73f8e6d703b32c64400bfc48c49faa6f881514a667b4",
+    "supabase/functions/customer360-local/index.ts": "b5e1fc820275f1a69dca8a0bd15916bf86b2c4f94d85d3a76f25d5d2e5edbc2b",
+    "supabase/functions/visitor-analytics/index.ts": "0140bfd9436187bae407e32052274a2d5172d6ba91e96c13deb754347fcde502",
+    "supabase/functions/_shared/complete-scoped-read.ts": "c6ec3067df72ba1cfd7ca4b043bb451dc123cf2a191613193a2591a612d15e96",
+    "tests/console-read/handlers.test.mjs": "f0a881d68e411f7edfaa61e499011c58b0bda84d372c4963fd66f6a12c195af8",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "316a633929e385958f810bca566e63984134a6cb7587b773c82f9b41470f8264"
   },
   "director_functional_deployment_authorized": false
 }

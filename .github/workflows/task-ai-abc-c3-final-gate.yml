@@ -880,6 +880,13 @@ jobs:
           npm ci
           node --test tests/c3-widget-live-auth/handler.test.mjs src/lib/widget-message-merge.test.mjs
           node --check public/widget/chat.js
+      - name: Customer360 and Visitor Analytics complete scoped reads
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/c3-console-sdk" --no-audit --no-fund @supabase/supabase-js@2.45.0
+          C3_CONSOLE_SDK_ROOT="$RUNNER_TEMP/c3-console-sdk" node --test tests/console-read/handlers.test.mjs
+          deno check --no-lock --node-modules-dir=none supabase/functions/customer360-local/index.ts supabase/functions/visitor-analytics/index.ts
       - name: Download verified live snapshot outside checkout
         if: env.C3_UNIFIED_SOURCE_PROFILE != 'true'
         uses: actions/download-artifact@v4
