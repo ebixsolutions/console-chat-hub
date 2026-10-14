@@ -32,7 +32,7 @@ export type NonFactualConversation = "opening" | "acknowledgement" | "wellbeing"
 const SOCIAL_ACTS: Array<[NonFactualConversation, RegExp]> = [
   ["opening", new RegExp(`^${GREETING_TOKEN}(?=$|[\\s\\p{P}~～]|你|您)`, "iu")],
   ["wellbeing", /^(?:how\s+(?:are|r)\s+(?:you|u)(?:\s+doing)?(?:\s+(?:today|this\s+(?:morning|afternoon|evening)))?|how(?:'s| is)\s+it\s+going|how\s+have\s+you\s+been|你(?:今日|今天|最近)?(?:好嗎|好吗|好唔好|點呀|點啊|點樣|点样|近排點|最近怎麼樣|最近怎么样)|最近(?:好嗎|好吗)|食咗飯未)(?=$|[\s\p{P}])/iu],
-  ["identity", /^(?:who\s+(?:are|r)\s+(?:you|u)|what(?:['’]s| is)\s+your\s+(?:name|role)|what\s+(?:is|are)\s+you(?:r\s+(?:name|role))?|what\s+do\s+you\s+do|(?:are|r)\s+(?:you|u)\s+(?:an?\s+)?(?:ai|bot|chatbot|robot|human|person|real\s+person)|你(?:係|是)(?:邊個|誰|谁|咩|什麼|什么|真人|人類|人类|機械人|机器人|AI|人工智能)(?:嗎|吗|呀|啊)?|你(?:叫|嘅名係|的名字是)(?:咩|什麼|什么)(?:名(?:字)?)?|你(?:有咩|有什麼|有什么)(?:職責|职责)|你(?:是|係)做(?:什麼|什么|咩)(?:的|嘅)?)(?=$|[\s\p{P}])/iu],
+  ["identity", /^(?:who\s+(?:are|r)\s+(?:you|u)|what(?:['’]s| is)\s+your\s+(?:name|role)|what\s+(?:is|are)\s+you(?:r\s+(?:name|role))?|what\s+do\s+you\s+do|what\s+can\s+you\s+(?:do|help(?:\s+me)?\s+with)|(?:are|r)\s+(?:you|u)\s+(?:an?\s+)?(?:ai(?:\s+(?:assistant|customer\s+support\s+assistant))?|bot|chatbot|robot|human|person|real\s+person)|你(?:係|是)(?:邊個|誰|谁|咩|什麼|什么|真人|人類|人类|機械人|机器人|AI|人工智能)(?:嗎|吗|呀|啊)?|你(?:叫|嘅名係|的名字是)(?:咩|什麼|什么)(?:名(?:字)?)?|你(?:有咩|有什麼|有什么)(?:職責|职责)|你(?:是|係)做(?:什麼|什么|咩)(?:的|嘅)?)(?=$|[\s\p{P}])/iu],
   ["acknowledgement", /^(?:thanks(?:\s+(?:a lot|you))?|thank\s+you|ok(?:ay)?|got\s+it|understood|明白(?:了|啦)?|知道了|收到|好(?:的|呀|啊)?|多謝(?:你)?|謝謝(?:你)?|谢谢(?:你)?)(?=$|[\s\p{P}])/iu],
 ];
 export function classifyNonFactualConversation(text: string): NonFactualConversation | null {

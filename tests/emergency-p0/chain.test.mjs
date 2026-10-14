@@ -85,7 +85,7 @@ function fixture(text,options={}) {
  load(path.join(root,'supabase/functions/generate-reply/index.ts'));
  return {run:async()=>{const response=await handler(new Request('http://isolated.invalid/functions/v1/generate-reply',{method:'POST',body:JSON.stringify({conversation_id:ticket,source_message_id:source})}));return {status:response.status,body:await response.json()};},requests,logs,commits,events,tables,env,load,setMode:v=>{mode=v},setForeign:()=>{foreign=true}};
 }
-const social=['hi how are you',"what's your name",'who are you?','Hey, how have you been?','hello and how are you doing today?','早晨！你今日好唔好？','你好，你是誰？','你叫咩名？','Are you a real person?','Hi，你係真人嗎？','thank you','明白啦'];
+const social=['hi how are you',"what's your name",'who are you?','Hey, how have you been?','hello and how are you doing today?','早晨！你今日好唔好？','你好，你是誰？','你叫咩名？','Are you a real person?','Are you an AI assistant?','What can you help me with?','Hi，你係真人嗎？','thank you','明白啦'];
 for(const text of social)test('full handler social/identity no provider: '+text,async()=>{
  const f=fixture(text);const result=await f.run();assert.equal(result.status,200);assert.equal(f.commits.length,1);
  assert.equal(f.requests.filter(r=>r.url.includes('aiplatform')).length,0);assert.equal(f.logs.length,0);
