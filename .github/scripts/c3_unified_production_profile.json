@@ -923,7 +923,8 @@
     "tests/emergency-p0/chain.test.mjs": "848d656b6534b8a9b83ca5e473420dc24e36fd7c42abb63486faa2e0fcf799ee",
     "tests/model-accounting/source-coverage.test.mjs": "27b857288b2976f5b9b70f41c21a5b8a3cf1e70af09ea09bf73d51ff2a4b0b67",
     "tests/uat-runtime/contract.test.ts": "975e948dfcf55d1c14e105c826091fe72d043b9a1f089d9918e31151cffe80d4",
-    "tests/uat-runtime/live-execution-postgres.py": "3ba7b342a12897777c9d51c7be1a1de4bbc69e670eeae6a86958bc69d6cf74d1"
+    "tests/uat-runtime/live-execution-postgres.py": "3ba7b342a12897777c9d51c7be1a1de4bbc69e670eeae6a86958bc69d6cf74d1",
+    "tests/uat-runtime/native-compatibility.ts": "2b8c2a922d1ff2184db5c47a7b46b2e7bf987d06a7eb619854f19d742f90b703"
   },
   "live_execution_deployment_authorized": false
 }
