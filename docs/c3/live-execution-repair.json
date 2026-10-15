@@ -1,0 +1,233 @@
+{
+  "contract_id": "C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1",
+  "revision": "rev1.5-UNIFIED-GENERIC-SERVICE-AND-FULL-UAT",
+  "amendment": "Director live execution regression repair 2026-10-15; same combined P0; no Supervisor reset",
+  "baseline": {
+    "head": "d45bb022137280603cda5102660946ff01a4e049",
+    "tree": "a3c358ed6eafc263f933db437b720a1ebc5d27e8",
+    "production_generate_reply": 219
+  },
+  "source_status": "IMPLEMENTED; validation recorded in original Closure Contract after exact-HEAD CI",
+  "proved": [
+    "Production synthetic company uses guarded UAT path; reserve/finalize RPCs absent by direct read",
+    "uatRun thrown before router request loop was not handled as an admission result; handler caught only Error.name",
+    "Terminal semantic failures were all marked retryable; underlying admission cause and request/source relation were lost",
+    "Identity ellipsis and presence questions fell through to semantic path; the passing 51-case fixture used another company"
+  ],
+  "not_proved": [
+    "No October 15 upstream_call_log rows found in the queried ticket/time scope does not establish zero remote calls",
+    "October 14 HTTP400 does not establish the October 15 root cause",
+    "No new Hosted Provider, KB or actual handoff acceptance has run"
+  ],
+  "rules_to_source": [
+    {
+      "rules": [
+        "CS-01",
+        "CS-02",
+        "CS-03",
+        "CS-04",
+        "CS-05"
+      ],
+      "existing_contract": "15-row semantic contract; original Section15 and 3899 cases retained",
+      "source": [
+        "commerce-semantic-interpreter.ts",
+        "llm-router.ts",
+        "kb-client.ts",
+        "generate-reply/index.ts"
+      ],
+      "assertions": [
+        "actual synthetic full business chain retains stage outcomes",
+        "actual synthetic KB adapter preserves admission separately from empty knowledge"
+      ]
+    },
+    {
+      "rules": [
+        "EM-01",
+        "EM-02",
+        "EM-03"
+      ],
+      "source": [
+        "conversational-routing.ts",
+        "natural-customer-response.ts"
+      ],
+      "assertions": [
+        "actual synthetic identity/presence remains local without activated model",
+        "presence after an unresolved failure acknowledges actual context without asserting handoff or resolution"
+      ]
+    },
+    {
+      "rules": [
+        "HO-01",
+        "HO-02",
+        "HO-03",
+        "HO-04",
+        "HO-05",
+        "HO-06",
+        "HO-07"
+      ],
+      "source": [
+        "handoff-intent.ts (unchanged)",
+        "generate-reply/index.ts",
+        "widget-live-ai-test/index.ts"
+      ],
+      "assertions": [
+        "synthetic explicit R1 and human-control do not depend on the missing model lease",
+        "actual synthetic explicit human request works without lease"
+      ]
+    },
+    {
+      "rules": [
+        "Salesforce/Zendesk authority and SLA",
+        "Chewy empathy plus action"
+      ],
+      "source": [
+        "generation-terminal-guard.ts",
+        "execution-failure.ts",
+        "widget-response-status.ts"
+      ],
+      "assertions": [
+        "diagnostics reject secrets, raw body, prompt-shaped codes and unsafe correlation identifiers",
+        "minimal social contrast preserves business or quoted meaning"
+      ]
+    },
+    {
+      "rules": [
+        "Zendesk independent QA/calibration"
+      ],
+      "source": [
+        "Original Closure Contract thresholds unchanged"
+      ],
+      "assertions": [
+        "Independent human blind reviewers remain required; isolated pass is not Quality95"
+      ]
+    }
+  ],
+  "execution_dependencies": {
+    "functions": [
+      "c3_uat_reserve_dispatch",
+      "c3_uat_finalize_dispatch",
+      "c3_uat_execution_status"
+    ],
+    "sql": [
+      "sql/c3_live_execution_dependencies.sql",
+      "sql/c3_uat_execution_status.sql"
+    ],
+    "ce_training_change": false,
+    "billing_hardening": "DEFERRED_POST_UAT",
+    "kb_bounds_verified": false
+  },
+  "exact_scope_decision": {
+    "status": "PROPOSED_NOT_AUTHORIZED_NOT_EXECUTED",
+    "same_backend": "nrfxhqabwblzxoushgnm",
+    "functions": [
+      "generate-reply",
+      "widget-live-ai-test",
+      "kb-search-proxy"
+    ],
+    "baseline_versions": {
+      "generate-reply": 219,
+      "widget-live-ai-test": 13,
+      "kb-search-proxy": 26
+    },
+    "target_identity": "Exact git HEAD/TREE recorded by original Closure Contract after final commit; all local import dependencies packaged, not a 73-file replacement repo",
+    "normal_auth": {
+      "origin": "https://id-preview--4dbf593e-577e-4af4-a553-460441c34473.lovable.app",
+      "route": "/console/conversations",
+      "actor_user_id": "4348ee35-9632-4626-a846-e313bcc4a5f9",
+      "rule": "normal secure Admin sign-in only; no credential extraction; confirm active role and tenant before operations"
+    },
+    "company": "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+    "channel": "0405282f-77dc-47cf-8074-99dd3dc6c393",
+    "run_id": "71657f35-88c4-4a73-a2e7-9abde643ad74",
+    "conversation_ids": [
+      "c7d3fa80-ed64-42d2-a48e-cda98dce5d71",
+      "a869150f-a69d-41ad-bb39-c070be8cc708"
+    ],
+    "session_ids": [
+      "4579cc72-1d8e-464f-b393-cae4f634bb55",
+      "97084394-abf7-4d50-ab18-d31092bc1384"
+    ],
+    "new_caps": {
+      "conversations": 2,
+      "visitor": 5,
+      "assistant": 5,
+      "vertex_generateContent": 12,
+      "vertex_countTokens": 12,
+      "singapore_rag": 0,
+      "embedding": 0,
+      "kb_tool": 0,
+      "per_request_attempts": 6,
+      "reserved_exposure_microusd": 400000,
+      "serial_inflight": 1
+    },
+    "cumulative_caps_retained": {
+      "conversations": 224,
+      "visitor": 480,
+      "assistant": 427,
+      "new_upstream_attempt_authorization": 3520,
+      "rule": "These are historical aggregate limits, not reset by the new lease; reconcile actual counters before any fresh write. Abort if the new cap would exceed any retained limit. Original unused 1V/1A smoke is not consumed."
+    },
+    "fresh_business_alternative": {
+      "why": "Original remote Calibration is not executable while remote-bound evidence is absent. Use the existing complete handler for customer-supplied arithmetic, corrections and real R1 without remote KB calls; no substitute backend or semantic endpoint.",
+      "steps": [
+        {
+          "conversation": 1,
+          "text": "我們活動有12張成人票，每張80港元，另有3張兒童票，每張40港元。未付款，只計算這批票總額，不要查價或預訂。",
+          "expected": "1080 HKD; live semantic Provider result, customer-only authority, no price lookup or transaction claim; persistent source-bound reply"
+        },
+        {
+          "conversation": 1,
+          "text": "更正：兒童票改為2張，每張40港元；成人票仍12張，每張80港元。只計算新總額，不要查價或預訂。",
+          "expected": "1040 HKD; latest correction; no paid/booked/completed inference; same ticket and current memory"
+        },
+        {
+          "conversation": 1,
+          "text": "請轉真人客服，連同剛才的更正及未付款狀態交給客服。",
+          "expected": "R1 actual handoff transaction and same-ticket Summary; no model/KB dependence; no claim of assigned or online staff"
+        },
+        {
+          "conversation": 2,
+          "text": "what your name",
+          "expected": "truthful AI identity; no model/KB dispatch; no business state mutation"
+        },
+        {
+          "conversation": 2,
+          "text": "有人吗？",
+          "expected": "truthful AI presence, context preserved; no claim of human availability/transfer"
+        }
+      ]
+    },
+    "necessary_writes": [
+      "Only three temporary SQL functions and three restrictive upstream-log policies from the two exact SQL files; CE stays unchanged",
+      "One protected lease row, two synthetic visitor sessions and two synthetic conversations in the exact registered company/channel, exclude_training=true and same owner",
+      "Normal Auth session/audit, 5 Visitor + at most5 Assistant, existing Commerce/Memory CAS/event/lineage/trace receipts, model reservation/finalization receipts, one actual R1 handoff/summary and existing notification transaction"
+    ],
+    "server_configuration": [
+      "C3_TEMP_UAT_RUN_ID=71657f35-88c4-4a73-a2e7-9abde643ad74",
+      "C3_TEMP_UAT_SOURCE_REVISION=c3-3322877-bounded-uat-r2",
+      "Preserve existing provider, project, region, JWT, import map, entrypoints and secret values; only the two temporary execution config names change with preimage capture"
+    ],
+    "observe_stop": [
+      "Deny before mutation on source/baseline/config drift, missing legal Admin membership/tenant/channel isolation or aggregate cap evidence",
+      "Stop at first unknown outcome, missing usage observation, replay/conflict, cross-tenant mismatch or unaccounted reservation; pause lease; never refund or retry unknown",
+      "Stop at any attempted remote KB/embedding call, fabricated transaction/human claim or wrong arithmetic; preserve failure denominator",
+      "No automatic continuation to Quality95 or formal UAT; original sequence and human blind-review obligations remain"
+    ],
+    "rollback": [
+      "Captured complete live Function/config baseline for each of the three targets, verify exact file hashes before any deploy; restore those exact bytes/config if source smoke fails",
+      "Pause the exact lease and prove no in-flight dispatch; retain audit/data evidence",
+      "Run status rollback then dependency rollback with exact body-hash guards; CE baseline must remain byte-identical",
+      "Restore temporary config preimages; do not delete the failed historical tickets or their messages"
+    ],
+    "remote_kb_scope": "NOT INCLUDED. kb_bounds_verified remains false, UAT_REMOTE_BOUND_UNVERIFIED stays enforced. Real current-KB positive evidence and full Section15 remain required and unaccepted.",
+    "lease_sql": "sql/c3_live_execution_qa_lease_proposed.sql"
+  },
+  "flags": {
+    "VIBECODE_FUNCTIONAL_HANDOFF_READY": false,
+    "FUNCTIONAL_UAT_ACCEPTED": false,
+    "PRODUCTION_RELEASE_READY": false,
+    "uat_start_allowed": false,
+    "formal_uat_completed": 0,
+    "formal_uat_required": 3899
+  }
+}

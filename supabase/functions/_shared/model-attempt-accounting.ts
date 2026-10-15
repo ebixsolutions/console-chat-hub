@@ -45,7 +45,12 @@ export async function accountedModelFetch(
   try {
     const mode = await trustedDispatchScope(db, meta.companyId, meta.conversationId, meta.legacyAuthority);
     if (mode === "uat") return await uatFetch(db, {...meta, operationId: `${meta.slot}:${meta.operationId}`}, url, init, upstream, onDispatch);
-  } catch (e) { throw new ModelAccountingError(e instanceof UatDenied ? e.code : "UAT_DISPATCH_DENIED"); }
+  } catch (e) {
+    if (e instanceof UatDenied) throw new ModelAccountingError(e.code);
+    // A failed provider transport is not an admission denial. Unknown outcomes
+    // have already been durably paused by uatFetch before this error returns.
+    throw e;
+  }
   // Established authenticated Production path: preserve exact provider request/response.
   // Permanent Guard is deferred; no new endpoint, provider, credential or tenant scope.
   onDispatch?.();

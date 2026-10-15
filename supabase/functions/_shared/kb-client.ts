@@ -1,3 +1,4 @@
+import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
 import { legacyPreactivationAuthority } from "./uat-execution-contract.ts";
 import { accountedModelFetch } from "./model-attempt-accounting.ts";
 import {
@@ -107,6 +108,7 @@ export interface KBRagResponse {
   dropped_without_document_id?: number;
   dropped_without_content?: number;
   error_code?: string;
+  failure?: ExecutionFailure;
 }
 export interface KBEndpointConfig {
   baseUrl: string;
@@ -488,7 +490,7 @@ export async function fetchKBRag(
 ): Promise<KBRagResponse> {
   const query = queryInput.query.trim();
   if (!query) {
-    return { success: true, chunks: [], citations: [], documents: [] };
+    return { success: true, chunks: [], citations: [], documents: [], failure:executionFailure("KB_NO_MATCH") };
   }
 
   const companyId = singaporeCompanyIdFromScope(scope);
@@ -516,6 +518,7 @@ export async function fetchKBRag(
       citations: [],
       documents: [],
       error_code: credential.error_code,
+      failure:executionFailure("KB_TOOL_FAILURE",{stage:"config"}),
     };
   }
 
@@ -540,14 +543,9 @@ export async function fetchKBRag(
       "kb",
       requestBody,
     );
-  } catch {
-    return {
-      success: false,
-      chunks: [],
-      citations: [],
-      documents: [],
-      error_code: "KB_DOWNSTREAM_ACCOUNTING_UNPROVEN",
-    };
+  } catch(error) {
+    const failure=failureFromError(error);
+    return {success:false,chunks:[],citations:[],documents:[],error_code:failure.code,failure};
   }
   const controller = new AbortController();
   const abortFromRequest = () => controller.abort(opts?.signal?.reason);
@@ -582,9 +580,10 @@ export async function fetchKBRag(
       chunks: [],
       citations: [],
       documents: [],
-      error_code: err instanceof DOMException && err.name === "AbortError"
-        ? "KB_TIMEOUT"
-        : "KB_FETCH_ERROR",
+      error_code: err instanceof DOMException && err.name === "AbortError" ? "KB_TIMEOUT" : "KB_FETCH_ERROR",
+      failure: err && typeof err === "object" && "code" in err
+        ? failureFromError(err)
+        : executionFailure(err instanceof Error && err.name === "AbortError" ? "LLM_TIMEOUT" : "LLM_NETWORK"),
     };
   }
 
@@ -597,6 +596,7 @@ export async function fetchKBRag(
       citations: [],
       documents: [],
       error_code: `KB_HTTP_${response.status}`,
+      failure: executionFailure("KB_TOOL_FAILURE",{stage:"provider_http",http_status:response.status}),
     };
   }
 
@@ -610,6 +610,7 @@ export async function fetchKBRag(
       citations: [],
       documents: [],
       error_code: "KB_INVALID_JSON",
+      failure: executionFailure("KB_TOOL_FAILURE",{stage:"decode"}),
     };
   }
 
@@ -621,10 +622,11 @@ export async function fetchKBRag(
       citations: [],
       documents: [],
       error_code: parsed.error_code,
+      failure: executionFailure("KB_TOOL_FAILURE",{stage:"canonical_validation"}),
     };
   }
   if (!parsed.contextFound) {
-    return { success: true, chunks: [], citations: [], documents: [] };
+    return { success: true, chunks: [], citations: [], documents: [], failure:executionFailure("KB_NO_MATCH") };
   }
 
   // A tenant mismatch returned by the remote service is an integrity failure.

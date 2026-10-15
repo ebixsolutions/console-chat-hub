@@ -320,6 +320,15 @@ jobs:
         run: |
           set -euo pipefail
           python tests/section15/early-r1-native.py --database postgresql://postgres:c3-disposable-native-only@127.0.0.1:5432/c3_uat_isolated_native --out "$RUNNER_TEMP/c3-rev14-offline/section15"
+      - name: Actual temporary dispatch dependency, role, lease, concurrency and rollback regressions
+        env:
+          PGPASSWORD: c3-disposable-native-only
+          C3_UAT_TEST_DB_URL: postgresql://postgres:c3-disposable-native-only@127.0.0.1:5432/c3tempuat
+        run: |
+          set -euo pipefail
+          psql postgresql://postgres@127.0.0.1:5432/c3_uat_isolated_native -v ON_ERROR_STOP=1 -c 'CREATE DATABASE c3tempuat'
+          python tests/uat-runtime/live-execution-postgres.py > "$RUNNER_TEMP/c3-rev14-offline/live-execution-native.log"
+          cat "$RUNNER_TEMP/c3-rev14-offline/live-execution-native.log"
       - name: Preserve actual source and native test evidence
         if: always()
         uses: actions/upload-artifact@v4

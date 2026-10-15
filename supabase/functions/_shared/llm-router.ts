@@ -1,4 +1,6 @@
-import { uatRun, UAT_THINKING } from "./uat-execution-contract.ts";
+import { uatExecutionReadiness } from "./uat-execution-readiness.ts";
+import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
+import { uatRun, UatDenied, UAT_THINKING } from "./uat-execution-contract.ts";
 import { accountedModelFetch, ModelAccountingError } from "./model-attempt-accounting.ts";
 /**
  * Governed model router — the single provider call site for Edge Functions.
@@ -53,6 +55,7 @@ export type LlmResult =
     ok: false;
     code: LlmFailureCode;
     status?: number;
+    failure?: ExecutionFailure;
     invalid_output_reason?: "response_json" | "response_schema" | "empty" | "truncated";
     request_id: string;
     usage: LlmUsage;
@@ -548,7 +551,7 @@ async function verifyGroundedGeneration(
   answer: string,
   grounding: ParsedGroundingBlock,
   timeoutMs: number,
-): Promise<{ ok: true } | { ok: false; reason: string }> {
+): Promise<{ ok: true } | { ok: false; reason: string; failure?:ExecutionFailure }> {
   // The governed generation input already contains the current visitor request
   // and recent conversational state. It is valid evidence only for facts the
   // customer/conversation itself supplied (preferences, quantities, reference
@@ -762,7 +765,7 @@ async function verifyGroundedGeneration(
           await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
           continue;
         }
-        return { ok: false, reason: "verifier_invalid_output" };
+        return { ok: false, reason: "verifier_invalid_output",failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"decode",request_id:call.operationId,http_status:res.status}) };
       }
 
       await recordUsage(
@@ -785,7 +788,7 @@ async function verifyGroundedGeneration(
       }
       return { ok: true };
     } catch (error) {
-      if (error instanceof ModelAccountingError) return { ok: false, reason: "model_accounting_denied" };
+      if (error instanceof ModelAccountingError || error instanceof UatDenied) return { ok: false, reason: "model_accounting_denied",failure:executionFailure(error.code,{request_id:call.operationId}) };
       const aborted = error instanceof Error && error.name === "AbortError";
       if (!call.signal?.aborted && !aborted && attempt < 2) {
         await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
@@ -808,7 +811,7 @@ async function verifyGroundedGeneration(
     verifierUsage,
     "GROUNDING_VERIFIER_UNAVAILABLE",
   );
-  return { ok: false, reason: "verifier_unavailable" };
+  return { ok: false, reason: "verifier_unavailable",failure:executionFailure(lastStatus ? "LLM_NON_2XX" : "LLM_NETWORK",{request_id:call.operationId,http_status:lastStatus}) };
 }
 
 export async function callModel(call: LlmCall): Promise<LlmResult> {
@@ -863,6 +866,10 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
 
   let adapter: ProviderAdapter;
   try {
+    if (uatRun(call.companyId)) {
+      const readiness = await uatExecutionReadiness(serviceClient(),call.companyId!);
+      if (!readiness.ready) throw new UatDenied(readiness.failure.code);
+    }
   if (provider === "vertex") {
     const sa = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON");
     const projectId = Deno.env.get("GOOGLE_PROJECT_ID");
@@ -935,6 +942,13 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
   }
 
   } catch (error) {
+    if (error instanceof UatDenied || error instanceof ModelAccountingError) {
+      const failure = executionFailure(error.code, {request_id:requestId});
+      usage.latency_ms = Date.now() - started;
+      log(call.tag, {event:"admission_denied", ...failure});
+      await recordUsage(call,provider,model!,"failed",0,usage,"LLM_ACCOUNTING_DENIED",{failure});
+      return {ok:false,code:"LLM_ACCOUNTING_DENIED",failure,request_id:requestId,usage};
+    }
     if (!(error instanceof VertexRequestValidationError)) throw error;
     usage.latency_ms = Date.now() - started;
     const diagnostic = { request_validation: error.reason };
@@ -945,6 +959,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
 
   let lastCode: LlmFailureCode = "LLM_NETWORK";
   let lastStatus: number | undefined;
+  let failure: ExecutionFailure | undefined;
   let providerDiagnostic: Record<string, unknown> | undefined;
   let invalidOutputReason: "response_json" | "response_schema" | "empty" | "truncated" | undefined;
 
@@ -974,7 +989,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         }, fetch, () => { usage.attempts++; });
       } catch (e) {
         if (e instanceof VertexRequestValidationError) { lastCode = "LLM_CONFIG_MISSING"; providerDiagnostic = {request_validation:e.reason}; break; }
-        if (e instanceof ModelAccountingError) { lastCode = "LLM_ACCOUNTING_DENIED"; break; }
+        if (e instanceof ModelAccountingError || e instanceof UatDenied) { lastCode = "LLM_ACCOUNTING_DENIED"; failure = executionFailure(e.code,{request_id:requestId}); break; }
         const aborted = e instanceof Error && e.name === "AbortError";
         lastCode = aborted ? "LLM_TIMEOUT" : "LLM_NETWORK";
         log(call.tag, {
@@ -1087,13 +1102,14 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           ? extractGroundingBlock(call.system)
           : null;
       if (grounding) {
-        const groundingDecision = await verifyGroundedGeneration(
+        let groundingDecision: Awaited<ReturnType<typeof verifyGroundedGeneration>>;
+        try { groundingDecision = await verifyGroundedGeneration(
           { ...call, operationId: `${call.operationId}:generation-attempt:${attempt}` },
           provider,
           parsed.text,
           grounding,
           timeoutMs,
-        );
+        ); } catch(error) { groundingDecision={ok:false,reason:"verifier_unavailable",failure:failureFromError(error,{request_id:requestId})}; }
         if (!groundingDecision.ok) {
           lastCode = "LLM_INVALID_OUTPUT";
           usage.latency_ms = Date.now() - started;
@@ -1118,6 +1134,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           return {
             ok: false,
             code: groundingDecision.reason === "model_accounting_denied" ? "LLM_ACCOUNTING_DENIED" : "LLM_GROUNDING_REJECTED",
+            failure: groundingDecision.failure ?? executionFailure("LLM_GROUNDING_REJECTED",{request_id:requestId}),
             status: res.status,
             request_id: requestId,
             usage,
@@ -1164,6 +1181,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
     request_id: requestId,
     provider: adapter.id,
     code: lastCode,
+    execution_failure:failure,
     attempts: usage.attempts,
   });
   await recordUsage(
@@ -1174,12 +1192,13 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
     lastStatus ?? 0,
     usage,
     lastCode,
-    providerDiagnostic,
+    {...providerDiagnostic, ...(failure ? {execution_failure:failure} : {})},
   );
   return {
     ok: false,
     code: lastCode,
     status: lastStatus,
+    failure: failure ?? executionFailure(lastCode,{request_id:requestId,http_status:lastStatus}),
     invalid_output_reason: invalidOutputReason,
     request_id: requestId,
     usage,

@@ -28,7 +28,7 @@ const GREETING = new RegExp(
 /** Whole-turn grammar only. Every constituent must be recognised; an unknown
  * remainder (including a merchant question/correction) keeps the normal path.
  * This recognises conversational acts, not a list of three customer sentences. */
-export type NonFactualConversation = "opening" | "acknowledgement" | "wellbeing" | "identity";
+export type NonFactualConversation = "opening" | "acknowledgement" | "wellbeing" | "identity" | "presence";
 // A closed grammar of non-factual speech acts, not an open-ended intent model.
 // Optional constituents compose across repetition, whitespace and language.
 // The caller must consume the ENTIRE turn; refunds, quotes, corrections and
@@ -41,12 +41,15 @@ const WELLBEING = new RegExp(String.raw`^(?:${EN_WELLBEING}|how(?:'s| is)\s+it\s
 const SOCIAL_ACTS: Array<[NonFactualConversation, RegExp]> = [
   ["opening", new RegExp(`^${GREETING_TOKEN}(?=$|[\\s\\p{P}~～]|你|您)`, "iu")],
   ["wellbeing", WELLBEING],
-  ["identity", /^(?:who\s+(?:are|r)\s+(?:you|u)|what(?:['’]s| is)\s+your\s+(?:name|role)|what\s+(?:is|are)\s+you(?:r\s+(?:name|role))?|what\s+do\s+you\s+do|what\s+can\s+you\s+(?:do|help(?:\s+me)?\s+with)|(?:are|r)\s+(?:you|u)\s+(?:an?\s+)?(?:ai(?:\s+(?:assistant|customer\s+support\s+assistant))?|bot|chatbot|robot|human|person|real\s+person)|你(?:係|是)(?:邊個|誰|谁|咩|什麼|什么|真人|人類|人类|機械人|机器人|AI|人工智能)(?:嗎|吗|呀|啊)?|你(?:叫|嘅名係|的名字是)(?:咩|什麼|什么)(?:名(?:字)?)?|你(?:有咩|有什麼|有什么)(?:職責|职责)|你(?:是|係)做(?:什麼|什么|咩)(?:的|嘅)?)(?=$|[\s\p{P}])/iu],
+  ["presence", /^(?:any(?:one|body)(?:\s+(?:there|here|around|online))?|(?:are\s+)?(?:you|u)\s+(?:there|here|around|online)|(?:hello|hi)\s*\?\s*(?:anyone|anybody)\s+there|有人(?:嗎|吗|在嗎|在吗|喺度嗎|喺度吗|喺度冇|喺唔喺度)|(?:你|您)(?:在嗎|在吗|喺度嗎|喺度吗|喺唔喺度)|喂)(?=$|[\s\p{P}])/iu],
+  ["identity", /^(?:who\s+(?:are|r)\s+(?:you|u)|what(?:['’]?s|\s+is)?\s+(?:your|ur)\s+(?:name|role)|what\s+(?:is|are)\s+you(?:r\s+(?:name|role))?|what\s+do\s+you\s+do|what\s+can\s+you\s+(?:do|help(?:\s+me)?\s+with)|(?:are|r)\s+(?:you|u)\s+(?:an?\s+)?(?:ai(?:\s+(?:assistant|customer\s+support\s+assistant))?|bot|chatbot|robot|human|person|real\s+person)|你(?:係|是)(?:邊個|誰|谁|咩|什麼|什么|真人|人類|人类|機械人|机器人|AI|人工智能)(?:嗎|吗|呀|啊)?|你(?:叫|嘅名係|的名字是)(?:咩|什麼|什么)(?:名(?:字)?)?|你(?:有咩|有什麼|有什么)(?:職責|职责)|你(?:是|係)做(?:什麼|什么|咩)(?:的|嘅)?)(?=$|[\s\p{P}])/iu],
   ["acknowledgement", /^(?:thanks(?:\s+(?:a lot|you))?|thank\s+you|ok(?:ay)?|got\s+it|understood|明白(?:了|啦)?|知道了|收到|好(?:的|呀|啊)?|多謝(?:你)?|謝謝(?:你)?|谢谢(?:你)?)(?=$|[\s\p{P}])/iu],
 ];
 export function classifyNonFactualConversation(text: string): NonFactualConversation | null {
   let rest = text.normalize("NFKC").trim().replace(/[’]/g, "'").replace(/\s+/gu, " ");
   if (!rest) return null;
+  // Quotes, reported speech and negation are semantic content, not social acts.
+  if (/["'「」『』“”‘’]/u.test(rest.replace(/(?:what's|how's|you're)/giu, ""))) return null;
   const acts: NonFactualConversation[] = [];
   // Do not slice input: unconsumed business text can never become a social turn.
   while (rest) {
@@ -58,7 +61,7 @@ export function classifyNonFactualConversation(text: string): NonFactualConversa
     if (rest) rest = rest.replace(/^(?:and\s+|同埋|以及|仲有)/iu, "");
   }
   if (rest) return null;
-  return acts.includes("identity") ? "identity" : acts.includes("wellbeing") ? "wellbeing"
+  return acts.includes("identity") ? "identity" : acts.includes("presence") ? "presence" : acts.includes("wellbeing") ? "wellbeing"
     : acts.includes("opening") ? "opening" : "acknowledgement";
 }
 

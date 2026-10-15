@@ -1,3 +1,5 @@
+import { isExplicitHandoffRequest } from "../_shared/handoff-intent.ts";
+import { uatExecutionReadiness } from "../_shared/uat-execution-readiness.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";
@@ -162,6 +164,12 @@ async function loadTestMessages(admin: QueryClient, conversationId: string) {
     }));
 }
 
+async function testConversationId(userId:string,channelId:string,clientMessageId:string): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(`${userId}:${channelId}:${clientMessageId}`)));
+  const hex = [...bytes].map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,32);
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20)}`;
+}
+
 async function createTestConversation(
   admin: QueryClient,
   userId: string,
@@ -171,9 +179,7 @@ async function createTestConversation(
   | { ok: true; conversationId: string }
   | { ok: false; status: number; error: string }
 > {
-  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(`${userId}:${resolved.channelId}:${clientMessageId}`)));
-  const hex = [...bytes].map(b=>b.toString(16).padStart(2,"0")).join("").slice(0,32);
-  const conversationId = `${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20)}`;
+  const conversationId = await testConversationId(userId,resolved.channelId,clientMessageId);
   const existing = await loadOwnedTestConversation(admin,conversationId,userId,resolved);
   if (existing.ok) return {ok:true,conversationId};
   if (existing.status !== 404) return existing;
@@ -354,11 +360,15 @@ return async (req: Request) => {
       ? String((body as Record<string, unknown>).action)
       : "send";
 
+    const execution = await uatExecutionReadiness(admin as any,resolved.companyId,deps.env);
     if (action === "history") {
       return json(req, {
         success: true,
         mode: "persistent_live_ai_test",
         isolation_ready: true,
+        execution_ready: execution.ready,
+        execution_failure: execution.ready ? null : execution.failure,
+        remote_ready: execution.ready && execution.remote_ready,
         company_id: resolved.companyId,
         channel_id: resolved.channelId,
         history: await listOwnedTestHistory(admin, authData.user.id, resolved),
@@ -409,6 +419,15 @@ return async (req: Request) => {
     }
 
     if (!isUuid((body as any).client_message_id)) return json(req,{success:false,error:"invalid_client_message_id"},400);
+    // Do not create a visitor/session merely to discover that the execution
+    // environment is not activated. Human-controlled messages and explicit R1
+    // remain ordinary widget operations and never require model admission.
+    const existingControl = requestedConversationId ? await loadOwnedTestConversation(admin,requestedConversationId,authData.user.id,resolved) : null;
+    const underHumanControl = existingControl?.ok && (HUMAN_CONTROL_STATUSES.has(String(existingControl.conversation.status)) || Boolean(existingControl.conversation.assigned_agent_id));
+    const controlOnly = isExplicitHandoffRequest(query);
+    if (!execution.ready && !underHumanControl && !controlOnly) return json(req,{success:false,error:"live_ai_execution_unavailable",failure:execution.failure,retryable:false,correlation_id:correlationId},503);
+    if (execution.ready && execution.allowed_conversations.length && !execution.allowed_conversations.includes(requestedConversationId || await testConversationId(authData.user.id,resolved.channelId,String((body as any).client_message_id))) && !underHumanControl && !controlOnly) return json(req,{success:false,error:"live_ai_conversation_not_authorized",retryable:false,correlation_id:correlationId},403);
+
     let conversationId = requestedConversationId;
     if (conversationId) {
       const owned = await loadOwnedTestConversation(admin, conversationId, authData.user.id, resolved);
@@ -445,7 +464,7 @@ return async (req: Request) => {
     const messages = poll.messages ?? [];
     const {data: state,error: stateError} = await admin.from("conversations").select("status,assigned_agent_id").eq("id",conversationId).eq("company_id",resolved.companyId).eq("channel_config_id",resolved.channelId).maybeSingle();
     if (stateError || !state) return json(req,{success:false,error:"test_conversation_lookup_failed"},500);
-    const latestAssistant = [...messages].reverse().find((m) => m.role === "assistant");
+    const latestAssistant = [...messages].reverse().find((m:any) => m.role === "assistant" && m.metadata?.source_message_id === sent.message_id);
     return json(req, {
       success: true,
       mode: "persistent_live_ai_test",
@@ -461,6 +480,9 @@ return async (req: Request) => {
       ai_generating: poll.ai_generating,
       idempotent: sent.idempotent === true,
       answer: latestAssistant?.content ?? "",
+      generation_success: latestAssistant ? latestAssistant.metadata?.generation_success !== false && latestAssistant.metadata?.degraded !== true : false,
+      degraded: latestAssistant?.metadata?.degraded === true,
+      execution_failure: latestAssistant?.metadata?.execution_failure ?? null,
       messages,
     });
   } catch (e) {

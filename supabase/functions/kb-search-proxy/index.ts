@@ -554,13 +554,13 @@ Deno.serve(async (req) => {
     const result = await fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint, {uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${crypto.randomUUID()}`}});
     if (!result.success) {
       if (result.error_code === "KB_TIMEOUT") {
-        return jsonResponse({ error: "kb_api_timeout" }, 504, req);
+        return jsonResponse({ error: "kb_api_timeout", failure:result.failure }, 504, req);
       }
       console.error("[kb-search-proxy] KB API error", {
         code: result.error_code,
         scope_mode: scope.mode,
       });
-      return jsonResponse({ error: "kb_api_error", detail: result.error_code }, 502, req);
+      return jsonResponse({ error: "kb_api_error", detail: result.error_code, failure:result.failure }, 502, req);
     }
 
     const expansions = await deriveRetrievalExpansions({

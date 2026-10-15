@@ -4,10 +4,12 @@ import assert from 'node:assert/strict';
 const root=new URL('../../',import.meta.url);
 let code=fs.readFileSync(new URL('supabase/functions/widget-live-ai-test/index.ts',root),'utf8').replace(/^import .*;\n/gm,'').replace('Deno.serve(createWidgetLiveHandler());','');
 const helper=fs.readFileSync(new URL('supabase/functions/_shared/supabase-admin-key.ts',root),'utf8').replace('export function','function');
+const dependencyCode=['supabase/functions/_shared/execution-failure.ts','supabase/functions/_shared/uat-execution-contract.ts','supabase/functions/_shared/uat-execution-readiness.ts','supabase/functions/_shared/handoff-intent.ts'].map(file=>fs.readFileSync(new URL(file,root),'utf8').replace(/^import .*;\n/gm,'')).join('\n');
+code=dependencyCode+'\n'+code;
 code='const createClient=()=>{throw new Error("unexpected SDK client")}; const supabaseCorsHeaders=()=>({});\n'+helper+'\n'+code+'\nexport {getSupabaseAdminKey as testAdminKey};';
 const js=ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const {createWidgetLiveHandler,testAdminKey}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
-const company='10000000-0000-4000-8000-000000000001',channel='20000000-0000-4000-8000-000000000001';
+const company='4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec',channel='20000000-0000-4000-8000-000000000001';
 const user='30000000-0000-4000-8000-000000000001', token='authenticated-test-token',secret='server-secret-never-output';
 let completed=[];
 async function check(name, options={}, expected=200, body={action:'history'}) {
@@ -16,11 +18,11 @@ async function check(name, options={}, expected=200, body={action:'history'}) {
  globalThis.fetch=async(url,init)=>{requests.push({url,body:JSON.parse(init.body)}); const data=String(url).endsWith('receive-widget-message')?{message_id:channel,ai_reply_pending:false,idempotent:true}:{messages:[{id:channel,role:'agent',content:'synthetic response'}],conversation_status:options.human?'pending':'open',human_support:{state:options.human?'waiting':'none',queue_position:2,estimated_wait_minutes:4}}; return new Response(JSON.stringify({success:true,data}));};
  const row={company_id:company,role:options.role??'admin',is_active:options.active??true};
  const memberships=options.ambiguous?[row,{...row,company_id:channel}]:[row];
- const client={from(table){const chain={singleRow:false,select(){return this},eq(k,v){calls.push([table,k,v]);return this},order(){return this},limit(){return this},maybeSingle(){this.singleRow=true;return this},then(resolve){
+ const client={rpc:async()=>options.missingRpc?({error:{code:'PGRST202'},data:null}):({error:null,data:{ready:true,remote_ready:false,allowed_conversations:[company]}}),from(table){const chain={singleRow:false,select(){return this},eq(k,v){calls.push([table,k,v]);return this},order(){return this},limit(){return this},maybeSingle(){this.singleRow=true;return this},then(resolve){
  let data=table==='company_membership'?memberships:table==='company'?{id:company,is_active:options.companyActive??true}:table==='channel_config'?{id:channel,company_id:company,is_active:true,channel_type:'web_widget',allowed_origins:['https://preview--console-chat-hub.lovable.app']}:table==='conversations'?(this.singleRow?{...conversation,metadata_source:options.foreignOwner?{...conversation.metadata_source,owner_user_id:channel}:conversation.metadata_source}:[]):table==='visitor_session'?{session_token:'synthetic-session-token-with-32-characters'}:[];
  resolve({data,status:options.providerError?401:200,error:table==='company_membership'&&options.providerError?{code:'PGRST301',message:secret}:null});
  }};return chain;}};
- const env={SUPABASE_SECRET_KEY:secret,SUPABASE_URL:'https://nrfxhqabwblzxoushgnm.supabase.co',SUPABASE_ANON_KEY:'public-key',...(options.env??{})};
+ const env={C3_TEMP_UAT_RUN_ID:company,C3_TEMP_UAT_SOURCE_REVISION:'c3-3322877-bounded-uat-r2',SUPABASE_SECRET_KEY:secret,SUPABASE_URL:'https://nrfxhqabwblzxoushgnm.supabase.co',SUPABASE_ANON_KEY:'public-key',...(options.env??{})};
  globalThis.Deno={env:{get:k=>env[k]}};
  const handler=createWidgetLiveHandler({env:k=>env[k],getAdminKey:options.missingKey?()=>{throw Error(secret)}:testAdminKey, log:event=>logs.push(event),createClient:(url,key,config)=>{
  clients++; assert.equal(url,env.SUPABASE_URL); assert.equal(config.auth.persistSession,false);
@@ -34,11 +36,17 @@ async function check(name, options={}, expected=200, body={action:'history'}) {
  assert(!responseText.includes(secret));assert(!JSON.stringify(logs).includes(secret));assert(!JSON.stringify(logs).includes(token));
  if(expected===200&&options.isolated!==false && body.action==='history') {assert(calls.some(c=>c[0]==='conversations'&&c[1]==='company_id'&&c[2]===company));assert(calls.some(c=>c[0]==='conversations'&&c[1]==='channel_config_id'&&c[2]===channel));}
  if(options.providerError)assert.equal(logs[0].provider_http_class,'4xx');
+ if(body.action==='send'&&expected>=400)assert.equal(requests.length,0);
  if(body.action==='send'&&expected===200){assert(requests.some(r=>r.url.endsWith('receive-widget-message'))); assert(!requests.some(r=>r.url.endsWith('generate-reply'))); assert.equal(requests[0].body.client_message_id,body.client_message_id);assert.equal(requests[0].body.conversation_id,company);}
  if(body.action==='load'&&expected===200){assert(requests.some(r=>r.url.endsWith('widget-poll-messages')));const payload=JSON.parse(responseText);assert.equal(payload.messages[0].role,'agent');assert.equal(payload.human_support.queue_position,2);}
  globalThis.fetch=originalFetch;
  completed.push({name,status:'PASS',kind:'actual_handler_unit_with_provider_adapters'});
 }
+await check('actual synthetic missing run denies before messages',{env:{C3_TEMP_UAT_RUN_ID:undefined}},503,{action:'send',test_conversation_id:company,client_message_id:channel,query:'Check the energy label'});
+await check('actual synthetic missing status RPC denies before messages',{missingRpc:true},503,{action:'send',test_conversation_id:company,client_message_id:channel,query:'Check the energy label'});
+await check('actual synthetic human control works without lease',{human:true,env:{C3_TEMP_UAT_RUN_ID:undefined}},200,{action:'send',test_conversation_id:company,client_message_id:channel,query:'Follow up with my agent'});
+await check('actual synthetic explicit human request works without lease',{env:{C3_TEMP_UAT_RUN_ID:undefined}},200,{action:'send',test_conversation_id:company,client_message_id:channel,query:'Please connect me to a human now'});
+await check('history remains readable when execution is not configured',{missingRpc:true});
 await check('valid Admin');await check('valid Supervisor',{role:'supervisor'});
 await check('no token',{noToken:true},401);await check('invalid JWT',{invalid:true,token:'invalid-token'},401);await check('expired JWT',{invalid:true,token:'expired-token'},401);
 await check('inactive membership',{active:false},403);await check('unsupported role',{role:'agent'},403);

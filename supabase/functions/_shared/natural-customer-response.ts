@@ -515,7 +515,7 @@ export function classifySocialTurn(text: string): NonFactualConversation | null 
     (classifyNaturalCustomerIntent(text).kind === "greeting" ? "opening" : null);
 }
 
-export function renderSocialTurn(text: string, language: NaturalResponseLanguage): string | null {
+export function renderSocialTurn(text: string, language: NaturalResponseLanguage, context?: {unresolved: boolean}): string | null {
   const kind = classifySocialTurn(text);
   if (!kind) return null;
   if (kind === "identity") {
@@ -525,6 +525,10 @@ export function renderSocialTurn(text: string, language: NaturalResponseLanguage
       : language === "zh-CN" ? "我是 AI 客服助手，并非真人客服。我可以在这里协助你处理问题；你也可以要求人工客服。"
       : "我係 AI 客服助手，並非真人客服。我可以喺呢度協助你處理問題；你亦可以要求真人客服。";
   }
+  if (kind === "presence") return context?.unresolved
+    ? language === "en" ? "I'm here as an AI assistant. The earlier problem is still unresolved. You can request human support here; no transfer has been made yet."
+      : language === "zh-CN" ? "我在这里，是 AI 助手。前面的问题仍未解决。你可以在这里要求人工客服；目前尚未转交。" : "我喺度，係 AI 助手。之前嘅問題仍未解決。你可以喺呢度要求真人客服；目前尚未轉交。"
+    : language === "en" ? "I'm here as an AI assistant. How can I help?" : language === "zh-CN" ? "我在这里，是 AI 客服助手。有什么可以帮你？" : "我喺度，係 AI 客服助手。有咩可以幫你？";
   if (kind === "wellbeing") return language === "en" ? "Hi! I'm here and ready to help. What can I help you with?"
     : language === "zh-CN" ? "你好！我在这里，可以帮你处理什么问题？" : "你好！我喺度，有咩可以幫你？";
   if (kind === "opening") return renderNaturalImmediateResponse({kind:"greeting",product:null},language);

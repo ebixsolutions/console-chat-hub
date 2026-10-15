@@ -1,3 +1,4 @@
+import { executionFailure, failureFromError, type ExecutionFailure } from "../_shared/execution-failure.ts";
 import { resolveIndustryProfile } from "../_shared/industry-runtime-adapter.ts";
 import { phase1CoachAllowed } from "../_shared/remote-model-accounting.ts";
 import {
@@ -2301,7 +2302,19 @@ async function persistTerminalRecovery(
       return originalResponse ?? sourceMessageErrorResponse(source);
     }
     const language = detectVisitorLanguage(source.message.content);
-    const reply = terminalRecoveryReply(language);
+    let diagnostic: ExecutionFailure | undefined;
+    if (originalResponse) {
+      try {
+        const payload = await originalResponse.clone().json();
+        if (payload.failure && typeof payload.failure === "object") diagnostic = executionFailure(payload.failure.code,{stage:payload.failure.stage,request_id:payload.failure.request_id,source_message_id:sourceMessageId,http_status:payload.failure.http_status});
+      } catch { /* No raw body or exception is exposed. */ }
+    }
+    diagnostic ??= executionFailure(
+      /^(?:commerce_state|canonical_memory|canonical_memory_commit)/.test(reason) ? "PERSISTENCE_FAILED"
+        : reason === "generation_work_budget_exhausted" ? "LLM_TIMEOUT" : "SEMANTIC_INTERPRETER_UNAVAILABLE",
+      {source_message_id:sourceMessageId},
+    );
+    const reply = terminalRecoveryReply(language, diagnostic);
     const committed = await commitAiReplyWithControlGate(
       admin,
       conversationId,
@@ -2312,8 +2325,10 @@ async function persistTerminalRecovery(
         handoff_required: false,
         factual_grounding_required: false,
         degraded: true,
-        source_error_code: reason.slice(0, 120),
-        recovery_class: "technical_failure",
+        source_error_code: diagnostic?.code ?? reason.slice(0, 120),
+        execution_failure: diagnostic,
+        retryable: diagnostic?.retryable ?? false,
+        recovery_class: diagnostic?.stage ?? "technical_failure",
         generation_success: false,
         transaction_mutation: "NONE",
         source_error_http_status: originalResponse?.status ?? null,
@@ -2327,6 +2342,8 @@ async function persistTerminalRecovery(
           reply,
           degraded: true,
           generation_success: false,
+          failure: diagnostic,
+          retryable: diagnostic?.retryable ?? false,
           response_route: "terminal_failure_recovery",
           idempotent: committed.idempotent,
         }),
@@ -2894,6 +2911,7 @@ ${legacyReturnToAiGuard}`;
         success: false,
         error: "AI service error",
         error_code: llm.code,
+        failure: llm.failure ?? executionFailure(llm.code,{request_id:llm.request_id,source_message_id,http_status:llm.status}),
       }),
       {
         status: routerFailureHttpStatus(llm.code),
@@ -3227,7 +3245,10 @@ async function persistC3ServiceRecovery(
   language: "zh-TW" | "zh-CN" | "en",
   traceMetadata: Record<string, unknown>,
 ): Promise<Response> {
-  const content = renderServiceRecovery(plan, state, language);
+  const recoveryFailure = traceMetadata.execution_failure && typeof traceMetadata.execution_failure === "object"
+    ? traceMetadata.execution_failure as ExecutionFailure : undefined;
+  const content = recoveryFailure && ["admission","config"].includes(recoveryFailure.stage)
+    ? terminalRecoveryReply(language,recoveryFailure) : renderServiceRecovery(plan, state, language);
   const metadata = {
     ...traceMetadata,
     response_route: `c3_service_${state}`,
@@ -3344,15 +3365,17 @@ async function persistNaturalImmediateResponse(
   intent: NaturalCustomerIntent,
   language: "zh-TW" | "zh-CN" | "en",
   socialText?: string,
+  socialContext?: {unresolved:boolean},
 ): Promise<Response | null> {
   // Product guidance can establish durable Commerce entities/constraints.
   // It therefore renders only after the shared Commerce writer has run.
   if (intent.kind === "product_guidance" ||
     (intent.kind === "product_shopping" && intent.product)) return null;
-  const content = socialText ? renderSocialTurn(socialText,language) : renderNaturalImmediateResponse(intent, language);
+  const content = socialText ? renderSocialTurn(socialText,language,socialContext) : renderNaturalImmediateResponse(intent, language);
   if (!content) return null;
   const socialKind = socialText ? classifySocialTurn(socialText) : null;
   const responseRoute = socialKind === "identity" ? "natural_ai_identity"
+    : socialKind === "presence" ? "natural_presence"
     : socialKind === "wellbeing" ? "natural_small_talk"
     : intent.kind === "greeting"
     ? "natural_greeting"
@@ -3370,6 +3393,7 @@ async function persistNaturalImmediateResponse(
       response_route: responseRoute,
       natural_response_contract: "c3-natural-customer-response-v1",
       natural_intent: socialKind ?? intent.kind,
+      social_context_unresolved: socialContext?.unresolved === true,
       transaction_mutation: socialKind ? "NONE" : undefined,
       product_reference_present: Boolean(intent.product),
       product_referent_candidates:
@@ -4365,7 +4389,8 @@ async function orchestrationGenerateReply(
   // turn must never reach a semantic state writer or replace the business goal.
   if (!_explicitHandoffRequested && classifySocialTurn(_h1LastMsg)) {
     return (await persistNaturalImmediateResponse(supabaseAdmin,conversation_id,_h1SourceMessageId,
-      {kind:"greeting",product:null},_visitorLang,_h1LastMsg))!;
+      {kind:"greeting",product:null},_visitorLang,_h1LastMsg,
+      {unresolved: [...(_pr5HistoryRows ?? [])].filter((row: any)=>row.role === "assistant").sort((a:any,b:any)=>String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))).slice(0,1).some((row: any)=>row.metadata?.degraded === true || row.metadata?.generation_success === false || row.metadata?.response_route === "terminal_failure_recovery" || row.metadata?.social_context_unresolved === true)}))!;
   }
   let _productFollowUpArbitration = arbitrateAnaphoricProductFollowUp(
     _h1LastMsg,
@@ -4398,6 +4423,7 @@ async function orchestrationGenerateReply(
   // It never writes commerce state and never supplies external product/policy facts.
   let _a3SemanticFrame: CommerceSemanticFrame | null = null;
   let _semanticFailure: string | null = null;
+  let _semanticDiagnostic: ExecutionFailure | undefined;
   const _semanticBusinessText = customerBusinessText(_h1LastMsg);
   if (_criticalE2ExpectedTenantId && _semanticBusinessText && !isCurrentRequirementsRecap(_semanticBusinessText)) {
     try {
@@ -4414,16 +4440,15 @@ async function orchestrationGenerateReply(
       });
       _a3SemanticFrame = semanticResult.frame;
       _semanticFailure = semanticResult.failure_code;
+      if (_semanticFailure) _semanticDiagnostic = semanticResult.failure ?? executionFailure(_semanticFailure,{source_message_id:_h1SourceMessageId});
       if (semanticResult.failure_code) console.warn(JSON.stringify({
         event: "semantic_interpretation_rejected", code: semanticResult.failure_code,
         stage: semanticResult.failure_stage, request_id: semanticResult.request_id,
       }));
     } catch (error) {
-      _semanticFailure = "SEMANTIC_INTERPRETER_UNAVAILABLE";
-      console.error(
-        "[generate-reply] A3.1 semantic interpreter rejected",
-        error instanceof Error ? error.name : "unknown_error",
-      );
+      _semanticDiagnostic = failureFromError(error,{request_id:`commerce-semantic:${_h1SourceMessageId}`,source_message_id:_h1SourceMessageId});
+      _semanticFailure = _semanticDiagnostic.code;
+      console.error(JSON.stringify({event:"semantic_interpretation_rejected",..._semanticDiagnostic}));
     }
   }
 
@@ -4431,7 +4456,7 @@ async function orchestrationGenerateReply(
     // Reject before every Commerce/Memory mutation and R1 enrichment. The visitor
     // message remains durable; never claim its facts were saved after truncation.
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({success:false,error:"semantic_interpretation_failed",code:_semanticFailure,retryable:true}),
+    return new Response(JSON.stringify({success:false,error:"semantic_interpretation_failed",code:_semanticFailure,failure:_semanticDiagnostic,retryable:_semanticDiagnostic?.retryable === true}),
       {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
   // ===== TASK A3: persistent commerce state runtime =====
@@ -5581,6 +5606,7 @@ async function orchestrationGenerateReply(
   let _kbDone = false;
   let ragResult: {
     success: boolean;
+    failure?: ExecutionFailure;
     no_answer?: boolean;
     retrieval_quality?: "high" | "medium" | "low" | "failed";
     chunks?: Array<{
@@ -5698,6 +5724,11 @@ async function orchestrationGenerateReply(
         requestSignal,
       );
     if (!ragResult || !ragResult.success) {
+      const failure=ragResult?.failure ?? executionFailure("KB_TOOL_FAILURE");
+      if (["admission","config"].includes(failure.stage)) {
+        return await persistC3ServiceRecovery(supabaseAdmin,conversation_id,source_message_id,_c3ServicePlan,"tool_failure",_visitorLang,
+          {rag_api_status:"failure",execution_failure:failure,generation_success:false,degraded:true,retryable:false});
+      }
       if (_deferR1ForE1) {
         const r1Response = await persistExplicitR1IfRequested(
           supabaseAdmin,
@@ -5723,7 +5754,7 @@ async function orchestrationGenerateReply(
         _c3ServicePlan,
         "tool_failure",
         _visitorLang,
-        { rag_api_status: "failure" },
+        { rag_api_status: "failure", execution_failure: ragResult?.failure ?? executionFailure("KB_TOOL_FAILURE"), generation_success:false, degraded:true },
       );
     }
     if (
@@ -5778,6 +5809,7 @@ async function orchestrationGenerateReply(
           _visitorLang,
           {
             rag_api_status: "success_empty",
+            execution_failure:executionFailure("KB_NO_MATCH"),
             evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
           },
           _effectiveNaturalCustomerIntent,
@@ -5800,7 +5832,7 @@ async function orchestrationGenerateReply(
             _pr5History.exact_same_intent_repeated === true,
         },
         _c3ServicePlan,
-        { rag_api_status: "success_empty" },
+        { rag_api_status: "success_empty", execution_failure:executionFailure("KB_NO_MATCH") },
       );
       if (clarification) return clarification;
       return await persistC3ServiceRecovery(
@@ -5810,7 +5842,7 @@ async function orchestrationGenerateReply(
         _c3ServicePlan,
         "no_match",
         _visitorLang,
-        { rag_api_status: "success_empty" },
+        { rag_api_status: "success_empty", execution_failure:executionFailure("KB_NO_MATCH") },
       );
     }
 
@@ -6640,6 +6672,11 @@ async function orchestrationGenerateReply(
   }
 
   if (!llm.ok) {
+    const failure=llm.failure ?? executionFailure(llm.code,{request_id:llm.request_id,source_message_id,http_status:llm.status});
+    if (["admission","config"].includes(failure.stage) || failure.code.startsWith("UAT_")) {
+      await cleanupThinking(supabaseAdmin,conversation_id,source_message_id);
+      return new Response(JSON.stringify({success:false,error:"AI service error",failure,retryable:false}),{status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    }
     if (llm.code === "LLM_GROUNDING_REJECTED") {
       const recoveryReply = GROUNDING_RECOVERY_WORDING[_visitorLang] ??
         GROUNDING_RECOVERY_WORDING.en;
@@ -6702,6 +6739,7 @@ async function orchestrationGenerateReply(
         success: false,
         error: "AI service error",
         error_code: llm.code,
+        failure: llm.failure ?? executionFailure(llm.code,{request_id:llm.request_id,source_message_id,http_status:llm.status}),
       }),
       {
         status: routerFailureHttpStatus(llm.code),
@@ -7225,6 +7263,7 @@ async function callKBAdapter(
   signal?: AbortSignal,
 ): Promise<{
   success: boolean;
+  failure?: ExecutionFailure;
   no_answer?: boolean;
   retrieval_quality?: "high" | "medium" | "low" | "failed";
   chunks?: KBFullChunk[];
@@ -7253,7 +7292,7 @@ async function callKBAdapter(
 }> {
   const endpointCfg = resolveKBEndpoint();
   if (!endpointCfg) {
-    return { success: false, no_answer: true, retrieval_quality: "failed" };
+    return { success: false, no_answer: true, retrieval_quality: "failed", failure:executionFailure("KB_TOOL_FAILURE",{stage:"config"}) };
   }
   const result = await fetchKBRag(
     { query: userMessage, top_k: 5 },
@@ -7262,7 +7301,7 @@ async function callKBAdapter(
     { timeoutMs: 15000, signal, uatContext: { conversationId: _conversation_id, operationId: `kb:generate-reply:${_conversation_id}:${crypto.randomUUID()}` } },
   );
   if (!result.success) {
-    return { success: false, no_answer: true, retrieval_quality: "failed" };
+    return { success: false, no_answer: true, retrieval_quality: "failed", failure:result.failure ?? executionFailure("KB_TOOL_FAILURE") };
   }
   if (result.chunks.length === 0) {
     return {

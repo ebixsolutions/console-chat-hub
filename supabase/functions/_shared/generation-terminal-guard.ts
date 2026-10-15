@@ -1,3 +1,4 @@
+import type { ExecutionFailure } from "./execution-failure.ts";
 /**
  * C3 request-budget and terminal-response guard.
  *
@@ -87,7 +88,13 @@ export function historicalQuoteValidityReply(
 
 export function terminalRecoveryReply(
   language: "zh-TW" | "zh-CN" | "en",
+  failure?: ExecutionFailure,
 ): string {
+  if (failure && !failure.retryable) {
+    if (language === "en") return "A system configuration or processing problem prevented this reply. Your question has not been resolved. You can request human support here; no transfer has been made yet.";
+    if (language === "zh-CN") return "系统配置或处理出现问题，这次未能完成回复，你的问题仍未解决。你可以在这里要求人工客服；目前尚未转交。";
+    return "系統設定或處理出現問題，今次未能完成回覆，你嘅問題仍未解決。你可以喺呢度要求真人客服；目前尚未轉交。";
+  }
   if (language === "zh-CN") {
     return "抱歉，系统暂时未能处理这次消息。请稍后再试，或者直接要求人工客服协助。";
   }

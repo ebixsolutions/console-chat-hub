@@ -821,6 +821,8 @@ function PreviewWidget({
     ? `widget_live_test:${user.id}:${scopeCompanyId}:${scopeChannelId}` : null;
   const [testConversationId, setTestConversationId] = useState<string | null>(null);
   const [scopeReady, setScopeReady] = useState(false);
+  const [executionReady, setExecutionReady] = useState(false);
+  const [remoteReady, setRemoteReady] = useState(false);
   const [liveFailure, setLiveFailure] = useState<string | null>(null);
   const pendingSend = useRef<{id: string; text: string} | null>(null);
 
@@ -966,6 +968,8 @@ function PreviewWidget({
       if (epoch !== conversationEpoch.current) return;
       const ready = !error && data?.success === true && data.isolation_ready === true && data.company_id === scopeCompanyId && data.channel_id === scopeChannelId;
       setScopeReady(ready);
+      setExecutionReady(ready && data?.execution_ready === true);
+      setRemoteReady(ready && data?.remote_ready === true);
       if (ready && Array.isArray(data.history)) {
         setHistory(data.history as LiveAiHistoryItem[]);
       }
@@ -1367,6 +1371,13 @@ function PreviewWidget({
       </div>
 
       <div className="border-t bg-white p-3">
+        {mode === "live" && scopeReady && (!executionReady || !remoteReady) && (
+          <p role="status" className="mb-2 text-xs text-amber-800">
+            {lang === "zh"
+              ? (!executionReady ? "AI 測試執行尚未啟用，暫不能產生商業問題回覆。歷史對話仍可查看；真人請求按既有流程處理，尚未代表已轉交。" : "模型執行已配置；遠端 KB 查詢尚未獲准。這不代表 KB 沒有資料。")
+              : (!executionReady ? "AI test execution is not activated for business replies. History remains available; human requests use the existing process and are not yet transfers." : "Model execution is configured; remote KB queries are not yet authorized. This does not mean the KB has no matching information.")}
+          </p>
+        )}
         {mode === "live" && !scopeReady && (
           <div className="mb-2 text-xs text-slate-500">
             <p role={historyLoading ? "status" : "alert"}>

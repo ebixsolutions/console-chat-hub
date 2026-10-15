@@ -1,3 +1,4 @@
+import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
 import { callModel } from "./llm-router.ts";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { requirementMutationText } from "./commerce-state-authority.ts";
@@ -31,6 +32,7 @@ export interface CommerceSemanticInterpretResult {
   source: "semantic_model" | "none";
   failure_code: string | null;
   failure_stage?: string;
+  failure?: ExecutionFailure;
   request_id?: string;
 }
 
@@ -304,7 +306,8 @@ export async function interpretCommerceSemantics(
   // The closed provider schema carries dynamic typed values as JSON strings.
   // Decode and enforce the canonical semantic contract before accepting events;
   // schema-constrained output still cannot write state directly.
-  const result = await callModel({
+  let result;
+  try { result = await callModel({
     purpose: "evaluation",
     system: SYSTEM +
       "\nOuter JSON has exactly operation, confidence, delta_json in that order. delta_json is a JSON-encoded object containing ALL other supplied current-turn fields (language, intent, topic, entities, referents, customer_facts, lifecycle, correction, negations, requested_facts, ambiguity). Omit defaults there; use {} encoded as a string if no optional fields. Do not put operation or confidence inside delta_json. The following wire rules apply INSIDE delta_json.\n" +
@@ -319,14 +322,18 @@ export async function interpretCommerceSemantics(
     responseSchema: COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,
     thinkingBudget: 0,
     signal: input.signal,
-  });
+  }); } catch (error) {
+    const failure = failureFromError(error,{request_id:`commerce-semantic:${input.source_message_id}`,source_message_id:input.source_message_id});
+    return {frame:null,source:"none",failure_code:failure.code,failure_stage:failure.stage,failure};
+  }
 
   if (!result.ok) {
     return {
       frame: null,
       source: "none",
-      failure_code: result.code,
-      failure_stage: result.invalid_output_reason ?? "provider",
+      failure_code: result.failure?.code ?? result.code,
+      failure_stage: result.failure?.stage ?? (result.invalid_output_reason ? "decode" : executionFailure(result.code).stage),
+      failure: executionFailure(result.failure?.code ?? result.code,{stage:result.failure?.stage,request_id:result.request_id,source_message_id:input.source_message_id,http_status:result.status}),
       request_id: result.request_id,
     };
   }
@@ -340,6 +347,7 @@ export async function interpretCommerceSemantics(
       source: "none",
       failure_code: "LLM_INVALID_OUTPUT",
       failure_stage: "semantic_json",
+      failure: executionFailure("LLM_INVALID_OUTPUT",{stage:"decode",request_id:result.request_id,source_message_id:input.source_message_id}),
       request_id: result.request_id,
     };
   }
@@ -352,6 +360,7 @@ export async function interpretCommerceSemantics(
       source: "none",
       failure_code: "LLM_INVALID_OUTPUT",
       failure_stage: "semantic_contract",
+      failure: executionFailure("LLM_INVALID_OUTPUT",{stage:"canonical_validation",request_id:result.request_id,source_message_id:input.source_message_id}),
       request_id: result.request_id,
     };
   }
@@ -366,6 +375,7 @@ export async function interpretCommerceSemantics(
       source: "none",
       failure_code: "LLM_INVALID_OUTPUT",
       failure_stage: "requirement_lifecycle_conflict",
+      failure: executionFailure("LLM_INVALID_OUTPUT",{stage:"canonical_validation",request_id:result.request_id,source_message_id:input.source_message_id}),
       request_id: result.request_id,
     };
   }

@@ -1,3 +1,4 @@
+import { safeExecutionCode } from "./execution-failure.ts";
 import { buildVertexEndpoint } from "./vertex-generation-config.ts";
 /** Temporary synthetic UAT admission. Existing log persistence, not the deferred shared Guard. */
 export const UAT_COMPANY = "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec";
@@ -7,7 +8,7 @@ export const UAT_MAX_OUTPUT = 8192;
 export const UAT_THINKING = 1024;
 export type Db = { from?: (table: string)=>any; rpc(name: string, args: Record<string, unknown>): PromiseLike<{data: any; error: any}> };
 export type UatContext = { companyId: string | null; conversationId: string | null; operationId: string; provider: string; purpose: string; slot: string; attempt: number; request: string };
-export class UatDenied extends Error { constructor(public code: string) { super(code); } }
+export class UatDenied extends Error { constructor(public code: string) { super(code); this.name = "UatDenied"; } }
 export function uatRun(company: string | null): string | null {
   if (company !== UAT_COMPANY) return null;
   const id = Deno.env.get("C3_TEMP_UAT_RUN_ID");
@@ -47,7 +48,12 @@ const digest = async (value: string) => Array.from(new Uint8Array(await crypto.s
 async function rpc(db: Db, name: string, args: Record<string, unknown>) {
   let r;
   try { r = await db.rpc(name, args); } catch { throw new UatDenied("UAT_PERSISTENCE_UNAVAILABLE"); }
-  if (r.error || !r.data) throw new UatDenied("UAT_ADMISSION_DENIED");
+  if (r.error) {
+    if (["PGRST202", "42883"].includes(r.error.code)) throw new UatDenied("UAT_DEPENDENCY_MISSING");
+    // Only an exact closed SQL exception label is safe to propagate.
+    throw new UatDenied(safeExecutionCode(r.error.message) ?? "UAT_ADMISSION_DENIED");
+  }
+  if (!r.data) throw new UatDenied("UAT_ADMISSION_DENIED");
   return r.data;
 }
 /** Must persist a denial/pause for unknown in-flight outcomes; never refund reservations. */
@@ -88,7 +94,7 @@ export async function uatFetch(db: Db, meta: UatContext, url: string, init: Requ
   };
   let response:Response;
   try {onDispatch?.();response=await upstream(url,{...init,redirect:"error"});}
-  catch(e){await finish("unknown",0,null,null);throw e;}
+  catch(e){await finish("unknown",0,null,null);throw new UatDenied(e instanceof Error && e.name === "AbortError" ? "UAT_TIMEOUT_OUTCOME_UNKNOWN" : "UAT_NETWORK_OUTCOME_UNKNOWN");}
   if(remote){
     // Remote attempt/cost exposure is a retained bound, never a fabricated observed token count.
     await finish("remote_bound",response.status,null,null);
