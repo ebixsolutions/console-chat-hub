@@ -9,7 +9,13 @@ const callers=['generate-reply/index.ts','agent-assist/index.ts','conversation-e
 for(const f of callers){assert(read(f).includes('callModel('));assert(read(f).includes('llm-router.ts'));}
 const guard=read('_shared/model-attempt-accounting.ts');const active=guard.slice(guard.indexOf('export async function accountedModelFetch'),guard.indexOf('export async function deferredAccountedModelFetch'));assert(active.includes('trustedDispatchScope')&&active.includes('uatFetch'));assert(!active.includes('c3_reserve_model_attempt'));assert(guard.includes('MODEL_ACCOUNTING_FINALIZATION_UNAVAILABLE'));
 for(const f of ['_shared/kb-client.ts','customer360-coach-sync/index.ts']){
- const s=read(f);assert(s.includes('prepareRemoteRetrieval'));assert(s.includes('accountingHeaders'));assert(s.includes('accounting_unproven')||s.includes('KB_DOWNSTREAM_ACCOUNTING_UNPROVEN'));
+ const s=read(f);assert(s.includes('prepareRemoteRetrieval'));assert(s.includes('accountingHeaders'));
+ if(f==='_shared/kb-client.ts'){
+  // Admission is now propagated as a typed failure, rather than flattened to an old string.
+  assert(s.includes('const failure=failureFromError(error)'));
+  assert(s.includes('error_code:failure.code,failure'));
+  assert(s.includes('accountedModelFetch('));
+ }else assert(s.includes('accounting_unproven')||s.includes('KB_DOWNSTREAM_ACCOUNTING_UNPROVEN'));
 }
 for(const f of ['ce-evaluation-worker/index.ts','ce-evaluation-control/index.ts'])assert(read(f).includes('ce-automation-engine.ts'));
 // Scan executable source (not generated historical bundles or tests) for extra provider dispatches.
