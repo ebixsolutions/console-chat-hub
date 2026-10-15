@@ -332,7 +332,7 @@ export async function interpretCommerceSemantics(
       frame: null,
       source: "none",
       failure_code: result.failure?.code ?? result.code,
-      failure_stage: result.failure?.stage ?? (result.invalid_output_reason ? "decode" : executionFailure(result.code).stage),
+      failure_stage: result.invalid_output_reason ?? result.failure?.stage ?? executionFailure(result.code).stage,
       failure: executionFailure(result.failure?.code ?? result.code,{stage:result.failure?.stage,request_id:result.request_id,source_message_id:input.source_message_id,http_status:result.status}),
       request_id: result.request_id,
     };

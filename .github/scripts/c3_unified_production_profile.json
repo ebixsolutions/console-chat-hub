@@ -906,7 +906,7 @@
     "sql/c3_uat_execution_status_rollback.sql": "8d277f939c4f52a3138b1eb90e4b75618619b830f0bb1830a06de9230805c06a",
     "src/lib/widget-response-status.ts": "f7b3239f7bc1422c0d71a2059a3f17294703f02e64f3653f90f01c79ddd01ac0",
     "src/routes/_authenticated/console.widget-preview.tsx": "6ad987a381a3c12cc819f33ca3064ab1e4bf0409445c0fc52be0007d9ccd2769",
-    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "3ee7ebe13c076e94bbe006c6258909be7ab9b7794c5133917ec6adbdde6b9e96",
+    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "dfbe7a1eefb5e65c567b3656a9b603bccbb93211ee29c8415b370d9e88028128",
     "supabase/functions/_shared/conversational-routing.ts": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3",
     "supabase/functions/_shared/execution-failure.ts": "07ba60be50a4a314e1824498d90a631cd084b0a14ef986b6063a16df66ba946b",
     "supabase/functions/_shared/generation-terminal-guard.ts": "b594946be00d0df338d8bc74cfc42ec0bf7dcdb4438c63262b2fb9b8b2dfadc5",
