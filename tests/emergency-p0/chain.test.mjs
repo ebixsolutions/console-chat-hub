@@ -288,3 +288,7 @@ for(const [options,stage,success] of [[{remoteDenied:true},'admission',false],[{
  const r=await kb.fetchKBRag({query:'CW-SUL70BA energy label',top_k:5},{mode:'canonical',aiCompanyId:syntheticCompany,singaporeTenantId:'34'},kb.resolveKBEndpoint(),{uatContext:{conversationId:ticket,operationId:'kb:isolated'}});
  assert.equal(r.success,success,JSON.stringify(r));assert.equal(r.failure.stage,stage);if(options.remoteDenied){assert.equal(r.failure.code,'UAT_REMOTE_BOUND_UNVERIFIED');assert.equal(r.failure.retryable,false);assert(!f.requests.some(x=>x.url.includes('py.ebixmall.com')))}assert(!JSON.stringify(r).includes('PRIVATE-SECRET'));
 });
+
+test('malformed server service-account JSON is config failure, no provider retry and no secret logging',async()=>{
+ const f=fixture('Check the published policy',{env:{GOOGLE_SERVICE_ACCOUNT_JSON:'PRIVATE-SECRET'}});const r=await f.run();assert.equal(r.body.generation_success,false);assert.equal(f.commits[0].metadata.execution_failure.code,'LLM_CONFIG_MISSING');assert.equal(f.commits[0].metadata.execution_failure.stage,'config');assert.equal(f.commits[0].metadata.retryable,false);assert(!f.requests.some(x=>x.url.includes('aiplatform')));assert(!JSON.stringify([f.logs,f.events,r]).includes('PRIVATE-SECRET'));
+});

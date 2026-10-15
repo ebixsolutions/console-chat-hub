@@ -2224,12 +2224,12 @@ Deno.serve(async (req) => {
         parsedSourceMessageId,
       );
   } catch (error) {
-    console.error("[generate-reply] unexpected error:", error);
+    console.error(JSON.stringify({event:"generation_unexpected_failure",...failureFromError(error,{source_message_id:parsedSourceMessageId})}));
     if (parsedConversationId && parsedSourceMessageId) {
       return await persistTerminalRecovery(
         parsedConversationId,
         parsedSourceMessageId,
-        error instanceof Error ? error.name : "unexpected_error",
+        failureFromError(error).code,
       );
     }
     return new Response(JSON.stringify({ error: "Internal server error" }), {

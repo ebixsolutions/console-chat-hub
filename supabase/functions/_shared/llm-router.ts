@@ -308,7 +308,12 @@ function anthropicAdapter(
 }
 
 async function vertexAccessToken(serviceAccountJson: string): Promise<string> {
-  const credentials = JSON.parse(serviceAccountJson) as Record<string, unknown>;
+  let credentials: Record<string, unknown>;
+  try {
+    const parsed:unknown=JSON.parse(serviceAccountJson);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    credentials=parsed as Record<string,unknown>;
+  } catch { throw new VertexRequestValidationError("vertex_service_account_json_invalid"); }
   const auth = new GoogleAuth({ credentials, scopes: [VERTEX_SCOPE] });
   const client = await auth.getClient();
   const token = await client.getAccessToken();
