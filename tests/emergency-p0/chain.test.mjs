@@ -292,3 +292,8 @@ for(const [options,stage,success] of [[{remoteDenied:true},'admission',false],[{
 test('malformed server service-account JSON is config failure, no provider retry and no secret logging',async()=>{
  const f=fixture('Check the published policy',{env:{GOOGLE_SERVICE_ACCOUNT_JSON:'PRIVATE-SECRET'}});const r=await f.run();assert.equal(r.body.generation_success,false);assert.equal(f.commits[0].metadata.execution_failure.code,'LLM_CONFIG_MISSING');assert.equal(f.commits[0].metadata.execution_failure.stage,'config');assert.equal(f.commits[0].metadata.retryable,false);assert(!f.requests.some(x=>x.url.includes('aiplatform')));assert(!JSON.stringify([f.logs,f.events,r]).includes('PRIVATE-SECRET'));
 });
+
+test('proposed no-RAG business QA entry executes actual synthetic handler, semantic Provider, source-bound calculation and reply persistence',async()=>{
+ const text='用假設數字試算3個軟件席位：單價每位 HKD 80；設定費整單 HKD 40。只作數學試算，不查現行價，不執行任何交易。';
+ const f=fixture(text,{company:syntheticCompany,env:enabledRun,fullChain:true,semantic:{operation:'ASK_CALCULATION',confidence:0.98,delta_json:JSON.stringify({intent:'customer_only_calculation',requested_facts:[]})}});const r=await f.run();assert.equal(r.body.response_route,'c3_historical_conditional_calculation');assert.match(r.body.reply,/HK\$ 280/);assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.source_message_id,source);assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1);assert(!f.requests.some(x=>x.url.includes('context-search')));assert.notEqual(r.body.generation_success,false);assert.doesNotMatch(r.body.reply,/已付款|已啟用|已落單/);
+});

@@ -149,15 +149,15 @@
     ],
     "new_caps": {
       "conversations": 2,
-      "visitor": 5,
-      "assistant": 5,
-      "vertex_generateContent": 12,
-      "vertex_countTokens": 12,
+      "visitor": 4,
+      "assistant": 4,
+      "vertex_generateContent": 6,
+      "vertex_countTokens": 6,
       "singapore_rag": 0,
       "embedding": 0,
       "kb_tool": 0,
       "per_request_attempts": 6,
-      "reserved_exposure_microusd": 400000,
+      "reserved_exposure_microusd": 200000,
       "serial_inflight": 1
     },
     "cumulative_caps_retained": {
@@ -172,17 +172,12 @@
       "steps": [
         {
           "conversation": 1,
-          "text": "我們活動有12張成人票，每張80港元，另有3張兒童票，每張40港元。未付款，只計算這批票總額，不要查價或預訂。",
-          "expected": "1080 HKD; live semantic Provider result, customer-only authority, no price lookup or transaction claim; persistent source-bound reply"
+          "text": "用假設數字試算3個軟件席位：單價每位 HKD 80；設定費整單 HKD 40。只作數學試算，不查現行價，不執行任何交易。",
+          "expected": "HKD 280; live semantic Provider result, customer-only hypothetical authority, no price lookup or transaction claim; persistent source-bound reply"
         },
         {
           "conversation": 1,
-          "text": "更正：兒童票改為2張，每張40港元；成人票仍12張，每張80港元。只計算新總額，不要查價或預訂。",
-          "expected": "1040 HKD; latest correction; no paid/booked/completed inference; same ticket and current memory"
-        },
-        {
-          "conversation": 1,
-          "text": "請轉真人客服，連同剛才的更正及未付款狀態交給客服。",
+          "text": "請轉真人客服，連同剛才的試算資料交給客服。",
           "expected": "R1 actual handoff transaction and same-ticket Summary; no model/KB dependence; no claim of assigned or online staff"
         },
         {
@@ -200,7 +195,7 @@
     "necessary_writes": [
       "Only three temporary SQL functions and three restrictive upstream-log policies from the two exact SQL files; CE stays unchanged",
       "One protected lease row, two synthetic visitor sessions and two synthetic conversations in the exact registered company/channel, exclude_training=true and same owner",
-      "Normal Auth session/audit, 5 Visitor + at most5 Assistant, existing Commerce/Memory CAS/event/lineage/trace receipts, model reservation/finalization receipts, one actual R1 handoff/summary and existing notification transaction"
+      "Normal Auth session/audit, 4 Visitor + at most4 Assistant, existing Commerce/Memory CAS/event/lineage/trace receipts, model reservation/finalization receipts, one actual R1 handoff/summary and existing notification transaction"
     ],
     "server_configuration": [
       "C3_TEMP_UAT_RUN_ID=71657f35-88c4-4a73-a2e7-9abde643ad74",

@@ -14,7 +14,7 @@ VALUES('71657f35-88c4-4a73-a2e7-9abde643ad74','4e0ea9f6-11d5-4968-97f6-f0ed8bf7c
  'kind','c3_uat_run','revision','c3-3322877-bounded-uat-r2','state','active','issued_at',clock_timestamp(),'expires',clock_timestamp()+interval '45 minutes',
  'allowed_conversations',jsonb_build_array('c7d3fa80-ed64-42d2-a48e-cda98dce5d71','a869150f-a69d-41ad-bb39-c070be8cc708'),
  'allowed_purposes',jsonb_build_array('generation','evaluation'),'allowed_operation_prefixes',jsonb_build_array('generate-reply-','commerce-semantic-interpreter:'),
- 'conversation_limit',2,'visitor_limit',5,'attempt_limit',12,'budget_microusd',400000,'batch_size',2,'batch_visitor_limit',5,'per_request_attempt_limit',6,'stage','A','kb_bounds_verified',false),0);
+ 'conversation_limit',2,'visitor_limit',4,'attempt_limit',6,'budget_microusd',200000,'batch_size',2,'batch_visitor_limit',4,'per_request_attempt_limit',6,'stage','A','kb_bounds_verified',false),0);
 INSERT INTO public.visitor_session(id,session_token,visitor_fingerprint,visitor_metadata,last_seen_at,channel_config_id)
 SELECT id, 'preview-test.'||gen_random_uuid()::text||'.'||replace(gen_random_uuid()::text,'-',''), 'widget-live-test:4348ee35-9632-4626-a846-e313bcc4a5f9',
  jsonb_build_object('source','c3_uat_widget','test_mode',true,'owner_user_id','4348ee35-9632-4626-a846-e313bcc4a5f9','exclude_training',true,'scope_mode','canonical'),clock_timestamp(),'0405282f-77dc-47cf-8074-99dd3dc6c393'::uuid
