@@ -1,5 +1,5 @@
 import { SavedResponses } from "@/components/console/SavedResponses";
-import { ReplyRequest } from "@/components/console/reply-request";
+import { useTicketReply } from "@/hooks/useTicketReply";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -40,6 +40,7 @@ function ConversationDetailGuard() {
 type Msg = {
   id: string;
   role: string;
+  sender_id?: string | null;
   content: string;
   content_type: string | null;
   status: string | null;
@@ -80,8 +81,9 @@ function ConversationDetailContent() {
 
   const [agents, setAgents] = useState<AgentLite[]>([]);
   const [myAgent, setMyAgent] = useState<AgentLite | null>(null);
-  const [reply, setReply] = useState("");
-  const [sending, setSending] = useState(false);
+  const replyDraft = useTicketReply(user?.id, id, myAgent?.id, scopedMessages);
+  const { reply, setReply, sending } = replyDraft;
+
   const [loading, setLoading] = useState(true);
   const [sendGuardOpen, setSendGuardOpen] = useState(false);
   const [resolvedWarningOpen, setResolvedWarningOpen] = useState(false);
@@ -148,7 +150,7 @@ function ConversationDetailContent() {
     try {
       const { data, error } = await supabase
         .from("messages")
-        .select("id,role,content,content_type,status,is_recalled,metadata,created_at")
+        .select("id,role,sender_id,content,content_type,status,is_recalled,metadata,created_at")
         .eq("conversation_id", id)
         .neq("content", "__THINKING__")
         .order("created_at", { ascending: true });
@@ -247,39 +249,26 @@ function ConversationDetailContent() {
   }, [loadConv, loadMessages]);
 
   async function callEF(name: string, body: Record<string, unknown>) {
-    const { data, error } = await supabase.functions.invoke(name, { body });
-    if (error) {
-      toast.error(error.message);
+    try {
+      const { data, error } = await supabase.functions.invoke(name, { body });
+      if (error || data?.success !== true) {
+        toast.error("Operation not confirmed. Refresh the ticket before further action.");
+        return false;
+      }
+      return true;
+    } catch {
+      toast.error("Operation outcome unconfirmed. Check the ticket before further action.");
       return false;
     }
-    if (data && (data as { error?: string }).error) {
-      toast.error((data as { error: string }).error);
-      return false;
-    }
-    return true;
-  }
-
-  const replyRequest = useRef(new ReplyRequest());
-  async function invokeReply(conversationId:string,content:string) {
-    const body=replyRequest.current.body(conversationId,content);
-    const ok=await callEF("agent-send-reply",body);
-    if(ok)replyRequest.current.confirmed(body.client_request_id);
-    return ok;
   }
   async function sendReply() {
-    const content = reply.trim();
-    if (!content) return;
-    setSending(true);
-    const ok = await invokeReply(id, content);
-    setSending(false);
-    if (ok) {
-      setReply("");
-      toast.success("Reply sent");
-      loadMessages();
+    const ticketId = id;
+    if (!ticketId) return;
+    if (await replyDraft.send()) {
+      toast.success("Reply saved");
+      void loadMessages();
     }
   }
-
-  // ── Dev22-F2: Send Guard — aligned with index route ───────────────
   function handleSendClick() {
     if (!reply.trim()) return;
     if (!conv) return;
@@ -299,34 +288,14 @@ function ConversationDetailContent() {
   }
 
   async function handleTakeOverAndSend() {
-    const content = reply.trim();
-    if (!content) {
-      setSendGuardOpen(false);
-      return;
-    }
-    setSending(true);
-    const takeOverOk = await callEF("take-over-conversation", { conversation_id: id });
-    if (!takeOverOk) {
-      setSending(false);
-      setSendGuardOpen(false);
-      toast.error("Take over failed. Message not sent.");
-      return;
-    }
-    const sendOk = await invokeReply(id, content);
-    setSending(false);
+    const ticketId = id;
+    if (!ticketId) return;
+    const ok = await replyDraft.send(ticket => callEF("take-over-conversation", { conversation_id: ticket }));
     setSendGuardOpen(false);
-    if (sendOk) {
-      setReply("");
-      toast.success("Took over and sent reply");
-      loadConv();
-      loadMessages();
-    } else {
-      toast.info("Conversation taken over, but message was not sent. Please re-send.");
-      loadConv();
-    }
+    if (ok) toast.success("Take over confirmed and reply saved");
+    void loadConv();
+    void loadMessages();
   }
-  // ── End Dev22-F2 ──────────────────────────────────────────────────
-
   async function handleResolve() {
     if (await callEF("resolve-conversation", { conversation_id: id })) {
       toast.success("Marked resolved");
@@ -587,6 +556,7 @@ function ConversationDetailContent() {
                 <SavedResponses key={`${user?.id}:${id}`} conversationId={id}
             variables={{customer_name:null,agent_name:myAgent?.display_name,channel_name:conv?.channel_config?.name}}
             onInsert={text=>{if(reply.trim()&&reply.trim()!==text.trim()){setPendingUseText(text);setUseConfirmOpen(true);}else setReply(text);}} />
+              {replyDraft.notice && <div role="alert">{replyDraft.notice}<button type="button" onClick={async () => { await loadMessages(); replyDraft.checked(); }}>Check reply status</button></div>}
           <Textarea
                   ref={replyRef}
                   value={reply}
@@ -609,7 +579,7 @@ function ConversationDetailContent() {
                   />
                   <AttachmentButtons conversationId={id} onSent={() => loadMessages()} />
                 </div>
-                <Button onClick={handleSendClick} disabled={sending || !reply.trim()} className="w-full">
+                <Button onClick={handleSendClick} disabled={replyDraft.blocked || !reply.trim()} className="w-full">
                   {sending ? "Sending…" : "Send reply"}
                 </Button>
               </div>

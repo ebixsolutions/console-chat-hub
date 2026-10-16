@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 const require=createRequire(path.resolve(process.env.C3_REACT_TEST_ROOT??'.','package.json'));const React=require('react');const {create,act}=require('react-test-renderer');globalThis.IS_REACT_ACT_ENVIRONMENT=true;const f=globalThis.__inboxSearch={};
 const result=await build({entryPoints:['src/routes/_authenticated/console.conversations.index.tsx'],bundle:true,write:false,platform:'node',format:'esm',jsx:'automatic',plugins:[{name:'transport',setup(b){
  b.onResolve({filter:/^react(?:\/.*)?$/},a=>({path:require.resolve(a.path),external:true}));
- b.onResolve({filter:/^(lucide-react|sonner|@tanstack\/react-router|@\/hooks\/|@\/components\/|@\/integrations\/|@\/lib\/api\/feedback.service)/},a=>({path:a.path,namespace:'fixture'}));
+ b.onResolve({filter:/^(lucide-react|sonner|@tanstack\/react-router|@\/hooks\/|@\/components\/|@\/integrations\/|@\/lib\/api\/feedback.service)/},a=>a.path.endsWith("/useTicketReply")?({path:path.resolve("src/hooks/useTicketReply.ts")}):({path:a.path,namespace:'fixture'}));
  b.onLoad({filter:/.*/,namespace:'fixture'},a=>{const s='const f=globalThis.__inboxSearch;';
  if(a.path==='@tanstack/react-router')return {contents:'export const createFileRoute=()=>x=>x;'};
  if(a.path==='lucide-react')return {contents:'export const Loader2=()=>null;'};

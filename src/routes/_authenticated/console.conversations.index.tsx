@@ -1,6 +1,6 @@
 import { SavedResponses } from "@/components/console/SavedResponses";
 import { B12VerificationDialog } from "@/components/console/B12VerificationDialog";
-import { ReplyRequest } from "@/components/console/reply-request";
+import { useTicketReply } from "@/hooks/useTicketReply";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -54,6 +54,7 @@ type Conv = {
 type Msg = {
   id: string;
   role: string;
+  sender_id?: string | null;
   content: string;
   content_type: string | null;
   status: string | null;
@@ -344,10 +345,11 @@ function SinglePageInbox() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [messagesError, setMessagesError] = useState<string | null>(null);
   const messageLoadRef = useRef(0);
-  const [reply, setReply] = useState("");
-  const [sending, setSending] = useState(false);
+
   const [agents, setAgents] = useState<AgentLite[]>([]);
   const [myAgent, setMyAgent] = useState<AgentLite | null>(null);
+  const replyDraft = useTicketReply(user?.id, selectedId, myAgent?.id, messagesConversationId === selectedId ? messages : []);
+  const { reply, setReply, sending } = replyDraft;
   const [activityOpen, setActivityOpen] = useState(false);
   const [sendGuardOpen, setSendGuardOpen] = useState(false);
   const [resolvedWarningOpen, setResolvedWarningOpen] = useState(false);
@@ -434,7 +436,7 @@ function SinglePageInbox() {
     try {
       const { data, error } = await supabase
         .from("messages")
-        .select("id,role,content,content_type,status,is_recalled,metadata,created_at")
+        .select("id,role,sender_id,content,content_type,status,is_recalled,metadata,created_at")
         .eq("conversation_id", convId)
         .neq("content", "__THINKING__")
         .order("created_at", { ascending: true });
@@ -579,33 +581,24 @@ function SinglePageInbox() {
   }, [loadMessages]);
 
   async function callEF(name: string, body: Record<string, unknown>) {
-    const { data, error: efErr } = await supabase.functions.invoke(name, { body });
-    if (efErr) {
-      toast.error(efErr.message);
+    try {
+      const { data, error } = await supabase.functions.invoke(name, { body });
+      if (error || data?.success !== true) {
+        toast.error("Operation not confirmed. Refresh the ticket before further action.");
+        return false;
+      }
+      return true;
+    } catch {
+      toast.error("Operation outcome unconfirmed. Check the ticket before further action.");
       return false;
     }
-    if (data && (data as { error?: string }).error) {
-      toast.error((data as { error: string }).error);
-      return false;
-    }
-    return true;
-  }
-  const replyRequest = useRef(new ReplyRequest());
-  async function invokeReply(conversationId:string,content:string) {
-    const body=replyRequest.current.body(conversationId,content);
-    const ok=await callEF("agent-send-reply",body);
-    if(ok)replyRequest.current.confirmed(body.client_request_id);
-    return ok;
   }
   async function sendReply() {
-    if (!selectedId || !reply.trim()) return;
-    setSending(true);
-    const ok = await invokeReply(selectedId, reply.trim());
-    setSending(false);
-    if (ok) {
-      setReply("");
-      toast.success("Reply sent");
-      loadMessages(selectedId, false, true);
+    const ticketId = selectedId;
+    if (!ticketId) return;
+    if (await replyDraft.send()) {
+      toast.success("Reply saved");
+      void loadMessages(ticketId, false, true);
     }
   }
   function handleSendClick() {
@@ -623,24 +616,13 @@ function SinglePageInbox() {
     setSendGuardOpen(true);
   }
   async function handleTakeOverAndSend() {
-    if (!selectedId) return;
-    setSending(true);
-    const takeOverOk = await callEF("take-over-conversation", { conversation_id: selectedId });
-    if (!takeOverOk) {
-      setSending(false);
-      setSendGuardOpen(false);
-      toast.error("Take over failed. Message not sent.");
-      return;
-    }
-    const sendOk = await invokeReply(selectedId, reply.trim());
-    setSending(false);
+    const ticketId = selectedId;
+    if (!ticketId) return;
+    const ok = await replyDraft.send(ticket => callEF("take-over-conversation", { conversation_id: ticket }));
     setSendGuardOpen(false);
-    if (sendOk) {
-      setReply("");
-      toast.success("Took over and sent reply");
-      loadConversations();
-      loadMessages(selectedId, false, true);
-    }
+    if (ok) toast.success("Take over confirmed and reply saved");
+    void loadConversations();
+    void loadMessages(ticketId, false, true);
   }
   async function handleResolve() {
     const conversationId = selectedId;
@@ -1449,6 +1431,7 @@ function SinglePageInbox() {
               <SavedResponses key={`${user?.id}:${selectedId}`} conversationId={selectedId!}
                 variables={{customer_name: (()=>{const meta=selectedConv?.visitor_session?.visitor_metadata;return meta&&typeof meta==="object"&&"name" in meta&&typeof meta.name==="string"?meta.name:null;})(), agent_name: myAgent?.display_name, channel_name: selectedConv?.channel_config?.name}}
                 onInsert={text=>{if(reply.trim()&&reply.trim()!==text.trim()){setPendingUseText(text);setUseConfirmOpen(true);}else setReply(text);}} />
+              {replyDraft.notice && <div role="alert">{replyDraft.notice}<button type="button" onClick={async () => { if (selectedId) await loadMessages(selectedId, false); replyDraft.checked(); }}>Check reply status</button></div>}
               <Textarea
                 ref={replyRef}
                 value={reply}
@@ -1477,7 +1460,7 @@ function SinglePageInbox() {
                   }}
                 />
 
-                <Button onClick={handleSendClick} disabled={sending || !reply.trim()} className="ml-auto">
+                <Button onClick={handleSendClick} disabled={replyDraft.blocked || !reply.trim()} className="ml-auto">
                   {sending ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
