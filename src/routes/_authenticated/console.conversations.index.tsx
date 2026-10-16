@@ -191,59 +191,9 @@ function HandoffBanner({
   const aiMsgs = messages.filter((m) => m.role === "assistant");
   const aiCount = aiMsgs.length;
   const visitorCount = visitorMsgs.length;
-  const allVisitorText = visitorMsgs
-    .map((m) => m.content)
-    .join(" ")
-    .toLowerCase();
-  const hasRefund = allVisitorText.includes("退款") || allVisitorText.includes("refund");
-  const hasDamaged =
-    allVisitorText.includes("損壞") ||
-    allVisitorText.includes("损坏") ||
-    allVisitorText.includes("damaged") ||
-    allVisitorText.includes("破損");
-  const hasUrgent =
-    allVisitorText.includes("急") ||
-    allVisitorText.includes("urgent") ||
-    allVisitorText.includes("今天") ||
-    allVisitorText.includes("today");
-  const hasAngry =
-    allVisitorText.includes("angry") ||
-    allVisitorText.includes("😡") ||
-    allVisitorText.includes("不滿") ||
-    allVisitorText.includes("失去預算") ||
-    allVisitorText.includes("unacceptable");
-  const hasHuman =
-    allVisitorText.includes("真人") ||
-    allVisitorText.includes("人工") ||
-    allVisitorText.includes("human") ||
-    allVisitorText.includes("轉接") ||
-    allVisitorText.includes("transfer");
-  const hasBudget =
-    allVisitorText.includes("預算") ||
-    allVisitorText.includes("budget") ||
-    allVisitorText.includes("失去") ||
-    allVisitorText.includes("超支");
-  const summaryParts: string[] = [];
-  if (hasRefund) summaryParts.push("requested a refund");
-  if (hasDamaged) summaryParts.push("reported damaged goods after delivery");
-  if (hasUrgent) summaryParts.push("said the item was urgently needed today");
-  if (hasAngry || hasBudget) summaryParts.push("became upset about the budget impact");
-  if (hasHuman) summaryParts.push("requested human support");
-  if (summaryParts.length === 0) summaryParts.push("escalated the conversation");
-  const summaryText = "Customer " + summaryParts.join(", ") + ".";
-  const whyReasons: string[] = [];
-  if (hasAngry) whyReasons.push("✓ Angry sentiment detected");
-  if (hasRefund) whyReasons.push("✓ Refund / policy issue");
-  if (hasDamaged) whyReasons.push("✓ Damaged item after delivery");
-  if (hasUrgent) whyReasons.push("✓ Urgent need today");
-  if (hasHuman) whyReasons.push("✓ Human support requested");
-  if (whyReasons.length === 0)
-    whyReasons.push(lang === "zh" ? "✓ 此對話已標記供人工檢視" : "✓ Conversation flagged for review");
-  const actions: string[] = ["✓ Prioritize human takeover", "✓ Review full conversation"];
-  if (hasRefund || hasDamaged) actions.push("✓ Ask for order number");
-  if (hasDamaged) actions.push("✓ Request damage photos");
-  if (hasHuman) actions.push("✓ Confirm contact method");
-  if (hasRefund || hasDamaged) actions.push("✓ Review refund / replacement policy");
+  // A quotation is source-bound evidence, not an inferred intent/entitlement.
+  // The persisted, tenant-checked TicketHandoffSummary remains the authority.
+  const latestVisitor = visitorMsgs.filter((m) => !m.is_recalled).at(-1);
   return (
     <div
       style={{
@@ -259,7 +209,7 @@ function HandoffBanner({
         <span style={{ fontSize: 12, fontWeight: 700, color: headerColor }}>
           {isHumanControl
             ? "🟣 Human Control Active — Knowledge Helper available for internal reference only"
-            : "🔴 AI Handoff Summary — Human Action Required"}
+            : "🔴 Handoff Status — Human Review Required"}
         </span>
       </div>
       <div style={{ padding: "10px 12px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, fontSize: 12 }}>
@@ -290,42 +240,18 @@ function HandoffBanner({
               marginBottom: 5,
             }}
           >
-            Detected Issues
+            Latest customer message (quotation)
           </div>
-          <div style={{ lineHeight: 1.6, fontSize: 11, color: "#1a1a1a" }}>{summaryText}</div>
+          <div style={{ lineHeight: 1.6, fontSize: 11, color: "#1a1a1a", whiteSpace: "pre-wrap" }}>
+            {latestVisitor ? <q data-source-message-id={latestVisitor.id}>{latestVisitor.content}</q> : "No customer message is currently loaded."}
+          </div>
         </div>
         <div>
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: "#888",
-              textTransform: "uppercase" as const,
-              marginBottom: 4,
-            }}
-          >
-            Detected Signals (keyword-based)
-          </div>
-          <div style={{ lineHeight: 1.7, marginBottom: 6, fontSize: 11 }}>
-            {whyReasons.map((r, i) => (
-              <div key={i}>{r}</div>
-            ))}
-          </div>
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: "#888",
-              textTransform: "uppercase" as const,
-              marginBottom: 4,
-            }}
-          >
-            Recommended Action
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#888", marginBottom: 4 }}>
+            Persisted handoff summary
           </div>
           <div style={{ fontSize: 11 }}>
-            {actions.map((a, i) => (
-              <div key={i}>{a}</div>
-            ))}
+            Review this ticket’s saved handoff summary and latest corrections. Message keywords alone do not establish a refund request, sentiment, entitlement or required action.
           </div>
         </div>
       </div>
@@ -416,6 +342,8 @@ function SinglePageInbox() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [messagesConversationId, setMessagesConversationId] = useState<string | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
+  const messageLoadRef = useRef(0);
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
   const [agents, setAgents] = useState<AgentLite[]>([]);
@@ -496,21 +424,34 @@ function SinglePageInbox() {
   }
 
   const loadMessages = useCallback(async (convId: string, showLoading = false, scrollToBottom = false) => {
+    if (selectedIdRef.current !== convId) return;
+    const read = ++messageLoadRef.current;
+    const stale = () => read !== messageLoadRef.current || selectedIdRef.current !== convId;
     if (showLoading) {
       setLoadingMessages(true);
       setMessagesConversationId(null);
     }
-    const { data } = await supabase
-      .from("messages")
-      .select("id,role,content,content_type,status,is_recalled,metadata,created_at")
-      .eq("conversation_id", convId)
-      .neq("content", "__THINKING__")
-      .order("created_at", { ascending: true });
-    setMessages((data as Msg[]) ?? []);
-    setMessagesConversationId(convId);
-    if (showLoading) setLoadingMessages(false);
-    if (showLoading || scrollToBottom) {
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id,role,content,content_type,status,is_recalled,metadata,created_at")
+        .eq("conversation_id", convId)
+        .neq("content", "__THINKING__")
+        .order("created_at", { ascending: true });
+      if (stale()) return;
+      if (error) { setMessagesError("Messages unavailable. Retry this ticket’s history."); return; }
+      setMessages((data as Msg[]) ?? []);
+      setMessagesConversationId(convId);
+      setMessagesError(null);
+      if (showLoading || scrollToBottom) {
+        setTimeout(() => {
+          if (!stale()) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }, 50);
+      }
+    } catch {
+      if (!stale()) setMessagesError("Messages unavailable. Retry this ticket’s history.");
+    } finally {
+      if (!stale()) setLoadingMessages(false);
     }
   }, []);
 
@@ -521,6 +462,7 @@ function SinglePageInbox() {
 
   // ── J1: Realtime infrastructure ──
   const selectedIdRef = useRef<string | null>(null);
+  selectedIdRef.current = selectedId;
   const realtimeConnectedRef = useRef(true);
   const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const convDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -599,6 +541,7 @@ function SinglePageInbox() {
 
   useEffect(() => {
     setSelectedMessage(null);
+    setMessagesError(null);
     if (!selectedId) {
       setMessages([]);
       setMessagesConversationId(null);
@@ -1326,7 +1269,7 @@ function SinglePageInbox() {
             {selectedConv && (
               <HandoffBanner
                 conv={selectedConv}
-                messages={messages}
+                messages={messagesConversationId === selectedId ? messages : []}
                 onResolve={handleResolve}
                 onTakeOver={handleTakeOver}
                 onReturnToAi={handleReturnToAi}
@@ -1338,10 +1281,13 @@ function SinglePageInbox() {
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 </div>
               )}
-              {!loadingMessages && messages.length === 0 && (
+              {messagesError && <div role="alert" className="text-sm text-red-700">
+                {messagesError}<button type="button" onClick={() => { if (selectedId) void loadMessages(selectedId, true); }}>Retry messages</button>
+              </div>}
+              {!loadingMessages && !messagesError && messagesConversationId === selectedId && messages.length === 0 && (
                 <div className="text-sm text-muted-foreground text-center py-8">No messages yet.</div>
               )}
-              {messages.map((m) => {
+              {(messagesConversationId === selectedId ? messages : []).map((m) => {
                 const isVisitor = m.role === "visitor",
                   isAgent = m.role === "agent",
                   isAssistant = m.role === "assistant";

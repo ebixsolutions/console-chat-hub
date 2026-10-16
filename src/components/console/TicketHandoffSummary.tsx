@@ -31,30 +31,38 @@ export function TicketHandoffSummary({ conversationId }: { conversationId: strin
   const [refresh, setRefresh] = useState(0);
   useEffect(() => {
     let cancelled = false;
+    let latestRead = 0;
     setState(null);
     async function load() {
-      const { data: conversation, error: ce } = await supabase
-        .from("conversations")
-        .select("id,company_id")
-        .eq("id", conversationId)
-        .maybeSingle();
-      if (ce || !conversation?.company_id) {
-        if (!cancelled) setState({ id: conversationId, summary: null, error: true });
-        return;
-      }
-      const { data: event, error: he } = await supabase
-        .from("handoff_event")
-        .select("ai_summary")
-        .eq("conversation_id", conversationId)
-        .not("ai_summary", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const summary = event
-        ? projectTicketSummary(event.ai_summary, conversationId, conversation.company_id)
-        : null;
-      if (!cancelled)
+      const read = ++latestRead;
+      const stale = () => cancelled || read !== latestRead;
+      try {
+        const { data: conversation, error: ce } = await supabase
+          .from("conversations")
+          .select("id,company_id")
+          .eq("id", conversationId)
+          .maybeSingle();
+        if (stale()) return;
+        if (ce || !conversation?.company_id) {
+          setState({ id: conversationId, summary: null, error: true });
+          return;
+        }
+        const { data: event, error: he } = await supabase
+          .from("handoff_event")
+          .select("ai_summary")
+          .eq("conversation_id", conversationId)
+          .not("ai_summary", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (stale()) return;
+        const summary = event
+          ? projectTicketSummary(event.ai_summary, conversationId, conversation.company_id)
+          : null;
         setState({ id: conversationId, summary, error: Boolean(he || (event && !summary)) });
+      } catch {
+        if (!stale()) setState({ id: conversationId, summary: null, error: true });
+      }
     }
     void load();
     const channel = supabase
