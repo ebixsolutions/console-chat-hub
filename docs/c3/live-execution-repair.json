@@ -224,5 +224,63 @@
     "uat_start_allowed": false,
     "formal_uat_completed": 0,
     "formal_uat_required": 3899
+  },
+  "scoped_admission_repair_20261016": {
+    "authority": "Director scoped admission repair; same PR12 / same Contract rev1.5; SOURCE AND ISOLATED VALIDATION ONLY. New SQL/Function bytes are NOT authorized for Production.",
+    "baseline_head": "a103f3dac439ae1762e5858d3b185b392e3e12c5",
+    "baseline_tree": "316f9af6ba0db2fbcf0caeb2891355ea4566fbce",
+    "quota_scope": "C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1/rev1.5/stage-A/3520",
+    "quota_unit": "model_attempt; countTokens has a separately retained six-call ceiling and is not reported as generation",
+    "admission": "READ COMMITTED only; advisory transaction lock (20261006,3520) before any run/receipt lock. Confirmed evidence units + conservative historical reserves + one debit per durable model reservation across ALL runs + proposed call <=3520. Reserved, finalized, unknown, expired-run and paused-run rows are not refunded. New unknown/pending outcome blocks the entire logical quota.",
+    "evidence": "Exactly one c3_uat_quota record in existing protected upstream_call_log; canonical PostgreSQL JSONB SHA256 pinned by each lease and every reservation. Evidence binds original Contract/company/scope/unit/3520/authorization/coverage/time bounds and uniquely identified positive-unit entries. Every exact historical missing request remains covered by an uncertainty entry with actual_usage=null, full caller/pre-semantic/retries/fallback/verifier/async coverage, call-chain/receipt hashes and disjoint-proved or explicit conservative-double-reserve overlap. Duplicate identity, altered/absent evidence, untagged or differently bound dispatch history denies. No evidence record is seeded in proposed Production SQL.",
+    "historical_result": {
+      "confirmed_observed_attempts": 298,
+      "confirmed_attribution_to_original_quota": "Requires original authorization coverage; 298 is not automatically loaded as in-scope debit",
+      "unknown_executions": 7,
+      "actual_attempts": null,
+      "actual_tokens": null,
+      "actual_cost": null,
+      "semantic_component_ceiling_only": 21,
+      "complete_provable_bound": null,
+      "production_uncertainty_reserve": null,
+      "quota_available": "UNPROVED / PAID ADMISSION DENIED"
+    },
+    "bound_limit": {
+      "captured_generate_reply_v219": "Entry semantic call at 4404; failed interpretation returns after cleanup at4433; interpreter callModel307 evaluation/JSON; router MAX_ATTEMPTS3 and generation-only grounding verifier. These establish only the semantic component, not full invocation exposure.",
+      "captured_caller": "widget-live-ai-test v13 calls receive-widget-message; the captured three-target package does not include a version-bound complete historical receive-widget-message/trigger/async deployment graph, nor a persisted execution-to-source bridge for the seven invocations. Complete caller/pre-semantic/async and overlap scope cannot be proven from these captures. No repeated log reconciliation, historical replay or guessed large reserve.",
+      "captured_files": [
+        {
+          "name": "generate-reply-v219.json",
+          "sha256": "4608fea40aa8858f3df9b1435f1216480a92e8fc1aa1cdd40e2f5c6e325e2991"
+        },
+        {
+          "name": "widget-live-ai-test-baseline.json",
+          "sha256": "10931a73e94f10eece477318b28b3b38b27e7d74365af7d094e30eb0af4bd28d"
+        },
+        {
+          "name": "kb-search-proxy-baseline.json",
+          "sha256": "405d4b943cb9a2e89183cc87fd9c8e334585996cab18e7b7f596aa4e86d3e7e9"
+        }
+      ]
+    },
+    "runtime": "countTokens now reserves/finalizes its own opaque slot before HTTP, before generation reservation. Unknown count/model/HTTP usage retains null observations, pauses and cannot auto-retry. Full-ceiling count exposure is conservatively reserved, not Provider invoice billing.",
+    "controlled_lease": "Same exact 45-minute run, actor, channel, two sessions/tickets, config strings; generation6/countTokens6/budget200000, serial1, zero KB/RAG/embedding. One timestamp defines issue/expiry; lease transaction refuses incomplete evidence before creating sessions/tickets. No renewal or cap reset.",
+    "production_delta": "Same three RPC names/signatures and three restrictive policies; no new table, function, schema, CE, policy class, backend, branch or Billing platform. Future exact-scope execution additionally needs one evidence-bound c3_uat_quota log record; its real evidence/bytes are currently UNAVAILABLE and are not authorized by this Source repair.",
+    "rollback": "Shared quota lock and table lock; both rollback scripts require all leases paused and no reserved/inflight receipt, then exact body hashes. Remove only three RPCs. Keep three restrictive policies whenever protected historical logs/evidence exist; preserve all quota/usage/audit/history. Reinstall validates retained policy definitions. Original CE body untouched. Restore exact three captured Function baselines and two ABSENT config preimages only under current postimage guards.",
+    "validation_scope": "Real local PostgreSQL overlapping connections and synthetic evidence, strict Deno/affected runtime regressions/build/typecheck, followed by new-HEAD required CI. Synthetic bounds are not real historical receipts or Hosted acceptance.",
+    "ui": "Normal secure Browser Auth submitted; original Preview returned to /console/conversations and rendered Frankie Admin/Admin plus exact Backend. Subsequent browser observation refused: native credential state cannot be safely resumed. Tenant conversation list and remaining no-paid authenticated UI/API assertions UNEXECUTED; no bypass attempted.",
+    "remaining_original_cases": [
+      "Hosted four authorized regressions",
+      "Section15.1-15.11",
+      "Fresh Quality95",
+      "I01-I07",
+      "Integration Gate",
+      "31 Routes / 18 Modules / 713 Actions / 3899 Cases / J01-J15",
+      "Final Gate"
+    ],
+    "MODEL_ACCOUNTING_HARDENING": "DEFERRED_POST_UAT",
+    "hosted": "NOT RUN",
+    "uat": "0/3899",
+    "all_acceptance_flags": false
   }
 }

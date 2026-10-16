@@ -56,7 +56,7 @@ const network=async(input:RequestInfo|URL,init?:RequestInit):Promise<Response>=>
   if(url.pathname.includes('/rpc/c3_uat_')){
    const fn=url.pathname.split('/').pop()!;const keys=fn==='c3_uat_reserve_dispatch'?['p_run_id','p_revision','p_company_id','p_conversation_id','p_operation','p_slot','p_identity','p_request_hash','p_provider','p_purpose','p_model','p_attempt','p_input_ceiling','p_output_ceiling','p_cost_microusd']:['p_run_id','p_company_id','p_identity','p_state','p_status','p_input','p_output'];
    const args=keys.map(k=>body[k]===null?'NULL':typeof body[k]==='number'?String(body[k]):q(body[k])).join(',');
-   const r=await sql(`set role service_role;select public.${fn}(${args});`);return r.ok?Response.json(JSON.parse(r.text.split('\n').at(-1)!)):Response.json({message:r.error},{status:400});
+   const r=await sql(`set role service_role;select public.${fn}(${args});`);if(!r.ok)console.error('NATIVE_UAT_RPC_REJECTION',fn,r.error);return r.ok?Response.json(JSON.parse(r.text.split('\n').at(-1)!)):Response.json({message:r.error},{status:400});
   }
   if(url.pathname.endsWith('/company')||url.pathname.endsWith('/conversations')){
    const table=url.pathname.split('/').pop()!, id=(url.searchParams.get('id')||'').replace(/^eq\./,'');
@@ -121,5 +121,5 @@ nativeTest('actual PostgreSQL UAT lease gates Vertex, KB bound, CE/Assist retrie
  await sql(`update public.upstream_call_log set request_payload=jsonb_set(request_payload,'{expires}',to_jsonb(clock_timestamp()+interval '1 hour')) where id=${q(run)};`);
  Deno.env.set('C3_TEMP_UAT_SOURCE_REVISION','wrong');await denied(()=>execute({...meta,operationId:'drift'}));Deno.env.set('C3_TEMP_UAT_SOURCE_REVISION',UAT_REVISION);
  unknown=true;let failed=false;try{await execute({...meta,operationId:'unknown'})}catch{failed=true}unknown=false;assert(failed);const paused=await sql(`select request_payload->>'state' from public.upstream_call_log where id=${q(run)};`);equal(paused.text,'paused');await denied(()=>execute({...meta,operationId:'after-unknown'}));
- const retained=await sql(`select count(*) from public.upstream_call_log where request_payload->>'run_id'=${q(run)};`);equal(retained.text,'5');equal(permanentCalls,0);
+ const retained=await sql(`select count(*) from public.upstream_call_log where request_payload->>'run_id'=${q(run)};`);equal(retained.text,'10');equal(permanentCalls,0);
 });

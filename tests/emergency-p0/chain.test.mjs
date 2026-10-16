@@ -202,7 +202,7 @@ function endpointGuardFixture(region) {
  return {f,url,meta,events,dispatches:()=>dispatches,deny:()=>deny=true,run:(u=url,m=meta)=>guard.uatFetch(db,m,u,{method:'POST',body:request},transport)};
 }
 test('protected Vertex caller accepts the same canonical regional and global endpoint as the request builder',async()=>{
- for(const region of ['us-central1','global']){const f=endpointGuardFixture(region);await f.run();assert.equal(f.dispatches(),1);assert.deepEqual(f.events,['countTokens','c3_uat_reserve_dispatch','provider','c3_uat_finalize_dispatch']);}
+ for(const region of ['us-central1','global']){const f=endpointGuardFixture(region);await f.run();assert.equal(f.dispatches(),1);assert.deepEqual(f.events,['c3_uat_reserve_dispatch','countTokens','c3_uat_finalize_dispatch','c3_uat_reserve_dispatch','provider','c3_uat_finalize_dispatch']);}
 });
 test('canonical endpoint compatibility retains exact project, region, model, scheme and purpose denial',async()=>{
  const f=endpointGuardFixture('global');
@@ -211,7 +211,7 @@ test('canonical endpoint compatibility retains exact project, region, model, sch
  assert.equal(f.dispatches(),0);assert.deepEqual(f.events,[]);
 });
 test('global endpoint compatibility never bypasses the original remote-bound database admission',async()=>{
- const f=endpointGuardFixture('global');f.deny();await assert.rejects(f.run(),e=>e.code==='UAT_ADMISSION_DENIED');assert.equal(f.dispatches(),0);assert.deepEqual(f.events,['countTokens','c3_uat_reserve_dispatch']);
+ const f=endpointGuardFixture('global');f.deny();await assert.rejects(f.run(),e=>e.code==='UAT_ADMISSION_DENIED');assert.equal(f.dispatches(),0);assert.deepEqual(f.events,['c3_uat_reserve_dispatch']);
 });
 
 // Combinations exercise the bounded speech-act grammar through the real handler.

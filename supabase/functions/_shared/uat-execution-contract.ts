@@ -59,7 +59,17 @@ async function rpc(db: Db, name: string, args: Record<string, unknown>) {
 /** Must persist a denial/pause for unknown in-flight outcomes; never refund reservations. */
 export async function uatFetch(db: Db, meta: UatContext, url: string, init: RequestInit, upstream: typeof fetch = fetch, onDispatch?: ()=>void): Promise<Response> {
   const run = uatRun(meta.companyId);
-  if (!run || !meta.conversationId || !meta.operationId || meta.operationId.length>240 || meta.slot.length>120 || !Number.isInteger(meta.attempt) || meta.attempt<1 || meta.attempt>3 || init.method!=="POST" || String(init.body)!==meta.request) throw new UatDenied("UAT_SCOPE_DENIED");
+  if (!run || !meta.conversationId || !meta.operationId || meta.operationId.length>240 || meta.slot.length>120 || meta.slot.startsWith("countTokens:") || !Number.isInteger(meta.attempt) || meta.attempt<1 || meta.attempt>3 || init.method!=="POST" || String(init.body)!==meta.request) throw new UatDenied("UAT_SCOPE_DENIED");
+  // Every external call, including countTokens, owns a durable admission before dispatch.
+  const admit = async (slot: string, callUrl: string, request: string, input: number, output: number, model: string, cost: number) => {
+    const key=await digest(JSON.stringify([meta.operationId,slot,meta.attempt,meta.provider]));
+    const receipt=await rpc(db,"c3_uat_reserve_dispatch",{p_run_id:run,p_revision:UAT_REVISION,p_company_id:meta.companyId,p_conversation_id:meta.conversationId,p_operation:meta.operationId,p_slot:slot,p_identity:key,p_request_hash:await digest(JSON.stringify([callUrl,request])),p_provider:meta.provider,p_purpose:meta.purpose,p_model:model,p_attempt:meta.attempt,p_input_ceiling:input,p_output_ceiling:output,p_cost_microusd:cost});
+    if (receipt.dispatch!==true || receipt.run_id!==run || receipt.identity!==key || receipt.state!=="reserved" || !Number.isFinite(receipt.expires_epoch) || Date.now()/1000>=receipt.expires_epoch) throw new UatDenied("UAT_REPLAY_OR_RECEIPT_DENIED");
+    return async(state:string,status:number,input:number|null,output:number|null)=>{
+      const result=await rpc(db,"c3_uat_finalize_dispatch",{p_run_id:run,p_company_id:meta.companyId,p_identity:key,p_state:state,p_status:status,p_input:input,p_output:output});
+      if(result.state!==state)throw new UatDenied("UAT_FINALIZATION_DENIED");
+    };
+  };
   const body = JSON.parse(meta.request);
   const remote = meta.provider === "singapore-kb";
   let inputCeiling = UAT_MAX_INPUT, outputCeiling = 0, model = "gemini-embedding-001", cost = 100000;
@@ -75,23 +85,23 @@ export async function uatFetch(db: Db, meta: UatContext, url: string, init: Requ
     if (new TextEncoder().encode(meta.request).length>80000 || body.tools || body.cachedContent || body.contents?.some((c:any)=>c.parts?.some((p:any)=>Object.keys(p).some(k=>k!=="text"))) || !Number.isInteger(body.generationConfig?.maxOutputTokens) || body.generationConfig.maxOutputTokens<1 || body.generationConfig.maxOutputTokens>UAT_MAX_OUTPUT || body.generationConfig?.thinkingConfig?.thinkingBudget!==UAT_THINKING) throw new UatDenied("UAT_TOKEN_EXPOSURE_DENIED");
     // CountTokens is pre-inference. Any failure denies before generateContent.
     const countRequest={contents:[...(body.contents ?? []),{role:"user",parts:[...(body.systemInstruction?.parts ?? []),{text:JSON.stringify(body.generationConfig?.responseSchema ?? {})}]}]};
-    const counted=await upstream(url.replace(/:generateContent$/,":countTokens"), {method:"POST",headers:init.headers,body:JSON.stringify(countRequest),redirect:"error",signal:init.signal});
-    if (!counted.ok) throw new UatDenied("UAT_TOKEN_COUNT_UNAVAILABLE");
-    const count=(await counted.json()).totalTokens;
-    if (!Number.isInteger(count) || count<1 || count>UAT_MAX_INPUT-1024) throw new UatDenied("UAT_INPUT_LIMIT");
+    const countUrl=url.replace(/:generateContent$/,":countTokens"), countBody=JSON.stringify(countRequest);
+    const countedFinish=await admit("countTokens:"+await digest(meta.slot),countUrl,countBody,UAT_MAX_INPUT,0,"gemini-2.5-flash",Math.ceil(UAT_MAX_INPUT*0.30));
+    let counted:Response;
+    try { counted=await upstream(countUrl,{method:"POST",headers:init.headers,body:countBody,redirect:"error",signal:init.signal}); }
+    catch(error){await countedFinish("unknown",0,null,null);throw new UatDenied(error instanceof Error && error.name==="AbortError"?"UAT_TIMEOUT_OUTCOME_UNKNOWN":"UAT_NETWORK_OUTCOME_UNKNOWN");}
+    let count:unknown;
+    try {if(counted.ok)count=(await counted.json()).totalTokens;}catch { /* Missing observation retains its reservation. */ }
+    if (!counted.ok || typeof count!=="number" || !Number.isInteger(count) || count<1 || count>UAT_MAX_INPUT-1024) {
+      await countedFinish("unknown",counted.status,null,null);throw new UatDenied("UAT_TOKEN_COUNT_UNAVAILABLE");
+    }
+    await countedFinish("response",counted.status,count,0);
     // Reserve the full input ceiling + output AND thinking ceilings, not average spend.
     outputCeiling=body.generationConfig.maxOutputTokens+UAT_THINKING;
     model="gemini-2.5-flash";
     cost=Math.ceil(UAT_MAX_INPUT*0.30+outputCeiling*2.50);
   }
-  const requestHash=await digest(JSON.stringify([url,meta.request]));
-  const key=await digest(JSON.stringify([meta.operationId,meta.slot,meta.attempt,meta.provider]));
-  const receipt=await rpc(db,"c3_uat_reserve_dispatch",{p_run_id:run,p_revision:UAT_REVISION,p_company_id:meta.companyId,p_conversation_id:meta.conversationId,p_operation:meta.operationId,p_slot:meta.slot,p_identity:key,p_request_hash:requestHash,p_provider:meta.provider,p_purpose:meta.purpose,p_model:model,p_attempt:meta.attempt,p_input_ceiling:inputCeiling,p_output_ceiling:outputCeiling,p_cost_microusd:cost});
-  if (receipt.dispatch!==true || receipt.run_id!==run || receipt.identity!==key || receipt.state!=="reserved" || !Number.isFinite(receipt.expires_epoch) || Date.now()/1000>=receipt.expires_epoch) throw new UatDenied("UAT_REPLAY_OR_RECEIPT_DENIED");
-  const finish=async(state:string,status:number,input:number|null,output:number|null)=>{
-    const r=await rpc(db,"c3_uat_finalize_dispatch",{p_run_id:run,p_company_id:meta.companyId,p_identity:key,p_state:state,p_status:status,p_input:input,p_output:output});
-    if(r.state!==state)throw new UatDenied("UAT_FINALIZATION_DENIED");
-  };
+  const finish=await admit(meta.slot,url,meta.request,inputCeiling,outputCeiling,model,cost);
   let response:Response;
   try {onDispatch?.();response=await upstream(url,{...init,redirect:"error"});}
   catch(e){await finish("unknown",0,null,null);throw new UatDenied(e instanceof Error && e.name === "AbortError" ? "UAT_TIMEOUT_OUTCOME_UNKNOWN" : "UAT_NETWORK_OUTCOME_UNKNOWN");}
@@ -100,7 +110,7 @@ export async function uatFetch(db: Db, meta: UatContext, url: string, init: Requ
     await finish("remote_bound",response.status,null,null);
     return response;
   }
-  if(!response.ok){await finish("response",response.status,0,0);return response;}
+  if(!response.ok){await finish("unknown",response.status,null,null);throw new UatDenied("UAT_PROVIDER_OUTCOME_UNKNOWN");}
   let usage:any;
   try{usage=(await response.clone().json()).usageMetadata;}catch{}
   const input=usage?.promptTokenCount, output=(usage?.candidatesTokenCount??0)+(usage?.thoughtsTokenCount??0);
