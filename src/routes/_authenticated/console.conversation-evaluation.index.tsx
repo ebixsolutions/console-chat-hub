@@ -1,3 +1,4 @@
+import { CeBatchControls } from "@/components/console/ce/CeBatchControls";
 /**
  * Conversation Evaluation console — PR29 Task 2 automatic evaluation UX.
  * Existing CE list/filter/detail design preserved.
@@ -179,6 +180,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   useEffect(() => { if (!canRun) setAutoEvaluationFor(null); }, [canRun]);
   const [runId, setRunId] = useState("");
   const [running, setRunning] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
   const [freshness, setFreshness] = useState<Record<string, FreshRow>>({});
   const dwellGeneration = useRef(0);
   const viewEpoch = useRef(0);
@@ -322,7 +324,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   const selectedRevision = selected ? freshness[selected]?.revision : undefined;
   useEffect(() => {
     // Failed/unknown outcomes never re-arm automatic work; no whole-object dependency.
-    if (!canRun || !selected || autoEvaluationFor !== selected || !selectedReady || selectedRevision === undefined ||
+    if (batchBusy || !canRun || !selected || autoEvaluationFor !== selected || !selectedReady || selectedRevision === undefined ||
         !["never_evaluated", "dirty", "stale_version"].includes(selectedState ?? "")) return;
     const tuple = ceExecution.capture(selected, String(selectedRevision), "ce_dwell");
     if (!ceExecution.canAuto(tuple)) return;
@@ -331,7 +333,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
       { setTimeout: (callback, delay) => window.setTimeout(callback, delay), clearTimeout: timer => window.clearTimeout(timer as number) },
       () => generation === dwellGeneration.current);
     return () => { cancel(); dwellGeneration.current++; };
-  }, [canRun, selected, autoEvaluationFor, selectedReady, selectedState, selectedRevision, executeEvaluation]);
+  }, [batchBusy, canRun, selected, autoEvaluationFor, selectedReady, selectedState, selectedRevision, executeEvaluation]);
 
   const runEvaluation = async () => {
     const id = runId.trim().toLowerCase();
@@ -371,6 +373,11 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
             </span>
           </div>
 
+          <CeBatchControls allowed={canRun} disabled={loading || running}
+            targets={pageRows.map(row=>({id:row.conversation_id,label:row.customer_label+" · "+row.conversation_id.slice(0,8),
+              available:row.evaluation_available===true,revision:String(freshness[row.conversation_id]?.revision??"unknown")}))}
+            onBusy={value=>{setBatchBusy(value);if(value){setAutoEvaluationFor(null);dwellGeneration.current++;}}}
+            execute={target=>executeEvaluation(ceExecution.capture(target.id,target.revision,"manual"),false)} />
           <div className="space-y-2.5 rounded-[10px] border border-[#e8e6e0] bg-white p-3">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -383,7 +390,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
                 <div className="flex items-center gap-1.5">
                   <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder={t(C.run.placeholder)}
                     className="h-7 min-w-0 flex-1 rounded-md border border-[#e8e6e0] bg-white px-2 font-mono text-[11px] text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-300" />
-                  <button type="button" disabled={running || !targetEvaluationAvailable} onClick={() => void runEvaluation()}
+                  <button type="button" disabled={batchBusy || running || !targetEvaluationAvailable} onClick={() => void runEvaluation()}
                     className="h-7 shrink-0 rounded-md bg-slate-900 px-2.5 text-[11px] font-medium text-white disabled:opacity-50">
                     {running ? t(C.run.running) : t(C.run.action)}
                   </button>

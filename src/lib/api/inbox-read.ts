@@ -66,3 +66,25 @@ export async function readInboxPreviews(
     return { data: null, error: { message: "Unable to load conversation previews. Please refresh." } };
   }
 }
+
+/** Search only the already-authorized inbox IDs; never broaden to other tickets. */
+export async function readInboxHistoryMatches(
+  ids: string[],
+  page: (ids: string[], from: number, to: number) => PromiseLike<Page<{ id: string; conversation_id: string }>>,
+): Promise<ReadResult<string[]>> {
+  const matched = new Set<string>();
+  for (let offset = 0; offset < ids.length; offset += 50) {
+    const batch = [...new Set(ids.slice(offset, offset + 50))];
+    const rows = await readInboxConversations((from, to) => page(batch, from, to));
+    if (rows.error) return { data: null, error: rows.error };
+    for (const row of rows.data) {
+      if (!batch.includes(row.conversation_id)) return { data: null, error: { message: "Unexpected inbox search scope." } };
+      matched.add(row.conversation_id);
+    }
+  }
+  return { data: [...matched], error: null };
+}
+/** Treat operator input as a literal substring, not a SQL wildcard. */
+export function inboxSearchPattern(query: string): string {
+  return "%" + query.trim().replace(/[\\%_]/g, char => "\\" + char) + "%";
+}

@@ -1,3 +1,4 @@
+import { SavedResponses } from "@/components/console/SavedResponses";
 import { ReplyRequest } from "@/components/console/reply-request";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -551,7 +552,10 @@ function ConversationDetailContent() {
               </div>
 
               <div className="space-y-2">
-                <Textarea
+                <SavedResponses key={`${user?.id}:${id}`} conversationId={id}
+            variables={{customer_name:null,agent_name:myAgent?.display_name,channel_name:conv?.channel_config?.name}}
+            onInsert={text=>{if(reply.trim()&&reply.trim()!==text.trim()){setPendingUseText(text);setUseConfirmOpen(true);}else setReply(text);}} />
+          <Textarea
                   ref={replyRef}
                   value={reply}
                   onChange={(e) => setReply(e.target.value)}

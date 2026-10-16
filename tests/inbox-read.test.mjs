@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readInboxConversations, readInboxPreviews } from '../src/lib/api/inbox-read.ts';
+import { readInboxConversations, readInboxPreviews, readInboxHistoryMatches, inboxSearchPattern } from '../src/lib/api/inbox-read.ts';
 
 test('all scoped tickets remain searchable beyond the old 50-row and API 1000-row boundaries', async () => {
   const rows = Array.from({ length: 1305 }, (_, i) => ({ id: `ticket-${i}`, status: i === 1304 ? 'human_control' : 'open' }));
@@ -55,4 +55,14 @@ test('preview batches stay scoped and failed reads never become no-messages resu
   assert.equal(foreign.data, null);
   const failed = await readInboxPreviews(['own'], async () => ({ data: null, error: { message: 'unavailable' } }));
   assert.equal(failed.data, null);
+});
+
+
+test('A02-011 history search batches scoped IDs, reads all match pages and refuses foreign or partial results', async()=>{
+ const ids=Array.from({length:57},(_,i)=>`ticket-${i}`);let batches=[];
+ const result=await readInboxHistoryMatches(ids,async(batch,from,to)=>{batches.push(batch);const rows=Array.from({length:405},(_,i)=>({id:`m-${batch[0]}-${i}`,conversation_id:batch[i%batch.length]}));return {data:rows.slice(from,to+1),count:405,error:null};});
+ assert.equal(result.error,null);assert.equal(result.data.length,57);assert(batches.every(b=>b.length<=50));
+ const foreign=await readInboxHistoryMatches(['allowed'],async()=>({data:[{id:'m',conversation_id:'foreign'}],count:1,error:null}));assert.equal(foreign.data,null);
+ const partial=await readInboxHistoryMatches(['allowed'],async()=>({data:[{id:'m',conversation_id:'allowed'}],count:2,error:null}));assert.equal(partial.data,null);
+ assert.equal(inboxSearchPattern('  50%_off\\deal  '),'%50\\%\\_off\\\\deal%');
 });

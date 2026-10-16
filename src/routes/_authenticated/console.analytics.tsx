@@ -15,6 +15,8 @@ export const Route = createFileRoute("/_authenticated/console/analytics")({
   component: AnalyticsPage,
 });
 
+import { downloadCsv } from "@/lib/console/csv-export";
+
 interface AnalyticsSummary {
   total_sessions: number;
   total_conversations: number;
@@ -169,6 +171,13 @@ function AnalyticsPage() {
           </p>
         </div>
 
+        <button type="button" onClick={() => downloadCsv("analytics-summary.csv", [
+          ["metric", "value"],
+          ["total_sessions", summary.total_sessions], ["total_conversations", summary.total_conversations],
+          ["total_messages", summary.total_messages], ["feedback_count", summary.feedback_count],
+          ["average_rating", summary.average_rating],
+          ...Object.entries(summary.status_counts).sort(([a], [b]) => a.localeCompare(b)).map(([status, count]) => [`status:${status}`, count]),
+        ])} className="rounded border px-3 py-2 text-xs">Export summary CSV</button>
         <Link
           to="/console/visitor-analytics"
           style={{
@@ -232,6 +241,19 @@ function AnalyticsPage() {
         <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
           Conversation Status
         </div>
+        {Object.keys(summary.status_counts).length > 0 && (
+          <div role="img" aria-label="Conversation status chart" style={{ marginBottom: 16 }}>
+            {Object.entries(summary.status_counts).sort(([a], [b]) => a.localeCompare(b)).map(([status, count]) => (
+              <div key={status} style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 12 }}>{status}: {count}</div>
+                <div style={{ height: 12, background: "#e2e8f0", borderRadius: 4 }}>
+                  <div style={{ height: "100%", borderRadius: 4, background: "#2563eb",
+                    width: `${100 * count / Math.max(1, ...Object.values(summary.status_counts))}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         {Object.keys(summary.status_counts).length === 0 ? (
           <div style={{ fontSize: 12, color: "#9ca3af" }}>
             No conversations yet.

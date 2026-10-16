@@ -1,3 +1,4 @@
+import { SavedResponses } from "@/components/console/SavedResponses";
 import { B12VerificationDialog } from "@/components/console/B12VerificationDialog";
 import { ReplyRequest } from "@/components/console/reply-request";
 import { createFileRoute } from "@tanstack/react-router";
@@ -19,7 +20,7 @@ import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { CRMPanel, RIGHT_COPY, buildBoundedContext, computeContextRevisionKey } from "@/components/console/CRMPanel";
 import { MessageAttachment, isAttachmentMessage, type AttachmentMeta } from "@/components/console/MessageAttachment";
 import { AttachmentButtons, EmojiPickerButton, insertAtCaret } from "@/components/console/ComposerTools";
-import { readInboxConversations, readInboxPreviews } from "@/lib/api/inbox-read";
+import { readInboxConversations, readInboxPreviews, readInboxHistoryMatches, inboxSearchPattern } from "@/lib/api/inbox-read";
 
 
 export const Route = createFileRoute("/_authenticated/console/conversations/")({
@@ -394,6 +395,22 @@ function SinglePageInbox() {
   const [conversations, setConversations] = useState<Conv[] | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [searchRefresh,setSearchRefresh]=useState(0);
+  const [historySearch, setHistorySearch] = useState<{ query: string; state: "loading" | "ready" | "error"; ids: string[]; error?: string }>({query:"",state:"ready",ids:[]});
+  useEffect(()=>{
+    const query=search.trim();let cancelled=false;
+    if(!query||!conversations){setHistorySearch({query,state:"ready",ids:[]});return;}
+    setHistorySearch({query,state:"loading",ids:[]});
+    const timer=window.setTimeout(()=>{void (async()=>{
+      const result=await readInboxHistoryMatches(conversations.map(c=>c.id),(ids,from,to)=>supabase.from("messages")
+        .select("id,conversation_id",{count:"exact"}).in("conversation_id",ids)
+        .or("is_recalled.is.null,is_recalled.eq.false").neq("content","__THINKING__")
+        .ilike("content",inboxSearchPattern(query)).order("id",{ascending:true}).range(from,to));
+      if(cancelled)return;
+      setHistorySearch(result.error?{query,state:"error",ids:[],error:result.error.message}:{query,state:"ready",ids:result.data});
+    })();},250);
+    return()=>{cancelled=true;window.clearTimeout(timer);};
+  },[search,conversations,searchRefresh]);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -868,9 +885,12 @@ function SinglePageInbox() {
     if (!conversations) return null;
     let list = conversations;
     if (search.trim()) {
-      const q = search.toLowerCase();
+      if(historySearch.query!==search.trim()||historySearch.state!=="ready")return [];
+      const q = search.trim().toLowerCase();
+      const historyIds=new Set(historySearch.ids);
       list = list.filter(
         (c) =>
+          historyIds.has(c.id) || c.id.toLowerCase().includes(q) ||
           getVisitorLabel(c).toLowerCase().includes(q) ||
           (c.visitor_session?.id || c.id).toLowerCase().includes(q) ||
           c.latest_preview.toLowerCase().includes(q),
@@ -885,7 +905,7 @@ function SinglePageInbox() {
     if (filter === "ai_handling")
       return list.filter((c) => c.status === "ai_handling" || (!isHumanNeeded(c) && c.status === "open"));
     return list.filter((c) => c.status === filter);
-  }, [conversations, filter, search]);
+  }, [conversations, filter, search, historySearch]);
 
   const selectedConv = useMemo(
     () => conversations?.find((c) => c.id === selectedId) ?? null,
@@ -1031,7 +1051,9 @@ function SinglePageInbox() {
               ))}
             </div>
           )}
-          {filtered && filtered.length === 0 && (
+          {search.trim() && (historySearch.query!==search.trim() || historySearch.state==="loading") && <div role="status" style={{padding:16}}>Searching conversation history…</div>}
+          {search.trim() && historySearch.query===search.trim() && historySearch.state==="error" && <div role="alert" style={{padding:16}}>Message search unavailable: {historySearch.error}. <button type="button" onClick={()=>setSearchRefresh(n=>n+1)}>Retry message search</button></div>}
+          {filtered && filtered.length === 0 && (!search.trim() || (historySearch.query===search.trim() && historySearch.state==="ready")) && (
             <div style={{ padding: 40, textAlign: "center", fontSize: 12, color: "#888" }}>No conversations found</div>
           )}
           {filtered?.map((c) => {
@@ -1478,6 +1500,9 @@ function SinglePageInbox() {
               <div ref={messagesEndRef} />
             </div>
             <div style={{ background: "#fff", borderTop: "0.5px solid #e8e6e0", padding: "8px 12px", flexShrink: 0 }}>
+              <SavedResponses key={`${user?.id}:${selectedId}`} conversationId={selectedId!}
+                variables={{customer_name: (()=>{const meta=selectedConv?.visitor_session?.visitor_metadata;return meta&&typeof meta==="object"&&"name" in meta&&typeof meta.name==="string"?meta.name:null;})(), agent_name: myAgent?.display_name, channel_name: selectedConv?.channel_config?.name}}
+                onInsert={text=>{if(reply.trim()&&reply.trim()!==text.trim()){setPendingUseText(text);setUseConfirmOpen(true);}else setReply(text);}} />
               <Textarea
                 ref={replyRef}
                 value={reply}

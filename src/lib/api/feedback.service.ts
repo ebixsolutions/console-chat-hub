@@ -438,6 +438,7 @@ export const listFeedbackResponsesFn = createServerFn({ method: "POST" })
     const offset = data.page * data.page_size;
     const { data: rows, error, count } = await query
       .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .range(offset, offset + data.page_size - 1);
 
     if (error) return { ok: false, error: "feedback_response_load_failed" };

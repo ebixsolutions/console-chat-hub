@@ -14,6 +14,8 @@ export const Route = createFileRoute(
   component: FeedbackResponsesPage,
 });
 
+import { collectExportPages, downloadCsv } from "@/lib/console/csv-export";
+
 const PAGE_SIZE = 20;
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -52,6 +54,8 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
   const [conversationId, setConversationId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
 
   const load = useCallback(async () => {
     if (from && to && from > to) {
@@ -106,6 +110,32 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
     void load();
   }, [load]);
 
+  const exportFiltered = async () => {
+    if (exporting || loading || error) return;
+    setExporting(true);
+    setExportError("");
+    // Capture this click's filter values; subsequent UI edits cannot broaden it.
+    const filters = {
+      status: status ? status as "pending" | "responded" : undefined,
+      delivery_status: delivery ? delivery as "pending" | "sent" | "delivery_failed" : undefined,
+      channel: channel ? channel as "email" | "website_widget" : undefined,
+      rating: rating === "none" ? "none" as const : rating ? Number(rating) : undefined,
+      conversation_id: conversationId || undefined,
+      from: from || undefined, to: to || undefined,
+    };
+    try {
+      const exported = await collectExportPages<FeedbackResponseRow>((page) =>
+        feedbackService.listFeedbackResponses({ ...filters, page, page_size: 50 }), 50);
+      downloadCsv("feedback-responses.csv", [
+        ["id", "conversation_id", "channel", "status", "delivery_status", "rating", "feedback", "responded_at", "created_at"],
+        ...exported.map(row => [row.id, row.conversation_id, row.channel, row.status,
+          row.delivery_status, row.rating, row.feedback_text, row.responded_at, row.created_at]),
+      ]);
+    } catch (cause) {
+      setExportError(cause instanceof Error ? cause.message : "feedback_export_failed");
+    } finally { setExporting(false); }
+  };
+
   const applyConversation = () => {
     const v = convInput.trim();
     if (!v) {
@@ -131,6 +161,11 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
   return (
     <div className="mx-auto max-w-[1120px] space-y-4">
       <div className="rounded-xl border bg-white p-4">
+        <button type="button" disabled={loading || exporting || Boolean(error)} onClick={exportFiltered}
+          className="mb-3 rounded border px-3 py-1.5 text-xs disabled:opacity-40">
+          {exporting ? (lang === "zh" ? "正在匯出…" : "Exporting…") : (lang === "zh" ? "匯出篩選結果 CSV" : "Export filtered CSV")}
+        </button>
+        {exportError && <p role="alert" className="mb-3 text-xs text-red-700">{exportError}</p>}
         <div className="mb-3 text-sm font-semibold">
           {lang === "zh" ? "客戶回饋" : "Feedback Responses"}
         </div>
