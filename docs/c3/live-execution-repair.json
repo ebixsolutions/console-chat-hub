@@ -282,5 +282,22 @@
     "hosted": "NOT RUN",
     "uat": "0/3899",
     "all_acceptance_flags": false
+  },
+  "director_functional_continuation_20261016": {
+    "parent": "9a42cf58f4a3ae042cab8a3a3205b5f92bc334c2",
+    "source_only": true,
+    "production_new_bytes_authorized": false,
+    "scope": [
+      "Widget local identity/presence reaches ordinary authenticated path without paid admission; complete mixed business turns still denied",
+      "Separate history/read/admission/unknown-delivery states, explicit read-only poll recovery, no unknown resend, source-bound reconciliation",
+      "Human-controlled visitor click-send agrees with Enter; assignment is not agent answer"
+    ],
+    "unchanged": [
+      "Original quota SQL/status/lease and 3520/6/6 guards",
+      "Frozen source/evidence, semantic Provider, KB, memory/handoff transactions"
+    ],
+    "validation": "Actual complete wrapper and React Widget with isolated session/transport; no Hosted/real-role/RLS or Provider success inference",
+    "open_hosted_failure": "Two CW-SUL70BA source→persistent-reply failures, v219 temporal semantic rejection association only; not KB_EMPTY or complete version bridge",
+    "entitlements": "Existing verifier and policy/source-lineage assertions retained with their actual scope. No real CRM entitlement/Tier/priority/SLA behavior acceptance claimed."
   }
 }

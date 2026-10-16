@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 const root=new URL('../../',import.meta.url);
 let code=fs.readFileSync(new URL('supabase/functions/widget-live-ai-test/index.ts',root),'utf8').replace(/^import .*;\n/gm,'').replace('Deno.serve(createWidgetLiveHandler());','');
 const helper=fs.readFileSync(new URL('supabase/functions/_shared/supabase-admin-key.ts',root),'utf8').replace('export function','function');
-const dependencyCode=['supabase/functions/_shared/execution-failure.ts','supabase/functions/_shared/uat-execution-contract.ts','supabase/functions/_shared/uat-execution-readiness.ts','supabase/functions/_shared/handoff-intent.ts'].map(file=>fs.readFileSync(new URL(file,root),'utf8').replace(/^import .*;\n/gm,'')).join('\n');
+const dependencyCode=['supabase/functions/_shared/execution-failure.ts','supabase/functions/_shared/uat-execution-contract.ts','supabase/functions/_shared/uat-execution-readiness.ts','supabase/functions/_shared/handoff-intent.ts','supabase/functions/_shared/conversational-routing.ts'].map(file=>fs.readFileSync(new URL(file,root),'utf8').replace(/^import .*;\n/gm,'')).join('\n');
 code=dependencyCode+'\n'+code;
 code='const createClient=()=>{throw new Error("unexpected SDK client")}; const supabaseCorsHeaders=()=>({});\n'+helper+'\n'+code+'\nexport {getSupabaseAdminKey as testAdminKey};';
 const js=ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
@@ -42,6 +42,11 @@ async function check(name, options={}, expected=200, body={action:'history'}) {
  globalThis.fetch=originalFetch;
  completed.push({name,status:'PASS',kind:'actual_handler_unit_with_provider_adapters'});
 }
+await check('local identity remains reachable without model lease',{env:{C3_TEMP_UAT_RUN_ID:undefined}},200,{action:'send',test_conversation_id:company,client_message_id:channel,query:'你是誰'});
+for (const query of ['what your name','有人吗？','Who are you?','你是誰？']) await check('local identity/presence without model lease: '+query,{env:{C3_TEMP_UAT_RUN_ID:undefined}},200,{action:'send',test_conversation_id:company,client_message_id:channel,query});
+for (const query of ['Who are you? Check my refund','有人吗？請查能源資料','i want to buy fridge','I want software seats']) await check('business remains admission guarded: '+query,{env:{C3_TEMP_UAT_RUN_ID:undefined}},503,{action:'send',test_conversation_id:company,client_message_id:channel,query});
+await check('local identity still requires owned conversation',{foreignOwner:true,env:{C3_TEMP_UAT_RUN_ID:undefined}},404,{action:'send',test_conversation_id:company,client_message_id:channel,query:'你是誰'});
+await check('local identity still requires authenticated actor',{invalid:true},401,{action:'send',test_conversation_id:company,client_message_id:channel,query:'你是誰'});
 await check('actual synthetic missing run denies before messages',{env:{C3_TEMP_UAT_RUN_ID:undefined}},503,{action:'send',test_conversation_id:company,client_message_id:channel,query:'Check the energy label'});
 await check('actual synthetic missing status RPC denies before messages',{missingRpc:true},503,{action:'send',test_conversation_id:company,client_message_id:channel,query:'Check the energy label'});
 await check('actual synthetic human control works without lease',{human:true,env:{C3_TEMP_UAT_RUN_ID:undefined}},200,{action:'send',test_conversation_id:company,client_message_id:channel,query:'Follow up with my agent'});

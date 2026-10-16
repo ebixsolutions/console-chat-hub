@@ -898,7 +898,7 @@ jobs:
           C3_CONSOLE_SDK_ROOT="$RUNNER_TEMP/c3-console-sdk" node --test tests/emergency-p0/chain.test.mjs
           deno test --no-config --no-npm --no-lock tests/emergency-p0/provider-request.test.ts
           npm install --prefix "$RUNNER_TEMP/c3-console-react" --ignore-scripts --no-audit --no-fund react@19.2.0 react-test-renderer@19.2.0
-          C3_REACT_TEST_ROOT="$RUNNER_TEMP/c3-console-react" node --test tests/console-navigation/runtime.test.mjs
+          C3_REACT_TEST_ROOT="$RUNNER_TEMP/c3-console-react" node --test tests/console-navigation/runtime.test.mjs tests/console-navigation/widget-recovery.test.mjs
           deno check --no-lock --node-modules-dir=none supabase/functions/customer360-local/index.ts supabase/functions/visitor-analytics/index.ts
       - name: Download verified live snapshot outside checkout
         if: env.C3_UNIFIED_SOURCE_PROFILE != 'true'

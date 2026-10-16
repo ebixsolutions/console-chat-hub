@@ -1,3 +1,4 @@
+import { classifyNonFactualConversation } from "../_shared/conversational-routing.ts";
 import { isExplicitHandoffRequest } from "../_shared/handoff-intent.ts";
 import { uatExecutionReadiness } from "../_shared/uat-execution-readiness.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -425,7 +426,8 @@ return async (req: Request) => {
     const existingControl = requestedConversationId ? await loadOwnedTestConversation(admin,requestedConversationId,authData.user.id,resolved) : null;
     const underHumanControl = existingControl?.ok && (HUMAN_CONTROL_STATUSES.has(String(existingControl.conversation.status)) || Boolean(existingControl.conversation.assigned_agent_id));
     const controlOnly = isExplicitHandoffRequest(query);
-    if (!execution.ready && !underHumanControl && !controlOnly) return json(req,{success:false,error:"live_ai_execution_unavailable",failure:execution.failure,retryable:false,correlation_id:correlationId},503);
+    const localConversation = classifyNonFactualConversation(query) !== null;
+    if (!execution.ready && !underHumanControl && !controlOnly && !localConversation) return json(req,{success:false,error:"live_ai_execution_unavailable",failure:execution.failure,retryable:false,correlation_id:correlationId},503);
     if (execution.ready && execution.allowed_conversations.length && !execution.allowed_conversations.includes(requestedConversationId || await testConversationId(authData.user.id,resolved.channelId,String((body as any).client_message_id))) && !underHumanControl && !controlOnly) return json(req,{success:false,error:"live_ai_conversation_not_authorized",retryable:false,correlation_id:correlationId},403);
 
     let conversationId = requestedConversationId;
