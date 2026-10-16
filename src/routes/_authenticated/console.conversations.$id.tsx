@@ -69,6 +69,15 @@ function ConversationDetailContent() {
   const lang = useConsoleLang();
   const [conv, setConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [messagesTicketId, setMessagesTicketId] = useState<string | null>(null);
+  const [messagesError, setMessagesError] = useState(false);
+  const [conversationError, setConversationError] = useState(false);
+  const detailScopeRef = useRef(id);
+  detailScopeRef.current = id;
+  const messageReadRef = useRef(0);
+  const conversationReadRef = useRef(0);
+  const scopedMessages = messagesTicketId === id ? messages : [];
+
   const [agents, setAgents] = useState<AgentLite[]>([]);
   const [myAgent, setMyAgent] = useState<AgentLite | null>(null);
   const [reply, setReply] = useState("");
@@ -81,8 +90,8 @@ function ConversationDetailContent() {
   const [pendingUseText, setPendingUseText] = useState("");
 
   // ── RIGHT-CRM-KB-CONTEXT-1: bounded context scoped to this conversation ──
-  const boundedContext = useMemo(() => buildBoundedContext(messages), [messages]);
-  const contextRevisionKey = useMemo(() => computeContextRevisionKey(id, messages), [id, messages]);
+  const boundedContext = useMemo(() => buildBoundedContext(scopedMessages), [messages, messagesTicketId, id]);
+  const contextRevisionKey = useMemo(() => computeContextRevisionKey(id, scopedMessages), [id, messages, messagesTicketId]);
 
   // ── J1: Realtime infrastructure ──
   const realtimeConnectedRef = useRef(true);
@@ -116,28 +125,41 @@ function ConversationDetailContent() {
   }
 
   const loadConv = useCallback(async () => {
-    const { data } = await supabase
-      .from("conversations")
-      .select(
-        `
-        id, status, assigned_agent_id,
-        channel_config:channel_config_id(name),
-        visitor_session:visitor_session_id(id)
-      `,
-      )
-      .eq("id", id)
-      .single();
-    setConv(data as Conversation | null);
+    const read = ++conversationReadRef.current;
+    const stale = () => read !== conversationReadRef.current || detailScopeRef.current !== id;
+    try {
+      const { data, error } = await supabase
+        .from("conversations")
+        .select(`id,status,assigned_agent_id,channel_config:channel_config_id(name),visitor_session:visitor_session_id(id)`)
+        .eq("id", id)
+        .single();
+      if (stale()) return;
+      if (error) { setConversationError(true); return; }
+      setConv(data as Conversation | null);
+      setConversationError(false);
+    } catch {
+      if (!stale()) setConversationError(true);
+    }
   }, [id]);
 
   const loadMessages = useCallback(async () => {
-    const { data } = await supabase
-      .from("messages")
-      .select("id, role, content, content_type, status, is_recalled, metadata, created_at")
-      .eq("conversation_id", id)
-      .neq("content", "__THINKING__")
-      .order("created_at", { ascending: true });
-    setMessages((data as Msg[]) ?? []);
+    const read = ++messageReadRef.current;
+    const stale = () => read !== messageReadRef.current || detailScopeRef.current !== id;
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id,role,content,content_type,status,is_recalled,metadata,created_at")
+        .eq("conversation_id", id)
+        .neq("content", "__THINKING__")
+        .order("created_at", { ascending: true });
+      if (stale()) return;
+      if (error) { setMessagesError(true); return; }
+      setMessages((data as Msg[]) ?? []);
+      setMessagesTicketId(id);
+      setMessagesError(false);
+    } catch {
+      if (!stale()) setMessagesError(true);
+    }
   }, [id]);
 
   const loadAgents = useCallback(async () => {
@@ -149,9 +171,14 @@ function ConversationDetailContent() {
   }, []);
 
   useEffect(() => {
+    setLoading(true);
+    setConv(null);
+    setMessagesTicketId(null);
+    setMessagesError(false);
+    setConversationError(false);
     (async () => {
       await Promise.all([loadConv(), loadMessages(), loadAgents()]);
-      setLoading(false);
+      if (detailScopeRef.current === id) setLoading(false);
     })();
 
     const convChannel = supabase
@@ -353,6 +380,10 @@ function ConversationDetailContent() {
       </div>
     );
   }
+  if (conversationError) {
+    return <div role="alert">Conversation unavailable.<button type="button" onClick={() => void loadConv()}>Retry conversation</button></div>;
+  }
+  if (conv && conv.id !== id) return <div>Loading conversation…</div>;
   if (!conv) {
     return <div className="text-sm text-muted-foreground">Conversation not found.</div>;
   }
@@ -478,8 +509,9 @@ function ConversationDetailContent() {
               style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}
             >
               <div className="max-h-[60vh] space-y-2 overflow-y-auto" style={{ flex: 1 }}>
-                {messages.length === 0 && <div className="text-sm text-muted-foreground">No messages.</div>}
-                {messages.map((m) => {
+                {messagesError && <div role="alert">Messages unavailable.<button type="button" onClick={() => void loadMessages()}>Retry messages</button></div>}
+                {!messagesError && messagesTicketId === id && scopedMessages.length === 0 && <div className="text-sm text-muted-foreground">No messages.</div>}
+                {scopedMessages.map((m) => {
                   const isVisitor = m.role === "visitor";
                   const isAgent = m.role === "agent";
                   const isAssistant = m.role === "assistant";

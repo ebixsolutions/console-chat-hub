@@ -444,6 +444,7 @@
     "tests/console-navigation/runtime.test.mjs",
     "tests/console-navigation/saved-responses-api.test.mjs",
     "tests/console-navigation/saved-responses.test.mjs",
+    "tests/console-navigation/ticket-detail-readback.test.mjs",
     "tests/console-navigation/widget-recovery.test.mjs",
     "tests/console-read/handlers.test.mjs",
     "tests/e2e/c3_widget_isolated_auth.mjs",
@@ -918,8 +919,8 @@
   },
   "authorized_live_execution_sha256": {
     ".github/scripts/c3_live_execution_manifest.mjs": "99550a1028ef2cb39d3d1b7480bb531e485a5c5fc7a7157afb26fbca99fe7310",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "8616fe276c1c4a9fcc29825c1168018388fc06e8bd1b2b40e897462aa290c700",
-    ".github/workflows/task-ai-abc-c3-final-gate.yml": "779d2fc50e572939e81fe7994bd1dbddd551ff2f8a5a9eb15cb449e21cf3e4d0",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "215b3af8f4f6b9981b0118212f7a158d306a4f2a899f523cfb9564a994e50fc4",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "a151c2f1aefde71ad87dff8e2e2763261a0a885ce774436ac52abe819ea28dd7",
     "docs/c3/live-execution-repair.json": "250f6e3ad487899eb4283de49da9800354e9a30c701971672b663b7f6ba11f65",
     "sql/c3_live_execution_dependencies.sql": "dbfd5c3444f99ffd0df22767a4c003098b765ef043492013f880191523a46a7c",
     "sql/c3_live_execution_dependencies_rollback.sql": "264d17d0a91194d695daa973425af9b0ab9e089f1a4897797dce6b9ace85a3ec",
@@ -961,7 +962,7 @@
     "src/lib/console/saved-response-variables.ts": "f84651e50e3c84962dfc7d1a88ea4d7173bacf8a6bb75c255b6f208e548161ca",
     "src/routes/_authenticated/console.analytics.tsx": "879c9b5f2746b2e66554b6e0ec0cf4d6b3a59e11bf391f2f5ce145c1c94d2b6c",
     "src/routes/_authenticated/console.conversation-evaluation.index.tsx": "fda2cd1de4b500928f494348661a298d9abc2ff1140724088d89b1c65cc62d83",
-    "src/routes/_authenticated/console.conversations.$id.tsx": "8215f662c5536261c820a6fbeb7ecf3935fe67ef2a42c134aec40ffd8e5f79f1",
+    "src/routes/_authenticated/console.conversations.$id.tsx": "3416cbfeae872f319faad7e34e8deb163a5e478ce2b61e05dbf832fcf0d8374d",
     "src/routes/_authenticated/console.conversations.index.tsx": "03f323cd7fb6ebab4d03b7409564ba9646759a058473b6bb6c9cef4c272fce93",
     "src/routes/_authenticated/console.feedback-responses.tsx": "1c0f575a2485d7910a723687ace3f48fc8108b8127c8f981155d7158f364d66e",
     "tests/console-navigation/ce-batch.test.mjs": "1508a1055df0056584c29444e607dee3003e5d4272a8ed6235862d16031b93a6",
@@ -973,7 +974,8 @@
     "tests/sql/saved-responses-postgres.py": "950a5580a3f9609bee7679a7417228284a9e1752c56a7e1ab263947680915762",
     "src/components/console/TicketHandoffSummary.tsx": "5a3965544fe7738892725f84c9dc488fe27f19e8fdb24f74f2b1ad286dcd9f70",
     "tests/console-navigation/handoff-banner.test.mjs": "4d75b4e6cbdc39285501e4d3df5259b1aa1d0cd5335fe1bbbf11359474d98aae",
-    "tests/console-navigation/handoff-summary-readback.test.mjs": "131815233105d8784dcbf25788bbc5d3b8a2698a58bc0e46ceccb3370bf5f7be"
+    "tests/console-navigation/handoff-summary-readback.test.mjs": "131815233105d8784dcbf25788bbc5d3b8a2698a58bc0e46ceccb3370bf5f7be",
+    "tests/console-navigation/ticket-detail-readback.test.mjs": "6bb0ad277a5c47e4745eef34cbbeea3f21db9de494c21cdee6f2d417a1dbf33e"
   },
   "live_execution_deployment_authorized": false
 }
