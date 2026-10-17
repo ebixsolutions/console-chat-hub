@@ -40,8 +40,10 @@ WITH CHECK (owner_id=auth.uid() AND EXISTS (
   WHERE m.user_id=auth.uid() AND m.company_id=saved_response.company_id
     AND m.is_active AND c.is_active AND m.role IN ('admin','supervisor','agent')
 ) AND (SELECT count(DISTINCT company_id) FROM public.company_membership WHERE user_id=auth.uid() AND is_active)=1);
+-- Supabase default ACL can grant ALL (including RLS-bypassing TRUNCATE).
+-- Whitelist CRUD explicitly; preserve trusted owner/service-role defaults only.
+REVOKE ALL ON public.saved_response FROM PUBLIC, anon, authenticated;
 GRANT SELECT,INSERT,UPDATE,DELETE ON public.saved_response TO authenticated;
-REVOKE ALL ON public.saved_response FROM PUBLIC, anon;
 CREATE FUNCTION public.c3_saved_response_revision() RETURNS trigger LANGUAGE plpgsql SET search_path='' AS $$
 BEGIN
   IF NEW.id<>OLD.id OR NEW.company_id<>OLD.company_id OR NEW.owner_id<>OLD.owner_id OR NEW.created_at<>OLD.created_at OR NEW.revision<>OLD.revision+1 THEN
@@ -50,7 +52,7 @@ BEGIN
   NEW.updated_at=clock_timestamp();
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION public.c3_saved_response_revision() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.c3_saved_response_revision() FROM PUBLIC, anon, authenticated;
 CREATE TRIGGER saved_response_revision BEFORE UPDATE ON public.saved_response FOR EACH ROW EXECUTE FUNCTION public.c3_saved_response_revision();
 DO $receipt$
 DECLARE v_table oid := 'public.saved_response'::regclass; v_hash text; v_receipt jsonb;

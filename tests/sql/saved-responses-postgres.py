@@ -55,6 +55,8 @@ try:
  CREATE POLICY company_sel ON company FOR SELECT TO authenticated USING(is_company_member(id,auth.uid()));
  CREATE POLICY cm_nw ON company_membership TO authenticated USING(false) WITH CHECK(false);
  CREATE POLICY cm_sel ON company_membership FOR SELECT TO authenticated USING(user_id=auth.uid() OR has_company_role(company_id,auth.uid(),'admin'::app_role));""")
+ # Reproduce the actual Production postgres public default ACL (read-only capture).
+ sql('ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO authenticated,anon;ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO authenticated,anon;')
  parent_preimage=sql("SELECT md5(jsonb_agg(to_jsonb(c) ORDER BY id)::text) FROM company c;SELECT md5(jsonb_agg(to_jsonb(m) ORDER BY user_id,company_id)::text) FROM company_membership m;SELECT md5(jsonb_agg(to_jsonb(p) ORDER BY tablename,policyname)::text) FROM pg_policies p WHERE tablename IN ('company','company_membership');").stdout
  check('A10 actual authenticated role is non-superuser non-bypass RLS',sql("SELECT NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname='authenticated';").stdout.strip()=='t')
  check('A10 both parent tables enforce their captured Production RLS policies',auth('SELECT count(*) FROM company;SELECT count(*) FROM company_membership;').stdout.strip()=='1\n1')
@@ -64,6 +66,9 @@ try:
  receipt=install()
  auth(f"INSERT INTO saved_response(id,company_id,owner_id,title,content) VALUES('{row}','{c}','{a}','Greeting','Hello {{{{customer_name}}}}');")
  check('A10 agent creates and reads own tenant response',auth('SELECT count(*) FROM saved_response;').stdout.strip()=='1')
+ check('A10 authenticated TRUNCATE denied despite Production ALL default ACL',auth('TRUNCATE saved_response;',ok=False).returncode!=0)
+ check('A10 authenticated has only intended CRUD, no TRUNCATE REFERENCES TRIGGER',sql("SELECT NOT has_table_privilege('authenticated','public.saved_response','TRUNCATE,REFERENCES,TRIGGER');").stdout.strip()=='t')
+ check('A10 revision function direct client default grants removed',sql("SELECT NOT has_function_privilege('authenticated','public.c3_saved_response_revision()','EXECUTE') AND NOT has_function_privilege('anon','public.c3_saved_response_revision()','EXECUTE');").stdout.strip()=='t')
  check('A10 actual foreign authenticated user sees no rows',auth('SELECT count(*) FROM saved_response;',b).stdout.strip()=='0')
  check('A10 foreign owner INSERT rejected by real RLS',auth(f"INSERT INTO saved_response(company_id,owner_id,title,content) VALUES('{other}','{a}','bad','bad');",ok=False).returncode!=0)
  check('A10 owner reassignment forbidden',auth(f"UPDATE saved_response SET owner_id='{b}',revision=2 WHERE id='{row}';",ok=False).returncode!=0)
