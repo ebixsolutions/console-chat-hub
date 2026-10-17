@@ -445,7 +445,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
             )}
           </div>
 
-          <div className="overflow-hidden rounded-[10px] border border-[#e8e6e0] bg-white">
+          <div className="shrink-0 overflow-hidden rounded-[10px] border border-[#e8e6e0] bg-white">
             {error ? (
               <div className="m-3 rounded-md border border-red-200 bg-red-50 p-3 text-[12px] text-red-700">{t(C.list.loadFailed)} <span className="font-mono">{error}</span></div>
             ) : loading ? (
