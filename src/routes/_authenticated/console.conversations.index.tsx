@@ -354,7 +354,17 @@ function SinglePageInbox() {
   const [sendGuardOpen, setSendGuardOpen] = useState(false);
   const [resolvedWarningOpen, setResolvedWarningOpen] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState(false);
   const [activityRows, setActivityRows] = useState<ActivityEvent[]>([]);
+  const activityLoadRef = useRef(0);
+  useEffect(() => {
+    activityLoadRef.current++;
+    setActivityOpen(false);
+    setActivityLoading(false);
+    setActivityError(false);
+    setActivityRows([]);
+    return () => { activityLoadRef.current++; };
+  }, [selectedId]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const conversationLoadRef = useRef(0);
@@ -715,7 +725,11 @@ function SinglePageInbox() {
 
   // Dev21b Phase 1: Conversation Activity Timeline
   async function loadActivity(convId: string) {
+    if (selectedIdRef.current !== convId) return;
+    const request = ++activityLoadRef.current;
+    const stale = () => request !== activityLoadRef.current || selectedIdRef.current !== convId;
     setActivityLoading(true);
+    setActivityError(false);
     setActivityRows([]);
     try {
       const [statusRes, assignRes, handoffRes] = await Promise.all([
@@ -732,11 +746,13 @@ function SinglePageInbox() {
           .select("created_at,handoff_type,handoff_reason,from_agent_id,to_agent_id")
           .eq("conversation_id", convId),
       ]);
+      if (stale()) return;
       if (statusRes.error || assignRes.error || handoffRes.error) {
         if (statusRes.error) console.error("[activity] conversation_status_log:", statusRes.error.message);
         if (assignRes.error) console.error("[activity] conversation_assignment:", assignRes.error.message);
         if (handoffRes.error) console.error("[activity] handoff_event:", handoffRes.error.message);
         toast.error("Failed to load conversation activity");
+        setActivityError(true);
         setActivityRows([]);
         return;
       }
@@ -782,11 +798,13 @@ function SinglePageInbox() {
       events.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
       setActivityRows(events);
     } catch (err) {
+      if (stale()) return;
       console.error("[activity] unexpected error:", err);
       toast.error("Failed to load conversation activity");
+      setActivityError(true);
       setActivityRows([]);
     } finally {
-      setActivityLoading(false);
+      if (!stale()) setActivityLoading(false);
     }
   }
   function openActivity() {
@@ -1619,7 +1637,15 @@ function SinglePageInbox() {
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
             )}
-            {!activityLoading && activityRows.length === 0 && (
+            {!activityLoading && activityError && (
+              <div role="alert" className="p-4 text-sm text-red-700">
+                Conversation activity unavailable. History has not been confirmed.
+                <Button type="button" variant="outline" className="ml-2" onClick={() => selectedId && loadActivity(selectedId)}>
+                  Retry activity
+                </Button>
+              </div>
+            )}
+            {!activityLoading && !activityError && activityRows.length === 0 && (
               <div style={{ padding: 24, textAlign: "center", fontSize: 13, color: "#888" }}>
                 No status, assignment, or handoff activity recorded for this conversation.
               </div>
