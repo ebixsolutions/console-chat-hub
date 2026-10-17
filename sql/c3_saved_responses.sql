@@ -105,7 +105,9 @@ BEGIN
       INTO v_hash FROM objects;
 
   v_receipt=jsonb_build_object('kind','c3.saved_response.installation.v2',
-    'table_oid',v_table,'catalog_sha256',v_hash,'installation_xid',pg_current_xact_id()::text,
+    'table_oid',v_table,'function_oid','public.c3_saved_response_revision()'::regprocedure::oid,
+    'function_owner',(SELECT proowner FROM pg_proc WHERE oid='public.c3_saved_response_revision()'::regprocedure),
+    'catalog_sha256',v_hash,'installation_xid',pg_current_xact_id()::text,
     'preimage','all_named_objects_absent');
   EXECUTE format('COMMENT ON TABLE public.saved_response IS %L',v_receipt::text);
 END $receipt$;

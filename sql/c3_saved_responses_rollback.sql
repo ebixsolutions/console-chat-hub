@@ -22,8 +22,6 @@ BEGIN
     OR current_setting('c3.saved_responses.expected_installation',true)='' THEN
     RAISE EXCEPTION 'saved_response_original_receipt_required';
   END IF;
-  -- Serialize routine catalog changes with validation and removal of our function.
-  PERFORM 1 FROM pg_proc WHERE oid=to_regprocedure('public.c3_saved_response_revision()') FOR UPDATE;
   v_expected=current_setting('c3.saved_responses.expected_installation')::jsonb;
   v_actual=obj_description(v_table,'pg_class')::jsonb;
   SELECT xmin::text INTO v_comment_xid FROM pg_description
@@ -35,6 +33,18 @@ BEGIN
     OR v_expected->>'installation_xid' IS DISTINCT FROM v_comment_xid THEN
     RAISE EXCEPTION 'saved_response_receipt_or_successor_mismatch';
   END IF;
+  IF NOT EXISTS(SELECT FROM pg_proc f JOIN pg_roles r ON r.rolname=current_user
+    WHERE f.oid=to_regprocedure('public.c3_saved_response_revision()')
+      AND f.oid=(v_expected->>'function_oid')::oid
+      AND f.proowner=(v_expected->>'function_owner')::oid
+      AND (f.proowner=r.oid OR r.rolsuper)) THEN
+    RAISE EXCEPTION 'saved_response_function_identity_or_owner_mismatch';
+  END IF;
+  -- Owner-authorized no-op acquires the routine object lock until COMMIT.
+  -- Unlike SELECT FOR UPDATE on pg_proc, this works for Production's
+  -- NOSUPERUSER migration owner without granting system-catalog UPDATE.
+  EXECUTE format('ALTER FUNCTION public.c3_saved_response_revision() OWNER TO %I',
+    (SELECT rolname FROM pg_roles WHERE oid=(v_expected->>'function_owner')::oid));
 
 
   WITH RECURSIVE owned(classid,objid) AS (

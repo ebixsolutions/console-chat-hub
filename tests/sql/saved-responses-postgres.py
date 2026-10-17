@@ -20,11 +20,12 @@ def auth(q,user=a,ok=True):return sql(f"BEGIN;SET LOCAL ROLE authenticated;SET L
 def check(name,condition):assert condition,name;checks.append(name)
 installer=(root/'sql/c3_saved_responses.sql').read_text()
 rollback=(root/'sql/c3_saved_responses_rollback.sql').read_text()
+def migrate(text,ok=True):return sql('SET ROLE c3_migration_owner;'+text,ok)
 def install():
- sql(installer)
+ migrate(installer)
  return sql("SELECT obj_description('public.saved_response'::regclass,'pg_class');").stdout.strip()
 def restore(receipt,ok=True,body=None):
- return sql("SELECT set_config('c3.saved_responses.expected_installation',"+"'"+receipt.replace("'","''")+"',false);"+(body or rollback),ok)
+ return migrate("SELECT set_config('c3.saved_responses.expected_installation',"+"'"+receipt.replace("'","''")+"',false);"+(body or rollback),ok)
 def absent():
  return sql("SELECT to_regclass('public.saved_response') IS NULL AND to_regclass('public.saved_response_owner_idx') IS NULL AND to_regclass('public.saved_response_pkey') IS NULL AND to_regprocedure('public.c3_saved_response_revision()') IS NULL AND to_regtype('public.saved_response') IS NULL AND to_regtype('public._saved_response') IS NULL;").stdout.strip()=='t'
 def cleanup():
@@ -56,14 +57,16 @@ try:
  CREATE POLICY cm_nw ON company_membership TO authenticated USING(false) WITH CHECK(false);
  CREATE POLICY cm_sel ON company_membership FOR SELECT TO authenticated USING(user_id=auth.uid() OR has_company_role(company_id,auth.uid(),'admin'::app_role));""")
  # Reproduce the actual Production postgres public default ACL (read-only capture).
- sql('ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO authenticated,anon;ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO authenticated,anon;')
+ sql('CREATE ROLE c3_migration_owner NOSUPERUSER BYPASSRLS;GRANT USAGE,CREATE ON SCHEMA public TO c3_migration_owner;GRANT USAGE ON SCHEMA auth TO c3_migration_owner;GRANT SELECT,REFERENCES ON company,company_membership,auth.users TO c3_migration_owner;ALTER DEFAULT PRIVILEGES FOR ROLE c3_migration_owner IN SCHEMA public GRANT ALL ON TABLES TO authenticated,anon;ALTER DEFAULT PRIVILEGES FOR ROLE c3_migration_owner IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO authenticated,anon;')
+ check('A10 migration owner matches real Production NOSUPERUSER BYPASSRLS without pg_proc UPDATE',sql("SET ROLE c3_migration_owner;SELECT NOT rolsuper AND rolbypassrls AND NOT has_table_privilege(current_user,'pg_catalog.pg_proc','UPDATE') FROM pg_roles WHERE rolname=current_user;").stdout.strip()=='t')
  parent_preimage=sql("SELECT md5(jsonb_agg(to_jsonb(c) ORDER BY id)::text) FROM company c;SELECT md5(jsonb_agg(to_jsonb(m) ORDER BY user_id,company_id)::text) FROM company_membership m;SELECT md5(jsonb_agg(to_jsonb(p) ORDER BY tablename,policyname)::text) FROM pg_policies p WHERE tablename IN ('company','company_membership');").stdout
  check('A10 actual authenticated role is non-superuser non-bypass RLS',sql("SELECT NOT rolsuper AND NOT rolbypassrls FROM pg_roles WHERE rolname='authenticated';").stdout.strip()=='t')
  check('A10 both parent tables enforce their captured Production RLS policies',auth('SELECT count(*) FROM company;SELECT count(*) FROM company_membership;').stdout.strip()=='1\n1')
  # Fail part-way through the actual candidate DDL: no partial catalog survives.
- failed=sql(installer.replace('CREATE INDEX saved_response_owner_idx','SELECT 1/0;CREATE INDEX saved_response_owner_idx'),False)
- check('A10 installation failure rolls back table and dependencies atomically',failed.returncode!=0 and absent())
+ failed=migrate(installer.replace('CREATE INDEX saved_response_owner_idx','SELECT 1/0;CREATE INDEX saved_response_owner_idx'),False)
+ check('A10 installation failure rolls back table and dependencies atomically',failed.returncode!=0 and 'division by zero' in failed.stderr and absent())
  receipt=install()
+ check('A10 owner-only no-op DDL holds routine object lock without superuser catalog rights',migrate("BEGIN;ALTER FUNCTION public.c3_saved_response_revision() OWNER TO c3_migration_owner;SELECT EXISTS(SELECT FROM pg_locks WHERE pid=pg_backend_pid() AND locktype='object' AND classid='pg_proc'::regclass AND objid='public.c3_saved_response_revision()'::regprocedure AND mode='AccessExclusiveLock' AND granted);ROLLBACK;").stdout.strip()=='t')
  auth(f"INSERT INTO saved_response(id,company_id,owner_id,title,content) VALUES('{row}','{c}','{a}','Greeting','Hello {{{{customer_name}}}}');")
  check('A10 agent creates and reads own tenant response',auth('SELECT count(*) FROM saved_response;').stdout.strip()=='1')
  check('A10 authenticated TRUNCATE denied despite Production ALL default ACL',auth('TRUNCATE saved_response;',ok=False).returncode!=0)
@@ -111,10 +114,10 @@ try:
  # All following removals/reset operations are isolated fixture cleanup, never Production.
  cleanup()
  receipt=install()
- missing=sql(rollback,False)
+ missing=migrate(rollback,False)
  check('A10 missing original installation receipt refuses without mutation',missing.returncode!=0 and not absent())
  fault=restore(receipt,False,rollback.replace('DROP FUNCTION public.c3_saved_response_revision() RESTRICT;', 'SELECT 1/0;DROP FUNCTION public.c3_saved_response_revision() RESTRICT;'))
- check('A10 failure after table drop restores whole schema atomically',fault.returncode!=0 and sql("SELECT to_regprocedure('public.c3_saved_response_revision()') IS NOT NULL AND to_regclass('public.saved_response') IS NOT NULL;").stdout.strip()=='t')
+ check('A10 failure after table drop restores whole schema atomically',fault.returncode!=0 and 'division by zero' in fault.stderr and sql("SELECT to_regprocedure('public.c3_saved_response_revision()') IS NOT NULL AND to_regclass('public.saved_response') IS NOT NULL;").stdout.strip()=='t')
  restored=restore(receipt)
  check('A10 empty unchanged original installation exactly restores absent schema',absent() and 'EXACT_PREIMAGE_RESTORED' in restored.stderr)
  old=receipt;receipt=install()
@@ -139,7 +142,7 @@ try:
   sql('ALTER TABLE saved_response OWNER TO postgres;')
   if label=='function':sql('ALTER FUNCTION c3_saved_response_revision_old() RENAME TO c3_saved_response_revision;')
   cleanup()
- receipt=install();sql('CREATE SEQUENCE successor_sequence OWNED BY saved_response.revision;')
+ receipt=install();migrate('CREATE SEQUENCE successor_sequence OWNED BY saved_response.revision;')
  check('A10 successor auto-owned sequence survives rollback refusal',restore(receipt,False).returncode!=0 and sql("SELECT to_regclass('public.successor_sequence') IS NOT NULL;").stdout.strip()=='t')
  sql('DROP SEQUENCE successor_sequence;');cleanup()
  receipt=install();sql('CREATE VIEW successor_view AS SELECT * FROM saved_response;')
