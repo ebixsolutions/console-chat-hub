@@ -37,3 +37,10 @@ test('original detail route ignores a previous ticket history completion after n
 test('original detail history failure is not no messages and normal read retry is available',async()=>{
  reset();f.messageRead=async()=>({data:null,error:{message:'read unavailable'}});const r=await mount();assert.match(txt(r.toJSON()),/Messages unavailable/);assert(!txt(r.toJSON()).includes('No messages yet.'));f.messageRead=null;await act(async()=>r.root.findAllByType('button').find(b=>txt({children:b.children})==='Retry messages').props.onClick());assert.match(txt(r.toJSON()),/Technical recovery/);await act(async()=>r.unmount());
 });
+
+test('assigned ticket remains assigned when RBAC hides its agent profile',async()=>{
+ reset();f.tables.conversations[0].assigned_agent_id='restricted-profile';f.tables.conversations[0].status='pending';const r=await mount();assert.match(txt(r.toJSON()),/Assigned agent \(name unavailable\)/);assert(!txt(r.toJSON()).includes('Unassigned'));await act(async()=>r.unmount());
+});
+test('assigned ticket displays an authorized profile name and only null assignment is Unassigned',async()=>{
+ reset();f.tables.conversations[0].assigned_agent_id='visible-profile';f.tables.agent_profile=[{id:'visible-profile',display_name:'Visible agent',role:'agent',status:'active'}];const assigned=await mount();assert.match(txt(assigned.toJSON()),/Visible agent/);assert(!txt(assigned.toJSON()).includes('Unassigned'));await act(async()=>assigned.unmount());reset();const unassigned=await mount();assert.match(txt(unassigned.toJSON()),/Unassigned/);assert(!txt(unassigned.toJSON()).includes('Assigned agent (name unavailable)'));await act(async()=>unassigned.unmount());
+});

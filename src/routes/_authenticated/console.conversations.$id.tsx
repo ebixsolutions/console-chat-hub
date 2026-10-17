@@ -358,7 +358,11 @@ function ConversationDetailContent() {
     return <div className="text-sm text-muted-foreground">Conversation not found.</div>;
   }
 
-  const assignedName = agents.find((a) => a.id === conv.assigned_agent_id)?.display_name || "Unassigned";
+  // Assignment is authoritative on the ticket. A name hidden by RBAC, a
+  // failed profile read or an inactive profile must not imply no owner.
+  const assignedName = conv.assigned_agent_id
+    ? agents.find((a) => a.id === conv.assigned_agent_id)?.display_name?.trim() || "Assigned agent (name unavailable)"
+    : "Unassigned";
   const isElevated = myAgent ? ELEVATED.has(myAgent.role) : false;
   const transferableAgents = agents.filter((a) => a.id !== myAgent?.id);
   const visitorShortId = `Visitor #${(conv.visitor_session?.id || id).slice(0, 8)}`;
