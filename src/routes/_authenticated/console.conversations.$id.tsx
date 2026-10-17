@@ -1,3 +1,4 @@
+import { ConversationList } from "@/components/console/ConversationList";
 import { SavedResponses } from "@/components/console/SavedResponses";
 import { useTicketReply } from "@/hooks/useTicketReply";
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -364,7 +365,7 @@ function ConversationDetailContent() {
 
   return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden", background: "#f5f4f0" }}>
-      {/* LEFT: Static context panel — no new queries, uses existing conv state */}
+      {/* LEFT: Current ticket context and RLS-scoped conversation navigation */}
       <div
         style={{
           width: 260,
@@ -435,18 +436,7 @@ function ConversationDetailContent() {
               ))}
             </div>
           </div>
-          <div
-            style={{
-              background: "#f5f4f0",
-              borderRadius: 8,
-              padding: "10px 12px",
-              fontSize: 10,
-              color: "#888",
-              lineHeight: 1.5,
-            }}
-          >
-            📋 Full conversation list coming in Phase-2B
-          </div>
+          <ConversationList actorId={user?.id ?? ""} currentId={id} />
         </div>
       </div>
 
