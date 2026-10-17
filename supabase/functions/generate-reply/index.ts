@@ -2224,12 +2224,15 @@ Deno.serve(async (req) => {
         parsedSourceMessageId,
       );
   } catch (error) {
-    console.error(JSON.stringify({event:"generation_unexpected_failure",...failureFromError(error,{source_message_id:parsedSourceMessageId})}));
+    const failure = failureFromError(error, {source_message_id: parsedSourceMessageId});
+    console.error(JSON.stringify({event:"generation_unexpected_failure",...failure}));
     if (parsedConversationId && parsedSourceMessageId) {
       return await persistTerminalRecovery(
         parsedConversationId,
         parsedSourceMessageId,
-        failureFromError(error).code,
+        failure.code,
+        undefined,
+        failure,
       );
     }
     return new Response(JSON.stringify({ error: "Internal server error" }), {
@@ -2274,6 +2277,7 @@ async function persistTerminalRecovery(
   sourceMessageId: string | null,
   reason: string,
   originalResponse?: Response,
+  originalFailure?: ExecutionFailure,
 ): Promise<Response> {
   if (!sourceMessageId) {
     return originalResponse ?? new Response(
@@ -2302,7 +2306,14 @@ async function persistTerminalRecovery(
       return originalResponse ?? sourceMessageErrorResponse(source);
     }
     const language = detectVisitorLanguage(source.message.content);
-    let diagnostic: ExecutionFailure | undefined;
+    let diagnostic: ExecutionFailure | undefined = originalFailure
+      ? executionFailure(originalFailure.code, {
+        stage: originalFailure.stage,
+        request_id: originalFailure.request_id,
+        source_message_id: sourceMessageId,
+        http_status: originalFailure.http_status,
+      })
+      : undefined;
     if (originalResponse) {
       try {
         const payload = await originalResponse.clone().json();

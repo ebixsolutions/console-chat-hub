@@ -92,7 +92,8 @@ function fixture(text,options={}) {
   if(method==='HEAD') return new Response(null,{headers:{'content-range':`0-0/${rows.length}`}});
   return Response.json(object?(rows[0]??null):rows,{headers:{'content-range':`0-${Math.max(0,rows.length-1)}/${rows.length}`}});
  };
- const modules=new Map(), deno={env:{get:k=>env[k]},serve:h=>{handler=h}};
+ let injectedFailure=false;
+ const modules=new Map(), deno={env:{get:k=>{if(k==='ENABLE_KB_ADAPTER' && options.unexpectedFailure && !injectedFailure){injectedFailure=true;throw options.unexpectedFailure;}return env[k]}},serve:h=>{handler=h}};
  function load(file){
   if(modules.has(file))return modules.get(file);
   const sourceCode=fs.readFileSync(file,'utf8');
@@ -296,4 +297,25 @@ test('malformed server service-account JSON is config failure, no provider retry
 test('proposed no-RAG business QA entry executes actual synthetic handler, semantic Provider, source-bound calculation and reply persistence',async()=>{
  const text='用假設數字試算3個軟件席位：單價每位 HKD 80；設定費整單 HKD 40。只作數學試算，不查現行價，不執行任何交易。';
  const f=fixture(text,{company:syntheticCompany,env:enabledRun,fullChain:true,semantic:{operation:'ASK_CALCULATION',confidence:0.98,delta_json:JSON.stringify({intent:'customer_only_calculation',requested_facts:[]})}});const r=await f.run();assert.equal(r.body.response_route,'c3_historical_conditional_calculation');assert.match(r.body.reply,/HK\$ 280/);assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.source_message_id,source);assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1);assert(!f.requests.some(x=>x.url.includes('context-search')));assert.notEqual(r.body.generation_success,false);assert.doesNotMatch(r.body.reply,/已付款|已啟用|已落單/);
+});
+
+for(const [error,code,stage,retryable] of [
+ [Object.assign(new Error('PRIVATE-SECRET'),{code:'UAT_TIMEOUT_OUTCOME_UNKNOWN'}),'UAT_TIMEOUT_OUTCOME_UNKNOWN','timeout',false],
+ [Object.assign(new Error('PRIVATE-SECRET'),{code:'UAT_AUTHORIZATION_ABSENT'}),'UAT_AUTHORIZATION_ABSENT','admission',false],
+ [new DOMException('PRIVATE-SECRET','AbortError'),'LLM_TIMEOUT','timeout',true],
+ [new Error('PRIVATE-SECRET'),'SEMANTIC_INTERPRETER_UNAVAILABLE','unexpected',false],
+])test('outer handler failure retains '+code+' through guarded persistence without secret or invented resolution',async()=>{
+ const f=fixture('Check the published policy',{unexpectedFailure:error});const r=await f.run();
+ assert.equal(r.body.generation_success,false);assert.equal(f.commits.length,1);
+ const failure=f.commits[0].metadata.execution_failure;assert.equal(failure.code,code);assert.equal(failure.stage,stage);assert.equal(failure.retryable,retryable);assert.equal(failure.source_message_id,source);
+ assert.equal(r.body.failure.code,code);assert.equal(f.commits[0].metadata.transaction_mutation,'NONE');
+ assert(!f.requests.some(x=>/aiplatform|context-search|handoff_tx/.test(x.url)));assert(!JSON.stringify([r,f.events,f.logs,f.commits]).includes('PRIVATE-SECRET'));
+});
+for(const result of ['human_control','superseded_source','tenant_mismatch','stale_authorized_revision'])test('outer failure recovery still rejects changed control '+result,async()=>{
+ const f=fixture('Check the published policy',{unexpectedFailure:new DOMException('isolated','AbortError'),rpcResult:result});const r=await f.run();assert.equal(f.commits.length,0);assert(r.body.skipped===result||r.status>=400,JSON.stringify(r));assert(!f.requests.some(x=>/aiplatform|context-search/.test(x.url)));
+});
+for(const [options,stage] of [[{remoteDenied:true},'admission'],[{kbHttp:true},'provider_http'],[{kbBadJson:true},'decode']])test('complete business handler never turns KB '+stage+' into successful grounded resolution',async()=>{
+ const f=fixture('請查CW-SUL70BA是否有能源效益資料，唔好估級別。',{company:syntheticCompany,env:{...enabledRun,ESC_ENABLE_S0:'false'},fullChain:true,...options});
+ f.tables.conversation_commerce_state.push({conversation_id:ticket,company_id:syntheticCompany,revision:0,source_message_id:null,state:f.load(path.join(root,'supabase/functions/_shared/commerce-state-contract.ts')).createEmptyConversationCommerceState()});
+ const r=await f.run();assert.equal(f.commits.length,1,JSON.stringify(r));const metadata=f.commits[0].metadata;assert.equal(metadata.generation_success,false);assert.equal(metadata.execution_failure.stage,stage);assert.notEqual(metadata.grounded,true);assert.equal(metadata.degraded,true);assert(!JSON.stringify([r,metadata,f.events]).includes('PRIVATE-SECRET'));assert(!f.requests.some(x=>/handoff_tx/.test(x.url)));
 });
