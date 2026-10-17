@@ -31,6 +31,7 @@ function AnalyticsPage() {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
+  const [readRevision, setReadRevision] = useState(0);
 
   const allowed = role === "admin" || role === "supervisor";
 
@@ -41,6 +42,7 @@ function AnalyticsPage() {
     void (async () => {
       setState("loading");
       setError("");
+      setSummary(null);
       try {
         const { data, error: invokeError } = await supabase.functions.invoke(
           "visitor-analytics",
@@ -48,7 +50,14 @@ function AnalyticsPage() {
         );
         if (cancelled) return;
 
-        if (invokeError || !data?.success) {
+        const value = data?.summary;
+        const count = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+        const valid = value && [value.total_sessions, value.total_conversations, value.total_messages,
+          value.feedback_count].every(count) &&
+          (value.average_rating === null || typeof value.average_rating === "number" && Number.isFinite(value.average_rating)) &&
+          value.status_counts && typeof value.status_counts === "object" && !Array.isArray(value.status_counts) &&
+          Object.values(value.status_counts).every(count);
+        if (invokeError || !data?.success || !valid) {
           setError(
             String(
               data?.error ??
@@ -73,7 +82,7 @@ function AnalyticsPage() {
     return () => {
       cancelled = true;
     };
-  }, [allowed, roleLoading]);
+  }, [allowed, roleLoading, readRevision]);
 
   if (roleLoading) {
     return <Centered icon={<Loader2 className="animate-spin" />} text="Loading analytics…" />;
@@ -97,6 +106,7 @@ function AnalyticsPage() {
       <Centered
         icon={<AlertCircle size={34} style={{ color: "#ef4444" }} />}
         text={`Analytics unavailable: ${error}`}
+        action={<button className="rounded-md border bg-white px-3 py-2 text-sm" type="button" onClick={() => setReadRevision(v => v + 1)}>Retry</button>}
       />
     );
   }
@@ -302,9 +312,11 @@ function AnalyticsPage() {
 function Centered({
   icon,
   text,
+  action,
 }: {
   icon: React.ReactNode;
   text: string;
+  action?: React.ReactNode;
 }) {
   return (
     <div
@@ -320,6 +332,7 @@ function Centered({
     >
       {icon}
       <div style={{ fontSize: 13 }}>{text}</div>
+      {action}
     </div>
   );
 }

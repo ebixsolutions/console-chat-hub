@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
@@ -56,8 +56,10 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
+  const readEpoch = useRef(0);
 
   const load = useCallback(async () => {
+    const epoch = ++readEpoch.current;
     if (from && to && from > to) {
       setLoading(false);
       setError("invalid_date_range");
@@ -88,6 +90,8 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
         page_size: PAGE_SIZE,
       });
 
+      if (epoch !== readEpoch.current) return;
+
       if (!res.ok) {
         setRows([]);
         setTotal(0);
@@ -98,16 +102,18 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
       setRows(res.data.rows);
       setTotal(res.data.total);
     } catch {
+      if (epoch !== readEpoch.current) return;
       setRows([]);
       setTotal(0);
       setError("feedback_response_load_failed");
     } finally {
-      setLoading(false);
+      if (epoch === readEpoch.current) setLoading(false);
     }
   }, [status, delivery, channel, rating, conversationId, from, to, page]);
 
   useEffect(() => {
     void load();
+    return () => { readEpoch.current++; };
   }, [load]);
 
   const exportFiltered = async () => {
@@ -265,14 +271,17 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
           {error}
+          <button className="ml-3 rounded-md border bg-white px-3 py-2 text-sm" type="button" disabled={loading} onClick={() => void load()}>
+            {lang === "zh" ? "重試" : "Retry"}
+          </button>
         </div>
       )}
 
       {loading ? (
         <LoadingState />
-      ) : rows.length === 0 ? (
+      ) : error ? null : rows.length === 0 ? (
         <div className="rounded-xl border bg-white p-10 text-center text-sm text-muted-foreground">
           No feedback responses found.
         </div>

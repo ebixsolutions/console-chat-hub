@@ -32,6 +32,7 @@ const COPY = {
   error: { en: "Failed to load analytics", zh: "無法載入分析資料" },
   errorSub: { en: "Please try again later", zh: "請稍後再試" },
   loading: { en: "Loading analytics...", zh: "載入分析資料..." },
+  retry: { en: "Retry", zh: "重試" },
   na: { en: "N/A", zh: "無" },
 } as const;
 
@@ -92,16 +93,29 @@ function VisitorAnalyticsContent() {
   const t = (key: CopyKey) => COPY[key]?.[lang] ?? COPY[key]?.en ?? key;
   const [summary, setSummary] = useState<SummaryData | null>(null);
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
+  const [readRevision, setReadRevision] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setStatus("loading");
+    setSummary(null);
     (async () => {
       try {
         const { data, error } = await supabase.functions.invoke("visitor-analytics", {
           body: { mode: "summary" },
         });
         if (cancelled) return;
-        if (error || !data?.success) {
+        const value = data?.summary;
+        const count = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+        const valid = value && [value.total_sessions, value.total_conversations, value.total_messages,
+          value.feedback_count].every(count) &&
+          (value.average_rating === null || typeof value.average_rating === "number" && Number.isFinite(value.average_rating)) &&
+          Array.isArray(value.recent_sessions) &&
+          value.recent_sessions.every((row: SummaryData["recent_sessions"][number]) => row &&
+            typeof row.session_ref === "string" && count(row.conversation_count) && typeof row.last_status === "string" &&
+            (row.first_seen === null || typeof row.first_seen === "string") &&
+            (row.last_seen === null || typeof row.last_seen === "string"));
+        if (error || !data?.success || !valid) {
           setStatus("error");
           return;
         }
@@ -114,7 +128,7 @@ function VisitorAnalyticsContent() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [readRevision]);
 
   if (status === "loading") {
     return (
@@ -148,10 +162,11 @@ function VisitorAnalyticsContent() {
         <AlertCircle size={32} style={{ color: "#ef4444" }} />
         <div style={{ fontSize: 15, fontWeight: 600, color: "#374151" }}>{t("error")}</div>
         <div style={{ fontSize: 12, color: "#9ca3af" }}>{t("errorSub")}</div>
+        <button className="rounded-md border bg-white px-3 py-2 text-sm" type="button" onClick={() => setReadRevision(v => v + 1)}>{t("retry")}</button>
       </div>
     );
   }
-  if (!summary || summary.total_sessions === 0) {
+  if (!summary || (summary.total_sessions === 0 && summary.total_conversations === 0 && summary.total_messages === 0 && summary.feedback_count === 0)) {
     return (
       <div
         style={{
