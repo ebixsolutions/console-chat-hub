@@ -992,7 +992,7 @@
     "src/routes/_authenticated/console.visitor-analytics.tsx": "bd8ddd502d58b72b06b4890d9e101bea044eefce86b5d467506d323e7c5d674c",
     "tests/console-navigation/read-recovery.test.mjs": "85d7de18dea3fb6cf003e1ec43725eb524e5588181704aa3fd698629246d1e61",
     "src/components/console/ConversationList.tsx": "7e38db3f5c8fed96b15ab6ca5f7154a1683ab41a6c0c86b9b9eea6b758204944",
-    "tests/console-navigation/conversation-list.test.mjs": "9c259cc3412da06be5be4e179f71b55f08b26e764dda3ee62753642895c31b2b"
+    "tests/console-navigation/conversation-list.test.mjs": "224ea22ab6e8239287d23ef33924c8b1032883bc55b6c45d39b712b29e1a3458"
   },
   "live_execution_deployment_authorized": false
 }
