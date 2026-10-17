@@ -128,6 +128,10 @@ try:
   ('function', "ALTER FUNCTION c3_saved_response_revision() RENAME TO c3_saved_response_revision_old"),
   ('owner', 'ALTER TABLE saved_response OWNER TO authenticated'),
   ('ACL', 'GRANT SELECT ON saved_response TO anon'),
+  ('policy-comment', "COMMENT ON POLICY saved_response_owner_scope ON saved_response IS 'successor'"),
+  ('constraint-comment', "COMMENT ON CONSTRAINT saved_response_company_id_fkey ON saved_response IS 'successor'"),
+  ('trigger-comment', "COMMENT ON TRIGGER saved_response_revision ON saved_response IS 'successor'"),
+  ('rowtype-comment', "COMMENT ON TYPE public.saved_response IS 'successor'"),
   ('comment', "COMMENT ON TABLE saved_response IS 'successor'")
  ]:
   receipt=install();sql(drift)
@@ -135,6 +139,9 @@ try:
   sql('ALTER TABLE saved_response OWNER TO postgres;')
   if label=='function':sql('ALTER FUNCTION c3_saved_response_revision_old() RENAME TO c3_saved_response_revision;')
   cleanup()
+ receipt=install();sql('CREATE SEQUENCE successor_sequence OWNED BY saved_response.revision;')
+ check('A10 successor auto-owned sequence survives rollback refusal',restore(receipt,False).returncode!=0 and sql("SELECT to_regclass('public.successor_sequence') IS NOT NULL;").stdout.strip()=='t')
+ sql('DROP SEQUENCE successor_sequence;');cleanup()
  receipt=install();sql('CREATE VIEW successor_view AS SELECT * FROM saved_response;')
  check('A10 successor dependency prevents drop without CASCADE',restore(receipt,False).returncode!=0 and not absent())
  sql('DROP VIEW successor_view;');restore(receipt)
