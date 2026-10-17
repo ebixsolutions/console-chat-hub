@@ -418,7 +418,7 @@ function SinglePageInbox() {
       list.map((c) => ({
         ...c,
         assigned_agent_name: c.assigned_agent_id
-          ? agentMap[c.assigned_agent_id] || "Unknown"
+          ? agentMap[c.assigned_agent_id]?.trim() || "Assigned agent (name unavailable)"
           : c.status === "pending" ||
               c.status === "unresolved" ||
               c.status === "human_needed" ||
@@ -855,7 +855,9 @@ function SinglePageInbox() {
     [conversations, selectedId],
   );
   const visitorLabel = selectedConv ? getVisitorLabel(selectedConv) : "";
-  const assignedName = agents.find((a) => a.id === selectedConv?.assigned_agent_id)?.display_name || "Unassigned";
+  const assignedName = selectedConv?.assigned_agent_id
+    ? agents.find((a) => a.id === selectedConv.assigned_agent_id)?.display_name?.trim() || "Assigned agent (name unavailable)"
+    : "Unassigned";
   const isElevated = myAgent ? ELEVATED.has(myAgent.role) : false;
   const transferableAgents = agents.filter((a) => a.id !== myAgent?.id);
   const chipStyle = (active: boolean, special?: boolean): CSSProperties => ({

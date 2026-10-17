@@ -35,6 +35,9 @@ test('A02-011 failed history lookup is an error, not a false empty result; clear
 
 const activityButton=(r,label)=>r.root.findAllByType('button').find(b=>txt({children:b.children}).trim()===label);
 async function pickTicket(r,label){const row=r.root.findAll(n=>n.props.onClick&&txt({children:n.children}).includes(label)).at(-1);assert(row);await act(async()=>row.props.onClick());}
+test('assigned Inbox ticket does not become Unassigned when its agent name is unavailable',async()=>{
+ reset();f.tables.conversations[0].assigned_agent_id='restricted-profile';f.tables.conversations[0].status='pending';const r=await mount();await pickTicket(r,'Target visitor');assert.match(txt(r.toJSON()),/Assigned agent \(name unavailable\)/);assert(!txt(r.toJSON()).includes('👤 Unassigned'));await act(async()=>r.unmount());
+});
 async function openActivity(r){await act(async()=>activityButton(r,'Activity').props.onClick());}
 test('A02-035-C04 activity read failure is not a false empty history and Retry reloads all three sources',async()=>{
  reset();f.tables.agent_profile=[{id:'admin-profile',user_id:'owner',display_name:'Admin',role:'admin',status:'active'}];const r=await mount();await pickTicket(r,'Target visitor');f.activityRead=async()=>({data:null,error:{message:'activity_read_failed'}});await openActivity(r);
