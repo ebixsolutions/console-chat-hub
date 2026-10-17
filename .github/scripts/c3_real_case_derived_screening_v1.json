@@ -1,0 +1,3651 @@
+{
+  "schema_version": "c3-real-case-derived-screening-1.0.0",
+  "source": {
+    "repository_url": "https://github.com/guyfe/Tweetsumm",
+    "commit": "4903b0f20665a59e4b5494abd83d8735893c0333",
+    "dataset_license": "CDLA-Sharing-1.0",
+    "dataset_license_url": "https://cdla.io/sharing-1-0/",
+    "attribution": "TweetSumm, A Dialog Summarization Dataset for Customer Service (Feigenblat et al., Findings of EMNLP 2021)",
+    "files": {
+      "tweet_sum_data_files/final_test_tweetsum.jsonl": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "tweet_sum_data_files/final_train_tweetsum.jsonl": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "tweet_sum_data_files/final_valid_tweetsum.jsonl": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba"
+    }
+  },
+  "candidate_rule": "order|delivery|deliver|shipping|shipment|package|parcel|return|refund|exchange|purchase|bought|buy|seller|retail|store|checkout",
+  "candidate_count": 251,
+  "selected_count": 100,
+  "excluded_count": 151,
+  "entries": [
+    {
+      "conversation_id": "54fe18905f0a19ee163a2b452e31e07d",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 4,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "531082fcb79b7d0e7725e8a19c4e0f8157e2b118521f04ccdfa4a2face64b60f",
+      "summary_basis_sha256": "356c8dfcb0960eb59c6d5fbcd1466f7023ea7a0112e230ebd4d1034d19518d43",
+      "matched_terms": [
+        "deliver",
+        "delivery",
+        "parcel"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "863395675e13aa300aa20804fdf32985",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 11,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "d55165079618b37458b633aca960b948f7914dad337aa99ac7e4cb0b59f373ab",
+      "summary_basis_sha256": "7bdf3c26e9c78c816527915fef106cd7b5bf0c6bbf088b5b83e10379fba476ab",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "b272cabe3a9bfb7bdda791cdb18d0538",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 14,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "b4e8b29c885a7298c97efd38914545e58644663611ff3c7de45b304bd5b52784",
+      "summary_basis_sha256": "065ef9ebb1e307efb1235b6db966ace97b426fafe046d25b8b1ae2b595a5fffc",
+      "matched_terms": [
+        "package",
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "3b109f420dc697b532755625337bba57",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 22,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "a4a467d645305ef0bac66a859507963f89e6a8ede846705f8607d7e9f719f607",
+      "summary_basis_sha256": "ff1e472cf95be98a7945e696a090b055d5fe072cb382f1886f4cd2effc0de21c",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "66ef0798511c37095b26b938be3c2d0b",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 26,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "0759d5f09bc4866a8a8007c933ab942f21f053fb32996574aa022a4d818f1938",
+      "summary_basis_sha256": "f3c2f4de0bcf6a83ce4070534976b5c8d61f9944ad671b59178c58a75378b1c7",
+      "matched_terms": [
+        "seller"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_SELLER_ACCOUNT_SECURITY"
+    },
+    {
+      "conversation_id": "8406b7a6237af5587d41daceebf1339f",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 28,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "9861f685d080063eec1dc582c8196ee418c8acca9ef50813fead22f4eeccfe3a",
+      "summary_basis_sha256": "1b54f53ee7ff4bf9f5d9bc1c451b3fa80fb8c8ed24ad5bb57cf01cf0657172f3",
+      "matched_terms": [
+        "bought"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "8ef88cee58799f5e227d59e0ce2d1938",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 33,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "957f51998347004e5bff6230b361f73582c48727a2d4722b4edcb0f1e05f7af3",
+      "summary_basis_sha256": "edbeeb73d23e59933738dbc651eccb4eb794b3cea5e5626bc6da7e26b4d1e070",
+      "matched_terms": [
+        "deliver",
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "fee2af6e301617a2b3c66ca0a6d087bc",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 34,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "6afe2d32826bc70e29d65af9930ad78bcb189e20b1120283574816f38e4cc4a7",
+      "summary_basis_sha256": "291d55148b975cfebb5af3cdfe3c2e4000b5151007556c525927fb448ebc6911",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "8e96a87be63b82941a419b4be2e4fd79",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 42,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "8d31dc894720c6a4f19634c8a35cf4466138f3a884e3352a7936de5c64437e0b",
+      "summary_basis_sha256": "da43c7c1b85e66474d068c940b860634bf8d8f0d40ff635a1b8b28cc5d6d31dc",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "a99eab7003cc7d3d74e6fa2bb6edd03a",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 50,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "33f4bc280d506a89414df3f31c65bda321a03d3b658003c10330f80103e9d146",
+      "summary_basis_sha256": "7e6a7e9995803ab5c45f070ea3f9472722e8ea5cf1dc0e3df0dffccb294495e5",
+      "matched_terms": [
+        "package"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "2dd7a7cd75ee2a79670038ad0216103c",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 56,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "50c99646485450adc70b0bd0a91462835b2c98342a577f1d8bdfb31b95ecb3de",
+      "summary_basis_sha256": "bab35e2e983d23341362242db5d355203942dcf1c1686f536d8c7863d6fc655d",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "7fcc655f7aa9de56a7813dc9df67b16f",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 59,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "2920acff9f72abb9ca44e6059aaba5692d4221119f69b8588a94d07a365370c1",
+      "summary_basis_sha256": "5c575b37cdbfcf5b62b361be369c3fd99fa47c5af072153a6c7e8c1a22ec4f01",
+      "matched_terms": [
+        "deliver",
+        "order",
+        "refund"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "9b35852321be1f27542ba84f267bac13",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 64,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "915429912253f0fe279bc281a042fb635512d77b06ec905561667900bdbada30",
+      "summary_basis_sha256": "a40e2168d23005210779dcd1fbe45802c6307591fe23766c7316c3826ce7cda6",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "0378fec73afd1fa7962a4f6f5d0000d6",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 69,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "d8b8e2a29e8d472fa93a9b1ef9123c3752c57c6f5f2843d66052fc6635144a40",
+      "summary_basis_sha256": "fa60997393a175d9eada48b7b583bfe624a278d801c7e939ad9eaec97eff114e",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "STORE_ENVIRONMENT_NOT_COMMERCE_CASE"
+    },
+    {
+      "conversation_id": "26ae1132fda9219af2a13b1045f36c8b",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 71,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "1beacf125e0340c5e8e3fc5ca76d03b6e29b52264a79b1d0d525231368485aae",
+      "summary_basis_sha256": "ec553682e1af439018126ea9555ede47717120022dcc81ce5120d227ff41c005",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "TRANSACTION_CONTEXT_NOT_ESTABLISHED"
+    },
+    {
+      "conversation_id": "a26b1666c8d58fdcec2c2b7c60254587",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 78,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "9a23752e3a088bac6bbd29a706ab4f3af14ceb5c44be8f2572aa33bd2722075d",
+      "summary_basis_sha256": "cbb0b6f1c6d5ff541cce1d8d09a5cae37ad0dea4a17abe29ca6cc610835d970c",
+      "matched_terms": [
+        "delivery",
+        "order",
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "5527f4fd117976f1b37dd4b4022d6c2b",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 80,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "4dae08b6ce40c34f99e2af4f9b616a4891a7d556bc510329c24481603e5669f0",
+      "summary_basis_sha256": "052685513b88aa690b20e283437c7b6a866666bf8d0a891ec260f7bf27e97d44",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "f90a8ec11e69f2da0c429f758aca190d",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 83,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "023688ab9d8e0aca56497fb67f3fa0df8c4192fd98a6c85f4de600a82fc3c633",
+      "summary_basis_sha256": "0b9008e94ee9a6d42d6567a875a0810152dd19560da065cec4b9dca5afa4194a",
+      "matched_terms": [
+        "package",
+        "seller"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "5f6dcd725b77e5dc36862ce50fe528e3",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 86,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "b155c71b39a8b182adfa4bc3163ac4a2dc2745e0505e8123621ca3c430399f24",
+      "summary_basis_sha256": "05ceb86ddec97b55025289024e3d8a4492d78eb3de6a46dbcbfbac0ed5171d88",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "495a68dc464f544f3bfd018a30f66f20",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 88,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "289ee5ab0ceedd37cc9044f1b141c4a48a00c223b5b67afd2b60aa02e31513c5",
+      "summary_basis_sha256": "df2b2f1db2a713c592af20a7e6cd87d1453fd0cdcf64b1cd3637eca9463ec1b8",
+      "matched_terms": [
+        "deliver",
+        "delivery",
+        "package"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "fa3ab76442483866a8d7af1159ff7842",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 89,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "8dc73ed0b84afafd477e995cb02ab53c0e52e8d23a8355e69d397f1a9209e0d3",
+      "summary_basis_sha256": "13165e4de2427aace06e46a0acd7badb99693cbd42122265d5108a24160337ac",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "eb3a20cd9106d790cca1098b5deab738",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 94,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "1f73841bf59176595a1e09303ba7e1317ea1927202c2bf2f30bb56bbe0444438",
+      "summary_basis_sha256": "125c6a7ea2ded449103914e5bca2ae11c5331b6543998c52731a043d169dd9d0",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "648bb2821f5827f5c90b4d042e145fe3",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 96,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "302c29ca6264784b4be43f729a06a161fd70830617f6e5f2407f91ce801e76af",
+      "summary_basis_sha256": "3d2dacd6b237b7f11f2e8ad5fee6c998baaef6ba3a4a279c3ab5590e11051b72",
+      "matched_terms": [
+        "order",
+        "shipping"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "c47bfe93d99284e5b0652e708b83ef6b",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 100,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "51bfb2f61d1b7907153821df6c4beadaba4b5f343b841987ad1b75cf346abe67",
+      "summary_basis_sha256": "fb6815464335041eb5802221b31181e8037a14329cd97e238f31e80f32d25aa7",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "42a6665f5410deac283750bbcc4b7682",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 107,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "fe8f74552cedae54b06f369209769dc3cf726af8ea12ad8e78aee9467af937a5",
+      "summary_basis_sha256": "f62181518176753e39a79ee9eff9b94564f0a188508da6b00f85c11092a7b7a1",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "d78ef8f479f4d15c8c0384d76c1a2039",
+      "source_path": "tweet_sum_data_files/final_test_tweetsum.jsonl",
+      "source_split": "test",
+      "source_line": 109,
+      "source_file_sha256": "5cfa68d7181b40fd179ef8d8208b0b1b86644f6fbc7d5ba4e4fd3e9e87c1e6e9",
+      "source_record_sha256": "efc9449d35a8bae68340b58e5e8faeb055e8e652366aec7a1af69449613bb6d8",
+      "summary_basis_sha256": "c3fd7bf1d398bd650f689e7a52a3a591f36b26ec278e5ce62d238154aaf625fd",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "1e1d8fd4f95c984fb78687c9e946dc97",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 2,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "d51af6e06f896977f5129fad70acb78f5ed8c73b785fe878756a0643e7dc7bd0",
+      "summary_basis_sha256": "1afd33452621121b4d75b55a61487ff432612b36996978d122ebc5c14db9b6d2",
+      "matched_terms": [
+        "buy",
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "3574d6b4418cb546a90d1561bacd66a2",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 4,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "1442d2606e94084c9c806253b4810f0fbe13107556a11f26c2b90aa5b4e320bd",
+      "summary_basis_sha256": "090bd1e366060f6ee6e892dda90deb703ebc5cafae67d6b6c6ef469b982565ae",
+      "matched_terms": [
+        "deliver",
+        "package"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "f30d2bbc15e7ff32244761b38b67d160",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 5,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "26eb9b2cbbd9fd172e40d889c67d0e91071eb14e5dd4e0681d6211191ad85592",
+      "summary_basis_sha256": "6b19adb006b703e1864bee0559a97d1cdd11a870ab67ead7984007b80911e4b6",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "01a14bf0dff4f25a0ee571acf08d779e",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 9,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "e7a8da88ee3a68e31537a5ad6879e5a365129d742f93350cc9de885c46d583f6",
+      "summary_basis_sha256": "646498b771b615f2a6a1e7821efa152c9456c61032501715a761909ce119a209",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "d63f8327d930c484d1a1e5b2c919315c",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 10,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "77adedf0e68553541d529198a99d20be742915516cd7295e59002e473b2f0815",
+      "summary_basis_sha256": "40642a636b33af7c8850b6422e8b28faf23df9db12163d33748adaf7e059b84a",
+      "matched_terms": [
+        "order",
+        "shipment",
+        "shipping"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "08faf4ed9a4ba7d62725d72ddd974674",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 11,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "5692c3dda19f08a8b02c9e7da49d7b9ababf16cf25ba038f465212b8f7021d38",
+      "summary_basis_sha256": "b42868dc786099098408afb92793e71e7c0c41647f155e16c54c2421dbc1e6bc",
+      "matched_terms": [
+        "bought",
+        "purchase"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "3485760e07a49771e073f91242ca17ea",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 16,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "2db0cde0fdb1638a375e4cdf42bc54ae71f1d42a73130f23fce98b367a2e0da7",
+      "summary_basis_sha256": "72528eaedfd619b83c609106564269ee85c08b9b8f75cc9a4a4cce13df5f7b89",
+      "matched_terms": [
+        "order",
+        "refund"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "7d4115d8a17e573a03addd3903a4467d",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 17,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "f5945ab9239f13149102500812a25f574795c14baf3dbf9e8794889cc7c88dc6",
+      "summary_basis_sha256": "9ff7af15b4bbc97ce8b753ad9819fcf056392ba1004825c578575d3b9f0c6d9a",
+      "matched_terms": [
+        "bought",
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "b50df8ee981a32af08b95b935a85e7b1",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 18,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "436da3ab3748879fc8c9f36b002de011b8ba6a1ce584b8cbb16c0318431d7b52",
+      "summary_basis_sha256": "60aaa9450fc6c72b696008b66ff61515439f44482a12ab8b52dacff5c644c0de",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "GENERAL_ASSORTMENT_FEEDBACK_NOT_TRANSACTION"
+    },
+    {
+      "conversation_id": "85a21f70bdfbab50e06bbb7c9382a5f0",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 21,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "58b43d4d4437c2a1ae40944c9e3572197ac2a65f2d52eff67bdaff76251dea4a",
+      "summary_basis_sha256": "5c457ad423c0c71ce72da98dc9d355f7bbdc4bdd30736fc13b0cfcc834e6e285",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "FINANCIAL_CARD_CASE"
+    },
+    {
+      "conversation_id": "1afb2f6d4668d5b1c70e531840c1633d",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 24,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "0f9b3d12101ccc4368daf61fccc5eda8491695ba737c79246a3051932869ee56",
+      "summary_basis_sha256": "fc16a1fde21b80226dda14013e1fb0484a7bea22cf0384515c0613050e7e9496",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "INSUFFICIENT_HUMAN_SUMMARY_PAIRS"
+    },
+    {
+      "conversation_id": "ffd29b593b54262ff9638919b972feff",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 25,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "7fa335bc5ebfce2c010f34b5c4e239d10dca60c09f7ba0cd93bc67b8e4eaabf4",
+      "summary_basis_sha256": "a65cc4477aeba89f8ccc01a3ee50b536a484056cabfd6fa18278c1ea393253a7",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "c545b20ca76e7a441f36b9481a2216bd",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 27,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "63eb53a186323e0fdb86b24fc09d6a7ab2f855dfa26617e80ccec117a8d398cd",
+      "summary_basis_sha256": "c7959a9582c03c5bfa3964b341f1fc7e107f88407e0d8ae4a3d029cdeb556013",
+      "matched_terms": [
+        "delivery",
+        "order",
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "b7fe5aeaa21cb8ba4620572560303e8a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 28,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "20f998e0b57fb6a353681b4ecbd3a2c91301ca61baa8aa9efd06e14ae6ab6cfb",
+      "summary_basis_sha256": "e6fdf2850ca8212c97d49469af79bb69805f41e30325e937674d44572b30a06a",
+      "matched_terms": [
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "d370b1e57be01797211b2f13751c2238",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 31,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "054f241d1ccffb6467621fefe4c28e1753554e0e78532a274fb72acfa1a49ef7",
+      "summary_basis_sha256": "3c7ecdbfadff3d3d2ad472eda95b45f30f45f6781c53a8a652196d77670a3da8",
+      "matched_terms": [
+        "package",
+        "parcel",
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "11d64ad14007d0f26b628b3a2033d6ab",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 33,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "4ce8cac7a79b44cbd124c2bde762293097ec218499cf2a8b4e613089e4260cb8",
+      "summary_basis_sha256": "701edb67963076f593431ade293a60e5caa9aa29ee8e12ddb715c610e9a2bead",
+      "matched_terms": [
+        "deliver",
+        "delivery",
+        "order",
+        "package"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "ea76ce5bc441a52e98141dc4eda6f691",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 36,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "03278c1736333b73924482e1774a2274c3f11f90ac8b0d6aba523cf81552fdff",
+      "summary_basis_sha256": "05e85ff882a901de986e275419640691fef5104c03a82307e456d1cbd5c3dddc",
+      "matched_terms": [
+        "deliver",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "1eea5450d515524de5b169cf30f0687c",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 45,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "b48331279e2ee25a278373e7156acc1156f69ada3391ae4e8e448d0d1c29f755",
+      "summary_basis_sha256": "f64d8ee50c7ad25c9e89255b0b93e778353e54a35cebd4fbb7251394e654b187",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "feee444f3f4b2263082dc0c6624c0353",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 51,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "60fa8db1e7a172916fa71b3f4a6148b34a1a535ee789d63488ca2cc32c1bd939",
+      "summary_basis_sha256": "0a2004da51d58516d4da1c485b35954f44bcccd06a88c1d883f4c8c0737a154d",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "29dcd1e9d90d5814ffe4178e04abd24b",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 53,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "4406941f9cb2b427237917f27112ad67ab98fc82f01ca569ef460c2e5b22d73d",
+      "summary_basis_sha256": "cd34c6594780bf560de9d19bda46e69b0b12af35b0ed02bc1bbb2e6e15da10b8",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "b94a375ed62b95c379329a560294670b",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 56,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "199203f6021899d5e3ae4a54c5acdb580e40d09e0b3a81a5f182b930d008ea6a",
+      "summary_basis_sha256": "667d6f3d639403a688a2833b6388f181ac36c10314dc1c1f6f0da3d7b9eb63d6",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "ee38567fa52f8c8cd41261a489c47114",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 59,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "5aff3d2d0be7d2e367f4c57db01433f2e8a96b06b00d80e6c2c61ceee9741d9c",
+      "summary_basis_sha256": "48e92f36d01381d0fd3a68b3fc4cc72ce13d4621db4fd6dd1e4cda6d008453a5",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "f2962639decc0048380881f4702821a0",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 61,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "1f92ecb3a30e206f66ec643f62d3cb2bc4ba50777c4830803e85dc0b16f28fd0",
+      "summary_basis_sha256": "80f5dc76b9111c77555a3381b79ada671dce6fa28a521c3ec24deab2650da445",
+      "matched_terms": [
+        "bought",
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "DIGITAL_GAME_ENTITLEMENT"
+    },
+    {
+      "conversation_id": "36be347a2ddbf8df8091b90823d891c1",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 69,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "343f0f041cbd4f0dd1990ca8557932c2bdba0647e192ae38dc1a5bd4560b57d8",
+      "summary_basis_sha256": "c36030b0111d43a1730be0d8adb748155408c5c88b63f54fcf4c40d2da91a975",
+      "matched_terms": [
+        "buy",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "2a1ace56f17af2d78548fd5d51705fad",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 71,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "35a33a14ba8bb4fdc72999e1707489585ccb50b1af2b466c56ce2b9fc9e069c4",
+      "summary_basis_sha256": "16e973a0bbbc7feb4ba018e9bdf14cb7567d0ca5275313e12a5c58bf731c8cbe",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "DIGITAL_GAME_PURCHASE"
+    },
+    {
+      "conversation_id": "becdfaade83d4df33973f03b2ed90a7a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 79,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "fb4c98e9edd1f1e3403689caa6a7968d662a849321dbbe7cdced0b9020de629b",
+      "summary_basis_sha256": "8a35c40eeb353cf22427eca97a1fb726ad469dd6e28280172a48548b15045e22",
+      "matched_terms": [
+        "bought",
+        "order",
+        "seller"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "ecc9c0719a66a52a8013746716a61395",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 80,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "493034065f54fff74bade09f63ae10222201c31d3c0653d99382400bc2e971dd",
+      "summary_basis_sha256": "5392c3cb4524161c4a6b75f9b24a1b45596acf70939b97e0d700afb426333e4b",
+      "matched_terms": [
+        "delivery",
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "265b7a378ddf2634bbe61147ba911b58",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 81,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "20a368f3942cc71503bb7d6c885a0f3b1260d985b86a58aeac8954bf657c8c44",
+      "summary_basis_sha256": "89fbec8751b52f5b0b6be3ebc934cee656943bc08338739a88108382ae094540",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "GAMEPLAY_SUPPORT_FALSE_POSITIVE"
+    },
+    {
+      "conversation_id": "91f2b7b8c90cf3a3d018e23b793b2b17",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 88,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "2fa221b9f6626a72aa49d83c0300895df59b7bbf2a08cc0d6eb05a85c57f146c",
+      "summary_basis_sha256": "636c9308f8c68a4db7ec80347a33d88855466b0db8bbffac6b6ea1943c3e099c",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "CAFE_MENU_FEEDBACK_NOT_ECOMMERCE"
+    },
+    {
+      "conversation_id": "1f889b03bad6b2445f57d143b2527743",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 92,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "146ee451913b9ec8ae16795d3342057da7999cb13517ba77dfae9a01c0a2e49e",
+      "summary_basis_sha256": "55432eca2215ffeae0c87235be81483ef7a5c00974a90c7331909e71c2eb15d1",
+      "matched_terms": [
+        "bought"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "e4c07e473077bd46e85bdfe2b782846e",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 93,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "0a78f106e359d6e1b4559c0892a64e53704601065318a2dcd02bd6ba8c9243fa",
+      "summary_basis_sha256": "3eb16993f87077ecc5d38d840ff4fbd5bc56109bf8c7136bb490a2150f8c306b",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "5462c3ace2d126debdb27dd029c265d9",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 97,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "65c215a09476689496a5166747db30d6976d88744cd29319f2bd6304a821c531",
+      "summary_basis_sha256": "a4626af6df7d7185a461566b50e8770dc2052bd72d641d98209e2ae9215f4312",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "654176114856f4052b2377c7983574f4",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 105,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "c40a1b0760f9e02349cfc497173c0b2ee65078e86042db7695edd8474652d683",
+      "summary_basis_sha256": "a9ebe26eb4bdde1f9e037bbee834cd671778ff1b6fb4b3da32dd13b4f05e4aaf",
+      "matched_terms": [
+        "deliver",
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "494bfb25b7d07b4c92bdf84d295719b5",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 108,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "e4166e6bd338021ea1d6e2135f38b2cf94e0ff90445b1c5eb77396b70e4acd67",
+      "summary_basis_sha256": "103fbe3147e56c6cb456ac4ef58cd289e0fb670dbd32091a9fb356a645afb304",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "b67d4c96b95db8bc29cd1ccdde1e7fa7",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 109,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "97b7b51ba5108494fa23085866681d0a4b609a6d6f3739dfb4eecebea7b7bc11",
+      "summary_basis_sha256": "ec37de0f131e584c0adf0824091798ed646beca9df774402e8d75925755dd654",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "c13dd1bb2ac4c87809637988abed5a84",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 112,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "9b28f69de7a6862e2b993dfb0e9a8d1ca0a1f6a7be84de63621c181db387eca2",
+      "summary_basis_sha256": "f6adbb17afd44dd7b129003bd49f04e13de1b5a604630346d25404c25e82dcba",
+      "matched_terms": [
+        "package"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "e232df5b9f3d6aca0fe9cf0822108825",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 113,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "93413be8ab7664a9db09635a8a3e26251a769dafcbddcad0266cbe121d787fad",
+      "summary_basis_sha256": "df937e214d36f93d750ffa5415f29c95064bf26c28baaf72846bac28f089504c",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "bb80b2bbaeec639a4b0e99b34c556da6",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 123,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "59c50d82b9b2437b7f51ce08ecf8d72621e6f7ee9e2c66e9b07d7d1f5013fd28",
+      "summary_basis_sha256": "ec4b96e004b2c3a25d800e7d423b69d61758f2c647cd8be162814721c08ecfc7",
+      "matched_terms": [
+        "bought"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "7eaa1aa15a6ad8563f63c5ba494a167d",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 128,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "3c65876674effe59077d267215ed95e051bc5ec99d4250229fdda8fb6acb9dcf",
+      "summary_basis_sha256": "415e0b1b5c080f23916e27e5b4bf46c61ebd3078dc09987d777481c89a851bd5",
+      "matched_terms": [
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "f39bbde69a350a5f417a0f2e816598db",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 129,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "53f2ebcf448a1a5d3351ae1e9bec6fe8a0ccb913ff39b5359b1d0ede50d6fcaa",
+      "summary_basis_sha256": "9d3ff2663307931d5b973973c8e9364bb61bb0d62e396e49bb9cc950954e4c68",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "975cb927e70e4ea536d96d719c125971",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 134,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "3887ef611cbcfcbe457632f8a5f5517a4595bfb6c84de5123aec094370d9709d",
+      "summary_basis_sha256": "4a2a7a8e178bd6d5f5f315792d3100b12dbc92ca0353f9bd25e289cac2622b12",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "636482d9d92de8747ef01fc11b84102c",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 139,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "085763ce9213458ec3e9b9a7eee7c844f0db720625161145c02f1177ba0b4f3d",
+      "summary_basis_sha256": "2deb85007a6131284ca87c286ce6afe97cee16e33ad015c25c144f51c08ce444",
+      "matched_terms": [
+        "buy",
+        "deliver",
+        "seller",
+        "shipping"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "ebfb59be654cfe3b24a82dbdcc1ba97e",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 143,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "eb92844ec0f20b11cc5f127f67268fffa1ac44bf8211542b0fc965b8aef850f0",
+      "summary_basis_sha256": "cbaa60e1e3aa4604282d7a7d078eacfc73fae5a88670f2ab83d98b497501b016",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "27946f59608c56909f97488f0c3cabb9",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 144,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "88599908d5869841746a7760d56e90f6beeff6948ca1d4647cf0ccb50b14ff17",
+      "summary_basis_sha256": "9c08cbd2cbffb35161f249ee1ca86db9f48705f1cddf92f91f69221bd1a844d3",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "22742496b2b9b62afb11b0f62cbe229c",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 147,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "d61b664d359a417a1bb9945827c24abd0a9dcbe0d094c4e78a9d086bc3dc87ae",
+      "summary_basis_sha256": "4d406f823cfbfbf975857fd0bb8a3912909190bfbbbcc5668ebf111fff21d095",
+      "matched_terms": [
+        "delivery"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "f49e5d96dfd255e852cd8ad5f73fce29",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 148,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "21a84462c37522ff1edc6ffada14a76168fb6762fc43cb8554656aeb4c2a30a2",
+      "summary_basis_sha256": "8499660e50c7e2552ed6aa186176863d90c172fc1a962ec6354c3918078be329",
+      "matched_terms": [
+        "deliver",
+        "delivery"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "14b2755e9cf7e4cdee411a91a7246118",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 152,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "a09a18aed82b84832b9df17a5668d51f3f260844d4581c712823f1a50749f9e7",
+      "summary_basis_sha256": "cd89afa50736b211d49859a0fe5f040520da9ea1228dc432b6cb3543face89f1",
+      "matched_terms": [
+        "refund",
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "17777c642a6a78b83daa9d5fe2271e1c",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 159,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "79ac6fc51580fc2592773457f030054641dadc5848d86f963f51d1501b54c320",
+      "summary_basis_sha256": "56beec59e9272e1678f7e1c642d9e9b96a69d95c858e2ac1c76e1a2fc2d1cb7c",
+      "matched_terms": [
+        "delivery"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "8fe05ac7aca6c2c6e762db50a76a7b09",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 165,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "240541c51e14105fc0ed4bf6e3a297b00bde7385624ae2ee76364cb38742b63a",
+      "summary_basis_sha256": "a0bcd58d932cc7b79a6bf1f35f7611f38a2400365938a0100c34cb96203e7aca",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "64ed5497753e9a52266acc500642aec5",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 167,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "bd197acb887879f6cc4c27c23250edee05ea3543cd439b84b884380fed00c593",
+      "summary_basis_sha256": "b1dd5f232c4579998501be217a01c330807afdd86c2979aca79e6a52bd0dce5b",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "8f5f07c27e38d2e72f4f4c80f80c6c2e",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 170,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "b23dcb05232d6914bd43f5641c33a9fd50b2debd9439637acd0cd7d49d02c48e",
+      "summary_basis_sha256": "54e711440d27ffa3582e0efd775e0b5ac7b187980cf9f057956a9cae41c38676",
+      "matched_terms": [
+        "buy",
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "33474cff3fc7973c38581668b4dfd55d",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 171,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "6a378eec4bdd4dcbd89f422355242f411955d3d277c641ce2b2392b4be1cea14",
+      "summary_basis_sha256": "581c94864e45558268964133777fdb19f19c6de29bf376bdf2df8b5cf31522cb",
+      "matched_terms": [
+        "order",
+        "seller"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "4d918e49d21849edbd7da2c8cf155670",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 172,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "870f20ef565f93c2b90461d0451e1ec0e356fc500e3b5339c0121fe751903edf",
+      "summary_basis_sha256": "a5acaf5bc887dc7f6ccbe862fefd52433942ab33dac57fa4a6cc09e5dbcc7b76",
+      "matched_terms": [
+        "return"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "8678dcc18049176193cf778949df5257",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 178,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "ae3475945d271c186df850abcdaa0e5d3f225ee791558016426d09b5166346da",
+      "summary_basis_sha256": "a3510982b44379e83918471c3f568ca87cf0f721443418641a2dd3ea7960a260",
+      "matched_terms": [
+        "delivery",
+        "refund"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "7545917f963acb42fc4d9439a89d58ad",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 182,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "f45ae871028f906ecb0df8d15974c6cbb2390d10e8afe3c051ab43e957f3c682",
+      "summary_basis_sha256": "2927c86346151a7d7d5516a8a73d9fe2e0b786b0274c7de644eca481734cd2ab",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "187fe2f321124667ee1f49673c223eda",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 186,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "76034306522c6467c78aafec1ecc8aec6d78532bbf89dd51e1a7a56339c09ae6",
+      "summary_basis_sha256": "325fbfddde274da9c9e2fc8a1a3e85a0a43d890f77934d9d6f656c6bd957949d",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "b54ae2d191c8ee7aec6c0461dc0aef2a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 195,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "aae7048aa4d3a028e0ee8027583c3be44935003ff51eb089f73023a5829ba0d9",
+      "summary_basis_sha256": "61addc806e3f47a5a825b846839f687d19b1de9e9fb4cf1a2e107fb62f3415c9",
+      "matched_terms": [
+        "bought",
+        "buy"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "d6d66b74b26c0e5ba7c8441f92746172",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 197,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "2abed6829551d8a28cd24f9967e9c87e17d10461bafe1a87002ffa515cceb4c2",
+      "summary_basis_sha256": "a0fd5558a56cf3a1b90205232795db923af5cfeae478898b48ccb819faa59d11",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "1c3333d666b15abfaea8a04d2376eb59",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 204,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "0de738b540e116f063e51ab4cdba31d7a31095a1d3537db90a1ddc31e4cd65e9",
+      "summary_basis_sha256": "3dd77dddefbe1081a38bb08bcca97692bfa7c69748b361bdf170d7dd9b9e60be",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "DIGITAL_GAME_CODE"
+    },
+    {
+      "conversation_id": "82956bff73ec19472b5e2d9a76c65888",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 205,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "6061c0109ab4309ea2a5310063def26afe4ceaf3438e3e254bfdc4fc1e15a614",
+      "summary_basis_sha256": "f6a3aca2ebea1903c038f848d374bedd307b66e3536732a322f9504cc5d77350",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "eafb6ce2ca98a3d0413b9465ebd58000",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 206,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "142246dc43969971409546011be075664a5bd92b8e239652ea456cd19a15e1fb",
+      "summary_basis_sha256": "8f34743a0ff14c0fd3fb46c3f5078cbad88c04b14c9338085b433b1528c9fe9e",
+      "matched_terms": [
+        "delivery"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "25b7e3422a1917beb9634e660b0e9efa",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 209,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "78c322e06b8fa0c6a815f30e4e8d2a40459fcec6518da9507772b2b9c5497919",
+      "summary_basis_sha256": "6e3cba272018ccb99f2432b1b87b3a594c65d45d9bc2d4d5e7be88b2bfdda510",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "ad0e81aa1463e4dd05e8652a33a5df76",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 230,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "7702b0c1b335b4e96402764a623d792ce55e242abb0d87f1ac4f5b453dbcdab8",
+      "summary_basis_sha256": "b4318d81bb53d000a6ace7944cc6f8dd4b8b1bd1e694d5ab1476e74a469cd16b",
+      "matched_terms": [
+        "deliver",
+        "delivery",
+        "parcel"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "a9e329e7934d1cdf27bd8adff9a3f29a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 232,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "f9d97fcd25f8e417936a3513588e4078d00b25b5dd3c88ec2153360d2a5639d8",
+      "summary_basis_sha256": "fabd6c3d156e83fe10ec7e6341433fc15db5c6d9e86de629730131b0ecd4d0a0",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "3863c01d5f8132a1ec087ff03397415d",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 234,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "a711cca7885442fa9377289e81a0401a76f7c9093cf58fb091b7b954a8144172",
+      "summary_basis_sha256": "bd925bf4c30bf0ea6ae06051398f1141fa5311930e508f002060b156b3e08c8d",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "5782a125c79e8ef5ff806a696f49f265",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 235,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "6806202ecbc550652b5e915648a054eda1acefc93a042b85a40250facd0a5f04",
+      "summary_basis_sha256": "cad80204d7149d6831ed6f82623d233cc64ede76fcd11fd48a7180a7458c3d68",
+      "matched_terms": [
+        "bought",
+        "order",
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "575a9a9c0f7f72dda06282a90a50a7b9",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 241,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "38e307256fc19bbc1d0b84a446b0a0e531e1cae1a3e399762efb16d9b89f84f4",
+      "summary_basis_sha256": "7e65ecd5db032762e6d4d4a2f6e0b58d49fbf484884e0144285ddd84abc12979",
+      "matched_terms": [
+        "deliver",
+        "delivery",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "5d13c47bb1fd552b7c71cfbdca341181",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 242,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "fa6e1af059859eb7f2d3c8de30d347496610bc5b3d8abb498978d41b08b95926",
+      "summary_basis_sha256": "2333e7de7a1ae1ca35c78f7483c15b53af6a65e06f86f8f60940b6291eda1153",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "71605d090497775499b509137b1efedc",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 249,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "eb09e1a3d9617204d96cb13e9dce3391481f703c7bb7a27963ca035c2daa23de",
+      "summary_basis_sha256": "78a5480445e47a1de3686108a94d5c04786e2df1e26d0d79f8d548d4a8c62ebe",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "0d0004acc6b01d591c88720ff8192063",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 251,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "62eaddca602b319dceaa88d85392cc66d466f28c4e8174d39f9847f5f22569dd",
+      "summary_basis_sha256": "0090a116c462faad6b5e9feec2eec04f8932d6aeba60479f65b7d13ba6b7dbf4",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "e76dd7528571ce5cf01f271850741b6a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 260,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "35310b3f7f776a017c347412d0883d3b73311ba1057c7dc928a78be586f0cb11",
+      "summary_basis_sha256": "3b01f937784d2fe666ef9f6cc0cea1b6dcefcfbb2e925f147e89954fb5ccbd08",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "76879c4eb7ad8d39c126d606b1bfa005",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 261,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "ed94895b0efe30052d2f9364a67b1df8b3219a07dedb3e73333b251774925a24",
+      "summary_basis_sha256": "1225c0e0927876b448e8f813c0c4f637bc0f172747e1f7afe6f674dfac91bdb2",
+      "matched_terms": [
+        "bought",
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "14f2d18b53e607dedfd1cd5f5cd7c9f9",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 266,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "155b207515928b62721619d115087148490916d7507b0de40c057b8e075bf890",
+      "summary_basis_sha256": "ef429df69d71f8cd02096d55049cf0c8c87de5a215c4e982cd44b24c1300b058",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "36acc3de6f8a60e7fee237f823bc93c8",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 276,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "ff86255c766c08a71fa5a7b6f89cd20036b63643677dd626ccdf1e6db4d6734c",
+      "summary_basis_sha256": "fe4a96133462987b46ea0ddf4eca74d64737cc98fa213ce73ce90f4865a8c384",
+      "matched_terms": [
+        "bought"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "1d3fc630279543c8f91a4290a9a1724e",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 281,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "20facd4fa22ea8737a463ff31bf92e9f2bbe9f7ee4faa97e523d74aa2e1df4d2",
+      "summary_basis_sha256": "fac1a6eb450ed55e838bd048809555d97cb332655459928cba6011d77d689de8",
+      "matched_terms": [
+        "buy",
+        "delivery",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "7aecf7fc3d78b2866277a86654000766",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 293,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "0b30db1de34dc9bc09937096e128a2c34a09bef76e45bd0b92492aca0692e2f3",
+      "summary_basis_sha256": "7b08717be6800551c70f3cfef37ead140be3d52c683834b465bac4cb3c1d6859",
+      "matched_terms": [
+        "shipment"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "eee126171b57647663ee571e280349dc",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 315,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "70a99038348887c2a686dab6009be7676699775f03e413bb01dea74194edaae8",
+      "summary_basis_sha256": "c61493b9e5fdec64d98483b62cd7c70bbde84306bd7d2d88862a932a43fcf701",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NETWORK_ORDER_FALSE_POSITIVE"
+    },
+    {
+      "conversation_id": "7f7c5ebfcdfd88600c3013227bc350b4",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 317,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "5965bfbf7ba17b8a2c1523ef178d4ddf21b96f6265d195ea6ae3cc365838ad4e",
+      "summary_basis_sha256": "84662e37e3e200681e45de69dd3c6c925a81a8bb28cbee5faec7c92a53d9471b",
+      "matched_terms": [
+        "deliver",
+        "delivery",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "d0c6ea2a8ad0ddd09686c28a53ef286d",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 321,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "a2ec6dbfd434eb09c90bc478b52f7629fb60e08dc1a6c95e3ebbf7cc558582ab",
+      "summary_basis_sha256": "23fa59e6f0533e77188a5a22e07eab29f63b825e650841375784013b05adda13",
+      "matched_terms": [
+        "deliver",
+        "delivery",
+        "order",
+        "package",
+        "shipment"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "2e139befb270e81b4e3097658a6fd7a5",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 322,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "c571672e92c71f8672f8f4a24464c0a6b97e101b809ad081e0e33af8f88814e5",
+      "summary_basis_sha256": "1028d3dc6b57408bf0f7ef358ebe987d41eae80e243d92f99be6c7c6211de6bb",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "2e2f39511c97d147085b8152bd597d2b",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 332,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "657e31f522f4788db357f1c935976f0eb19b3c8a563a947e38bccc62abbffbe7",
+      "summary_basis_sha256": "c9a1b5a6960701ea6812ad50ad9cd8f2616ee8bf9f97b127f63dcba5e780ec72",
+      "matched_terms": [
+        "deliver",
+        "delivery",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "3a4ea2b7674713dbca2315d8211e3936",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 333,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "db161ab252bb16e2ea92a1803d017eeee64dcbecc6edf2dfac320869654b60f8",
+      "summary_basis_sha256": "f94cdf166831d6c8880bbc52d8e4b5c969a78b7afa31d4f5ddf4e511d1b624e8",
+      "matched_terms": [
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "89d5e34ea1c4b5a2a5a9d38886a729cc",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 335,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "abe295e752f72efb6381dcc3a366ea319023bb05470e6c5c279e961fc059934f",
+      "summary_basis_sha256": "838619c889c17f076f73ed927c728e4c7399f8cc9c154170b977c42df6d70761",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "20384988557145454ff6e215d36d8a8a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 339,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "32803258ea1290b08d9b8945ed84331fa2c5327f7855e770be252d215c59522a",
+      "summary_basis_sha256": "b4295dfe9e7f183da0f475213f4a462f4156b3fc75df6f20bbc840be20031a9d",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "54a35e51d538534efa34d3b81d5f347c",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 347,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "be82a6e20aca01754f62a5fc9bf02c75664efd4f6d148e397be5ab492a0a39ed",
+      "summary_basis_sha256": "d95e1b2c9ee19495e6d839eba71f05c706c34efc6e0f190e186a5caadb8d7baa",
+      "matched_terms": [
+        "deliver",
+        "delivery"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "835077deca33755c9522d8e0bbe6ea40",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 349,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "5b00b64580a5a248a8b55c104bad5344b42e591fc0cdc07982866b31846ada5a",
+      "summary_basis_sha256": "9fff2649a1691da10eba9b7618e84e6e1c4b71e690c02674a451fcd137da82fe",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "CAFE_OPERATIONS_NOT_ECOMMERCE"
+    },
+    {
+      "conversation_id": "6278817888e84869fbf050897fbaa7e7",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 352,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "b35aa03ad01e8f8f43793829b76f20450bb793be3f6f95b15d97159be3f60c20",
+      "summary_basis_sha256": "cc3bfd72f1bcef3bf2a8634164eddff3b4dd77c7b619166aafc3ea2829df063c",
+      "matched_terms": [
+        "delivery"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "6668ae2b1da62a5d8bb9f7abaa49c516",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 354,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "4e4b583b93e4ec4870451c393a91017d5b1b82e965893bcae8f270a16bac83ab",
+      "summary_basis_sha256": "2e571cfe0f0b97529f2acb57eb58b38d5922d60b369e79dd9f884bc66dec2498",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "2525b5e0ff7554f088b19aa09c5ceafd",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 356,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "858803002451b6d19f2b8c7775a76481db0678321b321c7039637c5ff5a5e17e",
+      "summary_basis_sha256": "b7c47ce5dda4372c6deb0704552532d24ae352a2f419eca8688962622c01dc18",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "2bca578df54e57a7c5f9871dac7b3f2f",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 362,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "67ee22e73fd5fe91bac9bd6d9334ca621b876ee732c8afc3ab8f2995b133f8cb",
+      "summary_basis_sha256": "ec9ab80e3371d56a1c44f13361b96b19534957ee2e3831b1f892f7cbce1d0852",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "0ef930d81651dc0c622809c293eb30ea",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 371,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "649af4ed473fe8eff64a440ac31aa98cb86aa141ce52fe23ba2e9a8837902077",
+      "summary_basis_sha256": "ba7748ea569bd5f666350fccf3d7dc9708cf5e1338f07305679d093a61720dcf",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "f9a88036bb5380ad0ff2c0855bd376af",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 374,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "e18bcf36f10e81edf493cb2402c819daca291e1c0ec34acf165f66f073ca2803",
+      "summary_basis_sha256": "b833f20f4cdd3e7b129612b0926d6a0fcd888782b0e9adbff0a5d6f350461a66",
+      "matched_terms": [
+        "order",
+        "refund"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "f43f6cb22a64dd3f1462d81629b338b0",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 377,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "01580018d10c0e787c4ca5c89540dfed2368ea1ae4dba2d5607b7f35d4bf5aa1",
+      "summary_basis_sha256": "bb8b4197462460c3b9eaced6f8186956dd6726ce260c647eef9365da02f5443e",
+      "matched_terms": [
+        "delivery"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "TELECOM_SUPPORT_FALSE_POSITIVE"
+    },
+    {
+      "conversation_id": "86a678f7826710553afd7385001d2d67",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 380,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "415d49d211871dd5989a80e8ccbfded0393975ecb07230e5783bf8ceba415012",
+      "summary_basis_sha256": "c748036671e4e4bd277f5342322b6882b62076d253b6310a7e171cd08bbaad89",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "930ed47280b9656b912371e7b5ee9ec0",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 388,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "1f85065bcb23b281760aed39061ecec4991bbfba41a7db4dcefcfe04ea8fd9cc",
+      "summary_basis_sha256": "54fd4968340787767537e0b205037471ccfaa18f5003530b25070304951022fb",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "PREPAID_FINANCIAL_PRODUCT"
+    },
+    {
+      "conversation_id": "06038c42edfe3321556e51947cd208d0",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 391,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "3e3399e2bcea78087279131ebb4fba95ae1127dc4816eb1acdb94494a6f63416",
+      "summary_basis_sha256": "773f9c70374ab3c090c671e828c8df3744a1664b9f813e00ff10d9c6836d5b34",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "0c7ca829dad9d8f0199db931d8b861b3",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 392,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "6843747aef850842cced738bc6726315d86515c92a1e34ca01c1f6b901873e37",
+      "summary_basis_sha256": "32a886dd6d5393d75aaa4ddaa972df9b633064234363ceef1ed7bd07289d8029",
+      "matched_terms": [
+        "deliver",
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "REFUND_WITHOUT_TRANSACTION_FACTS"
+    },
+    {
+      "conversation_id": "7af386f7ec6c217dcd9bb516afebc9e4",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 403,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "efd2668e4da2b64515f19ad04988eb19e9f316a9ce56bc7f7f50789aa5db35d2",
+      "summary_basis_sha256": "5fab3f785a4a11b7caf7c90e7fde708efe3c6e245319f08005758b291b905bbf",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "34bc20f0479798b719171dd7de8a5983",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 406,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "5695dba7dc3435e7d1137319ddb2be789b31ca0796cb0a9df3ea0060a615247e",
+      "summary_basis_sha256": "06dc72995a020b891939aa968bade3a3fef79f5f4428b53de2c4683d46f9a464",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "f3c006d7036001f3da8cdce865bd7ac9",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 409,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "bb6bb643fa7801de17094380551613f02a646bcd62b88e694ca07fd768497e35",
+      "summary_basis_sha256": "991a45b15f254d84afadced88fe7700da0449bf4bedaf17d95cf05318f2d8c9d",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "65e2fc448ac0de066241457338241bfd",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 411,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "ed86237c74fffd13bc8e80ccecd022c0a2d8ce3e9c9c54a72c18d51528e14776",
+      "summary_basis_sha256": "dcdbf0f30a9c9721b46cb4818d284fad056d969a9a9aec18c1b5ccf97b5e3120",
+      "matched_terms": [
+        "delivery",
+        "seller"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "3e9f0a9304a4ef438aeb10ea8232da35",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 419,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "2ec7023862b7fd848145b1e5558aac22c2b1399064bd9054e2b0277c852102be",
+      "summary_basis_sha256": "7de4982ea6e08634195144a72c2de89a260eea8482f27e9001e4c1fc7dc5c451",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "a8669085ef49b09f2d67d58bbc1657b6",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 430,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "3e62283d7a8afcae7e2086343184fcec5f8e02ec54db9c0e9a6544b6c73818b1",
+      "summary_basis_sha256": "69caf5e6cfc189ebeb9abd6b1e9da81102379110ad560f1ad05860c655f4d517",
+      "matched_terms": [
+        "purchase",
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "58f174fa0f798d43029c208891b93960",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 436,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "135441c5fd031277d6b5ead2b05ec66f80ce57f3e8fe259e91b869e68d875fda",
+      "summary_basis_sha256": "22f87addd954079ad1f14a9ed82bce88dc055ae302b2dff58c7476abab0da483",
+      "matched_terms": [
+        "deliver",
+        "delivery",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "a30d99e7b22b9ddc10ea969cc33dbf7e",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 440,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "2b10abde4cb58c62876e06a89c6eceb9da488b6d6722d7f9fedea7e89eb14f17",
+      "summary_basis_sha256": "21e95343b157c74a6d95d54b0559c1661cf225ee558925995ce81005823181b4",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "STORE_STAFFING_NOT_ECOMMERCE"
+    },
+    {
+      "conversation_id": "9b4e274ace08dbbcdb2dbac1ad0a0007",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 446,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "31d01537c2cda1f9acf4afb61e17da7811fcd7cf6a72f6c49604058d4a51c3f6",
+      "summary_basis_sha256": "8f139e28d8d78e7e3c85bb570f0f470b6533bed4ad85982335033a5f33193143",
+      "matched_terms": [
+        "bought",
+        "purchase",
+        "refund"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "bfc29fd12cc8543641a6dfb19293d5d9",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 449,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "fe696976a4e80d286a17f16ed5bc87d44f873c9f5df14fa18d82277c4bb9c69f",
+      "summary_basis_sha256": "01af6e441468d9e5c3048e1ec93207ddcd5c69ab27a72d9304d92e6e4250cdbc",
+      "matched_terms": [
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "AIR_TRAVEL_BAGGAGE_CASE"
+    },
+    {
+      "conversation_id": "a821a6d93a6b995b780368fbd8af8ba2",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 450,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "b727af89b5a4dcabf67b0317992f63c72cf0c8168650cb5da886a12019a488b2",
+      "summary_basis_sha256": "eafb7fbeea2f4001f6383675a585c81887ce6709eb904cd14f41f8f077c50c6e",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "891e230cf8ef1c0871c22c953f030d35",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 455,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "25aebd0c8551ad0606b9cbeca64f679f0b7f239c9fb0f93f1ce0fa65d999f6f7",
+      "summary_basis_sha256": "6398e2f104c844cff5ebef972860f6d8f6dd7b179fc70bfdb4a0de9852fd5468",
+      "matched_terms": [
+        "buy",
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "3ca1cf2c119239e0bf2697f6378e641e",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 457,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "fa8c8cc515674b361936815d4e56f61db02166f01233038c239e11f8efceb544",
+      "summary_basis_sha256": "9df0ac1b61be0bbe389b2c7a7417b73b04830a15731eade209573c45f34d8ab7",
+      "matched_terms": [
+        "deliver",
+        "delivery"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "a3f874a261f5c77f322ee4ae9e6c68ed",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 463,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "698ced8239039fbab64518baa03b115d323266ff0b3b44bd438908d0b8db06a2",
+      "summary_basis_sha256": "cfc933491e61e5925b128c102fa9bed52689349bd1fcf2c372443781fa8fcb9d",
+      "matched_terms": [
+        "return"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "4e05e3e03b38590b4ec6036d7e209c95",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 468,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "94e785c787946f68536fbc62b0c304dcca9d77ae5e4e812d417378624fe0ad95",
+      "summary_basis_sha256": "e3cb09b6fe254f24e940c9fa4d4b92f6dafa5a0f43f4ea49571f498a5b1bea22",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "742628108bcaab82ab988d550650a3ee",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 469,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "62ed2c815e39f509a2d68ae2b2a2a11f3da0c7bb46c90f52ae4c5d29c0484106",
+      "summary_basis_sha256": "6183e75a8a7194a5b79e5be4e6abea56f9e7063f2df278af910c7d9d5117b74b",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "c27520ae8e310ea7ef115733cd29e8d4",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 474,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "e10e812e657d01591fcae08d40b2b7e2c9c97a1e154d91f276c85dca5f92a152",
+      "summary_basis_sha256": "702ad33a5629cb786e1714fa0dc5cb945227f2b437c451c0d95ac0022027dd68",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "STORE_HOURS_NOT_ECOMMERCE"
+    },
+    {
+      "conversation_id": "98d4f1d2e38f936e0844162a408c7b67",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 480,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "e77e424b2d51b57eea3fa9ba86e645f1f9ec39f27e81e6b434a384d98211dad4",
+      "summary_basis_sha256": "5c55beb6e1d14f79bb0cd6c475d635f8e86b0656360bb9556343511c823ca6e0",
+      "matched_terms": [
+        "bought",
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "d07924e25d64556e9f44bad175a38f4a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 495,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "4035b91432825b6f382fd13f2b0a8a84359c6aa84adfebf314ee09d3f869040e",
+      "summary_basis_sha256": "bd3c4b3bcac895296ebab33e9bdffeb005676f8a1a3c3ea53182d6112875a900",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "17f3be231950f68b4d642597687cbd02",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 505,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "990954e356eed548ff4526c509b1c543c211b5481f45274fe93245b10dc3ce35",
+      "summary_basis_sha256": "c6267be6515db01bf7ecf5da54a40125c3f3e1b197da30200766198545758db4",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "TELECOM_DATA_REFUND"
+    },
+    {
+      "conversation_id": "b9f8a67a3f374bedc6144aec87b73a18",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 507,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "c4145c239abc15e2309c449c7e72463c334f74ef85e23a4e88d2c7e425686fd6",
+      "summary_basis_sha256": "9c905fb96e62469e47f384957cf661541c1e8b79b8e8bcd32640abab84f2f14f",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "e23a4cfc30e3347220142cddab92d31a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 508,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "560a5555a24b102c32b06d17d6424427a559da23469e14ed1af4c07ad5b8e00c",
+      "summary_basis_sha256": "257be13f5e60454bb4b125947dc175a62aed35d08184c9464d4cc7cb934ca374",
+      "matched_terms": [
+        "bought",
+        "purchase"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "eccfb40c8b6a002ed01961b24d0ed554",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 509,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "4b765c913c4608023d945cd4ba5a5e918f55c3dfc7e5d64d9680f292610a9287",
+      "summary_basis_sha256": "7b3ab1569bdb2b3e210e11ef0d01dcae2c44110a422fa0dc56b73b0d8200c59a",
+      "matched_terms": [
+        "deliver",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "92f1fd8b569586ac8ae86b12e24eae75",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 510,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "0aa708a484a5110819ebcd49e69df6321d3876576a2e90024bf3455c33751d6d",
+      "summary_basis_sha256": "9fe12fda8a404638e730d1766889714d8b3d8c3601fc698812f05b18cc464fa5",
+      "matched_terms": [
+        "bought"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "0a550cad40a29dc96e573d1e837d85a9",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 513,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "c2096587e636d358a32deab188bb12546955af2fd29c4aba6b22a27ec9685521",
+      "summary_basis_sha256": "b6f158694b228bd1798712ad3205e835688fddfd58e4b9f749feaa4527f1e59f",
+      "matched_terms": [
+        "order",
+        "purchase"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "41f441f640bf1e579e6f5f9ed21be2c0",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 514,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "24c9f19bbd1d406cebfb253ca39e0fa4c03c4c13708dc4ba137fdc997126d2da",
+      "summary_basis_sha256": "19357cfc39e2fab396881fda3d79c934a99fc96e281f13e6c774399c98ccce51",
+      "matched_terms": [
+        "delivery",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "a3c52cfac1c31d747c0b1e881624be9f",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 522,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "cad796118d340170987c89a9f85fc07cef0786b6c34dbc701ee03e96099c27dc",
+      "summary_basis_sha256": "cb4463ed2263f96e80717b6ae7933d055fc86f356bfe7262a9154a5a0c56c3ee",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "171181733f56019b6933e192e68e6619",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 524,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "ffc69a3728cd3c57bac3dfbb9aaeb4ce846d9f925928261ac68e9b4bd1c03718",
+      "summary_basis_sha256": "a7e3d97dd4901bf313a6b5b215b6a06c965496dacbd9ab36d91302d332aae241",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "b9c55e7edf92d8010f3e276ceea0de52",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 528,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "a512bd901510ff8249ea983b3cf37b25d9e032afae5305dad43183ec65faa68d",
+      "summary_basis_sha256": "eb41ed5906bf9af177b7bcfae8231ab55e30d6a9288236637a9a6ec3252fdf15",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "INSUFFICIENT_SERVICE_CONTEXT"
+    },
+    {
+      "conversation_id": "ff5aa563c0e66872038021e7d51c63e5",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 529,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "1838041dfb627dce18366b4b6a82dc905b121d39be3b4e6552e4772ed811924e",
+      "summary_basis_sha256": "1317a103f1681499286b27bad960e9bf421dd523979a02723d198310c39d50ce",
+      "matched_terms": [
+        "bought"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "b9334740f13ac9604986c36d393296c7",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 539,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "6aaed9d178271ba40f193e590692f3473c8d1942be85951eced47b6c4d801e3c",
+      "summary_basis_sha256": "b5d7b22a3bcbd5a93ce14e0d5a2c1b126258c4f80bc96e0af3e29e06c897b32d",
+      "matched_terms": [
+        "refund",
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "e2d5c90f0d2d2050b784379bdaf941da",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 540,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "dc63912668aeb158a3c2161c12f3ae33e2b0fc5193e8373ae8e4722814599fe1",
+      "summary_basis_sha256": "55ff77ba684c4c0aaf5a3a5acd26d0d7e1d8e773f574dec0cc531b87f5f16ef7",
+      "matched_terms": [
+        "exchange"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "734d45041e681b088034eef724a584c6",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 542,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "49953c8ca4c37f377fe737a756f494ccb3add23f55ebf0a1e8fa6528c55fbd50",
+      "summary_basis_sha256": "3996016b0166614b56be2e742ba09ed1a8e30b1beffc281fe59d135f5308ebf9",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "835193cbf6750d34dbae686524b11cbd",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 552,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "90d789efc419781295ff77a895e5b9a768890532c4b8424c5572627576882f13",
+      "summary_basis_sha256": "e864408b9513e8310be631d4e19a2287d64e21c1819c162b3ed9558d19b97256",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "f88b73782bf3fe640f01ad4cc9fa500a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 555,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "7fa11674583581a75ced00ea582210a2f8f88f22f5dc61b27615737353395fa3",
+      "summary_basis_sha256": "3fdac93268e6ad7a32fc475f4f7523b4406bb663a2f31ec46ba6fd63ffbba40a",
+      "matched_terms": [
+        "buy",
+        "purchase",
+        "return"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "4d5602d2ec597c6fd1fbfba757ca5573",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 561,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "57b99f3011a00bd51a30d40e0f6b3e93288ae8848f9c71ec3038c71d1f54dbed",
+      "summary_basis_sha256": "bbeef2239e8d3d02ace08348dad4963424896a3f576e2c986c44a57eb5e11ee1",
+      "matched_terms": [
+        "bought",
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "TELECOM_DATA_PURCHASE"
+    },
+    {
+      "conversation_id": "9592c07a033c794d5204ea366e7de889",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 569,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "3813a173fae8119cf0d1bdee211cee72c27ff09c0ebfaa40d1e5b0552534f0fa",
+      "summary_basis_sha256": "a226f080bc215cfca2c1fffd7842f777c9712ed7121ca933c3fd9c1914b506e9",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "a683c5cd44a4854a28a4a0e5452a30dd",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 571,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "9dc7a85fc9fdd95f96d2d8c98ed0c2b063cb85a4138fc117c005dce06fc9ffdd",
+      "summary_basis_sha256": "e73f260e2b79c210d93be7fb44202e0651db58a2727965786ded0a6927f4dfa7",
+      "matched_terms": [
+        "buy",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "d8a942b75a7ad143c3454ac759e59e4c",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 579,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "3a83b23d7f974b02069ff22ac2be30896b14f3ff3ecf885c01c75116554cbf9d",
+      "summary_basis_sha256": "f5f95a75f224aee3c1b3486b96f8534d250a13b488120ff457b8bce9882eb204",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "a9fc9f6337888780314a1ddccfa545a1",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 581,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "c7ef8266b1200c358a24740cf4ba3c7a54cd34eb51ae596240f812911c8281ec",
+      "summary_basis_sha256": "25ab14a2c632713c7df2f9b40a427ac46b43e0dade95246353cc16e06d495dad",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "3b611fd130bf70182d5afff423d51f12",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 583,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "122e303be947f06258a87c585e45b2cb0ea5a8571561320c66947279b80fa96f",
+      "summary_basis_sha256": "11abd7600c10b25c62af404ee02239869ddbe8ae669465a74987d8cf7ef31acb",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "fc9486bebbb5149f2e816bafc4173834",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 584,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "1a3cd827667fc8de9f3a16b9cb2bd38d1005c508fc5bd28a53305898ebe40874",
+      "summary_basis_sha256": "bc10a96beb718ff30478c552e1a5be20308d4c3ef4500378221928111ab31acc",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "998b29709daa2aa50c047a193748a045",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 586,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "15eddf30f3df3da01506614dc2e1eb81ff05e1b185222f85824e558251b1f961",
+      "summary_basis_sha256": "b29381ba88f4514d6b5b8665c0df0047fe4f47eb40769252df1f405a8784be0d",
+      "matched_terms": [
+        "bought",
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "b169329e70e1cbbbba57f82231134ca4",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 593,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "6ea23185a40d0003a9b4669ba8da5cc5859b1ad559d5925c0ff6c7d9aeb3bfdf",
+      "summary_basis_sha256": "6c14b0716d96d523da6707afc83bf745a8ec049553ee732b6b4706b2935545c4",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "6540ec016e46729a03025a80032c3218",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 597,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "85b4d2c0a2a0f3ae423aac2610bc64befd73f60c9a14f53ed72f47855120eefa",
+      "summary_basis_sha256": "3c3d0b913f34b0282bc2dd940691859a0ba9eaf1890b0790eb4b1ab5b28dfc35",
+      "matched_terms": [
+        "seller"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "98a00a7295c3be69f7e516226ceafae1",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 600,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "7dfac9625e77a2f0550a2822c1b31831b7d33ce428fd726376c777f1526c9840",
+      "summary_basis_sha256": "20aeea3a64727f828c3943eee0ceb5da15da4809c621b19fdc1f506faa87a314",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "17ab157292bd67b743a1dbf6c775422a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 608,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "766035cf450da760292c99fad0b63d89442285ccd3f485d03335de6bc0f1bcf0",
+      "summary_basis_sha256": "af9f93c46f7219af9a5c12dc110a821e89ac029b3389b8c3ac97932bfd39d7e8",
+      "matched_terms": [
+        "delivery",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "4d1fcb7d07524e27ebf9ed5d97f5079f",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 619,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "91ba27c82678b1c22f92dd69864d10ba1bbb1ff2f201170f069ff0ed468ed6d4",
+      "summary_basis_sha256": "22c275f42ccaaf81af08bf15e7b61909f34f51e981d87c436104d479d97a2a83",
+      "matched_terms": [
+        "bought"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "b48db1f03b3670c66f2ad084d30893f8",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 620,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "efd4867c2978be3804803ebf0529e2117bae7b0df0c78430c2d8da8530f51e87",
+      "summary_basis_sha256": "a6629b35fe61ba1582ca431dce447fe1b27e29c876c0b03ff32e0aa847b3819a",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "26d3b7e4e65e0a704c8adfbf79060f53",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 637,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "20f74f98c8492759cd46350d058f286902d17b556d32eedd2cd08615e935873e",
+      "summary_basis_sha256": "a5aca5f46afe28ccf65ccc1d6459225ebf14cf44c1bd398ed3f57a22332c2a51",
+      "matched_terms": [
+        "package",
+        "purchase"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "d7ef073b344efe4359478a56aee66d31",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 647,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "285f5ec429b1400fafba58ec9dcf12fede0f07d861a82cdb15ef7f96aa691b83",
+      "summary_basis_sha256": "d0850cf15ac8112f8afd3d74bbbff1aa8db6b7688b8df97eb342ba059db9bc9f",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "633e7327be8f65bd793b80452bf8232c",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 651,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "d3794754b7ff8ca434548276ac8d47d36d3f56cbd215c40b0b5b21b051d96d82",
+      "summary_basis_sha256": "7b5af0d4e2adfaccfd2692be2e95970efd0a5ecd576190539ece3ca840207ed5",
+      "matched_terms": [
+        "deliver",
+        "delivery",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "78cd928843a04eda51317948597058dd",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 652,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "ef7f462071b4259af60447eaa4889f3377a8c18a45cff52c1231a9fc61ef77d7",
+      "summary_basis_sha256": "5200b0c045cb81f9ca0416e5dd886bf33cbff6fe1028782c40cc0d243becad08",
+      "matched_terms": [
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "0d4ade7db6e8b3edbc44be509b5180b4",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 655,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "a557c507b263d6a047b88982cc9923ebf989ac2062bfacff6333bd0c79bfb904",
+      "summary_basis_sha256": "cf073e83ce32c3c41c6ac28d489c439ded4c22867f009ec59737c1bc74b2f03d",
+      "matched_terms": [
+        "bought",
+        "refund"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "e224ed542c49cde845a4dbb9c690c6d2",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 666,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "0c013b6e87e71d96e1254a8e32c8cc8ccc08d4a865c885e13c6eb3070536f5e9",
+      "summary_basis_sha256": "14213312dda69d607405726a06234067f4a2d1fb8a35ad31a069e5db4bd74c30",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "1c776e8dddfd9a0a73c2337586a1d0fd",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 667,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "93050cc9fef7020edeac646825f84d3b6b8f8852717726c049dfa3e07eaec714",
+      "summary_basis_sha256": "b2025727cb8bdba5bb22312abb55cd712cb388001503d7c60d5a49135f0aeff5",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "8f5c6e9219011ff90d6b0adbbacead7a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 675,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "c186254b017057b7d335bcaa7b9997708dae46fe06c612b01e242e085bac6319",
+      "summary_basis_sha256": "2001770e22bc8191c62b8f07b5cb03a745690d5aa11758d28375a783bddad2c9",
+      "matched_terms": [
+        "shipping"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "03fed083e8f4d05de5ff9c3978b04c58",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 680,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "8e0e4e6d89bf765552c4ebefefea0d2a2782683ab9494b5209d8e22a710480f5",
+      "summary_basis_sha256": "5f9657b07daa23d94578a4906d9a24d17e0a12e23aa8ed8a3d2b86f6de066380",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "925e1e306c8d3dd4ecb3a689963e955a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 690,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "58bdf3fa2d9ee0dc2a972eddb120706d36e8f52fe9ebb46bb4bf59dad49f248c",
+      "summary_basis_sha256": "9cc19f643e07bc8a8706fd1f2b5d073e78c5ab12f557c372906e06e0ff397261",
+      "matched_terms": [
+        "deliver",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "d07fe88e43eebb23eea30f1598cb7549",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 698,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "02c76f1dd3901ccf3498f0c87b5682fab5b7e84d4f89ae1dfd5aede1bb8e520e",
+      "summary_basis_sha256": "97491cbc1f4737a64016f9a84652facc3216759ab27f12b241bb2c2a396445b9",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "f229148caef0442ee80ab9bdd170fe67",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 701,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "b7c7e1cec66e8a9d3ba3ba0b56f7b2c786b31f8e5afb211198200eeaed30d935",
+      "summary_basis_sha256": "8325630e28b952cfdd98725295d8c639135b08333fad90158e3d2cb8879a0081",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "2bb5c39b42a7de81fc6e5b5e25c49ada",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 702,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "4b47561e3b88aeaefed6e81eb72d90fe7793b2a8411668b106d7ce36507a7c23",
+      "summary_basis_sha256": "525cc8da8e3ca5ad558a13619db82271e975fea272d1b2204607434ecce659cc",
+      "matched_terms": [
+        "deliver",
+        "delivery",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "f880087978eceb02a39033b77bbdcad8",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 705,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "3ac27cac01b6a19e7d9e21d02ac075a03721007d8e0b8f9f77531349d51d6199",
+      "summary_basis_sha256": "80f9bf559409c607af0095c6224dbcb2bb6619a257cbfb8065bbf78fb21e9b34",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "6123538d65c2b979d357d700edf20033",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 706,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "51fd8c612baea33c07d077e369188381e38a868855c88b1ccd9995217472fdfd",
+      "summary_basis_sha256": "9c7205de8fc6810aeb2f3ea8b2c17623dfe395dffae3b6f7adc10c93a5edf049",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "1e866591667d45ac8afd70e7f600e86a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 707,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "942daad3bc3ed2f63bf04459eccfd647ce2da5af145b78fc54e3cc01c43ae02e",
+      "summary_basis_sha256": "45eacb8c318f6a3c7f55da1f3b74f1996a09a572fee5792df3c8d733dd6b58a1",
+      "matched_terms": [
+        "return",
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "7db7c0f3ab07568872f2e54596707e87",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 710,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "bc3e7590366313f166c68d182cae8bd2fb291d036016f40c287d6e42c9192f83",
+      "summary_basis_sha256": "2c448cbb3966f2067fdd4ac758be84ba092c62926bd67661505d16f4f3c873b5",
+      "matched_terms": [
+        "bought",
+        "delivery",
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "f9377f9f66599f68d014b3de647f4391",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 715,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "b6c68fe771a6b2f771328d31cbae61687bf4aee77bba31106eb15b04638cf7d1",
+      "summary_basis_sha256": "29c8d144ec91e9ee2646f74a60306af8c8f0304adb10ce0845b640c7cc6cfc47",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "35c2477f48d2e8762f4391d0ff5d5c06",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 716,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "273109b6269bda2f13e2ae942ef899d74e97fe24cf1473dc1f987f02a0500452",
+      "summary_basis_sha256": "3f398b105e7490b1e60115a7e8e20a62e86a71db0b85c9dfa0a2fdb3acbed31e",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "d3af0936afcc8dec65aa5cb3956098fe",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 726,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "69db500e58349c2a93b4190c954a04fe7362a4f94b61b4581b654f98cb9738ac",
+      "summary_basis_sha256": "7271b2baf1f6b9d5ad89c703327b201fed078b9da5eff09a62dca0312e4d16f2",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "2165ced383827bc306922ff99a225460",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 727,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "a7be5877cd6f9ee9821238d142b2545eb0087834470cca368e255fd71f19af02",
+      "summary_basis_sha256": "4654b4a27641d9524d92c8a5b424e0ecf89eff2102dd7768b778049a3cb65f71",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "8ee237b1d3a0a29a82cb5de73dd29c22",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 728,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "194c26f26af019f610d6a7f13758b22500873b6ffe4945c824fd27ea4c7791e0",
+      "summary_basis_sha256": "b3fb5062e6c023c2887d885afcd741848e92b90efa9ed687a993ef364da15e2d",
+      "matched_terms": [
+        "bought",
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "c6722f1f7810676c3b519882efff5a34",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 731,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "e44145806df5e1c5b936b2a9843b9688b42659a066315b0c013212c505a41172",
+      "summary_basis_sha256": "31720659f150009a2c1d92b9688b72efc71f6c65174ca32406e465569acab8c8",
+      "matched_terms": [
+        "delivery",
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "45d8683c1f2ab93d073e5bf19e268cd7",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 735,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "f12aaf60bdc3831027923a898219d0d45b15694ce52743b8635c9513383cc657",
+      "summary_basis_sha256": "59bb63ecb1330be402595b3e146af4971a536bb18728c5c3dab165d8efca0312",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "9fdc34315a8c5cf8ae1b0ab055e9bf10",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 753,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "b8fc064f0499f1e7ef0e332693ed8015e66645724ee0b67c88a21612f153de62",
+      "summary_basis_sha256": "4adfe40c08e0aecf6d8e6cec53ecc109684c15f4e30421f20ee2d4ea68799d54",
+      "matched_terms": [
+        "deliver",
+        "delivery",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "d3ef03b820ad9dc2801f35f3ecdc7caa",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 754,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "8b3fca083fdf2ef0226f006300a980c4ce12cff43e44ac52c7b91057232a5cad",
+      "summary_basis_sha256": "08c4d5ab45b659b690c9cae3c60000c35a8e091c4e5b81275bc2afa7de94bc82",
+      "matched_terms": [
+        "buy",
+        "checkout"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "87a2d7be9f6db33c0c4db59064d55b17",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 757,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "3ff9657eebb8a480fa6423bf096d4d59fedc2d71df3c8eeebc9b313cf55e08d2",
+      "summary_basis_sha256": "25c1fe335823f3402d720093f1f8aefacc66ab4a9f7c491561bf480a0693ff5c",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "b44910fd21e75fdc93a0d0d8d356b61c",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 775,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "377abc6848c7bec531dfb028ced3b4f13272e6ac184ca950cd0f8838570515b4",
+      "summary_basis_sha256": "bc8692b2e9ec3df4fed32f5b46b82554bd858ad813599645c52ce81f3a388291",
+      "matched_terms": [
+        "order",
+        "seller"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "4f0f69e10c73e17091233fa54c5a5cc2",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 780,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "040f2fd59661361a9a0887ed3de9218c3d65182630134542689650d827b043bf",
+      "summary_basis_sha256": "4cd9da608abed17c855df59d311a55631cea452d4b82b58b2154c02179590514",
+      "matched_terms": [
+        "buy"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "9307e7f59d1137187ebe78a19fc04bae",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 786,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "abe84b70214e88d13ff37975fb5f769ba26888fc00369292f8aa1f3dadfd8fee",
+      "summary_basis_sha256": "086ad7d032ec42661b5d3b0f9d25aebc398ea1f52281a5e65e853880d5b2e58a",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "db794d7debd99bf8be02a3a49352c6f8",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 797,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "8438073b68d19d7dac59493e5a1ae36cb689238401c56ef68d013f44a43a06ed",
+      "summary_basis_sha256": "14105599908bf5b63715e0b6ed53a4913ea33ba63ebbf18decd1f00fbbdbd9fa",
+      "matched_terms": [
+        "package",
+        "return"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "9e369985992793f1372a45300226ce09",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 800,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "c9fc277d0879f070c0f932030c697b764214ee854ada4a4d3cec1e8df5b714b9",
+      "summary_basis_sha256": "339d17265ede56488ca7379b9c86ca0b377eeea561cff2bcaaa14f9f982796da",
+      "matched_terms": [
+        "delivery"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "4ac7e3146b8191666b77a8292baacba4",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 801,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "cf16cdbf38ac8b13ee155cc8f7b77770010db79653b40a0b75d835ad5ee71dce",
+      "summary_basis_sha256": "ce5409ac923045c82dea9ca2ad2b44a11cae61048f6028e56abe896b03cf3b4f",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "f1073757e2c8994d3a42261e1ec64761",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 806,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "4ebb70e1893fe539cfb93712ad8dce4eaa680df498fdadffb7576fc23bdf9e82",
+      "summary_basis_sha256": "48abd499670d233a9f24baffd1d3ebcd7413f659b119a70b0d7b4e6202da0299",
+      "matched_terms": [
+        "deliver",
+        "delivery"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "4906cf2deda014e27a19b0d3fd1b9d07",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 809,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "72fa50631b245fb68de8355cd3369d4c7261a172fd099823df28c93b201173df",
+      "summary_basis_sha256": "d90a36f9ef064674805eb4c83362963613f753c98e0a410f3f0ae4985ec5cb3e",
+      "matched_terms": [
+        "purchase"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "INSUFFICIENT_PRODUCT_ISSUE_FACTS"
+    },
+    {
+      "conversation_id": "5390874991bc057dd1ad8e035733322a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 814,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "e21598e5207619b012d9e249a69d002d9c24dec999a244f251d59ab76f3f0cc4",
+      "summary_basis_sha256": "4debe5ffe585f7ebe724c9bbac1d0fa22e297f2e093fc83c213f4a77cdf481a0",
+      "matched_terms": [
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "INSUFFICIENT_HUMAN_SUMMARY_PAIRS"
+    },
+    {
+      "conversation_id": "f9a5857934d84f0b3701f05a09eef52a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 816,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "9c11042e7e87b3b79fc0b4a984f50c32d83c659402009a50b7772c683043ebe4",
+      "summary_basis_sha256": "5d6dcafe8090f79a772e586137414c9c38b6e566d31430c894eec51b035e22c2",
+      "matched_terms": [
+        "delivery",
+        "package"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "4d2c436995dba0d2a9bef69e1874dc8a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 819,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "dc2a76554a7a6034d0daf15abe24a925129550cdebe3b931285ea1c30512d776",
+      "summary_basis_sha256": "f17962cadc39a3f592d9ceb90190cd4ea87c684ec2b67a6e3aa89309ab03a1e3",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "a8fcae241696f3495ecb3cefb5601942",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 821,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "25d56a56d4bd330440aa4e8fe02501878660ab8796f654b318ec99f818a440ad",
+      "summary_basis_sha256": "77148846fc2f4ce2f3b04e39e8a4a87fab4dc56798e8264ea700ef510db936c0",
+      "matched_terms": [
+        "deliver",
+        "delivery"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "4e688a7c5cd78c27c2d510262c93d66a",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 822,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "b8165fc715438eb929ef61ec158be357d20f1b27b47056ed5bbbbcbc89a248a5",
+      "summary_basis_sha256": "a4afb1d50371b8920e25c70b4cfa9f9f288444dcf150657f27bc1664de208ede",
+      "matched_terms": [
+        "delivery",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "61543656a138617af0473753d7a5ae57",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 825,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "ca90febcb1cfc685691cfa9c671d20f8b85b31dd693bf56a7fa6b0cd6280d2ce",
+      "summary_basis_sha256": "0a844ec5b591130629a8f18bc5ecae058e07f415999aa00d27789b387d78a946",
+      "matched_terms": [
+        "checkout"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "1af5365bcf2627b2532888c4a7ff9463",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 829,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "bad36073b7bddecd7b28b49ce1431d814ecdb46cb6d10ff5f5618df53644efb4",
+      "summary_basis_sha256": "18aa9b0cccbe23260244a0b3aee4152de0d855a5c64ab3fe6a81161421b261c3",
+      "matched_terms": [
+        "deliver",
+        "delivery"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "50491a8d72a390b827085d461c836561",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 835,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "f9c02031644d60f210a3b870a9afed911a9a3502c66f5c0a5e703af74aff827e",
+      "summary_basis_sha256": "ddecdc97f1f817b04adad3ea5c83d81046cb44ae907d735fdaa153e31023497a",
+      "matched_terms": [
+        "delivery",
+        "order"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "747cced3816198da6a1ad4cafca15486",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 840,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "396080707f554bd2289bed390e6e72b7635150dbe73f3262245ba827b9989006",
+      "summary_basis_sha256": "7566563e8b1d57b6b9c5f71a33cba6f849eb53542d338b53878eaa43135a340f",
+      "matched_terms": [
+        "package",
+        "return"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "ad10c509c9fd6db420ab85ac37607047",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 845,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "c6a2daeeebc6a7f6175a9bcf33c56fed8a5d49ca2b751969adfa7d90fb572411",
+      "summary_basis_sha256": "c7f78b733e2067ea98e65b0a0fc277edfd8fc1ad6dc238f4df35bb6b36cf9a4e",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "TELECOM_STORE_CASE"
+    },
+    {
+      "conversation_id": "88f04b43e4e5abcc62af9be9ff76cede",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 857,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "d79253e711df3c207cd93af8917ba73308047d7be590fdbc4f19246127c4860f",
+      "summary_basis_sha256": "0171533398e12a696a29f34774c88d042a54a3a99ce4f708816d7daa59dce63c",
+      "matched_terms": [
+        "delivery"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "39fe3eba64e68f45ac32e16dd866b20d",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 861,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "e348aa4f194b3628428d0219b45d20e9b3c919cdc74055aec5dbf2abb6329eda",
+      "summary_basis_sha256": "ec88cc521635ea5ffe895f9fc7702e07597dd8605f89d0bf61e5e1a668145245",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "STORE_CONTACT_WITHOUT_CASE_FACTS"
+    },
+    {
+      "conversation_id": "37132101337b20b4f69a0aa13c05459d",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 872,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "1bc043a8151523f058aad6ab2fa75d6d471fa1dc679b4aae339b67e32a6e4ca5",
+      "summary_basis_sha256": "e4242fb42f7ee3e0076053fa208429d6934649754debce190ce8402b8d468104",
+      "matched_terms": [
+        "order",
+        "package"
+      ],
+      "decision": "SELECTED",
+      "reason": "DISTINCT_ECOMMERCE_CASE_WITH_SUFFICIENT_HUMAN_SUMMARY_FACTS"
+    },
+    {
+      "conversation_id": "b13be8337844e91117624554916697e4",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 875,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "86f4b4e5f4fc514669c0926cfed5d4581bf714c7ee00b6600e0efde7b6d1a033",
+      "summary_basis_sha256": "9cc601e6a01be86e226f41946a313c5e098f55332f54ad93829de16cfb8f245d",
+      "matched_terms": [
+        "order",
+        "refund",
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "8541230f7864cb62eb815aaca20630d6",
+      "source_path": "tweet_sum_data_files/final_train_tweetsum.jsonl",
+      "source_split": "train",
+      "source_line": 877,
+      "source_file_sha256": "944e45800a4c17417a0cb421b880183e1a8a6b28214b519a748bfaf7371fb091",
+      "source_record_sha256": "69c408500dddd906d136346ef316c54a92cbf78ecd05fce927de59ae49302240",
+      "summary_basis_sha256": "e416ce6ba643cce5154725df6374bcaaf858835e8dd9da1faad52658857714d2",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "3f6074702e2881ace14fb77005d6d542",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 3,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "fc494b4775470a5e85c1c20ea295aa3042efca8f6444321e820286d33a0fb266",
+      "summary_basis_sha256": "51634d3c3b701da743803c9472c3320e8017437c4ec1133d644aa8a998f15c78",
+      "matched_terms": [
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "CHARGE_WITHOUT_COMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "7b91cec5105adf2fefbca0256ffc475d",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 7,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "be8fc01e4022f19c34881cc874c5635040af3544df7d02ef6f6d87186c63beca",
+      "summary_basis_sha256": "b0d5e95dee3e17dac306820253ab438f484b4e6ebf74553e126d8a458739d899",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "48b916213e74d9cb794109372180a945",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 12,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "d3613c534f0a433061efb0c325fb45d10c4d15a9b9f149a9b9d931bf695f8872",
+      "summary_basis_sha256": "0aa9bd9b5d0c827901c43ec44fe38fe80d92dc5e7b64a3039a792b0aaf8e5086",
+      "matched_terms": [
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "34dd933bbf0ba33f670071db550dd3ea",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 16,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "37558c46bbad922c8ce46274663646e0ec16b1d1bf3d105dea0bc303e998dcef",
+      "summary_basis_sha256": "18777097be9ac05e613e8a47410a27fb509b5140abc511b34e9f297c97009f79",
+      "matched_terms": [
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "b9e4e3bd9914afc891b8796422a298a4",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 27,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "206fcbb1383abea2b4c4c935594b9b06c510a5fb675531952e2f47d03e5c54d9",
+      "summary_basis_sha256": "9dd5d903c571e24b5326322f063d21f496d30194aa726ed598a2bee7d0e2f7ad",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "73137606c1ec52a6268570a790215709",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 36,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "02d119be792687ad239935e6251abc50540f2bf933ba74f5d7526a629ad0779c",
+      "summary_basis_sha256": "431d1f0c076320c010f818885c2c73286c921de28970fd50bba9c1f1919e154d",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "ead085c1865c2dc09f3307530b6ddd40",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 37,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "5ea807256d04edffcb4af77421fe4fa481808851cf926283106f1e7703f0d767",
+      "summary_basis_sha256": "29fa79c238b13ca03a42c7a18ff9aeda275c90262f84d896b1aa653bba88bc34",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "999d38e6b7bcc35ff7e67311bf543a32",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 38,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "c9dcae685ed6dea019a8377793157816b8470bed8238b582894dd615541da37a",
+      "summary_basis_sha256": "bb69cc7cfe58bdd83f3fb16cc61093b7139d266e8e007253ef0d0033e05aa20b",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "458a8b40a2c64ebf58e7bdab8e13427f",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 41,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "97be5f06970206cda63fdbd2b80f76f5b0e58a4745e396a1226e7c6c73aed4a0",
+      "summary_basis_sha256": "2fecf860b9eff7c2c55a7be40771ca8984c8574ae88929a4a4045da6975f054c",
+      "matched_terms": [
+        "return"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "68f27101bdb98afe5600869fa7c16974",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 42,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "57419d4ff4d769b5a578c70b7f5bf0b1c461c452d8270a2072e808c08c07f5b7",
+      "summary_basis_sha256": "ea893216b2b91d28df29544c94979af9454ba9e19a3c4163148c85483cc6d200",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "521923ae22019d41dc462e43e0d4f65d",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 45,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "6f635c12db7b99fb5029638f8fe4beb87c248d28496aaefcb3d955a250c8c027",
+      "summary_basis_sha256": "b55f3270cf9b02cbd480b8198435ac2e894d4b08d36c1e3d3ecbdc581ed53bf2",
+      "matched_terms": [
+        "buy",
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "e0b85fcc42cd8d2e23eac7190b1bf69c",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 51,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "f2ca982899d74ea91fc2bfbd9b1c68814f823302446cd0a883728e44bf40d445",
+      "summary_basis_sha256": "d1ed07c6b9daf0fc19b790cd67ea28fc8ce8194178327244eb6245c8c03fbad8",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "de782f68d28646a0adc0b411918b970d",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 52,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "de74bb3705ebd0b0361df6371fca5a2eab02dd5d5fc0bb500b622119aaf46851",
+      "summary_basis_sha256": "9820354d1612ddcf8740dc161069eea6e8db9b80380b37d925228d81e0912d51",
+      "matched_terms": [
+        "bought",
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "c5f1c66557a6d73da5d8c5aa584f0c26",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 61,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "3a453ac9847e0599378b8796a10c4f4af12afc05def1c49fc15af3d0db01397e",
+      "summary_basis_sha256": "4fac73c64c0e354a7b83ffec6c1550d1318095983aa00753592f5a7b5ea87712",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "STORE_QUEUE_NOT_ECOMMERCE"
+    },
+    {
+      "conversation_id": "027bdd129e86706ceb56a0ec159ef568",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 62,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "8c68849c44c07b24d3b866c76d7ca7546a484cf2a6558b8011627d8c95b9bf91",
+      "summary_basis_sha256": "d40099349092695f406e8ca4980605b273bb3e47ffa66a8f9531899117d4d35b",
+      "matched_terms": [
+        "bought"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "3af258a3dbb1a76f7f14ca7b71e14448",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 64,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "24449b1f16b401a1d7dd19a79c334a1a50e4e88219eeb00a0d428c41f65f5b3e",
+      "summary_basis_sha256": "380f09511b8988a58a5de6fe470c29aaa34702d882713e6e1816487fa50f4a8e",
+      "matched_terms": [
+        "buy",
+        "shipping"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "b6db90435eb7ba3e692c3fa242efc6f1",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 66,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "b928edbbc4ecb4428f21771e83bc9a025c1135bfeb87441d6c280e6df5b931f7",
+      "summary_basis_sha256": "5511268cee8d5071d3b9a106625d2b1073d0fc0ec1dc1ba2ab7a3fe048fd48f9",
+      "matched_terms": [
+        "delivery"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "62a87044b8aa4ad4b3074f664e952f6b",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 67,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "95839805469efbb9f9cda8d7babdc737b858089fa8196421952676254d78731b",
+      "summary_basis_sha256": "bf22e52202420a37970209be1522660ddbc63d33875d3df13bc5caff663b457e",
+      "matched_terms": [
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "b4f6c95b33ddfc72cf5333286ad9e4bf",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 68,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "ce52bd0d79a2ab3b68beb566dc1b8606187d4c874f698c909e505297f4f5fe5f",
+      "summary_basis_sha256": "5d01c9a847ed67af71a05df27411877ef7181f4f7de50beff99ec3ebe2c0ee7c",
+      "matched_terms": [
+        "buy",
+        "refund"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "bd226e085c41a573d70edcc38eaa1446",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 69,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "c279a533507456950d6aaadd7fa83d6a66a2a98ee29bf1889b9f3001e021fbf7",
+      "summary_basis_sha256": "8951045dbed67bfdc3891e660d33967a09cb5dac238f109807f71541435b8a5d",
+      "matched_terms": [
+        "exchange"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "951a029c2ec13be2dca428ff7f3bd140",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 71,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "1d46243985c6d1c8918bcb25ec72b986413710e3bd06748bbefe04727f16fb8a",
+      "summary_basis_sha256": "63429c6b8cd4a75fe7f6c1494222bcfe885e8f64254fa41b3b2e499fa08fc0fd",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "0817a0c51384dfe5c52adbfcd54819a8",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 72,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "e4cd86bd773c5f9f65bcdbd3e7ba4cf74f78872d5dd10437a970db1d7a9c2778",
+      "summary_basis_sha256": "b4c985ea323b825d4d775c5a5588e56c1b860e3bcd1528232ea779845a4b0084",
+      "matched_terms": [
+        "package"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "ec52abc178b6a5192f88c027dcc6963f",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 75,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "494fb7b1e149bb8a52524a63728df90039016103c1f3687f787b582c17eb2cc8",
+      "summary_basis_sha256": "dad4c6ec7a6b48db6e9050810a9e98934af7db178b65f046688c0655c08c1582",
+      "matched_terms": [
+        "buy",
+        "delivery"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "26dc74c62ab8f1266618b1969cd73ccf",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 78,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "2f378121cee8e87f1e7918ff213d7b3793fc556e27b0f27cd88e21099b167fbb",
+      "summary_basis_sha256": "3ece08719e8bb2cd5783bdb2da5310c7645b0e9eac190ff8d13ea0652c31b6de",
+      "matched_terms": [
+        "bought",
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "2f8ce240a4e933d78d04f3b672451af4",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 92,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "4b20f6a8e7818be7aae3166859f1cf119e841c0dd2338e81281c751b1f19e65c",
+      "summary_basis_sha256": "457130e09381db4b6d9b488759920fb4c209bd3f83df36e3adbc6ddeb75301a6",
+      "matched_terms": [
+        "store"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    },
+    {
+      "conversation_id": "4a87fc9dc29a51bdc73b7a257cfc96ab",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 95,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "397d911d9f592fac692383266397d72d228909b74beed159cea2d8f2f564e056",
+      "summary_basis_sha256": "64c0db2b4f855dc8a7df6f8d7e74089b8d6ee4ac0b9505e70710b6d5448ea3d1",
+      "matched_terms": [
+        "bought"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "03f40d5abc6c39ec432844b04cad0794",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 96,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "39cda9997cf6c91ba2f4b628bf137e464208fedb6c4e36ff99aa872f2cf35aa4",
+      "summary_basis_sha256": "73f3211d77a378bab78682e035f58fe7a396eb6d5c465d25cd2251cfe9214b84",
+      "matched_terms": [
+        "deliver",
+        "order"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "0f01d9b5e5873fa9863cc2fd1c49772d",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 97,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "ca91b35691275fcf0e913ff946af5204d6151adb1bd4c2f5ec92a2170db7b654",
+      "summary_basis_sha256": "ca2d47bc02f3015ac72179053c3b2afa67361db302b4906665b4ec56feb03b39",
+      "matched_terms": [
+        "deliver"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "OVER_TARGET_AFTER_100_DISTINCT_ELIGIBLE_CASES"
+    },
+    {
+      "conversation_id": "a2022c5caabbd48c2362d88acaa09f43",
+      "source_path": "tweet_sum_data_files/final_valid_tweetsum.jsonl",
+      "source_split": "valid",
+      "source_line": 108,
+      "source_file_sha256": "0a571a3c3e246373d52185fb4ba38698d950a926ef86ee3e5c74a376eeeceaba",
+      "source_record_sha256": "5934db4445da5511ad905bcc77acd8d682a8ecff54d5b94cde969315cf3eb85b",
+      "summary_basis_sha256": "3a07e1289f9615b65d0dd55add4b6bb3209d1041d9a9152eeaad314e0c0abb3b",
+      "matched_terms": [
+        "bought"
+      ],
+      "decision": "EXCLUDED",
+      "reason": "NON_ECOMMERCE_CONTEXT"
+    }
+  ]
+}

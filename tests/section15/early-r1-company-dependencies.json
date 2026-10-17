@@ -1,0 +1,121 @@
+{
+  "columns": [
+    {
+      "type": "uuid",
+      "table": "company",
+      "column": "id"
+    },
+    {
+      "type": "text",
+      "table": "company",
+      "column": "slug"
+    },
+    {
+      "type": "text",
+      "table": "company",
+      "column": "display_name"
+    },
+    {
+      "type": "text",
+      "table": "company",
+      "column": "external_workspace_id"
+    },
+    {
+      "type": "text",
+      "table": "company",
+      "column": "external_tenant_id"
+    },
+    {
+      "type": "boolean",
+      "table": "company",
+      "column": "is_active"
+    },
+    {
+      "type": "timestamp with time zone",
+      "table": "company",
+      "column": "created_at"
+    },
+    {
+      "type": "bigint",
+      "table": "company",
+      "column": "platform_company_id"
+    },
+    {
+      "type": "uuid",
+      "table": "company_membership",
+      "column": "id"
+    },
+    {
+      "type": "uuid",
+      "table": "company_membership",
+      "column": "company_id"
+    },
+    {
+      "type": "uuid",
+      "table": "company_membership",
+      "column": "user_id"
+    },
+    {
+      "type": "USER-DEFINED",
+      "table": "company_membership",
+      "column": "role"
+    },
+    {
+      "type": "boolean",
+      "table": "company_membership",
+      "column": "is_active"
+    },
+    {
+      "type": "timestamp with time zone",
+      "table": "company_membership",
+      "column": "created_at"
+    }
+  ],
+  "policies": [
+    {
+      "name": "company_nw",
+      "check": "false",
+      "roles": "{authenticated}",
+      "table": "company",
+      "using": "false",
+      "command": "ALL",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "company_sel",
+      "check": null,
+      "roles": "{authenticated}",
+      "table": "company",
+      "using": "is_company_member(id, auth.uid())",
+      "command": "SELECT",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "cm_nw",
+      "check": "false",
+      "roles": "{authenticated}",
+      "table": "company_membership",
+      "using": "false",
+      "command": "ALL",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "cm_sel",
+      "check": null,
+      "roles": "{authenticated}",
+      "table": "company_membership",
+      "using": "((user_id = auth.uid()) OR has_company_role(company_id, auth.uid(), 'admin'::app_role))",
+      "command": "SELECT",
+      "permissive": "PERMISSIVE"
+    }
+  ],
+  "helper": {
+    "definition": "CREATE OR REPLACE FUNCTION public.has_company_role(p_company_id uuid, p_user_id uuid, p_role app_role)\n RETURNS boolean\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO ''\nAS $function$\n  select (\n    (session_user = 'postgres' and auth.uid() is null and auth.role() is null)\n    or auth.role() = 'service_role'\n    or p_user_id = auth.uid()\n  ) and exists (\n    select 1\n    from public.company_membership cm\n    where cm.company_id = p_company_id\n      and cm.user_id = p_user_id\n      and cm.role = p_role\n      and cm.is_active\n  );\n$function$\n",
+    "role_values": [
+      "admin",
+      "supervisor",
+      "agent",
+      "qa"
+    ]
+  }
+}

@@ -1,12 +1,15 @@
 import { classifyCanonicalConversationTurn, type ConversationOperation, type EvidenceAuthority } from "./conversation-semantic-contract.ts";
+import { exactProductIdentifiers } from "./natural-customer-response.ts";
+import { customerBusinessText, isCurrentRequirementsRecap } from "./commerce-state-authority.ts";
 
-export type RuntimeHistoryRow = { role?: string; content?: string | null; created_at?: string | null; metadata?: unknown };
+export type RuntimeHistoryRow = { id?: string; role?: string; content?: string | null; created_at?: string | null; metadata?: unknown };
 export type RuntimeLanguage = "zh-TW" | "zh-CN" | "en";
 
 export interface CurrentRequirementSnapshot {
   product_count: number | null;
   staff_count: number | null;
   app_interest: boolean | null;
+  preferred_interface: string | null;
   desired_features: string[];
   current_market: string | null;
   future_markets: string[];
@@ -44,7 +47,7 @@ export interface CanonicalRetrievalQuery {
 const CUSTOMER = new Set(["visitor", "customer", "user"]);
 const ASSISTANT = new Set(["assistant", "ai", "human_agent"]);
 const EXPLICIT_CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下[：:]?|更正[：:]|其實係|其实是|改返|改成|actually[,\s]+i meant|i meant|correction\s*[:：])/i;
-const CONTRAST_CORRECTION = /(唔係[^，。,.!?！？]{1,80}[，,]\s*係|不是[^，。,.!?！？]{1,80}[，,]\s*(?:而)?是|not .+ but .+)/i;
+const CONTRAST_CORRECTION = /(唔係[^，。,.!?！？]{1,80}[，,]\s*(?:應該)?係|不是[^，。,.!?！？]{1,80}[，,]\s*(?:應該|而)?是|not .+ but .+)/i;
 const LATEST_VALUE_CORRECTION = /(?:記住|记住)?\s*(?:最新|目前|現在|现在)\s*(?:係|是|為|为)?\s*[^，。,.!?！？]{1,50}(?:，|,)\s*(?:唔係|不是|而不是|not)\s*[^，。,.!?！？]{1,50}/i;
 
 function isCorrectionText(text: string): boolean {
@@ -160,34 +163,42 @@ export function deriveCurrentRequirementSnapshot(chronologicalCustomerTurns: str
   let productCount: number | null = null;
   let staffCount: number | null = null;
   let appInterest: boolean | null = null;
+  let preferredInterface: string | null = null;
   const desired = new Set<string>();
   let currentMarket: string | null = null;
   const futureMarkets = new Set<string>();
 
   for (const raw of chronologicalCustomerTurns) {
-    const text = clean(raw);
-    if (!text || /[?？]/.test(text)) continue;
+    const text = clean(customerBusinessText(raw));
+    if (!text || /[?？]/.test(text) || isCurrentRequirementsRecap(text)) continue;
+    const staffCountBeforeTurn: number | null = staffCount;
 
-    const product = text.match(/(\d{1,6})\s*(?:件(?:商品|產品|产品)?|sku\b)/i);
+    // Negated former values are not the replacement assertion. Preserve the
+    // remaining clauses, including a correction after the negated old value.
+    const assertions = text.replace(/(?:唔係|不是|並非|并非|not)\s*\d{1,6}\s*(?:件(?:商品|產品|产品)?|products?\b|items?\b|skus?\b)/gi, "");
+
+    const product = assertions.match(/(\d{1,6})\s*(?:件(?:商品|產品|产品)?|products?\b|items?\b|skus?\b)/i);
     if (product?.[1]) productCount = Number(product[1]);
     if (/(?:成千幾|成千几|一千幾|一千几)\s*sku\b/i.test(text)) productCount = productCount ?? 1000;
     const latestCount = text.match(/(?:最新|目前|現在|现在)\s*(?:係|是|為|为)?\s*(\d{1,6})(?:\s*(?:件|sku))?/i);
-    const latestCountIsStaffScoped = /(?:staff|員工|员工|管理人手|管理人员)/i.test(text);
+    const latestCountIsStaffScoped = /(?:staff|員工|员工|同事|colleagues?|管理人手|管理人员)/i.test(text);
     if (productCount !== null && latestCount?.[1] && !latestCountIsStaffScoped) productCount = Number(latestCount[1]);
 
     if (/(?:得我|只有我|只係我|只是我).{0,12}(?:一個人|一个人).{0,12}(?:管理|manage)/i.test(text)) staffCount = 1;
-    const staff = text.match(/(?:我有|有)\s*([一二兩两三四五六七八九十]|\d{1,3})\s*(?:個|个|位)?\s*(?:staff|員工|员工)/i);
+    const staff = assertions.match(/([一二兩两三四五六七八九十]|\d{1,3})\s*(?:個|个|位)?\s*(?:staff|員工|员工|同事|colleagues?|team members?)/i);
     if (staff?.[1]) staffCount = smallCount(staff[1]);
-    const addStaff = text.match(/(?:再加|增加|加多|add)\s*([一二兩两三四五六七八九十]|\d{1,3})\s*(?:個|个|位)?\s*(?:staff|員工|员工)/i);
+    const addStaff = text.match(/(?:再加|增加|加多|add)\s*([一二兩两三四五六七八九十]|\d{1,3})\s*(?:個|个|位)?\s*(?:staff|員工|员工|同事|colleagues?|team members?)/i);
     if (addStaff?.[1]) {
       const n = smallCount(addStaff[1]);
-      if (n !== null) staffCount = (staffCount ?? 0) + n;
+      if (n !== null) staffCount = (staffCountBeforeTurn ?? 0) + n;
     }
 
     if (/(?:唔要|不要|不需要|唔需要)\s*app.{0,20}(?:已經|已经)?(?:過時|过时|outdated|no longer)/i.test(text)) appInterest = true;
-    else if (/(?:app).{0,16}(?:有興趣|有兴趣|想要|需要|要用|會用|会用)|(?:想要|需要|要用)\s*app/i.test(text)) appInterest = true;
-    else if (/(?:暫時|暂时)?\s*(?:唔需要|不需要|唔要|不要)\s*app/i.test(text)) appInterest = false;
+    else if (/(?:唔需要|不需要|唔要|不要|不想要|no need (?:for|to use)|(?:do not|don't) (?:need|want))\s*(?:手機|手机|mobile\s*)?\s*app|app.{0,12}(?:not needed|唔需要|不需要)/i.test(text)) appInterest = false;
+    else if (/(?:app).{0,16}(?:有興趣|有兴趣|想要|需要|要用|會用|会用)|(?:想要|需要|要用|need|want)\s*(?:手機|手机|mobile\s*)?app/i.test(text)) appInterest = true;
 
+    if (/(?:先用|先使用|只用|只使用|prefer|use|start with).{0,16}(?:網頁版|网页版|web(?:site| version| app)?)/i.test(text)) preferredInterface = "web";
+    else if (/(?:改用|先用|先使用|prefer|use|start with).{0,16}(?:手機版|手机版|mobile version)/i.test(text)) preferredInterface = "mobile";
     if (/(?:想要|要用|會用|会用|需要).{0,12}(?:push|推播|推送)|(?:push|推播|推送).{0,12}(?:想要|要用|會用|会用|需要)/i.test(text)) desired.add("Push");
     if (/(?:想用|要用|會用|会用|需要).{0,12}crm|crm.{0,12}(?:想用|要用|會用|会用|需要)/i.test(text)) desired.add("CRM");
     if (/(?:會員等級|会员等级).{0,12}(?:都)?(?:會用|会用|要用|需要)|(?:想用|要用|需要).{0,12}(?:會員等級|会员等级)/i.test(text)) desired.add("會員等級");
@@ -195,7 +206,7 @@ export function deriveCurrentRequirementSnapshot(chronologicalCustomerTurns: str
     const market = detectExplicitJurisdiction(text);
     if (market) {
       if (/(?:之後|之后|以後|以后|未來|未来|later|future).{0,20}(?:可能|maybe|may|plan|做|進入|进入)/i.test(text)) futureMarkets.add(market);
-      else if (/(?:目前|而家|現在|现在|主要市場|主要市场|仍然|只做|currently|current|main market)/i.test(text)) currentMarket = market;
+      else if (/(?:目前|而家|現在|现在|主要(?:做|市場|市场)|集中在|仍(?:然|在)?|只做|currently|current|main market)/i.test(text)) currentMarket = market;
     }
   }
 
@@ -204,10 +215,35 @@ export function deriveCurrentRequirementSnapshot(chronologicalCustomerTurns: str
     product_count: productCount,
     staff_count: staffCount,
     app_interest: appInterest,
+    preferred_interface: preferredInterface,
     desired_features: [...desired],
     current_market: currentMarket,
     future_markets: [...futureMarkets],
   };
+}
+
+/** Actual customer assertion lineage, never the recap/handoff row rebuilding it. */
+export function deriveRequirementFacts(rows: RuntimeHistoryRow[]) {
+  const turns: string[] = [];
+  const current = new Map<string, { key: string; value: unknown; source_message_id: string | null }>();
+  const superseded: { key: string; value: unknown; source_message_id: string | null }[] = [];
+  let previous = deriveCurrentRequirementSnapshot([]);
+  for (const row of [...rows].reverse()) {
+    if (!["visitor", "user", "customer"].includes(String(row.role))) continue;
+    const text = clean(row.content);
+    if (!text || isCurrentRequirementsRecap(text)) continue;
+    turns.push(text);
+    const next = deriveCurrentRequirementSnapshot(turns);
+    for (const [key, value] of Object.entries(next)) {
+      if (value === null || Array.isArray(value) && !value.length) continue;
+      if (JSON.stringify(value) === JSON.stringify(previous[key as keyof CurrentRequirementSnapshot])) continue;
+      const old = current.get(key);
+      if (old) superseded.push(old);
+      current.set(key, { key, value, source_message_id: row.id ?? null });
+    }
+    previous = next;
+  }
+  return { current: [...current.values()], superseded };
 }
 
 function currentRequirementLines(snapshot: CurrentRequirementSnapshot, lang: RuntimeLanguage): string[] {
@@ -233,6 +269,10 @@ function currentRequirementLines(snapshot: CurrentRequirementSnapshot, lang: Run
 }
 
 export function resolveWorkflow5ConversationLanguage(latest: string, rows: RuntimeHistoryRow[]): RuntimeLanguage {
+  // A direct presentation request wins over the language of the surrounding
+  // customer context; it never changes the question or its factual authority.
+  if (/(?:reply|respond|explain|answer|summari[sz]e|please|請|请|用|改用).{0,28}(?:in\s+English|英文)|(?:in\s+English).{0,28}(?:please|reply|respond)/i.test(latest)) return "en";
+  if (/(?:用|改用|以).{0,12}(?:廣東話|粤語|粵語)/i.test(latest)) return "zh-TW";
   const direct = detectLanguage(latest);
   if (/[\u4e00-\u9fff]/.test(latest)) return direct;
   const priorCustomer = rows
@@ -241,6 +281,9 @@ export function resolveWorkflow5ConversationLanguage(latest: string, rows: Runti
     .filter((text) => text && text !== latest)
     .slice(0, 6);
   const zh = priorCustomer.map(detectLanguage).filter((x) => x !== "en");
+  // A schema-recognized identifier supplies identity, not a language request.
+  const identifiers = exactProductIdentifiers(latest);
+  if (identifiers.length === 1 && identifiers[0].toUpperCase() === latest.trim().toUpperCase() && priorCustomer.length) return detectLanguage(priorCustomer[0]);
   if (direct === "en" && latest.length <= 120 && zh.length >= 2) return zh[0];
   return direct;
 }

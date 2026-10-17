@@ -19,7 +19,52 @@ export type ConversationalRoute =
       reason: "semantic_intent_underspecified";
     };
 
-const GREETING = /^(hi|hello|hey|你好|您好|嗨|哈囉|哈啰|早安|午安|晚安|good\s*(morning|afternoon|evening))[\s!！。.？?，,~～]*$/i;
+const GREETING_TOKEN = "(?:hi|hiya|hello|hey|greetings|你好|您好|嗨|哈囉|哈啰|早晨|早安|午安|晚安|good\\s*(?:morning|afternoon|evening))";
+const GREETING_SEPARATOR = "[\\s\\p{P}~～]+";
+const GREETING = new RegExp(
+  String.raw`^${GREETING_TOKEN}(?:${GREETING_SEPARATOR}${GREETING_TOKEN})*[\s\p{P}~～]*$`,
+  "iu",
+);
+/** Whole-turn grammar only. Every constituent must be recognised; an unknown
+ * remainder (including a merchant question/correction) keeps the normal path.
+ * This recognises conversational acts, not a list of three customer sentences. */
+export type NonFactualConversation = "opening" | "acknowledgement" | "wellbeing" | "identity" | "presence";
+// A closed grammar of non-factual speech acts, not an open-ended intent model.
+// Optional constituents compose across repetition, whitespace and language.
+// The caller must consume the ENTIRE turn; refunds, quotes, corrections and
+// unknown complements remain semantic input, never silently discarded.
+const SECOND_PERSON = String.raw`(?:you|u)`;
+const WELLBEING_TIME = String.raw`(?:\s+(?:today|lately|recently|this\s+(?:morning|afternoon|evening)))?`;
+const EN_WELLBEING = String.raw`how\s+(?:do\s+${SECOND_PERSON}\s+do|(?:are|r)\s+${SECOND_PERSON}(?:\s+(?:doing|feeling|keeping|getting\s+on))?|have\s+${SECOND_PERSON}\s+been(?:\s+(?:doing|keeping))?|(?:is|'s)\s+(?:it|everything)\s+going|are\s+things(?:\s+going)?|is\s+your\s+day(?:\s+going)?)${WELLBEING_TIME}`;
+const ZH_WELLBEING = String.raw`(?:(?:你|您)(?:今日|今天|最近|近排)?|最近|近排)(?:好嗎|好吗|好唔好|還好嗎|还好吗|點(?:呀|啊|樣|样)|怎麼樣|怎么样|過得(?:點(?:呀|啊|樣|样)|怎麼樣|怎么样|好嗎|好吗|好唔好))(?:呀|啊)?`;
+const WELLBEING = new RegExp(String.raw`^(?:${EN_WELLBEING}|how(?:'s| is)\s+it\s+going|${ZH_WELLBEING}|食咗飯未)(?=$|[\s\p{P}])`, "iu");
+const SOCIAL_ACTS: Array<[NonFactualConversation, RegExp]> = [
+  ["opening", new RegExp(`^${GREETING_TOKEN}(?=$|[\\s\\p{P}~～]|你|您)`, "iu")],
+  ["wellbeing", WELLBEING],
+  ["presence", /^(?:any(?:one|body)(?:\s+(?:there|here|around|online))?|(?:are\s+)?(?:you|u)\s+(?:there|here|around|online)|(?:hello|hi)\s*\?\s*(?:anyone|anybody)\s+there|有人(?:嗎|吗|在嗎|在吗|喺度嗎|喺度吗|喺度冇|喺唔喺度)|(?:你|您)(?:在嗎|在吗|喺度嗎|喺度吗|喺唔喺度)|喂)(?=$|[\s\p{P}])/iu],
+  ["identity", /^(?:who\s+(?:are|r)\s+(?:you|u)|what(?:['’]?s|\s+is)?\s+(?:your|ur)\s+(?:name|role)|what\s+(?:is|are)\s+you(?:r\s+(?:name|role))?|what\s+do\s+you\s+do|what\s+can\s+you\s+(?:do|help(?:\s+me)?\s+with)|(?:are|r)\s+(?:you|u)\s+(?:an?\s+)?(?:ai(?:\s+(?:assistant|customer\s+support\s+assistant))?|bot|chatbot|robot|human|person|real\s+person)|你(?:係|是)(?:邊個|誰|谁|咩|什麼|什么|真人|人類|人类|機械人|机器人|AI|人工智能)(?:嗎|吗|呀|啊)?|你(?:叫|嘅名係|的名字是)(?:咩|什麼|什么)(?:名(?:字)?)?|你(?:有咩|有什麼|有什么)(?:職責|职责)|你(?:是|係)做(?:什麼|什么|咩)(?:的|嘅)?)(?=$|[\s\p{P}])/iu],
+  ["acknowledgement", /^(?:thanks(?:\s+(?:a lot|you))?|thank\s+you|ok(?:ay)?|got\s+it|understood|明白(?:了|啦)?|知道了|收到|好(?:的|呀|啊)?|多謝(?:你)?|謝謝(?:你)?|谢谢(?:你)?)(?=$|[\s\p{P}])/iu],
+];
+export function classifyNonFactualConversation(text: string): NonFactualConversation | null {
+  let rest = text.normalize("NFKC").trim().replace(/[’]/g, "'").replace(/\s+/gu, " ");
+  if (!rest) return null;
+  // Quotes, reported speech and negation are semantic content, not social acts.
+  if (/["'「」『』“”‘’]/u.test(rest.replace(/(?:what's|how's|you're)/giu, ""))) return null;
+  const acts: NonFactualConversation[] = [];
+  // Do not slice input: unconsumed business text can never become a social turn.
+  while (rest) {
+    const found = SOCIAL_ACTS.map(([act, re]) => ({act, match: rest.match(re)}))
+      .find(x => x.match);
+    if (!found?.match) return null;
+    acts.push(found.act);
+    rest = rest.slice(found.match[0].length).replace(/^[\s\p{P}~～]+/u, "");
+    if (rest) rest = rest.replace(/^(?:and\s+|同埋|以及|仲有)/iu, "");
+  }
+  if (rest) return null;
+  return acts.includes("identity") ? "identity" : acts.includes("presence") ? "presence" : acts.includes("wellbeing") ? "wellbeing"
+    : acts.includes("opening") ? "opening" : "acknowledgement";
+}
+
 const THANKS = /^(thanks|thank you|thx|謝謝|谢谢|多謝|多谢)[\s!！。.？?，,~～]*$/i;
 const ACK = /^(ok|okay|好的|好|明白|收到|嗯|唔該|唔该)[\s!！。.？?，,~～]*$/i;
 
@@ -205,4 +250,3 @@ export const UNDERSPECIFIED_CLARIFICATION: Record<"zh-TW" | "zh-CN" | "en", stri
   "zh-CN": "好的，我帮你跟进 🙂 可以说明一下具体是哪一项，或现在遇到什么情况吗？",
   en: "Sure, I can help with that 🙂 Could you tell me which one it is, or what's happening right now?",
 };
-

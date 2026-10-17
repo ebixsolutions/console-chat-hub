@@ -69,6 +69,10 @@ Deno.serve(async (req) => {
           customers_ahead: queueSnapshot.customers_ahead ?? null,
           estimated_wait_minutes: queueSnapshot.estimated_wait_minutes ?? null,
           estimate_confidence: queueSnapshot.estimate_confidence ?? "unavailable",
+          estimate_generated_at: queueSnapshot.estimate_generated_at ?? null,
+          estimate_deadline: queueSnapshot.estimate_deadline ?? null,
+          estimate_basis: queueSnapshot.estimate_basis ?? null,
+          server_now: queueSnapshot.server_now ?? null,
         },
       },
     });

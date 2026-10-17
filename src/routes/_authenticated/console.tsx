@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { LogOut } from "lucide-react";
+import { resolveAuthoritativeSupabaseBinding } from "@/integrations/supabase/runtime-authority.mjs";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { mapDemoRoleToEffective, type ConsoleOutletContext, type EffectiveRole } from "@/types/demoRole";
@@ -375,6 +376,8 @@ function ConsoleLayout() {
         color: "#1a1a1a",
       }}
     >
+      {
+        <div role="status" style={{ background: "#fef3c7", padding: "3px 12px" }}>{resolveAuthoritativeSupabaseBinding().projectId === "nrfxhqabwblzxoushgnm" ? "PRODUCTION" : "NONPRODUCTION"} · {resolveAuthoritativeSupabaseBinding().projectId} · {import.meta.env.VITE_C3_BUILD_IDENTITY}</div>}
       <div
         style={{
           height: LANGBAR_H,

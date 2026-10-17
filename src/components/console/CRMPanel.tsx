@@ -289,7 +289,6 @@ export function CRMPanel({
   const [kbError, setKbError] = useState("");
   const [kbQuery, setKbQuery] = useState("");
   const kbReqIdRef = useRef(0);
-  const lastAutoQueryRef = useRef("");
   const [polResult, setPolResult] = useState<PolicyResult | null>(null);
   const [polLoading, setPolLoading] = useState(false);
   const [polError, setPolError] = useState("");
@@ -358,22 +357,16 @@ export function CRMPanel({
     setPolMode("conv");
     kbReqIdRef.current++;
     polReqIdRef.current++;
-    lastAutoQueryRef.current = "";
   }, [conv?.id]);
 
   useEffect(() => {
-    if (!conv || !boundedContext || !canAccessKb) return;
-    if (lastAutoQueryRef.current === contextRevisionKey) return;
-    lastAutoQueryRef.current = contextRevisionKey;
+    // Viewing or changing context only invalidates evidence. Retrieval is an
+    // explicit Search/Refresh action; it can dispatch upstream models.
+    kbReqIdRef.current++;
     setKbResults([]);
+    setKbConnState("idle");
     setKbError("");
-    const autoQuery = deriveAutoSearchQuery(boundedContext);
-    if (!autoQuery) {
-      setKbConnState("empty");
-      return;
-    }
-    void runKbSearch(autoQuery, ++kbReqIdRef.current, "auto_context");
-  }, [conv, boundedContext, contextRevisionKey, canAccessKb, runKbSearch]);
+  }, [boundedContext, contextRevisionKey]);
 
   const runPolicyCheck = async (content: string, reqId: number) => {
     if (!content.trim() || !canAccessKb) return;
@@ -452,7 +445,7 @@ export function CRMPanel({
           ? lang === "zh" ? "權限不足" : "Permission denied"
           : kbConnState === "unavailable"
             ? lang === "zh" ? "無法存取" : "Unavailable"
-            : lang === "zh" ? "就緒" : "Ready";
+            : lang === "zh" ? "尚未核實" : "Not verified";
 
   const TABS = [
     { key: "customer", label: rc("customerTab") },
@@ -548,11 +541,11 @@ export function CRMPanel({
                   value={kbQuery}
                   onChange={(e) => setKbQuery(e.target.value)}
                   placeholder={rc("kbSearch")}
-                  onKeyDown={(e) => e.key === "Enter" && kbQuery.trim() && void runKbSearch(kbQuery, ++kbReqIdRef.current)}
+                  onKeyDown={(e) => e.key === "Enter" && kbConnState !== "loading" && kbQuery.trim() && void runKbSearch(kbQuery, ++kbReqIdRef.current)}
                   style={{ flex: 1, fontSize: 11.5, padding: "5px 8px", borderRadius: 6, border: "0.5px solid #e8e6e0" }}
                 />
                 <button disabled={kbConnState === "loading" || !kbQuery.trim()} onClick={() => void runKbSearch(kbQuery, ++kbReqIdRef.current)} style={btnSm}>{rc("kbSearchBtn")}</button>
-                <button disabled={kbConnState === "loading"} onClick={() => {
+                <button aria-label={lang === "zh" ? "查詢對話相關知識" : "Search conversation knowledge"} disabled={kbConnState === "loading"} onClick={() => {
                   const q = kbQuery.trim() || deriveAutoSearchQuery(boundedContext);
                   if (q) void runKbSearch(q, ++kbReqIdRef.current, kbQuery.trim() ? "manual" : "auto_context");
                 }} style={btnSm}>↻</button>

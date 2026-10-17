@@ -1,3 +1,5 @@
+import { legacyPreactivationAuthority } from "../_shared/uat-execution-contract.ts";
+import { uatMap } from "../_shared/uat-execution-contract.ts";
 import {
   resolveKBEndpoint,
   resolveTenantScope,
@@ -220,7 +222,7 @@ async function resolveStandaloneScope(
   if (!tenant) return { ok: false, status: 503, error: "kb_preactivation_config_missing" };
   return {
     ok: true,
-    scope: { mode: "pre_activation", aiCompanyId: null, singaporeTenantId: tenant },
+    scope: { mode: "pre_activation", aiCompanyId: null, singaporeTenantId: tenant, legacyAuthority: await legacyPreactivationAuthority(admin, userId, tenant, null) },
   };
 }
 
@@ -237,6 +239,7 @@ async function deriveRetrievalExpansions(params: {
     maxTokens: RETRIEVAL_EXPANSION_MAX_TOKENS,
     operationId: crypto.randomUUID(),
     companyId: params.scope.aiCompanyId,
+    legacyAuthority: params.scope.legacyAuthority,
     conversationId: params.conversationId,
     tag: "kb-query-expansion",
     responseFormat: "json",
@@ -344,6 +347,7 @@ async function rerankForDisplay(params: {
     maxTokens: RERANK_MAX_TOKENS,
     operationId: crypto.randomUUID(),
     companyId: scope.aiCompanyId,
+    legacyAuthority: scope.legacyAuthority,
     conversationId,
     tag: "kb-relevance-rerank",
     responseFormat: "json",
@@ -547,16 +551,16 @@ Deno.serve(async (req) => {
     const endpoint = resolveKBEndpoint();
     if (!endpoint) return jsonResponse({ error: "kb_config_missing" }, 500, req);
 
-    const result = await fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint);
+    const result = await fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint, {uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${crypto.randomUUID()}`}});
     if (!result.success) {
       if (result.error_code === "KB_TIMEOUT") {
-        return jsonResponse({ error: "kb_api_timeout" }, 504, req);
+        return jsonResponse({ error: "kb_api_timeout", failure:result.failure }, 504, req);
       }
       console.error("[kb-search-proxy] KB API error", {
         code: result.error_code,
         scope_mode: scope.mode,
       });
-      return jsonResponse({ error: "kb_api_error", detail: result.error_code }, 502, req);
+      return jsonResponse({ error: "kb_api_error", detail: result.error_code, failure:result.failure }, 502, req);
     }
 
     const expansions = await deriveRetrievalExpansions({
@@ -565,9 +569,9 @@ Deno.serve(async (req) => {
       scope,
       conversationId,
     });
-    const expandedResults = await Promise.all(
-      expansions.map((expandedQuery) =>
-        fetchKBRag({ query: expandedQuery, top_k: topK }, scope, endpoint)
+    const expandedResults = await uatMap(scope.aiCompanyId,
+      expansions.map((expandedQuery) => () =>
+        fetchKBRag({ query: expandedQuery, top_k: topK }, scope, endpoint, {uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${crypto.randomUUID()}`}})
       ),
     );
     const successfulExpanded = expandedResults.filter((r) => r.success);

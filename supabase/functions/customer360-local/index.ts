@@ -1,3 +1,5 @@
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
+import { readComplete, readByIds } from "../_shared/complete-scoped-read.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
 import {
@@ -42,7 +44,7 @@ Deno.serve(async (req) => {
 
     const admin = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      getSupabaseAdminKey(),
     );
 
     const scopeResult = await resolveCallerScope(admin, {
@@ -59,14 +61,14 @@ Deno.serve(async (req) => {
     const mode = body?.mode;
 
     if (mode === "directory") {
-      const { data: conversations, error: conversationError } = await applyCompanyScope(
+      const { data: conversations, error: conversationError } = await readComplete(() => applyCompanyScope(
         admin
           .from("conversations")
-          .select("id, visitor_session_id, created_at, updated_at"),
+          .select("id, visitor_session_id, created_at, updated_at", { count: "exact" }),
         scope,
       )
         .not("visitor_session_id", "is", null)
-        .order("updated_at", { ascending: false });
+        .order("updated_at", { ascending: false }));
 
 
       if (conversationError) return json({ error: "directory_query_failed" }, 500);
@@ -92,10 +94,10 @@ Deno.serve(async (req) => {
         return json({ success: true, scope: scopeDescriptor(scope), visitors: [] });
       }
 
-      const { data: sessions, error: sessionError } = await admin
+      const { data: sessions, error: sessionError } = await readByIds(sessionIds, "id", batch => admin
         .from("visitor_session")
-        .select("id, created_at, last_seen_at, visitor_metadata, channel_config:channel_config_id(name)")
-        .in("id", sessionIds);
+        .select("id, created_at, last_seen_at, visitor_metadata, channel_config:channel_config_id(name)", { count: "exact" })
+        .in("id", batch));
 
       if (sessionError) return json({ error: "directory_session_query_failed" }, 500);
 
@@ -116,7 +118,7 @@ Deno.serve(async (req) => {
         .sort((a, b) => {
           const at = a.last_activity ? new Date(a.last_activity).getTime() : 0;
           const bt = b.last_activity ? new Date(b.last_activity).getTime() : 0;
-          return bt - at;
+          return bt - at || a.id.localeCompare(b.id);
         })
         .slice(0, MAX_DIRECTORY);
 
@@ -133,14 +135,14 @@ Deno.serve(async (req) => {
 
       // Prove tenant ownership before reading visitor_session. Pre-activation
       // mode is bounded to company_id IS NULL conversations.
-      const { data: conversations, error: conversationError } = await applyCompanyScope(
+      const { data: conversations, error: conversationError } = await readComplete(() => applyCompanyScope(
         admin
           .from("conversations")
-          .select("id, status, priority, created_at, channel_config:channel_config_id(name), assigned_agent_id"),
+          .select("id, status, priority, created_at, channel_config:channel_config_id(name), assigned_agent_id", { count: "exact" }),
         scope,
       )
         .eq("visitor_session_id", visitorSessionId)
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false }));
 
 
       if (conversationError) return json({ error: "detail_conversation_query_failed" }, 500);
@@ -154,7 +156,8 @@ Deno.serve(async (req) => {
         .eq("id", visitorSessionId)
         .maybeSingle();
 
-      if (visitorError || !visitor) return json({ error: "not_found" }, 404);
+      if (visitorError) return json({ error: "detail_session_query_failed" }, 500);
+      if (!visitor) return json({ error: "not_found" }, 404);
 
       const convRows = conversations as Array<{
         id: string;
@@ -173,14 +176,14 @@ Deno.serve(async (req) => {
 
       const [agentsResult, feedbackResult, evaluationResult] = await Promise.all([
         agentIds.length
-          ? admin.from("agent_profile").select("id, display_name").in("id", agentIds)
+          ? readByIds(agentIds, "id", batch => admin.from("agent_profile").select("id, display_name", { count: "exact" }).in("id", batch))
           : Promise.resolve({ data: [], error: null }),
-        admin.from("feedback_request")
-          .select("conversation_id, rating, feedback_text, created_at")
-          .in("conversation_id", conversationIds),
-        admin.from("conversation_evaluation")
-          .select("id, conversation_id, overall_score, severity, review_status, created_at")
-          .in("conversation_id", conversationIds),
+        readByIds(conversationIds, "conversation_id", batch => admin.from("feedback_request")
+          .select("id, conversation_id, rating, feedback_text, created_at", { count: "exact" })
+          .in("conversation_id", batch), true),
+        readByIds(conversationIds, "conversation_id", batch => admin.from("conversation_evaluation")
+          .select("id, conversation_id, overall_score, severity, review_status, created_at", { count: "exact" })
+          .in("conversation_id", batch)),
       ]);
 
       if (agentsResult.error) return json({ error: "agent_query_failed" }, 500);
@@ -197,11 +200,11 @@ Deno.serve(async (req) => {
       let emotionPoints: unknown[] = [];
 
       if (evaluationIds.length > 0) {
-        const { data, error } = await admin
+        const { data, error } = await readByIds(evaluationIds, "evaluation_id", batch => admin
           .from("ce_emotion_point")
-          .select("evaluation_id, turn_index, sentiment, sentiment_score, occurred_at")
-          .in("evaluation_id", evaluationIds)
-          .order("turn_index", { ascending: true });
+          .select("id, evaluation_id, turn_index, sentiment, sentiment_score, occurred_at", { count: "exact" })
+          .in("evaluation_id", batch)
+          .order("turn_index", { ascending: true }), true);
 
         if (error) return json({ error: "emotion_query_failed" }, 500);
 

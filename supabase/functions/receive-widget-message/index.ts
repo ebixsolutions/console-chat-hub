@@ -144,9 +144,8 @@ Deno.serve(async (req) => {
     // reach generate-reply so A3.1 multilingual semantic interpretation can resolve
     // ellipsis/referents from conversation context instead of keyword heuristics.
     if (!knownShortTopic && route.kind === "clarify") {
-      const isUnderspecified = route.kind === "underspecified";
-      const clarificationRoute = isUnderspecified ? "conversational_underspecified_clarification" : "conversational_clarification";
-      const clarificationText = isUnderspecified ? UNDERSPECIFIED_CLARIFICATION[route.language] : NOISE_CLARIFICATION[route.language];
+      const clarificationRoute = "conversational_clarification";
+      const clarificationText = NOISE_CLARIFICATION[route.language];
       const { data: commitData, error: commitError } = await supabase.rpc("commit_ai_reply_tx", {
         p_conversation_id: conversation_id,
         p_source_message_id: messageId,

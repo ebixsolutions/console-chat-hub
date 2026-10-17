@@ -1,3 +1,4 @@
+import { classifyHandoffIntent as classifyCanonicalHandoffIntent, detectHandoffLanguageHint } from "./handoff-intent.ts";
 import { classifyCanonicalConversationTurn, type SemanticLanguage } from "./conversation-semantic-contract.ts";
 
 export type HandoffIntentKind =
@@ -24,63 +25,16 @@ export interface TurnClassification {
   reason: string;
 }
 
-const HUMAN_ZH = /(真人|人工|客服)/;
-const HUMAN_EN = /\b(human|live agent|human agent|real person|support agent|customer service)\b/i;
-const NEG_HUMAN_ZH = /(?:唔好|不要|唔使|不用|毋須|毋需|別|别|未需要|未要|而家未|現在未|现在未|唔係要|不是要|並非要|并非要|未叫|冇叫|没有叫|沒有叫|禁止|不准|唔准).{0,8}(?:轉|转|接|搵|找|聯絡|联系|要|需要)?\s*(?:真人|人工|客服(?:人員|人员)?)|(?:真人|人工|客服(?:人員|人员)?).{0,8}(?:唔好|不要|唔使|不用|毋須|毋需|未需要|未要|禁止|不准|唔准)/;
-const NEG_HUMAN_EN = /\b(?:don't|do not|didn't|did not|not asking|not ask|no need|don't need|do not need|not yet|never)\b.{0,28}\b(?:connect|transfer|put|speak|want|need)?\b.{0,12}\b(?:human|live agent|human agent|real person|support agent|customer service)\b|\b(?:human|live agent|human agent|real person|support agent|customer service)\b.{0,20}\b(?:not needed|not required|no need|not yet)\b/i;
-const AI_REJECT_HUMAN_REQUEST_ZH = /(?:唔好|不要|唔使|不用|毋須|毋需)\s*(?:AI|人工智能|機器人|机器人|bot).{0,24}(?:(?:我)?(?:而家|現在|现在|即刻|立即)?(?:要|想要|需要).{0,8}(?:真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(?:轉|转|接|搵|找|聯絡|联系).{0,8}(?:真人|人工|客服(?:人員|人员)?))/i;
-const AI_REJECT_HUMAN_REQUEST_EN = /\b(?:don't|do not|no longer want|stop using)\b.{0,16}\b(?:ai|bot|robot|automation)\b.{0,40}\b(?:i want|i need|please connect|please transfer|connect me|transfer me|let me speak to)\b.{0,16}\b(?:a\s+)?(?:human|live agent|human agent|real person|customer service)\b/i;
-const CONDITIONAL_ZH = /(如果|若果|如果.*先|先至|才|除非|答唔到|答不到|查唔到|查不到)/;
-const CONDITIONAL_EN = /\b(if|only if|unless|in case)\b/i;
-const FUTURE_ZH = /(之後|之后|遲啲|迟点|遲些|稍後|稍后|日後|以后|以後|到時|到时|再考慮|再考虑|可能)/;
-const FUTURE_EN = /\b(later|afterwards|after that|eventually|maybe later|might later|in the future)\b/i;
-const REFERENCE_ZH = /(你頭先|你刚才|你剛才|你之前|頭先話|刚才说|剛才說|提過|提过|講過|讲过|所謂|所谓|引用)/;
-const REFERENCE_EN = /\b(you said|you mentioned|earlier|previously|before|quote|quoted)\b/i;
-const QUESTION_ZH = /(係咪|是不是|是否|幾點|几点|幾時|何時|多久|幾耐|邊個|哪个|點樣|怎样|怎樣|可以嗎|可唔可以).*(真人|人工|客服)|(真人|人工|客服).*(係咪|是不是|是否|幾點|几点|幾時|何時|多久|幾耐|邊個|哪个|點樣|怎样|怎樣|可以嗎|可唔可以)/;
-const QUESTION_EN = /\b(when|what|who|where|how|hours|available|open|close|can i|could i)\b.*\b(human|agent|customer service|support)\b|\b(human|agent|customer service|support)\b.*\b(when|what|who|where|how|hours|available|open|close)\b/i;
-const HYPOTHETICAL_ZH = /(假如|假設|假设|例如|譬如|可唔可以轉|可不可以转|如果我要|如果想)/;
-const HYPOTHETICAL_EN = /\b(hypothetically|suppose|what if|could i|would i be able to)\b/i;
-const EXPLICIT_ZH = /(?:而家|現在|现在|即刻|立即).{0,8}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:請|请|麻煩|麻烦|幫我|帮我).{0,10}(轉|转|接|搵|找|聯絡|联系).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我要|我想|我需要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即).{0,4}(?:要|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)|(?:我)?(?:而家|現在|现在|即刻|立即)?(?:正式|明確|明确|確定|确定)(?:要|要求|想要|需要).{0,8}(真人|人工|客服(?:人員|人员)?)/;
-const EXPLICIT_EN = /\b(please\s+)?(connect|transfer|put|let)\s+me\s+(to|through to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)|\b(i want|i need|let me speak to|i want to speak to|i need to speak to|connect me to)\s+(a\s+)?(human|live agent|human agent|real person|customer service)(\s+now)?\b/i;
-
 function detectLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
-  if (!/[\u4e00-\u9fff]/.test(text)) return "en";
-  return /[转们为这没请]/.test(text) ? "zh-CN" : "zh-TW";
+  return detectHandoffLanguageHint(text);
 }
-
+/** Compatibility envelope only. Routing, projection and R1 share one authority. */
 export function classifyHandoffIntent(text: string): HandoffIntentClassification {
-  const t = text.normalize("NFKC").trim();
-  const language = detectLanguage(t);
-  const hasHuman = HUMAN_ZH.test(t) || HUMAN_EN.test(t);
-  if (!hasHuman) return { kind: "none", explicit_request: false, pure_negation: false, language, reason: "no_human_support_reference" };
-
-  // Target-aware contrast override: rejecting AI/bot while affirmatively asking
-  // for a human is a present handoff request, not a human-handoff negation.
-  if (AI_REJECT_HUMAN_REQUEST_ZH.test(t) || AI_REJECT_HUMAN_REQUEST_EN.test(t)) {
-    return { kind: "explicit_now", explicit_request: true, pure_negation: false, language, reason: "ai_rejected_human_requested_now" };
-  }
-  if (NEG_HUMAN_ZH.test(t) || NEG_HUMAN_EN.test(t)) {
-    return { kind: "negated", explicit_request: false, pure_negation: true, language, reason: "handoff_prohibited_or_negated" };
-  }
-  if (CONDITIONAL_ZH.test(t) || CONDITIONAL_EN.test(t)) {
-    return { kind: "conditional", explicit_request: false, pure_negation: false, language, reason: "handoff_is_conditional" };
-  }
-  if (FUTURE_ZH.test(t) || FUTURE_EN.test(t)) {
-    return { kind: "future", explicit_request: false, pure_negation: false, language, reason: "handoff_is_future_or_possible" };
-  }
-  if (REFERENCE_ZH.test(t) || REFERENCE_EN.test(t)) {
-    return { kind: "reference", explicit_request: false, pure_negation: false, language, reason: "handoff_is_referenced_not_requested" };
-  }
-  if (HYPOTHETICAL_ZH.test(t) || HYPOTHETICAL_EN.test(t)) {
-    return { kind: "hypothetical", explicit_request: false, pure_negation: false, language, reason: "handoff_is_hypothetical" };
-  }
-  if (QUESTION_ZH.test(t) || QUESTION_EN.test(t)) {
-    return { kind: "question_about_human_support", explicit_request: false, pure_negation: false, language, reason: "question_about_human_support" };
-  }
-  if (EXPLICIT_ZH.test(t) || EXPLICIT_EN.test(t)) {
-    return { kind: "explicit_now", explicit_request: true, pure_negation: false, language, reason: "unambiguous_present_handoff_request" };
-  }
-  return { kind: "none", explicit_request: false, pure_negation: false, language, reason: "human_support_mentioned_without_explicit_request" };
+  const d = classifyCanonicalHandoffIntent(text);
+  const kind: HandoffIntentKind = d.explicit_request ? "explicit_now" : d.pure_handoff_negation ? "negated" :
+    d.category === "conditional_or_future" ? (/如果|假如|假設|假设|unless|\bif\b|in case/i.test(text)?"conditional":"future") :
+    d.category === "reference_or_report" ? "reference" : d.category === "informational_question" ? "question_about_human_support" : "none";
+  return {kind,explicit_request:d.explicit_request,pure_negation:d.pure_handoff_negation,language:d.language,reason:d.category};
 }
 
 const TRIVIAL = /^(hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|ok|okay|好的|好|嗯|謝謝|谢谢|thanks|thank you)[!！。.？?，,\s]*$/i;

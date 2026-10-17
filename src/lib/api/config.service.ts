@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { authorizeChannelConfigScope } from "@/integrations/supabase/channel-config-scope";
+import { withConfigSession } from "@/integrations/supabase/config-session-transport";
 import type { TablesUpdate } from "@/integrations/supabase/types";
 
 export interface LiveChannelConfigRow {
@@ -86,16 +88,10 @@ async function resolveCompanyScope(context: {
   if (companyErr) return { ok: false, error: "company_lookup_failed" };
   if (!company || company.is_active !== true) return { ok: false, error: "company_inactive" };
 
-  const valid = new Set<AppRole>(ROLE_PRECEDENCE);
-  const roles: AppRole[] = [
-    ...new Set<AppRole>(
-      (memberships ?? [])
-        .map((m: any) => String(m.role) as AppRole)
-        .filter((r: AppRole) => valid.has(r)),
-    ),
-  ];
-
-  return { ok: true, data: { companyId, roles } };
+  const authorization = authorizeChannelConfigScope(memberships ?? [], company, ROLE_PRECEDENCE);
+  return authorization.ok
+    ? { ok: true, data: { companyId: authorization.companyId, roles: authorization.roles } }
+    : { ok: false, error: authorization.error };
 }
 
 function requireRole(
@@ -594,20 +590,20 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
 
 
 export const configService = {
-  listChannelConfigs: () => listChannelConfigsFn(),
+  listChannelConfigs: () => withConfigSession(supabase.auth, (headers) => listChannelConfigsFn({ headers })),
   bindChannelToCurrentCompany: (channelId: string) =>
-    bindChannelToCurrentCompanyFn({ data: { channel_id: channelId } }),
+    withConfigSession(supabase.auth, (headers) => bindChannelToCurrentCompanyFn({ data: { channel_id: channelId }, headers })),
   updateChannelConfig: (params: z.infer<typeof updateChannelInput>) =>
-    updateChannelConfigFn({ data: params }),
+    withConfigSession(supabase.auth, (headers) => updateChannelConfigFn({ data: params, headers })),
   getWidgetConfig: (channelId: string) =>
-    getWidgetConfigFn({ data: { channel_id: channelId } }),
+    withConfigSession(supabase.auth, (headers) => getWidgetConfigFn({ data: { channel_id: channelId }, headers })),
   updateWidgetConfig: (params: z.infer<typeof updateWidgetInput>) =>
-    updateWidgetConfigFn({ data: params }),
+    withConfigSession(supabase.auth, (headers) => updateWidgetConfigFn({ data: params, headers })),
   updateAgentProfile: (params: z.infer<typeof updateSelfProfileInput>) =>
-    updateAgentProfileFn({ data: params }),
-  getFeedbackConfig: () => getFeedbackConfigFn(),
+    withConfigSession(supabase.auth, (headers) => updateAgentProfileFn({ data: params, headers })),
+  getFeedbackConfig: () => withConfigSession(supabase.auth, (headers) => getFeedbackConfigFn({ headers })),
   updateFeedbackConfig: (params: z.infer<typeof updateFeedbackInput>) =>
-    updateFeedbackConfigFn({ data: params }),
+    withConfigSession(supabase.auth, (headers) => updateFeedbackConfigFn({ data: params, headers })),
 };
 
 const PREVIEW_ADMIN_EMAILS = new Set([
