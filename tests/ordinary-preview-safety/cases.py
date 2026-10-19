@@ -50,5 +50,21 @@ oldtoken=sessions[1]['session_token'];sql('UPDATE visitor_session SET session_to
 check('exclusion survives visitor token rotation',sql('SELECT widget_control_preview_excluded('+literal(sessions[1]['conversation_id'])+')')=='t')
 call('widget_control_preview_context',[sessions[1]['conversation_id'],oldtoken],fail=True)
 exec((folder/'cas.py').read_text())
+# Trigger WHEN permission is evaluated as the caller, not the trigger definer.
+check('Agent own-company trigger classification works without Admin preview permission',call('widget_control_preview_trigger_excluded',[sessions[0]['conversation_id']],agent)=='t')
+check('no-role caller cannot probe private preview classification',call('widget_control_preview_trigger_excluded',[sessions[0]['conversation_id']],norole)=='f')
+sql(actor_stmt('SELECT widget_control_preview_excluded('+literal(sessions[0]['conversation_id'])+')',agent),True)
+check('private global registry classifier remains denied to authenticated callers',True)
+beta='a2100000-0000-4000-8000-000000000001';sql("INSERT INTO company_membership(user_id,company_id,is_active,role)VALUES("+literal(beta)+','+literal(other)+",true,'admin')")
+foreign_bound=bootstrap('c1000000-0000-4000-8000-000000000090',foreign,beta)
+check('cross-Tenant trigger classifier does not reveal a foreign preview',call('widget_control_preview_trigger_excluded',[foreign_bound['conversation_id']],admin)=='f')
+sql('GRANT INSERT ON public.messages TO authenticated;')
+# Reproduce the predecessor WHEN permission defect inside a rolled-back native transaction.
+original_when="CREATE TRIGGER trg_zz_ce_realtime_assistant_dispatch AFTER INSERT ON public.messages FOR EACH ROW WHEN (NOT public.widget_control_preview_excluded(new.conversation_id)) EXECUTE FUNCTION ce_realtime_assistant_message_trigger_v1();"
+sql("BEGIN;DROP TRIGGER trg_zz_ce_realtime_assistant_dispatch ON public.messages;"+original_when+"SET LOCAL ROLE authenticated;SET LOCAL request.jwt.claim.sub="+literal(admin)+";INSERT INTO messages(conversation_id,role,content)VALUES("+literal(normal_id)+",'visitor','predecessor must fail');COMMIT;",True)
+check('predecessor private WHEN helper reproduces authenticated INSERT denial', 'permission denied for function widget_control_preview_excluded' in commands[-1]['stderr'])
+sql(actor_stmt("INSERT INTO messages(conversation_id,role,content,status,is_recalled,metadata)VALUES("+literal(normal_id)+",'visitor','native authenticated insert','delivered',false,'{}')"))
+check('authenticated normal INSERT retains real trigger execution permissions',sql("SELECT count(*)FROM messages WHERE conversation_id="+literal(normal_id)+" AND content='native authenticated insert'")=='1')
+
 if (folder/'runtime.mjs').exists():subprocess.run(['node',str(folder/'runtime.mjs')],check=True,env=os.environ)
 out=pathlib.Path(os.environ.get('C3_PREVIEW_EVIDENCE','/tmp/c3-preview-safety-evidence'));out.mkdir(parents=True,exist_ok=True);(out/'native-proof.json').write_text(json.dumps({'status':'PASS','checks':checks,'commands':commands,'Hosted':False},ensure_ascii=False,indent=2)+'\n');print(json.dumps({'status':'PASS','count':len(checks),'Hosted':False,'checks':checks},ensure_ascii=False))

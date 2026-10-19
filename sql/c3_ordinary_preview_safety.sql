@@ -97,6 +97,18 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$
 $$;
 REVOKE ALL ON FUNCTION public.widget_control_preview_excluded(uuid) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.widget_control_preview_excluded(uuid) TO service_role;
+-- WHEN expressions run as the INSERT caller, before the SECURITY DEFINER trigger.
+-- Expose only an own-company classification to authenticated writers, never the private registry.
+CREATE FUNCTION public.widget_control_preview_trigger_excluded(p_conversation_id uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$
+ SELECT public.widget_control_preview_excluded(p_conversation_id) AND (
+ coalesce(current_setting('role',true),'none') NOT IN ('anon','authenticated') OR
+ EXISTS(SELECT FROM public.widget_control_preview_scope s JOIN public.company_membership m
+ ON m.company_id=s.company_id AND m.user_id=auth.uid() AND m.is_active
+ WHERE s.conversation_id=p_conversation_id))
+$$;
+REVOKE ALL ON FUNCTION public.widget_control_preview_trigger_excluded(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.widget_control_preview_trigger_excluded(uuid) TO anon,authenticated,service_role;
 CREATE FUNCTION public.widget_control_preview_authorize(p_conversation_id uuid,p_session_token text) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$
  SELECT EXISTS(SELECT FROM public.widget_control_preview_scope s
@@ -314,5 +326,5 @@ end;
 $function$
 ;
 DROP TRIGGER trg_zz_ce_realtime_assistant_dispatch ON public.messages;
-CREATE TRIGGER trg_zz_ce_realtime_assistant_dispatch AFTER INSERT ON public.messages FOR EACH ROW WHEN (NOT public.widget_control_preview_excluded(new.conversation_id)) EXECUTE FUNCTION ce_realtime_assistant_message_trigger_v1();
+CREATE TRIGGER trg_zz_ce_realtime_assistant_dispatch AFTER INSERT ON public.messages FOR EACH ROW WHEN (NOT public.widget_control_preview_trigger_excluded(new.conversation_id)) EXECUTE FUNCTION ce_realtime_assistant_message_trigger_v1();
 COMMIT;

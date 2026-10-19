@@ -128,6 +128,7 @@ DROP FUNCTION public.widget_control_preview_context(uuid,text);
 DROP FUNCTION public.widget_control_preview_authorize(uuid,text);
 DROP FUNCTION public.widget_control_preview_seal();
 DROP FUNCTION public.widget_control_preview_receive_base(uuid,text,text,text);
+DROP FUNCTION public.widget_control_preview_trigger_excluded(uuid);
 DROP FUNCTION public.widget_control_preview_excluded(uuid);
 DROP TABLE public.widget_control_preview_scope;
 COMMIT;
