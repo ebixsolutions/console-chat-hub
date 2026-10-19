@@ -144,16 +144,19 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
 
   const applyConversation = () => {
     const v = convInput.trim();
-    if (!v) {
-      setConversationId("");
-      setPage(0);
-      return;
-    }
-    if (!UUID_RE.test(v)) {
+    if (v && !UUID_RE.test(v)) {
+      // A newer invalid search supersedes any pending read of the old scope.
+      readEpoch.current++;
+      setLoading(false);
       setError("invalid_conversation_id");
       return;
     }
     setError("");
+    if (v === conversationId && page === 0) {
+      // React will not rerun the effect for unchanged filter state.
+      void load();
+      return;
+    }
     setConversationId(v);
     setPage(0);
   };
@@ -273,9 +276,9 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
       {error && (
         <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
           {error}
-          <button className="ml-3 rounded-md border bg-white px-3 py-2 text-sm" type="button" disabled={loading} onClick={() => void load()}>
+          {error !== "invalid_conversation_id" && error !== "invalid_date_range" && <button className="ml-3 rounded-md border bg-white px-3 py-2 text-sm" type="button" disabled={loading} onClick={() => void load()}>
             {lang === "zh" ? "重試" : "Retry"}
-          </button>
+          </button>}
         </div>
       )}
 

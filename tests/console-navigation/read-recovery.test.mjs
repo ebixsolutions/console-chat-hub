@@ -61,6 +61,43 @@ test('A09-002-C01 supporting: slow prior filter cannot replace current filter ro
 test('A09-001-C04 supporting: failed read is not empty feedback and explicit retry recovers',async()=>{
  reset();f.feedback=async()=>({ok:false,error:'read_unavailable'});const r=await mount(Feedback);assert.match(text(r.toJSON()),/read_unavailable/);assert(!text(r.toJSON()).includes('No feedback responses found.'));f.feedback=async()=>({ok:true,data:{rows:[],total:0}});await click(r,'Retry');assert.match(text(r.toJSON()),/No feedback responses found./);assert.equal(f.calls.length,2);await act(async()=>r.unmount());
 });
+async function searchConversation(r,value){
+ await act(async()=>r.root.findByProps({placeholder:'Conversation UUID'}).props.onChange({target:{value}}));
+ await click(r,'Search');
+}
+test('A09-006 supporting: invalid conversation input cannot expose Retry for the previous broader query',async t=>{
+ reset();const r=await mount(Feedback);t.after(async()=>act(async()=>r.unmount()));await searchConversation(r,'invalid-uuid');
+ assert.match(text(r.toJSON()),/invalid_conversation_id/);
+ assert.equal(Boolean(button(r,'Retry')),false,'input errors require correction with Search, never replay the old query');
+ assert.equal(f.calls.length,1);
+});
+test('A09-006 supporting: clearing invalid input recovers the unchanged unfiltered query through Search',async t=>{
+ reset();const r=await mount(Feedback);t.after(async()=>act(async()=>r.unmount()));await searchConversation(r,'invalid-uuid');
+ await searchConversation(r,'');
+ assert(!text(r.toJSON()).includes('invalid_conversation_id'));
+ assert.match(text(r.toJSON()),/No feedback responses found/);
+ assert.equal(f.calls.length,2);assert.equal(f.calls[1].conversation_id,undefined);
+});
+test('A09-006 supporting: a pending old read failure cannot replace the newer UUID validation error',async t=>{
+ reset();let resolve;f.feedback=()=>new Promise(done=>resolve=done);const r=await mount(Feedback);t.after(async()=>act(async()=>r.unmount()));
+ await searchConversation(r,'invalid-uuid');
+ await act(async()=>resolve({ok:false,error:'old_read_failure'}));
+ assert.match(text(r.toJSON()),/invalid_conversation_id/);
+ assert(!text(r.toJSON()).includes('old_read_failure'));
+ assert.equal(f.calls.length,1);
+});
+test('A09-006-C04/C06 supporting: correction and Enter recover the same exact conversation scope',async t=>{
+ reset();const id='11111111-1111-4111-8111-111111111111';
+ f.feedback=async p=>({ok:true,data:{rows:[feedbackRow(p.conversation_id??'initial','pending')],total:1}});
+ const r=await mount(Feedback);t.after(async()=>act(async()=>r.unmount()));
+ await searchConversation(r,id);assert.equal(f.calls.length,2);
+ await searchConversation(r,'invalid-uuid');assert.equal(f.calls.length,2);
+ await act(async()=>r.root.findByProps({placeholder:'Conversation UUID'}).props.onChange({target:{value:id}}));
+ await act(async()=>r.root.findByProps({placeholder:'Conversation UUID'}).props.onKeyDown({key:'Enter'}));
+ assert(!text(r.toJSON()).includes('invalid_conversation_id'));
+ assert.equal(f.calls.length,3);assert.equal(f.calls[2].conversation_id,id);
+ assert.equal(r.root.findByType('a').props.params.id,id);
+});
 test('A14-001-C07/A15-001-C07/A09-001-C07 supporting: forbidden role does not invoke readers',async()=>{
  reset();f.role='visitor';for(const C of [Visitor,Customer,Feedback]){const r=await mount(C);assert.match(text(r.toJSON()),/Permission [Dd]enied/);await act(async()=>r.unmount());}assert.equal(f.calls.length,0);
 });
