@@ -359,6 +359,7 @@
     "src/routes/_authenticated/console.feedback-settings.tsx",
     "src/routes/_authenticated/console.visitor-analytics.tsx",
     "src/routes/_authenticated/console.widget-preview.tsx",
+    "src/start.ts",
     "supabase/config.toml",
     "supabase/functions/_shared/b2-journey-progress-contract.ts",
     "supabase/functions/_shared/bounded-decision-context.ts",
@@ -469,6 +470,7 @@
     "tests/model-accounting/router.test.ts",
     "tests/model-accounting/source-coverage.test.mjs",
     "tests/phase1/preview-startup.test.mjs",
+    "tests/phase1/request-response-propagation.test.mjs",
     "tests/quality95/frozen-inputs.json",
     "tests/quality95/retained-failures.test.ts",
     "tests/section15/compound-dialogue-state.test.ts",
@@ -927,7 +929,7 @@
   },
   "authorized_live_execution_sha256": {
     ".github/scripts/c3_live_execution_manifest.mjs": "99550a1028ef2cb39d3d1b7480bb531e485a5c5fc7a7157afb26fbca99fe7310",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "b4ed6a96c519a33e736a802161b3058cf73acaebe54780c4ef5f113da033fe99",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "179f5b79c5f16984a86802b773afc283dcedf0c5e7ccbbc2328a3dfdf560df85",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "85aa5132b0bfacc62501446afdc21ec1c6f8664b4b58bfd8e825ad70ba8cb38d",
     "docs/c3/live-execution-repair.json": "250f6e3ad487899eb4283de49da9800354e9a30c701971672b663b7f6ba11f65",
     "sql/c3_live_execution_dependencies.sql": "dbfd5c3444f99ffd0df22767a4c003098b765ef043492013f880191523a46a7c",
@@ -992,7 +994,9 @@
     "src/routes/_authenticated/console.visitor-analytics.tsx": "bd8ddd502d58b72b06b4890d9e101bea044eefce86b5d467506d323e7c5d674c",
     "tests/console-navigation/read-recovery.test.mjs": "85d7de18dea3fb6cf003e1ec43725eb524e5588181704aa3fd698629246d1e61",
     "src/components/console/ConversationList.tsx": "7e38db3f5c8fed96b15ab6ca5f7154a1683ab41a6c0c86b9b9eea6b758204944",
-    "tests/console-navigation/conversation-list.test.mjs": "224ea22ab6e8239287d23ef33924c8b1032883bc55b6c45d39b712b29e1a3458"
+    "tests/console-navigation/conversation-list.test.mjs": "224ea22ab6e8239287d23ef33924c8b1032883bc55b6c45d39b712b29e1a3458",
+    "src/start.ts": "30474eb76daf45109e57af25064639f1bfdd0a00447602a0c4464b27ee8aff55",
+    "tests/phase1/request-response-propagation.test.mjs": "93165be7a2053cba477300bc53570e094ad2df7776bb29f3a6de47f8ab2a90f4"
   },
   "live_execution_deployment_authorized": false
 }
