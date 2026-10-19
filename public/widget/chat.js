@@ -16,7 +16,13 @@
     return;
   }
 
-  var P = "nexus_widget_" + channelId;
+  var consolePreview = script.getAttribute("data-console-preview") === "ordinary-widget-control-v1";
+  var previewActor = script.getAttribute("data-preview-actor") || "";
+  var previewCompany = script.getAttribute("data-company-id") || "";
+  var previewContractReady = false;
+  var composing = false;
+  var previewInputs = ["你是誰？", "Who are you?", "請轉真人客服", "Please connect me to a human."];
+  var P = "nexus_widget_" + channelId + (consolePreview ? "_console_" + previewActor : "");
   var SK_TOKEN = P + "_session_token";
   var SK_CONV = P + "_conversation_id";
   var SK_CHANNEL = P + "_channel_id";
@@ -572,6 +578,7 @@
     sendBtn = panel.querySelector("#nx-send");
     tagsEl = panel.querySelector("#nx-tags-area");
 
+    if (consolePreview) { try { inputEl.value = localStorage.getItem(previewDraftKey()) || ""; } catch (_) {} syncPreviewSend(); }
     panel.querySelector("#nx-close-btn").addEventListener("click", closePanel);
     panel
       .querySelector("#nx-my-tickets-btn")
@@ -586,13 +593,16 @@
     sendBtn.addEventListener("click", handleSend);
 
     inputEl.addEventListener("keydown", function (e) {
-      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !composing && e.keyCode !== 229) {
         e.preventDefault();
         handleSend();
       }
     });
 
+    inputEl.addEventListener("compositionstart", function () { composing = true; });
+    inputEl.addEventListener("compositionend", function () { composing = false; });
     inputEl.addEventListener("input", function () {
+      if (consolePreview) { try { localStorage.setItem(previewDraftKey(), inputEl.value); } catch (_) {} syncPreviewSend(); }
       inputEl.style.height = getTheme() === "modern" ? "44px" : "36px";
       inputEl.style.height =
         Math.min(inputEl.scrollHeight, getTheme() === "modern" ? 140 : 120) +
@@ -797,7 +807,7 @@
       { key: "video", icon: "🎬", label: "Video" },
       { key: "file", icon: "📎", label: "File" },
       { key: "human", icon: "👤", label: "Request Human Support" },
-    ].forEach(function (action) {
+    ].filter(function (action) { return !consolePreview || action.key === "human"; }).forEach(function (action) {
       var item = document.createElement("div");
       item.className =
         "nx-plus-item" +
@@ -858,7 +868,7 @@
   }
 
   function uploadAttachment(file) {
-    if (!file || !state.sessionToken || !state.conversationId) return;
+    if (consolePreview || !file || !state.sessionToken || !state.conversationId) return;
     if (file.size > 10 * 1024 * 1024) {
       alert("File too large (max 10 MB).");
       return;
@@ -970,18 +980,25 @@
   }
 
   function insertEmoji(emoji) {
-    if (!inputEl) return;
-    var start = inputEl.selectionStart || inputEl.value.length;
-    var end = inputEl.selectionEnd || inputEl.value.length;
+    if (!inputEl || inputEl.disabled || composing) return;
+    var start = typeof inputEl.selectionStart === "number" ? inputEl.selectionStart : inputEl.value.length;
+    var end = typeof inputEl.selectionEnd === "number" ? inputEl.selectionEnd : inputEl.value.length;
     inputEl.value =
       inputEl.value.substring(0, start) +
       emoji +
       inputEl.value.substring(end);
     inputEl.selectionStart = inputEl.selectionEnd = start + emoji.length;
     inputEl.focus();
+    inputEl.dispatchEvent(new Event("input", {bubbles:true}));
   }
 
   function handleHumanSupport() {
+    if (consolePreview) {
+      if (!inputEl || inputEl.disabled) return;
+      inputEl.value = "Please connect me to a human.";
+      inputEl.dispatchEvent(new Event("input", {bubbles:true}));
+      handleSend(); return;
+    }
     if (
       !state.sessionToken ||
       !state.conversationId ||
@@ -1025,6 +1042,7 @@
   }
 
   function showSuggestedQuestions() {
+    if (consolePreview) return;
     if (!tagsEl || state.firstMessageSent) return;
     var questions = getSuggested();
     if (!questions.length) return;
@@ -1438,6 +1456,7 @@
   }
 
   function resetAndFresh() {
+    if (consolePreview && state.conversationId && readPendingText(state.conversationId)) { syncPreviewSend(); return; }
     invalidatePollingContext();
     clearSession();
     state.sessionToken = null;
@@ -1607,6 +1626,14 @@
         else if (pollStep < POLL_STEPS.length - 1) pollStep++;
 
         applyHumanSupportState(data.human_support);
+        if (consolePreview) {
+          var pendingPreview = readPendingText(state.conversationId);
+          if (pendingPreview && (data.messages || []).some(function (row) { return row.role === "visitor" && row.metadata && row.metadata.client_message_id === pendingPreview.id; })) {
+            try { localStorage.removeItem(pendingTextKey(state.conversationId)); } catch (_) {}
+            if (inputEl && inputEl.value === pendingPreview.text) inputEl.value = "";
+          }
+          syncPreviewSend();
+        }
 
         var aiGenerating = data.ai_generating;
 
@@ -1697,6 +1724,10 @@
         if (msgsEl) msgsEl.innerHTML = "";
 
         state.online = isOnline();
+        if (consolePreview) {
+          try { if (inputEl && !inputEl.value) inputEl.value = localStorage.getItem(P + "_draft_new") || ""; localStorage.removeItem(P + "_draft_new"); if (inputEl) localStorage.setItem(previewDraftKey(),inputEl.value); } catch (_) {}
+          syncPreviewSend();
+        }
         appendWelcome();
         showSuggestedQuestions();
         startPolling();
@@ -1766,6 +1797,7 @@
         startPolling();
       })
       .catch(function () {
+        if (consolePreview && readPendingText(stored.convId)) { state.sessionToken = stored.token; state.conversationId = stored.convId; restorePendingTextDraft(); return; }
         clearSession();
         state.sessionToken = null;
         state.conversationId = null;
@@ -1822,6 +1854,18 @@
         if (!panel) buildPanel();
         setPanelVisible(true);
 
+        if (consolePreview && !previewContractReady) {
+          return api("/receive-widget-message?console_preview=ordinary-widget-control-v1&channel_id=" + encodeURIComponent(channelId), {method:"GET"}).then(function (res) {
+            var data = res.body && res.body.data;
+            previewContractReady = Boolean(res.ok && res.body.success && data && data.console_preview === "ordinary-widget-control-v1" && data.paid_dispatch === false && data.channel_id === channelId && data.company_id === previewCompany);
+            syncPreviewSend();
+            if (previewContractReady) {
+              var savedPreview = loadSession();
+              if (savedPreview.token && savedPreview.convId && savedPreview.channel === channelId) tryRestoreSession(savedPreview);
+              else startFreshSession();
+            }
+          }).catch(function () { syncPreviewSend(); });
+        }
         if (state.sessionToken && state.conversationId) {
           restorePendingTextDraft();
           startPolling();
@@ -1856,7 +1900,7 @@
 
   var textSendInFlight = false;
   function pendingTextKey(conversationId) {
-    return "nx_pending_text:" + channelId + ":" + conversationId;
+    return "nx_pending_text:" + channelId + (consolePreview ? ":console:" + previewActor : "") + ":" + conversationId;
   }
   function readPendingText(conversationId) {
     try {
@@ -1867,9 +1911,27 @@
   function restorePendingTextDraft() {
     var pending = state.conversationId && readPendingText(state.conversationId);
     if (pending && inputEl) inputEl.value = pending.text;
+    if (consolePreview) syncPreviewSend();
+  }
+  function previewDraftKey() { return P + "_draft_" + (state.conversationId || "new"); }
+  function syncPreviewSend() {
+    if (!consolePreview || !panel || !inputEl || !sendBtn) return;
+    var pending = state.conversationId && readPendingText(state.conversationId);
+    var closed = inputEl.placeholder === "Conversation resolved.";
+    var reason = pending ? "Previous delivery is unknown. Readback must confirm the original message; no resend or new conversation." :
+      !previewContractReady ? "Controlled preview backend is not verified. Local draft only; no session or message is created." :
+      closed ? "Conversation resolved. Use Start new conversation." :
+      !state.conversationId ? "Connecting to your own channel." :
+      previewInputs.indexOf(inputEl.value.trim()) < 0 ? "Control-only preview: type ‘你是誰？’, ‘Who are you?’, ‘請轉真人客服’ or ‘Please connect me to a human.’ Business AI and attachments are unavailable." : "Ready for an ordinary visitor control message. This is not the C3 isolated test.";
+    inputEl.disabled = Boolean(pending || closed || textSendInFlight);
+    sendBtn.disabled = Boolean(pending || closed || textSendInFlight || !previewContractReady || !state.conversationId || previewInputs.indexOf(inputEl.value.trim()) < 0);
+    var status = panel.querySelector("#nx-preview-status");
+    if (!status) { status = document.createElement("p"); status.id = "nx-preview-status"; status.setAttribute("role","status"); status.style.cssText = "padding:8px;font-size:12px;color:#475569"; panel.appendChild(status); }
+    status.textContent = reason;
   }
   function handleSend() {
-    if (!inputEl || textSendInFlight) return;
+    if (!inputEl || inputEl.disabled || textSendInFlight || composing) return;
+    if (consolePreview && (!previewContractReady || readPendingText(state.conversationId) || previewInputs.indexOf(inputEl.value.trim()) < 0)) { syncPreviewSend(); return; }
     var text = inputEl.value.trim();
 
     if (!text || !state.conversationId || !state.sessionToken) return;
@@ -1890,6 +1952,7 @@
     pending = pending || { id: createClientMessageId(), text: text };
     try { localStorage.setItem(pendingTextKey(sendingConversation), JSON.stringify(pending)); } catch (_) {}
     textSendInFlight = true;
+    if (consolePreview) syncPreviewSend();
     hideTags();
     sendBtn.disabled = true;
     sendBtn.textContent = "\u2026";
@@ -1904,6 +1967,7 @@
         session_token: state.sessionToken,
         content: text,
         client_message_id: pending.id,
+        ...(consolePreview ? {console_preview:"ordinary-widget-control-v1"} : {}),
       }),
       signal: AbortSignal.timeout(30000),
     })
@@ -1919,7 +1983,10 @@
             created_at: new Date().toISOString(),
           });
         } else {
-          try { localStorage.removeItem(pendingTextKey(sendingConversation)); } catch (_) {}
+          // HTTP200 alone is insufficient: require the existing endpoint's persisted message receipt.
+          if (!consolePreview || (res.body.data && typeof res.body.data.message_id === "string" && res.body.data.message_id.length > 0)) {
+            try { localStorage.removeItem(pendingTextKey(sendingConversation)); if (consolePreview) localStorage.removeItem(previewDraftKey()); } catch (_) {}
+          } else if (consolePreview) inputEl.value = text;
         }
       })
       .catch(function () {
@@ -1937,6 +2004,7 @@
         if (sendingConversation !== state.conversationId || sendingGeneration !== pollGeneration) return;
         sendBtn.disabled = false;
         sendBtn.textContent = "Send";
+        if (consolePreview) { restorePendingTextDraft(); syncPreviewSend(); }
         state.fallbackShownForConversation = false;
         state.thinkingStartTime = null;
         pollStep = 0;

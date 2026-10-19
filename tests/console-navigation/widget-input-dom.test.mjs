@@ -22,6 +22,7 @@ const f=globalThis.__widgetInput={};
 const entry='src/routes/_authenticated/console.widget-preview.tsx';
 const compiled=await build({entryPoints:[entry],bundle:true,write:false,platform:'node',format:'esm',jsx:'automatic',plugins:[{name:'input-dom-boundaries',setup(b){
  b.onResolve({filter:/^react(?:\/.*)?$/},a=>({path:require.resolve(a.path),external:true}));
+ b.onResolve({filter:/^@\/components\/console\/OrdinaryWidgetPreview$/},()=>({path:path.resolve('src/components/console/OrdinaryWidgetPreview.tsx')}));
  b.onResolve({filter:/^(lucide-react|@tanstack\/react-router|@\/hooks\/|@\/components\/|@\/integrations\/|@\/lib\/api\/)/},a=>({path:a.path,namespace:'fixture'}));
  b.onLoad({filter:/.*/,namespace:'fixture'},a=>{const s='const f=globalThis.__widgetInput;';
   if(a.path==='lucide-react')return {contents:'export const AlertCircle=()=>null,Check=()=>null,Copy=()=>null,History=()=>null,Image=()=>null,Loader2=()=>null,MonitorDot=()=>null,Paperclip=()=>null,Plus=()=>null,Smile=()=>null,UserRound=()=>null,Video=()=>null;'};
@@ -54,7 +55,7 @@ function reset(){
  f.historyResponse=null;
  f.invoke=async(name,{body})=>{calls.push(body);assert.equal(name,'widget-live-ai-test');
   if(body.action==='history' && f.historyResponse)return f.historyResponse;
-  if(body.action==='history')return {error:null,data:{success:true,isolation_ready:f.ready,execution_ready:false,remote_ready:false,company_id:f.wrongTenant?'foreign':company,channel_id:channel,history:[]}};
+  if(body.action==='history')return {error:null,data:{success:true,runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:f.ready,execution_ready:false,remote_ready:false,company_id:f.wrongTenant?'foreign':company,channel_id:channel,history:[]}};
   if(body.action==='load')return {error:null,data:{success:true,conversation_id:body.test_conversation_id,conversation_status:f.status,human_control:f.human,messages:[]}};
   return {error:new Error('Unexpected dispatch trapped by local fixture'),data:null};
  };
@@ -139,6 +140,15 @@ test('non-C3 scope and selected-channel mismatch are explicit, draft-only and ne
  reset();f.wrongTenant=true;const wrong=await mount(t);assert.match(wrong.host.textContent,/selected company\/channel does not match/);assert.equal(button(wrong,'Send').disabled,true);noDispatch();
 });
 test('execution and remote readiness are not described as role denial or empty KB',async t=>{
- reset();f.historyResponse={data:{success:true,isolation_ready:true,company_id:company,channel_id:channel,execution_ready:false,execution_failure:{code:'UAT_REMOTE_BOUND_UNVERIFIED',stage:'admission',retryable:false},remote_ready:false,history:[]},error:null};const r=await mount(t);assert.match(r.host.textContent,/UAT_REMOTE_BOUND_UNVERIFIED/);noDispatch();await r.close();
- reset();f.historyResponse={data:{success:true,isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,history:[]},error:null};const remote=await mount(t);assert.match(remote.host.textContent,/remote KB queries are not yet authorized/);noDispatch();
+ reset();f.historyResponse={data:{success:true,runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:true,company_id:company,channel_id:channel,execution_ready:false,execution_failure:{code:'UAT_REMOTE_BOUND_UNVERIFIED',stage:'admission',retryable:false},remote_ready:false,history:[]},error:null};const r=await mount(t);assert.match(r.host.textContent,/UAT_REMOTE_BOUND_UNVERIFIED/);noDispatch();await r.close();
+ reset();f.historyResponse={data:{success:true,runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,history:[]},error:null};const remote=await mount(t);assert.match(remote.host.textContent,/remote KB queries are not yet authorized/);noDispatch();
 });
+
+test('actual v13-shaped history lacks send admission proof; HTTP200 cannot authorize Send',async t=>{
+ reset();f.historyResponse={data:{success:true,mode:'persistent_live_ai_test',isolation_ready:true,company_id:company,channel_id:channel,history:[]},error:null};const r=await mount(t);await edit(r,'Check energy label');assert.equal(button(r,'Send').disabled,true);assert.match(r.host.textContent,/backend has not proven/);assert.match(r.host.textContent,/backend_runtime_contract_unverified/);noDispatch();
+});
+test('pending without conversation id has read-only reconciliation, never automatic resend or New bypass',async t=>{
+ reset();const id='10000000-0000-4000-8000-000000000001';window.localStorage.setItem(key+':pending',JSON.stringify({id,text:'unknown original'}));const r=await mount(t);assert.match(r.host.textContent,/previous_delivery_unresolved/);const check=button(r,'Check original delivery');assert(check);await click(r,check);assert.equal(calls.filter(c=>c.action==='reconcile').length,1);assert.equal(button(r,'Send').disabled,true);assert.equal(field(r).value,'unknown original');noDispatch();
+});
+
+test('same-company/channel response for another authenticated actor is not send authority',async t=>{reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'foreign-actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:false,remote_ready:false,history:[]}};const r=await mount(t);await edit(r,'Who are you?');assert(button(r,'Send').disabled);assert.match(r.host.textContent,/authenticated_actor_mismatch/);noDispatch();});

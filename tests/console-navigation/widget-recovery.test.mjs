@@ -18,7 +18,8 @@ const fixture=globalThis.__c3Widget={};
 const entry='src/routes/_authenticated/console.widget-preview.tsx';
 const result=await build({entryPoints:[entry],bundle:true,write:false,platform:'node',format:'esm',jsx:'automatic',plugins:[{name:'widget-isolated-boundaries',setup(b){
   b.onResolve({filter:/^react(?:\/.*)?$/},a=>({path:require.resolve(a.path),external:true}));
-  b.onResolve({filter:/^(lucide-react|@tanstack\/react-router|@\/hooks\/|@\/components\/|@\/integrations\/|@\/lib\/api\/)/},a=>({path:a.path,namespace:'fixture'}));
+  b.onResolve({filter:/^@\/components\/console\/OrdinaryWidgetPreview$/},()=>({path:path.resolve('src/components/console/OrdinaryWidgetPreview.tsx')}));
+ b.onResolve({filter:/^(lucide-react|@tanstack\/react-router|@\/hooks\/|@\/components\/|@\/integrations\/|@\/lib\/api\/)/},a=>({path:a.path,namespace:'fixture'}));
   b.onLoad({filter:/.*/,namespace:'fixture'},a=>{
     const f='const f=globalThis.__c3Widget;';
     if(a.path==='lucide-react')return {contents:'export const AlertCircle=()=>null,Check=()=>null,Copy=()=>null,History=()=>null,Image=()=>null,Loader2=()=>null,MonitorDot=()=>null,Paperclip=()=>null,Plus=()=>null,Smile=()=>null,UserRound=()=>null,Video=()=>null;'};
@@ -51,13 +52,13 @@ function reset(){
   Object.assign(fixture,{user:{id:'actor'},historyError:false,loadError:false,loadThrows:false,human:false,assigned:false,generating:false,rows:[{id:'v0',role:'visitor',content:'Existing request'}],send:null,historyRows:[{conversation_id:conversation,message_count:1,latest_preview:'Existing request'}]});
   fixture.invoke=async(name,{body})=>{
     calls.push({name,body});assert.equal(name,'widget-live-ai-test');
-    if(body.action==='history')return fixture.historyError?{error:new Error('unavailable'),data:null}:{error:null,data:{success:true,isolation_ready:true,execution_ready:false,remote_ready:false,company_id:company,channel_id:channel,history:fixture.historyRows}};
+    if(body.action==='history')return fixture.historyError?{error:new Error('unavailable'),data:null}:{error:null,data:{success:true,runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:true,execution_ready:false,remote_ready:false,company_id:company,channel_id:channel,history:fixture.historyRows}};
     if(body.action==='load'){
       if(fixture.loadThrows)throw new Error('network');
       if(fixture.loadError)return {error:new Error('unavailable'),data:null};
       return {error:null,data:{success:true,conversation_id:body.test_conversation_id,messages:fixture.rows,ai_generating:fixture.generating??false,human_control:fixture.human,assigned_agent_id:fixture.assigned?'agent':null}};
     }
-    assert.equal(body.action,'send');return fixture.send?fixture.send(body):{error:null,data:{success:true,conversation_id:conversation,messages:fixture.rows,ai_generating:fixture.generating??false,human_control:fixture.human,assigned_agent_id:fixture.assigned?'agent':null}};
+    assert.equal(body.action,'send');return fixture.send?fixture.send(body):{error:null,data:{success:true,conversation_id:conversation,delivery_receipt:{persisted:true,conversation_id:conversation,client_message_id:body.client_message_id,visitor_message_id:'10000000-0000-4000-8000-000000000001'},messages:fixture.rows,ai_generating:fixture.generating??false,human_control:fixture.human,assigned_agent_id:fixture.assigned?'agent':null}};
   };
 }
 const props={scopeCompanyId:company,scopeChannelId:channel,lang:'en',mode:'live',theme:'classic',primary:'#000000',title:'Support',launcherIcon:'chat',placeholder:'Type',open:true,onOpenChange(){}};
@@ -111,3 +112,5 @@ test('scope changes discard old conversation data and require new verified conte
 test('a polled AI-pending flag cannot intercept an explicit R1 when no send is in flight',async()=>{
   reset();fixture.generating=true;const r=await mount();await enter(r,'Please connect me to human support');assert.equal(button(r,'Send').props.disabled,false);await click(r,'Send');assert.equal(sends().length,1);assert.equal(sends()[0].body.query,'Please connect me to human support');await close(r);
 });
+
+test('HTTP200 success without exact persisted source receipt must remain pending and cannot be retried',async()=>{reset();fixture.send=async()=>({error:null,data:{success:true,conversation_id:conversation,messages:[]}});const r=await mount();await enter(r,'Who are you?');await click(r,'Send');assert(store.has(storageKey+':pending'));assert.equal(button(r,'Send').props.disabled,true);assert.match(content(r),/Delivery could not be confirmed/);await close(r);});

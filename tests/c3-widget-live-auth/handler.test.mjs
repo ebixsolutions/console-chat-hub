@@ -34,11 +34,11 @@ async function check(name, options={}, expected=200, body={action:'history'}) {
  const response=await handler(new Request('https://endpoint.invalid',{method:'POST',headers,body:JSON.stringify(body)}));
  const responseText=await response.text(); assert.equal(response.status,expected,responseText);
  assert(!responseText.includes(secret));assert(!JSON.stringify(logs).includes(secret));assert(!JSON.stringify(logs).includes(token));
- if(expected===200&&options.isolated!==false && body.action==='history') {assert(calls.some(c=>c[0]==='conversations'&&c[1]==='company_id'&&c[2]===company));assert(calls.some(c=>c[0]==='conversations'&&c[1]==='channel_config_id'&&c[2]===channel));}
+ if(expected===200&&options.isolated!==false && body.action==='history') {const h=JSON.parse(responseText);assert.equal(h.runtime_contract,'c3-widget-control-v2');assert.equal(h.actor_id,user);assert.equal(typeof h.execution_ready,'boolean');assert.equal(typeof h.remote_ready,'boolean');assert(calls.some(c=>c[0]==='conversations'&&c[1]==='company_id'&&c[2]===company));assert(calls.some(c=>c[0]==='conversations'&&c[1]==='channel_config_id'&&c[2]===channel));}
  if(options.providerError)assert.equal(logs[0].provider_http_class,'4xx');
  if(body.action==='send'&&expected>=400)assert.equal(requests.length,0);
  if(body.action==='send'&&expected===200){assert(requests.some(r=>r.url.endsWith('receive-widget-message'))); assert(!requests.some(r=>r.url.endsWith('generate-reply'))); assert.equal(requests[0].body.client_message_id,body.client_message_id);assert.equal(requests[0].body.conversation_id,company);}
- if(body.action==='load'&&expected===200){assert(requests.some(r=>r.url.endsWith('widget-poll-messages')));const payload=JSON.parse(responseText);assert.equal(payload.messages[0].role,'agent');assert.equal(payload.human_support.queue_position,2);}
+ if((body.action==='load'||body.action==='reconcile')&&expected===200){assert(requests.some(r=>r.url.endsWith('widget-poll-messages')));const payload=JSON.parse(responseText);assert.equal(payload.messages[0].role,'agent');assert.equal(payload.human_support.queue_position,2);}
  globalThis.fetch=originalFetch;
  completed.push({name,status:'PASS',kind:'actual_handler_unit_with_provider_adapters'});
 }
@@ -68,6 +68,9 @@ await check('provider error safe diagnostics',{providerError:true},500);
 await check('no registered scope cannot send',{isolated:false},503,{action:'send',query:'test',client_message_id:company});
 await Promise.all([check('concurrent history A'),check('concurrent history B')]);
 await check('load isolated conversation',{},200,{action:'load',test_conversation_id:company});
+await check('read-only pending request reconciliation',{},200,{action:'reconcile',client_message_id:channel});
+await check('foreign owner reconciliation denied',{foreignOwner:true},404,{action:'reconcile',client_message_id:channel});
+await check('bad pending request id rejected',{},400,{action:'reconcile',client_message_id:'invalid'});
 await check('foreign owner load denied',{foreignOwner:true},404,{action:'load',test_conversation_id:company});
 await check('canonical send',{},200,{action:'send',test_conversation_id:company,client_message_id:channel,query:'synthetic generic request'});
 await check('human control send remains ordinary widget',{human:true},200,{action:'send',test_conversation_id:company,client_message_id:channel,query:'synthetic reply'});

@@ -367,6 +367,8 @@ return async (req: Request) => {
         success: true,
         mode: "persistent_live_ai_test",
         isolation_ready: true,
+        runtime_contract: "c3-widget-control-v2",
+        actor_id: authData.user.id,
         execution_ready: execution.ready,
         execution_failure: execution.ready ? null : execution.failure,
         remote_ready: execution.ready && execution.remote_ready,
@@ -376,12 +378,17 @@ return async (req: Request) => {
       });
     }
 
-    const requestedConversationId =
+    let requestedConversationId =
       typeof (body as Record<string, unknown>).test_conversation_id === "string"
         ? String((body as Record<string, unknown>).test_conversation_id)
         : "";
 
-    if (action === "load") {
+    if (action === "reconcile") {
+      if (!isUuid((body as any).client_message_id)) return json(req,{success:false,error:"invalid_client_message_id"},400);
+      // Deterministic lookup only. A missing row is not proof of non-delivery.
+      requestedConversationId = await testConversationId(authData.user.id, resolved.channelId, String((body as any).client_message_id));
+    }
+    if (action === "load" || action === "reconcile") {
       const owned = await loadOwnedTestConversation(
         admin,
         requestedConversationId,
@@ -397,6 +404,7 @@ return async (req: Request) => {
         mode: "persistent_live_ai_test",
         scope_mode: resolved.scopeMode,
         conversation_id: requestedConversationId,
+        ...(action === "reconcile" ? {reconciled_client_message_id: String((body as any).client_message_id)} : {}),
         conversation_status: owned.conversation.status,
         assigned_agent_id: owned.conversation.assigned_agent_id ?? null,
         human_control:
@@ -466,12 +474,14 @@ return async (req: Request) => {
     const messages = poll.messages ?? [];
     const {data: state,error: stateError} = await admin.from("conversations").select("status,assigned_agent_id").eq("id",conversationId).eq("company_id",resolved.companyId).eq("channel_config_id",resolved.channelId).maybeSingle();
     if (stateError || !state) return json(req,{success:false,error:"test_conversation_lookup_failed"},500);
+    if (!isUuid(sent.message_id)) return json(req,{success:false,error:"visitor_receipt_unverified"},503);
     const latestAssistant = [...messages].reverse().find((m:any) => m.role === "assistant" && m.metadata?.source_message_id === sent.message_id);
     return json(req, {
       success: true,
       mode: "persistent_live_ai_test",
       scope_mode: resolved.scopeMode,
       conversation_id: conversationId,
+      delivery_receipt: {persisted:true,conversation_id:conversationId,client_message_id:String((body as any).client_message_id),visitor_message_id:String(sent.message_id)},
       conversation_status: state?.status ?? null,
       assigned_agent_id: state?.assigned_agent_id ?? null,
       human_control:

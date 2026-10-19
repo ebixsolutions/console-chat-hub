@@ -1,3 +1,4 @@
+import { ORDINARY_PREVIEW_CONTRACT, ordinaryPreviewInputAllowed } from "../_shared/widget-preview-control.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
@@ -32,11 +33,27 @@ function attachmentType(mime: string): "image" | "video" | "file" {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method === "GET" && new URL(req.url).searchParams.get("console_preview") === ORDINARY_PREVIEW_CONTRACT) {
+    const channelId = new URL(req.url).searchParams.get("channel_id");
+    if (!isUuid(channelId)) return json({success:false,error:"invalid_channel_id"},400);
+    try {
+      const db = createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey());
+      const {data: channel,error} = await db.from("channel_config").select("id,company_id,is_active,channel_type,allowed_origins").eq("id",channelId).maybeSingle();
+      if (error) return json({success:false,error:"channel_lookup_failed"},500);
+      if (!channel || !channel.company_id || channel.is_active !== true || channel.channel_type !== "web_widget") return json({success:false,error:"widget_channel_unavailable"},403);
+      const company = await db.from("company").select("id,is_active").eq("id",channel.company_id).maybeSingle();
+      if (company.error || company.data?.is_active !== true) return json({success:false,error:"company_unavailable"},403);
+      const origin = validateWidgetOrigin(req,channel.allowed_origins);
+      if (!origin.ok) return json({success:false,error:origin.error},403);
+      return json({success:true,data:{console_preview:ORDINARY_PREVIEW_CONTRACT,paid_dispatch:false,channel_id:channel.id,company_id:channel.company_id}});
+    } catch { return json({success:false,error:"preview_contract_unavailable"},503); }
+  }
   if (req.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
 
   try {
     const requestContentType = req.headers.get("content-type") ?? "";
     const isMultipart = requestContentType.toLowerCase().startsWith("multipart/form-data");
+    let previewContract: unknown;
     let conversation_id: unknown;
     let session_token: unknown;
     let content: unknown = null;
@@ -52,6 +69,7 @@ Deno.serve(async (req) => {
       if (candidate instanceof File) attachment = candidate;
     } else {
       const body = await req.json().catch(() => ({}));
+      previewContract = body.console_preview;
       conversation_id = body.conversation_id;
       session_token = body.session_token;
       content = body.content;
@@ -116,6 +134,10 @@ Deno.serve(async (req) => {
       return json({ success: true, data: { message_id: String(txData.message_id), content_type: attachmentType(attachment.type), ai_reply_pending: false, idempotent: false } });
     }
 
+    if (previewContract !== undefined && (previewContract !== ORDINARY_PREVIEW_CONTRACT || !ordinaryPreviewInputAllowed(content))) {
+      // Definitive prewrite rejection: never route a preview business question to the model.
+      return json({success:false,error:"preview_business_dispatch_denied",message_written:false},409);
+    }
     const normalizedContent = String(content).trim();
     if (!normalizedContent) return json({ success: false, error: "invalid_content" }, 400);
     if (normalizedContent.length > 2000) return json({ success: false, error: "message_too_long" }, 400);
