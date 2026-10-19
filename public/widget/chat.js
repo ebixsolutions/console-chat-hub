@@ -16,8 +16,9 @@
     return;
   }
 
-  var consolePreview = script.getAttribute("data-console-preview") === "ordinary-widget-control-v1";
+  var consolePreview = script.getAttribute("data-console-preview") === "ordinary-widget-control-v2";
   var previewActor = script.getAttribute("data-preview-actor") || "";
+  var previewBridge = script.getAttribute("data-preview-bridge") || "";
   var previewCompany = script.getAttribute("data-company-id") || "";
   var previewContractReady = false;
   var composing = false;
@@ -1457,6 +1458,7 @@
 
   function resetAndFresh() {
     if (consolePreview && state.conversationId && readPendingText(state.conversationId)) { syncPreviewSend(); return; }
+    if(consolePreview && state.conversationId) localStorage.removeItem(P+"_preview_open_id");
     invalidatePollingContext();
     clearSession();
     state.sessionToken = null;
@@ -1491,6 +1493,16 @@
   }
 
   function api(path, opts) {
+    if (consolePreview && /^\/(create-visitor-session|receive-widget-message|widget-poll-messages)(\?|$)/.test(path)) {
+      return new Promise(function(resolve,reject){
+        if(!previewBridge || window.parent===window){reject(new Error("preview_authenticated_bridge_missing"));return;}
+        var id=crypto.randomUUID();
+        var timer=setTimeout(function(){window.removeEventListener("message",receive);reject(new Error("preview_delivery_unconfirmed"));},30000);
+        function receive(event){var d=event.data;if(event.source!==window.parent || event.origin!==window.location.origin || d?.type!=="ordinary-preview-response-v2" || d.nonce!==previewBridge || d.id!==id)return;clearTimeout(timer);window.removeEventListener("message",receive);resolve({ok:d.status>=200&&d.status<300,status:d.status,body:d.body});}
+        window.addEventListener("message",receive);
+        window.parent.postMessage({type:"ordinary-preview-request-v2",nonce:previewBridge,id:id,path:path,method:opts?.method||"POST",body:opts?.body},window.location.origin);
+      });
+    }
     return fetch(apiBase + path, opts).then(function (response) {
       return response.json().then(function (body) {
         return {
@@ -1691,6 +1703,7 @@
       });
   }
 
+  function previewOpenId() {var key=P+"_preview_open_id";var saved=localStorage.getItem(key);if(!saved){saved=crypto.randomUUID();localStorage.setItem(key,saved);}return saved;}
   function startFreshSession() {
     if (msgsEl) {
       msgsEl.innerHTML =
@@ -1704,7 +1717,7 @@
     api("/create-visitor-session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ channel_id: channelId }),
+      body: JSON.stringify({ channel_id: channelId, ...(consolePreview ? {console_preview:"ordinary-widget-control-v2",preview_request_id:previewOpenId()} : {}) }),
     })
       .then(function (res) {
         if (!res.ok || !res.body || !res.body.success) {
@@ -1715,6 +1728,8 @@
           return;
         }
 
+        if(consolePreview && (res.body.data.preview_contract!=="ordinary-widget-control-v2" || res.body.data.preview_revision!=="c3-preview-ce-zero-paid-v2")){previewContractReady=false;syncPreviewSend();return;}
+        if (consolePreview) previewContractReady = true;
         state.sessionToken = res.body.data.session_token;
         state.conversationId = res.body.data.conversation_id;
         saveSession();
@@ -1740,7 +1755,15 @@
       });
   }
 
-  function tryRestoreSession(stored) {
+  function tryRestoreSession(stored, verified) {
+    if(consolePreview && !verified){
+      api("/receive-widget-message",{method:"POST",body:JSON.stringify({action:"preview_context",console_preview:"ordinary-widget-control-v2",conversation_id:stored.convId,session_token:stored.token})}).then(function(res){
+        var d=res.body?.data;
+        var valid=res.ok && d?.contract==="ordinary-widget-control-v2" && d.revision==="c3-preview-ce-zero-paid-v2" && d.actor_id===previewActor && d.company_id===previewCompany && d.channel_id===channelId && d.conversation_id===stored.convId;
+        if(!valid){previewContractReady=false;state.sessionToken=stored.token;state.conversationId=stored.convId;restorePendingTextDraft();syncPreviewSend();return;}
+        tryRestoreSession(stored,true);
+      }).catch(function(){previewContractReady=false;state.sessionToken=stored.token;state.conversationId=stored.convId;restorePendingTextDraft();syncPreviewSend();});return;
+    }
     invalidatePollingContext();
 
     if (msgsEl) {
@@ -1855,9 +1878,9 @@
         setPanelVisible(true);
 
         if (consolePreview && !previewContractReady) {
-          return api("/receive-widget-message?console_preview=ordinary-widget-control-v1&channel_id=" + encodeURIComponent(channelId), {method:"GET"}).then(function (res) {
+          return api("/receive-widget-message?console_preview=ordinary-widget-control-v2&channel_id=" + encodeURIComponent(channelId), {method:"GET"}).then(function (res) {
             var data = res.body && res.body.data;
-            previewContractReady = Boolean(res.ok && res.body.success && data && data.console_preview === "ordinary-widget-control-v1" && data.paid_dispatch === false && data.channel_id === channelId && data.company_id === previewCompany);
+            previewContractReady = Boolean(res.ok && res.body.success && data && data.console_preview === "ordinary-widget-control-v2" && data.server_bound === true && data.preview_revision === "c3-preview-ce-zero-paid-v2" && data.actor_id === previewActor && data.paid_dispatch === false && data.channel_id === channelId && data.company_id === previewCompany);
             syncPreviewSend();
             if (previewContractReady) {
               var savedPreview = loadSession();
@@ -1967,7 +1990,7 @@
         session_token: state.sessionToken,
         content: text,
         client_message_id: pending.id,
-        ...(consolePreview ? {console_preview:"ordinary-widget-control-v1"} : {}),
+        ...(consolePreview ? {console_preview:"ordinary-widget-control-v2"} : {}),
       }),
       signal: AbortSignal.timeout(30000),
     })

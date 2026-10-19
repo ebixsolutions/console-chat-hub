@@ -4156,6 +4156,13 @@ async function orchestrationGenerateReply(
     });
   }
 
+  // Sealed server preview binding is the authority; no extra dependency for normal customer conversations.
+  if (conversation.metadata_source?.source === "ordinary_widget_control_preview") {
+    const scope=await supabaseAdmin.rpc("widget_control_preview_excluded",{p_conversation_id:conversation_id});
+    if(scope.error || typeof scope.data!=="boolean") return new Response(JSON.stringify({error:"preview_safety_scope_unavailable"}),{status:503,headers:corsHeaders});
+    if(scope.data) return new Response(JSON.stringify({success:true,skipped:"server_verified_control_preview"}),{headers:corsHeaders});
+  }
+
   flags = { ...flags, ENABLE_COACH: phase1CoachAllowed(conversation.company_id, flags.ENABLE_COACH) };
 
   if (conversation.status === "resolved" || conversation.status === "closed") {

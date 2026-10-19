@@ -1,3 +1,4 @@
+import { previewActorClient } from "../_shared/widget-preview-authority.ts";
 import { ORDINARY_PREVIEW_CONTRACT, ordinaryPreviewInputAllowed } from "../_shared/widget-preview-control.ts";
 import { isExplicitHandoffRequest } from "../_shared/handoff-intent.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
@@ -46,7 +47,13 @@ Deno.serve(async (req) => {
       if (company.error || company.data?.is_active !== true) return json({success:false,error:"company_unavailable"},403);
       const origin = validateWidgetOrigin(req,channel.allowed_origins);
       if (!origin.ok) return json({success:false,error:origin.error},403);
-      return json({success:true,data:{console_preview:ORDINARY_PREVIEW_CONTRACT,paid_dispatch:false,channel_id:channel.id,company_id:channel.company_id}});
+      const actor=await previewActorClient(req,createClient,Deno.env.get("SUPABASE_URL")!,Deno.env.get("SUPABASE_ANON_KEY")!);
+      if (!actor) return json({success:false,error:"preview_auth_required"},401);
+      const member=await db.from("company_membership").select("role,is_active").eq("user_id",actor.actorId).eq("company_id",channel.company_id).eq("is_active",true).maybeSingle();
+      if(member.error || !["admin","supervisor"].includes(member.data?.role)) return json({success:false,error:"preview_actor_role_denied"},403);
+      const schema=await db.rpc("widget_control_preview_excluded",{p_conversation_id:null});
+      if(schema.error || schema.data!==false) return json({success:false,error:"preview_safety_schema_unverified"},503);
+      return json({success:true,data:{console_preview:ORDINARY_PREVIEW_CONTRACT,server_bound:true,preview_revision:"c3-preview-ce-zero-paid-v2",actor_id:actor.actorId,paid_dispatch:false,channel_id:channel.id,company_id:channel.company_id}});
     } catch { return json({success:false,error:"preview_contract_unavailable"},503); }
   }
   if (req.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
@@ -55,6 +62,7 @@ Deno.serve(async (req) => {
     const requestContentType = req.headers.get("content-type") ?? "";
     const isMultipart = requestContentType.toLowerCase().startsWith("multipart/form-data");
     let previewContract: unknown;
+    let previewContext = false;
     let conversation_id: unknown;
     let session_token: unknown;
     let content: unknown = null;
@@ -71,6 +79,7 @@ Deno.serve(async (req) => {
     } else {
       const body = await req.json().catch(() => ({}));
       previewContract = body.console_preview;
+      previewContext = body.action === "preview_context";
       conversation_id = body.conversation_id;
       session_token = body.session_token;
       content = body.content;
@@ -83,7 +92,7 @@ Deno.serve(async (req) => {
     if (client_message_id != null && !isUuid(client_message_id)) {
       return json({ success: false, error: "invalid_client_message_id" }, 400);
     }
-    if (!isMultipart && typeof content !== "string") return json({ success: false, error: "invalid_request" }, 400);
+    if (!isMultipart && !previewContext && typeof content !== "string") return json({ success: false, error: "invalid_request" }, 400);
     if (isMultipart && !attachment) return json({ success: false, error: "invalid_attachment" }, 400);
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey());
@@ -97,6 +106,27 @@ Deno.serve(async (req) => {
     if (!channel || channel.is_active !== true || channel.channel_type !== "web_widget") return json({ success: false, error: "widget_channel_unavailable" }, 403);
     const originCheck = validateWidgetOrigin(req, channel.allowed_origins);
     if (!originCheck.ok) return json({ success: false, error: originCheck.error }, 403);
+
+    const scope=await supabase.from("conversations").select("id,visitor_session_id,metadata_source").eq("id",conversation_id).eq("visitor_session_id",sessionScope.id).maybeSingle();
+    if(scope.error || !scope.data) return json({success:false,error:"conversation_scope_unavailable"},403);
+    const previewHint=scope.data.metadata_source?.source === "ordinary_widget_control_preview";
+    if (previewHint || previewContract !== undefined) {
+      // A browser flag cannot promote a customer conversation. The protected registry and actual JWT decide.
+      const registered=await supabase.rpc("widget_control_preview_excluded",{p_conversation_id:conversation_id});
+      if(registered.error) return json({success:false,error:"preview_safety_schema_unverified"},503);
+      if(registered.data!==true || isMultipart || previewContract!==ORDINARY_PREVIEW_CONTRACT || (!previewContext && !ordinaryPreviewInputAllowed(content))) return json({success:false,error:"preview_scope_or_control_input_denied",message_written:false},403);
+      const actor=await previewActorClient(req,createClient,Deno.env.get("SUPABASE_URL")!,Deno.env.get("SUPABASE_ANON_KEY")!);
+      if(!actor) return json({success:false,error:"preview_auth_required",message_written:false},401);
+      if(previewContext){
+        const context=await actor.client.rpc("widget_control_preview_context",{p_conversation_id:conversation_id,p_session_token:session_token});
+        if(context.error || context.data?.contract!==ORDINARY_PREVIEW_CONTRACT) return json({success:false,error:"preview_actor_session_scope_denied"},403);
+        return json({success:true,data:context.data});
+      }
+      const {data,error}=await actor.client.rpc("widget_control_preview_message_tx",{p_conversation_id:conversation_id,p_session_token:session_token,p_content:content,p_client_message_id:client_message_id});
+      if(error?.code==="42501" || error?.code==="22023") return json({success:false,error:"preview_actor_scope_or_input_denied",message_written:false},403);
+      if(error || data?.preview_contract!==ORDINARY_PREVIEW_CONTRACT || !isUuid(data?.message_id)) return json({success:false,error:"preview_transaction_unconfirmed"},503);
+      return json({success:true,data});
+    }
 
     if (isMultipart && attachment) {
       if (attachment.size <= 0 || attachment.size > MAX_ATTACHMENT_BYTES) return json({ success: false, error: "file_too_large" }, 400);
@@ -160,56 +190,6 @@ Deno.serve(async (req) => {
     if (!messageId) return json({ success: false, error: "widget_message_missing_id" }, 500);
     if (result === "human_control") return json({ success: true, data: { message_id: messageId, ai_reply_pending: false, control_state: "human_control" } });
     if (result === "idempotent") return json({ success: true, data: { message_id: messageId, ai_reply_pending: Boolean(txData?.ai_reply_pending), control_state: "ai", idempotent: true } });
-
-    // Console ordinary-preview messages are real persisted visitor messages, but
-    // MUST terminate on existing native control transactions. Never dispatch
-    // generate-reply/KB/paid inference from a control-only preview request.
-    // The preview allowlist and Origin/session authority are checked above.
-    if (previewContract === ORDINARY_PREVIEW_CONTRACT) {
-      if (isExplicitHandoffRequest(normalizedContent)) {
-        const safeReply = normalizedContent === "請轉真人客服"
-          ? "已記錄你要求轉接真人客服的訊息。此對話現正等待客服跟進；不代表客服已接手。"
-          : "Your request for a human support agent has been recorded. This conversation is awaiting a human; an agent has not yet taken over.";
-        const { data: handoff, error: handoffError } = await supabase.rpc("explicit_handoff_tx", {
-          p_conversation_id: conversation_id,
-          p_safe_reply_content: safeReply,
-          p_source_message_id: messageId,
-        });
-        if (handoffError) {
-          return json({ success: false, error: "preview_handoff_commit_unconfirmed", message_written: true, message_id: messageId }, 503);
-        }
-        const resultCode = String(handoff?.result ?? "unknown");
-        if (["success", "already_handled", "already_under_human_control"].includes(resultCode)) {
-          return json({ success: true, data: { message_id: messageId, ai_reply_pending: false, control_state: "human_control", response_route: "ordinary_preview_handoff", handoff_result: resultCode } });
-        }
-        return json({ success: false, error: "preview_handoff_result_unconfirmed", message_written: true, message_id: messageId }, 409);
-      }
-      const safeReply = normalizedContent === "你是誰？"
-        ? "我是網站的自動客服助手，並非真人。這是受控 Widget 預覽回覆，沒有查詢知識庫；如需真人客服，請提出轉接要求。"
-        : "I am this site's automated support assistant, not a human. This is a controlled Widget preview reply without a Knowledge Base lookup; you can request a human agent.";
-      const { data: committed, error: commitError } = await supabase.rpc("commit_ai_reply_tx", {
-        p_conversation_id: conversation_id,
-        p_source_message_id: messageId,
-        p_content: safeReply,
-        p_metadata: {
-          response_route: "ordinary_preview_identity",
-          preview_contract: ORDINARY_PREVIEW_CONTRACT,
-          kb_lookup: false,
-          handoff_required: false,
-        },
-      });
-      if (commitError) {
-        return json({ success: false, error: "preview_identity_commit_unconfirmed", message_written: true, message_id: messageId }, 503);
-      }
-      const resultCode = String(committed?.result ?? "unknown");
-      if (["success", "idempotent"].includes(resultCode)) {
-        return json({ success: true, data: { message_id: messageId, ai_reply_pending: false, control_state: "ai", response_route: "ordinary_preview_identity" } });
-      }
-      if (["human_control", "superseded_source", "resolved"].includes(resultCode)) {
-        return json({ success: true, data: { message_id: messageId, ai_reply_pending: false, control_state: resultCode, response_route: "ordinary_preview_identity" } });
-      }
-      return json({ success: false, error: "preview_identity_result_unconfirmed", message_written: true, message_id: messageId }, 409);
-    }
 
     const route = classifyConversationalRoute(normalizedContent);
     const knownShortTopic = workflow5ShortTopicHint(normalizedContent);
