@@ -1,4 +1,5 @@
 import { ORDINARY_PREVIEW_CONTRACT, ordinaryPreviewInputAllowed } from "../_shared/widget-preview-control.ts";
+import { isExplicitHandoffRequest } from "../_shared/handoff-intent.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
@@ -159,6 +160,56 @@ Deno.serve(async (req) => {
     if (!messageId) return json({ success: false, error: "widget_message_missing_id" }, 500);
     if (result === "human_control") return json({ success: true, data: { message_id: messageId, ai_reply_pending: false, control_state: "human_control" } });
     if (result === "idempotent") return json({ success: true, data: { message_id: messageId, ai_reply_pending: Boolean(txData?.ai_reply_pending), control_state: "ai", idempotent: true } });
+
+    // Console ordinary-preview messages are real persisted visitor messages, but
+    // MUST terminate on existing native control transactions. Never dispatch
+    // generate-reply/KB/paid inference from a control-only preview request.
+    // The preview allowlist and Origin/session authority are checked above.
+    if (previewContract === ORDINARY_PREVIEW_CONTRACT) {
+      if (isExplicitHandoffRequest(normalizedContent)) {
+        const safeReply = normalizedContent === "請轉真人客服"
+          ? "已記錄你要求轉接真人客服的訊息。此對話現正等待客服跟進；不代表客服已接手。"
+          : "Your request for a human support agent has been recorded. This conversation is awaiting a human; no agent has taken over yet.";
+        const { data: handoff, error: handoffError } = await supabase.rpc("explicit_handoff_tx", {
+          p_conversation_id: conversation_id,
+          p_safe_reply_content: safeReply,
+          p_source_message_id: messageId,
+        });
+        if (handoffError) {
+          return json({ success: false, error: "preview_handoff_commit_unconfirmed", message_written: true, message_id: messageId }, 503);
+        }
+        const resultCode = String(handoff?.result ?? "unknown");
+        if (["success", "already_handled", "already_under_human_control"].includes(resultCode)) {
+          return json({ success: true, data: { message_id: messageId, ai_reply_pending: false, control_state: "human_control", response_route: "ordinary_preview_handoff", handoff_result: resultCode } });
+        }
+        return json({ success: false, error: "preview_handoff_result_unconfirmed", message_written: true, message_id: messageId }, 409);
+      }
+      const safeReply = normalizedContent === "你是誰？"
+        ? "我是網站的自動客服助手，並非真人。這是受控 Widget 預覽回覆，沒有查詢知識庫；如需真人客服，請提出轉接要求。"
+        : "I am this site's automated support assistant, not a human. This is a controlled Widget preview reply without a Knowledge Base lookup; you can request a human agent.";
+      const { data: committed, error: commitError } = await supabase.rpc("commit_ai_reply_tx", {
+        p_conversation_id: conversation_id,
+        p_source_message_id: messageId,
+        p_content: safeReply,
+        p_metadata: {
+          response_route: "ordinary_preview_identity",
+          preview_contract: ORDINARY_PREVIEW_CONTRACT,
+          kb_lookup: false,
+          handoff_required: false,
+        },
+      });
+      if (commitError) {
+        return json({ success: false, error: "preview_identity_commit_unconfirmed", message_written: true, message_id: messageId }, 503);
+      }
+      const resultCode = String(committed?.result ?? "unknown");
+      if (["success", "idempotent"].includes(resultCode)) {
+        return json({ success: true, data: { message_id: messageId, ai_reply_pending: false, control_state: "ai", response_route: "ordinary_preview_identity" } });
+      }
+      if (["human_control", "superseded_source", "resolved"].includes(resultCode)) {
+        return json({ success: true, data: { message_id: messageId, ai_reply_pending: false, control_state: resultCode, response_route: "ordinary_preview_identity" } });
+      }
+      return json({ success: false, error: "preview_identity_result_unconfirmed", message_written: true, message_id: messageId }, 409);
+    }
 
     const route = classifyConversationalRoute(normalizedContent);
     const knownShortTopic = workflow5ShortTopicHint(normalizedContent);

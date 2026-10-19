@@ -8,6 +8,32 @@ const body=text=>({conversation_id:conversation,session_token:token,client_messa
 test('read-only capability checks existing own channel and Origin without any session/message write',async()=>{reset();const r=await req(null,'GET');assert.equal(r.status,200);assert.equal(r.body.data.console_preview,'ordinary-widget-control-v1');assert.equal(r.body.data.paid_dispatch,false);assert.equal(f.rpc.length,0);assert.equal(f.fetch.length,0);assert.equal((await req(null,'GET','https://not-allowed.invalid')).status,403);f.active=false;assert.equal((await req(null,'GET')).status,403);assert.equal(f.rpc.length,0);});
 test('actual receive handler rejects preview business/composite/unknown protocol before message persistence or dispatch',async()=>{for(const text of ['Buy refrigerator','Who are you? Check refund','請轉真人並推薦洗衣機']){reset();const r=await req(body(text));assert.equal(r.status,409);assert.equal(r.body.message_written,false);assert.equal(f.rpc.length,0);assert.equal(f.fetch.length,0);}reset();const r=await req({...body('Who are you?'),console_preview:'unapproved'});assert.equal(r.status,409);assert.equal(f.rpc.length,0);});
 test('allowed ordinary preview control request retains existing transaction, stable ID and human-control suppression',async()=>{reset();const r=await req(body('請轉真人客服'));assert.equal(r.status,200);assert.equal(r.body.data.message_id,client);assert.equal(f.rpc.length,1);assert.equal(f.rpc[0].name,'receive_widget_message_tx');assert.equal(f.rpc[0].args.p_client_message_id,client);assert.equal(f.fetch.length,0);});
+// Actual success (not merely a mocked human_control short-circuit): no
+// preview-controlled request may ever reach generate-reply / paid transport.
+test('preview identity success commits deterministic source-bound reply without paid dispatch',async()=>{
+ for(const text of ['你是誰？','Who are you?']){
+  reset();
+  f.db.rpc=async(name,args)=>{f.rpc.push({name,args});if(name==='receive_widget_message_tx')return {data:{result:'success',message_id:client},error:null};if(name==='commit_ai_reply_tx')return {data:{result:'success',message_id:client},error:null};throw Error('unexpected RPC:'+name);};
+  const r=await req(body(text));assert.equal(r.status,200);assert.equal(r.body.data.response_route,'ordinary_preview_identity');
+  assert.equal(r.body.data.ai_reply_pending,false);assert.deepEqual(f.rpc.map(x=>x.name),['receive_widget_message_tx','commit_ai_reply_tx']);
+  assert.equal(f.rpc[1].args.p_source_message_id,client);assert.equal(f.rpc[1].args.p_metadata.kb_lookup,false);assert.equal(f.fetch.length,0);
+ }
+});
+test('preview explicit human success calls existing atomic R1 handoff and no model',async()=>{
+ for(const text of ['請轉真人客服','Please connect me to a human.']){
+  reset();f.db.rpc=async(name,args)=>{f.rpc.push({name,args});if(name==='receive_widget_message_tx')return {data:{result:'success',message_id:client},error:null};if(name==='explicit_handoff_tx')return {data:{result:'success'},error:null};throw Error('unexpected RPC:'+name);};
+  const r=await req(body(text));assert.equal(r.status,200);assert.equal(r.body.data.control_state,'human_control');assert.equal(r.body.data.handoff_result,'success');
+  assert.deepEqual(f.rpc.map(x=>x.name),['receive_widget_message_tx','explicit_handoff_tx']);
+  assert.equal(f.rpc[1].args.p_source_message_id,client);assert.match(f.rpc[1].args.p_safe_reply_content,/not yet|不代表/);assert.equal(f.fetch.length,0);
+ }
+});
+test('post-write preview control failure is not called a delivery success and never dispatches paid inference',async()=>{
+ for(const text of ['Who are you?','Please connect me to a human.']){
+  reset();f.db.rpc=async(name,args)=>{f.rpc.push({name,args});if(name==='receive_widget_message_tx')return {data:{result:'success',message_id:client},error:null};return {data:null,error:{code:'40001'}};};
+  const r=await req(body(text));assert.equal(r.status,503);assert.equal(r.body.success,false);assert.equal(r.body.message_written,true);assert.equal(r.body.message_id,client);
+  assert.equal(f.rpc.length,2);assert.equal(f.fetch.length,0);
+ }
+});
 test('ordinary non-preview visitor flow keeps the original transaction and human control',async()=>{reset();const b=body('Existing agent follow-up');delete b.console_preview;const r=await req(b);assert.equal(r.status,200);assert.equal(f.rpc.length,1);assert.equal(f.fetch.length,0);});
 test('Origin rejection cannot be turned into channel permission by preview flags',async()=>{reset();const r=await req(body('Who are you?'),'POST','https://not-allowed.invalid');assert.equal(r.status,403);assert.equal(f.rpc.length,0);assert.equal(f.fetch.length,0);});
 
