@@ -346,8 +346,8 @@ const listInput = z.object({
   channel: z.enum(["email", "website_widget"]).optional(),
   rating: z.union([z.number().int().min(1).max(5), z.literal("none")]).optional(),
   conversation_id: z.string().uuid().optional(),
-  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  from: z.iso.date().optional(),
+  to: z.iso.date().optional(),
   page: z.number().int().min(0).default(0),
   page_size: z.number().int().min(1).max(50).default(20),
 });

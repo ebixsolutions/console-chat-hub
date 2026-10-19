@@ -469,6 +469,7 @@
     "tests/model-accounting/remote-python.test.py",
     "tests/model-accounting/router.test.ts",
     "tests/model-accounting/source-coverage.test.mjs",
+    "tests/phase1/feedback-date-boundaries.test.mjs",
     "tests/phase1/preview-startup.test.mjs",
     "tests/phase1/request-response-propagation.test.mjs",
     "tests/quality95/frozen-inputs.json",
@@ -929,7 +930,7 @@
   },
   "authorized_live_execution_sha256": {
     ".github/scripts/c3_live_execution_manifest.mjs": "99550a1028ef2cb39d3d1b7480bb531e485a5c5fc7a7157afb26fbca99fe7310",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "179f5b79c5f16984a86802b773afc283dcedf0c5e7ccbbc2328a3dfdf560df85",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "e14bb9ea7ae93a925631312e27d31e4de67bdc8316cd67b042bcd20532c5ec64",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "85aa5132b0bfacc62501446afdc21ec1c6f8664b4b58bfd8e825ad70ba8cb38d",
     "docs/c3/live-execution-repair.json": "250f6e3ad487899eb4283de49da9800354e9a30c701971672b663b7f6ba11f65",
     "sql/c3_live_execution_dependencies.sql": "dbfd5c3444f99ffd0df22767a4c003098b765ef043492013f880191523a46a7c",
@@ -944,7 +945,7 @@
     "src/components/console/ce/CeBatchControls.tsx": "8ffd23e44d10b6f55af5492133c295fd68e253a6f8374044545d3dbc87feaa8c",
     "src/hooks/useTicketReply.ts": "859038852afeeecf28607296330cf2bf33397112b7bfd7764a2daf557cc9a3e2",
     "src/integrations/supabase/types.ts": "9212711fdaf464074201f1ab7e6be79c2c2a8297400a07ae2eabd3841d1c0b49",
-    "src/lib/api/feedback.service.ts": "1d6a9fdd9153a30b25db744b05e6250473301ecefa8f127a30f367e0f75e619a",
+    "src/lib/api/feedback.service.ts": "92b3aa444a3ca9192852748f20154487ac352fb3c27013b182a43b087fa362ba",
     "src/lib/api/inbox-read.ts": "2fd6997283647059ec7521b31d817a83a1dd608b5c42b9648b5bdb98273505e6",
     "src/lib/api/saved-responses.service.ts": "7e90ece18d526d33f95654e2cbd4d0a41a6feabbc2da5dd7d9fea2bfd879864f",
     "src/lib/console/csv-export.ts": "0fd7344a3e66faba5df7e7e8840de7de0a2d70fdcdef5675b3dd9bd28ebd96b4",
@@ -996,7 +997,8 @@
     "src/components/console/ConversationList.tsx": "7e38db3f5c8fed96b15ab6ca5f7154a1683ab41a6c0c86b9b9eea6b758204944",
     "tests/console-navigation/conversation-list.test.mjs": "224ea22ab6e8239287d23ef33924c8b1032883bc55b6c45d39b712b29e1a3458",
     "src/start.ts": "30474eb76daf45109e57af25064639f1bfdd0a00447602a0c4464b27ee8aff55",
-    "tests/phase1/request-response-propagation.test.mjs": "93165be7a2053cba477300bc53570e094ad2df7776bb29f3a6de47f8ab2a90f4"
+    "tests/phase1/request-response-propagation.test.mjs": "93165be7a2053cba477300bc53570e094ad2df7776bb29f3a6de47f8ab2a90f4",
+    "tests/phase1/feedback-date-boundaries.test.mjs": "5a028ec643d9e7ff22c3e4df81d0004d9955a23d066d7824b4fc847802a45b7d"
   },
   "live_execution_deployment_authorized": false
 }
