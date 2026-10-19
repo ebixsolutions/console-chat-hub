@@ -336,6 +336,7 @@
     "src/components/console/SavedResponses.tsx",
     "src/components/console/TicketHandoffSummary.tsx",
     "src/components/console/VisitorAnalyticsDetail.tsx",
+    "src/components/console/WidgetLiveAiTest.tsx",
     "src/components/console/ce/CeBatchControls.tsx",
     "src/components/console/handoff-summary.ts",
     "src/hooks/useConsoleIdentity.ts",
@@ -460,6 +461,7 @@
     "tests/console-navigation/handoff-summary-readback.test.mjs",
     "tests/console-navigation/inbox-history-search.test.mjs",
     "tests/console-navigation/inbox-reply.test.mjs",
+    "tests/console-navigation/legacy-widget-entry.test.mjs",
     "tests/console-navigation/ordinary-preview-route.test.mjs",
     "tests/console-navigation/ordinary-widget-dom.test.mjs",
     "tests/console-navigation/original-action-exports.test.mjs",
@@ -945,8 +947,8 @@
   },
   "authorized_live_execution_sha256": {
     ".github/scripts/c3_live_execution_manifest.mjs": "99550a1028ef2cb39d3d1b7480bb531e485a5c5fc7a7157afb26fbca99fe7310",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "7c3d8a955a0b5b86cec11095396fce95387f83eee6a9063859c4bb37ab7b3135",
-    ".github/workflows/task-ai-abc-c3-final-gate.yml": "94cbe9fbd8eb3b2fd763c61cd490e15163d93a36f0146738c85b0c2cd04c9b59",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "fbd8eaa16963e8312b8ca790576c6b1e029224792f165224b0496467a9bf1c81",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "eabc8ff0c9ef564c56bc47cbdfbeeff8c383929e1bcb7247d21de9eae35be5a9",
     "docs/c3/live-execution-repair.json": "250f6e3ad487899eb4283de49da9800354e9a30c701971672b663b7f6ba11f65",
     "sql/c3_live_execution_dependencies.sql": "dbfd5c3444f99ffd0df22767a4c003098b765ef043492013f880191523a46a7c",
     "sql/c3_live_execution_dependencies_rollback.sql": "264d17d0a91194d695daa973425af9b0ab9e089f1a4897797dce6b9ace85a3ec",
@@ -1029,8 +1031,10 @@
     "supabase/functions/_shared/widget-preview-control.ts": "6b774fff93e36d2262909ce6e5cc4c045dc3f1d7687ded57a9edd82aaa4b8da1",
     "tests/c3-widget-live-auth/ordinary-receive.test.mjs": "d2213aa052f87bac2edbc0e79e93f75501c8c118d05f325aac893c8c94b380e1",
     "tests/console-navigation/console-role-display.test.mjs": "5d71cc434b5d7e059563ab22be19b4df0f19d4e3a4334bad27854aab0fefb8c1",
-    "tests/console-navigation/ordinary-preview-route.test.mjs": "8a1dc5685e49b890632a429406b77a6d8ad16a143601ddfe76640cb9886af364",
-    "tests/console-navigation/ordinary-widget-dom.test.mjs": "24f0b11ce27793310540a6a3e97a48edb8a2886106ffcf7b139a8446b270be49"
+    "tests/console-navigation/ordinary-preview-route.test.mjs": "bc5a26cd150df4281ccb1cb442462b9b220917a0749d803c3715d0f6e87e1933",
+    "tests/console-navigation/ordinary-widget-dom.test.mjs": "24f0b11ce27793310540a6a3e97a48edb8a2886106ffcf7b139a8446b270be49",
+    "tests/console-navigation/legacy-widget-entry.test.mjs": "5374768522357087f6fe3d4242097b261497f46b5e34fa8de03b29926b13b63e",
+    "src/components/console/WidgetLiveAiTest.tsx": "faabd8ac72edea9a3e213dc73e8dd3053d2a783277fdb9ebc7813a899892a5fb"
   },
   "live_execution_deployment_authorized": false
 }
