@@ -51,7 +51,9 @@ function reset(){
  document.body.innerHTML='';window.localStorage.clear();intervals=new Map();calls=[];network=0;
  globalThis.setInterval=fn=>{const id={};intervals.set(id,fn);return id;};globalThis.clearInterval=id=>intervals.delete(id);
  Object.assign(f,{actor:{id:'actor'},ready:true,wrongTenant:false,status:'open',human:false});
+ f.historyResponse=null;
  f.invoke=async(name,{body})=>{calls.push(body);assert.equal(name,'widget-live-ai-test');
+  if(body.action==='history' && f.historyResponse)return f.historyResponse;
   if(body.action==='history')return {error:null,data:{success:true,isolation_ready:f.ready,execution_ready:false,remote_ready:false,company_id:f.wrongTenant?'foreign':company,channel_id:channel,history:[]}};
   if(body.action==='load')return {error:null,data:{success:true,conversation_id:body.test_conversation_id,conversation_status:f.status,human_control:f.human,messages:[]}};
   return {error:new Error('Unexpected dispatch trapped by local fixture'),data:null};
@@ -124,4 +126,19 @@ test('human control still permits local visitor composition without inventing a 
 test('local draft is separated by Channel and survives an unrelated server poll',async t=>{
  reset();window.localStorage.setItem(key,conversation);const r=await mount(t);await edit(r,'同一票草稿');await act(async()=>{for(const poll of intervals.values())await poll();});assert.equal(field(r).value,'同一票草稿');
  await act(async()=>r.root.render(React.createElement(PreviewWidget,{...props,scopeChannelId:'other-channel'})));assert.equal(field(r).value,'');assert.equal(button(r,'Send').disabled,true);noDispatch();
+});
+
+test('scope diagnostics preserve HTTP auth, conflict and readiness distinctions without dispatch',async t=>{
+ for(const status of [401,403,409,503]){
+  reset();f.historyResponse={data:null,error:{context:new Response('{}',{status})}};const r=await mount(t);
+  assert.match(r.host.textContent,new RegExp('HTTP '+status));assert.equal(button(r,'Send').disabled,true);await edit(r,'safe local draft');noDispatch();await r.close();
+ }
+});
+test('non-C3 scope and selected-channel mismatch are explicit, draft-only and never broaden tenant access',async t=>{
+ reset();f.ready=false;const r=await mount(t);assert.match(r.host.textContent,/C3 isolated test scope is not available/);assert.equal(button(r,'Send').disabled,true);noDispatch();await r.close();
+ reset();f.wrongTenant=true;const wrong=await mount(t);assert.match(wrong.host.textContent,/selected company\/channel does not match/);assert.equal(button(wrong,'Send').disabled,true);noDispatch();
+});
+test('execution and remote readiness are not described as role denial or empty KB',async t=>{
+ reset();f.historyResponse={data:{success:true,isolation_ready:true,company_id:company,channel_id:channel,execution_ready:false,execution_failure:{code:'UAT_REMOTE_BOUND_UNVERIFIED',stage:'admission',retryable:false},remote_ready:false,history:[]},error:null};const r=await mount(t);assert.match(r.host.textContent,/UAT_REMOTE_BOUND_UNVERIFIED/);noDispatch();await r.close();
+ reset();f.historyResponse={data:{success:true,isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,history:[]},error:null};const remote=await mount(t);assert.match(remote.host.textContent,/remote KB queries are not yet authorized/);noDispatch();
 });

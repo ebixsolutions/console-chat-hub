@@ -117,7 +117,7 @@ const PREVIEW_DEFAULT: LiveWidgetConfigRow = {
 
 const COPY = {
   en: {
-    denied: "You do not have permission to view widget preview.",
+    denied: "Widget Preview requires an active Admin or Supervisor membership. Agents should use Inbox / Tickets; accounts without membership need an authorized administrator to confirm access.",
     subtitle:
       "Configure appearance and test the Widget interaction flow. Live AI Test uses the real Singapore Knowledge Base and governed LLM with persistent test conversations that appear in the AI Chatbot Inbox while remaining clearly marked as test data.",
     preview: "Preview",
@@ -149,7 +149,7 @@ const COPY = {
       "The Knowledge Base returned no authoritative full-content evidence for this query.",
   },
   zh: {
-    denied: "您沒有權限查看 Widget 預覽。",
+    denied: "Widget 預覽需要有效的 Admin 或 Supervisor 成員資格。Agent 請使用 Inbox／Ticket；沒有成員資格的帳戶需由獲授權管理員核實存取權限。",
     subtitle:
       "設定 Widget 外觀並測試互動流程。Live AI Test 會使用真實 Singapore Knowledge Base 及受管控 LLM，並建立可保留的測試對話；測試對話會顯示於 AI Chatbot Inbox，但會明確標記為 test data。",
     preview: "預覽",
@@ -261,13 +261,14 @@ function safeLiveError(
 }
 
 function WidgetPreviewGuard() {
-  const { role, loading } = useCurrentRole();
+  const { role, loading, actorId, error, retry } = useCurrentRole();
   const lang = useConsoleLang();
   if (loading) return <LoadingState />;
+  if (error) return <div role="alert"><p>{lang === "zh" ? "未能核實目前帳戶的權限；請重試。" : "Current account permissions could not be verified. Please retry."}</p><Button onClick={retry}>{lang === "zh" ? "重試" : "Retry"}</Button></div>;
   if (role !== "admin" && role !== "supervisor") {
     return <PermissionDenied message={COPY[lang].denied} />;
   }
-  return <WidgetPreviewContent role={role} />;
+  return <WidgetPreviewContent key={actorId} role={role} />;
 }
 
 function WidgetPreviewContent({
@@ -823,6 +824,8 @@ function PreviewWidget({
     ? `widget_live_test:${user.id}:${scopeCompanyId}:${scopeChannelId}` : null;
   const [testConversationId, setTestConversationId] = useState<string | null>(null);
   const [scopeReady, setScopeReady] = useState(false);
+  const [scopeFailure, setScopeFailure] = useState<string | null>(null);
+  const [executionFailure, setExecutionFailure] = useState<string | null>(null);
   const [conversationClosed, setConversationClosed] = useState(false);
   const [conversationVerified, setConversationVerified] = useState(false);
   const [executionReady, setExecutionReady] = useState(false);
@@ -927,6 +930,8 @@ function PreviewWidget({
     setMessages([]);
     setHistory([]);
     setScopeReady(false);
+    setScopeFailure(null);
+    setExecutionFailure(null);
     setConversationClosed(false);
     setConversationVerified(false);
     composing.current = false;
@@ -1024,8 +1029,19 @@ function PreviewWidget({
       const { data, error } = await invokeLiveWidget({ action: "history" });
       if (epoch !== conversationEpoch.current) return;
       const ready = !error && data?.success === true && data.isolation_ready === true && data.company_id === scopeCompanyId && data.channel_id === scopeChannelId;
+      let reason: string | null = null;
+      if (error) {
+        const status = error?.context?.status;
+        reason = Number.isInteger(status) && status >= 400 && status < 600
+          ? `HTTP ${status}` : "scope_lookup_failed";
+      } else if (data?.success !== true) reason = "scope_lookup_failed";
+      else if (data.isolation_ready !== true) reason = "isolated_scope_unavailable";
+      else if (data.company_id !== scopeCompanyId || data.channel_id !== scopeChannelId) reason = "selected_scope_mismatch";
+      setScopeFailure(reason);
+      const executionCode = data?.execution_failure?.code;
+      setExecutionFailure(ready && ["UAT_AUTHORIZATION_ABSENT", "UAT_SOURCE_OR_RUN_DENIED", "UAT_DEPENDENCY_MISSING", "UAT_ADMISSION_DENIED", "UAT_REMOTE_BOUND_UNVERIFIED", "UAT_SCOPE_DENIED", "UAT_ISOLATION_DENIED"].includes(executionCode) ? executionCode : null);
       setScopeReady(ready);
-      setHistoryFailure(!ready);
+      setHistoryFailure(Boolean(error) || data?.success !== true);
       setExecutionReady(ready && data?.execution_ready === true);
       setRemoteReady(ready && data?.remote_ready === true);
       if (ready && Array.isArray(data.history)) {
@@ -1034,6 +1050,8 @@ function PreviewWidget({
     } catch {
       if (epoch === conversationEpoch.current) {
         setScopeReady(false);
+        setScopeFailure("scope_lookup_failed");
+        setExecutionFailure(null);
         setExecutionReady(false);
         setRemoteReady(false);
         setHistoryFailure(true);
@@ -1459,6 +1477,7 @@ function PreviewWidget({
             {lang === "zh"
               ? (!executionReady ? "AI 測試執行尚未啟用，暫不能產生商業問題回覆。歷史對話仍可查看；真人請求按既有流程處理，尚未代表已轉交。" : "模型執行已配置；遠端 KB 查詢尚未獲准。這不代表 KB 沒有資料。")
               : (!executionReady ? "AI test execution is not activated for business replies. History remains available; human requests use the existing process and are not yet transfers." : "Model execution is configured; remote KB queries are not yet authorized. This does not mean the KB has no matching information.")}
+            {executionFailure && <span className="block">{executionFailure}</span>}
           </p>
         )}
         {mode === "live" && !scopeReady && (
@@ -1468,6 +1487,19 @@ function PreviewWidget({
                 ? (lang === "zh" ? "正在核實隔離測試範圍；KB 存取尚未確認。" : "Verifying isolated test scope; KB access is not yet confirmed.")
                 : (lang === "zh" ? "暫時無法連接此測試 channel。請選擇獲准使用的 channel，或請管理員核對設定。KB 存取尚未確認。" : "This test channel is unavailable. Select an authorized channel or ask an administrator to check its settings. KB access is not yet confirmed.")}
             </p>
+            {!historyLoading && scopeFailure && <p role="status">{scopeFailure === "isolated_scope_unavailable"
+              ? (lang === "zh" ? "目前帳戶沒有此 C3 隔離測試範圍；這不代表沒有自己公司的 Widget 權限。" : "C3 isolated test scope is not available for this account. This does not deny access to your own company's ordinary Widget.")
+              : scopeFailure === "selected_scope_mismatch"
+              ? (lang === "zh" ? "所選公司／channel 與伺服器核實的測試範圍不一致；傳送已阻擋。" : "The selected company/channel does not match the server-verified test scope. Sending is blocked.")
+              : scopeFailure === "HTTP 401"
+              ? (lang === "zh" ? "HTTP 401：伺服器未能核實目前登入；請使用正常登入流程。" : "HTTP 401: the server could not authenticate this session. Use normal sign-in.")
+              : scopeFailure === "HTTP 403"
+              ? (lang === "zh" ? "HTTP 403：伺服器拒絕此測試要求；請核對目前帳戶、角色及 Origin。" : "HTTP 403: the server denied this test request. Check the current account, role and Origin.")
+              : scopeFailure === "HTTP 409"
+              ? (lang === "zh" ? "HTTP 409：測試範圍發生衝突；尚未獲准傳送。" : "HTTP 409: test scope conflict. Sending is not authorized.")
+              : scopeFailure === "HTTP 503"
+              ? (lang === "zh" ? "HTTP 503：測試 scope／channel 服務未就緒；這不是未登入的證據。" : "HTTP 503: test scope/channel service is not ready. This is not proof of being signed out.")
+              : (lang === "zh" ? "未能核實測試連線；尚未獲准傳送。" : "Test connection could not be verified. Sending is not authorized.")}</p>}
             <p>{lang === "zh" ? "你可以先在本機編寫草稿；完成 channel 核實前不能傳送。" : "You can compose a local draft. Sending stays unavailable until this channel is verified."}</p>
             {!historyLoading && storageKey && <button type="button" className="mt-1 underline" onClick={() => void loadLiveHistory()}>{lang === "zh" ? "重試連線" : "Retry connection"}</button>}
           </div>

@@ -336,6 +336,7 @@
     "src/components/console/VisitorAnalyticsDetail.tsx",
     "src/components/console/ce/CeBatchControls.tsx",
     "src/components/console/handoff-summary.ts",
+    "src/hooks/useCurrentRole.ts",
     "src/hooks/useTicketReply.ts",
     "src/integrations/supabase/previewAuthStorage.ts",
     "src/integrations/supabase/types.ts",
@@ -443,6 +444,7 @@
     "tests/c3-widget-live-auth/handler.test.mjs",
     "tests/console-navigation/ce-batch.test.mjs",
     "tests/console-navigation/conversation-list.test.mjs",
+    "tests/console-navigation/current-role.test.mjs",
     "tests/console-navigation/detail-reply.test.mjs",
     "tests/console-navigation/handoff-banner.test.mjs",
     "tests/console-navigation/handoff-summary-readback.test.mjs",
@@ -931,8 +933,8 @@
   },
   "authorized_live_execution_sha256": {
     ".github/scripts/c3_live_execution_manifest.mjs": "99550a1028ef2cb39d3d1b7480bb531e485a5c5fc7a7157afb26fbca99fe7310",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "7c5b563555e84f8894353ff36deb582475531f3845ce62d66f494b2a5b31cb5a",
-    ".github/workflows/task-ai-abc-c3-final-gate.yml": "7cbd36b8c97c0d46f4958dd294d921cfb894d0457493d77eff4165af16162a96",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "1ce8716dba72559f61ae03f7c1944e5a11f09594dbcab12b2f408e1760c709f0",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "d30849be34928219fabf16902292e67e81fa2972d817c100eb1ad1667398f777",
     "docs/c3/live-execution-repair.json": "250f6e3ad487899eb4283de49da9800354e9a30c701971672b663b7f6ba11f65",
     "sql/c3_live_execution_dependencies.sql": "dbfd5c3444f99ffd0df22767a4c003098b765ef043492013f880191523a46a7c",
     "sql/c3_live_execution_dependencies_rollback.sql": "264d17d0a91194d695daa973425af9b0ab9e089f1a4897797dce6b9ace85a3ec",
@@ -958,7 +960,7 @@
     "src/routes/_authenticated/console.conversations.$id.tsx": "483b57afe482e0157dacf189c9e2442a82e64ec29f4de3a55c8a545b9c188d11",
     "src/routes/_authenticated/console.conversations.index.tsx": "9c2480a49fe22f23496feda153026a480ca93a34440e0c2cc9c4a8ae1490f705",
     "src/routes/_authenticated/console.feedback-responses.tsx": "5abd8f12c1c7f6907682db99fc8fab954b7313f4467cd6b2c2c45d219a246a31",
-    "src/routes/_authenticated/console.widget-preview.tsx": "868a7ed5ab800b2dcc681d24e6af12ed65dc4abd82b2f4b838e3697b1ac8f28a",
+    "src/routes/_authenticated/console.widget-preview.tsx": "8c1efbf992205d76a09a934e6f966faeac454be4c700ee4de7399acf4633cb55",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "dfbe7a1eefb5e65c567b3656a9b603bccbb93211ee29c8415b370d9e88028128",
     "supabase/functions/_shared/conversational-routing.ts": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3",
     "supabase/functions/_shared/execution-failure.ts": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249",
@@ -1000,7 +1002,9 @@
     "src/start.ts": "30474eb76daf45109e57af25064639f1bfdd0a00447602a0c4464b27ee8aff55",
     "tests/phase1/request-response-propagation.test.mjs": "93165be7a2053cba477300bc53570e094ad2df7776bb29f3a6de47f8ab2a90f4",
     "tests/phase1/feedback-date-boundaries.test.mjs": "5a028ec643d9e7ff22c3e4df81d0004d9955a23d066d7824b4fc847802a45b7d",
-    "tests/console-navigation/widget-input-dom.test.mjs": "e7b405fc1be63130aff18df6c1d1c7eb6b89f586385e546183800fd5c8d8271f"
+    "tests/console-navigation/widget-input-dom.test.mjs": "83fe5f84cc34240cb57d00230ef44bf312ec4136004118a4482d30eaab48d6d8",
+    "src/hooks/useCurrentRole.ts": "ad2b68dd13a81a711b4a87a6ab9a6aa2949d3bed58d2fcbff3d816742fe1c41e",
+    "tests/console-navigation/current-role.test.mjs": "4de66573f4b4724386dabfb0b528e6bcce26c4d25a74ee658d648966cf260139"
   },
   "live_execution_deployment_authorized": false
 }
