@@ -77,7 +77,7 @@ test('business readiness does not disable local identity/presence or explicit hu
   assert.deepEqual(sends().map(x=>x.body.query),['你是誰','有人吗？','Please connect me to human support']);await close(r);
 });
 test('history transport failure is not empty history or business admission; retry restores verified scope',async()=>{
-  reset();fixture.historyError=true;const r=await mount();await click(r,'Conversation History');assert.match(content(r),/History.*(?:unavailable|could not be loaded)/);assert(!content(r).includes('No Live AI Test history yet.'));assert.equal(r.root.findByType('input').props.disabled,true);
+  reset();fixture.historyError=true;const r=await mount();await click(r,'Conversation History');assert.match(content(r),/History.*(?:unavailable|could not be loaded)/);assert(!content(r).includes('No Live AI Test history yet.'));assert.equal(r.root.findByType('input').props.disabled,false);assert.equal(button(r,'Send').props.disabled,true);
   fixture.historyError=false;await click(r,'Retry connection');assert.equal(r.root.findByType('input').props.disabled,false);assert.equal(sends().length,0);await close(r);
 });
 test('three polling failures preserve messages, pause reads and explicitly restart the SAME conversation',async()=>{
@@ -105,7 +105,7 @@ test('pending delivery survives reload and remains blocked until exact visitor r
   reset();store.set(storageKey+':pending',JSON.stringify({id:'pending-id',text:'For my agent'}));fixture.human=true;const r=await mount();assert.equal(button(r,'Send').props.disabled,true);fixture.rows.push({id:'human-visitor',role:'visitor',content:'For my agent',metadata:{client_message_id:'pending-id'}});await tick();assert(!store.has(storageKey+':pending'));assert.equal(sends().length,0);await close(r);
 });
 test('scope changes discard old conversation data and require new verified context',async()=>{
-  reset();const r=await mount();fixture.historyError=true;fixture.rows=[];await act(async()=>r.update(React.createElement(PreviewWidget,{...props,scopeChannelId:'different-channel'})));assert(!content(r).includes('Existing request'));assert.equal(r.root.findByType('input').props.disabled,true);assert.equal(sends().length,0);await close(r);
+  reset();const r=await mount();fixture.historyError=true;fixture.rows=[];await act(async()=>r.update(React.createElement(PreviewWidget,{...props,scopeChannelId:'different-channel'})));assert(!content(r).includes('Existing request'));assert.equal(r.root.findByType('input').props.disabled,false);assert.equal(r.root.findByType('input').props.value,'');assert.equal(button(r,'Send').props.disabled,true);assert.equal(sends().length,0);await close(r);
 });
 
 test('a polled AI-pending flag cannot intercept an explicit R1 when no send is in flight',async()=>{

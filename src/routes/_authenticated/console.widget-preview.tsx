@@ -823,6 +823,8 @@ function PreviewWidget({
     ? `widget_live_test:${user.id}:${scopeCompanyId}:${scopeChannelId}` : null;
   const [testConversationId, setTestConversationId] = useState<string | null>(null);
   const [scopeReady, setScopeReady] = useState(false);
+  const [conversationClosed, setConversationClosed] = useState(false);
+  const [conversationVerified, setConversationVerified] = useState(false);
   const [executionReady, setExecutionReady] = useState(false);
   const [remoteReady, setRemoteReady] = useState(false);
   const [liveFailure, setLiveFailure] = useState<string | null>(null);
@@ -843,9 +845,37 @@ function PreviewWidget({
   const actionAreaRef = useRef<HTMLDivElement | null>(null);
   const conversationEpoch = useRef(0);
   const replyInFlight = useRef(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const composing = useRef(false);
+  const emojiCaret = useRef<number | null>(null);
   const [humanState, setHumanState] = useState<
     "none" | "waiting" | "assigned"
   >("none");
+  // Scope admission controls Send, not harmless local draft composition.
+  const inputEditable = mode === "live"
+    ? Boolean(storageKey) && !conversationClosed && !pendingSend.current && !replyInFlight.current
+    : !typing && humanState === "none";
+  const draftKey = storageKey ? `${storageKey}:draft:${testConversationId ?? "new"}` : null;
+  const readDraft = (conversationId: string | null) => {
+    if (!storageKey) return "";
+    try { return (window.localStorage.getItem(`${storageKey}:draft:${conversationId ?? "new"}`) ?? "").slice(0, 500); }
+    catch { return ""; }
+  };
+  const updateInput = (value: string) => {
+    setInput(value);
+    if (mode === "live" && draftKey) {
+      try {
+        if (value) window.localStorage.setItem(draftKey, value);
+        else window.localStorage.removeItem(draftKey);
+      } catch { /* Storage restrictions must not prevent local typing. */ }
+    }
+  };
+  useEffect(() => {
+    if (emojiCaret.current === null) return;
+    inputRef.current?.focus();
+    inputRef.current?.setSelectionRange(emojiCaret.current, emojiCaret.current);
+    emojiCaret.current = null;
+  }, [input]);
   useEffect(() => {
     if (mode !== "live" || humanState !== "waiting") return;
     const timer = setInterval(() => setClock(Date.now()), 1000);
@@ -871,7 +901,8 @@ function PreviewWidget({
   useEffect(() => {
     conversationEpoch.current += 1;
     replyInFlight.current = false;
-    setInput("");
+    composing.current = false;
+    setInput(mode === "live" ? pendingSend.current?.text ?? readDraft(testConversationId) : "");
     setTyping(false);
     setHumanState("none");
     setHistoryOpen(false);
@@ -896,6 +927,10 @@ function PreviewWidget({
     setMessages([]);
     setHistory([]);
     setScopeReady(false);
+    setConversationClosed(false);
+    setConversationVerified(false);
+    composing.current = false;
+    emojiCaret.current = null;
     setExecutionReady(false);
     setRemoteReady(false);
     setHistoryFailure(false);
@@ -904,7 +939,8 @@ function PreviewWidget({
     setTyping(false);
     setHumanState("none");
     setLiveFailure(null);
-    setTestConversationId(storageKey ? window.localStorage.getItem(storageKey) : null);
+    const restoredConversationId = storageKey ? window.localStorage.getItem(storageKey) : null;
+    setTestConversationId(restoredConversationId);
     pendingSend.current = null;
     if (storageKey) {
       try {
@@ -912,7 +948,7 @@ function PreviewWidget({
         if (saved && typeof saved.id === "string" && typeof saved.text === "string") pendingSend.current = saved;
       } catch { window.localStorage.removeItem(storageKey + ":pending"); }
     }
-    setInput(pendingSend.current?.text ?? "");
+    setInput(pendingSend.current?.text ?? readDraft(restoredConversationId));
     return () => { conversationEpoch.current += 1; };
   }, [storageKey]);
 
@@ -938,6 +974,7 @@ function PreviewWidget({
   };
 
   const loadLiveConversation = async (conversationId: string, switching = false, signal?: AbortSignal) => {
+    if (switching) setConversationVerified(false);
     const epoch = switching ? ++conversationEpoch.current : conversationEpoch.current;
     let result;
     try { result = await invokeLiveWidget({ action: "load", test_conversation_id: conversationId }, signal); }
@@ -953,13 +990,15 @@ function PreviewWidget({
     }
     if (switching) {
       setMessages([]);
-      setInput(pendingSend.current?.text ?? "");
+      setInput(pendingSend.current?.text ?? readDraft(conversationId));
       setTyping(false);
       replyInFlight.current = false;
     }
     setConversationFailure(false);
     if (switching) setPollRevision(value => value + 1);
     setTestConversationId(data.conversation_id);
+    setConversationClosed(["resolved", "closed"].includes(String(data.conversation_status ?? "")));
+    setConversationVerified(true);
     if (storageKey) window.localStorage.setItem(storageKey, data.conversation_id);
     const underHumanControl =
       data.human_control === true ||
@@ -1084,12 +1123,12 @@ function PreviewWidget({
   };
 
   const appendLiveFailure = (text: string, _detail: string) => {
-    if (text) setInput(text);
+    if (text) updateInput(text);
     setLiveFailure(lang === "zh" ? "未能確認傳送結果。請重新讀取對話核實；結果未明前不會再次發送。" : "Delivery could not be confirmed. Refresh the conversation to reconcile it; it will not be sent again while the outcome is unknown.");
   };
 
   const runLiveAi = async (text: string) => {
-    if (!storageKey || !scopeReady) return;
+    if (!storageKey || !scopeReady || conversationClosed || (testConversationId && !conversationVerified)) return;
     if (pendingSend.current) {
       setInput(pendingSend.current.text);
       setLiveFailure(lang === "zh" ? "上一則訊息結果未明，請先重新讀取對話核實。" : "The previous delivery is unresolved. Refresh the conversation to reconcile it first.");
@@ -1123,7 +1162,7 @@ function PreviewWidget({
         // This rejection is before persistence. No replay or model-admission bypass.
         pendingSend.current = null;
         window.localStorage.removeItem(storageKey + ":pending");
-        setInput(text);
+        updateInput(text);
         setLiveFailure(lang === "zh" ? "此商業查詢尚未獲准執行；訊息未發送。你仍可詢問 AI 身份、確認在場或明確要求真人客服。" : "This business query is not admitted and was not sent. You can still ask about AI identity or presence, or explicitly request human support.");
         return;
       }
@@ -1149,6 +1188,8 @@ function PreviewWidget({
 
       const result = payload as LiveAiResponse;
       setTestConversationId(result.conversation_id);
+      setConversationClosed(["resolved", "closed"].includes(String(result.conversation_status ?? "")));
+      setConversationVerified(true);
       window.localStorage.setItem(storageKey, result.conversation_id);
       window.localStorage.removeItem(storageKey + ":pending");
       pendingSend.current = null;
@@ -1198,10 +1239,10 @@ function PreviewWidget({
   };
 
   const send = () => {
-    if ((mode === "simulation" && typing) || replyInFlight.current || !input.trim() || (mode === "live" && !scopeReady)) return;
+    if (!inputEditable || composing.current || !input.trim() || (mode === "live" && (!scopeReady || Boolean(pendingSend.current) || (testConversationId && !conversationVerified)))) return;
 
     const text = input.trim();
-    setInput("");
+    updateInput("");
 
     if (mode === "live") {
       void runLiveAi(text);
@@ -1225,6 +1266,11 @@ function PreviewWidget({
     replyInFlight.current = false;
     if (mode === "live") {
       setTestConversationId(null);
+      setConversationClosed(false);
+      setConversationVerified(false);
+      if (storageKey) {
+        try { window.localStorage.removeItem(`${storageKey}:draft:new`); } catch { /* Local-only draft cleanup. */ }
+      }
       if (storageKey) { window.localStorage.removeItem(storageKey); window.localStorage.removeItem(storageKey + ":pending"); }
       pendingSend.current = null;
       setLiveFailure(null);
@@ -1422,8 +1468,14 @@ function PreviewWidget({
                 ? (lang === "zh" ? "正在核實隔離測試範圍；KB 存取尚未確認。" : "Verifying isolated test scope; KB access is not yet confirmed.")
                 : (lang === "zh" ? "暫時無法連接此測試 channel。請選擇獲准使用的 channel，或請管理員核對設定。KB 存取尚未確認。" : "This test channel is unavailable. Select an authorized channel or ask an administrator to check its settings. KB access is not yet confirmed.")}
             </p>
+            <p>{lang === "zh" ? "你可以先在本機編寫草稿；完成 channel 核實前不能傳送。" : "You can compose a local draft. Sending stays unavailable until this channel is verified."}</p>
             {!historyLoading && storageKey && <button type="button" className="mt-1 underline" onClick={() => void loadLiveHistory()}>{lang === "zh" ? "重試連線" : "Retry connection"}</button>}
           </div>
+        )}
+        {mode === "live" && conversationClosed && (
+          <p role="status" className="mb-2 text-xs text-slate-500">
+            {lang === "zh" ? "此對話已結束；請使用「新對話」開始另一個問題。" : "This conversation is resolved. Use New Conversation to start another request."}
+          </p>
         )}
         {mode === "live" && historyFailure && <p role="alert" className="mb-2 text-xs text-red-600">{lang === "zh" ? "歷史清單未能載入；這不代表沒有歷史對話。請重試連線。" : "History could not be loaded; this does not mean the history is empty. Retry the connection."}</p>}
         {mode === "live" && (conversationFailure || pendingSend.current) && testConversationId && (
@@ -1503,9 +1555,12 @@ function PreviewWidget({
           <button
             type="button"
             onClick={() => {
+              if (!inputEditable || composing.current) return;
               setMenuOpen(false);
               setEmojiOpen((value) => !value);
             }}
+            disabled={!inputEditable}
+            onMouseDown={(e) => e.preventDefault()}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white"
             aria-label="Emoji"
             title="Emoji"
@@ -1588,11 +1643,11 @@ function PreviewWidget({
                   if (mode === "simulation") {
                     requestHumanSimulation();
                   } else {
-                    if (!replyInFlight.current && scopeReady && humanState === "none") void runLiveAi(lang === "zh" ? "請轉真人客服" : "Please connect me to human support");
+                    if (inputEditable && scopeReady && (!testConversationId || conversationVerified) && humanState === "none") void runLiveAi(lang === "zh" ? "請轉真人客服" : "Please connect me to human support");
                   }
                 }}
                 disabled={
-                  humanState !== "none" || (mode === "simulation" && typing) || replyInFlight.current || (mode === "live" && (!scopeReady || Boolean(pendingSend.current)))
+                  !inputEditable || humanState !== "none" || (mode === "live" && (!scopeReady || Boolean(testConversationId && !conversationVerified)))
                 }
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
               >
@@ -1602,16 +1657,23 @@ function PreviewWidget({
             </div>
           )}
 
-          {emojiOpen && (
+          {emojiOpen && inputEditable && (
             <div className="absolute bottom-12 left-10 z-20 grid w-64 grid-cols-8 gap-1 rounded-xl border bg-white p-2 shadow-xl">
               {PREVIEW_EMOJIS.map((emoji) => (
                 <button
                   key={emoji}
                   type="button"
                   onClick={() => {
-                    setInput((value) => `${value}${emoji}`);
+                    if (!inputEditable || composing.current) return;
+                    const start = inputRef.current?.selectionStart ?? input.length;
+                    const end = inputRef.current?.selectionEnd ?? input.length;
+                    const value = input.slice(0, start) + emoji + input.slice(end);
+                    if (value.length > 500) return;
+                    emojiCaret.current = start + emoji.length;
+                    updateInput(value);
                     setEmojiOpen(false);
                   }}
+                  onMouseDown={(e) => e.preventDefault()}
                   className="flex h-8 w-8 items-center justify-center rounded-lg text-base hover:bg-slate-100"
                   aria-label={`Insert ${emoji}`}
                 >
@@ -1622,12 +1684,16 @@ function PreviewWidget({
           )}
 
           <input
+            ref={inputRef}
+            maxLength={500}
             value={input}
             onChange={(e) =>
-              setInput(e.target.value.slice(0, 500))
+              inputEditable && updateInput(e.target.value.slice(0, 500))
             }
+            onCompositionStart={() => { composing.current = true; }}
+            onCompositionEnd={() => { composing.current = false; }}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              if (e.key === "Enter" && !composing.current && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
                 e.preventDefault();
                 send();
               }
@@ -1638,16 +1704,16 @@ function PreviewWidget({
                 ? (lang === "zh" ? "你仍可傳送訊息，真人接聽狀態以對話通知為準" : "You can still send messages; assignment does not confirm an agent has answered")
                 : placeholder
             }
-            disabled={mode === "live" && !scopeReady}
+            disabled={!inputEditable}
           />
 
           <Button
             onClick={send}
             disabled={
-              (mode === "simulation" && typing) || replyInFlight.current ||
+              !inputEditable ||
               !input.trim() ||
               (mode === "simulation" && humanState !== "none") ||
-              (mode === "live" && (!scopeReady || Boolean(pendingSend.current)))
+              (mode === "live" && (!scopeReady || Boolean(pendingSend.current) || Boolean(testConversationId && !conversationVerified)))
             }
             style={{ background: primary }}
           >

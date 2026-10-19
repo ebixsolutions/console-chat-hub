@@ -454,6 +454,7 @@
     "tests/console-navigation/saved-responses-api.test.mjs",
     "tests/console-navigation/saved-responses.test.mjs",
     "tests/console-navigation/ticket-detail-readback.test.mjs",
+    "tests/console-navigation/widget-input-dom.test.mjs",
     "tests/console-navigation/widget-recovery.test.mjs",
     "tests/console-read/handlers.test.mjs",
     "tests/e2e/c3_widget_isolated_auth.mjs",
@@ -930,8 +931,8 @@
   },
   "authorized_live_execution_sha256": {
     ".github/scripts/c3_live_execution_manifest.mjs": "99550a1028ef2cb39d3d1b7480bb531e485a5c5fc7a7157afb26fbca99fe7310",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "e14bb9ea7ae93a925631312e27d31e4de67bdc8316cd67b042bcd20532c5ec64",
-    ".github/workflows/task-ai-abc-c3-final-gate.yml": "85aa5132b0bfacc62501446afdc21ec1c6f8664b4b58bfd8e825ad70ba8cb38d",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "7c5b563555e84f8894353ff36deb582475531f3845ce62d66f494b2a5b31cb5a",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "7cbd36b8c97c0d46f4958dd294d921cfb894d0457493d77eff4165af16162a96",
     "docs/c3/live-execution-repair.json": "250f6e3ad487899eb4283de49da9800354e9a30c701971672b663b7f6ba11f65",
     "sql/c3_live_execution_dependencies.sql": "dbfd5c3444f99ffd0df22767a4c003098b765ef043492013f880191523a46a7c",
     "sql/c3_live_execution_dependencies_rollback.sql": "264d17d0a91194d695daa973425af9b0ab9e089f1a4897797dce6b9ace85a3ec",
@@ -957,7 +958,7 @@
     "src/routes/_authenticated/console.conversations.$id.tsx": "483b57afe482e0157dacf189c9e2442a82e64ec29f4de3a55c8a545b9c188d11",
     "src/routes/_authenticated/console.conversations.index.tsx": "9c2480a49fe22f23496feda153026a480ca93a34440e0c2cc9c4a8ae1490f705",
     "src/routes/_authenticated/console.feedback-responses.tsx": "5abd8f12c1c7f6907682db99fc8fab954b7313f4467cd6b2c2c45d219a246a31",
-    "src/routes/_authenticated/console.widget-preview.tsx": "1e14da3684e010851d7f08657cd49f75405d4e63e216bb95a5275fe08fb1b23a",
+    "src/routes/_authenticated/console.widget-preview.tsx": "c224fc0e30228e7bddfed0e8698c0feee9f4a6fbb7e5280309224a104f593eaa",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "dfbe7a1eefb5e65c567b3656a9b603bccbb93211ee29c8415b370d9e88028128",
     "supabase/functions/_shared/conversational-routing.ts": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3",
     "supabase/functions/_shared/execution-failure.ts": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249",
@@ -982,7 +983,7 @@
     "tests/console-navigation/saved-responses-api.test.mjs": "cb7d547237f6188cd9f91be475b666338cfe61e576dbcd48f47f72930ea4d9e7",
     "tests/console-navigation/saved-responses.test.mjs": "b42b9984a123f3ef3c60f1ae90b3695b040dad42e93b5862263a0e8118d205f1",
     "tests/console-navigation/ticket-detail-readback.test.mjs": "a486172dfb38decef34f29b1b92d3bcec531b0e996d1e8ad1cf2c840927f14c9",
-    "tests/console-navigation/widget-recovery.test.mjs": "150635de2039fd41ebcb346430a47fa5ce09baeb701564268ebca5e4f2348a41",
+    "tests/console-navigation/widget-recovery.test.mjs": "68905be93e3aa3420c76331a32aa2aa81d5a1774db901c1982e45481d0a8781b",
     "tests/emergency-p0/chain.test.mjs": "f3c4ec5b488db51ce136ee32d3d83d3fe00b2d79ff1edcadceb4d28da0bfd21c",
     "tests/inbox-read.test.mjs": "830557dd1006e458e0554931fe2904355e37a2770610e49a86d21bff5660a5c9",
     "tests/model-accounting/source-coverage.test.mjs": "27b857288b2976f5b9b70f41c21a5b8a3cf1e70af09ea09bf73d51ff2a4b0b67",
@@ -998,7 +999,8 @@
     "tests/console-navigation/conversation-list.test.mjs": "224ea22ab6e8239287d23ef33924c8b1032883bc55b6c45d39b712b29e1a3458",
     "src/start.ts": "30474eb76daf45109e57af25064639f1bfdd0a00447602a0c4464b27ee8aff55",
     "tests/phase1/request-response-propagation.test.mjs": "93165be7a2053cba477300bc53570e094ad2df7776bb29f3a6de47f8ab2a90f4",
-    "tests/phase1/feedback-date-boundaries.test.mjs": "5a028ec643d9e7ff22c3e4df81d0004d9955a23d066d7824b4fc847802a45b7d"
+    "tests/phase1/feedback-date-boundaries.test.mjs": "5a028ec643d9e7ff22c3e4df81d0004d9955a23d066d7824b4fc847802a45b7d",
+    "tests/console-navigation/widget-input-dom.test.mjs": "0568b1491a3ae8a41fa1f1233c161e381b7ff1f033c36e31b6d496877c05f5f7"
   },
   "live_execution_deployment_authorized": false
 }
