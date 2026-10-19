@@ -670,52 +670,59 @@ async function resolvePreviewAcceptanceRole(): Promise<AppRole | null> {
   return PREVIEW_ADMIN_EMAILS.has(email) ? "admin" : null;
 }
 
-async function getCurrentCompanyRoles(): Promise<AppRole[]> {
-  const { data: sessionData } = await supabase.auth.getSession();
+async function getCurrentCompanyRoles(): Promise<{ roles: AppRole[]; canonical: boolean }> {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) throw new Error("session_lookup_failed");
   const userId = sessionData.session?.user?.id;
-  if (!userId) return [];
+  if (!userId) return { roles: [], canonical: false };
 
+  // Read all own memberships so inactive or ambiguous canonical identity never
+  // falls through to the legacy frontend acceptance bridge.
   const { data: memberships, error } = await supabase
     .from("company_membership")
-    .select("company_id, role")
-    .eq("user_id", userId)
-    .eq("is_active", true);
-  if (error || !memberships?.length) return [];
+    .select("company_id, role, is_active")
+    .eq("user_id", userId);
+  if (error) throw new Error("company_membership_lookup_failed");
+  if (!memberships?.length) return { roles: [], canonical: false };
 
+  const denied = { roles: [] as AppRole[], canonical: true };
   const companyIds = [...new Set(memberships.map((m) => String(m.company_id)))];
-  if (companyIds.length !== 1) return [];
+  if (companyIds.length !== 1) return denied;
+  const activeMemberships = memberships.filter((m) => m.is_active === true);
+  if (!activeMemberships.length) return denied;
 
   const { data: company, error: companyErr } = await supabase
     .from("company")
     .select("id, is_active")
     .eq("id", companyIds[0])
     .maybeSingle();
-  if (companyErr || !company || company.is_active !== true) return [];
+  if (companyErr) throw new Error("company_lookup_failed");
+  if (!company || company.is_active !== true) return denied;
 
   const valid = new Set<AppRole>(ROLE_PRECEDENCE);
-  return [
-    ...new Set(
-      memberships
-        .map((m) => String(m.role) as AppRole)
-        .filter((r): r is AppRole => valid.has(r)),
-    ),
-  ];
+  return {
+    canonical: true,
+    roles: [...new Set(activeMemberships.map((m) => String(m.role) as AppRole))]
+      .filter((r): r is AppRole => valid.has(r)),
+  };
 }
 
 export const authService = {
   getCurrentUserRole: async (): Promise<AppRole | null> => {
-    const roles = await getCurrentCompanyRoles();
+    const { roles, canonical } = await getCurrentCompanyRoles();
     for (const candidate of ROLE_PRECEDENCE) {
       if (roles.includes(candidate)) return candidate;
     }
+
+    if (canonical) return null;
 
     // Frontend acceptance bridge only. Never use this result for server writes,
     // RLS, tenant resolution, or production authorization.
     return await resolvePreviewAcceptanceRole();
   },
   getCurrentUserRoles: async (): Promise<AppRole[]> => {
-    const roles = await getCurrentCompanyRoles();
-    if (roles.length > 0) return roles;
+    const { roles, canonical } = await getCurrentCompanyRoles();
+    if (canonical) return roles;
     const previewRole = await resolvePreviewAcceptanceRole();
     return previewRole ? [previewRole] : [];
   },

@@ -933,7 +933,7 @@
   },
   "authorized_live_execution_sha256": {
     ".github/scripts/c3_live_execution_manifest.mjs": "99550a1028ef2cb39d3d1b7480bb531e485a5c5fc7a7157afb26fbca99fe7310",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "1ce8716dba72559f61ae03f7c1944e5a11f09594dbcab12b2f408e1760c709f0",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "cb1a014e5063c30cba00382f970874388cab7f43b0096e3bcea41e06f0231cb3",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "d30849be34928219fabf16902292e67e81fa2972d817c100eb1ad1667398f777",
     "docs/c3/live-execution-repair.json": "250f6e3ad487899eb4283de49da9800354e9a30c701971672b663b7f6ba11f65",
     "sql/c3_live_execution_dependencies.sql": "dbfd5c3444f99ffd0df22767a4c003098b765ef043492013f880191523a46a7c",
@@ -1004,7 +1004,8 @@
     "tests/phase1/feedback-date-boundaries.test.mjs": "5a028ec643d9e7ff22c3e4df81d0004d9955a23d066d7824b4fc847802a45b7d",
     "tests/console-navigation/widget-input-dom.test.mjs": "83fe5f84cc34240cb57d00230ef44bf312ec4136004118a4482d30eaab48d6d8",
     "src/hooks/useCurrentRole.ts": "ad2b68dd13a81a711b4a87a6ab9a6aa2949d3bed58d2fcbff3d816742fe1c41e",
-    "tests/console-navigation/current-role.test.mjs": "4de66573f4b4724386dabfb0b528e6bcce26c4d25a74ee658d648966cf260139"
+    "tests/console-navigation/current-role.test.mjs": "7825a14103845ae58711daf79061d3c6b22f067ee0a50467c18ca51c061d0059",
+    "src/lib/api/config.service.ts": "d7bd2955fbc1f80bb36ae5196cee650002bc87e0fcf98dc669c67d6049244284"
   },
   "live_execution_deployment_authorized": false
 }
