@@ -94,7 +94,11 @@ test('DOM Chinese IME composition Enter and keyCode229 never submit',async t=>{
 test('DOM emoji replaces the real selection and preserves subsequent normal typing',async t=>{
  reset();const r=await mount(t);await edit(r,'abc123');field(r).setSelectionRange(1,4);
  await click(r,button(r,'Emoji'));const emoji=r.host.querySelector('[aria-label^="Insert "]');const value=emoji.textContent;await click(r,emoji);
- assert.equal(field(r).value,'a'+value+'23');await edit(r,'Z');assert.ok(field(r).value.includes('Z'));noDispatch();
+ assert.equal(field(r).value,'a'+value+'23');assert.equal(field(r).selectionStart,1+value.length);
+ await act(async()=>r.user.keyboard('Z'));assert.equal(field(r).value,'a'+value+'Z23');
+ field(r).setSelectionRange(1,1+value.length);await click(r,button(r,'Emoji'));await click(r,r.host.querySelector('[aria-label^="Insert "]'));
+ assert.equal(field(r).selectionStart,1+value.length);assert.equal(field(r).selectionEnd,1+value.length);
+ await act(async()=>r.user.keyboard('Q'));assert.equal(field(r).value,'a'+value+'QZ23');noDispatch();
 });
 test('local draft survives real unmount/remount without a send or cross-actor restore',async t=>{
  reset();f.ready=false;const r=await mount(t);await edit(r,'保留草稿 123');await r.close();const next=await mount(t);assert.equal(field(next).value,'保留草稿 123');await next.close();

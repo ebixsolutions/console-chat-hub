@@ -958,7 +958,7 @@
     "src/routes/_authenticated/console.conversations.$id.tsx": "483b57afe482e0157dacf189c9e2442a82e64ec29f4de3a55c8a545b9c188d11",
     "src/routes/_authenticated/console.conversations.index.tsx": "9c2480a49fe22f23496feda153026a480ca93a34440e0c2cc9c4a8ae1490f705",
     "src/routes/_authenticated/console.feedback-responses.tsx": "5abd8f12c1c7f6907682db99fc8fab954b7313f4467cd6b2c2c45d219a246a31",
-    "src/routes/_authenticated/console.widget-preview.tsx": "c224fc0e30228e7bddfed0e8698c0feee9f4a6fbb7e5280309224a104f593eaa",
+    "src/routes/_authenticated/console.widget-preview.tsx": "868a7ed5ab800b2dcc681d24e6af12ed65dc4abd82b2f4b838e3697b1ac8f28a",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "dfbe7a1eefb5e65c567b3656a9b603bccbb93211ee29c8415b370d9e88028128",
     "supabase/functions/_shared/conversational-routing.ts": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3",
     "supabase/functions/_shared/execution-failure.ts": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249",
@@ -1000,7 +1000,7 @@
     "src/start.ts": "30474eb76daf45109e57af25064639f1bfdd0a00447602a0c4464b27ee8aff55",
     "tests/phase1/request-response-propagation.test.mjs": "93165be7a2053cba477300bc53570e094ad2df7776bb29f3a6de47f8ab2a90f4",
     "tests/phase1/feedback-date-boundaries.test.mjs": "5a028ec643d9e7ff22c3e4df81d0004d9955a23d066d7824b4fc847802a45b7d",
-    "tests/console-navigation/widget-input-dom.test.mjs": "0568b1491a3ae8a41fa1f1233c161e381b7ff1f033c36e31b6d496877c05f5f7"
+    "tests/console-navigation/widget-input-dom.test.mjs": "e7b405fc1be63130aff18df6c1d1c7eb6b89f586385e546183800fd5c8d8271f"
   },
   "live_execution_deployment_authorized": false
 }

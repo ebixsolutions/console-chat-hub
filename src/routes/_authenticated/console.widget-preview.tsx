@@ -875,7 +875,7 @@ function PreviewWidget({
     inputRef.current?.focus();
     inputRef.current?.setSelectionRange(emojiCaret.current, emojiCaret.current);
     emojiCaret.current = null;
-  }, [input]);
+  }, [input, emojiOpen]);
   useEffect(() => {
     if (mode !== "live" || humanState !== "waiting") return;
     const timer = setInterval(() => setClock(Date.now()), 1000);
