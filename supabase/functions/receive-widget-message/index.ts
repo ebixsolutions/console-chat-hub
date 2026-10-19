@@ -169,7 +169,7 @@ Deno.serve(async (req) => {
       if (isExplicitHandoffRequest(normalizedContent)) {
         const safeReply = normalizedContent === "請轉真人客服"
           ? "已記錄你要求轉接真人客服的訊息。此對話現正等待客服跟進；不代表客服已接手。"
-          : "Your request for a human support agent has been recorded. This conversation is awaiting a human; no agent has taken over yet.";
+          : "Your request for a human support agent has been recorded. This conversation is awaiting a human; an agent has not yet taken over.";
         const { data: handoff, error: handoffError } = await supabase.rpc("explicit_handoff_tx", {
           p_conversation_id: conversation_id,
           p_safe_reply_content: safeReply,

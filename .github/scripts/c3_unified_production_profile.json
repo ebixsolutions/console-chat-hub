@@ -1023,7 +1023,7 @@
     ".github/scripts/c3_director_generic_core_final_gate.mjs": "156aaf90722582306332f4d0612520656b5982a0607f5bb0dd0dba759c9c3175",
     "public/widget/chat.js": "e79fc23e8cbe7cc67d30b034c3bfc44f7285d6f7e1b9d873b9289fda8e4d141b",
     "src/routes/_authenticated/console.tsx": "4b601f1c866653b1b06ee8b45936a2fae119d1bb1c52241ecd518d0855655925",
-    "supabase/functions/receive-widget-message/index.ts": "718ec30f116cc3b28179ba11f6851324e8a29b85c822283c4e7ec02b4c4f2225",
+    "supabase/functions/receive-widget-message/index.ts": "1a36c0c2285b7fc63e9080ed60b4c617e5a403472839754c8e01e67c9d493d27",
     "src/components/console/OrdinaryWidgetPreview.tsx": "d0f11b192cd291d75840edf25c0457ca5ad4d8ecaf9f0a106b5e50ae862282c2",
     "src/hooks/useConsoleIdentity.ts": "fb9224b7c54c2e6308723b843341e7346d1ad50e926dbd7fb4ce11bf976e538d",
     "src/lib/public-widget-preview-asset.ts": "332f64145514ee755dd33a2b59b06f3cc60af0d8d80dc2eb3f720dc7a0e01aa4",
