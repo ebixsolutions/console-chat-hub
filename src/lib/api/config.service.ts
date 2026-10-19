@@ -686,10 +686,9 @@ async function getCurrentCompanyRoles(): Promise<{ roles: AppRole[]; canonical: 
   if (!memberships?.length) return { roles: [], canonical: false };
 
   const denied = { roles: [] as AppRole[], canonical: true };
-  const companyIds = [...new Set(memberships.map((m) => String(m.company_id)))];
-  if (companyIds.length !== 1) return denied;
   const activeMemberships = memberships.filter((m) => m.is_active === true);
-  if (!activeMemberships.length) return denied;
+  const companyIds = [...new Set(activeMemberships.map((m) => String(m.company_id)))];
+  if (companyIds.length !== 1) return denied;
 
   const { data: company, error: companyErr } = await supabase
     .from("company")

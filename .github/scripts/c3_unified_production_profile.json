@@ -1004,8 +1004,8 @@
     "tests/phase1/feedback-date-boundaries.test.mjs": "5a028ec643d9e7ff22c3e4df81d0004d9955a23d066d7824b4fc847802a45b7d",
     "tests/console-navigation/widget-input-dom.test.mjs": "83fe5f84cc34240cb57d00230ef44bf312ec4136004118a4482d30eaab48d6d8",
     "src/hooks/useCurrentRole.ts": "ad2b68dd13a81a711b4a87a6ab9a6aa2949d3bed58d2fcbff3d816742fe1c41e",
-    "tests/console-navigation/current-role.test.mjs": "7825a14103845ae58711daf79061d3c6b22f067ee0a50467c18ca51c061d0059",
-    "src/lib/api/config.service.ts": "d7bd2955fbc1f80bb36ae5196cee650002bc87e0fcf98dc669c67d6049244284"
+    "tests/console-navigation/current-role.test.mjs": "558a2e79b075b77fe214c3a995bdc57b37b089155486abbd4952e4a859d95e89",
+    "src/lib/api/config.service.ts": "330da5d3eaca8d98ab6ddf2de48869bf0c6491c06c2b7958d299a1e279713df4"
   },
   "live_execution_deployment_authorized": false
 }
