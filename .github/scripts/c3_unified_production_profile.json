@@ -1052,7 +1052,7 @@
     "tests/console-navigation/saved-responses.test.mjs": "b42b9984a123f3ef3c60f1ae90b3695b040dad42e93b5862263a0e8118d205f1",
     "tests/console-navigation/ticket-detail-readback.test.mjs": "a486172dfb38decef34f29b1b92d3bcec531b0e996d1e8ad1cf2c840927f14c9",
     "tests/console-navigation/widget-input-dom.test.mjs": "c1a254e5bebf359c3819a433e010f967613a749da87849352a2e019e6d38ed34",
-    "tests/console-navigation/widget-recovery.test.mjs": "22e65f78a130d51775e94aeab663d327c2f59668376fe9b6f8cab9ee4d572430",
+    "tests/console-navigation/widget-recovery.test.mjs": "6afdc4859e8b764b425b80a1952d76cc4db08cad54b9275e90aff0ee0c095ae9",
     "tests/emergency-p0/chain.test.mjs": "f3c4ec5b488db51ce136ee32d3d83d3fe00b2d79ff1edcadceb4d28da0bfd21c",
     "tests/inbox-read.test.mjs": "830557dd1006e458e0554931fe2904355e37a2770610e49a86d21bff5660a5c9",
     "tests/model-accounting/source-coverage.test.mjs": "27b857288b2976f5b9b70f41c21a5b8a3cf1e70af09ea09bf73d51ff2a4b0b67",
