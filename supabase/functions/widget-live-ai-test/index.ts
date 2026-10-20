@@ -1,6 +1,7 @@
 import { classifyNonFactualConversation } from "../_shared/conversational-routing.ts";
 import { isExplicitHandoffRequest } from "../_shared/handoff-intent.ts";
 import { uatExecutionReadiness } from "../_shared/uat-execution-readiness.ts";
+import { FRANKIE_DEMO_COMPANY } from "../_shared/uat-execution-contract.ts";
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
@@ -11,7 +12,6 @@ const ALLOWED_ROLES = new Set(["admin", "supervisor"]);
 const PROJECT_ID = "4dbf593e-577e-4af4-a553-460441c34473";
 const PRODUCTION_ORIGIN = "https://console-chat-hub.lovable.app";
 // Existing Frankie-owned production company/channel, never a browser-supplied scope.
-const FRANKIE_DEMO_COMPANY = "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493";
 const FRANKIE_DEMO_CHANNEL = "b0000000-0000-0000-0000-000000000001";
 const HUMAN_CONTROL_STATUSES = new Set(["pending", "transferred", "human_needed", "human_control"]);
 
