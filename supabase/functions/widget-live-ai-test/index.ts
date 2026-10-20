@@ -1,6 +1,7 @@
 import { classifyNonFactualConversation } from "../_shared/conversational-routing.ts";
 import { isExplicitHandoffRequest } from "../_shared/handoff-intent.ts";
 import { uatExecutionReadiness } from "../_shared/uat-execution-readiness.ts";
+import { executionFailure } from "../_shared/execution-failure.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";
@@ -9,6 +10,9 @@ const MAX_QUERY_LENGTH = 500;
 const ALLOWED_ROLES = new Set(["admin", "supervisor"]);
 const PROJECT_ID = "4dbf593e-577e-4af4-a553-460441c34473";
 const PRODUCTION_ORIGIN = "https://console-chat-hub.lovable.app";
+// Existing Frankie-owned production company/channel, never a browser-supplied scope.
+const FRANKIE_DEMO_COMPANY = "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493";
+const FRANKIE_DEMO_CHANNEL = "b0000000-0000-0000-0000-000000000001";
 const HUMAN_CONTROL_STATUSES = new Set(["pending", "transferred", "human_needed", "human_control"]);
 
 type QueryClient = { from: (table: string) => any };
@@ -344,16 +348,24 @@ return async (req: Request) => {
       diagnostic("membership_validation", (membership as any).provider, membership.status);
       return json(req, {success:false,error:membership.error,correlation_id:correlationId},membership.status);
     }
-    // The installed authenticated RPC and its config channel FK prove B12 registration.
-    // Never infer isolation from a browser flag, channel name or arbitrary metadata.
-    const {data: isolation, error: isolationError} = await auth.rpc("c3_uat_feedback_config_context");
-    const config = isolation?.config;
-    if (isolationError || isolation?.isolated !== true || !config || config.company_id !== membership.companyId || !isUuid(config.channel_id)) {
-      if ((body as any).action === "history" && !isolationError) return json(req,{success:true,mode:"persistent_live_ai_test",history:[],isolation_ready:false});
-      diagnostic("synthetic_scope", isolationError, 503);
-      return json(req,{success:false,error:"synthetic_scope_not_ready",correlation_id:correlationId},503);
+    // Recover the existing own-company read/control scope without borrowing C3's
+    // B12 synthetic authority. Any paid AI/KB dispatch remains admission-denied.
+    const ownCompany = membership.companyId === FRANKIE_DEMO_COMPANY;
+    let scopedChannelId: string;
+    if (ownCompany) {
+      scopedChannelId = FRANKIE_DEMO_CHANNEL;
+    } else {
+      // The C3 path retains its exact authenticated B12 registration.
+      const {data: isolation, error: isolationError} = await auth.rpc("c3_uat_feedback_config_context");
+      const config = isolation?.config;
+      if (isolationError || isolation?.isolated !== true || !config || config.company_id !== membership.companyId || !isUuid(config.channel_id)) {
+        if ((body as any).action === "history" && !isolationError) return json(req,{success:true,mode:"persistent_live_ai_test",history:[],isolation_ready:false});
+        diagnostic("synthetic_scope", isolationError, 503);
+        return json(req,{success:false,error:"synthetic_scope_not_ready",correlation_id:correlationId},503);
+      }
+      scopedChannelId = String(config.channel_id);
     }
-    const resolved = {companyId: String(membership.companyId), channelId: String(config.channel_id), scopeMode: "canonical" as const};
+    const resolved = {companyId: String(membership.companyId), channelId: scopedChannelId, scopeMode: "canonical" as const};
     const {data: channel,error: channelError} = await admin.from("channel_config").select("id,company_id,is_active,channel_type,allowed_origins").eq("id",resolved.channelId).eq("company_id",resolved.companyId).maybeSingle();
     if (channelError || !channel || channel.is_active !== true || channel.channel_type !== "web_widget" || !Array.isArray(channel.allowed_origins) || !channel.allowed_origins.includes(origin)) return json(req,{success:false,error:"synthetic_channel_unavailable"},503);
 
@@ -361,7 +373,12 @@ return async (req: Request) => {
       ? String((body as Record<string, unknown>).action)
       : "send";
 
-    const execution = await uatExecutionReadiness(admin as any,resolved.companyId,deps.env);
+    // Frankie gets a read/control-only scope until the Director-authorized paid
+    // execution contract is truly installed. In particular, the non-UAT default
+    // readiness must NOT authorize synthetic paid traffic.
+    const execution = ownCompany
+      ? {ready:false as const, failure:executionFailure("UAT_AUTHORIZATION_ABSENT")}
+      : await uatExecutionReadiness(admin as any,resolved.companyId,deps.env);
     if (action === "history") {
       return json(req, {
         success: true,
