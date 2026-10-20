@@ -1,7 +1,7 @@
 import { classifyNonFactualConversation } from "../_shared/conversational-routing.ts";
 import { isExplicitHandoffRequest } from "../_shared/handoff-intent.ts";
 import { uatExecutionReadiness } from "../_shared/uat-execution-readiness.ts";
-import { executionFailure } from "../_shared/execution-failure.ts";
+
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";
@@ -376,12 +376,9 @@ return async (req: Request) => {
       ? String((body as Record<string, unknown>).action)
       : "send";
 
-    // Frankie gets a read/control-only scope until the Director-authorized paid
-    // execution contract is truly installed. In particular, the non-UAT default
-    // readiness must NOT authorize synthetic paid traffic.
-    const execution = ownCompany
-      ? {ready:false as const, failure:executionFailure("UAT_AUTHORIZATION_ABSENT")}
-      : await uatExecutionReadiness(admin as any,resolved.companyId,deps.env);
+    // Both tenants use separate, server-verified admission; never use a
+    // non-UAT default or browser field to authorize synthetic paid traffic.
+    const execution = await uatExecutionReadiness(admin as any,resolved.companyId,deps.env);
     if (action === "history") {
       return json(req, {
         success: true,
