@@ -679,6 +679,7 @@ function WidgetPreviewContent({
               }
               open={previewOpen}
               onOpenChange={setPreviewOpen}
+              onSwitchToOrdinary={() => setPreviewMode("ordinary")}
             />
           )}
         </TabsContent>
@@ -801,6 +802,7 @@ function PreviewWidget({
   placeholder,
   open,
   onOpenChange,
+  onSwitchToOrdinary,
 }: {
   scopeCompanyId: string;
   scopeChannelId: string;
@@ -813,6 +815,7 @@ function PreviewWidget({
   placeholder: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSwitchToOrdinary?: () => void;
 }) {
   const c = COPY[lang];
   const [messages, setMessages] = useState<PreviewMessage[]>([]);
@@ -1533,6 +1536,7 @@ function PreviewWidget({
               ? (lang === "zh" ? "HTTP 503：測試 scope／channel 服務未就緒；這不是未登入的證據。" : "HTTP 503: test scope/channel service is not ready. This is not proof of being signed out.")
               : (lang === "zh" ? "未能核實測試連線；尚未獲准傳送。" : "Test connection could not be verified. Sending is not authorized.")}</p>}
             <p>{lang === "zh" ? "你可以先在本機編寫草稿；完成 channel 核實前不能傳送。" : "You can compose a local draft. Sending stays unavailable until this channel is verified."}</p>
+            {!historyLoading && scopeFailure === "isolated_scope_unavailable" && onSwitchToOrdinary && <div role="status"><button type="button" className="font-medium underline text-blue-700" onClick={onSwitchToOrdinary}>{lang === "zh" ? "改用自己公司的普通 Widget（受控測試）" : "Switch to my company\'s Ordinary Widget (control-only)"}</button><p>{lang === "zh" ? "這個帳戶沒有 C3 隔離測試權限；普通 Widget 只能測試指定控制句。" : "This account has no C3 test scope. Ordinary Preview supports only four controlled messages, not real AI/KB quality tests."}</p></div>}
             {!historyLoading && storageKey && <button type="button" className="mt-1 underline" onClick={() => void loadLiveHistory()}>{lang === "zh" ? "重試連線" : "Retry connection"}</button>}
           </div>
         )}
