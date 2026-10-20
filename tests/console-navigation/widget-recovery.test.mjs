@@ -116,3 +116,26 @@ test('a polled AI-pending flag cannot intercept an explicit R1 when no send is i
 });
 
 test('HTTP200 success without exact persisted source receipt must remain pending and cannot be retried',async()=>{reset();fixture.send=async()=>({error:null,data:{success:true,conversation_id:conversation,messages:[]}});const r=await mount();await enter(r,'Who are you?');await click(r,'Send');assert(store.has(storageKey+':pending'));assert.equal(button(r,'Send').props.disabled,true);assert.match(content(r),/Delivery could not be confirmed/);await close(r);});
+
+test('101-turn original C3 Widget source path preserves one conversation and distinct receipts without any paid provider calls',async()=>{
+  reset();
+  const r=await mount();
+  let seq=0;
+  fixture.send=async body=>{
+    seq++;
+    const visitorId='10000000-0000-4000-8000-'+seq.toString(16).padStart(12,'0');
+    fixture.rows.push({id:visitorId,role:'visitor',content:body.query,metadata:{client_message_id:body.client_message_id}});
+    return {error:null,data:{success:true,conversation_id:conversation,delivery_receipt:{persisted:true,conversation_id:conversation,client_message_id:body.client_message_id,visitor_message_id:visitorId},messages:fixture.rows,ai_generating:false,human_control:false,assigned_agent_id:null}};
+  };
+  for(let turn=1;turn<=101;turn++){
+    await enter(r,'Independent customer turn '+turn+' — follow up on the same ticket');
+    await click(r,'Send');
+    assert.equal(sends().length,turn,'each turn issues one original guarded widget request');
+    assert.equal(sends()[turn-1].body.test_conversation_id,conversation,'no new ticket between turns');
+    assert(!store.has(storageKey+':pending'),'persisted receipt clears only current pending delivery');
+  }
+  assert.equal(new Set(sends().map(x=>x.body.client_message_id)).size,101,'no client message replay');
+  assert.equal(new Set(fixture.rows.map(x=>x.id)).size,101,'distinct persisted visitor receipts');
+  assert.equal(sends().some(x=>x.name!=='widget-live-ai-test'),false,'no alternate backend');
+  await close(r);
+});
