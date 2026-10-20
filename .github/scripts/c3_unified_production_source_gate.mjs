@@ -99,8 +99,6 @@ export function verifyIdentity(root,profile,expected){
  return {head,tree,changed};
 }
 export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs.readFileSync(path.join(root,PROFILE_PATH))),expectedIdentity,sourceOnly=false}={}){
- must(JSON.stringify(profile.authorized_widget_hosted_build_sha256)===JSON.stringify(HOSTED_WIDGET_BUILD_SOURCE),'widget_hosted_build_scope_drift');
- for(const [f,h] of Object.entries(HOSTED_WIDGET_BUILD_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'widget_hosted_build_source_drift:'+f);
  must(profile.live_execution_deployment_authorized===false,'live_execution_deployment_not_authorized');
  must(JSON.stringify(profile.authorized_live_execution_sha256)===JSON.stringify(LIVE_EXECUTION_REPAIR),'live_execution_scope_drift');
  for(const [f,h] of Object.entries(LIVE_EXECUTION_REPAIR)){must(fs.existsSync(path.join(root,f)),'dependency_missing:'+f);must(sha(fs.readFileSync(path.join(root,f)))===h,'live_execution_source_drift:'+f);}
@@ -164,6 +162,8 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
  for(const [f,h] of Object.entries(SECTION15_REFERENCE_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(LIVE_EXECUTION_REPAIR[f]??DIRECTOR_FUNCTIONAL_REPAIR[f]??UAT_COMPATIBILITY_REPAIR[f]??UAT_RUNTIME_REPAIR[f]??COMPOUND_DIALOGUE_REPAIR[f]??W19_COMPATIBILITY_REPAIR[f]??h),'section15_reference_source_drift:'+f);
  must(JSON.stringify(profile.authorized_nonproduction_preview_repair_sha256)===JSON.stringify(NONPRODUCTION_PREVIEW_REPAIR),'nonproduction_preview_scope_drift');
  for(const [f,h] of Object.entries(NONPRODUCTION_PREVIEW_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(LIVE_EXECUTION_REPAIR[f]??DIRECTOR_FUNCTIONAL_REPAIR[f]??UAT_COMPATIBILITY_REPAIR[f]??UAT_RUNTIME_REPAIR[f]??COMPOUND_DIALOGUE_REPAIR[f]??W19_COMPATIBILITY_REPAIR[f]??SECTION15_REFERENCE_REPAIR[f]??h),'nonproduction_preview_source_drift:'+f);
+ must(JSON.stringify(profile.authorized_widget_hosted_build_sha256)===JSON.stringify(HOSTED_WIDGET_BUILD_SOURCE),'widget_hosted_build_scope_drift');
+ for(const [f,h] of Object.entries(HOSTED_WIDGET_BUILD_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'widget_hosted_build_source_drift:'+f);
  const files=productionClosure(root,profile);
  for(const [f,h] of Object.entries(KB_ACCOUNTING_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(LIVE_EXECUTION_REPAIR[f]??DIRECTOR_FUNCTIONAL_REPAIR[f]??UAT_COMPATIBILITY_REPAIR[f]??UAT_RUNTIME_REPAIR[f]??COMPOUND_DIALOGUE_REPAIR[f]??W19_COMPATIBILITY_REPAIR[f]??SECTION15_REFERENCE_REPAIR[f]??NONPRODUCTION_PREVIEW_REPAIR[f]??h),'kb_accounting_source_drift:'+f);
 
