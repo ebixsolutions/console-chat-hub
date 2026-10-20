@@ -23,6 +23,8 @@ const entry='src/routes/_authenticated/console.widget-preview.tsx';
 const compiled=await build({entryPoints:[entry],bundle:true,write:false,platform:'node',format:'esm',jsx:'automatic',plugins:[{name:'input-dom-boundaries',setup(b){
  b.onResolve({filter:/^react(?:\/.*)?$/},a=>({path:require.resolve(a.path),external:true}));
  b.onResolve({filter:/^@\/components\/console\/OrdinaryWidgetPreview$/},()=>({path:path.resolve('src/components/console/OrdinaryWidgetPreview.tsx')}));
+ b.onResolve({filter:/^virtual:c3-widget-preview-source$/},()=>({path:'canonical-widget',namespace:'widget-source'}));
+ b.onLoad({filter:/.*/,namespace:'widget-source'},()=>({contents:'export default () => '+JSON.stringify(fs.readFileSync('public/widget/chat.js','utf8'))+';'}));
  b.onResolve({filter:/^(lucide-react|@tanstack\/react-router|@\/hooks\/|@\/components\/|@\/integrations\/|@\/lib\/api\/)/},a=>({path:a.path,namespace:'fixture'}));
  b.onLoad({filter:/.*/,namespace:'fixture'},a=>{const s='const f=globalThis.__widgetInput;';
   if(a.path==='lucide-react')return {contents:'export const AlertCircle=()=>null,Check=()=>null,Copy=()=>null,History=()=>null,Image=()=>null,Loader2=()=>null,MonitorDot=()=>null,Paperclip=()=>null,Plus=()=>null,Smile=()=>null,UserRound=()=>null,Video=()=>null;'};
