@@ -829,6 +829,14 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
   };
   const requestId = call.operationId;
 
+  // A caller that already cancelled must not start authority reads or reserve
+  // execution. Preserve the original timeout result without any external I/O.
+  if (call.signal?.aborted) {
+    usage.latency_ms = Date.now() - started;
+    return {ok:false,code:"LLM_TIMEOUT",request_id:requestId,usage,
+      failure:executionFailure("LLM_TIMEOUT",{request_id:requestId})};
+  }
+
   const provider = resolveProvider();
   const model = Deno.env.get(MODEL_ENV[call.purpose]);
   const timeoutMs = Number(

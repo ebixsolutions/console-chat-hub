@@ -18,8 +18,9 @@ Deno.test('F13 invalid-output classes retain diagnostic cause and HTTP status, n
    assert(!r.ok && r.code===c.code && r.status===c.status && r.invalid_output_reason===c.reason,JSON.stringify(r));
    assert(count===1,'invalid output was retried or a live request escaped interception');
   }
-  const controller=new AbortController();controller.abort();globalThis.fetch=async()=>{throw Error('aborted request attempted network')};
+  const controller=new AbortController();controller.abort();let abortedCalls=0;globalThis.fetch=async()=>{abortedCalls++;throw Error('aborted request attempted network')};
   const r=await callModel({purpose:'evaluation',system:'JSON only',user:'customer requirements',maxTokens:1800,operationId:'isolated-timeout',companyId:'11111111-1111-4111-8111-111111111111',conversationId:'22222222-2222-4222-8222-222222222222',tag:'isolated-f13',signal:controller.signal});
   assert(!r.ok && r.code==='LLM_TIMEOUT','timeout reclassified as invalid output');
+  assert(abortedCalls===0 && r.usage.attempts===0,'pre-aborted call performed authority/accounting/provider I/O');
  } finally {globalThis.fetch=original;names.forEach((n,i)=>saved[i]===undefined?Deno.env.delete(n):Deno.env.set(n,saved[i]!));}
 });

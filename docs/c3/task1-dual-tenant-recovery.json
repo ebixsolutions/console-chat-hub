@@ -13,7 +13,8 @@
     "Retained pending/unknown, immutable source-bound finalization and receipt-preserving guarded rollback",
     "Ordinary Frankie router uses persisted synthetic classification before requiring UAT; no new permanent accounting prerequisite",
     "Canonical and original temporary SQL entrypoints install the same functions, with CE eligibility unchanged",
-    "Actual self-QA negative reproduction: historical widget_live_test and damaged synthetic tags cannot inherit ordinary paid dispatch; 57 handler assertions pass"
+    "Actual self-QA negative reproduction: historical widget_live_test and damaged synthetic tags cannot inherit ordinary paid dispatch; 57 handler assertions pass",
+    "CI-reproduced pre-aborted model calls return LLM_TIMEOUT with zero authority/accounting/provider I/O; original F13 regression retained and strengthened"
   ],
   "production_readonly": {
     "rpc_preimages": "status/reserve/finalize/tenant-authority/permanent-accounting absent",
@@ -330,7 +331,7 @@
         {
           "repository_path": "supabase/functions/_shared/llm-router.ts",
           "deploy_path": "_shared/llm-router.ts",
-          "sha256": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4"
+          "sha256": "064e3634d22c75cdaf1757963827839b22e596d55e47de64d75b105f438693e8"
         },
         {
           "repository_path": "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
@@ -620,7 +621,7 @@
         {
           "repository_path": "supabase/functions/_shared/llm-router.ts",
           "deploy_path": "_shared/llm-router.ts",
-          "sha256": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4"
+          "sha256": "064e3634d22c75cdaf1757963827839b22e596d55e47de64d75b105f438693e8"
         },
         {
           "repository_path": "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
@@ -834,7 +835,7 @@
         {
           "repository_path": "supabase/functions/_shared/llm-router.ts",
           "deploy_path": "_shared/llm-router.ts",
-          "sha256": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4"
+          "sha256": "064e3634d22c75cdaf1757963827839b22e596d55e47de64d75b105f438693e8"
         },
         {
           "repository_path": "supabase/functions/_shared/model-attempt-accounting.ts",
@@ -1068,7 +1069,7 @@
         {
           "repository_path": "supabase/functions/_shared/llm-router.ts",
           "deploy_path": "_shared/llm-router.ts",
-          "sha256": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4"
+          "sha256": "064e3634d22c75cdaf1757963827839b22e596d55e47de64d75b105f438693e8"
         },
         {
           "repository_path": "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
@@ -1323,7 +1324,7 @@
         {
           "repository_path": "supabase/functions/_shared/llm-router.ts",
           "deploy_path": "_shared/llm-router.ts",
-          "sha256": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4"
+          "sha256": "064e3634d22c75cdaf1757963827839b22e596d55e47de64d75b105f438693e8"
         },
         {
           "repository_path": "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
@@ -1567,7 +1568,7 @@
         {
           "repository_path": "supabase/functions/_shared/llm-router.ts",
           "deploy_path": "_shared/llm-router.ts",
-          "sha256": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4"
+          "sha256": "064e3634d22c75cdaf1757963827839b22e596d55e47de64d75b105f438693e8"
         },
         {
           "repository_path": "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",

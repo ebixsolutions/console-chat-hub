@@ -1024,7 +1024,7 @@
     "supabase/functions/_shared/execution-failure.ts": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249",
     "supabase/functions/_shared/generation-terminal-guard.ts": "b594946be00d0df338d8bc74cfc42ec0bf7dcdb4438c63262b2fb9b8b2dfadc5",
     "supabase/functions/_shared/kb-client.ts": "56246bfa52baeb8e644233bc64d267e11882d4f54afc245def2eee02b7e16071",
-    "supabase/functions/_shared/llm-router.ts": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4",
+    "supabase/functions/_shared/llm-router.ts": "064e3634d22c75cdaf1757963827839b22e596d55e47de64d75b105f438693e8",
     "supabase/functions/_shared/model-attempt-accounting.ts": "23131b006e5289cccb83e33d3e0d535dee64330dfcc0d24a48fd4b129c7b23fc",
     "supabase/functions/_shared/natural-customer-response.ts": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854",
     "supabase/functions/_shared/uat-execution-contract.ts": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd",
@@ -1089,7 +1089,8 @@
     "tests/uat-runtime/tenant-fixtures.sql": "8f5895a8d941ed1b1d6a0816c4863a21d7fec5ecfb86df3d8f97040630d2d841",
     "tests/uat-runtime/dual-tenant.py": "8930eb3c155fc0bc0a6c1fb018a6b588afe8e5b168d3197fb412a92b98e406b8",
     "sql/c3_uat_tenant_authority_rollback.sql": "92d2907902e5a9b7de4e41d5dae857455fdf43fd2480aa4a1b0c2588b4a79df9",
-    "docs/c3/task1-dual-tenant-recovery.json": "e47ff4ae531f2b7cd9bd87483301938c7511ddd879ec6c38769d87dd23d86f80"
+    "docs/c3/task1-dual-tenant-recovery.json": "4b4f6cfd3eb3c75656ce9b4808b1d4774aef6878b0f3da9b1a6833d6745e33c8",
+    "supabase/functions/_shared/f13-llm-failure.test.ts": "100a03fe4c937baff56431860bcff5f076389d43883ec97d803d24bb9c641263"
   },
   "live_execution_deployment_authorized": false,
   "authorized_widget_hosted_build_sha256": {
