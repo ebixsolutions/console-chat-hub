@@ -288,7 +288,7 @@ function WidgetPreviewContent({
   const [widget, setWidget] =
     useState<LiveWidgetConfigRow>(PREVIEW_DEFAULT);
   const [theme, setTheme] = useState<WidgetTheme>("modern");
-  const [previewMode, setPreviewMode] = useState<PreviewMode | "ordinary">("ordinary");
+  const [previewMode, setPreviewMode] = useState<PreviewMode | "ordinary">("live");
   const { user: previewActor } = useAuth();
   const [primary, setPrimary] = useState("#6B5CE7");
   const [launcherIcon, setLauncherIcon] =
@@ -480,7 +480,7 @@ function WidgetPreviewContent({
               : "rounded-lg px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
           }
         >
-          {lang === "zh" ? "C3 隔離 AI 測試" : "C3 isolated AI test"}
+          {lang === "zh" ? "真正 AI／KB 測試（需授權）" : "Live AI / KB test (authorization required)"}
         </button>
         <div className="ml-auto text-[11px] text-muted-foreground">
           {previewMode === "ordinary" ? "Own-company visitor flow · control-only" : previewMode === "live" ? "C3 isolated test · guarded" : "UI only"}
