@@ -135,7 +135,7 @@ test('101-turn original C3 Widget source path preserves one conversation and dis
     assert(!store.has(storageKey+':pending'),'persisted receipt clears only current pending delivery');
   }
   assert.equal(new Set(sends().map(x=>x.body.client_message_id)).size,101,'no client message replay');
-  assert.equal(new Set(fixture.rows.map(x=>x.id)).size,101,'distinct persisted visitor receipts');
+  assert.equal(new Set(fixture.rows.filter(x=>x.id!=='v0').map(x=>x.id)).size,101,'101 distinct new visitor receipts; pre-existing history excluded');
   assert.equal(sends().some(x=>x.name!=='widget-live-ai-test'),false,'no alternate backend');
   await close(r);
 });
