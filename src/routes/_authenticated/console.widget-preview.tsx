@@ -450,7 +450,7 @@ function WidgetPreviewContent({
     <div
       className={[
         "space-y-4 transition-[padding-right] duration-200",
-        theme === "modern" && previewOpen && previewMode !== "ordinary" ? "lg:pr-[420px]" : "",
+        (previewMode === "ordinary" || (theme === "modern" && previewOpen)) ? "lg:pr-[420px]" : "",
       ].join(" ")}
     >
       <div>
