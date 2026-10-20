@@ -541,7 +541,8 @@
     "vite.candidate-identity.d.mts",
     "vite.candidate-identity.mjs",
     "vite.config.ts",
-    "vite.preview-environment.mjs"
+    "vite.preview-environment.mjs",
+    "src/types/c3-widget-preview-source.d.ts"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
@@ -1077,5 +1078,8 @@
     "tests/uat-runtime/live-execution-postgres.py": "d86ca0c23ca1fc332f97273cc30ab4101bd6af7d21de28293cc6f403eb4a93a8",
     "tests/uat-runtime/native-compatibility.ts": "f773e0c0299a6a642167cc399c96242374b5caa4ffff7b66aaa795fb6d0f9776"
   },
-  "live_execution_deployment_authorized": false
+  "live_execution_deployment_authorized": false,
+  "authorized_widget_hosted_build_sha256": {
+    "src/types/c3-widget-preview-source.d.ts": "84450c137eedddd5b6e2dd600238eae3b86db282375f12685625bf2cb6736403"
+  }
 }
