@@ -91,17 +91,17 @@ await check('missing stable message id rejected before writes',{},400,{action:'s
 {
  const originalDeno=globalThis.Deno;
  const companyId=FRANKIE_DEMO_COMPANY, conversationId='55555555-5555-4555-8555-555555555555';
- let synthetic=false;const env={};
+ let synthetic=false;let sourceOverride=null;const env={};
  globalThis.Deno={env:{get:k=>env[k]}};
  const db={from:table=>({
    select(){return this},eq(){return this},
    async maybeSingle(){
      return {error:null,data:table==='company'?{id:companyId}:{
        id:conversationId,company_id:companyId,
-       metadata_source:synthetic?{
+       metadata_source:sourceOverride??(synthetic?{
          source:'c3_uat_widget',synthetic:true,exclude_training:true,
          owner_user_id:user
-       }:{source:'ordinary_customer',exclude_training:false}
+       }:{source:'ordinary_customer',exclude_training:false})
      }};
    }
  })};
@@ -111,6 +111,17 @@ await check('missing stable message id rejected before writes',{},400,{action:'s
    synthetic=true;let code='';
    try{await trustedDispatchScope(db,companyId,conversationId)}catch(e){code=e instanceof UatDenied?e.code:'other'}
    assert.equal(code,'UAT_AUTHORIZATION_ABSENT','synthetic paid dispatch denies without own run');
+   for (const source of [
+     {source:'widget_live_test',widget_live_test:true,exclude_training:true,owner_user_id:user},
+     {source:'unexpected',synthetic:true,exclude_training:true,owner_user_id:user},
+     {source:'c3_uat_widget',exclude_training:true,owner_user_id:user}
+   ]) {
+     sourceOverride=source;let denied='';
+     try{await trustedDispatchScope(db,companyId,conversationId)}catch(e){denied=e instanceof UatDenied?e.code:'other'}
+     assert.equal(denied,'UAT_AUTHORIZATION_DENIED','historical or damaged synthetic scope must never fall through to ordinary paid execution');
+     completed.push({name:'historical/damaged synthetic cannot inherit ordinary Production: '+source.source,status:'PASS',kind:'real_source_with_injected_db'});
+   }
+   sourceOverride=null;
    env.FRANKIE_DEMO_UAT_RUN_ID='20000000-0000-4000-8000-000000000002';
    env.FRANKIE_DEMO_UAT_SOURCE_REVISION=FRANKIE_DEMO_REVISION;
    assert.equal(await trustedDispatchScope(db,companyId,conversationId),'uat','licensed synthetic path uses bounded dispatch');

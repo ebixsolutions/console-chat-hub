@@ -1027,7 +1027,7 @@
     "supabase/functions/_shared/llm-router.ts": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4",
     "supabase/functions/_shared/model-attempt-accounting.ts": "23131b006e5289cccb83e33d3e0d535dee64330dfcc0d24a48fd4b129c7b23fc",
     "supabase/functions/_shared/natural-customer-response.ts": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854",
-    "supabase/functions/_shared/uat-execution-contract.ts": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc",
+    "supabase/functions/_shared/uat-execution-contract.ts": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd",
     "supabase/functions/_shared/uat-execution-readiness.ts": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d",
     "supabase/functions/_shared/widget-preview-authority.ts": "ddc26a7c3cc533d47bb0689bac79fcaa0c9eaa96c11e01878121e8d61f3a86aa",
     "supabase/functions/_shared/widget-preview-control.ts": "9e2e79b7b8db2b5f3b8d892ef6d56f3d86e8a9f296e31a9751784e27e6a9b394",
@@ -1036,7 +1036,7 @@
     "supabase/functions/kb-search-proxy/index.ts": "c2e61bd8d06856c6606e509182e6050d29083afca3f4df6326971ed096aa97a7",
     "supabase/functions/receive-widget-message/index.ts": "fff8d87eb720e3bb5ec887cbd5a180e2155e4d8c6288b2ab89720ae299903c1d",
     "supabase/functions/widget-live-ai-test/index.ts": "b8c05ccb43b43cbf3360943ade89d0f5212a7ce26ebde16da3d5878c2b47d826",
-    "tests/c3-widget-live-auth/handler.test.mjs": "c5087762f511596a32d97ed7e0438e2e7dc68f52182ce42d62e02ed682029686",
+    "tests/c3-widget-live-auth/handler.test.mjs": "6bc21f67b22df94202027965fd99faea457bc66140da11d365821439baa00959",
     "tests/c3-widget-live-auth/ordinary-receive.test.mjs": "f845ddef3ccb933aa99b3da13ba8eb28f57b9ffed01bccac9258acfee72710da",
     "tests/console-navigation/ce-batch.test.mjs": "1508a1055df0056584c29444e607dee3003e5d4272a8ed6235862d16031b93a6",
     "tests/console-navigation/console-role-display.test.mjs": "5d71cc434b5d7e059563ab22be19b4df0f19d4e3a4334bad27854aab0fefb8c1",
@@ -1089,7 +1089,7 @@
     "tests/uat-runtime/tenant-fixtures.sql": "8f5895a8d941ed1b1d6a0816c4863a21d7fec5ecfb86df3d8f97040630d2d841",
     "tests/uat-runtime/dual-tenant.py": "8930eb3c155fc0bc0a6c1fb018a6b588afe8e5b168d3197fb412a92b98e406b8",
     "sql/c3_uat_tenant_authority_rollback.sql": "92d2907902e5a9b7de4e41d5dae857455fdf43fd2480aa4a1b0c2588b4a79df9",
-    "docs/c3/task1-dual-tenant-recovery.json": "f7efd31ce6f0d6cf52bf04cda78a02d0f3c98e4ba18fa88f4f17dc7e1fba3232"
+    "docs/c3/task1-dual-tenant-recovery.json": "e47ff4ae531f2b7cd9bd87483301938c7511ddd879ec6c38769d87dd23d86f80"
   },
   "live_execution_deployment_authorized": false,
   "authorized_widget_hosted_build_sha256": {

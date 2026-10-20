@@ -12,7 +12,8 @@
     "Shared cumulative per-Tenant historical attempt, message and budget exposure, company locks across actual concurrent sessions",
     "Retained pending/unknown, immutable source-bound finalization and receipt-preserving guarded rollback",
     "Ordinary Frankie router uses persisted synthetic classification before requiring UAT; no new permanent accounting prerequisite",
-    "Canonical and original temporary SQL entrypoints install the same functions, with CE eligibility unchanged"
+    "Canonical and original temporary SQL entrypoints install the same functions, with CE eligibility unchanged",
+    "Actual self-QA negative reproduction: historical widget_live_test and damaged synthetic tags cannot inherit ordinary paid dispatch; 57 handler assertions pass"
   ],
   "production_readonly": {
     "rpc_preimages": "status/reserve/finalize/tenant-authority/permanent-accounting absent",
@@ -409,7 +410,7 @@
         {
           "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
           "deploy_path": "_shared/uat-execution-contract.ts",
-          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+          "sha256": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd"
         },
         {
           "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
@@ -444,7 +445,7 @@
           "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
         }
       ],
-      "target_manifest_sha256": "b3cf2d7af543644d2a81233d3d76b09597fe315759cdcb9d84fa47a1d988d033",
+      "target_manifest_sha256": "89613f4e9c92f623d63c6ae0d56babe0a9aa0d7edd6b248d57245d91c151806b",
       "deployment_authorized": false
     },
     "agent-assist": {
@@ -674,7 +675,7 @@
         {
           "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
           "deploy_path": "_shared/uat-execution-contract.ts",
-          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+          "sha256": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd"
         },
         {
           "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
@@ -709,7 +710,7 @@
           "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
         }
       ],
-      "target_manifest_sha256": "601b8b52e196bed1ef4274b6e16392472933103b8e1737ab374a3e764c1a534e",
+      "target_manifest_sha256": "f86ecda852a8be811662ec271551ea0f701ca6e5a434eacc76fbcc258eff602c",
       "deployment_authorized": false
     },
     "widget-live-ai-test": {
@@ -749,7 +750,7 @@
         {
           "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
           "deploy_path": "_shared/uat-execution-contract.ts",
-          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+          "sha256": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd"
         },
         {
           "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
@@ -768,7 +769,7 @@
         }
       ],
       "runtime_config": [],
-      "target_manifest_sha256": "4c6c1ffedb7ee64fbdbc2605da22cba4b6abedee239c8a64b28426adb8f4dd66",
+      "target_manifest_sha256": "e024231f019cfa72ba9fc1d9655dfc6b0bf65120a00f9f3f450e9f70075bad6f",
       "deployment_authorized": false
     },
     "kb-search-proxy": {
@@ -868,7 +869,7 @@
         {
           "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
           "deploy_path": "_shared/uat-execution-contract.ts",
-          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+          "sha256": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd"
         },
         {
           "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
@@ -892,7 +893,7 @@
         }
       ],
       "runtime_config": [],
-      "target_manifest_sha256": "7d1308a601e0503b4faa212a7a19cc20690d2cdd6a21a2bb4ea169a1bed0d70f",
+      "target_manifest_sha256": "7fb6218850cdd3ab44f1ec65561cfa15959a8719dc955c7c48c1ee6eda00770b",
       "deployment_authorized": false
     },
     "conversation-evaluate": {
@@ -1107,7 +1108,7 @@
         {
           "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
           "deploy_path": "_shared/uat-execution-contract.ts",
-          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+          "sha256": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd"
         },
         {
           "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
@@ -1137,7 +1138,7 @@
           "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
         }
       ],
-      "target_manifest_sha256": "be06349d2b31b515cdf345df3bf493139d62476bd69700608629436bd9d66390",
+      "target_manifest_sha256": "9f47a97138ebe8d5b92954bf50674573ffc6eff551954e0e4ce5d153867b5c67",
       "deployment_authorized": false
     },
     "ce-evaluation-control": {
@@ -1362,7 +1363,7 @@
         {
           "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
           "deploy_path": "_shared/uat-execution-contract.ts",
-          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+          "sha256": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd"
         },
         {
           "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
@@ -1386,7 +1387,7 @@
         }
       ],
       "runtime_config": [],
-      "target_manifest_sha256": "979127fc07cc6ff44781b46e483ae0be254a412ca1f6b4c7bcdec64e2a97c68b",
+      "target_manifest_sha256": "a648c9fbf034139674bb7719e9389617d997a68254657177328e95f700f72a1f",
       "deployment_authorized": false
     },
     "ce-evaluation-worker": {
@@ -1606,7 +1607,7 @@
         {
           "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
           "deploy_path": "_shared/uat-execution-contract.ts",
-          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+          "sha256": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd"
         },
         {
           "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
@@ -1630,7 +1631,7 @@
         }
       ],
       "runtime_config": [],
-      "target_manifest_sha256": "6e7c9234c85235ce02e3870771ae8e2c19b473f8a240feb65877b03da5eb5fb4",
+      "target_manifest_sha256": "44a1b8236824c9278d02102ba8026eecf7462c96317bc38b23fddf54afdf930a",
       "deployment_authorized": false
     }
   },
