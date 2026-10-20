@@ -1075,7 +1075,7 @@
     "tests/ordinary-preview-safety/live-queue-triggers.json": "80522aa7975644b27e9d819a19c419909dbb033af913c0ff36eb2aeb502d1bc0",
     "tests/ordinary-preview-safety/live-triggers.json": "f95ee825ff2ef55d1b36eb978b5e0af17f32c165da77aad9303f44c062609fa0",
     "tests/ordinary-preview-safety/native.py": "de40c069927c652cc66ef54f67c4655c44c15499f59adaa1c0e0c836662ad79f",
-    "tests/ordinary-preview-safety/runtime.mjs": "f14f2f48fc311ea3b2051746a48240e29ad4df31fe211abc3ed602401d270fd6",
+    "tests/ordinary-preview-safety/runtime.mjs": "261f8fe26a707917cd7981662e26a466859ad7f47c8d8803c217dae80527dfc8",
     "tests/phase1/feedback-date-boundaries.test.mjs": "5a028ec643d9e7ff22c3e4df81d0004d9955a23d066d7824b4fc847802a45b7d",
     "tests/phase1/request-response-propagation.test.mjs": "93165be7a2053cba477300bc53570e094ad2df7776bb29f3a6de47f8ab2a90f4",
     "tests/sql/saved-responses-postgres.py": "ac426404292ac558b14dab3ecb5a6e12efdc6e63e39ad401465cfbd7cc02d211",
