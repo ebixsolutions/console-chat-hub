@@ -1012,7 +1012,7 @@
     "src/routes/_authenticated/console.feedback-responses.tsx": "5abd8f12c1c7f6907682db99fc8fab954b7313f4467cd6b2c2c45d219a246a31",
     "src/routes/_authenticated/console.tsx": "4b601f1c866653b1b06ee8b45936a2fae119d1bb1c52241ecd518d0855655925",
     "src/routes/_authenticated/console.visitor-analytics.tsx": "bd8ddd502d58b72b06b4890d9e101bea044eefce86b5d467506d323e7c5d674c",
-    "src/routes/_authenticated/console.widget-preview.tsx": "429089a8b7712cc34b2768fb61f28603a2687d1e9a6ab82821618c3ed078d857",
+    "src/routes/_authenticated/console.widget-preview.tsx": "ace43af455f7f2e043771ad3e4c65f7d674e4ad35e4a19123490e156975c64fb",
     "src/start.ts": "30474eb76daf45109e57af25064639f1bfdd0a00447602a0c4464b27ee8aff55",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "dfbe7a1eefb5e65c567b3656a9b603bccbb93211ee29c8415b370d9e88028128",
     "supabase/functions/_shared/conversational-routing.ts": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3",
