@@ -71,7 +71,7 @@ export function OrdinaryWidgetPreview({ channel, actorId, lang }: { channel: Liv
           aria-label={lang === "zh" ? "開啟普通 Widget 預覽" : "Open ordinary Widget preview"}
           aria-busy={loading}
           disabled={loading}
-          onClick={() => { void open(); }}
+          onClick={open}
           className="inline-flex min-h-11 items-center justify-center rounded-lg bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm ring-offset-2 transition-colors hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
         >
           {loading
