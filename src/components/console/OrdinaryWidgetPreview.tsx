@@ -2,7 +2,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useEffect, useRef, useState } from "react";
 import type { LiveChannelConfigRow } from "@/lib/api/config.service";
 import { PUBLIC_WIDGET_PREVIEW_SHA256 } from "@/lib/public-widget-preview-asset";
-import authoritativeWidgetSource from "virtual:c3-widget-preview-source";
+import getAuthoritativeWidgetSource from "virtual:c3-widget-preview-source";
 import { resolveAuthoritativeSupabaseBinding } from "@/integrations/supabase/runtime-authority.mjs";
 
 /** Existing public Widget, with an additional server-verified zero-paid preview restriction. */
@@ -53,7 +53,7 @@ export function OrdinaryWidgetPreview({ channel, actorId, lang }: { channel: Liv
     try {
       // The canonical public Widget is bundled with this exact frontend build.
       // Avoid a separate hosted static-asset version that can drift from the served app.
-      const bytes = new TextEncoder().encode(authoritativeWidgetSource);
+      const bytes = new TextEncoder().encode(getAuthoritativeWidgetSource());
       const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
         .map(value => value.toString(16).padStart(2, "0")).join("");
       if (digest !== PUBLIC_WIDGET_PREVIEW_SHA256) throw new Error("asset_revision_mismatch");
