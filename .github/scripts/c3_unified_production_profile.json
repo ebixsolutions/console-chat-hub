@@ -566,7 +566,7 @@
   "authorized_preview_activation_sha256": {
     "vite.candidate-identity.mjs": "c257b0d375c055361a6c3c3ff18f85366590c1f505f29bd2d059100a31598066",
     "vite.candidate-identity.d.mts": "18c6a612edf22deef4d41fc26216b2e1d856e8cd7a925fffe9c981b8dc8c93ee",
-    "vite.config.ts": "334294bf9d457999ef5b09be99f751047f502c25d075b5da4e64905ee0fb1185",
+    "vite.config.ts": "02fe0076b202d6e80e2cc89477c49dde6a2d1e54102ecedc5d58fa99c5c0c9db",
     "tests/c3-candidate-identity/candidate-identity.test.mjs": "11adab520ff5e2e8761453b9a8c772e76d4e1028c15687ae6fb254ce69081eda",
     ".github/scripts/c3_candidate_identity_build_check.mjs": "f1cf53c562e537a57402c3119adc7868d530d0958a9b99471bb21e289aa03a11"
   },
@@ -984,7 +984,7 @@
     "sql/c3_uat_execution_status.sql": "84dcd01684cb0b3177160ba922290743e1e0ac4b02a194453176159757badc50",
     "sql/c3_uat_execution_status_rollback.sql": "395ef4102ce47f97638059f6ff7d47b556ad558817de4ac7d6fd43132582217d",
     "src/components/console/ConversationList.tsx": "7e38db3f5c8fed96b15ab6ca5f7154a1683ab41a6c0c86b9b9eea6b758204944",
-    "src/components/console/OrdinaryWidgetPreview.tsx": "6b2e83232c0c37933d652fed7f2972d94e07ad87435cf1adb51900e8355805b0",
+    "src/components/console/OrdinaryWidgetPreview.tsx": "5f98f05e1da4130ed1f481ab24c343937b1bcf6a239b70fedeed4669682c295a",
     "src/components/console/SavedResponses.tsx": "a51ab1ed0e6500356e6ab394d84d82f32e6fdee8e271684f1397e7f2a2bf827f",
     "src/components/console/TicketHandoffSummary.tsx": "5a3965544fe7738892725f84c9dc488fe27f19e8fdb24f74f2b1ad286dcd9f70",
     "src/components/console/WidgetLiveAiTest.tsx": "faabd8ac72edea9a3e213dc73e8dd3053d2a783277fdb9ebc7813a899892a5fb",
@@ -1043,8 +1043,8 @@
     "tests/console-navigation/inbox-history-search.test.mjs": "83f5fef04a136b6659474cc30b0e6b7fbecacce8707a9e21228a6c2abd80479d",
     "tests/console-navigation/inbox-reply.test.mjs": "fcd8e5320e9b5ea87c991f4825c8c57383e8857fe775af2e1bf62f49ff8ad2af",
     "tests/console-navigation/legacy-widget-entry.test.mjs": "5374768522357087f6fe3d4242097b261497f46b5e34fa8de03b29926b13b63e",
-    "tests/console-navigation/ordinary-preview-bridge.test.mjs": "4b06dcd4595618b8b4c62e1a1c104d95ea56ae08b2b9e67ef99c82672d030074",
-    "tests/console-navigation/ordinary-preview-route.test.mjs": "edc370a3cfc51d4b02b7ef392d6fa60626e785c4d41d1986fd85be98e6a1b452",
+    "tests/console-navigation/ordinary-preview-bridge.test.mjs": "a596c5e20ac0f4ca5d461e003ff34e4445a1f34ae81120d5148fd68dd38b5975",
+    "tests/console-navigation/ordinary-preview-route.test.mjs": "c667c71a546894ff45f78260abbb73d8101b8272311a7f45ed0e3d92b115bc23",
     "tests/console-navigation/ordinary-widget-dom.test.mjs": "f00f2c020843c18eb2959704788a5120aeb0173c47ddab4b0831af1d365ea838",
     "tests/console-navigation/original-action-exports.test.mjs": "ef409bb9a69658810060c17b085b2a1a26824da54c70e4e54b1f8491af7b49f8",
     "tests/console-navigation/read-recovery.test.mjs": "99bcb87fdf53618242ec9e1039c3db0b29d966f2140fbab3a5f87af7d38f8bb2",
@@ -1080,6 +1080,6 @@
   },
   "live_execution_deployment_authorized": false,
   "authorized_widget_hosted_build_sha256": {
-    "src/types/c3-widget-preview-source.d.ts": "84450c137eedddd5b6e2dd600238eae3b86db282375f12685625bf2cb6736403"
+    "src/types/c3-widget-preview-source.d.ts": "2d023d7d7d8ccfba73030186c3d104f489aba4068a64c2996c6e128b678aeb68"
   }
 }
