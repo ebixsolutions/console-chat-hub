@@ -19,6 +19,10 @@
   var consolePreview = script.getAttribute("data-console-preview") === "ordinary-widget-control-v2";
   var previewActor = script.getAttribute("data-preview-actor") || "";
   var previewBridge = script.getAttribute("data-preview-bridge") || "";
+  // srcDoc documents report location.origin as "null" even when the sandbox inherits
+  // a trustworthy parent origin. The parent explicitly binds this origin at render time.
+  var previewParentOrigin = script.getAttribute("data-preview-parent-origin") ||
+    (window.location.protocol === "https:" ? window.location.origin : "");
   var previewCompany = script.getAttribute("data-company-id") || "";
   var previewContractReady = false;
   var composing = false;
@@ -1495,12 +1499,12 @@
   function api(path, opts) {
     if (consolePreview && /^\/(create-visitor-session|receive-widget-message|widget-poll-messages)(\?|$)/.test(path)) {
       return new Promise(function(resolve,reject){
-        if(!previewBridge || window.parent===window){reject(new Error("preview_authenticated_bridge_missing"));return;}
+        if(!previewBridge || !/^https:\/\/[^/]+$/.test(previewParentOrigin) || window.parent===window){reject(new Error("preview_authenticated_bridge_missing"));return;}
         var id=crypto.randomUUID();
         var timer=setTimeout(function(){window.removeEventListener("message",receive);reject(new Error("preview_delivery_unconfirmed"));},30000);
-        function receive(event){var d=event.data;if(event.source!==window.parent || event.origin!==window.location.origin || d?.type!=="ordinary-preview-response-v2" || d.nonce!==previewBridge || d.id!==id)return;clearTimeout(timer);window.removeEventListener("message",receive);resolve({ok:d.status>=200&&d.status<300,status:d.status,body:d.body});}
+        function receive(event){var d=event.data;if(event.source!==window.parent || event.origin!==previewParentOrigin || d?.type!=="ordinary-preview-response-v2" || d.nonce!==previewBridge || d.id!==id)return;clearTimeout(timer);window.removeEventListener("message",receive);resolve({ok:d.status>=200&&d.status<300,status:d.status,body:d.body});}
         window.addEventListener("message",receive);
-        window.parent.postMessage({type:"ordinary-preview-request-v2",nonce:previewBridge,id:id,path:path,method:opts?.method||"POST",body:opts?.body},window.location.origin);
+        window.parent.postMessage({type:"ordinary-preview-request-v2",nonce:previewBridge,id:id,path:path,method:opts?.method||"POST",body:opts?.body},previewParentOrigin);
       });
     }
     return fetch(apiBase + path, opts).then(function (response) {
