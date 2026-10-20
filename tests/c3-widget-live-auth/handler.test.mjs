@@ -6,9 +6,9 @@ let code=fs.readFileSync(new URL('supabase/functions/widget-live-ai-test/index.t
 const helper=fs.readFileSync(new URL('supabase/functions/_shared/supabase-admin-key.ts',root),'utf8').replace('export function','function');
 const dependencyCode=['supabase/functions/_shared/execution-failure.ts','supabase/functions/_shared/uat-execution-contract.ts','supabase/functions/_shared/uat-execution-readiness.ts','supabase/functions/_shared/handoff-intent.ts','supabase/functions/_shared/conversational-routing.ts'].map(file=>fs.readFileSync(new URL(file,root),'utf8').replace(/^import .*;\n/gm,'')).join('\n');
 code=dependencyCode+'\n'+code;
-code='const createClient=()=>{throw new Error("unexpected SDK client")}; const supabaseCorsHeaders=()=>({});\n'+helper+'\n'+code+'\nexport {getSupabaseAdminKey as testAdminKey};';
+code='const createClient=()=>{throw new Error("unexpected SDK client")}; const supabaseCorsHeaders=()=>({});\n'+helper+'\n'+code+'\nexport {getSupabaseAdminKey as testAdminKey, trustedDispatchScope, FRANKIE_DEMO_COMPANY, FRANKIE_DEMO_REVISION, UatDenied};';
 const js=ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
-const {createWidgetLiveHandler,testAdminKey}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+const {createWidgetLiveHandler,testAdminKey,trustedDispatchScope,FRANKIE_DEMO_COMPANY,FRANKIE_DEMO_REVISION,UatDenied}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
 const company='4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec',channel='20000000-0000-4000-8000-000000000001';
 const user='30000000-0000-4000-8000-000000000001', token='authenticated-test-token',secret='server-secret-never-output';
 let completed=[];
@@ -86,5 +86,38 @@ await check('foreign owner load denied',{foreignOwner:true},404,{action:'load',t
 await check('canonical send',{},200,{action:'send',test_conversation_id:company,client_message_id:channel,query:'synthetic generic request'});
 await check('human control send remains ordinary widget',{human:true},200,{action:'send',test_conversation_id:company,client_message_id:channel,query:'synthetic reply'});
 await check('missing stable message id rejected before writes',{},400,{action:'send',query:'synthetic'});
+// Real shared model-dispatch admission boundary, exercised without any upstream traffic.
+{
+ const originalDeno=globalThis.Deno;
+ const companyId=FRANKIE_DEMO_COMPANY, conversationId='55555555-5555-4555-8555-555555555555';
+ let synthetic=false;const env={};
+ globalThis.Deno={env:{get:k=>env[k]}};
+ const db={from:table=>({
+   select(){return this},eq(){return this},
+   async maybeSingle(){
+     return {error:null,data:table==='company'?{id:companyId}:{
+       id:conversationId,company_id:companyId,
+       metadata_source:synthetic?{
+         source:'c3_uat_widget',synthetic:true,exclude_training:true,
+         owner_user_id:user
+       }:{source:'ordinary_customer',exclude_training:false}
+     }};
+   }
+ })};
+ try{
+   assert.equal(await trustedDispatchScope(db,companyId,conversationId),'legacy',
+      'existing Frankie Production traffic must not require synthetic UAT admission');
+   synthetic=true;let code='';
+   try{await trustedDispatchScope(db,companyId,conversationId)}catch(e){code=e instanceof UatDenied?e.code:'other'}
+   assert.equal(code,'UAT_AUTHORIZATION_ABSENT','synthetic paid dispatch denies without own run');
+   env.FRANKIE_DEMO_UAT_RUN_ID='20000000-0000-4000-8000-000000000002';
+   env.FRANKIE_DEMO_UAT_SOURCE_REVISION=FRANKIE_DEMO_REVISION;
+   assert.equal(await trustedDispatchScope(db,companyId,conversationId),'uat','licensed synthetic path uses bounded dispatch');
+   env.FRANKIE_DEMO_UAT_SOURCE_REVISION='wrong-revision';
+   code='';try{await trustedDispatchScope(db,companyId,conversationId)}catch(e){code=e instanceof UatDenied?e.code:'other'}
+   assert.equal(code,'UAT_SOURCE_OR_RUN_DENIED','wrong source revision cannot authorize dispatch');
+   completed.push({name:'Frankie synthetic/ordinary model scope isolation',status:'PASS',kind:'real_source_with_injected_db'});
+ }finally{globalThis.Deno=originalDeno}
+}
 if(process.env.C3_WIDGET_TEST_REPORT)fs.writeFileSync(process.env.C3_WIDGET_TEST_REPORT,JSON.stringify({completed,production_runtime:false},null,2));
 console.log(JSON.stringify({tests:completed.length,passed:completed.length,production_runtime:false}));
