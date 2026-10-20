@@ -64,7 +64,27 @@ export function OrdinaryWidgetPreview({ channel, actorId, lang }: { channel: Liv
     {allowed && <p role="note" className="my-2 text-sm">{lang === "zh" ? "僅能測試四句：你是誰？／Who are you?／請轉真人客服／Please connect me to a human.；此模式不會回答其他 AI／KB 商業問題。" : "Control-only Preview accepts: 你是誰？ / Who are you? / 請轉真人客服 / Please connect me to a human. Other business AI/KB questions are not sent here."}</p>}
 
     {assetError && <p role="alert">{lang === "zh" ? "普通 Widget 程式版本未能核實；不會載入舊程式或建立訪客對話。" : "The public Widget asset revision could not be verified. No older script or visitor conversation will be started."}</p>}
-    {allowed && !widgetScript && <button type="button" disabled={loading} onClick={open}>{lang === "zh" ? "開啟普通 Widget 預覽" : "Open ordinary Widget preview"}</button>}
+    {allowed && !widgetScript && (
+      <div className="mt-4 space-y-2">
+        <button
+          type="button"
+          aria-label={lang === "zh" ? "開啟普通 Widget 預覽" : "Open ordinary Widget preview"}
+          aria-busy={loading}
+          disabled={loading}
+          onClick={() => { void open(); }}
+          className="inline-flex min-h-11 items-center justify-center rounded-lg bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm ring-offset-2 transition-colors hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
+        >
+          {loading
+            ? (lang === "zh" ? "正在核實並載入 Widget…" : "Verifying and loading Widget…")
+            : (lang === "zh" ? "開啟普通 Widget 預覽" : "Open ordinary Widget preview")}
+        </button>
+        <p className="text-xs text-slate-600" role="note">
+          {lang === "zh"
+            ? "這是可操作的開啟按鈕；只載入原有 Widget，並不自動發送 AI／KB 訊息。"
+            : "This button opens the existing Widget only; it does not automatically send an AI/KB message."}
+        </p>
+      </div>
+    )}
     {widgetScript && allowed && <iframe ref={frame} title="Ordinary own-company Widget" sandbox="allow-scripts allow-same-origin" srcDoc={doc} className="mt-3 h-[720px] w-full rounded-lg border" />}
   </section>;
 }
