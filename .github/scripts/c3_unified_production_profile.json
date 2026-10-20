@@ -1030,7 +1030,7 @@
     "supabase/functions/generate-reply/index.ts": "0731769d66c0c7207f4114ad1de84807e52d61e2c64a24dbed40de31e5611d55",
     "supabase/functions/kb-search-proxy/index.ts": "c2e61bd8d06856c6606e509182e6050d29083afca3f4df6326971ed096aa97a7",
     "supabase/functions/receive-widget-message/index.ts": "fff8d87eb720e3bb5ec887cbd5a180e2155e4d8c6288b2ab89720ae299903c1d",
-    "supabase/functions/widget-live-ai-test/index.ts": "c4d4ef6c5bd2cb0abacde57ac66c7a68e8eb4b3779fc2306f1a6d87ea55b4195",
+    "supabase/functions/widget-live-ai-test/index.ts": "444e02f840af39e7770fbcfb65ff685904256d478d3192be0b3da2491465f7fb",
     "tests/c3-widget-live-auth/handler.test.mjs": "8d3790495b2167e1319decb35323479193f3c634acfbedabfa3a8c73c974f0e6",
     "tests/c3-widget-live-auth/ordinary-receive.test.mjs": "f845ddef3ccb933aa99b3da13ba8eb28f57b9ffed01bccac9258acfee72710da",
     "tests/console-navigation/ce-batch.test.mjs": "1508a1055df0056584c29444e607dee3003e5d4272a8ed6235862d16031b93a6",
