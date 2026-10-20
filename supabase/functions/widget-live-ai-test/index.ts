@@ -153,7 +153,10 @@ async function loadTestMessages(admin: QueryClient, conversationId: string) {
     .eq("conversation_id", conversationId)
     .neq("content", "__THINKING__")
     .order("created_at", { ascending: true })
-    .limit(200);
+    .order("id", { ascending: true })
+    .limit(1000);
+  // Over 100 turns require more than 200 persisted visitor/AI/system/agent rows.
+  // This is a read window, never a maximum on new turns or on message persistence.
   if (error) throw new Error("test_messages_lookup_failed");
   return (data ?? [])
     .filter((m: any) => ["visitor","assistant","agent","system"].includes(m.role))
