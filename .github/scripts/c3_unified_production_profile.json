@@ -1042,7 +1042,7 @@
     "tests/console-navigation/inbox-history-search.test.mjs": "83f5fef04a136b6659474cc30b0e6b7fbecacce8707a9e21228a6c2abd80479d",
     "tests/console-navigation/inbox-reply.test.mjs": "fcd8e5320e9b5ea87c991f4825c8c57383e8857fe775af2e1bf62f49ff8ad2af",
     "tests/console-navigation/legacy-widget-entry.test.mjs": "5374768522357087f6fe3d4242097b261497f46b5e34fa8de03b29926b13b63e",
-    "tests/console-navigation/ordinary-preview-bridge.test.mjs": "67fdaab7bee683f140ccaaec0ee516c4f27828b1bf6c809ff19647782feac6ec",
+    "tests/console-navigation/ordinary-preview-bridge.test.mjs": "a3793f53d8631f4c9a4d883dcc092969c6dbe0c510fa336a9140eb928fd4d949",
     "tests/console-navigation/ordinary-preview-route.test.mjs": "11bc16b49b825a7f3a07baa0db0aab166230f8eddf5afdb413b806f408c5e525",
     "tests/console-navigation/ordinary-widget-dom.test.mjs": "f00f2c020843c18eb2959704788a5120aeb0173c47ddab4b0831af1d365ea838",
     "tests/console-navigation/original-action-exports.test.mjs": "ef409bb9a69658810060c17b085b2a1a26824da54c70e4e54b1f8491af7b49f8",
