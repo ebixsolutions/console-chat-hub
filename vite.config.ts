@@ -49,7 +49,17 @@ return defineConfig({
   vite: {
     define: { "import.meta.env.VITE_C3_BUILD_IDENTITY": JSON.stringify(buildIdentity), "import.meta.env.VITE_C3_CANDIDATE": JSON.stringify(identity) },
     server: tlsCert && tlsKey ? { https: { cert: readFileSync(tlsCert), key: readFileSync(tlsKey) } } : undefined,
-    plugins: [mcpPlugin(), candidateIdentityPlugin(identity), ...(nonproductionConsole ? [{
+    plugins: [mcpPlugin(), candidateIdentityPlugin(identity), {
+      name: "c3-authoritative-widget-source-bundle",
+      enforce: "pre",
+      resolveId(id: string) { if (id === "virtual:c3-widget-preview-source") return "\0c3-widget-preview-source"; },
+      load(id: string) {
+        if (id !== "\0c3-widget-preview-source") return null;
+        // One authoritative public/widget/chat.js source, included in the exact frontend build.
+        const source = readFileSync(fileURLToPath(new URL("./public/widget/chat.js", import.meta.url)), "utf8");
+        return `export default ${JSON.stringify(source)};`;
+      },
+    }, ...(nonproductionConsole ? [{
       name: "c3-nonproduction-customer-entrypoint",
       configureServer(server: any) {
         server.middlewares.use((req: any, res: any, next: any) => {
