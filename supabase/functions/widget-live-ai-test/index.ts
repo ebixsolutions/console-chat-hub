@@ -378,7 +378,7 @@ return async (req: Request) => {
 
     // Both tenants use separate, server-verified admission; never use a
     // non-UAT default or browser field to authorize synthetic paid traffic.
-    const execution = await uatExecutionReadiness(admin as any,resolved.companyId,deps.env);
+    const execution = await uatExecutionReadiness(admin as any,resolved.companyId,deps.env,{actorId:authData.user.id,channelId:resolved.channelId});
     if (action === "history") {
       return json(req, {
         success: true,

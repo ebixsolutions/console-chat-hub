@@ -18,29 +18,33 @@ CREATE TABLE upstream_call_log(id uuid primary key default gen_random_uuid(),com
 ALTER TABLE upstream_call_log ENABLE ROW LEVEL SECURITY;CREATE POLICY fixture_authenticated_allow ON upstream_call_log TO authenticated USING(true) WITH CHECK(true);GRANT ALL ON upstream_call_log TO authenticated;""")
 sql("CREATE TABLE c3_uat_conversation_scope(conversation_id uuid primary key); CREATE FUNCTION c3_uat_learning_excluded(p_conversation_id uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path='' AS $$ SELECT EXISTS(SELECT 1 FROM public.c3_uat_conversation_scope WHERE conversation_id=p_conversation_id) $$;")
 sql((root/'tests/uat-runtime/ce-live-baseline.sql').read_text())
+sql((root/'tests/uat-runtime/tenant-fixtures.sql').read_text())
+sql((root/'sql/c3_uat_tenant_authority.sql').read_text())
 sql((root/'sql/c3_uat_execution_status.sql').read_text())
 status_call=f"select c3_uat_execution_status('{run}','c3-3322877-bounded-uat-r2','{company}');"
 check('authenticated cannot inspect server lease',sql('set role authenticated;'+status_call,False).returncode!=0)
 check('read-only status detects missing RPC dependencies before activation','UAT_DEPENDENCY_MISSING' in svc(status_call).stdout)
-sql((root/'sql/c3_live_execution_dependencies.sql').read_text())
+sql((root/('sql/'+os.environ.get('C3_UAT_SQL_PACKAGE','c3_live_execution_dependencies.sql'))).read_text())
 check('status does not invent an active lease','UAT_RUN_MISSING' in svc(status_call).stdout)
 # Synthetic evidence ONLY: not a Production receipt or a bound for the seven real unknowns.
 scope='C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1/rev1.5/stage-A/3520'
 quota='eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
 missing=['commerce-semantic:'+x for x in ['83e12377-3e9f-435a-b3f3-32a9e7348edc','af02d94b-32bb-455d-ae91-030d7be729b2','25b28f4e-462a-4f16-bc0e-c80f0e4576b0','47f004ca-4996-4a0e-a8df-ae622bd008ee','10638698-3549-4d8d-a7e7-c76f276465d9','2f61d01e-0438-42c4-b739-5e64eb6ada85','e2cce632-0681-409f-93a2-d274fff1bd79']]
 evidence={'contract':'C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1/rev1.5','company_id':company,'scope':scope,'unit':'model_attempt','limit':3520,'authorization_sha256':'a'*64,'coverage_sha256':'b'*64,'period_start':'2026-01-01T00:00:00Z','covered_through':'2026-01-02T00:00:00Z','entries':[{'id':'synthetic-confirmed','units':3489,'classification':'confirmed','receipt_sha256':'c'*64,'unit':'model_attempt','scope':scope,'request_ids':['synthetic-confirmed']}]+[{'id':x,'units':2,'classification':'uncertainty','receipt_sha256':'d'*64,'unit':'model_attempt','scope':scope,'request_ids':[x],'actual_usage':None,'call_chain_sha256':'e'*64,'coverage':['caller','pre-semantic','router-retries','fallback','verifier','async-sidecalls'],'overlap':'conservative-double-reserve'} for x in missing]}
+evidence.update(budget_microusd=64000000,historical_cost_microusd=0,historical_conversations=0,historical_visitors=0,historical_assistants=0,conversation_limit=224,visitor_limit=480,assistant_limit=427,source_head='a'*40,source_tree='b'*40)
 def seed_evidence():
  raw=json.dumps(evidence).replace("'","''")
  sql(f"insert into upstream_call_log(id,company_id,request_payload) values('{quota}','{company}',jsonb_build_object('kind','c3_uat_quota','scope','{scope}','evidence','{raw}'::jsonb,'evidence_sha256',encode(sha256(convert_to(('{raw}'::jsonb)::text,'UTF8')),'hex'))) on conflict(id) do update set request_payload=excluded.request_payload")
  sql(f"update upstream_call_log set request_payload=request_payload||jsonb_build_object('quota_evidence_sha256',(select request_payload->>'evidence_sha256' from upstream_call_log where id='{quota}')) where request_payload->>'kind' in ('c3_uat_run','c3_uat_dispatch')")
 seed_evidence()
 policy={'kind':'c3_uat_run','revision':'c3-3322877-bounded-uat-r2','state':'active','issued_at':'2026-01-01T00:00:00Z','expires':'2026-01-01T23:59:59Z','allowed_conversations':[conv],'allowed_purposes':['generation','evaluation','assist','kb_embedding'],'allowed_operation_prefixes':['generate-reply:','agent-assist:','ce:','kb:'],'conversation_limit':20,'visitor_limit':20,'attempt_limit':17,'budget_microusd':64000000,'batch_size':20,'batch_visitor_limit':20,'per_request_attempt_limit':32,'stage':'calibration','kb_bounds_verified':False,'quota_scope':scope,'count_tokens_limit':6,'quota_evidence_sha256':sql(f"select request_payload->>'evidence_sha256' from upstream_call_log where id='{quota}'").stdout.strip()}
-sql(f"insert into conversations values('{conv}','{company}','{{\"exclude_training\":true}}',clock_timestamp());insert into messages(id,conversation_id,role,created_at) values('44444444-4444-4444-8444-444444444444','{conv}','visitor',clock_timestamp());insert into upstream_call_log(id,company_id,request_payload) values('{run}','{company}','{json.dumps(policy)}');update upstream_call_log set request_payload=request_payload||jsonb_build_object('issued_at',clock_timestamp()-interval '1 minute','expires',clock_timestamp()+interval '1 hour') where id='{run}'")
+policy.update(actor_id='4348ee35-9632-4626-a846-e313bcc4a5f9',channel_id='0405282f-77dc-47cf-8074-99dd3dc6c393',source_head='a'*40,source_tree='b'*40,authorization_sha256='a'*64)
+sql(f"insert into conversations(id,company_id,metadata_source,created_at) values('{conv}','{company}','{{\"exclude_training\":true}}',clock_timestamp());insert into messages(id,conversation_id,role,created_at) values('44444444-4444-4444-8444-444444444444','{conv}','visitor',clock_timestamp());insert into upstream_call_log(id,company_id,request_payload) values('{run}','{company}','{json.dumps(policy)}');update upstream_call_log set request_payload=request_payload||jsonb_build_object('issued_at',clock_timestamp()-interval '1 minute','expires',clock_timestamp()+interval '1 hour') where id='{run}'")
 sql(f"insert into messages(id,conversation_id,role) values('55555555-5555-4555-8555-555555555555','{conv}','assistant');insert into c3_uat_conversation_scope values('{conv}')")
 check('active model-only lease status never promotes KB bound', '"ready": true' in svc(status_call).stdout and '"remote_ready": false' in svc(status_call).stdout)
 check('read-only status emits no dispatch record',sql("select count(*) from upstream_call_log where request_payload->>'kind'='c3_uat_dispatch'").stdout.strip()=='0')
 check('Phase1 dispatch activation does not enable CE or training',sql(f"select ce_conversation_evaluable_v1('{conv}')").stdout.strip()=='f')
-sql(f"insert into conversations values('33333333-3333-4333-8333-333333333333','{company}','{{\"exclude_training\":true}}','2026-01-01');insert into c3_uat_conversation_scope values('33333333-3333-4333-8333-333333333333');insert into messages(id,conversation_id,role) values('66666666-6666-4666-8666-666666666666','33333333-3333-4333-8333-333333333333','visitor'),('77777777-7777-4777-8777-777777777777','33333333-3333-4333-8333-333333333333','assistant')")
+sql(f"insert into conversations(id,company_id,metadata_source,created_at) values('33333333-3333-4333-8333-333333333333','{company}','{{\"exclude_training\":true}}','2026-01-01');insert into c3_uat_conversation_scope values('33333333-3333-4333-8333-333333333333');insert into messages(id,conversation_id,role) values('66666666-6666-4666-8666-666666666666','33333333-3333-4333-8333-333333333333','visitor'),('77777777-7777-4777-8777-777777777777','33333333-3333-4333-8333-333333333333','assistant')")
 check('historical excluded CE jobs remain excluded under new active lease',sql("select ce_conversation_evaluable_v1('33333333-3333-4333-8333-333333333333')").stdout.strip()=='f')
 check('CE learning exclusion remains active' ,sql(f"select c3_uat_learning_excluded('{conv}')").stdout.strip()=='t')
 def reserve(i,c=company,v=conv,revision='c3-3322877-bounded-uat-r2',provider='vertex',purpose='generation',model='gemini-2.5-flash',op='generate-reply:test',cost=8540,inp=20000,out=1016):
@@ -135,20 +139,22 @@ check('rollback removes only temporary functions' ,sql("select to_regprocedure('
 check('rollback preserves restrictive receipt update protection','UPDATE 0' in sql(f"set role authenticated;update upstream_call_log set request_payload='{{}}' where id='{quota}'").stdout)
 check('rollback permits legal ordinary non-UAT log writes',sql(f"set role authenticated;insert into upstream_call_log(company_id,request_payload) values('{company}','{{\"kind\":\"ordinary\"}}')").returncode==0)
 # Exercise the exact proposed normal-UI fixture entry, including clock ordering.
-sql((root/'sql/c3_live_execution_dependencies.sql').read_text())
+sql((root/('sql/'+os.environ.get('C3_UAT_SQL_PACKAGE','c3_live_execution_dependencies.sql'))).read_text())
 sql((root/'sql/c3_uat_execution_status.sql').read_text())
-sql("CREATE TABLE company_membership(user_id uuid,company_id uuid,is_active boolean,role text);CREATE TABLE channel_config(id uuid,company_id uuid,is_active boolean,channel_type text);CREATE TABLE visitor_session(id uuid,session_token text,visitor_fingerprint text,visitor_metadata jsonb,last_seen_at timestamptz,channel_config_id uuid);ALTER TABLE conversations ADD COLUMN visitor_session_id uuid,ADD COLUMN channel_config_id uuid,ADD COLUMN status text;")
-sql(f"INSERT INTO company_membership VALUES('4348ee35-9632-4626-a846-e313bcc4a5f9','{company}',true,'admin');INSERT INTO channel_config VALUES('0405282f-77dc-47cf-8074-99dd3dc6c393','{company}',true,'web_widget');")
-check('proposed lease refuses unknown cross-run dispatch and rolls back all fixtures',sql((root/'sql/c3_live_execution_qa_lease_proposed.sql').read_text(),False).returncode!=0 and sql("select count(*) from visitor_session").stdout.strip()=='0')
+def qa_sql():
+ cfg={'company_id':company,'actor_id':'4348ee35-9632-4626-a846-e313bcc4a5f9','run_id':'71657f35-88c4-4a73-a2e7-9abde643ad74','conversation_1':'c7d3fa80-ed64-42d2-a48e-cda98dce5d71','conversation_2':'a869150f-a69d-41ad-bb39-c070be8cc708','source_head':'a'*40,'source_tree':'b'*40,'authorization_sha256':'a'*64}
+ return ''.join("SET c3.qa_"+k+"='"+v+"';" for k,v in cfg.items())+(root/'sql/c3_live_execution_qa_lease_proposed.sql').read_text()
+check('proposed lease refuses unknown cross-run dispatch and rolls back all fixtures',sql(qa_sql(),False).returncode!=0 and sql("select count(*) from visitor_session where visitor_fingerprint like 'widget-live-test:%'").stdout.strip()=='0')
 # A second isolated phase uses a clean fixture DB ledger; never remove production receipts.
 sql("delete from upstream_call_log where request_payload->>'kind'='c3_uat_dispatch'")
 evidence['entries'][0]['units']=298;seed_evidence()
-sql((root/'sql/c3_live_execution_qa_lease_proposed.sql').read_text())
+sql(qa_sql())
+check('exact lease expiry uses one clock sample',sql("select (request_payload->>'expires')::timestamptz-(request_payload->>'issued_at')::timestamptz=interval '45 minutes' from upstream_call_log where id='71657f35-88c4-4a73-a2e7-9abde643ad74'").stdout.strip()=='t')
 check('exact proposed normal-UI entry creates two and only two scoped tickets',sql("select count(*) from conversations where id in ('c7d3fa80-ed64-42d2-a48e-cda98dce5d71','a869150f-a69d-41ad-bb39-c070be8cc708') and metadata_source->>'exclude_training'='true'").stdout.strip()=='2')
 check('exact proposed lease does not enable remote bounds',sql("select request_payload->>'kb_bounds_verified' from upstream_call_log where id='71657f35-88c4-4a73-a2e7-9abde643ad74'").stdout.strip()=='false')
 check('proposed tickets satisfy real issued_at admission ordering',sql("select bool_and(c.created_at >= (l.request_payload->>'issued_at')::timestamptz) from conversations c join upstream_call_log l on l.request_payload->'allowed_conversations' ? c.id::text where l.id='71657f35-88c4-4a73-a2e7-9abde643ad74'").stdout.strip()=='t')
 check('proposed fixture setup does not send a customer message',sql("select count(*) from messages where conversation_id in ('c7d3fa80-ed64-42d2-a48e-cda98dce5d71','a869150f-a69d-41ad-bb39-c070be8cc708')").stdout.strip()=='0')
-check('replay of fixture preparation is atomically denied',sql((root/'sql/c3_live_execution_qa_lease_proposed.sql').read_text(),False).returncode!=0)
+check('replay of fixture preparation is atomically denied',sql(qa_sql(),False).returncode!=0)
 # The exact controlled lease has separate durable ceilings for generation and countTokens.
 qa='71657f35-88c4-4a73-a2e7-9abde643ad74';qa_conv='c7d3fa80-ed64-42d2-a48e-cda98dce5d71'
 original_run=run;run=qa
@@ -170,15 +176,17 @@ sql("update upstream_call_log set request_payload=jsonb_set(request_payload,'{st
 sql((root/'sql/c3_uat_execution_status_rollback.sql').read_text())
 sql((root/'sql/c3_live_execution_dependencies_rollback.sql').read_text())
 
+subprocess.run([__import__('sys').executable,str(root/'tests/uat-runtime/dual-tenant.py')],check=True)
+
 print(json.dumps({'result':'PASS','assertions':checks,'count':len(checks),'max_observed_overlapping_sessions':overlap,'scope':'real localhost PostgreSQL roles/RLS/concurrency and receipt-retaining rollback; no Hosted/provider dispatch'}))
 
 if '--compatibility' in __import__('sys').argv:
  import tempfile
  fixtures=tempfile.mkdtemp(prefix='c3-live-comparison-')
  subprocess.run(['python3',str(root/'tests/uat-runtime/materialize-baselines.py'),fixtures],check=True)
- sql("CREATE TABLE company(id uuid primary key);insert into company values('11111111-1111-4111-8111-111111111111'),('4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec');GRANT SELECT ON company,conversations TO service_role;insert into conversations(id,company_id) values('99999999-9999-4999-8999-999999999999','11111111-1111-4111-8111-111111111111');")
+ sql("insert into company(id) values('11111111-1111-4111-8111-111111111111') ON CONFLICT DO NOTHING;GRANT SELECT ON company,conversations TO service_role;insert into conversations(id,company_id) values('99999999-9999-4999-8999-999999999999','11111111-1111-4111-8111-111111111111');")
  sql("CREATE TABLE user_roles(user_id uuid,role text);insert into user_roles values('12345678-1234-4234-8234-123456789012','admin');GRANT SELECT ON user_roles,company_membership TO service_role;")
- sql((root/'sql/c3_live_execution_dependencies.sql').read_text())
+ sql((root/('sql/'+os.environ.get('C3_UAT_SQL_PACKAGE','c3_live_execution_dependencies.sql'))).read_text())
  sql((root/'sql/c3_uat_execution_status.sql').read_text())
  policy.update(state='active',count_tokens_limit=6,quota_evidence_sha256=sql(f"select request_payload->>'evidence_sha256' from upstream_call_log where id='{quota}'").stdout.strip(),attempt_limit=640,budget_microusd=64000000,per_request_attempt_limit=32,allowed_operation_prefixes=['generate-reply-','agent-assist-','ce:','kb:','grounding-verifier:'])
  sql("insert into upstream_call_log(id,company_id,request_payload) values('cccccccc-cccc-4ccc-8ccc-cccccccccccc','"+company+"','"+json.dumps(policy)+"');update upstream_call_log set request_payload=request_payload||jsonb_build_object('issued_at',clock_timestamp()-interval '1 hour','expires',clock_timestamp()+interval '1 hour') where id='cccccccc-cccc-4ccc-8ccc-cccccccccccc'")

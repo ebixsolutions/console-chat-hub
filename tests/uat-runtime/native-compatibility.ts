@@ -60,7 +60,7 @@ const network=async(input:RequestInfo|URL,init?:RequestInit):Promise<Response>=>
   }
   if(url.pathname.endsWith('/company')||url.pathname.endsWith('/conversations')){
    const table=url.pathname.split('/').pop()!, id=(url.searchParams.get('id')||'').replace(/^eq\./,'');
-   const r=await sql(`set role service_role;select row_to_json(t) from (select ${table==='company'?'id':'id,company_id'} from public.${table} where id=${q(id)}::uuid)t;`);
+   const r=await sql(`set role service_role;select row_to_json(t) from (select ${table==='company'?'id':'id,company_id,metadata_source'} from public.${table} where id=${q(id)}::uuid)t;`);
    if(!r.ok)console.error('NATIVE_IDENTITY_READ_FAILURE',r.error);return r.ok?Response.json(r.text?JSON.parse(r.text.split('\n').at(-1)!):null):Response.json({message:r.error},{status:400});
   }
   if(url.pathname.endsWith('/user_roles')||url.pathname.endsWith('/company_membership')){
@@ -82,12 +82,13 @@ globalThis.fetch=network;
 const dir=Deno.env.get('C3_UAT_BASELINES_DIR')!;
 const baseline=await import('file://'+dir+'/generate-reply/functions/_shared/llm-router.ts');
 const call={purpose:'generation' as const,system:'Return JSON only.',user:'An existing customer asks about service.',maxTokens:100,companyId:company,conversationId:conv,operationId:'native-compatibility',tag:'generate-reply-orchestration',responseFormat:'json' as const};
+await sql("INSERT INTO conversations(id,company_id,metadata_source)VALUES('12121212-1212-4212-8212-121212121212','3d6e17b5-ec79-4f75-aa7f-eaa824ff8493','{\"source\":\"ordinary_customer\"}')");
 nativeTest('captured live router and candidate execute equal non-UAT provider bytes/results for all six caller classes and retry with UAT off/valid/malformed',async()=>{
  const tokenClient=GoogleAuth.prototype.getClient;GoogleAuth.prototype.getClient=(async()=>({getAccessToken:async()=>({token:'native-fixture-token'})})) as any;Deno.env.set('GOOGLE_PROJECT_ID','native-project');Deno.env.set('GOOGLE_REGION','us-central1');Deno.env.set('GOOGLE_SERVICE_ACCOUNT_JSON','{}');
- try{for(const provider of ['anthropic','vertex']){Deno.env.set('LLM_PROVIDER',provider);for(const config of ['off','valid','malformed']){
+ try{for(const actorCompany of [company,'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493'])for(const provider of ['anthropic','vertex']){Deno.env.set('LLM_PROVIDER',provider);for(const config of ['off','valid','malformed']){
   if(config==='off')Deno.env.delete('C3_TEMP_UAT_RUN_ID');else Deno.env.set('C3_TEMP_UAT_RUN_ID',config==='valid'?run:'malformed');Deno.env.set('C3_TEMP_UAT_SOURCE_REVISION',UAT_REVISION);
   for(const [purpose,tag] of [['generation','generate-reply-orchestration'],['assist','agent-assist-answer'],['assist','kb-query-expansion'],['evaluation','ce:helpfulness'],['evaluation','ce:auto:signals'],['evaluation','ce:auto:grounding']] as const){
-   const input={...call,purpose,tag};providerRequests=[];retry=1;const before=await baseline.callModel(input);const requests=JSON.stringify(providerRequests);assert(before.ok,'live baseline failed');
+   const input={...call,companyId:actorCompany,conversationId:actorCompany===company?conv:"12121212-1212-4212-8212-121212121212",purpose,tag};providerRequests=[];retry=1;const before=await baseline.callModel(input);const requests=JSON.stringify(providerRequests);assert(before.ok,'live baseline failed');
    providerRequests=[];retry=1;const after=await callModel(input);assert(after.ok,'candidate failed '+JSON.stringify(after));equal(providerRequests,JSON.parse(requests));equal(after.text,before.text);equal(after.usage.attempts,before.usage.attempts);equal(after.usage.input_tokens,before.usage.input_tokens);equal(after.usage.output_tokens,before.usage.output_tokens);
   }
  }}equal(permanentCalls,0);}finally{GoogleAuth.prototype.getClient=tokenClient;Deno.env.set('LLM_PROVIDER','anthropic')}

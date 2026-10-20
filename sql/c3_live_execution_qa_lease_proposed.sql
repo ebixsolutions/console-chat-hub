@@ -1,34 +1,46 @@
--- PROPOSED ONLY. Execute only with the final candidate's exact Director authorization.
--- Precondition: exact source/function/config baseline, legal existing Admin,
--- original cumulative usage reconciliation, and the two dependency SQL files verified.
--- No remote KB authority is granted. No Visitor/Assistant message is inserted here.
+-- PROPOSED ONLY. NOT AUTHORIZED for Production execution.
+-- Supply c3.qa_company_id, actor_id, run_id, conversation_1, conversation_2,
+-- source_head, source_tree, authorization_sha256 on the same SQL session.
+-- One explicit Tenant, no manufactured quota/history evidence or message sends.
 BEGIN;
-SELECT pg_advisory_xact_lock(20261006,3520);
-DO $$ BEGIN
- IF to_regprocedure('public.c3_uat_execution_status(uuid,text,uuid)') IS NULL THEN RAISE EXCEPTION 'UAT_DEPENDENCY_MISSING'; END IF;
- IF NOT EXISTS(SELECT 1 FROM public.company_membership WHERE user_id='4348ee35-9632-4626-a846-e313bcc4a5f9' AND company_id='4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec' AND is_active AND role IN ('admin','supervisor')) THEN RAISE EXCEPTION 'UAT_ACTOR_DENIED'; END IF;
- IF NOT EXISTS(SELECT 1 FROM public.channel_config WHERE id='0405282f-77dc-47cf-8074-99dd3dc6c393' AND company_id='4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec' AND is_active AND channel_type='web_widget') THEN RAISE EXCEPTION 'UAT_CHANNEL_DENIED'; END IF;
- IF EXISTS(SELECT 1 FROM public.upstream_call_log WHERE id='71657f35-88c4-4a73-a2e7-9abde643ad74') OR EXISTS(SELECT 1 FROM public.conversations WHERE id IN ('c7d3fa80-ed64-42d2-a48e-cda98dce5d71','a869150f-a69d-41ad-bb39-c070be8cc708')) OR EXISTS(SELECT 1 FROM public.visitor_session WHERE id IN ('4579cc72-1d8e-464f-b393-cae4f634bb55','97084394-abf7-4d50-ab18-d31092bc1384')) THEN RAISE EXCEPTION 'UAT_FIXTURE_ALREADY_EXISTS'; END IF;
-END $$;
-INSERT INTO public.upstream_call_log(id,company_id,upstream_service,request_payload,response_status)
-VALUES('71657f35-88c4-4a73-a2e7-9abde643ad74','4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec','c3_temp_uat',jsonb_build_object(
- 'quota_scope','C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1/rev1.5/stage-A/3520','quota_evidence_sha256',(SELECT request_payload->>'evidence_sha256' FROM public.upstream_call_log WHERE company_id='4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec' AND request_payload->>'kind'='c3_uat_quota'),'count_tokens_limit',6,'kind','c3_uat_run','revision','c3-3322877-bounded-uat-r2','state','active','issued_at',statement_timestamp(),'expires',statement_timestamp()+interval '45 minutes',
- 'allowed_conversations',jsonb_build_array('c7d3fa80-ed64-42d2-a48e-cda98dce5d71','a869150f-a69d-41ad-bb39-c070be8cc708'),
- 'allowed_purposes',jsonb_build_array('generation','evaluation'),'allowed_operation_prefixes',jsonb_build_array('generate-reply-','commerce-semantic-interpreter:'),
- 'conversation_limit',2,'visitor_limit',4,'attempt_limit',6,'budget_microusd',200000,'batch_size',2,'batch_visitor_limit',4,'per_request_attempt_limit',6,'stage','A','kb_bounds_verified',false),0);
--- Server-side readiness check, not an authenticated Admin impersonation.
-SET LOCAL ROLE service_role;
-DO $$ DECLARE gate jsonb; BEGIN
- gate:=public.c3_uat_execution_status('71657f35-88c4-4a73-a2e7-9abde643ad74','c3-3322877-bounded-uat-r2','4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec');
- IF gate->>'ready' IS DISTINCT FROM 'true' THEN RAISE EXCEPTION '%',coalesce(gate->>'code','UAT_ADMISSION_DENIED'); END IF;
+SET LOCAL lock_timeout='5s';
+SET LOCAL statement_timeout='30s';
+DO $$
+DECLARE company uuid:=nullif(current_setting('c3.qa_company_id',true),'')::uuid;
+ actor uuid:=nullif(current_setting('c3.qa_actor_id',true),'')::uuid;
+ run uuid:=nullif(current_setting('c3.qa_run_id',true),'')::uuid;
+ ticket1 uuid:=nullif(current_setting('c3.qa_conversation_1',true),'')::uuid;
+ ticket2 uuid:=nullif(current_setting('c3.qa_conversation_2',true),'')::uuid;
+ issued timestamptz:=clock_timestamp(); channel uuid; revision text; scope text; evidence text; lease jsonb; item uuid; session uuid;
+BEGIN
+ IF company IS NULL OR actor IS NULL OR run IS NULL OR ticket1 IS NULL OR ticket2 IS NULL OR ticket1=ticket2 THEN RAISE EXCEPTION 'UAT_POLICY_INCOMPLETE'; END IF;
+ PERFORM pg_advisory_xact_lock(20261006,hashtext(company::text));
+ channel:=CASE company WHEN '4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec'::uuid THEN '0405282f-77dc-47cf-8074-99dd3dc6c393'::uuid WHEN '3d6e17b5-ec79-4f75-aa7f-eaa824ff8493'::uuid THEN 'b0000000-0000-0000-0000-000000000001'::uuid END;
+ revision:=CASE WHEN company='4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec'::uuid THEN 'c3-3322877-bounded-uat-r2' ELSE 'c3-frankie-tenant-bounded-demo-v1' END;
+ scope:=CASE WHEN company='4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec'::uuid THEN 'C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1/rev1.5/stage-A/3520' ELSE 'C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1/rev1.5/frankie/model-attempt' END;
+ SELECT request_payload->>'evidence_sha256' INTO evidence FROM public.upstream_call_log WHERE company_id=company AND request_payload->>'kind'='c3_uat_quota';
+ IF evidence IS NULL THEN RAISE EXCEPTION 'UAT_HISTORY_EVIDENCE_REQUIRED'; END IF;
+ lease:=jsonb_build_object('kind','c3_uat_run','revision',revision,'actor_id',actor,'channel_id',channel,
+ 'source_head',current_setting('c3.qa_source_head',true),'source_tree',current_setting('c3.qa_source_tree',true),'authorization_sha256',current_setting('c3.qa_authorization_sha256',true),
+ 'quota_scope',scope,'quota_evidence_sha256',evidence,'state','active','issued_at',issued,'expires',issued+interval '45 minutes',
+ 'allowed_conversations',jsonb_build_array(ticket1,ticket2),'allowed_purposes',jsonb_build_array('generation','assist'),
+ 'allowed_operation_prefixes',jsonb_build_array('generate-reply-','commerce-semantic-interpreter:'),'count_tokens_limit',6,
+ 'conversation_limit',2,'visitor_limit',4,'attempt_limit',6,'budget_microusd',200000,'batch_size',2,'batch_visitor_limit',4,'per_request_attempt_limit',6,'stage','A','kb_bounds_verified',false);
+ IF NOT public.c3_uat_lease_authority(company,revision,lease) THEN RAISE EXCEPTION 'UAT_AUTHORIZATION_DENIED'; END IF;
+ IF EXISTS(SELECT 1 FROM public.upstream_call_log WHERE id=run) OR EXISTS(SELECT 1 FROM public.conversations WHERE id IN(ticket1,ticket2)) THEN RAISE EXCEPTION 'UAT_FIXTURE_ALREADY_EXISTS'; END IF;
+ INSERT INTO public.upstream_call_log(id,company_id,upstream_service,request_payload,response_status) VALUES(run,company,'c3_temp_uat',lease,0);
+ FOREACH item IN ARRAY ARRAY[ticket1,ticket2] LOOP
+  session:=gen_random_uuid();
+  INSERT INTO public.visitor_session(id,session_token,visitor_fingerprint,visitor_metadata,last_seen_at,channel_config_id)
+  VALUES(session,'preview-test.'||gen_random_uuid()::text||'.'||replace(gen_random_uuid()::text,'-',''),'widget-live-test:'||actor::text,
+   jsonb_build_object('source','c3_uat_widget','test_mode',true,'owner_user_id',actor,'exclude_training',true,'scope_mode','canonical'),clock_timestamp(),channel);
+  INSERT INTO public.conversations(id,visitor_session_id,channel_config_id,company_id,status,metadata_source,created_at)
+  VALUES(item,session,channel,company,'open',jsonb_build_object('source','c3_uat_widget','synthetic',true,'owner_user_id',actor,'exclude_training',true,'scope_mode','canonical'),clock_timestamp());
+ END LOOP;
+ -- The original order checked admission BEFORE ownership-bound tickets existed.
+ PERFORM set_config('role','service_role',true);
+ lease:=public.c3_uat_execution_status(run,revision,company);
+ IF lease->>'ready' IS DISTINCT FROM 'true' THEN RAISE EXCEPTION '%',coalesce(lease->>'code','UAT_ADMISSION_DENIED'); END IF;
 END $$;
 RESET ROLE;
-INSERT INTO public.visitor_session(id,session_token,visitor_fingerprint,visitor_metadata,last_seen_at,channel_config_id)
-SELECT id, 'preview-test.'||gen_random_uuid()::text||'.'||replace(gen_random_uuid()::text,'-',''), 'widget-live-test:4348ee35-9632-4626-a846-e313bcc4a5f9',
- jsonb_build_object('source','c3_uat_widget','test_mode',true,'owner_user_id','4348ee35-9632-4626-a846-e313bcc4a5f9','exclude_training',true,'scope_mode','canonical'),clock_timestamp(),'0405282f-77dc-47cf-8074-99dd3dc6c393'::uuid
-FROM unnest(ARRAY['4579cc72-1d8e-464f-b393-cae4f634bb55'::uuid,'97084394-abf7-4d50-ab18-d31092bc1384'::uuid]) AS t(id);
-INSERT INTO public.conversations(id,visitor_session_id,channel_config_id,company_id,status,metadata_source,created_at)
-SELECT id,session_id,'0405282f-77dc-47cf-8074-99dd3dc6c393'::uuid,'4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec'::uuid,'open',
- jsonb_build_object('source','c3_uat_widget','synthetic',true,'owner_user_id','4348ee35-9632-4626-a846-e313bcc4a5f9','exclude_training',true,'scope_mode','canonical','contract_id','C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1'),clock_timestamp()
-FROM (VALUES('c7d3fa80-ed64-42d2-a48e-cda98dce5d71'::uuid,'4579cc72-1d8e-464f-b393-cae4f634bb55'::uuid),('a869150f-a69d-41ad-bb39-c070be8cc708'::uuid,'97084394-abf7-4d50-ab18-d31092bc1384'::uuid)) AS t(id,session_id);
 COMMIT;

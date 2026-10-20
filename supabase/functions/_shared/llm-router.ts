@@ -1,6 +1,6 @@
 import { uatExecutionReadiness } from "./uat-execution-readiness.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
-import { uatRun, UatDenied, UAT_THINKING } from "./uat-execution-contract.ts";
+import { trustedDispatchScope, UatDenied, UAT_THINKING } from "./uat-execution-contract.ts";
 import { accountedModelFetch, ModelAccountingError } from "./model-attempt-accounting.ts";
 /**
  * Governed model router — the single provider call site for Edge Functions.
@@ -650,7 +650,7 @@ async function verifyGroundedGeneration(
         },
         required: ["grounded", "unsupported_claims", "evidence_chunk_ids"],
       },
-      uatRun(call.companyId) ? UAT_THINKING : undefined,
+      (await trustedDispatchScope(serviceClient(),call.companyId,call.conversationId,call.legacyAuthority)) === "uat" ? UAT_THINKING : undefined,
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");
@@ -871,7 +871,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
 
   let adapter: ProviderAdapter;
   try {
-    if (uatRun(call.companyId)) {
+    if ((await trustedDispatchScope(serviceClient(),call.companyId,call.conversationId,call.legacyAuthority)) === "uat") {
       const readiness = await uatExecutionReadiness(serviceClient(),call.companyId!);
       if (!readiness.ready) throw new UatDenied(readiness.failure.code);
     }
@@ -911,7 +911,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       call.maxTokens,
       call.responseFormat === "json",
       call.responseSchema,
-      uatRun(call.companyId) ? UAT_THINKING : call.thinkingBudget,
+      (await trustedDispatchScope(serviceClient(),call.companyId,call.conversationId,call.legacyAuthority)) === "uat" ? UAT_THINKING : call.thinkingBudget,
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");

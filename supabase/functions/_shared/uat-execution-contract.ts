@@ -60,8 +60,9 @@ export async function trustedDispatchScope(db: Db, company: string | null, conve
       .eq("id", conversation).eq("company_id", company).maybeSingle();
     if (ticket.error || !ticket.data) throw new UatDenied("DISPATCH_IDENTITY_UNAVAILABLE");
     const source = ticket.data.metadata_source;
-    if (source?.source === "c3_uat_widget" && source?.synthetic === true &&
-        source?.exclude_training === true && typeof source?.owner_user_id === "string") {
+    if (source?.source === "c3_uat_widget") {
+      if (source?.synthetic !== true || source?.exclude_training !== true ||
+          typeof source?.owner_user_id !== "string") throw new UatDenied("UAT_AUTHORIZATION_DENIED");
       uatRun(company);
       return "uat";
     }

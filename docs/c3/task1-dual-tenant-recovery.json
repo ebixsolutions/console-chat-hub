@@ -1,0 +1,1657 @@
+{
+  "contract_id": "C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1",
+  "task": "EXISTING TASK 1 / Director Approval A / Frankie-Authe execution recovery",
+  "baseline": {
+    "head": "12ab0dd8b90b8a6d0f8013c09037e2eb11d4b407",
+    "tree": "62f3cf2e4905ea8bd19f557591c0adac569aa294"
+  },
+  "repository": "ebixsolutions/console-chat-hub",
+  "branch": "director/ai-abc-c3-long-memory-final-cutover",
+  "implementation": [
+    "Independent server-persisted actor/company/channel/session/conversation/run/revision authority",
+    "Shared cumulative per-Tenant historical attempt, message and budget exposure, company locks across actual concurrent sessions",
+    "Retained pending/unknown, immutable source-bound finalization and receipt-preserving guarded rollback",
+    "Ordinary Frankie router uses persisted synthetic classification before requiring UAT; no new permanent accounting prerequisite",
+    "Canonical and original temporary SQL entrypoints install the same functions, with CE eligibility unchanged"
+  ],
+  "production_readonly": {
+    "rpc_preimages": "status/reserve/finalize/tenant-authority/permanent-accounting absent",
+    "ce_evaluable_prosrc_md5": "1cea72657a372172d7b06c557be30294"
+  },
+  "sql_order": [
+    "sql/c3_uat_tenant_authority.sql",
+    "sql/c3_uat_execution_status.sql",
+    "sql/c3_live_execution_dependencies.sql"
+  ],
+  "alternative_sql_entrypoint": "sql/c3_temporary_uat_execution.sql is byte-identical to c3_live_execution_dependencies.sql; choose exactly one, never apply both",
+  "lease_proposal": "sql/c3_live_execution_qa_lease_proposed.sql: explicit session settings for one Tenant; transaction and owner approval required; no quota evidence is fabricated",
+  "sql_files": {
+    "sql/c3_uat_tenant_authority.sql": "cfa6136239c7f4eb7fced1fd6cce6daabaafabe3ad4109c42acecb9fce916bc2",
+    "sql/c3_uat_execution_status.sql": "e2cbe0d5b673ff5f5bba5e75eafa337d60ac3240841e6775724cafe4d68ddbb7",
+    "sql/c3_live_execution_dependencies.sql": "e99155ce38114f28c95a8db1dcc1a7521c9404d0410a17d86fdc56ccba03d65a",
+    "sql/c3_uat_execution_status_rollback.sql": "50f44d47f1a8a534ace309c123c7963add5904857e40d67e91fc3214844089e0",
+    "sql/c3_live_execution_dependencies_rollback.sql": "275ad631c889ecdc6184b37996a068c6d1c0e4b230077aa8453a7dfe30f08f89",
+    "sql/c3_uat_tenant_authority_rollback.sql": "92d2907902e5a9b7de4e41d5dae857455fdf43fd2480aa4a1b0c2588b4a79df9",
+    "sql/c3_temporary_uat_execution.sql": "e99155ce38114f28c95a8db1dcc1a7521c9404d0410a17d86fdc56ccba03d65a",
+    "sql/c3_temporary_uat_rollback.sql": "275ad631c889ecdc6184b37996a068c6d1c0e4b230077aa8453a7dfe30f08f89",
+    "sql/c3_live_execution_qa_lease_proposed.sql": "efcdefde004b6d64510e05f3c73c127c60e30035cdd9f2b1096b497566185cb8"
+  },
+  "rollback_order": [
+    "pause exact approved leases, retain unknown outcomes and require no reserved dispatch",
+    "sql/c3_uat_execution_status_rollback.sql",
+    "sql/c3_live_execution_dependencies_rollback.sql",
+    "sql/c3_uat_tenant_authority_rollback.sql"
+  ],
+  "minimum_production_decision": {
+    "authorized": false,
+    "project_id": "nrfxhqabwblzxoushgnm",
+    "requirements": [
+      "Exact final source/tree, submitted target bytes and live preimage/JWT/import-map recheck",
+      "Apply only listed SQL under short lock/statement timeouts; no memberships/grants/origins/secrets changes",
+      "Separately evidence-bound quota/run records per Tenant; unknown prior usage cannot be reset or treated as zero",
+      "Only listed existing Function closures; all below are affected shared callers, no new endpoints",
+      "No frontend Source change in this candidate; no new Publish required for these changes alone",
+      "Only after separate permission and platform-approved normal sessions: bounded model-only smoke; retain kb_bounds_verified=false and no KB dispatch",
+      "Source proposed smoke limits per Tenant: 2 conversations,4 Visitor inputs,6 generation attempts plus6 countTokens slots,200000 microusd retained exposure,45minutes; combined400000 microusd is local reservation exposure, NOT a vendor hard cap or approval to spend",
+      "These preliminary smoke ceilings do not replace required fresh100+turns/Quality95; those require their own original authorized envelope"
+    ]
+  },
+  "functions": {
+    "generate-reply": {
+      "existing_function_id": "3108968e-ad4e-4b5f-92cb-48df320b0b41",
+      "preimage_version": 221,
+      "verify_jwt": true,
+      "entrypoint_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_3108968e-ad4e-4b5f-92cb-48df320b0b41_221/source/functions/generate-reply/index.ts",
+      "import_map_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_3108968e-ad4e-4b5f-92cb-48df320b0b41_221/source/functions/generate-reply/deno.json",
+      "preimage_snapshot_sha256": "0e0e00dcb1269b3463e729c439ddf05527f741a04c671e994fa4219f1567e792",
+      "preimage_ezbr_sha256": "98bf7fb08394d89e4a9c8ff618418da9ff18324819c29eadde795136bbb33b52",
+      "target_files": [
+        {
+          "repository_path": "supabase/functions/_shared/authoritative-commit-readback.ts",
+          "deploy_path": "_shared/authoritative-commit-readback.ts",
+          "sha256": "2d2c14fbab89f4caede7d8c43faed0aae3bd07064e69a948f2d9a28a6a7b62bc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/b2-journey-progress-contract.ts",
+          "deploy_path": "_shared/b2-journey-progress-contract.ts",
+          "sha256": "50c152406251e7cc53a0a624907bdf0cf28b1560011a5b2f57e02ca58a284ffd"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/bounded-decision-context.ts",
+          "deploy_path": "_shared/bounded-decision-context.ts",
+          "sha256": "f93b59b56469f4a79518374f2cb3b73fab8d09028ce2b3c5c6cbb1c6c90f01f1"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-grounding.ts",
+          "deploy_path": "_shared/canonical-grounding.ts",
+          "sha256": "17d4d99d6b2953017fe04c5d032bf8e8ccf5b17d08406786af53b4b964cf51f7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-json.ts",
+          "deploy_path": "_shared/canonical-json.ts",
+          "sha256": "efe44b2683ff6b90db1b9d40f438560f3011d985c1eb5a131492913acc0e4295"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-kb-direct-answer.ts",
+          "deploy_path": "_shared/canonical-kb-direct-answer.ts",
+          "sha256": "120d0e8f4a6eb2273d21bb7c621aec6ffe803cacfb7eb3a4eff0f182b2104d41"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/citation-lineage.ts",
+          "deploy_path": "_shared/citation-lineage.ts",
+          "sha256": "66dfac164fe0e8f166e6651d8ac3a5dd7d629002b73b599ff81e256b2c840f8e"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-capability-runtime.ts",
+          "deploy_path": "_shared/commerce-capability-runtime.ts",
+          "sha256": "09a3c5917529d967d91560ead71519d987186d02c68b3638929a93a2fee83b72"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-semantic-adapter.ts",
+          "deploy_path": "_shared/commerce-semantic-adapter.ts",
+          "sha256": "553abf039af853014f9dbc2c89c86f02f78c1e339176b1423c409cf28050e7ca"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-semantic-frame.ts",
+          "deploy_path": "_shared/commerce-semantic-frame.ts",
+          "sha256": "79f63bfd4fd2898a06e468873f8699032174f7d48237ab8f4b5a15ee5aa64ceb"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-semantic-interpreter.ts",
+          "deploy_path": "_shared/commerce-semantic-interpreter.ts",
+          "sha256": "dfbe7a1eefb5e65c567b3656a9b603bccbb93211ee29c8415b370d9e88028128"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-authority.ts",
+          "deploy_path": "_shared/commerce-state-authority.ts",
+          "sha256": "2c6932b6db06d135f4a9324e9e36464f5215851b9db423babfffec9573b677d7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-contract.ts",
+          "deploy_path": "_shared/commerce-state-contract.ts",
+          "sha256": "b75848856f1854f9df5f458ba5d3e491b6693c550458f5e3178cf88874b6e3be"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-reducer.ts",
+          "deploy_path": "_shared/commerce-state-reducer.ts",
+          "sha256": "b303bcf3cb610976bf6286a6a01767a192668c1604adb0aa86832b4632d8843f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-runtime-base.ts",
+          "deploy_path": "_shared/commerce-state-runtime-base.ts",
+          "sha256": "6f8cfd56409d9185ab448677e5af24a6436424ecada869ae085a4bda3ba53035"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-runtime.ts",
+          "deploy_path": "_shared/commerce-state-runtime.ts",
+          "sha256": "ea72c62ed61bcfeab576a8521fe19d0e9388af2cb16c62bfe870676be6074949"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/contextual-customer-update.ts",
+          "deploy_path": "_shared/contextual-customer-update.ts",
+          "sha256": "9b4b0d3a8deae05450d2f6a96421ad9b2e409379b2b2e32bc0ea1ee9e5333b9b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-closure.ts",
+          "deploy_path": "_shared/conversation-closure.ts",
+          "sha256": "12431e3c5d285f56270945e28a3e026d0d1b1544fa8dbe7484cc4fd67b1995dd"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-intelligence.ts",
+          "deploy_path": "_shared/conversation-intelligence.ts",
+          "sha256": "5c6e2b0973df9c41dee0fb9a324b661ce7835946e129210d37071519d5e41658"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-long-memory.ts",
+          "deploy_path": "_shared/conversation-long-memory.ts",
+          "sha256": "27102c323642dadde8ea3a212a964192e68199137d4887a1a00b062ff978851b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-recall.ts",
+          "deploy_path": "_shared/conversation-recall.ts",
+          "sha256": "281fbccaa51198a1651a28f9500a3336a0031a6e503484e9ce82a6b1c5f2af3b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-resolution-contract.ts",
+          "deploy_path": "_shared/conversation-resolution-contract.ts",
+          "sha256": "56e62a58ef4c1528e870d272244ac696bd548a95cafb7b8023bdc4c8beb4bb2f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-runtime-state-core.ts",
+          "deploy_path": "_shared/conversation-runtime-state-core.ts",
+          "sha256": "12af48041e25e5cc3c5bd6b091906077e5cd4a35995fcbcd0144e933ae1ace9f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-runtime-state.ts",
+          "deploy_path": "_shared/conversation-runtime-state.ts",
+          "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-semantic-contract.ts",
+          "deploy_path": "_shared/conversation-semantic-contract.ts",
+          "sha256": "1880fbb696b1ce3d7a68a9e47a18843186ebe25052f1a06d29297315803b336f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-service-planner.ts",
+          "deploy_path": "_shared/conversation-service-planner.ts",
+          "sha256": "2c72fc2e666689ae26a481f7a4b165fcfd974e942171aebff22429c3c17a3bbe"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-service-runtime.ts",
+          "deploy_path": "_shared/conversation-service-runtime.ts",
+          "sha256": "df6a1c2248cc4508dead4222312cb687ce98f96d2ac5b9bc45412a24eefc7344"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversational-routing.ts",
+          "deploy_path": "_shared/conversational-routing.ts",
+          "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/current-fact-evidence.ts",
+          "deploy_path": "_shared/current-fact-evidence.ts",
+          "sha256": "29bd2d56d2d82a202a9057d11e6ee085a09c1c3c9da1dee5afe717de61f2fbd9"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer-journey-orchestration.ts",
+          "deploy_path": "_shared/customer-journey-orchestration.ts",
+          "sha256": "3978f4bd89914dcf915758f48d10a6cffd96b7c98a944e208b53c59245be2df4"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer-money-facts.ts",
+          "deploy_path": "_shared/customer-money-facts.ts",
+          "sha256": "bad7b229031d97f0a0fcd054408b7c69bad88891bac1319dd27e1d3366d1ed19"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer360-entitlement-client.ts",
+          "deploy_path": "_shared/customer360-entitlement-client.ts",
+          "sha256": "2da12c29740371bcbdd752bbfe6b5adc7fd58286294aefe3e2af7779115fe13b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer360-entitlement-contract.ts",
+          "deploy_path": "_shared/customer360-entitlement-contract.ts",
+          "sha256": "0338ca5d879e0023403005198f5e88247939bbc65938b9170694bf85ae6a0e97"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/e2-direct-threat.ts",
+          "deploy_path": "_shared/e2-direct-threat.ts",
+          "sha256": "ebd0f8ed645804b99fcef8f295079acf6fe00b41917850184b3c562255e56dfd"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/emotion-reply-strategy.ts",
+          "deploy_path": "_shared/emotion-reply-strategy.ts",
+          "sha256": "950423ffed4221143e0cdf2cf6e7d9ce106e6a71dfa0cb7981006bf7d013b82b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/escalation-live.ts",
+          "deploy_path": "_shared/escalation-live.ts",
+          "sha256": "ccf21ab50fbd2212f25f2292f30d82e8ba1f6d5ae7e37bafb88935a5b161ae92"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/escalation-p1.ts",
+          "deploy_path": "_shared/escalation-p1.ts",
+          "sha256": "f38ade68e72a1234594fd91032cae5a6cd15da7dccab841d986e4ef8e262b96a"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/escalation-policy.ts",
+          "deploy_path": "_shared/escalation-policy.ts",
+          "sha256": "bebf933242d5e391f65c429097a86eb23f0feececf34aa27ebff132ccc652edc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/escalation-rules.ts",
+          "deploy_path": "_shared/escalation-rules.ts",
+          "sha256": "50b1e4604d1f11b1e888afbcd6cf5edf42e1c0510c529865327399d30cb2318d"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/escalation-shadow.ts",
+          "deploy_path": "_shared/escalation-shadow.ts",
+          "sha256": "757ed25aab8694bed31a1da7ef5daa911fd8adbbb772578629b4b0cdbaceb9b8"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/escalation-signals.ts",
+          "deploy_path": "_shared/escalation-signals.ts",
+          "sha256": "f4aab1682fb348b09041230a7f6d3c301abc893a83d521afc9ba14c2bbd02b6d"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/execution-failure.ts",
+          "deploy_path": "_shared/execution-failure.ts",
+          "sha256": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/generation-terminal-guard.ts",
+          "deploy_path": "_shared/generation-terminal-guard.ts",
+          "sha256": "b594946be00d0df338d8bc74cfc42ec0bf7dcdb4438c63262b2fb9b8b2dfadc5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/handoff-decision.ts",
+          "deploy_path": "_shared/handoff-decision.ts",
+          "sha256": "865049906acb93b206c6cb4f613bfeed60943862f710a7e6b930062906d20f6f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/handoff-intent.ts",
+          "deploy_path": "_shared/handoff-intent.ts",
+          "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-agent-registry.ts",
+          "deploy_path": "_shared/industry-agent-registry.ts",
+          "sha256": "cb4525633baf7fca5d936b3c212fbfa1cd97c9da8b54b8c97f2064f4d84e088e"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts",
+          "deploy_path": "_shared/industry-profiles/home-appliance-v1.ts",
+          "sha256": "04f8f83d88a0bc413b57b9f449e56bd62fa3455567d4893a5caedf08c9d5e687"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-runtime-adapter.ts",
+          "deploy_path": "_shared/industry-runtime-adapter.ts",
+          "sha256": "fbe1615f5fadd15e6c70e8b3b0bbb7528b202042fbbc92af8e1dd79b0d698f37"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-schema.ts",
+          "deploy_path": "_shared/industry-schema.ts",
+          "sha256": "149c208a8b898faedab61234cfc7f85e7a40d71c92996a5b61354e4cf85d35dd"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-aggregation-response.ts",
+          "deploy_path": "_shared/kb-aggregation-response.ts",
+          "sha256": "c38365d92cd0860bfba541f3cb072a01d095cb0d2c3be84162c88173ca612ba2"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-auth.ts",
+          "deploy_path": "_shared/kb-auth.ts",
+          "sha256": "696473ccbae22ea1328778785659be96204328ca6be5ca35ed7e94e70483e6d7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-client.ts",
+          "deploy_path": "_shared/kb-client.ts",
+          "sha256": "56246bfa52baeb8e644233bc64d267e11882d4f54afc245def2eee02b7e16071"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/llm-router.ts",
+          "deploy_path": "_shared/llm-router.ts",
+          "sha256": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
+          "deploy_path": "_shared/memory-reply-lifecycle-readback.ts",
+          "sha256": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/model-attempt-accounting.ts",
+          "deploy_path": "_shared/model-attempt-accounting.ts",
+          "sha256": "23131b006e5289cccb83e33d3e0d535dee64330dfcc0d24a48fd4b129c7b23fc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/natural-customer-response.ts",
+          "deploy_path": "_shared/natural-customer-response.ts",
+          "sha256": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/nonproduction-secret.ts",
+          "deploy_path": "_shared/nonproduction-secret.ts",
+          "sha256": "9a760728a4298c09a080237a8d0c90492e7caa029fa41db9aaecc5da74daebd5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
+          "deploy_path": "_shared/pre-send-conversion-supervisor.ts",
+          "sha256": "745d7aa988df3195ea9f8af75659861acdc5ea6e6d3e9dd8f387af0b2ef50f56"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/prior-grounded-transform-core.ts",
+          "deploy_path": "_shared/prior-grounded-transform-core.ts",
+          "sha256": "4a61e1cad24e725ce7743d4ecde31431ee614663f9251f8a6fad1919a362e9f0"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/prior-grounded-transform.ts",
+          "deploy_path": "_shared/prior-grounded-transform.ts",
+          "sha256": "151ff0ddc3256d395f3bc6d5c77eb13d41af5b72b5666a78cf2232167bd29946"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/product-kb-semantic-contract.ts",
+          "deploy_path": "_shared/product-kb-semantic-contract.ts",
+          "sha256": "3fc1d296c395b05f547a4c585cf7a291d5732bbc4d443dab4a5cc9c2ad5f0231"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/remote-model-accounting.ts",
+          "deploy_path": "_shared/remote-model-accounting.ts",
+          "sha256": "1faa1ecebdc13e9f2f067611130e1a0ff65ba8697884387587a74b7f135947c5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/return-to-ai-control.ts",
+          "deploy_path": "_shared/return-to-ai-control.ts",
+          "sha256": "e0f44e4417aecb974634e2185baf0f558df5cdb3e63d29f161a656b7ae51c1d2"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/revision-bound-reply.ts",
+          "deploy_path": "_shared/revision-bound-reply.ts",
+          "sha256": "13439a22cffcda24508d4a07bc875c9c4aeeb6966b9ee8336535ba878a4aa690"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/runtime-signal-lifecycle.ts",
+          "deploy_path": "_shared/runtime-signal-lifecycle.ts",
+          "sha256": "113d45ea7a36c9a04d8cd7193e52d432514785538a35df4f578221b73f2b8b62"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/service-semantic-routing.ts",
+          "deploy_path": "_shared/service-semantic-routing.ts",
+          "sha256": "117b06bc1365e1dddbb0c80f1515b934ee45116a2826004a6e8e9f892799cc3c"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/supabase-admin-key.ts",
+          "deploy_path": "_shared/supabase-admin-key.ts",
+          "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/transaction-closure-handoff.ts",
+          "deploy_path": "_shared/transaction-closure-handoff.ts",
+          "sha256": "8d68d0e53b9333f619b59b5675f3f10216644a2ce21ff487c1c0e9faa8900715"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
+          "deploy_path": "_shared/uat-execution-contract.ts",
+          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
+          "deploy_path": "_shared/uat-execution-readiness.ts",
+          "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-generation-config.ts",
+          "deploy_path": "_shared/vertex-generation-config.ts",
+          "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-parse.ts",
+          "deploy_path": "_shared/vertex-parse.ts",
+          "sha256": "83062c4576e309ac92af3850f5f7aaf4fef2285b553a9d5a81df29451cee2a34"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/warm-handoff.ts",
+          "deploy_path": "_shared/warm-handoff.ts",
+          "sha256": "ececeb9fc88f37f22ce6b9a1fe264211b0899994cf634d6ebc6c871689420068"
+        },
+        {
+          "repository_path": "supabase/functions/generate-reply/index.ts",
+          "deploy_path": "generate-reply/index.ts",
+          "sha256": "0731769d66c0c7207f4114ad1de84807e52d61e2c64a24dbed40de31e5611d55"
+        }
+      ],
+      "runtime_config": [
+        {
+          "deploy_path": "functions/generate-reply/deno.json",
+          "content": "{\n  \"nodeModulesDir\": \"auto\",\n  \"compilerOptions\": {\n    \"strict\": true\n  }\n}\n",
+          "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
+        }
+      ],
+      "target_manifest_sha256": "b3cf2d7af543644d2a81233d3d76b09597fe315759cdcb9d84fa47a1d988d033",
+      "deployment_authorized": false
+    },
+    "agent-assist": {
+      "existing_function_id": "a0290445-68c4-4ca2-b00a-7a1f382f0e71",
+      "preimage_version": 76,
+      "verify_jwt": true,
+      "entrypoint_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_a0290445-68c4-4ca2-b00a-7a1f382f0e71_75/source/functions/agent-assist/index.ts",
+      "import_map_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_a0290445-68c4-4ca2-b00a-7a1f382f0e71_75/source/functions/agent-assist/deno.json",
+      "preimage_snapshot_sha256": "1158bd21aea1b176de0f5a9a987709044d4d2c3d4f1febbc48696ecc352e2474",
+      "preimage_ezbr_sha256": "61d83d79f68e0d9de360b747b893f9f0c10a90bccc51488e0775a87d0a734626",
+      "target_files": [
+        {
+          "repository_path": "supabase/functions/_shared/agent.ts",
+          "deploy_path": "_shared/agent.ts",
+          "sha256": "ffb74b764f1782577e049ff0ac3a25de115b239653cee6e9c846ce3ae6d5c96f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/authoritative-commit-readback.ts",
+          "deploy_path": "_shared/authoritative-commit-readback.ts",
+          "sha256": "2d2c14fbab89f4caede7d8c43faed0aae3bd07064e69a948f2d9a28a6a7b62bc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/b2-journey-progress-contract.ts",
+          "deploy_path": "_shared/b2-journey-progress-contract.ts",
+          "sha256": "50c152406251e7cc53a0a624907bdf0cf28b1560011a5b2f57e02ca58a284ffd"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/bounded-decision-context.ts",
+          "deploy_path": "_shared/bounded-decision-context.ts",
+          "sha256": "f93b59b56469f4a79518374f2cb3b73fab8d09028ce2b3c5c6cbb1c6c90f01f1"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-grounding.ts",
+          "deploy_path": "_shared/canonical-grounding.ts",
+          "sha256": "17d4d99d6b2953017fe04c5d032bf8e8ccf5b17d08406786af53b4b964cf51f7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-json.ts",
+          "deploy_path": "_shared/canonical-json.ts",
+          "sha256": "efe44b2683ff6b90db1b9d40f438560f3011d985c1eb5a131492913acc0e4295"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-capability-runtime.ts",
+          "deploy_path": "_shared/commerce-capability-runtime.ts",
+          "sha256": "09a3c5917529d967d91560ead71519d987186d02c68b3638929a93a2fee83b72"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-authority.ts",
+          "deploy_path": "_shared/commerce-state-authority.ts",
+          "sha256": "2c6932b6db06d135f4a9324e9e36464f5215851b9db423babfffec9573b677d7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-contract.ts",
+          "deploy_path": "_shared/commerce-state-contract.ts",
+          "sha256": "b75848856f1854f9df5f458ba5d3e491b6693c550458f5e3178cf88874b6e3be"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-reducer.ts",
+          "deploy_path": "_shared/commerce-state-reducer.ts",
+          "sha256": "b303bcf3cb610976bf6286a6a01767a192668c1604adb0aa86832b4632d8843f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-long-memory.ts",
+          "deploy_path": "_shared/conversation-long-memory.ts",
+          "sha256": "27102c323642dadde8ea3a212a964192e68199137d4887a1a00b062ff978851b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-recall.ts",
+          "deploy_path": "_shared/conversation-recall.ts",
+          "sha256": "281fbccaa51198a1651a28f9500a3336a0031a6e503484e9ce82a6b1c5f2af3b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-runtime-state-core.ts",
+          "deploy_path": "_shared/conversation-runtime-state-core.ts",
+          "sha256": "12af48041e25e5cc3c5bd6b091906077e5cd4a35995fcbcd0144e933ae1ace9f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-runtime-state.ts",
+          "deploy_path": "_shared/conversation-runtime-state.ts",
+          "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-semantic-contract.ts",
+          "deploy_path": "_shared/conversation-semantic-contract.ts",
+          "sha256": "1880fbb696b1ce3d7a68a9e47a18843186ebe25052f1a06d29297315803b336f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-service-planner.ts",
+          "deploy_path": "_shared/conversation-service-planner.ts",
+          "sha256": "2c72fc2e666689ae26a481f7a4b165fcfd974e942171aebff22429c3c17a3bbe"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-service-runtime.ts",
+          "deploy_path": "_shared/conversation-service-runtime.ts",
+          "sha256": "df6a1c2248cc4508dead4222312cb687ce98f96d2ac5b9bc45412a24eefc7344"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversational-routing.ts",
+          "deploy_path": "_shared/conversational-routing.ts",
+          "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/cors.ts",
+          "deploy_path": "_shared/cors.ts",
+          "sha256": "24cba23c64b46fba83055278a9dc6437f3abcbcdf4cf4cfa9fb9dfc9f424c232"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer-journey-orchestration.ts",
+          "deploy_path": "_shared/customer-journey-orchestration.ts",
+          "sha256": "3978f4bd89914dcf915758f48d10a6cffd96b7c98a944e208b53c59245be2df4"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer-money-facts.ts",
+          "deploy_path": "_shared/customer-money-facts.ts",
+          "sha256": "bad7b229031d97f0a0fcd054408b7c69bad88891bac1319dd27e1d3366d1ed19"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer360-entitlement-client.ts",
+          "deploy_path": "_shared/customer360-entitlement-client.ts",
+          "sha256": "2da12c29740371bcbdd752bbfe6b5adc7fd58286294aefe3e2af7779115fe13b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer360-entitlement-contract.ts",
+          "deploy_path": "_shared/customer360-entitlement-contract.ts",
+          "sha256": "0338ca5d879e0023403005198f5e88247939bbc65938b9170694bf85ae6a0e97"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/execution-failure.ts",
+          "deploy_path": "_shared/execution-failure.ts",
+          "sha256": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/handoff-intent.ts",
+          "deploy_path": "_shared/handoff-intent.ts",
+          "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-agent-registry.ts",
+          "deploy_path": "_shared/industry-agent-registry.ts",
+          "sha256": "cb4525633baf7fca5d936b3c212fbfa1cd97c9da8b54b8c97f2064f4d84e088e"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts",
+          "deploy_path": "_shared/industry-profiles/home-appliance-v1.ts",
+          "sha256": "04f8f83d88a0bc413b57b9f449e56bd62fa3455567d4893a5caedf08c9d5e687"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-runtime-adapter.ts",
+          "deploy_path": "_shared/industry-runtime-adapter.ts",
+          "sha256": "fbe1615f5fadd15e6c70e8b3b0bbb7528b202042fbbc92af8e1dd79b0d698f37"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-schema.ts",
+          "deploy_path": "_shared/industry-schema.ts",
+          "sha256": "149c208a8b898faedab61234cfc7f85e7a40d71c92996a5b61354e4cf85d35dd"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-aggregation-response.ts",
+          "deploy_path": "_shared/kb-aggregation-response.ts",
+          "sha256": "c38365d92cd0860bfba541f3cb072a01d095cb0d2c3be84162c88173ca612ba2"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-auth.ts",
+          "deploy_path": "_shared/kb-auth.ts",
+          "sha256": "696473ccbae22ea1328778785659be96204328ca6be5ca35ed7e94e70483e6d7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-client.ts",
+          "deploy_path": "_shared/kb-client.ts",
+          "sha256": "56246bfa52baeb8e644233bc64d267e11882d4f54afc245def2eee02b7e16071"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/llm-router.ts",
+          "deploy_path": "_shared/llm-router.ts",
+          "sha256": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
+          "deploy_path": "_shared/memory-reply-lifecycle-readback.ts",
+          "sha256": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/model-attempt-accounting.ts",
+          "deploy_path": "_shared/model-attempt-accounting.ts",
+          "sha256": "23131b006e5289cccb83e33d3e0d535dee64330dfcc0d24a48fd4b129c7b23fc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/natural-customer-response.ts",
+          "deploy_path": "_shared/natural-customer-response.ts",
+          "sha256": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/nonproduction-secret.ts",
+          "deploy_path": "_shared/nonproduction-secret.ts",
+          "sha256": "9a760728a4298c09a080237a8d0c90492e7caa029fa41db9aaecc5da74daebd5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/pre-activation-scope.ts",
+          "deploy_path": "_shared/pre-activation-scope.ts",
+          "sha256": "52c7e3a349df6d9675413203f689b0862219346a99c6831e4d1fa8d0649231af"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/remote-model-accounting.ts",
+          "deploy_path": "_shared/remote-model-accounting.ts",
+          "sha256": "1faa1ecebdc13e9f2f067611130e1a0ff65ba8697884387587a74b7f135947c5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/service-semantic-routing.ts",
+          "deploy_path": "_shared/service-semantic-routing.ts",
+          "sha256": "117b06bc1365e1dddbb0c80f1515b934ee45116a2826004a6e8e9f892799cc3c"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/supabase-admin-key.ts",
+          "deploy_path": "_shared/supabase-admin-key.ts",
+          "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/supabase-cors.ts",
+          "deploy_path": "_shared/supabase-cors.ts",
+          "sha256": "7beec6546ab29f0dc4bc586fdca49b2dbd65195c9c6455471c42458d6ecdc9d1"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/transaction-closure-handoff.ts",
+          "deploy_path": "_shared/transaction-closure-handoff.ts",
+          "sha256": "8d68d0e53b9333f619b59b5675f3f10216644a2ce21ff487c1c0e9faa8900715"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
+          "deploy_path": "_shared/uat-execution-contract.ts",
+          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
+          "deploy_path": "_shared/uat-execution-readiness.ts",
+          "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-generation-config.ts",
+          "deploy_path": "_shared/vertex-generation-config.ts",
+          "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-parse.ts",
+          "deploy_path": "_shared/vertex-parse.ts",
+          "sha256": "83062c4576e309ac92af3850f5f7aaf4fef2285b553a9d5a81df29451cee2a34"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/warm-handoff.ts",
+          "deploy_path": "_shared/warm-handoff.ts",
+          "sha256": "ececeb9fc88f37f22ce6b9a1fe264211b0899994cf634d6ebc6c871689420068"
+        },
+        {
+          "repository_path": "supabase/functions/agent-assist/index.ts",
+          "deploy_path": "agent-assist/index.ts",
+          "sha256": "748fd71741e7a6d533c49e60d3f734c912f70e0acde4cdd615db136cd224f694"
+        }
+      ],
+      "runtime_config": [
+        {
+          "deploy_path": "functions/agent-assist/deno.json",
+          "content": "{\n  \"nodeModulesDir\": \"auto\",\n  \"compilerOptions\": {\n    \"strict\": true\n  }\n}\n",
+          "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
+        }
+      ],
+      "target_manifest_sha256": "601b8b52e196bed1ef4274b6e16392472933103b8e1737ab374a3e764c1a534e",
+      "deployment_authorized": false
+    },
+    "widget-live-ai-test": {
+      "existing_function_id": "850c5889-1728-4f4a-ae85-eb14d78d44c0",
+      "preimage_version": 14,
+      "verify_jwt": true,
+      "entrypoint_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_850c5889-1728-4f4a-ae85-eb14d78d44c0_14/source/functions/widget-live-ai-test/index.ts",
+      "import_map_path": null,
+      "preimage_snapshot_sha256": "ef6affe9952cfdc597f00f45d44792597c4f5a0860b36d44b43476202e05a406",
+      "preimage_ezbr_sha256": "0651cd1892e193a19d385b65dac035c93bd8b88de1721c61551d005041e0f1d7",
+      "target_files": [
+        {
+          "repository_path": "supabase/functions/_shared/conversational-routing.ts",
+          "deploy_path": "_shared/conversational-routing.ts",
+          "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/execution-failure.ts",
+          "deploy_path": "_shared/execution-failure.ts",
+          "sha256": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/handoff-intent.ts",
+          "deploy_path": "_shared/handoff-intent.ts",
+          "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/supabase-admin-key.ts",
+          "deploy_path": "_shared/supabase-admin-key.ts",
+          "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/supabase-cors.ts",
+          "deploy_path": "_shared/supabase-cors.ts",
+          "sha256": "7beec6546ab29f0dc4bc586fdca49b2dbd65195c9c6455471c42458d6ecdc9d1"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
+          "deploy_path": "_shared/uat-execution-contract.ts",
+          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
+          "deploy_path": "_shared/uat-execution-readiness.ts",
+          "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-generation-config.ts",
+          "deploy_path": "_shared/vertex-generation-config.ts",
+          "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+        },
+        {
+          "repository_path": "supabase/functions/widget-live-ai-test/index.ts",
+          "deploy_path": "widget-live-ai-test/index.ts",
+          "sha256": "b8c05ccb43b43cbf3360943ade89d0f5212a7ce26ebde16da3d5878c2b47d826"
+        }
+      ],
+      "runtime_config": [],
+      "target_manifest_sha256": "4c6c1ffedb7ee64fbdbc2605da22cba4b6abedee239c8a64b28426adb8f4dd66",
+      "deployment_authorized": false
+    },
+    "kb-search-proxy": {
+      "existing_function_id": "74381138-6fd5-4e6f-bf71-d354c6ee9a38",
+      "preimage_version": 26,
+      "verify_jwt": true,
+      "entrypoint_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_74381138-6fd5-4e6f-bf71-d354c6ee9a38_25/source/kb-search-proxy/index.ts",
+      "import_map_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_74381138-6fd5-4e6f-bf71-d354c6ee9a38_25/source/deno.json",
+      "preimage_snapshot_sha256": "4520ca20e9f5dd99d35c070f78cb7242ba5406e7c01645ea920c5a0416108a3a",
+      "preimage_ezbr_sha256": "c984fe672e79e32ef1bb5772cc6b0523aac0648a44cc870ddf534e4b1a6b83c1",
+      "target_files": [
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-authority.ts",
+          "deploy_path": "_shared/commerce-state-authority.ts",
+          "sha256": "2c6932b6db06d135f4a9324e9e36464f5215851b9db423babfffec9573b677d7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-runtime-state-core.ts",
+          "deploy_path": "_shared/conversation-runtime-state-core.ts",
+          "sha256": "12af48041e25e5cc3c5bd6b091906077e5cd4a35995fcbcd0144e933ae1ace9f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-runtime-state.ts",
+          "deploy_path": "_shared/conversation-runtime-state.ts",
+          "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-semantic-contract.ts",
+          "deploy_path": "_shared/conversation-semantic-contract.ts",
+          "sha256": "1880fbb696b1ce3d7a68a9e47a18843186ebe25052f1a06d29297315803b336f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversational-routing.ts",
+          "deploy_path": "_shared/conversational-routing.ts",
+          "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/execution-failure.ts",
+          "deploy_path": "_shared/execution-failure.ts",
+          "sha256": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/handoff-intent.ts",
+          "deploy_path": "_shared/handoff-intent.ts",
+          "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-aggregation-response.ts",
+          "deploy_path": "_shared/kb-aggregation-response.ts",
+          "sha256": "c38365d92cd0860bfba541f3cb072a01d095cb0d2c3be84162c88173ca612ba2"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-auth.ts",
+          "deploy_path": "_shared/kb-auth.ts",
+          "sha256": "696473ccbae22ea1328778785659be96204328ca6be5ca35ed7e94e70483e6d7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-client.ts",
+          "deploy_path": "_shared/kb-client.ts",
+          "sha256": "56246bfa52baeb8e644233bc64d267e11882d4f54afc245def2eee02b7e16071"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/llm-router.ts",
+          "deploy_path": "_shared/llm-router.ts",
+          "sha256": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/model-attempt-accounting.ts",
+          "deploy_path": "_shared/model-attempt-accounting.ts",
+          "sha256": "23131b006e5289cccb83e33d3e0d535dee64330dfcc0d24a48fd4b129c7b23fc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/natural-customer-response.ts",
+          "deploy_path": "_shared/natural-customer-response.ts",
+          "sha256": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/nonproduction-secret.ts",
+          "deploy_path": "_shared/nonproduction-secret.ts",
+          "sha256": "9a760728a4298c09a080237a8d0c90492e7caa029fa41db9aaecc5da74daebd5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/remote-model-accounting.ts",
+          "deploy_path": "_shared/remote-model-accounting.ts",
+          "sha256": "1faa1ecebdc13e9f2f067611130e1a0ff65ba8697884387587a74b7f135947c5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/supabase-admin-key.ts",
+          "deploy_path": "_shared/supabase-admin-key.ts",
+          "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/supabase-cors.ts",
+          "deploy_path": "_shared/supabase-cors.ts",
+          "sha256": "7beec6546ab29f0dc4bc586fdca49b2dbd65195c9c6455471c42458d6ecdc9d1"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
+          "deploy_path": "_shared/uat-execution-contract.ts",
+          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
+          "deploy_path": "_shared/uat-execution-readiness.ts",
+          "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-generation-config.ts",
+          "deploy_path": "_shared/vertex-generation-config.ts",
+          "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-parse.ts",
+          "deploy_path": "_shared/vertex-parse.ts",
+          "sha256": "83062c4576e309ac92af3850f5f7aaf4fef2285b553a9d5a81df29451cee2a34"
+        },
+        {
+          "repository_path": "supabase/functions/kb-search-proxy/index.ts",
+          "deploy_path": "kb-search-proxy/index.ts",
+          "sha256": "c2e61bd8d06856c6606e509182e6050d29083afca3f4df6326971ed096aa97a7"
+        }
+      ],
+      "runtime_config": [],
+      "target_manifest_sha256": "7d1308a601e0503b4faa212a7a19cc20690d2cdd6a21a2bb4ea169a1bed0d70f",
+      "deployment_authorized": false
+    },
+    "conversation-evaluate": {
+      "existing_function_id": "2980db0c-f42d-42ac-8acf-fb4d9b9bb348",
+      "preimage_version": 27,
+      "verify_jwt": true,
+      "entrypoint_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_2980db0c-f42d-42ac-8acf-fb4d9b9bb348_26/source/functions/conversation-evaluate/index.ts",
+      "import_map_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_2980db0c-f42d-42ac-8acf-fb4d9b9bb348_26/source/functions/conversation-evaluate/deno.json",
+      "preimage_snapshot_sha256": "e858f35b6b60e649d4495e5aea7132c8db6a07261ddbb19ee1b5e50344ebb7ad",
+      "preimage_ezbr_sha256": "a4b00021646bc4f56b787c37c2367b7023aed3fc29add9d38850cea65a896a17",
+      "target_files": [
+        {
+          "repository_path": "supabase/functions/_shared/authoritative-commit-readback.ts",
+          "deploy_path": "_shared/authoritative-commit-readback.ts",
+          "sha256": "2d2c14fbab89f4caede7d8c43faed0aae3bd07064e69a948f2d9a28a6a7b62bc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/b2-journey-progress-contract.ts",
+          "deploy_path": "_shared/b2-journey-progress-contract.ts",
+          "sha256": "50c152406251e7cc53a0a624907bdf0cf28b1560011a5b2f57e02ca58a284ffd"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-grounding.ts",
+          "deploy_path": "_shared/canonical-grounding.ts",
+          "sha256": "17d4d99d6b2953017fe04c5d032bf8e8ccf5b17d08406786af53b4b964cf51f7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-json.ts",
+          "deploy_path": "_shared/canonical-json.ts",
+          "sha256": "efe44b2683ff6b90db1b9d40f438560f3011d985c1eb5a131492913acc0e4295"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-kb-direct-answer.ts",
+          "deploy_path": "_shared/canonical-kb-direct-answer.ts",
+          "sha256": "120d0e8f4a6eb2273d21bb7c621aec6ffe803cacfb7eb3a4eff0f182b2104d41"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-contract.ts",
+          "deploy_path": "_shared/ce-contract.ts",
+          "sha256": "dce6cafca991315d27614580d2000cb3e18a108d0bcc91c2137b99b27fcd5210"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-conversion-reality.ts",
+          "deploy_path": "_shared/ce-conversion-reality.ts",
+          "sha256": "200a71b68b81f1c7067fcde7cddb5b78adec447ab4cdf27c316a18944c5c488c"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-evaluation-scope.ts",
+          "deploy_path": "_shared/ce-evaluation-scope.ts",
+          "sha256": "8f1ef878a90fb55eb66aa2a732035bc151e77d12a0a4deabf6c22c4f4c7cfd7e"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-grounding.ts",
+          "deploy_path": "_shared/ce-grounding.ts",
+          "sha256": "74e42dde0a8bc9ef5b7139ce8d2f6baeed9f3b01cb1a1acf3b873b5e8243fb1d"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-provider-response.ts",
+          "deploy_path": "_shared/ce-provider-response.ts",
+          "sha256": "90e8609dd772afaf584aeb5db16c828960830562f3d09536890c903daae5e2c2"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-capability-runtime.ts",
+          "deploy_path": "_shared/commerce-capability-runtime.ts",
+          "sha256": "09a3c5917529d967d91560ead71519d987186d02c68b3638929a93a2fee83b72"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-authority.ts",
+          "deploy_path": "_shared/commerce-state-authority.ts",
+          "sha256": "2c6932b6db06d135f4a9324e9e36464f5215851b9db423babfffec9573b677d7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-contract.ts",
+          "deploy_path": "_shared/commerce-state-contract.ts",
+          "sha256": "b75848856f1854f9df5f458ba5d3e491b6693c550458f5e3178cf88874b6e3be"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-reducer.ts",
+          "deploy_path": "_shared/commerce-state-reducer.ts",
+          "sha256": "b303bcf3cb610976bf6286a6a01767a192668c1604adb0aa86832b4632d8843f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-long-memory.ts",
+          "deploy_path": "_shared/conversation-long-memory.ts",
+          "sha256": "27102c323642dadde8ea3a212a964192e68199137d4887a1a00b062ff978851b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-recall.ts",
+          "deploy_path": "_shared/conversation-recall.ts",
+          "sha256": "281fbccaa51198a1651a28f9500a3336a0031a6e503484e9ce82a6b1c5f2af3b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-runtime-state-core.ts",
+          "deploy_path": "_shared/conversation-runtime-state-core.ts",
+          "sha256": "12af48041e25e5cc3c5bd6b091906077e5cd4a35995fcbcd0144e933ae1ace9f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-runtime-state.ts",
+          "deploy_path": "_shared/conversation-runtime-state.ts",
+          "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-semantic-contract.ts",
+          "deploy_path": "_shared/conversation-semantic-contract.ts",
+          "sha256": "1880fbb696b1ce3d7a68a9e47a18843186ebe25052f1a06d29297315803b336f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-service-runtime.ts",
+          "deploy_path": "_shared/conversation-service-runtime.ts",
+          "sha256": "df6a1c2248cc4508dead4222312cb687ce98f96d2ac5b9bc45412a24eefc7344"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversational-routing.ts",
+          "deploy_path": "_shared/conversational-routing.ts",
+          "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer-journey-orchestration.ts",
+          "deploy_path": "_shared/customer-journey-orchestration.ts",
+          "sha256": "3978f4bd89914dcf915758f48d10a6cffd96b7c98a944e208b53c59245be2df4"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer-money-facts.ts",
+          "deploy_path": "_shared/customer-money-facts.ts",
+          "sha256": "bad7b229031d97f0a0fcd054408b7c69bad88891bac1319dd27e1d3366d1ed19"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/execution-failure.ts",
+          "deploy_path": "_shared/execution-failure.ts",
+          "sha256": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/handoff-intent.ts",
+          "deploy_path": "_shared/handoff-intent.ts",
+          "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-agent-registry.ts",
+          "deploy_path": "_shared/industry-agent-registry.ts",
+          "sha256": "cb4525633baf7fca5d936b3c212fbfa1cd97c9da8b54b8c97f2064f4d84e088e"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts",
+          "deploy_path": "_shared/industry-profiles/home-appliance-v1.ts",
+          "sha256": "04f8f83d88a0bc413b57b9f449e56bd62fa3455567d4893a5caedf08c9d5e687"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-runtime-adapter.ts",
+          "deploy_path": "_shared/industry-runtime-adapter.ts",
+          "sha256": "fbe1615f5fadd15e6c70e8b3b0bbb7528b202042fbbc92af8e1dd79b0d698f37"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-schema.ts",
+          "deploy_path": "_shared/industry-schema.ts",
+          "sha256": "149c208a8b898faedab61234cfc7f85e7a40d71c92996a5b61354e4cf85d35dd"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-aggregation-response.ts",
+          "deploy_path": "_shared/kb-aggregation-response.ts",
+          "sha256": "c38365d92cd0860bfba541f3cb072a01d095cb0d2c3be84162c88173ca612ba2"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-auth.ts",
+          "deploy_path": "_shared/kb-auth.ts",
+          "sha256": "696473ccbae22ea1328778785659be96204328ca6be5ca35ed7e94e70483e6d7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-client.ts",
+          "deploy_path": "_shared/kb-client.ts",
+          "sha256": "56246bfa52baeb8e644233bc64d267e11882d4f54afc245def2eee02b7e16071"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/llm-router.ts",
+          "deploy_path": "_shared/llm-router.ts",
+          "sha256": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
+          "deploy_path": "_shared/memory-reply-lifecycle-readback.ts",
+          "sha256": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/model-attempt-accounting.ts",
+          "deploy_path": "_shared/model-attempt-accounting.ts",
+          "sha256": "23131b006e5289cccb83e33d3e0d535dee64330dfcc0d24a48fd4b129c7b23fc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/natural-customer-response.ts",
+          "deploy_path": "_shared/natural-customer-response.ts",
+          "sha256": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/nonproduction-secret.ts",
+          "deploy_path": "_shared/nonproduction-secret.ts",
+          "sha256": "9a760728a4298c09a080237a8d0c90492e7caa029fa41db9aaecc5da74daebd5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
+          "deploy_path": "_shared/pre-send-conversion-supervisor.ts",
+          "sha256": "745d7aa988df3195ea9f8af75659861acdc5ea6e6d3e9dd8f387af0b2ef50f56"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/remote-model-accounting.ts",
+          "deploy_path": "_shared/remote-model-accounting.ts",
+          "sha256": "1faa1ecebdc13e9f2f067611130e1a0ff65ba8697884387587a74b7f135947c5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/supabase-admin-key.ts",
+          "deploy_path": "_shared/supabase-admin-key.ts",
+          "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
+          "deploy_path": "_shared/uat-execution-contract.ts",
+          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
+          "deploy_path": "_shared/uat-execution-readiness.ts",
+          "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-generation-config.ts",
+          "deploy_path": "_shared/vertex-generation-config.ts",
+          "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-parse.ts",
+          "deploy_path": "_shared/vertex-parse.ts",
+          "sha256": "83062c4576e309ac92af3850f5f7aaf4fef2285b553a9d5a81df29451cee2a34"
+        },
+        {
+          "repository_path": "supabase/functions/conversation-evaluate/index.ts",
+          "deploy_path": "conversation-evaluate/index.ts",
+          "sha256": "21b4e1b19b68e4841230ef856ea0b0b09a50083c1f7d89325081d50ff4a7508e"
+        }
+      ],
+      "runtime_config": [
+        {
+          "deploy_path": "functions/conversation-evaluate/deno.json",
+          "content": "{\n  \"nodeModulesDir\": \"auto\",\n  \"compilerOptions\": {\n    \"strict\": true\n  }\n}\n",
+          "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
+        }
+      ],
+      "target_manifest_sha256": "be06349d2b31b515cdf345df3bf493139d62476bd69700608629436bd9d66390",
+      "deployment_authorized": false
+    },
+    "ce-evaluation-control": {
+      "existing_function_id": "cd7ef396-195e-460f-a2a4-ddcf49b4ecd5",
+      "preimage_version": 16,
+      "verify_jwt": true,
+      "entrypoint_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_cd7ef396-195e-460f-a2a4-ddcf49b4ecd5_15/source/ce-evaluation-control/index.ts",
+      "import_map_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_cd7ef396-195e-460f-a2a4-ddcf49b4ecd5_15/source/deno.json",
+      "preimage_snapshot_sha256": "7827899e1bec7e91145a9a52bf387574c310f0b7173847fc4019bfa0cd7e7674",
+      "preimage_ezbr_sha256": "1bfef83438ff845d19cc4f16e828f7193fd606b7518b5b36645878381d1ba26a",
+      "target_files": [
+        {
+          "repository_path": "supabase/functions/_shared/authoritative-commit-readback.ts",
+          "deploy_path": "_shared/authoritative-commit-readback.ts",
+          "sha256": "2d2c14fbab89f4caede7d8c43faed0aae3bd07064e69a948f2d9a28a6a7b62bc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/b2-journey-progress-contract.ts",
+          "deploy_path": "_shared/b2-journey-progress-contract.ts",
+          "sha256": "50c152406251e7cc53a0a624907bdf0cf28b1560011a5b2f57e02ca58a284ffd"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-grounding.ts",
+          "deploy_path": "_shared/canonical-grounding.ts",
+          "sha256": "17d4d99d6b2953017fe04c5d032bf8e8ccf5b17d08406786af53b4b964cf51f7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-json.ts",
+          "deploy_path": "_shared/canonical-json.ts",
+          "sha256": "efe44b2683ff6b90db1b9d40f438560f3011d985c1eb5a131492913acc0e4295"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-kb-direct-answer.ts",
+          "deploy_path": "_shared/canonical-kb-direct-answer.ts",
+          "sha256": "120d0e8f4a6eb2273d21bb7c621aec6ffe803cacfb7eb3a4eff0f182b2104d41"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-automation-engine.ts",
+          "deploy_path": "_shared/ce-automation-engine.ts",
+          "sha256": "3283642d1c8b4be6d8c1c1b000273be5dbd6b00c34d63836c3215f355b6d5e98"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-contract.ts",
+          "deploy_path": "_shared/ce-contract.ts",
+          "sha256": "dce6cafca991315d27614580d2000cb3e18a108d0bcc91c2137b99b27fcd5210"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-conversion-reality.ts",
+          "deploy_path": "_shared/ce-conversion-reality.ts",
+          "sha256": "200a71b68b81f1c7067fcde7cddb5b78adec447ab4cdf27c316a18944c5c488c"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-cors.ts",
+          "deploy_path": "_shared/ce-cors.ts",
+          "sha256": "ee60323757827310a70f1e7ab9c8ac8c8998a16f72f0b526f129008fdd85ad53"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-evaluation-scope.ts",
+          "deploy_path": "_shared/ce-evaluation-scope.ts",
+          "sha256": "8f1ef878a90fb55eb66aa2a732035bc151e77d12a0a4deabf6c22c4f4c7cfd7e"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-grounding.ts",
+          "deploy_path": "_shared/ce-grounding.ts",
+          "sha256": "74e42dde0a8bc9ef5b7139ce8d2f6baeed9f3b01cb1a1acf3b873b5e8243fb1d"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-provider-response.ts",
+          "deploy_path": "_shared/ce-provider-response.ts",
+          "sha256": "90e8609dd772afaf584aeb5db16c828960830562f3d09536890c903daae5e2c2"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-capability-runtime.ts",
+          "deploy_path": "_shared/commerce-capability-runtime.ts",
+          "sha256": "09a3c5917529d967d91560ead71519d987186d02c68b3638929a93a2fee83b72"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-authority.ts",
+          "deploy_path": "_shared/commerce-state-authority.ts",
+          "sha256": "2c6932b6db06d135f4a9324e9e36464f5215851b9db423babfffec9573b677d7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-contract.ts",
+          "deploy_path": "_shared/commerce-state-contract.ts",
+          "sha256": "b75848856f1854f9df5f458ba5d3e491b6693c550458f5e3178cf88874b6e3be"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-reducer.ts",
+          "deploy_path": "_shared/commerce-state-reducer.ts",
+          "sha256": "b303bcf3cb610976bf6286a6a01767a192668c1604adb0aa86832b4632d8843f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-long-memory.ts",
+          "deploy_path": "_shared/conversation-long-memory.ts",
+          "sha256": "27102c323642dadde8ea3a212a964192e68199137d4887a1a00b062ff978851b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-recall.ts",
+          "deploy_path": "_shared/conversation-recall.ts",
+          "sha256": "281fbccaa51198a1651a28f9500a3336a0031a6e503484e9ce82a6b1c5f2af3b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-runtime-state-core.ts",
+          "deploy_path": "_shared/conversation-runtime-state-core.ts",
+          "sha256": "12af48041e25e5cc3c5bd6b091906077e5cd4a35995fcbcd0144e933ae1ace9f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-runtime-state.ts",
+          "deploy_path": "_shared/conversation-runtime-state.ts",
+          "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-semantic-contract.ts",
+          "deploy_path": "_shared/conversation-semantic-contract.ts",
+          "sha256": "1880fbb696b1ce3d7a68a9e47a18843186ebe25052f1a06d29297315803b336f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-service-runtime.ts",
+          "deploy_path": "_shared/conversation-service-runtime.ts",
+          "sha256": "df6a1c2248cc4508dead4222312cb687ce98f96d2ac5b9bc45412a24eefc7344"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversational-routing.ts",
+          "deploy_path": "_shared/conversational-routing.ts",
+          "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer-journey-orchestration.ts",
+          "deploy_path": "_shared/customer-journey-orchestration.ts",
+          "sha256": "3978f4bd89914dcf915758f48d10a6cffd96b7c98a944e208b53c59245be2df4"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer-money-facts.ts",
+          "deploy_path": "_shared/customer-money-facts.ts",
+          "sha256": "bad7b229031d97f0a0fcd054408b7c69bad88891bac1319dd27e1d3366d1ed19"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/execution-failure.ts",
+          "deploy_path": "_shared/execution-failure.ts",
+          "sha256": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/handoff-intent.ts",
+          "deploy_path": "_shared/handoff-intent.ts",
+          "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-agent-registry.ts",
+          "deploy_path": "_shared/industry-agent-registry.ts",
+          "sha256": "cb4525633baf7fca5d936b3c212fbfa1cd97c9da8b54b8c97f2064f4d84e088e"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts",
+          "deploy_path": "_shared/industry-profiles/home-appliance-v1.ts",
+          "sha256": "04f8f83d88a0bc413b57b9f449e56bd62fa3455567d4893a5caedf08c9d5e687"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-runtime-adapter.ts",
+          "deploy_path": "_shared/industry-runtime-adapter.ts",
+          "sha256": "fbe1615f5fadd15e6c70e8b3b0bbb7528b202042fbbc92af8e1dd79b0d698f37"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-schema.ts",
+          "deploy_path": "_shared/industry-schema.ts",
+          "sha256": "149c208a8b898faedab61234cfc7f85e7a40d71c92996a5b61354e4cf85d35dd"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-aggregation-response.ts",
+          "deploy_path": "_shared/kb-aggregation-response.ts",
+          "sha256": "c38365d92cd0860bfba541f3cb072a01d095cb0d2c3be84162c88173ca612ba2"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-auth.ts",
+          "deploy_path": "_shared/kb-auth.ts",
+          "sha256": "696473ccbae22ea1328778785659be96204328ca6be5ca35ed7e94e70483e6d7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-client.ts",
+          "deploy_path": "_shared/kb-client.ts",
+          "sha256": "56246bfa52baeb8e644233bc64d267e11882d4f54afc245def2eee02b7e16071"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/llm-router.ts",
+          "deploy_path": "_shared/llm-router.ts",
+          "sha256": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
+          "deploy_path": "_shared/memory-reply-lifecycle-readback.ts",
+          "sha256": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/model-attempt-accounting.ts",
+          "deploy_path": "_shared/model-attempt-accounting.ts",
+          "sha256": "23131b006e5289cccb83e33d3e0d535dee64330dfcc0d24a48fd4b129c7b23fc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/natural-customer-response.ts",
+          "deploy_path": "_shared/natural-customer-response.ts",
+          "sha256": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/nonproduction-secret.ts",
+          "deploy_path": "_shared/nonproduction-secret.ts",
+          "sha256": "9a760728a4298c09a080237a8d0c90492e7caa029fa41db9aaecc5da74daebd5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
+          "deploy_path": "_shared/pre-send-conversion-supervisor.ts",
+          "sha256": "745d7aa988df3195ea9f8af75659861acdc5ea6e6d3e9dd8f387af0b2ef50f56"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/remote-model-accounting.ts",
+          "deploy_path": "_shared/remote-model-accounting.ts",
+          "sha256": "1faa1ecebdc13e9f2f067611130e1a0ff65ba8697884387587a74b7f135947c5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/supabase-admin-key.ts",
+          "deploy_path": "_shared/supabase-admin-key.ts",
+          "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
+          "deploy_path": "_shared/uat-execution-contract.ts",
+          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
+          "deploy_path": "_shared/uat-execution-readiness.ts",
+          "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-generation-config.ts",
+          "deploy_path": "_shared/vertex-generation-config.ts",
+          "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-parse.ts",
+          "deploy_path": "_shared/vertex-parse.ts",
+          "sha256": "83062c4576e309ac92af3850f5f7aaf4fef2285b553a9d5a81df29451cee2a34"
+        },
+        {
+          "repository_path": "supabase/functions/ce-evaluation-control/index.ts",
+          "deploy_path": "ce-evaluation-control/index.ts",
+          "sha256": "d7e95c6594d828cf438394ba2bce199520ab775d40695e358a7ac4a0a4be01d8"
+        }
+      ],
+      "runtime_config": [],
+      "target_manifest_sha256": "979127fc07cc6ff44781b46e483ae0be254a412ca1f6b4c7bcdec64e2a97c68b",
+      "deployment_authorized": false
+    },
+    "ce-evaluation-worker": {
+      "existing_function_id": "292b2cae-b14b-493e-be5b-fd4a4cb965a5",
+      "preimage_version": 31,
+      "verify_jwt": false,
+      "entrypoint_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_292b2cae-b14b-493e-be5b-fd4a4cb965a5_30/source/ce-evaluation-worker/index.ts",
+      "import_map_path": "/tmp/user_fn_nrfxhqabwblzxoushgnm_292b2cae-b14b-493e-be5b-fd4a4cb965a5_30/source/deno.json",
+      "preimage_snapshot_sha256": "1d0a174bf9676efe57b6843b60c7996324dd2123f47562eb9d16f45ff119615e",
+      "preimage_ezbr_sha256": "c9884d6d721b62bdd65cf9ce13dd7ea8d10b9c8992fe45e6385b40efac5d9db8",
+      "target_files": [
+        {
+          "repository_path": "supabase/functions/_shared/authoritative-commit-readback.ts",
+          "deploy_path": "_shared/authoritative-commit-readback.ts",
+          "sha256": "2d2c14fbab89f4caede7d8c43faed0aae3bd07064e69a948f2d9a28a6a7b62bc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/b2-journey-progress-contract.ts",
+          "deploy_path": "_shared/b2-journey-progress-contract.ts",
+          "sha256": "50c152406251e7cc53a0a624907bdf0cf28b1560011a5b2f57e02ca58a284ffd"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-grounding.ts",
+          "deploy_path": "_shared/canonical-grounding.ts",
+          "sha256": "17d4d99d6b2953017fe04c5d032bf8e8ccf5b17d08406786af53b4b964cf51f7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-json.ts",
+          "deploy_path": "_shared/canonical-json.ts",
+          "sha256": "efe44b2683ff6b90db1b9d40f438560f3011d985c1eb5a131492913acc0e4295"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/canonical-kb-direct-answer.ts",
+          "deploy_path": "_shared/canonical-kb-direct-answer.ts",
+          "sha256": "120d0e8f4a6eb2273d21bb7c621aec6ffe803cacfb7eb3a4eff0f182b2104d41"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-automation-engine.ts",
+          "deploy_path": "_shared/ce-automation-engine.ts",
+          "sha256": "3283642d1c8b4be6d8c1c1b000273be5dbd6b00c34d63836c3215f355b6d5e98"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-contract.ts",
+          "deploy_path": "_shared/ce-contract.ts",
+          "sha256": "dce6cafca991315d27614580d2000cb3e18a108d0bcc91c2137b99b27fcd5210"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-conversion-reality.ts",
+          "deploy_path": "_shared/ce-conversion-reality.ts",
+          "sha256": "200a71b68b81f1c7067fcde7cddb5b78adec447ab4cdf27c316a18944c5c488c"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-evaluation-scope.ts",
+          "deploy_path": "_shared/ce-evaluation-scope.ts",
+          "sha256": "8f1ef878a90fb55eb66aa2a732035bc151e77d12a0a4deabf6c22c4f4c7cfd7e"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-grounding.ts",
+          "deploy_path": "_shared/ce-grounding.ts",
+          "sha256": "74e42dde0a8bc9ef5b7139ce8d2f6baeed9f3b01cb1a1acf3b873b5e8243fb1d"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/ce-provider-response.ts",
+          "deploy_path": "_shared/ce-provider-response.ts",
+          "sha256": "90e8609dd772afaf584aeb5db16c828960830562f3d09536890c903daae5e2c2"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-capability-runtime.ts",
+          "deploy_path": "_shared/commerce-capability-runtime.ts",
+          "sha256": "09a3c5917529d967d91560ead71519d987186d02c68b3638929a93a2fee83b72"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-authority.ts",
+          "deploy_path": "_shared/commerce-state-authority.ts",
+          "sha256": "2c6932b6db06d135f4a9324e9e36464f5215851b9db423babfffec9573b677d7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-contract.ts",
+          "deploy_path": "_shared/commerce-state-contract.ts",
+          "sha256": "b75848856f1854f9df5f458ba5d3e491b6693c550458f5e3178cf88874b6e3be"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/commerce-state-reducer.ts",
+          "deploy_path": "_shared/commerce-state-reducer.ts",
+          "sha256": "b303bcf3cb610976bf6286a6a01767a192668c1604adb0aa86832b4632d8843f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-long-memory.ts",
+          "deploy_path": "_shared/conversation-long-memory.ts",
+          "sha256": "27102c323642dadde8ea3a212a964192e68199137d4887a1a00b062ff978851b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-recall.ts",
+          "deploy_path": "_shared/conversation-recall.ts",
+          "sha256": "281fbccaa51198a1651a28f9500a3336a0031a6e503484e9ce82a6b1c5f2af3b"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-runtime-state-core.ts",
+          "deploy_path": "_shared/conversation-runtime-state-core.ts",
+          "sha256": "12af48041e25e5cc3c5bd6b091906077e5cd4a35995fcbcd0144e933ae1ace9f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-runtime-state.ts",
+          "deploy_path": "_shared/conversation-runtime-state.ts",
+          "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-semantic-contract.ts",
+          "deploy_path": "_shared/conversation-semantic-contract.ts",
+          "sha256": "1880fbb696b1ce3d7a68a9e47a18843186ebe25052f1a06d29297315803b336f"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversation-service-runtime.ts",
+          "deploy_path": "_shared/conversation-service-runtime.ts",
+          "sha256": "df6a1c2248cc4508dead4222312cb687ce98f96d2ac5b9bc45412a24eefc7344"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/conversational-routing.ts",
+          "deploy_path": "_shared/conversational-routing.ts",
+          "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer-journey-orchestration.ts",
+          "deploy_path": "_shared/customer-journey-orchestration.ts",
+          "sha256": "3978f4bd89914dcf915758f48d10a6cffd96b7c98a944e208b53c59245be2df4"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/customer-money-facts.ts",
+          "deploy_path": "_shared/customer-money-facts.ts",
+          "sha256": "bad7b229031d97f0a0fcd054408b7c69bad88891bac1319dd27e1d3366d1ed19"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/execution-failure.ts",
+          "deploy_path": "_shared/execution-failure.ts",
+          "sha256": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/handoff-intent.ts",
+          "deploy_path": "_shared/handoff-intent.ts",
+          "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-agent-registry.ts",
+          "deploy_path": "_shared/industry-agent-registry.ts",
+          "sha256": "cb4525633baf7fca5d936b3c212fbfa1cd97c9da8b54b8c97f2064f4d84e088e"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts",
+          "deploy_path": "_shared/industry-profiles/home-appliance-v1.ts",
+          "sha256": "04f8f83d88a0bc413b57b9f449e56bd62fa3455567d4893a5caedf08c9d5e687"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-runtime-adapter.ts",
+          "deploy_path": "_shared/industry-runtime-adapter.ts",
+          "sha256": "fbe1615f5fadd15e6c70e8b3b0bbb7528b202042fbbc92af8e1dd79b0d698f37"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/industry-schema.ts",
+          "deploy_path": "_shared/industry-schema.ts",
+          "sha256": "149c208a8b898faedab61234cfc7f85e7a40d71c92996a5b61354e4cf85d35dd"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-aggregation-response.ts",
+          "deploy_path": "_shared/kb-aggregation-response.ts",
+          "sha256": "c38365d92cd0860bfba541f3cb072a01d095cb0d2c3be84162c88173ca612ba2"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-auth.ts",
+          "deploy_path": "_shared/kb-auth.ts",
+          "sha256": "696473ccbae22ea1328778785659be96204328ca6be5ca35ed7e94e70483e6d7"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/kb-client.ts",
+          "deploy_path": "_shared/kb-client.ts",
+          "sha256": "56246bfa52baeb8e644233bc64d267e11882d4f54afc245def2eee02b7e16071"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/llm-router.ts",
+          "deploy_path": "_shared/llm-router.ts",
+          "sha256": "aefdd39ace4b0693c746c72998879766e6da5c955574495bc5e69ccd29f0eee4"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
+          "deploy_path": "_shared/memory-reply-lifecycle-readback.ts",
+          "sha256": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/model-attempt-accounting.ts",
+          "deploy_path": "_shared/model-attempt-accounting.ts",
+          "sha256": "23131b006e5289cccb83e33d3e0d535dee64330dfcc0d24a48fd4b129c7b23fc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/natural-customer-response.ts",
+          "deploy_path": "_shared/natural-customer-response.ts",
+          "sha256": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/nonproduction-secret.ts",
+          "deploy_path": "_shared/nonproduction-secret.ts",
+          "sha256": "9a760728a4298c09a080237a8d0c90492e7caa029fa41db9aaecc5da74daebd5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
+          "deploy_path": "_shared/pre-send-conversion-supervisor.ts",
+          "sha256": "745d7aa988df3195ea9f8af75659861acdc5ea6e6d3e9dd8f387af0b2ef50f56"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/remote-model-accounting.ts",
+          "deploy_path": "_shared/remote-model-accounting.ts",
+          "sha256": "1faa1ecebdc13e9f2f067611130e1a0ff65ba8697884387587a74b7f135947c5"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/supabase-admin-key.ts",
+          "deploy_path": "_shared/supabase-admin-key.ts",
+          "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-contract.ts",
+          "deploy_path": "_shared/uat-execution-contract.ts",
+          "sha256": "c4f2c2e813f34b13b02e6e53a082e7fb47a50323047f61b24d05a46bc810aebc"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/uat-execution-readiness.ts",
+          "deploy_path": "_shared/uat-execution-readiness.ts",
+          "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-generation-config.ts",
+          "deploy_path": "_shared/vertex-generation-config.ts",
+          "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+        },
+        {
+          "repository_path": "supabase/functions/_shared/vertex-parse.ts",
+          "deploy_path": "_shared/vertex-parse.ts",
+          "sha256": "83062c4576e309ac92af3850f5f7aaf4fef2285b553a9d5a81df29451cee2a34"
+        },
+        {
+          "repository_path": "supabase/functions/ce-evaluation-worker/index.ts",
+          "deploy_path": "ce-evaluation-worker/index.ts",
+          "sha256": "4ced4c0bd7ee05e1a11b401a964226f13ca9e5f9446c4b20b06da881ec4a5f5d"
+        }
+      ],
+      "runtime_config": [],
+      "target_manifest_sha256": "6e7c9234c85235ce02e3870771ae8e2c19b473f8a240feb65877b03da5eb5fb4",
+      "deployment_authorized": false
+    }
+  },
+  "guards": {
+    "MODEL_ACCOUNTING_HARDENING": "DEFERRED_POST_UAT",
+    "kb_bounds_verified": false,
+    "UAT_REMOTE_BOUND_UNVERIFIED": true
+  },
+  "readiness": {
+    "VIBECODE_FUNCTIONAL_HANDOFF_READY": false,
+    "FUNCTIONAL_UAT_ACCEPTED": false,
+    "uat_start_allowed": false,
+    "PRODUCTION_RELEASE_READY": false
+  },
+  "hosted": "NOT RUN / NOT ACCEPTED; original browser-security-review boundary retained",
+  "production_mutations": 0,
+  "preserved_C3_cumulative_ceilings": {
+    "conversations": 224,
+    "Visitor": 480,
+    "Assistant": 427,
+    "model_attempts": 3520,
+    "historical_debits_retained": true
+  }
+}
