@@ -57,7 +57,7 @@ return defineConfig({
         if (id !== "\0c3-widget-preview-source") return null;
         // One authoritative public/widget/chat.js source, included in the exact frontend build.
         const source = readFileSync(fileURLToPath(new URL("./public/widget/chat.js", import.meta.url)), "utf8");
-        return `export default ${JSON.stringify(source)};`;
+        return `export default () => ${JSON.stringify(source)};`;
       },
     }, ...(nonproductionConsole ? [{
       name: "c3-nonproduction-customer-entrypoint",
