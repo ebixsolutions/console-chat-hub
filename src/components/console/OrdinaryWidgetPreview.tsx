@@ -37,6 +37,9 @@ export function OrdinaryWidgetPreview({ channel, actorId, lang }: { channel: Liv
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const allowed = Boolean(actorId && channel?.company_id && channel.is_active && channel.channel_type === "web_widget" && channel.allowed_origins?.includes(origin));
+  // A published-only Company channel must not be silently opened from the editor Preview origin.
+  const publishedOrigin = "https://console-chat-hub.lovable.app";
+  const publishedOnly = Boolean(!channel?.allowed_origins?.includes(origin) && channel?.allowed_origins?.includes(publishedOrigin));
   const api = resolveAuthoritativeSupabaseBinding().functionsUrl;
   const attr = (value: string) => value.replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const open = async () => {
@@ -57,6 +60,9 @@ export function OrdinaryWidgetPreview({ channel, actorId, lang }: { channel: Liv
     <h2>{lang === "zh" ? "普通 Widget：目前公司的訪客流程" : "Ordinary Widget: visitor flow for the current company"}</h2>
     <p>{lang === "zh" ? "使用既有公開 Widget、Visitor Session、訊息接收及回讀 API；不使用 C3 合成測試帳戶。此預覽只開放身份確認及明確真人要求，商業 AI、KB 查詢及附件均不開放。開啟聊天可能建立真實訪客對話。" : "Uses the existing public Widget, visitor session, message and polling APIs. This is separate from the C3 synthetic test. Preview permits identity and explicit human requests only; business AI, KB queries and attachments are unavailable. Opening chat may create a real visitor conversation."}</p>
     {!allowed && <p role="alert">{lang === "zh" ? "目前帳戶／channel／網站 Origin 未符合普通 Widget 預覽條件。請使用該 channel 已允許的網站；此畫面不會更改 allowed_origins 或借用 C3 channel。" : "The current account/channel/origin is not eligible. Use an origin already allowed for this channel. This screen does not modify allowed_origins or borrow the C3 channel."}</p>}
+    {!allowed && publishedOnly && <p role="status" className="mt-2 text-sm">{lang === "zh" ? "此 Channel 只允許已發布網站：" : "Use the already-authorized published origin:"} <a href="https://console-chat-hub.lovable.app/console/widget-preview" target="_blank" rel="noopener noreferrer" className="underline">https://console-chat-hub.lovable.app/console/widget-preview</a></p>}
+    {allowed && <p role="note" className="my-2 text-sm">{lang === "zh" ? "僅能測試四句：你是誰？／Who are you?／請轉真人客服／Please connect me to a human.；此模式不會回答其他 AI／KB 商業問題。" : "Control-only Preview accepts: 你是誰？ / Who are you? / 請轉真人客服 / Please connect me to a human. Other business AI/KB questions are not sent here."}</p>}
+
     {assetError && <p role="alert">{lang === "zh" ? "普通 Widget 程式版本未能核實；不會載入舊程式或建立訪客對話。" : "The public Widget asset revision could not be verified. No older script or visitor conversation will be started."}</p>}
     {allowed && !widgetScript && <button type="button" disabled={loading} onClick={open}>{lang === "zh" ? "開啟普通 Widget 預覽" : "Open ordinary Widget preview"}</button>}
     {widgetScript && allowed && <iframe ref={frame} title="Ordinary own-company Widget" sandbox="allow-scripts allow-same-origin" srcDoc={doc} className="mt-3 h-[720px] w-full rounded-lg border" />}
