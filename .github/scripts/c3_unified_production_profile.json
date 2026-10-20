@@ -983,7 +983,7 @@
     "sql/c3_uat_execution_status.sql": "84dcd01684cb0b3177160ba922290743e1e0ac4b02a194453176159757badc50",
     "sql/c3_uat_execution_status_rollback.sql": "395ef4102ce47f97638059f6ff7d47b556ad558817de4ac7d6fd43132582217d",
     "src/components/console/ConversationList.tsx": "7e38db3f5c8fed96b15ab6ca5f7154a1683ab41a6c0c86b9b9eea6b758204944",
-    "src/components/console/OrdinaryWidgetPreview.tsx": "26e2e95627b3046c9c3b6aef7d8f59bf5c2edbf666a9911058797d5243ccc6ea",
+    "src/components/console/OrdinaryWidgetPreview.tsx": "447821bd379efb1054193885ab0a48efe8e26df37bb5efe91f54afe09407615e",
     "src/components/console/SavedResponses.tsx": "a51ab1ed0e6500356e6ab394d84d82f32e6fdee8e271684f1397e7f2a2bf827f",
     "src/components/console/TicketHandoffSummary.tsx": "5a3965544fe7738892725f84c9dc488fe27f19e8fdb24f74f2b1ad286dcd9f70",
     "src/components/console/WidgetLiveAiTest.tsx": "faabd8ac72edea9a3e213dc73e8dd3053d2a783277fdb9ebc7813a899892a5fb",
