@@ -1080,6 +1080,7 @@
   },
   "live_execution_deployment_authorized": false,
   "authorized_widget_hosted_build_sha256": {
+    "vite.config.ts": "02fe0076b202d6e80e2cc89477c49dde6a2d1e54102ecedc5d58fa99c5c0c9db",
     "src/types/c3-widget-preview-source.d.ts": "2d023d7d7d8ccfba73030186c3d104f489aba4068a64c2996c6e128b678aeb68"
   }
 }
