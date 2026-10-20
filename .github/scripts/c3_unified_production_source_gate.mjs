@@ -162,8 +162,6 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
  for(const [f,h] of Object.entries(SECTION15_REFERENCE_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(LIVE_EXECUTION_REPAIR[f]??DIRECTOR_FUNCTIONAL_REPAIR[f]??UAT_COMPATIBILITY_REPAIR[f]??UAT_RUNTIME_REPAIR[f]??COMPOUND_DIALOGUE_REPAIR[f]??W19_COMPATIBILITY_REPAIR[f]??h),'section15_reference_source_drift:'+f);
  must(JSON.stringify(profile.authorized_nonproduction_preview_repair_sha256)===JSON.stringify(NONPRODUCTION_PREVIEW_REPAIR),'nonproduction_preview_scope_drift');
  for(const [f,h] of Object.entries(NONPRODUCTION_PREVIEW_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(LIVE_EXECUTION_REPAIR[f]??DIRECTOR_FUNCTIONAL_REPAIR[f]??UAT_COMPATIBILITY_REPAIR[f]??UAT_RUNTIME_REPAIR[f]??COMPOUND_DIALOGUE_REPAIR[f]??W19_COMPATIBILITY_REPAIR[f]??SECTION15_REFERENCE_REPAIR[f]??h),'nonproduction_preview_source_drift:'+f);
- must(JSON.stringify(profile.authorized_widget_hosted_build_sha256)===JSON.stringify(HOSTED_WIDGET_BUILD_SOURCE),'widget_hosted_build_scope_drift');
- for(const [f,h] of Object.entries(HOSTED_WIDGET_BUILD_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'widget_hosted_build_source_drift:'+f);
  const files=productionClosure(root,profile);
  for(const [f,h] of Object.entries(KB_ACCOUNTING_REPAIR))must(sha(fs.readFileSync(path.join(root,f)))===(LIVE_EXECUTION_REPAIR[f]??DIRECTOR_FUNCTIONAL_REPAIR[f]??UAT_COMPATIBILITY_REPAIR[f]??UAT_RUNTIME_REPAIR[f]??COMPOUND_DIALOGUE_REPAIR[f]??W19_COMPATIBILITY_REPAIR[f]??SECTION15_REFERENCE_REPAIR[f]??NONPRODUCTION_PREVIEW_REPAIR[f]??h),'kb_accounting_source_drift:'+f);
 
@@ -177,6 +175,8 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
  const scan=n=>{if(ts.isCallExpression(n)&&ts.isIdentifier(n.expression)&&n.expression.text==='fetch')throw Error('worker_direct_external_fetch');ts.forEachChild(n,scan)};scan(ast);
  must(profile.conditional_worker_sha256==='56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de' && sha(Buffer.from(worker))===profile.conditional_worker_sha256,'conditional_worker_integrity');
  const identity=sourceOnly?null:verifyIdentity(root,profile,expectedIdentity);
+ must(JSON.stringify(profile.authorized_widget_hosted_build_sha256)===JSON.stringify(HOSTED_WIDGET_BUILD_SOURCE),'widget_hosted_build_scope_drift');
+ for(const [f,h] of Object.entries(HOSTED_WIDGET_BUILD_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'widget_hosted_build_source_drift:'+f);
  return {status:'SOURCE_VALIDATED',mode:profile.mode,contract:profile.contract,authorization:profile.authorization,backend:profile.backend,identity,files,closure_sha256:sha(JSON.stringify(files)),hosted_runtime:'NOT_TESTED',uat_start_allowed:false};
 }
 export function verifyChildEvidence(rows){
