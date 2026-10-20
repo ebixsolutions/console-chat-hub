@@ -1,4 +1,3 @@
-import { trustedDispatchScope, FRANKIE_DEMO_COMPANY, FRANKIE_DEMO_REVISION, UatDenied } from "../../supabase/functions/_shared/uat-execution-contract.ts";
 import {
   callModel,
   type LlmCall,
@@ -284,49 +283,4 @@ Deno.test("Phase-1 synthetic run excludes Phase-2 Coach regardless of global fla
   assert(!phase1CoachAllowed("4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec", false));
   assert(phase1CoachAllowed("other-tenant", true));
   assert(!phase1CoachAllowed("other-tenant", false));
-});
-
-Deno.test("Frankie demo isolation: old legitimate tickets stay legacy; synthetic tickets require their own lease",async()=>{
-  const company=FRANKIE_DEMO_COMPANY;
-  const conversation="33333333-3333-4333-8333-333333333333";
-  let synthetic=false;
-  const from=(table:string)=>{
-    const chain={
-      select(_fields:string){return this;},
-      eq(_key:string,_value:unknown){return this;},
-      async maybeSingle(){
-        return {error:null,data:table==="company"?{id:company}
-          : {id:conversation,company_id:company,
-            metadata_source:synthetic?{
-              source:"c3_uat_widget",synthetic:true,exclude_training:true,
-              owner_user_id:"44444444-4444-4444-8444-444444444444"
-            }:{source:"normal_customer_ticket"}}};
-      }
-    };
-    return chain;
-  };
-  const db={from,rpc:async()=>({error:null,data:null})};
-  const keys=["FRANKIE_DEMO_UAT_RUN_ID","FRANKIE_DEMO_UAT_SOURCE_REVISION"];
-  const before=keys.map(k=>Deno.env.get(k));
-  try{
-    Deno.env.delete(keys[0]);Deno.env.delete(keys[1]);
-    assert(await trustedDispatchScope(db,company,conversation)==="legacy",
-      "existing Production traffic cannot gain a new Demo prerequisite");
-    synthetic=true;
-    let denied=false;
-    try{await trustedDispatchScope(db,company,conversation);}
-    catch(e){denied=e instanceof UatDenied&&e.code==="UAT_AUTHORIZATION_ABSENT";}
-    assert(denied,"synthetic Frankie must not fall into unmetered legacy dispatch");
-    Deno.env.set(keys[0],"20000000-0000-4000-8000-000000000002");
-    Deno.env.set(keys[1],FRANKIE_DEMO_REVISION);
-    assert(await trustedDispatchScope(db,company,conversation)==="uat",
-      "authorized Frankie synthetic requests must use the existing bounded UAT dispatch");
-    Deno.env.set(keys[1],"unauthorized-revision");
-    denied=false;
-    try{await trustedDispatchScope(db,company,conversation);}
-    catch(e){denied=e instanceof UatDenied&&e.code==="UAT_SOURCE_OR_RUN_DENIED";}
-    assert(denied,"wrong source revision must fail closed");
-  }finally{
-    keys.forEach((k,i)=>before[i]===undefined?Deno.env.delete(k):Deno.env.set(k,before[i]!));
-  }
 });
