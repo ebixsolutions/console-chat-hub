@@ -371,6 +371,7 @@
     "src/routes/_authenticated/console.visitor-analytics.tsx",
     "src/routes/_authenticated/console.widget-preview.tsx",
     "src/start.ts",
+    "src/types/c3-widget-preview-source.d.ts",
     "supabase/config.toml",
     "supabase/functions/_shared/b2-journey-progress-contract.ts",
     "supabase/functions/_shared/bounded-decision-context.ts",
@@ -541,8 +542,7 @@
     "vite.candidate-identity.d.mts",
     "vite.candidate-identity.mjs",
     "vite.config.ts",
-    "vite.preview-environment.mjs",
-    "src/types/c3-widget-preview-source.d.ts"
+    "vite.preview-environment.mjs"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
