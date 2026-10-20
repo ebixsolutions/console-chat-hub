@@ -14,19 +14,22 @@ const user='30000000-0000-4000-8000-000000000001', token='authenticated-test-tok
 let completed=[];
 async function check(name, options={}, expected=200, body={action:'history'}) {
  const logs=[], calls=[]; let clients=0; const requests=[]; const originalFetch=globalThis.fetch;
- const conversation={id:company,company_id:company,channel_config_id:channel,status:options.human?'pending':'open',visitor_session_id:channel,metadata_source:{source:'c3_uat_widget',synthetic:true,owner_user_id:user,exclude_training:true}};
+ const ownCompany=options.ownCompany===true;
+ const scopeCompany=ownCompany?'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493':company;
+ const scopeChannel=ownCompany?'b0000000-0000-0000-0000-000000000001':channel;
+ const conversation={id:company,company_id:scopeCompany,channel_config_id:scopeChannel,status:options.human?'pending':'open',visitor_session_id:channel,metadata_source:{source:'c3_uat_widget',synthetic:true,owner_user_id:user,exclude_training:true}};
  globalThis.fetch=async(url,init)=>{requests.push({url,body:JSON.parse(init.body)}); const data=String(url).endsWith('receive-widget-message')?{message_id:channel,ai_reply_pending:false,idempotent:true}:{messages:[{id:channel,role:'agent',content:'synthetic response'}],conversation_status:options.human?'pending':'open',human_support:{state:options.human?'waiting':'none',queue_position:2,estimated_wait_minutes:4}}; return new Response(JSON.stringify({success:true,data}));};
- const row={company_id:company,role:options.role??'admin',is_active:options.active??true};
+ const row={company_id:scopeCompany,role:options.role??'admin',is_active:options.active??true};
  const memberships=options.ambiguous?[row,{...row,company_id:channel}]:[row];
  const client={rpc:async()=>options.missingRpc?({error:{code:'PGRST202'},data:null}):({error:null,data:{ready:true,remote_ready:false,allowed_conversations:[company]}}),from(table){const chain={singleRow:false,select(){return this},eq(k,v){calls.push([table,k,v]);return this},order(){return this},limit(){return this},maybeSingle(){this.singleRow=true;return this},then(resolve){
- let data=table==='company_membership'?memberships:table==='company'?{id:company,is_active:options.companyActive??true}:table==='channel_config'?{id:channel,company_id:company,is_active:true,channel_type:'web_widget',allowed_origins:['https://preview--console-chat-hub.lovable.app']}:table==='conversations'?(this.singleRow?{...conversation,metadata_source:options.foreignOwner?{...conversation.metadata_source,owner_user_id:channel}:conversation.metadata_source}:[]):table==='visitor_session'?{session_token:'synthetic-session-token-with-32-characters'}:[];
+ let data=table==='company_membership'?memberships:table==='company'?{id:scopeCompany,is_active:options.companyActive??true}:table==='channel_config'?{id:scopeChannel,company_id:scopeCompany,is_active:true,channel_type:'web_widget',allowed_origins:['https://preview--console-chat-hub.lovable.app']}:table==='conversations'?(this.singleRow?{...conversation,metadata_source:options.foreignOwner?{...conversation.metadata_source,owner_user_id:channel}:conversation.metadata_source}:[]):table==='visitor_session'?{session_token:'synthetic-session-token-with-32-characters'}:[];
  resolve({data,status:options.providerError?401:200,error:table==='company_membership'&&options.providerError?{code:'PGRST301',message:secret}:null});
  }};return chain;}};
  const env={C3_TEMP_UAT_RUN_ID:company,C3_TEMP_UAT_SOURCE_REVISION:'c3-3322877-bounded-uat-r2',SUPABASE_SECRET_KEY:secret,SUPABASE_URL:'https://nrfxhqabwblzxoushgnm.supabase.co',SUPABASE_ANON_KEY:'public-key',...(options.env??{})};
  globalThis.Deno={env:{get:k=>env[k]}};
  const handler=createWidgetLiveHandler({env:k=>env[k],getAdminKey:options.missingKey?()=>{throw Error(secret)}:testAdminKey, log:event=>logs.push(event),createClient:(url,key,config)=>{
  clients++; assert.equal(url,env.SUPABASE_URL); assert.equal(config.auth.persistSession,false);
- if(clients===1) return {auth:{getUser:async jwt=>{assert.equal(jwt,options.token??token);return {data:{user:options.invalid?null:{id:user}},error:options.invalid?{code:'bad_jwt',message:secret}:null}}},rpc:async()=>({data:{isolated:options.isolated??true,config:{company_id:company,channel_id:channel}},error:null})};
+ if(clients===1) return {auth:{getUser:async jwt=>{assert.equal(jwt,options.token??token);return {data:{user:options.invalid?null:{id:user}},error:options.invalid?{code:'bad_jwt',message:secret}:null}}},rpc:async()=>{if(ownCompany)throw Error('Frankie must never borrow C3 scope RPC');return {data:{isolated:options.isolated??true,config:{company_id:company,channel_id:channel}},error:null};}};
  assert.equal(key,secret);assert.equal(config.global,undefined);return client;
  }});
  const headers={Origin:'https://preview--console-chat-hub.lovable.app'};
@@ -34,7 +37,7 @@ async function check(name, options={}, expected=200, body={action:'history'}) {
  const response=await handler(new Request('https://endpoint.invalid',{method:'POST',headers,body:JSON.stringify(body)}));
  const responseText=await response.text(); assert.equal(response.status,expected,responseText);
  assert(!responseText.includes(secret));assert(!JSON.stringify(logs).includes(secret));assert(!JSON.stringify(logs).includes(token));
- if(expected===200&&options.isolated!==false && body.action==='history') {const h=JSON.parse(responseText);assert.equal(h.runtime_contract,'c3-widget-control-v2');assert.equal(h.actor_id,user);assert.equal(typeof h.execution_ready,'boolean');assert.equal(typeof h.remote_ready,'boolean');assert(calls.some(c=>c[0]==='conversations'&&c[1]==='company_id'&&c[2]===company));assert(calls.some(c=>c[0]==='conversations'&&c[1]==='channel_config_id'&&c[2]===channel));}
+ if(expected===200&&options.isolated!==false && body.action==='history') {const h=JSON.parse(responseText);assert.equal(h.runtime_contract,'c3-widget-control-v2');assert.equal(h.actor_id,user);assert.equal(typeof h.execution_ready,'boolean');assert.equal(typeof h.remote_ready,'boolean');assert(calls.some(c=>c[0]==='conversations'&&c[1]==='company_id'&&c[2]===scopeCompany));assert(calls.some(c=>c[0]==='conversations'&&c[1]==='channel_config_id'&&c[2]===scopeChannel));}
  if(options.providerError)assert.equal(logs[0].provider_http_class,'4xx');
  if(body.action==='send'&&expected>=400)assert.equal(requests.length,0);
  if(body.action==='send'&&expected===200){assert(requests.some(r=>r.url.endsWith('receive-widget-message'))); assert(!requests.some(r=>r.url.endsWith('generate-reply'))); assert.equal(requests[0].body.client_message_id,body.client_message_id);assert.equal(requests[0].body.conversation_id,company);}
@@ -53,6 +56,9 @@ await check('actual synthetic human control works without lease',{human:true,env
 await check('actual synthetic explicit human request works without lease',{env:{C3_TEMP_UAT_RUN_ID:undefined}},200,{action:'send',test_conversation_id:company,client_message_id:channel,query:'Please connect me to a human now'});
 await check('history remains readable when execution is not configured',{missingRpc:true});
 await check('valid Admin');await check('valid Supervisor',{role:'supervisor'});
+await check('Frankie own-company history bound to his real channel without C3 RPC',{ownCompany:true},200,{action:'history'});
+await check('Frankie business question denied before creating messages or paid dispatch',{ownCompany:true},503,{action:'send',test_conversation_id:company,client_message_id:channel,query:'Can you check my product warranty from KB?'});
+await check('Frankie non-C3 membership cannot access the synthetic C3 tenant',{ownCompany:true,foreignOwner:true},404,{action:'load',test_conversation_id:company});
 await check('no token',{noToken:true},401);await check('invalid JWT',{invalid:true,token:'invalid-token'},401);await check('expired JWT',{invalid:true,token:'expired-token'},401);
 await check('inactive membership',{active:false},403);await check('unsupported role',{role:'agent'},403);
 await check('inactive company',{companyActive:false},403);await check('ambiguous company',{ambiguous:true},409);
