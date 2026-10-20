@@ -2,6 +2,12 @@ import { safeExecutionCode } from "./execution-failure.ts";
 import { buildVertexEndpoint } from "./vertex-generation-config.ts";
 /** Temporary synthetic UAT admission. Existing log persistence, not the deferred shared Guard. */
 export const UAT_COMPANY = "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec";
+// Second pre-existing lawful admin/company channel; never borrow the C3 authorization.
+export const FRANKIE_DEMO_COMPANY = "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493";
+export const FRANKIE_DEMO_REVISION = "c3-frankie-tenant-bounded-demo-v1";
+export function isBoundedDemoCompany(company: string | null): boolean {
+  return company === UAT_COMPANY || company === FRANKIE_DEMO_COMPANY;
+}
 export const UAT_REVISION = "c3-3322877-bounded-uat-r2";
 export const UAT_MAX_INPUT = 20000;
 export const UAT_MAX_OUTPUT = 8192;
@@ -10,10 +16,14 @@ export type Db = { from?: (table: string)=>any; rpc(name: string, args: Record<s
 export type UatContext = { companyId: string | null; conversationId: string | null; operationId: string; provider: string; purpose: string; slot: string; attempt: number; request: string };
 export class UatDenied extends Error { constructor(public code: string) { super(code); this.name = "UatDenied"; } }
 export function uatRun(company: string | null): string | null {
-  if (company !== UAT_COMPANY) return null;
-  const id = Deno.env.get("C3_TEMP_UAT_RUN_ID");
+  if (!isBoundedDemoCompany(company)) return null;
+  const frankie = company === FRANKIE_DEMO_COMPANY;
+  const runKey = frankie ? "FRANKIE_DEMO_UAT_RUN_ID" : "C3_TEMP_UAT_RUN_ID";
+  const revisionKey = frankie ? "FRANKIE_DEMO_UAT_SOURCE_REVISION" : "C3_TEMP_UAT_SOURCE_REVISION";
+  const expectedRevision = frankie ? FRANKIE_DEMO_REVISION : UAT_REVISION;
+  const id = Deno.env.get(runKey);
   if (!id) throw new UatDenied("UAT_AUTHORIZATION_ABSENT");
-  if (!/^[a-f0-9-]{36}$/.test(id) || Deno.env.get("C3_TEMP_UAT_SOURCE_REVISION") !== UAT_REVISION) throw new UatDenied("UAT_SOURCE_OR_RUN_DENIED");
+  if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(id) || Deno.env.get(revisionKey) !== expectedRevision) throw new UatDenied("UAT_SOURCE_OR_RUN_DENIED");
   return id;
 }
 // Opaque server-only authority for the already existing authenticated KB pre-activation path.
@@ -42,6 +52,20 @@ export async function trustedDispatchScope(db: Db, company: string | null, conve
     }
   } catch (error) { throw error instanceof UatDenied ? error : new UatDenied("DISPATCH_IDENTITY_UNAVAILABLE"); }
   if (company === UAT_COMPANY) { if (!conversation) throw new UatDenied("UAT_CONVERSATION_REQUIRED"); uatRun(company); return "uat"; }
+  if (company === FRANKIE_DEMO_COMPANY && conversation) {
+    // Only the authenticated, tagged synthetic preview enters bounded admission.
+    // Existing ordinary Frankie customer/agent conversations stay on their
+    // established Production path without a new accounting prerequisite.
+    const ticket = await db.from("conversations").select("metadata_source")
+      .eq("id", conversation).eq("company_id", company).maybeSingle();
+    if (ticket.error || !ticket.data) throw new UatDenied("DISPATCH_IDENTITY_UNAVAILABLE");
+    const source = ticket.data.metadata_source;
+    if (source?.source === "c3_uat_widget" && source?.synthetic === true &&
+        source?.exclude_training === true && typeof source?.owner_user_id === "string") {
+      uatRun(company);
+      return "uat";
+    }
+  }
   return "legacy";
 }
 const digest = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))), b=>b.toString(16).padStart(2,"0")).join("");
@@ -63,7 +87,7 @@ export async function uatFetch(db: Db, meta: UatContext, url: string, init: Requ
   // Every external call, including countTokens, owns a durable admission before dispatch.
   const admit = async (slot: string, callUrl: string, request: string, input: number, output: number, model: string, cost: number) => {
     const key=await digest(JSON.stringify([meta.operationId,slot,meta.attempt,meta.provider]));
-    const receipt=await rpc(db,"c3_uat_reserve_dispatch",{p_run_id:run,p_revision:UAT_REVISION,p_company_id:meta.companyId,p_conversation_id:meta.conversationId,p_operation:meta.operationId,p_slot:slot,p_identity:key,p_request_hash:await digest(JSON.stringify([callUrl,request])),p_provider:meta.provider,p_purpose:meta.purpose,p_model:model,p_attempt:meta.attempt,p_input_ceiling:input,p_output_ceiling:output,p_cost_microusd:cost});
+    const receipt=await rpc(db,"c3_uat_reserve_dispatch",{p_run_id:run,p_revision:meta.companyId === FRANKIE_DEMO_COMPANY ? FRANKIE_DEMO_REVISION : UAT_REVISION,p_company_id:meta.companyId,p_conversation_id:meta.conversationId,p_operation:meta.operationId,p_slot:slot,p_identity:key,p_request_hash:await digest(JSON.stringify([callUrl,request])),p_provider:meta.provider,p_purpose:meta.purpose,p_model:model,p_attempt:meta.attempt,p_input_ceiling:input,p_output_ceiling:output,p_cost_microusd:cost});
     if (receipt.dispatch!==true || receipt.run_id!==run || receipt.identity!==key || receipt.state!=="reserved" || !Number.isFinite(receipt.expires_epoch) || Date.now()/1000>=receipt.expires_epoch) throw new UatDenied("UAT_REPLAY_OR_RECEIPT_DENIED");
     return async(state:string,status:number,input:number|null,output:number|null)=>{
       const result=await rpc(db,"c3_uat_finalize_dispatch",{p_run_id:run,p_company_id:meta.companyId,p_identity:key,p_state:state,p_status:status,p_input:input,p_output:output});
@@ -121,6 +145,9 @@ export async function uatFetch(db: Db, meta: UatContext, url: string, init: Requ
 
 /** One in-flight synthetic dispatch; production retains its existing concurrency. */
 export async function uatMap<T>(company: string | null, tasks: Array<()=>Promise<T>>): Promise<T[]> {
-  if (!uatRun(company)) return await Promise.all(tasks.map(task=>task()));
+  // Keep legitimate Frankie Production requests unchanged. Synthetic
+  // Frankie traffic still requires atomic per-dispatch admission in uatFetch.
+  if (company === FRANKIE_DEMO_COMPANY || !uatRun(company))
+    return await Promise.all(tasks.map(task=>task()));
   const results:T[]=[]; for(const task of tasks)results.push(await task()); return results;
 }
