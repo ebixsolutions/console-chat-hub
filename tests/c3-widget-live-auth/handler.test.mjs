@@ -37,7 +37,7 @@ async function check(name, options={}, expected=200, body={action:'history'}) {
  const response=await handler(new Request('https://endpoint.invalid',{method:'POST',headers,body:JSON.stringify(body)}));
  const responseText=await response.text(); assert.equal(response.status,expected,responseText);
  assert(!responseText.includes(secret));assert(!JSON.stringify(logs).includes(secret));assert(!JSON.stringify(logs).includes(token));
- if(expected===200&&options.isolated!==false && body.action==='history') {const h=JSON.parse(responseText);assert.equal(h.runtime_contract,'c3-widget-control-v2');assert.equal(h.actor_id,user);assert.equal(typeof h.execution_ready,'boolean');assert.equal(typeof h.remote_ready,'boolean');assert(calls.some(c=>c[0]==='conversations'&&c[1]==='company_id'&&c[2]===scopeCompany));assert(calls.some(c=>c[0]==='conversations'&&c[1]==='channel_config_id'&&c[2]===scopeChannel));}
+ if(expected===200&&options.isolated!==false && body.action==='history') {const h=JSON.parse(responseText);assert.equal(h.runtime_contract,'c3-widget-control-v2');assert.equal(h.actor_id,user);assert.equal(typeof h.execution_ready,'boolean');assert.equal(typeof h.remote_ready,'boolean');if(options.expectFrankieReady)assert.equal(h.execution_ready,true);assert(calls.some(c=>c[0]==='conversations'&&c[1]==='company_id'&&c[2]===scopeCompany));assert(calls.some(c=>c[0]==='conversations'&&c[1]==='channel_config_id'&&c[2]===scopeChannel));}
  if(options.providerError)assert.equal(logs[0].provider_http_class,'4xx');
  if(body.action==='send'&&expected>=400)assert.equal(requests.length,0);
  if(body.action==='send'&&expected===200){assert(requests.some(r=>r.url.endsWith('receive-widget-message'))); assert(!requests.some(r=>r.url.endsWith('generate-reply'))); assert.equal(requests[0].body.client_message_id,body.client_message_id);assert.equal(requests[0].body.conversation_id,company);}
@@ -57,6 +57,11 @@ await check('actual synthetic explicit human request works without lease',{env:{
 await check('history remains readable when execution is not configured',{missingRpc:true});
 await check('valid Admin');await check('valid Supervisor',{role:'supervisor'});
 await check('Frankie own-company history bound to his real channel without C3 RPC',{ownCompany:true},200,{action:'history'});
+await check('Frankie own-company lease readiness uses a distinct server run, not C3',
+  {ownCompany:true,expectFrankieReady:true,env:{
+    FRANKIE_DEMO_UAT_RUN_ID:'20000000-0000-4000-8000-000000000002',
+    FRANKIE_DEMO_UAT_SOURCE_REVISION:'c3-frankie-tenant-bounded-demo-v1'
+  }},200,{action:'history'});
 await check('Frankie business question denied before creating messages or paid dispatch',{ownCompany:true},503,{action:'send',test_conversation_id:company,client_message_id:channel,query:'Can you check my product warranty from KB?'});
 await check('Frankie non-C3 membership cannot access the synthetic C3 tenant',{ownCompany:true,foreignOwner:true},404,{action:'load',test_conversation_id:company});
 await check('no token',{noToken:true},401);await check('invalid JWT',{invalid:true,token:'invalid-token'},401);await check('expired JWT',{invalid:true,token:'expired-token'},401);
