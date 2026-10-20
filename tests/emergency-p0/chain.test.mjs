@@ -179,7 +179,12 @@ test('actual interpreter rejects wrong company and inactive synthetic guard befo
   const result=await interpret({company_id:id,conversation_id:ticket,source_message_id:source,latest:'Check current delivery options',persistent_state_summary:'{}'});
   assert.equal(result.frame,null);assert.equal(result.failure_code,'DISPATCH_COMPANY_UNPROVEN');
  }
- const denied=await interpret({company_id:'4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec',conversation_id:ticket,source_message_id:source,latest:'Check current delivery options',persistent_state_summary:'{}'});assert.equal(denied.failure_code,'UAT_AUTHORIZATION_ABSENT');assert.equal(denied.failure.retryable,false);
+ // Ownership is proven before the run guard. A missing run must be tested
+ // against a real same-company ticket, separately from the foreign-company case.
+ const c3=fixture('unused',{company:'4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec'});
+ const scopedInterpret=c3.load(path.join(root,'supabase/functions/_shared/commerce-semantic-interpreter.ts')).interpretCommerceSemantics;
+ const denied=await scopedInterpret({company_id:'4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec',conversation_id:ticket,source_message_id:source,latest:'Check current delivery options',persistent_state_summary:'{}'});assert.equal(denied.failure_code,'UAT_AUTHORIZATION_ABSENT');assert.equal(denied.failure.retryable,false);
+ assert(!c3.requests.some(r=>r.url.includes('aiplatform')));
  assert(!f.requests.some(r=>r.url.includes('aiplatform')));
 });
 test('actual interpreter recovers from an isolated 400 using same call path and preserves typed semantic delta',async()=>{
