@@ -391,7 +391,6 @@
     "supabase/functions/_shared/commerce-semantic-frame.ts",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts",
     "supabase/functions/_shared/commerce-state-authority.ts",
-    "supabase/functions/_shared/commerce-state-reducer.ts",
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
     "supabase/functions/_shared/complete-scoped-read.ts",
     "supabase/functions/_shared/contextual-customer-update.test.ts",
