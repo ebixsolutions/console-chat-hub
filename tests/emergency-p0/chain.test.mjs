@@ -23,7 +23,8 @@ function fixture(text,options={}) {
  const conversation={id:ticket,company_id:company,status:options.human?'human_control':'open',assigned_agent_id:null,metadata_source:{}};
  const visitor={id:source,conversation_id:ticket,role:'visitor',content:text,is_recalled:false,created_at:'2026-10-14T01:00:00.000Z',metadata:{}};
  const tables={conversation_commerce_state_event:[],company:[{id:company,is_active:true}],conversations:[conversation],messages:[visitor],conversation_commerce_state:[],conversation_memory_state:[],conversation_memory_state_event:[],c3_memory_reply_lifecycle_receipt:[]};
- let generationIndex=0;
+ let generationIndex=0, previewInitialization;
+ const claimReaders=[];
  if(options.previous)for(const name of ['conversation_commerce_state','conversation_memory_state','conversation_commerce_state_event','conversation_memory_state_event'])tables[name]=structuredClone(options.previous[name]);
  if(options.history)tables.messages.push(...structuredClone(options.history));
  if(options.retainedMemory)tables.conversation_memory_state.push({conversation_id:ticket,company_id:company,revision:7,memory:{current_customer_facts:[{key:'subscription_seats',value:17,source_message_id:uuid(30)}]}});
@@ -36,10 +37,11 @@ function fixture(text,options={}) {
   if(url.hostname==='us-central1-aiplatform.googleapis.com') {
    if(url.pathname.endsWith(':countTokens'))return Response.json({totalTokens:120});
    assert(url.pathname.endsWith('/gemini-2.5-flash:generateContent'));
-   if(body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.'))assert.equal(body.generationConfig.thinkingConfig?.thinkingBudget,company==='4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec'?1024:0);
+   if(body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.'))assert.equal(body.generationConfig.thinkingConfig?.thinkingBudget,company==='4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec'&&!options.originalPreview?1024:0);
    if(options.fullChain && !body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.')) {
     const verifier=body.generationConfig.responseSchema?.properties?.grounded;
-    const text=verifier?JSON.stringify({grounded:true,unsupported_claims:[],evidence_chunk_ids:['E1']}):options.answers?.[generationIndex++]??options.answer??'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
+    const isRepair=body.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered');
+    const text=verifier?JSON.stringify({grounded:true,unsupported_claims:[],evidence_chunk_ids:['E1']}):isRepair&&options.repairAnswer?options.repairAnswer:options.answers?.[generationIndex++]??options.answer??'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
     if(!verifier && options.humanAfterFirstDraft && generationIndex===1)conversation.status='human_control';
     if(!verifier && options.newSourceAfterFirstDraft && generationIndex===1)tables.messages.unshift({...visitor,id:uuid(999),content:'A newer customer question',created_at:'2026-10-14T01:00:01.000Z'});
     return Response.json({candidates:[{content:{parts:[{text}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}});
@@ -96,19 +98,33 @@ function fixture(text,options={}) {
   const table=url.pathname.split('/').at(-1);
   if(table==='upstream_call_log'&&method==='POST'){logs.push(body);return new Response(null,{status:201});}
   if(method==='DELETE')return new Response(null,{status:204});
-  assert.equal(method,'GET','unexpected mutation '+table);
+  assert(method==='GET'||(table==='messages'&&method==='PATCH'),'unexpected mutation '+table);
   assert(table in tables,'unhandled isolated table '+table);
   let rows=tables[table];
   for(const [field,value] of url.searchParams){
    const get=r=>field.includes('->>')?r[field.split('->>')[0]]?.[field.split('->>')[1]]:r[field];
-   if(value.startsWith('eq.')) rows=rows.filter(r=>String(get(r))===value.slice(3));
+   if(value.startsWith('eq.')) rows=rows.filter(r=>(field==='metadata'?JSON.stringify(get(r)):String(get(r)))===value.slice(3));
+   if(value==='is.null')rows=rows.filter(r=>get(r)===null);
    if(value.startsWith('neq.')) rows=rows.filter(r=>String(r[field])!==value.slice(4));
   }
   if(foreign&&table==='company')rows=[];
   if(foreign&&table==='messages'&&url.searchParams.get('id')===`eq.${source}`)rows=[];
+  if(method==='PATCH'){
+   assert.equal(table,'messages');assert.equal(url.searchParams.get('id'),'eq.'+source);
+   assert.equal(url.searchParams.get('conversation_id'),'eq.'+ticket);
+   assert.equal(url.searchParams.get('role'),'eq.visitor');assert.equal(url.searchParams.get('is_recalled'),'eq.false');
+   assert(url.searchParams.has('metadata'),'claim must compare the entire prior metadata');
+   assert.deepEqual(Object.keys(body),['metadata']);assert(body.metadata.original_preview_draft_repair);
+   if(options.claimFails)return Response.json({message:'isolated CAS unavailable'},{status:503});
+   for(const row of rows)row.metadata=structuredClone(body.metadata);
+   if(options.humanAfterRepairClaim)conversation.status='human_control';
+   if(options.newSourceAfterRepairClaim)tables.messages.unshift({...visitor,id:uuid(999),content:'new source',created_at:'2026-10-14T01:00:01.000Z'});
+  }
   const headers=new Headers(init.headers);const object=headers.get('accept')?.includes('pgrst.object');
   if(method==='HEAD') return new Response(null,{headers:{'content-range':`0-0/${rows.length}`}});
-  return Response.json(object?(rows[0]??null):rows,{headers:{'content-range':`0-${Math.max(0,rows.length-1)}/${rows.length}`}});
+  const response=Response.json(object?(rows[0]??null):rows,{headers:{'content-range':`0-${Math.max(0,rows.length-1)}/${rows.length}`}});
+  if(options.overlapClaims&&method==='GET'&&table==='messages'&&url.searchParams.get('select')==='metadata')await new Promise(resolve=>{claimReaders.push(resolve);if(claimReaders.length===2)for(const release of claimReaders)release();});
+  return response;
  };
  let injectedFailure=false;
  const modules=new Map(), deno={env:{get:k=>{if(k==='ENABLE_KB_ADAPTER' && options.unexpectedFailure && !injectedFailure){injectedFailure=true;throw options.unexpectedFailure;}return env[k]}},serve:h=>{handler=h}};
@@ -128,15 +144,18 @@ function fixture(text,options={}) {
  }
  load(path.join(root,'supabase/functions/generate-reply/index.ts'));
  return {run:async()=>{
-  if(options.originalPreview && !conversation.metadata_source.original_preview_authority){
+  if(options.originalPreview){
+   previewInitialization ??= (async()=>{
    const original=load(path.join(root,'supabase/functions/_shared/original-widget-preview.ts'));
    env.ORIGINAL_WIDGET_PREVIEW_AUTHORIZATION=original.ORIGINAL_PREVIEW_AUTHORIZATION;env.SUPABASE_SERVICE_ROLE_KEY='isolated-service-jwt';
-   const actor=uuid(70),channel='b0000000-0000-0000-0000-000000000001',session=uuid(71);
+   const account=original.ORIGINAL_PREVIEW_ACCOUNTS.find(a=>a.company===company);assert(account);
+   const actor=uuid(70),channel=account.channel,session=uuid(71);
    conversation.channel_config_id=channel;conversation.visitor_session_id=session;
    conversation.metadata_source={source:'widget_live_test',widget_live_test:true,test_mode:true,exclude_training:true,execution_class:'authenticated_admin_preview',owner_user_id:actor,scope_mode:'canonical'};
-   conversation.metadata_source.original_preview_authority=await original.signOriginalPreview({id:actor,email:'frankien.ng@gmail.com',email_confirmed_at:'2026-01-01'},company,channel,ticket,session);
+   conversation.metadata_source.original_preview_authority=await original.signOriginalPreview({id:actor,email:account.email,email_confirmed_at:'2026-01-01'},company,channel,ticket,session);
    tables.company_membership=[{user_id:actor,company_id:company,role:'admin',is_active:true}];tables.channel_config=[{id:channel,company_id:company,is_active:true,channel_type:'web_widget'}];
    tables.visitor_session=[{id:session,channel_config_id:channel,visitor_fingerprint:'widget-live-test:'+actor,visitor_metadata:{source:'widget_live_test',test_mode:true,exclude_training:true,owner_user_id:actor,scope_mode:'canonical'}}];
+   })();await previewInitialization;
   }
   const response=await handler(new Request('http://isolated.invalid/functions/v1/generate-reply',{method:'POST',headers:options.originalPreview?{Authorization:'Bearer isolated-service-jwt'}:{},body:JSON.stringify({conversation_id:ticket,source_message_id:source})}));return {status:response.status,body:await response.json()};},requests,logs,commits,events,tables,env,load,setMode:v=>{mode=v},setForeign:()=>{foreign=true}};
 }
@@ -463,4 +482,37 @@ for(const variant of ['valid-repair','still-invalid','merchant-claim','human-con
  }else if(['human-control','superseded-source'].includes(variant)){assert.equal(f.commits.length,0);assert.equal(modelCalls.length,2);}
  else {assert(!f.commits.some(x=>x.content===answer||x.content==='訂單已確認。'));assert(modelCalls.length<=3);}
  assert(!f.requests.some(x=>x.url.includes('context-search')));
+});
+
+for(const text of ['Hello，屋企想換冷氣，兩間睡房加個客廳，應該點揀好？','公司要換視像會議服務，十位同事分兩地，應該點樣選擇？','租用工具之前，應從哪些方面比較？','另外個廳下晝西斜幾勁，揀機時要點考慮？'])test('historical selection speech act uses current generic generation: '+text,async()=>{
+ const answer='先按實際使用情況比較選擇，再記下現場限制和優先需要；具體服務條款及產品資料仍須核實。';
+ const f=fixture(text,{fullChain:true,answer,semantic:wireDelta({intent:'ask_fact',requested_facts:['selection_criteria']})});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits[0]?.content,answer);assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));
+});
+
+for(const repairCompany of ['3d6e17b5-ec79-4f75-aa7f-eaa824ff8493','4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec'])test('simultaneous rejected Preview drafts reserve at most one repair across overlapping handlers: '+repairCompany,async()=>{
+ const text='我想選洗衣機，請解釋選機時應該考慮的取捨，暫時不用查型號。';
+ const f=fixture(text,{fullChain:true,originalPreview:true,overlapClaims:true,company:repairCompany,answer:'What product type do you need?',repairAnswer:'可先比較每次衣量、使用時段及現場空間，再量度門位及喉管空間。具體規格仍需核實。',semantic:wireDelta({intent:'customer_guidance',entities:[{name:'洗衣機',kind:'physical_product',confidence:0.97}],requested_facts:[]},'ADD_ITEM')});
+ const results=await Promise.all([f.run(),f.run()]);
+ const repairs=()=>f.requests.filter(x=>x.url.endsWith(':generateContent')&&x.body.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered'));
+ assert.equal(f.requests.filter(x=>x.method==='PATCH'&&x.url.includes('/messages?')).length,2,'both overlapping handlers must race on the same prior metadata, not run sequentially');
+ assert.equal(repairs().length,1,JSON.stringify({results,repairs:repairs().length}));assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.b2_known_context_repaired,true,JSON.stringify({results,commits:f.commits,events:f.events.slice(-15)}));
+ await f.run();assert.equal(repairs().length,1);assert.equal(f.commits.length,1);
+});
+
+for(const boundary of ['humanAfterRepairClaim','newSourceAfterRepairClaim','claimFails'])test('reserved draft respects current control/source and unavailable CAS: '+boundary,async()=>{
+ const f=fixture('請說明洗衣機選機取捨，暫時不用查型號。',{fullChain:true,originalPreview:true,[boundary]:true,answer:'What product type do you need?',repairAnswer:'先量度門位。',semantic:wireDelta({intent:'customer_guidance',entities:[{name:'洗衣機',kind:'physical_product',confidence:0.97}],requested_facts:[]},'ADD_ITEM')});
+ await f.run();assert.equal(f.requests.filter(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered')).length,0);assert.equal(f.commits.length,0);
+ if(boundary!=='claimFails'){const before=f.requests.filter(x=>x.url.endsWith(':generateContent')).length;await f.run();assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,before,'reserved unknown/stale outcome must not dispatch again');}
+});
+
+test('a failed repaired draft remains durably reserved across replay',async()=>{
+ const f=fixture('請說明洗衣機選機取捨，暫時不用查型號。',{fullChain:true,originalPreview:true,answers:['What product type do you need?','What product type do you need?'],semantic:wireDelta({intent:'customer_guidance',entities:[{name:'洗衣機',kind:'physical_product',confidence:0.97}],requested_facts:[]},'ADD_ITEM')});
+ await f.run();const before=f.requests.filter(x=>x.url.endsWith(':generateContent')).length;assert.equal(before,3);assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.degraded,true,'a rejected repair is a failure receipt, never an AI answer');const r=await f.run();assert.equal(r.status,200);assert.equal(r.body.idempotent,true);assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,before);assert.equal(f.commits.length,1);
+});
+
+test('bounded repair can still ask a genuinely unprovided purposeful clarification',async()=>{
+ const answer='可以先按每次衣量、使用時段和空間限制比較取捨，具體型號的資料仍須核實。你通常會在甚麼時段洗衣？';
+ const f=fixture('請說明洗衣機選機取捨，暫時不用查型號。',{fullChain:true,originalPreview:true,answers:['What product type do you need?',answer],semantic:wireDelta({intent:'customer_guidance',entities:[{name:'洗衣機',kind:'physical_product',confidence:0.97}],requested_facts:[]},'ADD_ITEM')});
+ await f.run();assert.equal(f.commits.length,1);assert.equal(f.commits[0].content,answer);assert.equal(f.commits[0].metadata.b2_gate_contract,'executeB2PersistenceGate:allow_after_revalidation');const prompt=f.requests.find(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered')).body.systemInstruction.parts[0].text;assert(prompt.includes('one purposeful clarification is allowed'));assert(prompt.includes('missing-slot name is not a supplied value'));
 });

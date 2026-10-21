@@ -391,7 +391,10 @@ export function isCustomerGuidanceRequest(question: string, semantic: {
   if (!semantic || semantic.confidence < 0.62 || semantic.ambiguity.is_ambiguous) return false;
   const text = withoutExcludedLookups(clean(question));
   if (/\b(?:price|cost|stock|warranty|policy|specifications?|availability|recommend.*(?:products?|options?))\b|售價|售价|報價|报价|價錢|价钱|幾錢|几钱|庫存|库存|保養|保养|政策|規格|规格|推薦|推荐|現貨|现货|你[哋們们]?有|你[哋們们]?嘅/i.test(text)) return false;
-  if (!/(?:取捨|取舍|選購|选购|選機|选机|應(?:該)?(?:準備|補充|考虑|考慮)|應該考慮|应该考虑|先問|先问)|(?:現場|现场|量度|量測|量测|測量|测量).{0,24}(?:應|应|要|先).{0,8}(?:記低|记低|記錄|记录|留意|注意|準備|准备|量度|量測|量测)|\b(?:trade[ -]?offs?|selection criteria|what.*(?:ask|prepare|measure)|how.*(?:choose|select))\b/i.test(text)) return false;
+  // Selection is a speech act across products, services and rentals, not an
+  // appliance keyword or an old answer. Merchant evidence still wins above.
+  const selectionQuestion = /(?:點(?:樣)?|怎(?:樣|么)|如何).{0,6}(?:揀|選|选|比較|比较|考慮|考虑|取捨|取舍|準備|准备)|(?:從|从|按|依).{0,8}(?:哪些|甚麼|什么|咩).{0,8}(?:方面|因素|條件|条件).{0,8}(?:比較|比较|選|选)|\b(?:how|what).{0,32}(?:choose|select|compare|pick)\b/iu.test(text);
+  if (!selectionQuestion && !/(?:取捨|取舍|選購|选购|選機|选机|應(?:該)?(?:準備|補充|考虑|考慮)|應該考慮|应该考虑|先問|先问)|(?:現場|现场|量度|量測|量测|測量|测量).{0,24}(?:應|应|要|先).{0,8}(?:記低|记低|記錄|记录|留意|注意|準備|准备|量度|量測|量测)|\b(?:trade[ -]?offs?|selection criteria|what.*(?:ask|prepare|measure)|how.*(?:choose|select))\b/i.test(text)) return false;
   // A valid model can describe the same speech act as ASK_FACT, or include
   // abstract advice/checklist targets in requested_facts. Neither authorizes
   // a merchant lookup. Unknown targets still fail closed unless the customer
