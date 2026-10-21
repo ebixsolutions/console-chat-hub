@@ -417,3 +417,16 @@ test('Hosted a6626087 Authe free-form prompt follows native compact grammar thro
  const f=fixture(text,{fullChain:true,answer,semantic:wireDelta({intent:'customer_guidance',entities:[{name:'洗衣機',kind:'physical_product',confidence:0.97,constraints:{width:{amount:600,unit:'mm'},depth:{amount:560,unit:'mm'}}}],customer_facts:[{key:'family_size',value:3},{key:'priority',value:'quiet operation'}],requested_facts:[]})});
  const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits[0]?.content,answer,JSON.stringify({r,events:f.events}));assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));assert(f.requests.filter(x=>x.url.endsWith(':generateContent')).length>=2);assert.equal(f.commits.length,1);const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
 });
+
+// Actual Hosted 4df129e5: valid semantic interpretation, guidance_selected=false,
+// then execution unavailable. Model label/target below are safe reproductions;
+// the raw Hosted delta was not retained.
+test('Hosted 4df129e5 third-turn onsite observations generate through B2 without merchant lookup',async()=>{
+ const initial=fixture('客廳180平方呎，預算HK$6,000，兩位長者重視安靜及省電。',{fullChain:true,semantic:wireDelta({intent:'customer_guidance',customer_facts:[{key:'room_area',value:{amount:180,unit:'平方呎'}},{key:'budget',value:{amount:6000,unit:'HKD'}}]})});await initial.run();
+ const corrected=fixture('更正客廳150平方呎，預算HK$5,000；請說明選購取捨，不需要查型號或報價。',{source:uuid(121),fullChain:true,previous:initial.tables,history:initial.tables.messages,answer:'按最新150平方呎及HK$5,000預算，先量度現場位置。',semantic:wireDelta({intent:'customer_context_update',customer_correction:true,customer_facts:[{key:'room_area',value:{amount:150,unit:'平方呎'}},{key:'budget',value:{amount:5000,unit:'HKD'}}]},'UPDATE_ITEM')});await corrected.run();
+ const text='如果長者對晚上風聲特別敏感，我去現場量度時應先記低哪幾項環境情況，才方便之後跟安裝師傅討論？請沿用最新面積及預算，暫時不用查商戶產品。';
+ const answer='沿用最新150平方呎及HK$5,000預算，先記下夜間使用時段、休息位置與風口方向，再記下門窗和室外機位置。具體型號噪音及安裝可行性仍須核實。';
+ const f=fixture(text,{source:uuid(122),fullChain:true,previous:corrected.tables,history:corrected.tables.messages,answer,semantic:wireDelta({intent:'ask_fact',requested_facts:['onsite_conditions']})});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits[0]?.content,answer);assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));assert(f.requests.some(x=>x.url.endsWith(':generateContent')));assert.equal(f.commits.length,1);
+ const memory=f.tables.conversation_memory_state[0].memory;assert.equal(memory.current_customer_facts.find(x=>x.key==='room_area').value.amount,150);assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);await f.run();assert.equal(f.commits.length,1);
+});

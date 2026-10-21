@@ -340,7 +340,7 @@ const EXCLUDED_LOOKUP = /(?:唔查|唔使查|唔需要查|不要查|不查|不�
 export function withoutExcludedLookups(question: string): string {
   // Only discard an explicit instruction NOT to perform a lookup. A negative
   // customer fact and an actual question about a negative condition remain data.
-  return question.split(/[，,。;；\n]|\bbut\b|但(?:係|是)?|\band(?=\s+(?:check|query|look up)\b)|同埋(?=查)/i).filter(clause => {
+  return question.split(/[，,。?？;；\n]|\bbut\b|但(?:係|是)?|\band(?=\s+(?:check|query|look up)\b)|同埋(?=查)/i).filter(clause => {
     const excluded = EXCLUDED_LOOKUP.exec(clause);
     if (!excluded) return true;
     // Never erase an affirmative request that shares the negative clause.
@@ -391,7 +391,7 @@ export function isCustomerGuidanceRequest(question: string, semantic: {
   if (!semantic || semantic.confidence < 0.62 || semantic.ambiguity.is_ambiguous) return false;
   const text = withoutExcludedLookups(clean(question));
   if (/\b(?:price|cost|stock|warranty|policy|specifications?|availability|recommend.*(?:products?|options?))\b|售價|售价|報價|报价|價錢|价钱|幾錢|几钱|庫存|库存|保養|保养|政策|規格|规格|推薦|推荐|現貨|现货|你[哋們们]?有|你[哋們们]?嘅/i.test(text)) return false;
-  if (!/(?:取捨|取舍|選購|选购|選機|选机|應(?:該)?(?:準備|補充|考虑|考慮)|應該考慮|应该考虑|先問|先问)|\b(?:trade[ -]?offs?|selection criteria|what.*(?:ask|prepare|measure)|how.*(?:choose|select))\b/i.test(text)) return false;
+  if (!/(?:取捨|取舍|選購|选购|選機|选机|應(?:該)?(?:準備|補充|考虑|考慮)|應該考慮|应该考虑|先問|先问)|(?:現場|现场|量度|量測|量测|測量|测量).{0,24}(?:應|应|要|先).{0,8}(?:記低|记低|記錄|记录|留意|注意|準備|准备|量度|量測|量测)|\b(?:trade[ -]?offs?|selection criteria|what.*(?:ask|prepare|measure)|how.*(?:choose|select))\b/i.test(text)) return false;
   // A valid model can describe the same speech act as ASK_FACT, or include
   // abstract advice/checklist targets in requested_facts. Neither authorizes
   // a merchant lookup. Unknown targets still fail closed unless the customer

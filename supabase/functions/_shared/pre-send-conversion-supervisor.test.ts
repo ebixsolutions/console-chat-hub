@@ -1,3 +1,5 @@
+import { prepareConversationRecall } from "./conversation-recall.ts";
+import { recallFixture } from "./conversation-recall.test.ts";
 import {
   type B2DatabaseClient,
   type B2PersistenceKind,
@@ -1450,4 +1452,41 @@ Deno.test('replacement-only room correction requires exact fresh canonical scope
  const vague=structuredClone(state);vague.latest_corrections=['記住我最新嗰個更正'];assert(evaluate('客廳150平方呎，先量度安裝位置。',vague).decision!=='allow','vague correction remains unresolved');
  const cancelled=structuredClone(state);cancelled.entities[0].status='cancelled';assert(evaluate('客廳150平方呎，先量度安裝位置。',cancelled).decision!=='allow','cancelled entity is not an active owner');
  assertEquals(state.latest_corrections,['更正一下:客廳其實是150平方呎'],'the correction history is unchanged');
+});
+
+Deno.test('Hosted B2 missing-slot descriptors never become supplied facts after a semantic commit', async () => {
+  for (const classification of ['COMMITTED', 'IDEMPOTENT', 'NO_SEMANTIC_CHANGE'] as const) {
+    const state = createEmptyConversationCommerceState();
+    state.current_topic = 'washing_machine';
+    state.entities = [{entity_id:'washing_machine:one',category:'washing_machine',quantity:1,status:'researching',attributes:{width_mm:600,depth_mm:560,customer_goal:{missing:['budget','color'],collected:['width_mm','depth_mm']}},constraints:{},provenance:{source_type:'customer',source_message_id:SOURCE_ID}}];
+    const before = JSON.stringify(state);
+    const metadata = {commerce_state_persistence_classification:classification};
+    const evaluate = (draft:string) => evaluateB2BeforeCommit({proposed_response:draft,persistence_kind:'ai_reply',metadata,snapshot:snapshot(state)});
+    assertEquals(evaluate('What is your budget?').decision, 'allow', `${classification}: budget is missing, not provided`);
+    assertEquals(evaluate('Which color do you need?').decision, 'allow', `${classification}: a missing color is not a known color`);
+    state.entities[0].attributes.color = 'blue';
+    assertEquals(evaluate('Which color do you need?').code, 'KNOWN_CONTEXT_RECONFIRMATION', `${classification}: a real supplied value still blocks re-asking`);
+    delete state.entities[0].attributes.color;
+    assertEquals(JSON.stringify(state), before, 'B2 evaluation must not mutate state or planning descriptors');
+    const client = new MockClient({state,revision:7,sourceContent:'Help me compare the trade-offs.'});
+    let commits = 0;
+    const result = await executeB2PersistenceGate({client,conversation_id:CONVERSATION_ID,source_message_id:SOURCE_ID,proposed_response:'What is your budget?',persistence_kind:'ai_reply',metadata,expected_commerce_state_revision:7,commit:async()=>{commits++;return 'persisted';}});
+    assert(result.committed && commits === 1, `${classification}: legitimate missing-slot question must reach revision-checked commit`);
+  }
+});
+
+Deno.test('Hosted same-ticket summary renders typed customer budget without internal entity bookkeeping',()=>{
+ const input=recallFixture('請總結這張對話目前記低的最新面積、預算和優先需求。');
+ input.commerce!.state=createEmptyConversationCommerceState();
+ input.commerce!.state.entities=[{entity_id:'air_conditioner:living_room',category:'air_conditioner',quantity:1,status:'researching',attributes:{room_sizes:{living_room:'150平方呎'}},constraints:{},provenance:{source_type:'customer',source_message_id:input.source_message_id}}];
+ input.memory!.current_customer_facts=[
+  {key:'budget',value:{unit:'HKD',amount:5000},authority:'customer',source_message_id:input.source_message_id,entity_id:null,region:null},
+  {key:'priority',value:'quiet operation',authority:'customer',source_message_id:input.source_message_id,entity_id:null,region:null},
+  {key:'entity:air_conditioner:living_room:quantity',value:1,authority:'canonical_commerce',source_message_id:input.source_message_id,entity_id:'air_conditioner:living_room',region:null}];
+ const before=JSON.stringify(input);
+ const result=prepareConversationRecall(input,'zh-TW');
+ assert(result.decision.handled && result.decision.fact_type==='summary',JSON.stringify(result.decision));
+ assert(result.reply?.includes('HK$5,000') && result.reply.includes('150平方呎'),result.reply??'no summary');
+ assert(!/[{}]|entity:|priority:/.test(result.reply!),result.reply!);
+ assert(JSON.stringify(input)===before,'summary formatting must remain read-only');
 });

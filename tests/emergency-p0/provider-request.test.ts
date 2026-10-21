@@ -102,3 +102,11 @@ Deno.test('Hosted a6626087 compact prompt uses one encoding layer and canonical 
  assert(decodeCommerceSemanticWire({...wire,delta_json:JSON.stringify({entities:[{name:'item',kind:'physical_product',attributes:{a:1},attributes_json:'{"a":2}'}]})})===null);
  assert(!normalizeCommerceSemanticFrame(decodeCommerceSemanticWire({...wire,delta_json:JSON.stringify({customer_facts:[{key:'too_deep',value:{a:{b:{c:{d:1}}}}}]})})));
 });
+
+Deno.test('Hosted 4df129e5 onsite observation advice remains general across natural phrasing',()=>{
+ const frame={intent:'ask_fact',confidence:0.97,requested_facts:['onsite_conditions'],ambiguity:{is_ambiguous:false}};
+ const question='如果長者對晚上風聲特別敏感，我去現場量度時應先記低哪幾項環境情況，才方便之後跟安裝師傅討論？請沿用最新面積及預算，暫時不用查商戶產品。';
+ for(const text of [question,'現場測量時應留意哪些環境資料？不用查產品。','现场测量时要先记录哪些环境资料？不用查产品。'])assert(isCustomerGuidanceRequest(text,frame),text);
+ for(const text of [question+'但請查現貨。',question+'請推薦型號。',question+'請確認你們的保養政策。'])assert(!isCustomerGuidanceRequest(text,frame),text);
+ assert(!isCustomerGuidanceRequest(question,{...frame,ambiguity:{is_ambiguous:true}}));assert(!isCustomerGuidanceRequest(question,{...frame,confidence:0.2}));assert(!isCustomerGuidanceRequest(question,null));
+});

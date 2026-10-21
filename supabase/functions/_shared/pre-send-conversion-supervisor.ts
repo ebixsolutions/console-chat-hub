@@ -825,7 +825,7 @@ function evaluateTransactionReality(
   return null;
 }
 
-function evaluateKnownContext(text: string, state: ConversationCommerceState, readOnlyProjection: boolean = false): B2Decision | null {
+function evaluateKnownContext(text: string, state: ConversationCommerceState): B2Decision | null {
   if (!QUESTION.test(text)) return null;
   const questionClauses = text
     .split(/(?<=[?？.!！。])|\n+/)
@@ -833,8 +833,10 @@ function evaluateKnownContext(text: string, state: ConversationCommerceState, re
     .filter((clause) => QUESTION.test(clause));
   for (const clause of questionClauses) {
     for (const fact of collectKnownCommerceFacts(state)) {
-      // A missing-slot identifier is a planning descriptor, not a provided value.
-      if (readOnlyProjection && /\.attributes\.customer_goal\.missing\.\d+$/.test(fact.path)) continue;
+      // A missing-slot identifier is never a supplied customer value, including
+      // on the turn that commits the semantic state containing that descriptor.
+      // Actual values elsewhere in the state remain subject to this same guard.
+      if (/\.attributes\.customer_goal\.missing\.\d+$/.test(fact.path)) continue;
       if (fact.aliases.some((alias) => clause.includes(alias))) {
         return {
           decision: "block",
@@ -1312,7 +1314,7 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
     (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection || trustedLifecycle || trustedReadOnlyRecap || trustedCustomerCalculation
       ? null
-      : evaluateKnownContext(draft, state, input.metadata?.commerce_state_persistence_classification !== "COMMITTED" && !input.trusted_journey_progress)) ?? {
+      : evaluateKnownContext(draft, state)) ?? {
       decision: "allow",
       code: kbPriceDecision?.code ?? (trustedReadOnlyRecap
         ? "B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP"
