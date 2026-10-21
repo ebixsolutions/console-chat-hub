@@ -146,11 +146,17 @@ async function loadOwnedTestConversation(
   return { ok: true, conversation: data };
 }
 
-async function loadTestMessages(admin: QueryClient, conversationId: string) {
+async function loadTestMessages(admin: QueryClient, conversationId: string, archiveScope?: {userId:string;companyId:string}) {
+  // The archive's message query joins its parent and Session in one database
+  // snapshot. An ownership/session change between earlier reads cannot expose a
+  // different Tenant's message rows through the service client.
+  const fields = "id,role,content,created_at,metadata" + (archiveScope
+    ? ",archive:conversations!inner(id,company_id,channel_config_id,visitor_session_id,metadata_source,archive_session:visitor_session!inner(id,channel_config_id,visitor_fingerprint,visitor_metadata))" : "");
   const { data, error } = await admin
     .from("messages")
-    .select("id,role,content,created_at,metadata")
+    .select(fields)
     .eq("conversation_id", conversationId)
+    .eq("is_recalled", false)
     .neq("content", "__THINKING__")
     .order("created_at", { ascending: true })
     .order("id", { ascending: true })
@@ -158,7 +164,10 @@ async function loadTestMessages(admin: QueryClient, conversationId: string) {
   // Over 100 turns require more than 200 persisted visitor/AI/system/agent rows.
   // This is a read window, never a maximum on new turns or on message persistence.
   if (error) throw new Error("test_messages_lookup_failed");
-  return (data ?? [])
+  if (archiveScope && (data ?? []).some((m:any) => m.archive?.id !== conversationId ||
+    !legacyPreviewOwned(m.archive,archiveScope.userId,archiveScope.companyId) ||
+    !legacyPreviewSessionMatches(m.archive.archive_session,m.archive,archiveScope.userId))) throw new Error("legacy_preview_read_scope_changed");
+  return [...new Map<string,any>((data ?? []).map((m: any) => [m.id, m])).values()]
     .filter((m: any) => ["visitor","assistant","agent","system"].includes(m.role))
     .map((m: any) => ({
       id: String(m.id),
@@ -170,6 +179,44 @@ async function loadTestMessages(admin: QueryClient, conversationId: string) {
           ? m.metadata as Record<string, unknown>
           : null,
     }));
+}
+
+// The original authenticated Preview stored a null-channel session. That is an
+// archival format, not authority to attach it to today's channel or dispatch AI.
+function legacyPreviewOwned(c: any, userId: string, companyId: string): boolean {
+  const m = c?.metadata_source;
+  return isUuid(c?.id) && c.company_id === companyId && c.channel_config_id === null &&
+    isUuid(c.visitor_session_id) && m?.source === "widget_live_test" &&
+    m.widget_live_test === true && m.synthetic !== true && m.exclude_training === true &&
+    m.scope_mode === "canonical" && m.canonical_company_attached === true && m.owner_user_id === userId;
+}
+
+async function legacyPreviewSessionValid(admin: QueryClient, c: any, userId: string): Promise<boolean> {
+  const { data: session, error } = await admin.from("visitor_session")
+    .select("id,channel_config_id,visitor_fingerprint,visitor_metadata")
+    .eq("id", c.visitor_session_id).is("channel_config_id", null).maybeSingle();
+  if (error) throw new Error("legacy_preview_session_lookup_failed");
+  return legacyPreviewSessionMatches(session,c,userId);
+}
+
+function legacyPreviewSessionMatches(session: any, c: any, userId: string): boolean {
+  const m = session?.visitor_metadata;
+  return session?.id === c.visitor_session_id && session.channel_config_id === null &&
+    session.visitor_fingerprint === `widget-live-test:${userId}` &&
+    m?.source === "widget_live_test" && m.test_mode === true && m.exclude_training === true &&
+    m.scope_mode === "canonical" && m.owner_user_id === userId;
+}
+
+async function loadLegacyPreview(admin: QueryClient, id: string, userId: string, companyId: string) {
+  if (!isUuid(id)) return null;
+  const {data, error} = await admin.from("conversations")
+    .select("id,company_id,channel_config_id,visitor_session_id,metadata_source,status,assigned_agent_id")
+    .eq("id", id).eq("company_id", companyId).is("channel_config_id", null)
+    .eq("metadata_source->>source", "widget_live_test")
+    .eq("metadata_source->>owner_user_id", userId).maybeSingle();
+  if (error) throw new Error("legacy_preview_lookup_failed");
+  if (!legacyPreviewOwned(data, userId, companyId) || !await legacyPreviewSessionValid(admin, data, userId)) return null;
+  return data;
 }
 
 async function testConversationId(userId:string,channelId:string,clientMessageId:string): Promise<string> {
@@ -264,9 +311,23 @@ async function listOwnedTestHistory(admin: QueryClient, userId: string, scope: {
     .limit(100);
   if (error) throw new Error("test_history_lookup_failed");
 
+  const {data: legacy, error: legacyError} = await admin.from("conversations")
+    .select("id,company_id,channel_config_id,visitor_session_id,created_at,updated_at,metadata_source")
+    .eq("company_id", scope.companyId).is("channel_config_id", null)
+    .eq("metadata_source->>source", "widget_live_test")
+    .eq("metadata_source->>owner_user_id", userId)
+    .order("updated_at", {ascending:false}).limit(100);
+  if (legacyError) throw new Error("legacy_preview_history_lookup_failed");
+  const candidates = (data ?? []).filter((x: any) => isTestConversationOwned(x.metadata_source, userId)).slice(0,10)
+    .map((c: any) => ({...c, read_only:false}));
+  for (const c of legacy ?? []) {
+    if (legacyPreviewOwned(c,userId,scope.companyId) && await legacyPreviewSessionValid(admin,c,userId)) candidates.push({...c,read_only:true});
+  }
   const out = [];
-  for (const c of (data ?? []).filter((x: any) => isTestConversationOwned(x.metadata_source, userId)).slice(0, 10)) {
-    const messages = await loadTestMessages(admin, String(c.id));
+  const ordered = [...new Map<string,any>(candidates.map((c: any) => [c.id,c])).values()]
+    .sort((a: any,b: any) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")) || String(a.id).localeCompare(String(b.id)));
+  for (const c of ordered) {
+    const messages = await loadTestMessages(admin, String(c.id), c.read_only ? {userId,companyId:scope.companyId} : undefined);
     const latest = [...messages].reverse().find((m) => m.content.trim().length > 0);
     out.push({
       conversation_id: String(c.id),
@@ -274,6 +335,7 @@ async function listOwnedTestHistory(admin: QueryClient, userId: string, scope: {
       updated_at: typeof c.updated_at === "string" ? c.updated_at : null,
       latest_preview: latest?.content.slice(0, 120) ?? "(no messages)",
       message_count: messages.length,
+      read_only: c.read_only,
     });
   }
   return out;
@@ -412,13 +474,29 @@ return async (req: Request) => {
         authData.user.id,
         resolved,
       );
-      if (!owned.ok) return json(req, { success: false, error: owned.error }, owned.status);
+      if (!owned.ok) {
+        // Only explicit reads may access the old null-channel format. Send and
+        // reconciliation keep their existing synthetic ownership/admission rules.
+        if (action === "load" && owned.status === 404) {
+          const legacy = await loadLegacyPreview(admin,requestedConversationId,authData.user.id,resolved.companyId);
+          if (legacy) return json(req, {
+            success:true, mode:"persistent_live_ai_test", scope_mode:"canonical",
+            conversation_id:legacy.id, company_id:resolved.companyId, channel_id:resolved.channelId,
+            read_only:true, execution_class:"historical_widget_live_test",
+            conversation_status:legacy.status, assigned_agent_id:legacy.assigned_agent_id ?? null,
+            human_control:HUMAN_CONTROL_STATUSES.has(String(legacy.status)) || Boolean(legacy.assigned_agent_id),
+            messages:await loadTestMessages(admin,legacy.id,{userId:authData.user.id,companyId:resolved.companyId}), ai_generating:false,
+          });
+        }
+        return json(req, { success: false, error: owned.error }, owned.status);
+      }
       const {data: session,error: sessionError} = await admin.from("visitor_session").select("session_token").eq("id",owned.conversation.visitor_session_id).eq("channel_config_id",resolved.channelId).maybeSingle();
       if (sessionError || !session?.session_token) return json(req,{success:false,error:"test_session_lookup_failed"},500);
       const poll = await widgetRequest(supabaseUrl,serviceKey,tokenMatch[1],origin,"widget-poll-messages",{conversation_id:requestedConversationId,session_token:session.session_token});
       return json(req, {
         success: true,
         mode: "persistent_live_ai_test",
+        read_only: false,
         scope_mode: resolved.scopeMode,
         conversation_id: requestedConversationId,
         ...(action === "reconcile" ? {reconciled_client_message_id: String((body as any).client_message_id)} : {}),

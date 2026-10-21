@@ -197,6 +197,7 @@ type LiveAiHistoryItem = {
   updated_at: string | null;
   latest_preview: string;
   message_count: number;
+  read_only?: boolean;
 };
 
 type LiveAiResponse = {
@@ -835,6 +836,7 @@ function PreviewWidget({
   const [scopeFailure, setScopeFailure] = useState<string | null>(null);
   const [executionFailure, setExecutionFailure] = useState<string | null>(null);
   const [conversationClosed, setConversationClosed] = useState(false);
+  const [conversationReadOnly, setConversationReadOnly] = useState(false);
   const [conversationVerified, setConversationVerified] = useState(false);
   const [executionReady, setExecutionReady] = useState(false);
   const [remoteReady, setRemoteReady] = useState(false);
@@ -864,7 +866,7 @@ function PreviewWidget({
   >("none");
   // Scope admission controls Send, not harmless local draft composition.
   const inputEditable = mode === "live"
-    ? Boolean(storageKey) && !conversationClosed && !pendingSend.current && !replyInFlight.current
+    ? Boolean(storageKey) && !conversationClosed && !conversationReadOnly && !pendingSend.current && !replyInFlight.current
     : !typing && humanState === "none";
   const draftKey = storageKey ? `${storageKey}:draft:${testConversationId ?? "new"}` : null;
   const readDraft = (conversationId: string | null) => {
@@ -942,6 +944,7 @@ function PreviewWidget({
     setScopeFailure(null);
     setExecutionFailure(null);
     setConversationClosed(false);
+    setConversationReadOnly(false);
     setConversationVerified(false);
     composing.current = false;
     emojiCaret.current = null;
@@ -988,7 +991,7 @@ function PreviewWidget({
   };
 
   const loadLiveConversation = async (conversationId: string, switching = false, signal?: AbortSignal) => {
-    if (switching) setConversationVerified(false);
+    if (switching) { setConversationVerified(false); setConversationReadOnly(true); }
     const epoch = switching ? ++conversationEpoch.current : conversationEpoch.current;
     let result;
     try { result = await invokeLiveWidget({ action: "load", test_conversation_id: conversationId }, signal); }
@@ -1012,6 +1015,7 @@ function PreviewWidget({
     if (switching) setPollRevision(value => value + 1);
     setTestConversationId(data.conversation_id);
     setConversationClosed(["resolved", "closed"].includes(String(data.conversation_status ?? "")));
+    setConversationReadOnly(data.read_only === true);
     setConversationVerified(true);
     if (storageKey) window.localStorage.setItem(storageKey, data.conversation_id);
     const underHumanControl =
@@ -1158,7 +1162,7 @@ function PreviewWidget({
   };
 
   const runLiveAi = async (text: string) => {
-    if (!storageKey || !scopeReady || !runtimeReady || conversationClosed || (testConversationId && !conversationVerified)) return;
+    if (!storageKey || !scopeReady || !runtimeReady || conversationClosed || conversationReadOnly || (testConversationId && !conversationVerified)) return;
     if (pendingSend.current) {
       setInput(pendingSend.current.text);
       setLiveFailure(lang === "zh" ? "上一則訊息結果未明，請先重新讀取對話核實。" : "The previous delivery is unresolved. Refresh the conversation to reconcile it first.");
@@ -1273,7 +1277,7 @@ function PreviewWidget({
   };
 
   const sendBlockReason = mode === "live" ? widgetSendBlockReason({
-    actorScoped: Boolean(storageKey), closed: conversationClosed, pending: Boolean(pendingSend.current),
+    actorScoped: Boolean(storageKey), closed: conversationClosed || conversationReadOnly, pending: Boolean(pendingSend.current),
     inFlight: replyInFlight.current, scopeReady, runtimeReady, runtimeReason, conversationId: testConversationId,
     conversationVerified, input,
   }) : null;
@@ -1320,6 +1324,7 @@ function PreviewWidget({
     if (mode === "live") {
       setTestConversationId(null);
       setConversationClosed(false);
+      setConversationReadOnly(false);
       setConversationVerified(false);
       if (storageKey) {
         try { window.localStorage.removeItem(`${storageKey}:draft:new`); } catch { /* Local-only draft cleanup. */ }
@@ -1543,7 +1548,8 @@ function PreviewWidget({
         {mode === "live" && scopeReady && !runtimeReady && <p role="alert" className="mb-2 text-xs text-amber-800">{lang === "zh" ? "目前後端未證實支援受控傳送契約；歷史可讀、草稿可編輯，但不會傳送或執行商業 AI。這不代表發布版前端過時。" : "The backend has not proven the controlled-send contract. History and local drafts remain available; sending and business AI are blocked. This does not establish a stale published frontend."}</p>}
         {mode === "live" && <details className="mb-2 text-xs"><summary>{lang === "zh" ? "傳送狀態" : "Send status"}</summary><output data-widget-send-state={sendBlockReason ?? "ready"}>{sendBlockReason ?? "ready"}</output><div>scopeReady={String(scopeReady)} · runtimeReady={String(runtimeReady)} · executionReady={runtimeReady ? String(executionReady) : "unverified"} · remoteReady={runtimeReady ? String(remoteReady) : "unverified"} · pending={String(Boolean(pendingSend.current))} · conversationVerified={String(conversationVerified)}</div></details>}
         {mode === "live" && pendingSend.current && !testConversationId && <div role="alert" className="mb-2 text-xs">{lang === "zh" ? "上一則訊息結果未明；只可查核原訊息，不會重送或另開對話。" : "The previous outcome is unknown. Check the original message; it will not be resent or replaced with a new conversation."}<button type="button" disabled={!scopeReady || !runtimeReady} className="ml-1 underline" onClick={() => void reconcilePending()}>{lang === "zh" ? "核實原訊息送達" : "Check original delivery"}</button></div>}
-        {mode === "live" && conversationClosed && (
+        {mode === "live" && conversationReadOnly && <p role="status" className="mb-2 text-xs text-slate-500">{lang === "zh" ? "這是原有 Preview 的唯讀歷史對話，不能在此傳送訊息或執行 AI。" : "This original Preview conversation is read-only. Messages and AI execution are disabled for this archive."}</p>}
+        {mode === "live" && conversationClosed && !conversationReadOnly && (
           <p role="status" className="mb-2 text-xs text-slate-500">
             {lang === "zh" ? "此對話已結束；請使用「新對話」開始另一個問題。" : "This conversation is resolved. Use New Conversation to start another request."}
           </p>
@@ -1588,7 +1594,7 @@ function PreviewWidget({
                   }
                 >
                   <div className="font-medium">
-                    Live Test {history.length - index} · {session.message_count} messages
+                    {session.read_only ? "Preview archive" : "Live Test"} {history.length - index} · {session.message_count} messages{session.read_only ? " · Read-only" : ""}
                   </div>
                   <div className="mt-1 truncate text-[10px] text-slate-500">
                     {session.latest_preview}

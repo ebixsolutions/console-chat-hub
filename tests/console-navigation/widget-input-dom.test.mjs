@@ -53,12 +53,12 @@ test.after(()=>{globalThis.setInterval=originalInterval;globalThis.clearInterval
 function reset(){
  document.body.innerHTML='';window.localStorage.clear();intervals=new Map();calls=[];network=0;
  globalThis.setInterval=fn=>{const id={};intervals.set(id,fn);return id;};globalThis.clearInterval=id=>intervals.delete(id);
- Object.assign(f,{actor:{id:'actor'},ready:true,wrongTenant:false,status:'open',human:false});
+ Object.assign(f,{actor:{id:'actor'},ready:true,wrongTenant:false,status:'open',human:false,readOnly:false});
  f.historyResponse=null;
  f.invoke=async(name,{body})=>{calls.push(body);assert.equal(name,'widget-live-ai-test');
   if(body.action==='history' && f.historyResponse)return f.historyResponse;
   if(body.action==='history')return {error:null,data:{success:true,runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:f.ready,execution_ready:false,remote_ready:false,company_id:f.wrongTenant?'foreign':company,channel_id:channel,history:[]}};
-  if(body.action==='load')return {error:null,data:{success:true,conversation_id:body.test_conversation_id,conversation_status:f.status,human_control:f.human,messages:[]}};
+  if(body.action==='load')return {error:null,data:{success:true,conversation_id:body.test_conversation_id,conversation_status:f.status,human_control:f.human,read_only:f.readOnly,messages:[]}};
   return {error:new Error('Unexpected dispatch trapped by local fixture'),data:null};
  };
 }
@@ -68,6 +68,26 @@ const button=(r,label)=>[...r.host.querySelectorAll('button')].find(b=>b.textCon
 const edit=async(r,text)=>act(async()=>r.user.type(field(r),text));
 const click=async(r,el)=>act(async()=>r.user.click(el));
 function noDispatch(){assert.equal(calls.filter(c=>c.action==='send').length,0,'input must never dispatch');assert.equal(network,0);}
+test('original Preview archive is readable but Send, Enter and emoji cannot write; new conversation restores draft input',async t=>{
+ reset();f.readOnly=true;f.human=true;window.localStorage.setItem(key,conversation);
+ const r=await mount(t);
+ assert(calls.some(c=>c.action==='load'&&c.test_conversation_id===conversation));
+ assert.match(r.host.textContent,/original Preview conversation is read-only/);
+ assert.equal(field(r).disabled,true);assert.equal(button(r,'Send').disabled,true);
+ await click(r,button(r,'Send'));await act(async()=>r.user.keyboard('{Enter}'));noDispatch();
+ await click(r,button(r,'New Conversation'));assert.equal(field(r).disabled,false);
+ await edit(r,'A new draft');assert.equal(field(r).value,'A new draft');noDispatch();
+});
+test('switching from current conversation to archive blocks input before delayed read completes',async t=>{
+ reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,execution_ready:false,remote_ready:false,company_id:company,channel_id:channel,history:[{conversation_id:conversation,message_count:3,latest_preview:'Original answer',read_only:true}]}};
+ const invoke=f.invoke;let complete;
+ f.invoke=async(name,args)=>args.body.action==='load'?await new Promise(resolve=>{complete=resolve;}):invoke(name,args);
+ const r=await mount(t);await click(r,button(r,'Conversation History'));
+ const archive=[...r.host.querySelectorAll('button')].find(b=>b.textContent.includes('Preview archive'));
+ assert(archive);await click(r,archive);assert.equal(field(r).disabled,true);
+ await act(async()=>complete({error:null,data:{success:true,conversation_id:conversation,read_only:true,messages:[]}}));
+ assert.equal(field(r).disabled,true);noDispatch();
+});
 test('original symptom: scope-unready real DOM keyboard and emoji must share safe draft editability',async t=>{
  reset();f.ready=false;const r=await mount(t);
  const disabled=field(r).disabled;await click(r,button(r,'Emoji'));const first=r.host.querySelector('[aria-label^="Insert "]');await click(r,first);
