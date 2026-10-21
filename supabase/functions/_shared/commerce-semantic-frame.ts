@@ -500,6 +500,11 @@ export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSema
         ["operation", "confidence"].includes(k))) return reject("wire_delta_fields");
       value = { ...delta, operation: value.operation, confidence: value.confidence };
     } catch { return reject("wire_delta_json"); }
+  } else if (Object.keys(value).some(key =>
+    !Object.hasOwn(COMMERCE_SEMANTIC_NATIVE_SCHEMA.properties, key))) {
+    // JSON MIME mode does not enforce semantic property names. Preserve the
+    // compact grammar's closed-field boundary before canonical normalization.
+    return reject("wire_delta_fields");
   }
   if (!isRecord(value)) return reject("wire_object");
   const decode = (raw: unknown): unknown => {

@@ -13,6 +13,7 @@ Deno.test('Hosted 21745026 native JSON avoids the second-document escape boundar
  const f=normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(JSON.parse(JSON.stringify(native))))!;assert(f?.customer_correction);assert(f.customer_facts?.[0].value && typeof f.customer_facts[0].value==='object');assert(f.customer_facts?.[1].value===false&&f.customer_facts[2].value===0&&f.customer_facts[3].value===null);
  const cfg=buildVertexGenerationConfig(4096,true,undefined,0,'gemini-2.5-flash');assert(cfg.responseMimeType==='application/json');assert(!Object.hasOwn(cfg,'responseSchema'));assert((cfg.thinkingConfig as any).thinkingBudget===0);
  assert(COMMERCE_SEMANTIC_NATIVE_INSTRUCTIONS.endsWith(JSON.stringify(COMMERCE_SEMANTIC_NATIVE_SCHEMA)));
+ for(const alias of ['correction','lifecycle','negations','unknown'])assert(decodeCommerceSemanticWire({...native,[alias]:'PRIVATE-SECRET'})===null);
  assert(!normalizeCommerceSemanticFrame({...native,confidence:2}));assert(!normalizeCommerceSemanticFrame({...native,operation:'INVALID'}));assert(!normalizeCommerceSemanticFrame({...native,customer_facts:Array(17).fill({key:'x',value:1})}));
 });
 Deno.test('customer priority rankings do not request merchant facts; affirmative mixed requests retain grounding',()=>{
