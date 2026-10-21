@@ -1,11 +1,26 @@
 import {isCurrentRequirementsRecap,isCustomerGuidanceRequest} from '../../supabase/functions/_shared/commerce-state-authority.ts';
 import { buildVertexGenerationConfig, buildVertexEndpoint, normalizeVertexResponseSchema, safeVertexErrorDiagnostic } from '../../supabase/functions/_shared/vertex-generation-config.ts';
-import {COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,COMMERCE_SEMANTIC_WIRE_SCHEMA,COMMERCE_SEMANTIC_DELTA_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame} from '../../supabase/functions/_shared/commerce-semantic-frame.ts';
+import {COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,COMMERCE_SEMANTIC_WIRE_SCHEMA,COMMERCE_SEMANTIC_DELTA_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS,COMMERCE_SEMANTIC_NATIVE_INSTRUCTIONS,COMMERCE_SEMANTIC_NATIVE_SCHEMA,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame} from '../../supabase/functions/_shared/commerce-semantic-frame.ts';
 import {classifyNonFactualConversation} from '../../supabase/functions/_shared/conversational-routing.ts';
 import {classifyCanonicalConversationTurn} from '../../supabase/functions/_shared/conversation-semantic-contract.ts';
 import {terminalRecoveryReply} from '../../supabase/functions/_shared/generation-terminal-guard.ts';
 function assert(v:unknown,m='assertion'):asserts v {if(!v)throw Error(m)}
 function throws(f:()=>unknown){let failed=false;try{f()}catch{failed=true}assert(failed,'invalid request accepted')}
+Deno.test('Hosted 21745026 native JSON avoids the second-document escape boundary; malformed legacy output remains rejected',()=>{
+ const malformed={operation:'UPDATE_ITEM',confidence:0.97,delta_json:'{"customer_correction":true,"customer_facts":[{"key":"budget","value":{"amount":5000,"unit":"HKD"}}'};
+ const reasons:string[]=[];assert(decodeCommerceSemanticWire(malformed,r=>reasons.push(r))===null);assert(reasons[0]==='wire_delta_json');
+ const native={operation:'UPDATE_ITEM',confidence:0.97,customer_correction:true,customer_facts:[{key:'budget',value:{amount:5000,unit:'HKD'}},{key:'auto_renew',value:false},{key:'seats',value:0},{key:'date',value:null}]};
+ const f=normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(JSON.parse(JSON.stringify(native))))!;assert(f?.customer_correction);assert(f.customer_facts?.[0].value && typeof f.customer_facts[0].value==='object');assert(f.customer_facts?.[1].value===false&&f.customer_facts[2].value===0&&f.customer_facts[3].value===null);
+ const cfg=buildVertexGenerationConfig(4096,true,undefined,0,'gemini-2.5-flash');assert(cfg.responseMimeType==='application/json');assert(!Object.hasOwn(cfg,'responseSchema'));assert((cfg.thinkingConfig as any).thinkingBudget===0);
+ assert(COMMERCE_SEMANTIC_NATIVE_INSTRUCTIONS.endsWith(JSON.stringify(COMMERCE_SEMANTIC_NATIVE_SCHEMA)));
+ assert(!normalizeCommerceSemanticFrame({...native,confidence:2}));assert(!normalizeCommerceSemanticFrame({...native,operation:'INVALID'}));assert(!normalizeCommerceSemanticFrame({...native,customer_facts:Array(17).fill({key:'x',value:1})}));
+});
+Deno.test('customer priority rankings do not request merchant facts; affirmative mixed requests retain grounding',()=>{
+ const frame={intent:'customer_guidance',confidence:0.97,requested_facts:[] as string[],ambiguity:{is_ambiguous:false}};
+ for(const q of ['夜間安靜比初期價錢更重要。請解釋如何取捨，暫時不查產品或報價。','Quiet operation matters more than upfront price. What trade-offs should I consider?','I prioritize accessibility over price. How should I choose a rental service?','更正：預算HK$5,000。安全比價錢更重要，請解釋選購取捨。'])assert(isCustomerGuidanceRequest(q,frame),q);
+ for(const q of ['安靜比價錢更重要，但請查最新價錢。','Quiet operation matters more than upfront price, but what is your current price?','I prioritize accessibility over price. What is your warranty policy?','請比較A及B的價錢，並講解取捨。'])assert(!isCustomerGuidanceRequest(q,frame),q);
+ assert(!isCustomerGuidanceRequest('安靜比價錢更重要，請解釋取捨。',{...frame,requested_facts:['current_price']}));
+});
 Deno.test('documented Vertex serialization includes JSON schema, typed int64 bounds and valid model thinking controls',()=>{
  const cfg=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,0,'gemini-2.5-flash');
  assert(cfg.responseMimeType==='application/json');assert((cfg.thinkingConfig as any).thinkingBudget===0);

@@ -47,8 +47,9 @@ function fixture(text,options={}) {
     return Response.json({candidates:[{content:{parts:[{text}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}});
    }
    assert.equal(body.generationConfig.responseMimeType,'application/json');
-   assert.equal(body.generationConfig.responseSchema.properties.delta_json.type,'STRING');
-   assert.equal(Object.keys(body.generationConfig.responseSchema.properties).length,3);
+   assert.equal(body.generationConfig.responseSchema,undefined);
+   assert(body.systemInstruction.parts[0].text.includes('Return one native JSON object'));
+   assert(body.systemInstruction.parts[0].text.includes('Canonical JSON grammar:'));
    if(mode==='400')return Response.json({error:{status:'INVALID_ARGUMENT',message:'response schema too complex; PRIVATE-SECRET user@example.invalid',details:[{fieldViolations:[{field:'generation_config.response_schema',description:'PRIVATE-SECRET'}]}]}},{status:400});
    if(mode==='timeout')return await new Promise((resolve,reject)=>{if(init.signal?.aborted)return reject(new DOMException('isolated','AbortError'));init.signal?.addEventListener('abort',()=>reject(new DOMException('isolated','AbortError')),{once:true})});
    if(mode==='malformed')return Response.json({candidates:[{content:{parts:[{text:'{broken'}]},finishReason:'STOP'}]});
@@ -399,7 +400,7 @@ for(const alias of ['lifecycle','correction','negations'])test('prompt/decoder i
  const r=await f.load(path.join(root,'supabase/functions/_shared/commerce-semantic-interpreter.ts')).interpretCommerceSemantics({company_id:company,conversation_id:ticket,source_message_id:source,latest:'Please correct my requirements',persistent_state_summary:'{}'});
  assert.equal(r.frame,null);assert.equal(r.contract_rejection,'wire_delta_fields');assert(!JSON.stringify(r).includes('PRIVATE-SECRET'));
  const request=f.requests.find(x=>x.url.includes('aiplatform')).body.systemInstruction.parts[0].text;
- assert(request.includes('customer_correction'));assert(request.includes('"value"'));assert(request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
+ assert(request.includes('customer_correction'));assert(request.includes('"value"'));assert(request.includes('Return one native JSON object'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
 });
 
 test('Hosted Frankie correction then same-ticket Summary retains latest canonical Memory and passes unchanged B2',async()=>{
@@ -515,4 +516,21 @@ test('bounded repair can still ask a genuinely unprovided purposeful clarificati
  const answer='可以先按每次衣量、使用時段和空間限制比較取捨，具體型號的資料仍須核實。你通常會在甚麼時段洗衣？';
  const f=fixture('請說明洗衣機選機取捨，暫時不用查型號。',{fullChain:true,originalPreview:true,answers:['What product type do you need?',answer],semantic:wireDelta({intent:'customer_guidance',entities:[{name:'洗衣機',kind:'physical_product',confidence:0.97}],requested_facts:[]},'ADD_ITEM')});
  await f.run();assert.equal(f.commits.length,1);assert.equal(f.commits[0].content,answer);assert.equal(f.commits[0].metadata.b2_gate_contract,'executeB2PersistenceGate:allow_after_revalidation');const prompt=f.requests.find(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered')).body.systemInstruction.parts[0].text;assert(prompt.includes('one purposeful clarification is allowed'));assert(prompt.includes('missing-slot name is not a supplied value'));
+});
+
+// Current Hosted 21745026 proves wire_delta_json rejection, not the precise
+// retained provider bytes (those were not retained). Native objects below are
+// deterministic transport/handler reproductions, never Hosted evidence.
+for(const actorCompany of ['3d6e17b5-ec79-4f75-aa7f-eaa824ff8493','4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec'])test('native semantic multi-turn correction/Memory/Summary preserves original Preview authority '+actorCompany,async()=>{
+ const initial=fixture('你好，我想換冷氣給家中兩位長者使用。客廳180平方呎，預算HK$6,000，重視夜間安靜及省電。未選型號，請解釋選購時應如何取捨，並告訴我要量度哪些現場尺寸；暫時不用查外部產品或報價。',{company:actorCompany,originalPreview:true,fullChain:true,answer:'先比較夜間低速聲量、使用時段與能源效益，再量度安裝位置、門窗、電源及去水路線；未有現場條件不能保證匹數。',semantic:{operation:'ASK_FACT',confidence:0.97,intent:'customer_guidance',customer_facts:[{key:'room_area',value:{amount:180,unit:'平方呎'}},{key:'budget',value:{amount:6000,unit:'HKD'}}],entities:[{name:'冷氣',kind:'physical_product',confidence:0.97}],requested_facts:[]}});
+ const first=await initial.run();assert.equal(first.status,200);assert.notEqual(first.body.generation_success,false);assert.equal(initial.commits.length,1);assert(initial.tables.conversation_commerce_state[0]?.state.entities.some(e=>e.attributes.room_sizes?.living_room==='180平方呎'),JSON.stringify({initial:initial.tables.conversation_commerce_state,events:initial.events.slice(-8)}));
+ const correction=fixture('更正：客廳實際150平方呎，總預算改為HK$5,000；夜間安靜比初期價錢更重要。仍不查型號、價格或庫存。請按最新資料解釋省電與安靜如何取捨，並提醒我尚欠哪些現場條件。',{company:actorCompany,source:uuid(141),originalPreview:true,fullChain:true,previous:initial.tables,history:initial.tables.messages,answer:'以你最新150平方呎及HK$5,000要求，先比較夜間低速聲量，再看同等用途的能源效益；現場仍要確認安裝位置、日照、通風和去水，不能只按面積保證匹數。',semantic:{operation:'UPDATE_ITEM',confidence:0.97,intent:'customer_guidance',customer_correction:true,customer_facts:[{key:'room_area',value:{amount:150,unit:'平方呎'}},{key:'budget',value:{amount:5000,unit:'HKD'}},{key:'priority',value:'夜間安靜'}],requested_facts:[]}});
+ const second=await correction.run();assert.equal(second.status,200);assert.notEqual(second.body.generation_success,false,JSON.stringify({second,commerce:correction.tables.conversation_commerce_state,memory:correction.tables.conversation_memory_state,events:correction.events.slice(-15)}));assert.equal(correction.commits.length,1);assert.match(correction.commits[0].content,/150/);assert.match(correction.commits[0].content,/5[,.]?000/);assert.equal(correction.commits[0].metadata.response_route,'customer_guidance');
+ const memory=correction.tables.conversation_memory_state[0].memory;assert.equal(memory.current_customer_facts.find(x=>x.key==='room_area').value.amount,150);assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);assert(memory.latest_corrections.length>0);assert(memory.cancelled_or_superseded.length>0);
+ const before=correction.requests.length;const replay=await correction.run();assert.equal(replay.body.idempotent,true);assert.equal(correction.commits.length,1);assert.equal(correction.requests.slice(before).filter(x=>x.url.endsWith(':generateContent')).length,0);
+ const summary=fixture('請總結同一張票的最新面積及預算，唔好查外部資料。',{company:actorCompany,source:uuid(142),originalPreview:true,fullChain:true,previous:correction.tables,history:correction.tables.messages});const sr=await summary.run();assert.equal(sr.status,200);assert.match(sr.body.reply,/150/);assert.match(sr.body.reply,/5[,.]?000/);assert(!summary.requests.some(x=>/aiplatform|context-search/.test(x.url)));
+ assert(!initial.requests.concat(correction.requests).some(x=>x.url.includes('context-search')));
+});
+test('Hosted wire_delta_json failure remains closed with no state mutation and no paid repair attempt',async()=>{
+ const f=fixture('更正：客廳實際150平方呎，預算HK$5,000。',{originalPreview:true,fullChain:true,semantic:{operation:'UPDATE_ITEM',confidence:0.97,delta_json:'{"customer_facts":['}});const r=await f.run();assert.equal(r.body.generation_success,false);assert(JSON.stringify(f.events).includes('wire_delta_json'));assert.equal(f.tables.conversation_commerce_state.length,0);assert.equal(f.tables.conversation_memory_state.length,0);assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1);assert.equal(f.commits.length,1);await f.run();assert.equal(f.commits.length,1);
 });

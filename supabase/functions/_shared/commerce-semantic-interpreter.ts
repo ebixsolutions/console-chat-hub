@@ -4,8 +4,7 @@ import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { requirementMutationText } from "./commerce-state-authority.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
-  COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,
-  COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS,
+  COMMERCE_SEMANTIC_NATIVE_INSTRUCTIONS,
   type SemanticContractRejection,
   type CommerceSemanticFrame,
   decodeCommerceSemanticWire,
@@ -306,15 +305,16 @@ export async function interpretCommerceSemantics(
     input,
   );
 
-  // The closed provider schema carries dynamic typed values as JSON strings.
-  // Decode and enforce the canonical semantic contract before accepting events;
-  // schema-constrained output still cannot write state directly.
+  // Hosted 21745026: outer schema-valid JSON contained an invalid delta_json
+  // document. Generate native JSON once, keeping dynamic customer values native.
+  // Do not repair malformed output or retry paid inference. Strict decoding and
+  // the unchanged canonical validator still precede every proposed state event.
   let result;
   try { result = await callModel({
     purpose: "evaluation",
     system: SYSTEM +
-      COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS +
-      "\nProvider wire format: only delta_json is JSON-encoded. Its contents use native customer_facts value and native entity attributes/constraints exactly as shown in the example and delta schema. Preserve all named values/units, false, zero and null. All other fields use the stated contract. For corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraints and customer_correction=true. Output budget 4096 tokens; omit unchanged/default fields. Do not include reasoning.",
+      COMMERCE_SEMANTIC_NATIVE_INSTRUCTIONS +
+      "\nFor corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraints and customer_correction=true. Output budget 4096 tokens; omit unchanged/default fields. Do not include reasoning.",
     user: buildUser(input, persistentStateSummary),
     maxTokens: 4096,
     operationId: `commerce-semantic:${input.source_message_id}`,
@@ -322,7 +322,9 @@ export async function interpretCommerceSemantics(
     conversationId: input.conversation_id,
     tag: "commerce-semantic-interpreter",
     responseFormat: "json",
-    responseSchema: COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,
+    // JSON MIME mode requests a single JSON document without the unsupported
+    // dynamic-key schema or an unconstrained JSON-in-a-string escape layer.
+    // Provider schema enforcement is not substituted for canonical validation.
     thinkingBudget: 0,
     signal: input.signal,
   }); } catch (error) {

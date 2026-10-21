@@ -455,6 +455,29 @@ export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS =
   "there are no lifecycle, correction or negations aliases. Schema: " +
   JSON.stringify(COMMERCE_SEMANTIC_DELTA_SCHEMA);
 
+/** Native JSON transport avoids asking the model to serialize a second JSON
+ * document inside a string. The canonical validator below remains the only
+ * admission to business state; JSON syntax alone is never semantic authority.
+ * Keep the older wire decoder for compatibility, including its strict rejects. */
+export const COMMERCE_SEMANTIC_NATIVE_SCHEMA = {
+  type: "object", additionalProperties: false,
+  required: ["operation", "confidence"],
+  properties: {
+    operation: { type: "string", enum: [...OPERATIONS] },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+    ...COMMERCE_SEMANTIC_DELTA_SCHEMA.properties,
+  },
+};
+export const COMMERCE_SEMANTIC_NATIVE_INSTRUCTIONS =
+  "Return one native JSON object, not JSON encoded inside a string. " +
+  "Put operation, confidence and this turn's optional fields directly in that object. " +
+  "Do not emit delta_json, value_json, attributes_json or constraints_json. " +
+  "customer_facts use {key,value}; value and entity attributes/constraints retain native typed JSON, including false, zero, null, arrays and bounded objects. " +
+  "Omit unchanged/default fields. Never repair an invalid value by dropping a constraint. " +
+  "Example: " + JSON.stringify({operation:"UPDATE_ITEM",confidence:0.97,customer_correction:true,
+    customer_facts:[{key:"maximum_depth",value:{amount:560,unit:"mm"}},{key:"auto_renew",value:false}]}) +
+  ". Canonical JSON grammar: " + JSON.stringify(COMMERCE_SEMANTIC_NATIVE_SCHEMA);
+
 export type SemanticContractRejection =
   | "wire_object" | "wire_outer_fields" | "wire_delta_size_or_type"
   | "wire_delta_json" | "wire_delta_fields" | "wire_value_json"
