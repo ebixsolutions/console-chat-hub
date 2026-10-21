@@ -354,7 +354,14 @@ function retainedCustomerFacts(rows: MemoryHistoryRow[], state: ConversationComm
     }
     const cancelled = text.match(/([^，。,.!?！？]{1,30}?)(?:那部|嗰部|那個|那个)?\s*(?:暫時|暂时)?\s*(?:取消|唔要|不要)/i);
     if (cancelled?.[1]) add(superseded, "cancelled item", cancelled[1].replace(/^(?:更正|correction)[:：]?\s*/i, "").trim(), row);
-    const addressCorrection = parseAddressReplacementCorrection(text);
+    // Generic requirement corrections may contain 型號 or "living room".
+    // Neither is address authority. Keep the frozen reducer unchanged and
+    // require address context or a concrete address component at this Memory
+    // extraction boundary before invoking its address parser.
+    const addressContext = /(?:地址|送貨地點|送货地点|收貨地點|收货地点|delivery\s+(?:address|location)|\baddress\b)/i.test(text);
+    const addressComponent = /(?:邨|村|苑|街|道|路|大廈|大厦)|(?:[A-Z0-9一二三四五六七八九十]+)\s*(?:座|樓|楼|層|层|室|號|号)|\b(?:building|block|floor|road|street|avenue)\b|\broom\s+[A-Z]*\d+[A-Z]*\b/i.test(text);
+    const addressCorrection = addressContext || (addressComponent && retainedRoomSizes(text).length === 0)
+      ? parseAddressReplacementCorrection(text) : null;
     const statedAddress = text.match(/(?:送貨地址|送货地址|地址)\s*(?:是|係|為|为|=|:|：)?\s*([^。!?！？]{3,180})/i)?.[1];
     const address: string = addressCorrection
       ? applyAddressReplacementCorrection(

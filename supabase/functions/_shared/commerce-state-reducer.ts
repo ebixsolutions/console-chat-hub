@@ -400,10 +400,7 @@ export function parseAddressReplacementCorrection(
       )
       .replace(/[,，。.!！?？;；\s]+$/g, "");
   const addressContext = /(?:地址|送貨地址|送货地址|收貨地址|收货地址|送貨地點|送货地点|delivery address|delivery location)/i;
-  // A model's 型號 or a living-room requirement is not a delivery address.
-  // Unlabelled corrections need an actual address component, not the isolated
-  // character 號 or the ordinary English noun room.
-  const addressValue = /(?:邨|村|苑|街|道|路|大廈|大厦|中心)|(?:[A-Z0-9一二三四五六七八九十]+)\s*(?:座|樓|楼|層|层|室|號|号)|\b(?:building|block|floor|road|street|avenue)\b|\broom\s+[A-Z0-9]+\b/i;
+  const addressValue = /(?:邨|村|苑|座|樓|楼|層|层|室|街|道|路|號|号|大廈|大厦|中心|building|block|floor|room|road|street|avenue)/i;
 
   const paired = text.match(
     /^(?:(?:更正|修正|correction)\s*)?(?:(?:地址|送貨地址|送货地址|收貨地址|收货地址|delivery address)\s*[:：,，]?\s*)?(?:唔係|唔系|不是|不係|not)\s*(.+?)\s*[,，;；]?\s*(?:而)?(?:係|系|是|but\s+(?:it\s+is\s+)?|instead\s+it\s+is\s+)\s*(.+)$/i,
