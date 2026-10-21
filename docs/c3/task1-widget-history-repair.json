@@ -7,17 +7,16 @@
   "scope": "Backward-compatible read-only original Preview history. Existing ordinary dispatch and all synthetic admission/KB guards unchanged. No new paid execution path.",
   "read_security": [
     "server Auth.getUser; active own membership/company; own active allowed-origin Channel",
-    "canonical original null-channel conversation AND independently matching Session actor/fingerprint/markers",
+    "original canonical/pre_activation null-channel conversation, currently bound to the verified own Company, AND independently matching Session actor/fingerprint/markers; historical pre_activation is read-only, never execution authority",
     "message query embeds conversation and Session in one database snapshot; rejects concurrent identity change",
     "archive cannot use send or reconciliation; no session token returned; recalled/thinking rows omitted; IDs deduplicated",
     "frontend archive blocks Send, Enter and composition; ordinary new-conversation and synthetic paths retained"
   ],
   "production_readonly_eligibility": {
     "total_original_Frankie": 38,
-    "eligible": 35,
-    "excluded": 3,
+    "eligible": 37,
+    "excluded": 1,
     "reasons": [
-      "two originally pre_activation/company-unattached",
       "one nonmatching fingerprint/missing Session scope marker"
     ],
     "not_Hosted_acceptance": true
@@ -30,7 +29,7 @@
     },
     {
       "path": "supabase/functions/widget-live-ai-test/index.ts",
-      "sha256": "13cffc824c1eb12d763df08a1332de4d93cf4325dcbfd2e4fcf091212e332fae",
+      "sha256": "68bfd92da77eafd5b55293b342a68540b5c904ffb732b37de0b92ece5878857f",
       "rollback": "restore exact baseline file"
     },
     {
@@ -40,7 +39,7 @@
     },
     {
       "path": "tests/c3-widget-live-auth/legacy-history.test.mjs",
-      "sha256": "af915c2f82a907043c32af29d6b1d8d7bca441984b7d4e7d2e3d493b78a8ba4f",
+      "sha256": "be721e3ae43a8b4b81fd5e6bda59638d836a6bada9d1ed2b0519c67cddc4cd7d",
       "rollback": "remove new file"
     },
     {
@@ -136,7 +135,7 @@
         },
         {
           "path": "supabase/functions/widget-live-ai-test/index.ts",
-          "sha256": "13cffc824c1eb12d763df08a1332de4d93cf4325dcbfd2e4fcf091212e332fae"
+          "sha256": "68bfd92da77eafd5b55293b342a68540b5c904ffb732b37de0b92ece5878857f"
         }
       ],
       "production_deployment_authorized": false
@@ -144,17 +143,17 @@
     "changed": [
       {
         "path": "supabase/functions/widget-live-ai-test/index.ts",
-        "sha256": "13cffc824c1eb12d763df08a1332de4d93cf4325dcbfd2e4fcf091212e332fae",
+        "sha256": "68bfd92da77eafd5b55293b342a68540b5c904ffb732b37de0b92ece5878857f",
         "rollback_sha256": "b8c05ccb43b43cbf3360943ade89d0f5212a7ce26ebde16da3d5878c2b47d826"
       }
     ],
     "removed": [],
-    "target_sha256": "bcbe16c4480143703a51d8f960efbc417b98b6d55ddb44fb1a89b354a272ca5f",
+    "target_sha256": "89af81ad303ae4ee6d0898467b444da29c3485c6312ee7e58e961c2a7854f9ab",
     "rollback": "Before deployment require live v15 dependency hashes/config exactly match baseline; after approved deployment restore all nine exact c5 baseline files with unchanged JWT/import-map/entrypoint settings. No SQL/config/lease rollback needed.",
     "deployment_authorized": false
   },
   "validation": {
-    "backend_history": "42 actual-handler adapter tests; not Hosted",
+    "backend_history": "44 actual-handler adapter tests; not Hosted",
     "existing_handler": "57 actual-handler adapter assertions; not Hosted",
     "ordinary_ingress_and_exactly_once": "8 ingress and 8 merge tests; not Hosted",
     "frontend": "18 React DOM tests; not Hosted",
@@ -165,7 +164,8 @@
     "full_build": "npm run build exit0; complete authoritative repo client and SSR",
     "changed_Edge_check": "deno check exit0 with pinned SDK 2.45.0 temporary import map; canonical URL check added to existing CI",
     "baseline_reproduction": "new history regression on c5 baseline exit1 as expected; archive absent",
-    "source_gate": "required after exact candidate commit; no Hosted PASS implied"
+    "source_gate": "207 anti-fake controls and original C3_GATE_PHASE=preproduction final-gate exit0 on same initial repair tree; rerun required on final scoped correction",
+    "legacy_phase1_validator": "phase1_console_final_gate --source-only exit1 at historical B0 validation-only successor restriction. This checker admits validation-only commits; current C3 application repair uses the existing governed preproduction gate. Frozen B0/Phase-1 acceptance is preserved, not relabelled."
   },
   "guards": {
     "kb_bounds_verified": false,

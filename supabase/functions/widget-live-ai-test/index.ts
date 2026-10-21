@@ -188,7 +188,8 @@ function legacyPreviewOwned(c: any, userId: string, companyId: string): boolean 
   return isUuid(c?.id) && c.company_id === companyId && c.channel_config_id === null &&
     isUuid(c.visitor_session_id) && m?.source === "widget_live_test" &&
     m.widget_live_test === true && m.synthetic !== true && m.exclude_training === true &&
-    m.scope_mode === "canonical" && m.canonical_company_attached === true && m.owner_user_id === userId;
+    ((m.scope_mode === "canonical" && m.canonical_company_attached === true) ||
+      (m.scope_mode === "pre_activation" && m.canonical_company_attached === false)) && m.owner_user_id === userId;
 }
 
 async function legacyPreviewSessionValid(admin: QueryClient, c: any, userId: string): Promise<boolean> {
@@ -204,7 +205,7 @@ function legacyPreviewSessionMatches(session: any, c: any, userId: string): bool
   return session?.id === c.visitor_session_id && session.channel_config_id === null &&
     session.visitor_fingerprint === `widget-live-test:${userId}` &&
     m?.source === "widget_live_test" && m.test_mode === true && m.exclude_training === true &&
-    m.scope_mode === "canonical" && m.owner_user_id === userId;
+    m.scope_mode === c.metadata_source.scope_mode && m.owner_user_id === userId;
 }
 
 async function loadLegacyPreview(admin: QueryClient, id: string, userId: string, companyId: string) {

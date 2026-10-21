@@ -97,3 +97,10 @@ for(const scope of scopes)test(scope[0]+' session lookup failure is an error, ne
  const f=fixture(scope,()=>{},c=>c,{session:true});
  for(const body of [{action:'history'},{action:'load',test_conversation_id:ticket}]){const r=await f.call(body);assert.equal(r.status,500);assert.equal(r.data.history,undefined);assert.equal(r.data.messages,undefined);}
 });
+
+for(const scope of scopes)test(scope[0]+' original pre-activation archive is readable only after persisted own-company binding',async()=>{
+ const f=fixture(scope,t=>{t.conversations[0].metadata_source.scope_mode='pre_activation';t.conversations[0].metadata_source.canonical_company_attached=false;t.visitor_session[0].visitor_metadata.scope_mode='pre_activation';});
+ const h=await f.call({action:'history'});assert.equal(h.data.history.length,1);assert.equal(h.data.history[0].read_only,true);
+ const r=await f.call({action:'load',test_conversation_id:ticket});assert.equal(r.status,200);assert.equal(r.data.read_only,true);assert.equal(r.data.messages.length,3);
+ const denied=await f.call({action:'send',test_conversation_id:ticket,client_message_id:foreign,query:'Who are you?'});assert.equal(denied.status,404);
+});

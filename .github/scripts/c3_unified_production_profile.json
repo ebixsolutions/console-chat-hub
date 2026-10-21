@@ -1037,7 +1037,7 @@
     "supabase/functions/generate-reply/index.ts": "0731769d66c0c7207f4114ad1de84807e52d61e2c64a24dbed40de31e5611d55",
     "supabase/functions/kb-search-proxy/index.ts": "c2e61bd8d06856c6606e509182e6050d29083afca3f4df6326971ed096aa97a7",
     "supabase/functions/receive-widget-message/index.ts": "fff8d87eb720e3bb5ec887cbd5a180e2155e4d8c6288b2ab89720ae299903c1d",
-    "supabase/functions/widget-live-ai-test/index.ts": "13cffc824c1eb12d763df08a1332de4d93cf4325dcbfd2e4fcf091212e332fae",
+    "supabase/functions/widget-live-ai-test/index.ts": "68bfd92da77eafd5b55293b342a68540b5c904ffb732b37de0b92ece5878857f",
     "tests/c3-widget-live-auth/handler.test.mjs": "942770dd5127500644f19ddbe0e55e3dbbb293c0705b3e0daa5878c5ea2687df",
     "tests/c3-widget-live-auth/ordinary-receive.test.mjs": "f845ddef3ccb933aa99b3da13ba8eb28f57b9ffed01bccac9258acfee72710da",
     "tests/console-navigation/ce-batch.test.mjs": "1508a1055df0056584c29444e607dee3003e5d4272a8ed6235862d16031b93a6",
@@ -1093,8 +1093,8 @@
     "sql/c3_uat_tenant_authority_rollback.sql": "92d2907902e5a9b7de4e41d5dae857455fdf43fd2480aa4a1b0c2588b4a79df9",
     "docs/c3/task1-dual-tenant-recovery.json": "4b4f6cfd3eb3c75656ce9b4808b1d4774aef6878b0f3da9b1a6833d6745e33c8",
     "supabase/functions/_shared/f13-llm-failure.test.ts": "100a03fe4c937baff56431860bcff5f076389d43883ec97d803d24bb9c641263",
-    "tests/c3-widget-live-auth/legacy-history.test.mjs": "af915c2f82a907043c32af29d6b1d8d7bca441984b7d4e7d2e3d493b78a8ba4f",
-    "docs/c3/task1-widget-history-repair.json": "f6d81b3816ba348c824292d258b6b70d085d656f9ea9d5a3992786f46cd4511a"
+    "tests/c3-widget-live-auth/legacy-history.test.mjs": "be721e3ae43a8b4b81fd5e6bda59638d836a6bada9d1ed2b0519c67cddc4cd7d",
+    "docs/c3/task1-widget-history-repair.json": "1e0d048da61e2d136c6aaa9c286be78f2090caabcf631436f7b322e5c1533b83"
   },
   "live_execution_deployment_authorized": false,
   "authorized_widget_hosted_build_sha256": {
