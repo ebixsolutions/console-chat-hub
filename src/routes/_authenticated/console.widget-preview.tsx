@@ -837,6 +837,7 @@ function PreviewWidget({
   const [executionFailure, setExecutionFailure] = useState<string | null>(null);
   const [conversationClosed, setConversationClosed] = useState(false);
   const [conversationReadOnly, setConversationReadOnly] = useState(false);
+  const [conversationReadOnlyReason, setConversationReadOnlyReason] = useState<string | null>(null);
   const [conversationVerified, setConversationVerified] = useState(false);
   const [executionReady, setExecutionReady] = useState(false);
   const [authorizedPreviewAvailable, setAuthorizedPreviewAvailable] = useState(false);
@@ -946,6 +947,7 @@ function PreviewWidget({
     setExecutionFailure(null);
     setConversationClosed(false);
     setConversationReadOnly(false);
+    setConversationReadOnlyReason(null);
     setConversationVerified(false);
     composing.current = false;
     emojiCaret.current = null;
@@ -1021,6 +1023,7 @@ function PreviewWidget({
     setTestConversationId(data.conversation_id);
     setConversationClosed(["resolved", "closed"].includes(String(data.conversation_status ?? "")));
     setConversationReadOnly(data.read_only === true);
+    setConversationReadOnlyReason(typeof data.read_only_reason === "string" ? data.read_only_reason : null);
     setConversationVerified(true);
     if (storageKey) window.localStorage.setItem(storageKey, data.conversation_id);
     const underHumanControl =
@@ -1057,7 +1060,7 @@ function PreviewWidget({
       else if (data.company_id !== scopeCompanyId || data.channel_id !== scopeChannelId) reason = "selected_scope_mismatch";
       setScopeFailure(reason);
       const executionCode = data?.execution_failure?.code;
-      setExecutionFailure(ready && ["UAT_AUTHORIZATION_ABSENT", "UAT_SOURCE_OR_RUN_DENIED", "UAT_DEPENDENCY_MISSING", "UAT_ADMISSION_DENIED", "UAT_REMOTE_BOUND_UNVERIFIED", "UAT_SCOPE_DENIED", "UAT_ISOLATION_DENIED"].includes(executionCode) ? executionCode : null);
+      setExecutionFailure(ready && ["ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED", "ORIGINAL_PREVIEW_PROVIDER_DENIED", "UAT_AUTHORIZATION_ABSENT", "UAT_SOURCE_OR_RUN_DENIED", "UAT_DEPENDENCY_MISSING", "UAT_ADMISSION_DENIED", "UAT_REMOTE_BOUND_UNVERIFIED", "UAT_SCOPE_DENIED", "UAT_ISOLATION_DENIED"].includes(executionCode) ? executionCode : null);
       setScopeReady(ready);
       setRuntimeReady(ready && verifiedWidgetRuntime(data,user?.id));
       setRuntimeReason(ready ? widgetRuntimeBlockReason(data,user?.id) : null);
@@ -1332,6 +1335,7 @@ function PreviewWidget({
       setTestConversationId(null);
       setConversationClosed(false);
       setConversationReadOnly(false);
+    setConversationReadOnlyReason(null);
       setConversationVerified(false);
       if (storageKey) {
         try { window.localStorage.removeItem(`${storageKey}:draft:new`); } catch { /* Local-only draft cleanup. */ }
@@ -1524,6 +1528,7 @@ function PreviewWidget({
             {lang === "zh" ? "開啟已授權 AI 對話" : "Open authorized AI conversation"}
           </button>
         )}
+        {mode === "live" && conversationReadOnlyReason === "synthetic_uat_start_new_original_preview" && <p role="status" className="mb-2 text-xs text-amber-800">{lang === "zh" ? "此 Synthetic UAT 對話保留原租約規則。請按「新對話」使用已授權的原 AI Preview。" : "This Synthetic UAT conversation retains its lease rules. Select New Conversation to use your authorized original AI Preview."}</p>}
         {mode === "live" && scopeReady && runtimeReady && (!executionReady || !remoteReady) && (
           <p role="status" className="mb-2 text-xs text-amber-800">
             {lang === "zh"
@@ -1560,7 +1565,7 @@ function PreviewWidget({
         {mode === "live" && scopeReady && !runtimeReady && <p role="alert" className="mb-2 text-xs text-amber-800">{lang === "zh" ? "目前後端未證實支援受控傳送契約；歷史可讀、草稿可編輯，但不會傳送或執行商業 AI。這不代表發布版前端過時。" : "The backend has not proven the controlled-send contract. History and local drafts remain available; sending and business AI are blocked. This does not establish a stale published frontend."}</p>}
         {mode === "live" && <details className="mb-2 text-xs"><summary>{lang === "zh" ? "傳送狀態" : "Send status"}</summary><output data-widget-send-state={sendBlockReason ?? "ready"}>{sendBlockReason ?? "ready"}</output><div>scopeReady={String(scopeReady)} · runtimeReady={String(runtimeReady)} · executionReady={runtimeReady ? String(executionReady) : "unverified"} · remoteReady={runtimeReady ? String(remoteReady) : "unverified"} · pending={String(Boolean(pendingSend.current))} · conversationVerified={String(conversationVerified)}</div></details>}
         {mode === "live" && pendingSend.current && !testConversationId && <div role="alert" className="mb-2 text-xs">{lang === "zh" ? "上一則訊息結果未明；只可查核原訊息，不會重送或另開對話。" : "The previous outcome is unknown. Check the original message; it will not be resent or replaced with a new conversation."}<button type="button" disabled={!scopeReady || !runtimeReady} className="ml-1 underline" onClick={() => void reconcilePending()}>{lang === "zh" ? "核實原訊息送達" : "Check original delivery"}</button></div>}
-        {mode === "live" && conversationReadOnly && <p role="status" className="mb-2 text-xs text-slate-500">{lang === "zh" ? "這是原有 Preview 的唯讀歷史對話，不能在此傳送訊息或執行 AI。" : "This original Preview conversation is read-only. Messages and AI execution are disabled for this archive."}</p>}
+        {mode === "live" && conversationReadOnly && !conversationReadOnlyReason && <p role="status" className="mb-2 text-xs text-slate-500">{lang === "zh" ? "這是原有 Preview 的唯讀歷史對話，不能在此傳送訊息或執行 AI。" : "This original Preview conversation is read-only. Messages and AI execution are disabled for this archive."}</p>}
         {mode === "live" && conversationClosed && !conversationReadOnly && (
           <p role="status" className="mb-2 text-xs text-slate-500">
             {lang === "zh" ? "此對話已結束；請使用「新對話」開始另一個問題。" : "This conversation is resolved. Use New Conversation to start another request."}

@@ -1,3 +1,4 @@
+import { originalPreviewRequest } from "../_shared/original-widget-preview.ts";
 import { previewActorClient } from "../_shared/widget-preview-authority.ts";
 import { ORDINARY_PREVIEW_CONTRACT, ordinaryPreviewInputAllowed } from "../_shared/widget-preview-control.ts";
 import { isExplicitHandoffRequest } from "../_shared/handoff-intent.ts";
@@ -107,8 +108,10 @@ Deno.serve(async (req) => {
     const originCheck = validateWidgetOrigin(req, channel.allowed_origins);
     if (!originCheck.ok) return json({ success: false, error: originCheck.error }, 403);
 
-    const scope=await supabase.from("conversations").select("id,visitor_session_id,metadata_source").eq("id",conversation_id).eq("visitor_session_id",sessionScope.id).maybeSingle();
+    const scope=await supabase.from("conversations").select("id,company_id,channel_config_id,visitor_session_id,metadata_source").eq("id",conversation_id).eq("visitor_session_id",sessionScope.id).maybeSingle();
     if(scope.error || !scope.data) return json({success:false,error:"conversation_scope_unavailable"},403);
+    if(scope.data.metadata_source?.execution_class === "authenticated_admin_preview" && !await originalPreviewRequest(req,createClient,supabase,scope.data))
+      return json({success:false,error:"original_preview_actor_or_authority_denied",message_written:false},403);
     const previewHint=scope.data.metadata_source?.source === "ordinary_widget_control_preview";
     if (previewHint || previewContract !== undefined) {
       // A browser flag cannot promote a customer conversation. The protected registry and actual JWT decide.

@@ -1,3 +1,4 @@
+import { originalPreviewEnabled } from "../_shared/original-widget-preview.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "../_shared/execution-failure.ts";
 import { resolveIndustryProfile } from "../_shared/industry-runtime-adapter.ts";
 import { phase1CoachAllowed } from "../_shared/remote-model-accounting.ts";
@@ -2174,6 +2175,18 @@ Deno.serve(async (req) => {
     parsedSourceMessageId = typeof source_message_id === "string"
       ? source_message_id
       : null;
+
+    // Original Preview generation is invoked only by the existing privileged
+    // visitor ingress. A logged-in browser cannot call the paid generator with
+    // a copied ticket/source-message ID. Normal customer call semantics remain.
+    const previewDb=createClient(Deno.env.get("SUPABASE_URL") ?? "",getSupabaseAdminKey());
+    const previewTarget=await previewDb.from("conversations").select("id,metadata_source").eq("id",parsedConversationId).maybeSingle();
+    if(previewTarget.error)return new Response(JSON.stringify({success:false,error:"preview_scope_lookup_failed"}),{status:503,headers:corsHeaders});
+    if(previewTarget.data?.metadata_source?.execution_class === "authenticated_admin_preview") {
+      const serviceJwt=Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim();
+      if(!originalPreviewEnabled() || !serviceJwt || req.headers.get("Authorization")!==`Bearer ${serviceJwt}`)
+        return new Response(JSON.stringify({success:false,error:"original_preview_server_ingress_required"}),{status:403,headers:corsHeaders});
+    }
 
     const ENABLE_KB = Deno.env.get("ENABLE_KB_ADAPTER") !== "false";
     const ENABLE_COACH = Deno.env.get("ENABLE_COACH_PROMPT_ADAPTER") === "true";

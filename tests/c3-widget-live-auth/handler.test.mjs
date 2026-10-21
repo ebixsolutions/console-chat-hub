@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 const root=new URL('../../',import.meta.url);
 let code=fs.readFileSync(new URL('supabase/functions/widget-live-ai-test/index.ts',root),'utf8').replace(/^import .*;\n/gm,'').replace('Deno.serve(createWidgetLiveHandler());','');
 const helper=fs.readFileSync(new URL('supabase/functions/_shared/supabase-admin-key.ts',root),'utf8').replace('export function','function');
-const dependencyCode=['supabase/functions/_shared/execution-failure.ts','supabase/functions/_shared/uat-execution-contract.ts','supabase/functions/_shared/uat-execution-readiness.ts','supabase/functions/_shared/handoff-intent.ts','supabase/functions/_shared/conversational-routing.ts'].map(file=>fs.readFileSync(new URL(file,root),'utf8').replace(/^import .*;\n/gm,'')).join('\n');
+const dependencyCode=['supabase/functions/_shared/original-widget-preview.ts','supabase/functions/_shared/execution-failure.ts','supabase/functions/_shared/uat-execution-contract.ts','supabase/functions/_shared/uat-execution-readiness.ts','supabase/functions/_shared/handoff-intent.ts','supabase/functions/_shared/conversational-routing.ts'].map(file=>fs.readFileSync(new URL(file,root),'utf8').replace(/^import .*;\n/gm,'')).join('\n');
 code=dependencyCode+'\n'+code;
 code='const createClient=()=>{throw new Error("unexpected SDK client")}; const supabaseCorsHeaders=()=>({});\n'+helper+'\n'+code+'\nexport {getSupabaseAdminKey as testAdminKey, trustedDispatchScope, FRANKIE_DEMO_COMPANY, FRANKIE_DEMO_REVISION, UatDenied};';
 const js=ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;

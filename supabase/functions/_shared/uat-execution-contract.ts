@@ -1,3 +1,4 @@
+import { verifyOriginalPreview } from "./original-widget-preview.ts";
 import { safeExecutionCode } from "./execution-failure.ts";
 import { buildVertexEndpoint } from "./vertex-generation-config.ts";
 /** Temporary synthetic UAT admission. Existing log persistence, not the deferred shared Guard. */
@@ -40,7 +41,7 @@ export async function legacyPreactivationAuthority(db: {from:(table:string)=>any
 /** Identity comes from service-side persistence and existing authenticated caller scopes.
  * The fixed Director synthetic company never falls through to legacy dispatch.
  * A request body flag, tenant UUID or missing lease cannot grant UAT privileges. */
-export async function trustedDispatchScope(db: Db, company: string | null, conversation: string | null, authority?: object): Promise<"legacy" | "uat"> {
+export async function trustedDispatchScope(db: Db, company: string | null, conversation: string | null, authority?: object): Promise<"legacy" | "uat" | "authenticated_preview"> {
   if(company===null && authority){const grant=preactivation.get(authority);if(grant && grant.conversation===conversation && grant.expires>Date.now() && Deno.env.get("KB_PREACTIVATION_ENABLED")==="true" && grant.tenant===Deno.env.get("KB_PREACTIVATION_TENANT_ID")?.trim()){if(conversation){if(!db.from)throw new UatDenied("PREACTIVATION_TICKET_DENIED");const ticket=await db.from("conversations").select("id,company_id").eq("id",conversation).maybeSingle();if(ticket.error || ticket.data?.id!==conversation || ticket.data.company_id!==null)throw new UatDenied("PREACTIVATION_TICKET_DENIED");}return "legacy";}throw new UatDenied("PREACTIVATION_AUTHORITY_DENIED");}
   if (!company || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(company) || !db.from) throw new UatDenied("DISPATCH_COMPANY_UNPROVEN");
   try {
@@ -51,6 +52,14 @@ export async function trustedDispatchScope(db: Db, company: string | null, conve
       if (ticket.error || ticket.data?.id !== conversation || ticket.data?.company_id !== company) throw new UatDenied("DISPATCH_TENANT_MISMATCH");
     }
   } catch (error) { throw error instanceof UatDenied ? error : new UatDenied("DISPATCH_IDENTITY_UNAVAILABLE"); }
+  if (conversation && (company === UAT_COMPANY || company === FRANKIE_DEMO_COMPANY)) {
+    const ticket=await db.from("conversations").select("id,company_id,channel_config_id,visitor_session_id,metadata_source").eq("id",conversation).eq("company_id",company).maybeSingle();
+    if(ticket.error || !ticket.data)throw new UatDenied("DISPATCH_IDENTITY_UNAVAILABLE");
+    if(ticket.data.metadata_source?.execution_class === "authenticated_admin_preview") {
+      if(await verifyOriginalPreview(db,ticket.data)) return "authenticated_preview";
+      throw new UatDenied("UAT_AUTHORIZATION_DENIED");
+    }
+  }
   if (company === UAT_COMPANY) { if (!conversation) throw new UatDenied("UAT_CONVERSATION_REQUIRED"); uatRun(company); return "uat"; }
   if (company === FRANKIE_DEMO_COMPANY && conversation) {
     // Only the authenticated, tagged synthetic preview enters bounded admission.

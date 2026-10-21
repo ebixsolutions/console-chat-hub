@@ -1,3 +1,4 @@
+import { buildVertexEndpoint } from "./vertex-generation-config.ts";
 import { uatFetch, UatDenied, trustedDispatchScope } from "./uat-execution-contract.ts";
 /** Shared pre-dispatch model boundary. No scoped fail-open path. */
 export type AccountingRpc = {
@@ -42,14 +43,33 @@ export async function accountedModelFetch(
   upstream: typeof fetch = fetch,
   onDispatch?: () => void,
 ): Promise<Response> {
+  let mode: "legacy" | "uat" | "authenticated_preview";
   try {
-    const mode = await trustedDispatchScope(db, meta.companyId, meta.conversationId, meta.legacyAuthority);
+    mode = await trustedDispatchScope(db, meta.companyId, meta.conversationId, meta.legacyAuthority);
     if (mode === "uat") return await uatFetch(db, {...meta, operationId: `${meta.slot}:${meta.operationId}`}, url, init, upstream, onDispatch);
   } catch (e) {
     if (e instanceof UatDenied) throw new ModelAccountingError(e.code);
     // A failed provider transport is not an admission denial. Unknown outcomes
     // have already been durably paused by uatFetch before this error returns.
     throw e;
+  }
+  if (mode === "authenticated_preview") {
+    // Explicit original-account paid permission, not synthetic admission and
+    // never ordinary traffic reclassification. Existing provider only, bounded
+    // original retry/output controls; no new ledger or inferred UAT balance.
+    const model=Deno.env.get("LLM_MODEL_"+meta.purpose.toUpperCase())?.trim();
+    const project=Deno.env.get("GOOGLE_PROJECT_ID")?.trim(),region=Deno.env.get("GOOGLE_REGION")?.trim();
+    if(Deno.env.get("LLM_PROVIDER")?.trim().toLowerCase()!=="vertex" || meta.provider!=="vertex" ||
+      !["generation","assist","evaluation"].includes(meta.purpose) || !model || !project || !region ||
+      !Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON")?.trim() || url!==buildVertexEndpoint(project,region,model) ||
+      init.method!=="POST" || String(init.body)!==meta.request || !Number.isInteger(meta.attempt) || meta.attempt<1 || meta.attempt>3)
+      throw new ModelAccountingError("ORIGINAL_PREVIEW_PROVIDER_DENIED");
+    const body=JSON.parse(meta.request);
+    if(new TextEncoder().encode(meta.request).length>256000 || !Number.isInteger(body.generationConfig?.maxOutputTokens) ||
+      body.generationConfig.maxOutputTokens<1 || body.generationConfig.maxOutputTokens>8192)
+      throw new ModelAccountingError("ORIGINAL_PREVIEW_PROVIDER_DENIED");
+    onDispatch?.();
+    return await upstream(url,{...init,redirect:"error"});
   }
   // Established authenticated Production path: preserve exact provider request/response.
   // Permanent Guard is deferred; no new endpoint, provider, credential or tenant scope.

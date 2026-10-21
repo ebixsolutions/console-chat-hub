@@ -11,7 +11,7 @@ let source=process.env.C3_WIDGET_HANDLER_SOURCE_REF
   ? execFileSync('git',['show',process.env.C3_WIDGET_HANDLER_SOURCE_REF+':supabase/functions/widget-live-ai-test/index.ts'],{encoding:'utf8'})
   : read('supabase/functions/widget-live-ai-test/index.ts');
 source=source.replace(/^import .*;\n/gm,'').replace('Deno.serve(createWidgetLiveHandler());','');
-const dependencies=['execution-failure','uat-execution-contract','uat-execution-readiness','handoff-intent','conversational-routing']
+const dependencies=['original-widget-preview','execution-failure','uat-execution-contract','uat-execution-readiness','handoff-intent','conversational-routing']
   .map(n=>read(`supabase/functions/_shared/${n}.ts`).replace(/^import .*;\n/gm,'')).join('\n');
 const code='const createClient=()=>{throw Error("SDK not injected")};const getSupabaseAdminKey=()=>"server-key";const supabaseCorsHeaders=()=>({});\n'+dependencies+'\n'+source;
 const {createWidgetLiveHandler}=await import('data:text/javascript;base64,'+Buffer.from(ts.transpileModule(code,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText).toString('base64'));
