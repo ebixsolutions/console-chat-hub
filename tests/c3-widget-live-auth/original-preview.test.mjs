@@ -9,7 +9,7 @@ const body=JSON.stringify({contents:[{role:'user',parts:[{text:'Compare options 
 function setup(account,{grant=true}={}){
  f.account=account;f.user={id:crypto.randomUUID(),email:account.email,email_confirmed_at:'2026-01-01T00:00:00Z'};
  f.env={SUPABASE_URL:'https://nrfxhqabwblzxoushgnm.supabase.co',SUPABASE_ANON_KEY:'public',SUPABASE_SECRET_KEY:'isolated-secret-not-production',LLM_PROVIDER:'vertex',GOOGLE_SERVICE_ACCOUNT_JSON:'isolated-provider-config',GOOGLE_PROJECT_ID:'fixture-project',GOOGLE_REGION:'asia-east1',LLM_MODEL_GENERATION:'gemini-2.5-flash',...(grant?{ORIGINAL_WIDGET_PREVIEW_AUTHORIZATION:ORIGINAL_PREVIEW_AUTHORIZATION}:{})};
- f.rows={company_membership:[{user_id:f.user.id,company_id:account.company,role:'admin',is_active:true}],company:[{id:account.company,is_active:true}],channel_config:[{id:account.channel,company_id:account.company,is_active:true,channel_type:'web_widget',allowed_origins:['https://console-chat-hub.lovable.app']}],visitor_session:[],conversations:[],messages:[]};f.logs=[];f.rpc=[];f.transport=[];f.provider=0;f.writes=0;
+ f.rows={company_membership:[{user_id:f.user.id,company_id:account.company,role:'admin',is_active:true}],company:[{id:account.company,is_active:true}],channel_config:[{id:account.channel,company_id:account.company,is_active:true,channel_type:'web_widget',allowed_origins:['https://console-chat-hub.lovable.app']}],visitor_session:[],conversations:[],messages:[]};f.logs=[];f.rpc=[];f.transport=[];f.provider=0;f.writes=0;f.deferAnswer=false;f.omitVisitor=false;f.tasks=[];f.releaseGeneration=null;
  f.db={rpc:async(n)=>{f.rpc.push(n);throw Error('Original Preview must not borrow synthetic quota/registration');},from(table){let filters=[],single=false,op=null,payload,fields='',opts={};const q={
  select(s,o={}){fields=s;opts=o;return q;},eq(k,v){filters.push([k,v]);return q;},is(k,v){filters.push([k,v]);return q;},neq(k,v){filters.push([k,v,true]);return q;},order(){return q;},limit(){return q;},maybeSingle(){single=true;return q;},single(){single=true;return q;},insert(v){op='insert';payload=v;return q;},delete(){op='delete';return q;},update(v){op='update';payload=v;return q;},then(resolve,reject){return Promise.resolve().then(()=>{
  const get=(r,k)=>k.includes('->>')?r[k.split('->>')[0]]?.[k.split('->>')[1]]:r[k];let rows=(f.rows[table]??[]).filter(r=>filters.every(([k,v,ne])=>ne?get(r,k)!==v:get(r,k)===v));
@@ -24,10 +24,10 @@ function setup(account,{grant=true}={}){
  if(String(url).endsWith('receive-widget-message')){
  let m=f.rows.messages.find(m=>m.role==='visitor'&&m.metadata.client_message_id===b.client_message_id);const repeated=!!m;
  if(!m){m={id:crypto.randomUUID(),conversation_id:c.id,role:'visitor',content:b.content,is_recalled:false,metadata:{client_message_id:b.client_message_id}};f.rows.messages.push(m);
- if(c.status==='open') {await accountedModelFetch(f.db,{companyId:c.company_id,conversationId:c.id,operationId:'generate-reply-'+m.id,provider:'vertex',purpose:'generation',slot:'generation',attempt:1,request:body},f.url,{method:'POST',body},f.upstream);f.rows.messages.push({id:crypto.randomUUID(),conversation_id:c.id,role:'assistant',content:'Isolated provider reply',is_recalled:false,metadata:{source_message_id:m.id,generation_success:true}});}}
- return Response.json({success:true,data:{message_id:m.id,ai_reply_pending:false,idempotent:repeated}});
+ if(c.status==='open') {const generate=async()=>{if(f.deferAnswer)await new Promise(resolve=>{f.releaseGeneration=resolve;});await accountedModelFetch(f.db,{companyId:c.company_id,conversationId:c.id,operationId:'generate-reply-'+m.id,provider:'vertex',purpose:'generation',slot:'generation',attempt:1,request:body},f.url,{method:'POST',body},f.upstream);f.rows.messages.push({id:crypto.randomUUID(),conversation_id:c.id,role:'assistant',content:'Isolated provider reply',is_recalled:false,metadata:{source_message_id:m.id,generation_success:true}});};if(f.deferAnswer)f.tasks.push(generate());else await generate();}}
+ return Response.json({success:true,data:{message_id:m.id,ai_reply_pending:f.deferAnswer&&c.status==='open',idempotent:repeated}});
  }
- assert(String(url).endsWith('widget-poll-messages'));return Response.json({success:true,data:{messages:f.rows.messages.filter(m=>m.conversation_id===c.id),human_support:{state:c.status==='pending'?'waiting':'none'},ai_generating:false}});
+ assert(String(url).endsWith('widget-poll-messages'));return Response.json({success:true,data:{messages:f.rows.messages.filter(m=>m.conversation_id===c.id&&(!f.omitVisitor||m.role!=='visitor')),human_support:{state:c.status==='pending'?'waiting':'none'},ai_generating:false}});
  };
  f.handler=createWidgetLiveHandler({env:k=>f.env[k],getAdminKey:()=>f.env.SUPABASE_SECRET_KEY,log(event){f.logs.push(event);},createClient:(url,key)=>key==='public'?{auth:{getUser:async()=>({data:{user:f.user},error:null})},rpc:async()=>{throw Error('Original actor must use own Channel, not B12 registration');}}:f.db});
 }
@@ -84,3 +84,25 @@ for(const account of ORIGINAL_PREVIEW_ACCOUNTS){
   setup(account);assert.equal((await request({action:'readiness',company_id:ORIGINAL_PREVIEW_ACCOUNTS.find(a=>a!==account).company})).status,400);assert.equal(f.writes,0);assert.equal(f.provider,0);
  });
 }
+
+for(const account of ORIGINAL_PREVIEW_ACCOUNTS)test(account.email+': durable Visitor receipt returns while governed generation remains pending; polling delivers exactly once',async()=>{
+ setup(account);f.deferAnswer=true;const client=crypto.randomUUID(),started=performance.now();
+ const r=await request({action:'original_preview_send',client_message_id:client,query:'Please explain selection trade-offs for my business.'});const elapsed=performance.now()-started;
+ const tasks=[...f.tasks];f.releaseGeneration();await Promise.all(tasks);
+ assert.equal(r.status,200,JSON.stringify(r));assert(elapsed<2000,'unnecessary post-receipt wait '+elapsed+'ms');assert.equal(r.data.delivery_receipt.persisted,true);assert.equal(r.data.generation_success,false);assert.equal(r.data.answer,'');assert.equal(f.provider,1);assert.equal(f.transport.filter(x=>x.endsWith('widget-poll-messages')).length,1);
+ const c=f.rows.conversations[0];const loaded=await request({action:'load',test_conversation_id:c.id});assert.equal(loaded.status,200);assert.equal(loaded.data.messages.filter(m=>m.role==='assistant').length,1);
+ const replay=await request({action:'original_preview_send',test_conversation_id:c.id,client_message_id:client,query:'Please explain selection trade-offs for my business.'});assert.equal(replay.data.delivery_receipt.visitor_message_id,r.data.delivery_receipt.visitor_message_id);assert.equal(f.provider,1);assert.equal(f.rows.messages.length,2);
+ console.log('ISOLATED_RECEIPT_RESPONSE_MS',account.email,Math.round(elapsed),'NOT_HOSTED_AI_LATENCY');
+});
+
+for(const account of ORIGINAL_PREVIEW_ACCOUNTS)test(account.email+': a missing polled Visitor cannot become a verified receipt or trigger a blind resend',async()=>{
+ setup(account);f.deferAnswer=true;f.omitVisitor=true;const id=crypto.randomUUID();
+ const r=await request({action:'original_preview_send',client_message_id:id,query:'Please help compare the options.'});
+ assert.equal(r.status,503);assert.equal(r.data.error,'visitor_receipt_unverified');assert.equal(r.data.delivery_receipt,undefined);assert.equal(f.transport.filter(u=>u.endsWith('receive-widget-message')).length,1);assert.equal(f.rows.messages.filter(m=>m.role==='visitor').length,1);
+ f.omitVisitor=false;f.releaseGeneration();await Promise.all(f.tasks);const reconciled=await request({action:'reconcile',client_message_id:id});assert.equal(reconciled.status,200);assert.equal(reconciled.data.reconciled_client_message_id,id);assert.equal(reconciled.data.messages.filter(m=>m.role==='visitor').length,1);assert.equal(f.provider,1);assert.equal(f.transport.filter(u=>u.endsWith('receive-widget-message')).length,1);
+});
+
+for(const account of ORIGINAL_PREVIEW_ACCOUNTS)test(account.email+': Vertex B-O does not admit Singapore KB embedding or any downstream transport',async()=>{
+ setup(account);const {c}=await start();let remote=0;const requestBody=JSON.stringify({query:'current published product facts',company_id:'fixture-only-not-a-live-mapping'});
+ await assert.rejects(()=>accountedModelFetch(f.db,{companyId:account.company,conversationId:c.id,operationId:'kb-'+crypto.randomUUID(),provider:'singapore-kb',purpose:'kb_embedding',slot:'context-search',attempt:1,request:requestBody},'https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search',{method:'POST',body:requestBody},async()=>{remote++;return Response.json({});}),e=>e.code==='ORIGINAL_PREVIEW_PROVIDER_DENIED');assert.equal(remote,0);assert.equal(f.provider,1);
+});

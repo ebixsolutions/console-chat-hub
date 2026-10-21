@@ -318,6 +318,20 @@ async function createTestConversation(
   return { ok: true, conversationId: String(conversation.id) };
 }
 
+// Keep every ownership/session/message-snapshot check, but do not serialize
+// independent tickets. Four workers bound DB load and preserve input order.
+async function mapHistory<T,R>(items: T[], read: (item:T)=>Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(Array.from({length:Math.min(4,items.length)},async()=>{
+    while(next<items.length) {
+      const index=next++;
+      results[index]=await read(items[index]);
+    }
+  }));
+  return results;
+}
+
 async function listOwnedTestHistory(admin: QueryClient, userId: string, scope: {companyId: string; channelId: string}) {
   const { data, error } = await admin
     .from("conversations")
@@ -337,29 +351,28 @@ async function listOwnedTestHistory(admin: QueryClient, userId: string, scope: {
   if (legacyError) throw new Error("legacy_preview_history_lookup_failed");
   const candidates = (data ?? []).filter((x: any) => isTestConversationOwned(x.metadata_source, userId)).slice(0,10)
     .map((c: any) => ({...c, read_only:false}));
-  for (const c of legacy ?? []) {
-    if (legacyPreviewOwned(c,userId,scope.companyId) && await legacyPreviewSessionValid(admin,c,userId)) candidates.push({...c,read_only:true});
-  }
-  const out = [];
+  const archives = await mapHistory<any,any>((legacy ?? []),async c=>
+    legacyPreviewOwned(c,userId,scope.companyId) && await legacyPreviewSessionValid(admin,c,userId) ? {...c,read_only:true} : null);
+  candidates.push(...archives.filter(Boolean));
   const ordered = [...new Map<string,any>(candidates.map((c: any) => [c.id,c])).values()]
     .sort((a: any,b: any) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")) || String(a.id).localeCompare(String(b.id)));
-  for (const c of ordered) {
+  const out = await mapHistory<any,any>(ordered,async c=>{
     if(c.metadata_source?.execution_class === "authenticated_admin_preview") {
       const owned=await loadOwnedTestConversation(admin,c.id,userId,scope);
-      if(!owned.ok) continue;
+      if(!owned.ok) return null;
     }
     const messages = await loadTestMessages(admin, String(c.id), c.read_only ? {userId,companyId:scope.companyId} : c.metadata_source?.execution_class === "authenticated_admin_preview" ? {userId,companyId:scope.companyId,channelId:scope.channelId} : undefined);
     const latest = [...messages].reverse().find((m) => m.content.trim().length > 0);
-    out.push({
+    return {
       conversation_id: String(c.id),
       created_at: typeof c.created_at === "string" ? c.created_at : null,
       updated_at: typeof c.updated_at === "string" ? c.updated_at : null,
       latest_preview: latest?.content.slice(0, 120) ?? "(no messages)",
       message_count: messages.length,
       read_only: c.read_only,
-    });
-  }
-  return out;
+    };
+  });
+  return out.filter(Boolean);
 }
 
 async function widgetRequest(url: string, key: string, token: string, origin: string, slug: string, body: unknown) {
@@ -639,22 +652,31 @@ return async (req: Request) => {
     if (sessionError || !session?.session_token) return json(req,{success:false,error:"test_session_lookup_failed"},500);
     const clientMessageId = (body as any).client_message_id;
     if (!isUuid(clientMessageId)) return json(req,{success:false,error:"invalid_client_message_id"},400);
+    const receiveStarted=Date.now();
     const sent = await widgetRequest(supabaseUrl, serviceKey, tokenMatch[1], origin, "receive-widget-message", {
       conversation_id:conversationId, session_token:session.session_token, content:query, client_message_id:clientMessageId,
     });
-    let poll = await widgetRequest(supabaseUrl,serviceKey,tokenMatch[1],origin,"widget-poll-messages",{
+    const receiveMs=Date.now()-receiveStarted;
+    if (!isUuid(sent.message_id)) return json(req,{success:false,error:"visitor_receipt_unverified"},503);
+    const pollStarted=Date.now();
+    const poll = await widgetRequest(supabaseUrl,serviceKey,tokenMatch[1],origin,"widget-poll-messages",{
       conversation_id:conversationId,session_token:session.session_token,
     });
-    for (let attempt=0; sent.ai_reply_pending && attempt<12; attempt++) {
-      if (poll.messages?.some((m:any)=>m.role !== "visitor" && m.metadata?.source_message_id === sent.message_id) || (poll.human_support?.state && poll.human_support.state !== "none")) break;
-      await new Promise(resolve=>setTimeout(resolve,1000));
-      poll = await widgetRequest(supabaseUrl,serviceKey,tokenMatch[1],origin,"widget-poll-messages",{conversation_id:conversationId,session_token:session.session_token});
-    }
+    const pollMs=Date.now()-pollStarted;
+    // The existing receive transaction and EdgeRuntime.waitUntil own durable
+    // dispatch. One authenticated poll verifies the persisted Visitor; the
+    // existing client poll delivers the eventual answer without server waiting.
     const messages = poll.messages ?? [];
+    if (original && !messages.some((m:any)=>m.id===sent.message_id && m.role==="visitor" && m.content===query))
+      return json(req,{success:false,error:"visitor_receipt_unverified"},503);
     const {data: state,error: stateError} = await admin.from("conversations").select("status,assigned_agent_id").eq("id",conversationId).eq("company_id",resolved.companyId).eq("channel_config_id",resolved.channelId).maybeSingle();
     if (stateError || !state) return json(req,{success:false,error:"test_conversation_lookup_failed"},500);
-    if (!isUuid(sent.message_id)) return json(req,{success:false,error:"visitor_receipt_unverified"},503);
     const latestAssistant = [...messages].reverse().find((m:any) => m.role === "assistant" && m.metadata?.source_message_id === sent.message_id);
+    const humanControl=HUMAN_CONTROL_STATUSES.has(String(state.status ?? "")) || Boolean(state.assigned_agent_id) ||
+      Boolean(poll.human_support?.state && poll.human_support.state!=="none");
+    deps.log({endpoint:"widget-live-ai-test",action,stage:"visitor_receipt_verified",source_message_id:sent.message_id,
+      conversation_id:conversationId,correlation_id:correlationId,elapsed_ms:Date.now()-requestStarted,
+      receive_ms:receiveMs,poll_ms:pollMs,reply_persisted:Boolean(latestAssistant),generation_pending:sent.ai_reply_pending===true && !latestAssistant && !humanControl});
     return json(req, {
       success: true,
       mode: "persistent_live_ai_test",
@@ -668,7 +690,7 @@ return async (req: Request) => {
         Boolean(state?.assigned_agent_id),
       handoff_persisted: (poll.human_support?.state && poll.human_support.state !== "none"),
       human_support: poll.human_support,
-      ai_generating: poll.ai_generating,
+      ai_generating: !humanControl && !latestAssistant && (poll.ai_generating===true || sent.ai_reply_pending===true),
       idempotent: sent.idempotent === true,
       answer: latestAssistant?.content ?? "",
       generation_success: latestAssistant ? latestAssistant.metadata?.generation_success !== false && latestAssistant.metadata?.degraded !== true : false,
