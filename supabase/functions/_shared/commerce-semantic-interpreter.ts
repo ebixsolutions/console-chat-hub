@@ -5,6 +5,8 @@ import { requirementMutationText } from "./commerce-state-authority.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
   COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,
+  COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS,
+  type SemanticContractRejection,
   type CommerceSemanticFrame,
   decodeCommerceSemanticWire,
   normalizeCommerceSemanticFrame,
@@ -34,6 +36,7 @@ export interface CommerceSemanticInterpretResult {
   failure_stage?: string;
   failure?: ExecutionFailure;
   request_id?: string;
+  contract_rejection?: SemanticContractRejection;
 }
 
 const SYSTEM = `You are a multilingual commerce semantic interpreter.
@@ -62,7 +65,7 @@ Core rules:
 11. Unknown industries and unseen vocabulary are expected; never fall back to an industry list or synonym dictionary.
 12. Never invent add-ons/options/fees. Only include them when customer-authored context explicitly identifies them or persistent customer-authored state already contains them.
 13. If confidence is below 0.62, set ambiguity.is_ambiguous=true and operation=NO_STATE_CHANGE.
-14. Use intent explore_options, recommend_options or compare_options for category exploration, recommendations or comparison, even without a question mark or a model. Put the requested published selection criteria/options in requested_facts. Do not demand a model before looking up a category.
+14. Use intent explore_options, recommend_options or compare_options when the customer requests actual merchant options, recommendations or comparison, even without a question mark or a model. Put requested published facts/options in requested_facts. Do not demand a model before looking up a category. Use intent customer_guidance and requested_facts=[] for general decision trade-offs, what to measure/prepare or which clarification to ask, when no actual merchant model, price, specification, availability or policy is requested. Customer budgets and their site dimensions are customer facts, not merchant facts. Never invent a merchant lookup solely because a product category is mentioned.
 15. A supplemental constraint, corrected requirement or resolved referent continues the latest unresolved customer request. Preserve its requested_facts when a new published read is needed. Do not treat a customer supplying a requested detail as a fresh greeting, a completed action, or a reason to ask the same detail again.
 16. Separate customer-owned requirements from merchant facts. An unfamiliar service, rental, digital good or subscription uses the same rules. Never infer completed payment, booking or delivery from confirmation of requirements.
 17. Preserve decision-relevant constraints as named values, including false, zero, null/unknown, arrays, exclusions and bounded nested operator/value/unit records. Do not flatten an amount, capacity, duration or measurement into an unnamed number. Use at most 40 fields, 12 array items, three levels of nesting and 300 characters per value. Never include credentials or unrelated contact details.
@@ -310,7 +313,7 @@ export async function interpretCommerceSemantics(
   try { result = await callModel({
     purpose: "evaluation",
     system: SYSTEM +
-      "\nOuter JSON has exactly operation, confidence, delta_json in that order. delta_json is a JSON-encoded object containing ALL other supplied current-turn fields (language, intent, topic, entities, referents, customer_facts, lifecycle, correction, negations, requested_facts, ambiguity). Omit defaults there; use {} encoded as a string if no optional fields. Do not put operation or confidence inside delta_json. The following wire rules apply INSIDE delta_json.\n" +
+      COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS +
       "\nProvider wire format: customer_facts records use value_json (a JSON-encoded typed value) instead of value. Entity attributes and constraints use attributes_json and constraints_json (JSON-encoded objects) instead of attributes/constraints. Preserve all named values/units, false, zero and null. All other fields use the stated contract. For corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraints and customer_correction=true. Output budget 4096 tokens; omit unchanged/default fields. Do not include reasoning.",
     user: buildUser(input, persistentStateSummary),
     maxTokens: 4096,
@@ -351,8 +354,10 @@ export async function interpretCommerceSemantics(
       request_id: result.request_id,
     };
   }
+  let contractRejection: SemanticContractRejection | undefined;
+  const rejected = (reason: SemanticContractRejection) => { contractRejection ??= reason; };
   const frame = normalizeCommerceSemanticFrame(
-    decodeCommerceSemanticWire(parsed),
+    decodeCommerceSemanticWire(parsed, rejected), rejected,
   );
   if (!frame) {
     return {
@@ -360,6 +365,7 @@ export async function interpretCommerceSemantics(
       source: "none",
       failure_code: "LLM_INVALID_OUTPUT",
       failure_stage: "semantic_contract",
+      contract_rejection: contractRejection,
       failure: executionFailure("LLM_INVALID_OUTPUT",{stage:"canonical_validation",request_id:result.request_id,source_message_id:input.source_message_id}),
       request_id: result.request_id,
     };

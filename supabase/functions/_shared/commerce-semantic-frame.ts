@@ -417,24 +417,55 @@ export const COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA: Record<string, unknown> = {
   },
 };
 
-export function decodeCommerceSemanticWire(value: unknown): unknown {
-  if (!isRecord(value)) return null;
+/** The outer schema owns operation/confidence. They are forbidden in the inner
+ * delta, including its advertised grammar, not merely stripped after decode. */
+export const COMMERCE_SEMANTIC_DELTA_SCHEMA = {
+  type: "object", additionalProperties: false,
+  properties: Object.fromEntries(Object.entries(
+    COMMERCE_SEMANTIC_WIRE_SCHEMA.properties as Record<string, unknown>,
+  ).filter(([key]) => !["operation", "confidence"].includes(key))),
+};
+
+/** The inner grammar and prompt share one source of truth. Never advertise aliases
+ * that strict decoding rejects, and never repair provider data by guessing. */
+export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS =
+  "Outer JSON has exactly operation, confidence, delta_json in that order. " +
+  "delta_json is a JSON-encoded object with only current-turn optional fields from the following wire schema; " +
+  "omit operation/confidence from it and omit unchanged/default fields. Use the string {} when empty. " +
+  "Inside delta_json customer_facts use value_json, and entities use attributes_json/constraints_json, " +
+  "each containing JSON-encoded typed values/objects, never double-encoded JSON. " +
+  "Use customer_correction, explicit_negations and the four separate *_state fields exactly as named; " +
+  "there are no lifecycle, correction or negations aliases. Schema: " +
+  JSON.stringify(COMMERCE_SEMANTIC_DELTA_SCHEMA);
+
+export type SemanticContractRejection =
+  | "wire_object" | "wire_outer_fields" | "wire_delta_size_or_type"
+  | "wire_delta_json" | "wire_delta_fields" | "wire_value_json"
+  | "wire_entity_object" | "canonical_object" | "canonical_operation"
+  | "canonical_confidence" | "canonical_array_bounds" | "canonical_fact"
+  | "canonical_fact_bounds" | "canonical_entity" | "canonical_entity_kind"
+  | "canonical_entity_name" | "canonical_entity_bounds";
+type RejectSemantic = (reason: SemanticContractRejection) => void;
+
+export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSemantic): unknown {
+  const reject = (reason: SemanticContractRejection): null => { onReject?.(reason); return null; };
+  if (!isRecord(value)) return reject("wire_object");
   if (Object.hasOwn(value, "delta_json")) {
     try {
-      if (Object.keys(value).some(k => !["operation", "confidence", "delta_json"].includes(k)) ||
-          typeof value.delta_json !== "string" || value.delta_json.length > 24_000) return null;
+      if (Object.keys(value).some(k => !["operation", "confidence", "delta_json"].includes(k))) return reject("wire_outer_fields");
+      if (typeof value.delta_json !== "string" || value.delta_json.length > 24_000) return reject("wire_delta_size_or_type");
       const delta: unknown = JSON.parse(value.delta_json);
       if (!isRecord(delta) || Object.keys(delta).some(k =>
-        !Object.hasOwn(COMMERCE_SEMANTIC_WIRE_SCHEMA.properties as object, k) ||
-        ["operation", "confidence"].includes(k))) return null;
+        !Object.hasOwn(COMMERCE_SEMANTIC_DELTA_SCHEMA.properties, k) ||
+        ["operation", "confidence"].includes(k))) return reject("wire_delta_fields");
       value = { ...delta, operation: value.operation, confidence: value.confidence };
-    } catch { return null; }
+    } catch { return reject("wire_delta_json"); }
   }
-  if (!isRecord(value)) return null;
+  if (!isRecord(value)) return reject("wire_object");
   const decode = (raw: unknown): unknown => {
     if (typeof raw !== "string" || raw.length > 12_000)
-      throw new Error("semantic_wire_value_invalid");
-    return JSON.parse(raw);
+      throw new Error("wire_value_json");
+    try { return JSON.parse(raw); } catch { throw new Error("wire_value_json"); }
   };
   try {
     return {
@@ -447,7 +478,7 @@ export function decodeCommerceSemanticWire(value: unknown): unknown {
               for (const key of ["attributes", "constraints"])
                 if (Object.hasOwn(entity, key + "_json")) {
                   const decoded = decode(entity[key + "_json"]);
-                  if (!isRecord(decoded)) throw new Error("semantic_wire_object_invalid");
+                  if (!isRecord(decoded)) throw new Error("wire_entity_object");
                   out[key] = decoded;
                 }
               return out;
@@ -464,8 +495,8 @@ export function decodeCommerceSemanticWire(value: unknown): unknown {
           }
         : {}),
     };
-  } catch {
-    return null;
+  } catch (error) {
+    return reject(error instanceof Error && error.message === "wire_entity_object" ? "wire_entity_object" : "wire_value_json");
   }
 }
 
@@ -522,10 +553,11 @@ function normalizeAmbiguity(value: unknown, confidence: number): CommerceSemanti
   };
 }
 
-export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemanticFrame | null {
-  if (!isRecord(value)) return null;
+export function normalizeCommerceSemanticFrame(value: unknown, onReject?: RejectSemantic): CommerceSemanticFrame | null {
+  const reject = (reason: SemanticContractRejection): null => { onReject?.(reason); return null; };
+  if (!isRecord(value)) return reject("canonical_object");
   const rawOperation = clean(value.operation, 40) as CommerceSemanticOperation;
-  if (!OPERATIONS.has(rawOperation)) return null;
+  if (!OPERATIONS.has(rawOperation)) return reject("canonical_operation");
 
   if (
     typeof value.confidence !== "number" ||
@@ -533,7 +565,7 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
     value.confidence < 0 ||
     value.confidence > 1
   )
-    return null;
+    return reject("canonical_confidence");
   // No sliced partial state proposal. An oversized/malformed wire delta is rejected.
   for (const key of [
     "entities",
@@ -552,7 +584,7 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
               ? 20
               : 12))
     )
-      return null;
+      return reject("canonical_array_bounds");
   }
   const customerFacts: { key: string; value: DecisionValue }[] = [];
   for (const raw of Array.isArray(value.customer_facts) ? value.customer_facts : []) {
@@ -564,24 +596,24 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
       !Object.hasOwn(raw, "value") ||
       raw.value === undefined
     )
-      return null;
+      return reject("canonical_fact");
     try {
       customerFacts.push({
         key: raw.key,
         value: normalizeDecisionContext({ fact: raw.value }).fact,
       });
     } catch (error) {
-      if (error instanceof DecisionContextLimitError) return null;
+      if (error instanceof DecisionContextLimitError) return reject("canonical_fact_bounds");
       throw error;
     }
   }
   const entities: CommerceSemanticEntity[] = [];
   for (const raw of Array.isArray(value.entities) ? value.entities.slice(0, 12) : []) {
-    if (!isRecord(raw)) return null;
+    if (!isRecord(raw)) return reject("canonical_entity");
     const kind = clean(raw.kind, 40) as CommerceSemanticKind;
-    if (!KINDS.has(kind)) return null;
+    if (!KINDS.has(kind)) return reject("canonical_entity_kind");
     const name = clean(raw.name, 200);
-    if (!name) return null;
+    if (!name) return reject("canonical_entity_name");
     const q = raw.quantity == null ? null : Number(raw.quantity);
     const quantity = q === null || !Number.isFinite(q) || q < 0 ? null : q;
     let attributes: Record<string, DecisionValue>, constraints: Record<string, DecisionValue>;
@@ -589,7 +621,7 @@ export function normalizeCommerceSemanticFrame(value: unknown): CommerceSemantic
       attributes = normalizeDecisionContext(raw.attributes);
       constraints = normalizeDecisionContext(raw.constraints);
     } catch (error) {
-      if (error instanceof DecisionContextLimitError) return null;
+      if (error instanceof DecisionContextLimitError) return reject("canonical_entity_bounds");
       throw error;
     }
     entities.push({

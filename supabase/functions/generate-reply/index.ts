@@ -121,7 +121,7 @@ import {
   selectCanonicalGrounding,
 } from "../_shared/canonical-grounding.ts";
 import type { ReferenceAuthorityDecision } from "../_shared/commerce-state-authority.ts";
-import { customerBusinessText, isCurrentRequirementsRecap } from "../_shared/commerce-state-authority.ts";
+import { customerBusinessText, isCurrentRequirementsRecap, isCustomerGuidanceRequest } from "../_shared/commerce-state-authority.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import {
   type CanonicalKbDirectAnswer,
@@ -4475,6 +4475,7 @@ async function orchestrationGenerateReply(
       if (semanticResult.failure_code) console.warn(JSON.stringify({
         event: "semantic_interpretation_rejected", code: semanticResult.failure_code,
         stage: semanticResult.failure_stage, request_id: semanticResult.request_id,
+        contract_rejection: semanticResult.contract_rejection,
       }));
     } catch (error) {
       _semanticDiagnostic = failureFromError(error,{request_id:`commerce-semantic:${_h1SourceMessageId}`,source_message_id:_h1SourceMessageId});
@@ -4929,6 +4930,11 @@ async function orchestrationGenerateReply(
     );
   }
 
+  const _customerGuidance = isCustomerGuidanceRequest(_h1LastMsg, _a3SemanticFrame) &&
+    classifyLocalTopicRisk(_h1LastMsg)?.level !== "high";
+  const _customerGuidanceInstruction = _customerGuidance
+    ? "General customer decision support: answer the actual question with useful trade-offs or one relevant clarification. Use only customer-authored context for exact needs and measurements. Do not assert merchant model recommendations, specifications, prices, stock, policy, suitability guarantees or completed actions. Do not invent numerical thresholds. Distinguish general advice from facts needing verification."
+    : "";
   const _naturalGuidanceReply: string | null = null;
 
   const _c3IsGroundedReadOnlyRecap = _a3Commerce?.reason ===
@@ -4936,7 +4942,7 @@ async function orchestrationGenerateReply(
     _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     _c3Recall.decision.handled && _c3Recall.decision.fact_type === "summary" &&
     Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
-  const _c3PlannedReply = _c3IsGroundedReadOnlyRecap
+  const _c3PlannedReply = _customerGuidance ? null : _c3IsGroundedReadOnlyRecap
     ? _c3Recall.reply
     : _c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")
     ? null
@@ -5547,7 +5553,7 @@ async function orchestrationGenerateReply(
   // A verified transform reuses the immutable evidence authority of the prior
   // grounded answer. It must not perform a second/current KB retrieval because
   // that can select different evidence and falsely reject a faithful transform.
-  const _g1SkipKB = _pr5GreetingOrTrivial || Boolean(_priorGroundedTransform);
+  const _g1SkipKB = _pr5GreetingOrTrivial || Boolean(_priorGroundedTransform) || _customerGuidance;
 
   let _pr5RagMatchState: RagMatchState | undefined;
   const _escEnableS0 = Deno.env.get("ESC_ENABLE_S0") !== "false";
@@ -6597,6 +6603,7 @@ async function orchestrationGenerateReply(
       _c3MemoryContext,
       returnToAiGuard,
       _customerAdvisoryBlock,
+      _customerGuidanceInstruction,
       _emotionReplyStrategyBlock,
       buildMaskedContextBlock(customerContext, opaqueCustomerRef),
       buildRagBlock(ragResult),
@@ -6654,6 +6661,7 @@ async function orchestrationGenerateReply(
         buildServicePlanPromptBlock(_c3ServicePlan),
         returnToAiGuard,
         _customerAdvisoryBlock,
+        _customerGuidanceInstruction,
         _emotionReplyStrategyBlock,
         buildMaskedContextBlock(customerContext, opaqueCustomerRef),
         buildRagBlock(ragResult),
@@ -6832,7 +6840,7 @@ async function orchestrationGenerateReply(
     conversation_id,
     source_message_id,
     aiReplyContent,
-    citationMeta,
+    _customerGuidance ? { ...citationMeta, response_route: "customer_guidance", factual_grounding_required: false } : citationMeta,
   );
   if (!committed.ok) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);

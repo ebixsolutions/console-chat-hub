@@ -7,18 +7,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 import ts from 'typescript';
+import {createHash} from 'node:crypto';
+const hash=s=>createHash('sha256').update(s).digest('hex');
 const root=path.resolve(new URL('../..',import.meta.url).pathname);
 const sdkRequire=createRequire(path.resolve(process.env.C3_CONSOLE_SDK_ROOT || root,'package.json'));
 const sdk=sdkRequire('@supabase/supabase-js');
 assert.equal(sdkRequire('@supabase/supabase-js/package.json').version,'2.45.0');
+// Cache compilation only; each fixture still executes a fresh complete module graph.
+const compiledCode=new Map();
 const uuid=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const company=uuid(1),ticket=uuid(2),source=uuid(3);
 function fixture(text,options={}) {
- const company=options.company ?? uuid(1);
+ const company=options.company ?? uuid(1),source=options.source??uuid(3);
  const requests=[],logs=[],commits=[],events=[]; let handler,mode=options.mode || 'ok',foreign=false;
  const conversation={id:ticket,company_id:company,status:options.human?'human_control':'open',assigned_agent_id:null,metadata_source:{}};
  const visitor={id:source,conversation_id:ticket,role:'visitor',content:text,is_recalled:false,created_at:'2026-10-14T01:00:00.000Z',metadata:{}};
  const tables={conversation_commerce_state_event:[],company:[{id:company,is_active:true}],conversations:[conversation],messages:[visitor],conversation_commerce_state:[],conversation_memory_state:[],conversation_memory_state_event:[],c3_memory_reply_lifecycle_receipt:[]};
+ if(options.previous)for(const name of ['conversation_commerce_state','conversation_memory_state','conversation_commerce_state_event','conversation_memory_state_event'])tables[name]=structuredClone(options.previous[name]);
+ if(options.history)tables.messages.push(...structuredClone(options.history));
  if(options.retainedMemory)tables.conversation_memory_state.push({conversation_id:ticket,company_id:company,revision:7,memory:{current_customer_facts:[{key:'subscription_seats',value:17,source_message_id:uuid(30)}]}});
  if(options.memory)tables.conversation_memory_state.push({conversation_id:ticket,company_id:company,revision:options.memory.memory_revision,source_message_id:options.memory.source_message_id,memory:options.memory});
  const env={SUPABASE_URL:'http://isolated.invalid',SUPABASE_SECRET_KEY:'isolated-fake-key',ENABLE_KB_ADAPTER:'true',LLM_PROVIDER:'vertex',LLM_MODEL_EVALUATION:'gemini-2.5-flash',LLM_MODEL_GENERATION:'gemini-2.5-flash',GOOGLE_PROJECT_ID:'isolated-project',GOOGLE_REGION:'us-central1',GOOGLE_SERVICE_ACCOUNT_JSON:'{}',LLM_TIMEOUT_MS:'50',...(options.fullChain?{KB_SINGAPORE_TENANT_MAP_JSON:JSON.stringify({[company]:'34'}),KB_SINGAPORE_TENANT_API_KEYS_JSON:JSON.stringify({'34':'isolated-kb-fixture'})}:{}),...(options.env??{})};
@@ -29,10 +35,10 @@ function fixture(text,options={}) {
   if(url.hostname==='us-central1-aiplatform.googleapis.com') {
    if(url.pathname.endsWith(':countTokens'))return Response.json({totalTokens:120});
    assert(url.pathname.endsWith('/gemini-2.5-flash:generateContent'));
-   assert.equal(body.generationConfig.thinkingConfig.thinkingBudget,company==='4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec'?1024:0);
+   if(body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.'))assert.equal(body.generationConfig.thinkingConfig?.thinkingBudget,company==='4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec'?1024:0);
    if(options.fullChain && !body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.')) {
     const verifier=body.generationConfig.responseSchema?.properties?.grounded;
-    const text=verifier?JSON.stringify({grounded:true,unsupported_claims:[],evidence_chunk_ids:['E1']}):'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
+    const text=verifier?JSON.stringify({grounded:true,unsupported_claims:[],evidence_chunk_ids:['E1']}):options.answer??'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
     return Response.json({candidates:[{content:{parts:[{text}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}});
    }
    assert.equal(body.generationConfig.responseMimeType,'application/json');
@@ -60,6 +66,12 @@ function fixture(text,options={}) {
    if(options.fullChain && rpc==='c3_commit_conversation_memory_tx') {
     assert.equal(body.p_company_id,company);assert.equal(body.p_expected_memory_revision,tables.conversation_memory_state[0]?.revision??0);const row={conversation_id:ticket,company_id:company,source_message_id:source,revision:body.p_expected_memory_revision+1,commerce_state_revision:body.p_expected_commerce_revision,memory:body.p_memory,markdown_projection:body.p_markdown_projection,memory_hash:'a'.repeat(64)};tables.conversation_memory_state=[row];tables.conversation_memory_state_event.push({...row,applied_revision:row.revision});return Response.json({result:'success',current_revision:row.revision});
    }
+   if(options.fullChain && rpc==='c3_finalize_memory_reply_tx') {
+    const prior=tables.conversation_memory_state[0];assert.equal(prior.revision,body.p_expected_memory_revision);assert.equal(prior.memory_hash,body.p_expected_memory_hash);
+    const answer=tables.messages.find(x=>x.id===body.p_reply_message_id);assert(answer);
+    const row={...prior,revision:prior.revision+1,memory:body.p_memory,markdown_projection:body.p_markdown_projection,memory_hash:hash(JSON.stringify(body.p_memory))};
+    tables.conversation_memory_state=[row];tables.c3_memory_reply_lifecycle_receipt.push({conversation_id:ticket,company_id:company,source_message_id:source,reply_message_id:answer.id,parent_revision:prior.revision,parent_hash:prior.memory_hash,applied_revision:row.revision,commerce_state_revision:prior.commerce_state_revision,memory_hash:row.memory_hash,markdown_hash:hash(row.markdown_projection),reply_content_hash:hash(answer.content)});return Response.json({result:'success'});
+   }
    if(rpc==='c3_uat_execution_status')return options.rpcMissing ? Response.json({code:'PGRST202',message:'PRIVATE-SECRET'},{status:404}) : Response.json({ready:true,remote_ready:options.fullChain===true && !options.remoteDenied,allowed_conversations:[ticket]});
    if(rpc==='c3_uat_reserve_dispatch' && body.p_provider==='singapore-kb' && options.remoteDenied)return Response.json({code:'P0001',message:'UAT_REMOTE_BOUND_UNVERIFIED'},{status:400});
    if(rpc==='c3_uat_reserve_dispatch')return options.rpcMissing ? Response.json({code:'PGRST202',message:'PRIVATE-SECRET'},{status:404}) : Response.json({dispatch:true,run_id:env.C3_TEMP_UAT_RUN_ID,identity:body.p_identity,state:'reserved',expires_epoch:Date.now()/1000+60});
@@ -71,7 +83,7 @@ function fixture(text,options={}) {
     if(options.rpcResult)return Response.json({result:options.rpcResult});
     if(foreign)return Response.json({result:'tenant_mismatch'});
     if(commits.length)return Response.json(body.p_content===commits[0].content?{result:'idempotent',message_id:commits[0].id}:{result:'response_substitution'});
-    const reply={id:uuid(10),conversation_id:ticket,role:'assistant',content:body.p_content,is_recalled:false,metadata:{...body.p_metadata,source_message_id:source,control_commit:'ai'}};
+    const reply={id:options.source?uuid(Number(source.slice(-6))+1000):uuid(10),conversation_id:ticket,role:'assistant',content:body.p_content,is_recalled:false,metadata:{...body.p_metadata,source_message_id:source,control_commit:'ai'}};
     commits.push(reply);tables.messages.push(reply);return Response.json({result:'success',message_id:reply.id});
    }
    throw Error('unhandled isolated RPC '+rpc);
@@ -96,8 +108,8 @@ function fixture(text,options={}) {
  const modules=new Map(), deno={env:{get:k=>{if(k==='ENABLE_KB_ADAPTER' && options.unexpectedFailure && !injectedFailure){injectedFailure=true;throw options.unexpectedFailure;}return env[k]}},serve:h=>{handler=h}};
  function load(file){
   if(modules.has(file))return modules.get(file);
-  const sourceCode=fs.readFileSync(file,'utf8');
-  const code=ts.transpileModule(sourceCode,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+  let code=compiledCode.get(file);
+  if(!code){const sourceCode=fs.readFileSync(file,'utf8');code=ts.transpileModule(sourceCode,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;compiledCode.set(file,code);}
   const module={exports:{}};modules.set(file,module.exports);
   const require=spec=>{
    if(spec.startsWith('.'))return load(path.resolve(path.dirname(file),spec));
@@ -323,4 +335,52 @@ for(const [options,stage] of [[{remoteDenied:true},'admission'],[{kbHttp:true},'
  const f=fixture('請查CW-SUL70BA是否有能源效益資料，唔好估級別。',{company:syntheticCompany,env:{...enabledRun,ESC_ENABLE_S0:'false'},fullChain:true,...options});
  f.tables.conversation_commerce_state.push({conversation_id:ticket,company_id:syntheticCompany,revision:0,source_message_id:null,state:f.load(path.join(root,'supabase/functions/_shared/commerce-state-contract.ts')).createEmptyConversationCommerceState()});
  const r=await f.run();assert.equal(f.commits.length,1,JSON.stringify(r));const metadata=f.commits[0].metadata;assert.equal(metadata.generation_success,false);assert.equal(metadata.execution_failure.stage,stage);assert.notEqual(metadata.grounded,true);assert.equal(metadata.degraded,true);assert(!JSON.stringify([r,metadata,f.events]).includes('PRIVATE-SECRET'));assert(!f.requests.some(x=>/handoff_tx/.test(x.url)));
+});
+
+// Real Hosted P0 texts; provider outputs below are deterministic contract
+// reproductions, not recovered model output or Hosted PASS.
+const hostedP0 = [
+ {id:'34c6be92-c1aa-468d-b0bc-10cad66508ad',text:'你好，我想換一部冷氣俾屋企兩位長者用。客廳180平方呎，預算HK$6,000，最重視夜晚安靜同慳電。未揀型號亦未落單；可否先幫我梳理選購取捨，同講應準備咩現場尺寸？暫時唔使查外部產品、報價或存貨。',product:'冷氣',facts:{room_area:{amount:180,unit:'平方呎'},budget:{amount:6000,unit:'HKD'}}},
+ {id:'cefb3207-3fa2-4eed-bdbc-a090ee280493',text:'你好，我想買一部洗衣機俾三人家庭用，擺機位置闊600毫米、深560毫米，平時最在意洗衣時嘈音。你可以先幫我整理選機時應該考慮嘅取捨，同講下一步應補充咩資料嗎？',product:'洗衣機',facts:{household:3,width:{amount:600,unit:'mm'},depth:{amount:560,unit:'mm'}}},
+ {id:'ed269091-dbed-45e6-9c6e-f2ef254a6b40',text:'我想買一部洗衣機，三人家庭使用，放機位置闊600毫米、深560毫米，預算HK$4,500。日常衣物比較多，對洗衣時嘈音特別在意。你會先問我邊一個問題？',product:'洗衣機',facts:{household:3,width:{amount:600,unit:'mm'},depth:{amount:560,unit:'mm'},budget:{amount:4500,unit:'HKD'}}},
+];
+const wireDelta=(delta,operation='ASK_FACT')=>({operation,confidence:0.97,delta_json:JSON.stringify(delta)});
+for(const c of hostedP0)test('Hosted P0 deterministic whole handler reaches meaningful generation: '+c.id,async()=>{
+ const answer='先量度擺放位置和出入通道，並確認門或窗開啟需要的空間。安靜與慳電都重要；你最常使用的時段是甚麼？';
+ const f=fixture(c.text,{fullChain:true,answer,semantic:wireDelta({intent:'customer_guidance',entities:[{name:c.product,kind:'physical_product',confidence:0.97}],customer_facts:Object.entries(c.facts).map(([key,value])=>({key,value_json:JSON.stringify(value)})),requested_facts:[]})});
+ const r=await f.run();
+ assert.notEqual(r.body.generation_success,false,JSON.stringify({r,events:f.events.slice(-6),requests:f.requests.map(x=>x.url)}));
+ assert.notEqual(r.body.response_route,'terminal_failure_recovery');
+ assert(!/暫時未記低/.test(r.body.reply??''),JSON.stringify(r));
+ assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits[0]?.content,answer,JSON.stringify({r,events:f.events.slice(-5)}));
+ assert(f.requests.filter(x=>x.url.endsWith(':generateContent')).length>=2);
+ assert(!f.requests.some(x=>x.url.includes('context-search')));
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+ assert.equal(f.commits.length,1);assert(f.tables.conversation_memory_state[0]?.memory.current_customer_facts.length>=Object.keys(c.facts).length);
+});
+for(const alias of ['lifecycle','correction','negations'])test('prompt/decoder incompatibility '+alias+' fails closed with fixed secret-free diagnostic',async()=>{
+ const f=fixture('unused',{semantic:wireDelta({[alias]:'PRIVATE-SECRET user@example.invalid'})});
+ const r=await f.load(path.join(root,'supabase/functions/_shared/commerce-semantic-interpreter.ts')).interpretCommerceSemantics({company_id:company,conversation_id:ticket,source_message_id:source,latest:'Please correct my requirements',persistent_state_summary:'{}'});
+ assert.equal(r.frame,null);assert.equal(r.contract_rejection,'wire_delta_fields');assert(!JSON.stringify(r).includes('PRIVATE-SECRET'));
+ const request=f.requests.find(x=>x.url.includes('aiplatform')).body.systemInstruction.parts[0].text;
+ assert(request.includes('customer_correction'));assert(request.includes('"value_json"'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
+});
+
+test('Hosted Frankie correction then same-ticket Summary retains latest canonical Memory and passes unchanged B2',async()=>{
+ const c=hostedP0[0];
+ const initial=fixture(c.text,{fullChain:true,semantic:wireDelta({intent:'customer_guidance',entities:[{name:c.product,kind:'physical_product',confidence:0.97}],customer_facts:Object.entries(c.facts).map(([key,value])=>({key,value_json:JSON.stringify(value)})),requested_facts:[]})});await initial.run();
+ const text='更正一下：客廳其實係150平方呎，預算改為HK$5,000。請記住最新資料，並用你理解嘅內容回覆我。';
+ const f=fixture(text,{source:uuid(101),fullChain:true,previous:initial.tables,history:initial.tables.messages,semantic:wireDelta({customer_correction:true,customer_facts:[{key:'room_area',value_json:'{"amount":150,"unit":"平方呎"}'},{key:'budget',value_json:'{"amount":5000,"unit":"HKD"}'}],requested_facts:[]},'UPDATE_ITEM')});
+ const r=await f.run();assert.notEqual(r.body.generation_success,false,JSON.stringify({r,events:f.events.slice(-5)}));assert.equal(f.commits.length,1);
+ const memory=f.tables.conversation_memory_state[0].memory;
+ assert.equal(memory.current_customer_facts.find(x=>x.key==='room_area').value.amount,150);assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);
+ assert(memory.latest_corrections.length>0);assert(memory.cancelled_or_superseded.length>0);
+ const summary=fixture('請總結呢張對話嘅需求，同我最新更正嘅客廳面積及預算；唔好查外部資料。',{source:uuid(102),fullChain:true,previous:f.tables,history:f.tables.messages});
+ const beforeSummary=JSON.stringify(summary.tables.conversation_memory_state);const sr=await summary.run();assert.equal(JSON.stringify(summary.tables.conversation_memory_state),beforeSummary);assert.equal(sr.status,200,JSON.stringify({sr,events:summary.events.slice(-5)}));assert.equal(typeof sr.body.reply,'string',JSON.stringify({sr,events:summary.events.slice(-5)}));assert.equal(summary.commits.length,1);assert.match(sr.body.reply,/150/);assert.match(sr.body.reply,/5[,.]?000/);assert(!summary.requests.some(x=>/aiplatform|context-search/.test(x.url)));
+});
+
+test('malformed compact output cannot commit customer state or hide a canonical rejection',async()=>{
+ const f=fixture('更正一下：預算改為HK$5,000。',{fullChain:true,semantic:wireDelta({correction:true})});const r=await f.run();
+ assert.equal(r.body.generation_success,false);assert.equal(f.tables.conversation_memory_state.length,0);assert.equal(f.tables.conversation_commerce_state.length,0);assert(!f.requests.some(x=>/c3_commit_conversation_memory_tx|upsert_conversation_commerce_state_v1/.test(x.url)));
+ assert(JSON.stringify(f.events).includes('wire_delta_fields'));assert.equal(f.commits.length,1);await f.run();assert.equal(f.commits.length,1);
 });

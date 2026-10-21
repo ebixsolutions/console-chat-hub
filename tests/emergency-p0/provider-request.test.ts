@@ -1,5 +1,6 @@
+import {isCurrentRequirementsRecap,isCustomerGuidanceRequest} from '../../supabase/functions/_shared/commerce-state-authority.ts';
 import { buildVertexGenerationConfig, buildVertexEndpoint, normalizeVertexResponseSchema, safeVertexErrorDiagnostic } from '../../supabase/functions/_shared/vertex-generation-config.ts';
-import {COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,COMMERCE_SEMANTIC_WIRE_SCHEMA,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame} from '../../supabase/functions/_shared/commerce-semantic-frame.ts';
+import {COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,COMMERCE_SEMANTIC_WIRE_SCHEMA,COMMERCE_SEMANTIC_DELTA_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame} from '../../supabase/functions/_shared/commerce-semantic-frame.ts';
 import {classifyNonFactualConversation} from '../../supabase/functions/_shared/conversational-routing.ts';
 import {classifyCanonicalConversationTurn} from '../../supabase/functions/_shared/conversation-semantic-contract.ts';
 import {terminalRecoveryReply} from '../../supabase/functions/_shared/generation-terminal-guard.ts';
@@ -39,4 +40,33 @@ Deno.test('whole social grammar never erases mixed business, corrections, negati
 });
 Deno.test('technical terminal response is distinct from external evidence unavailability in all supported response languages',()=>{
  for(const lang of ['en','zh-TW','zh-CN'] as const){const s=terminalRecoveryReply(lang);assert(/technical problem|系統|系统/.test(s));assert(!/verify|資料核實|资料核实/.test(s));}
+});
+
+Deno.test('general preparation/decision support never becomes retained-state recap or merchant evidence bypass',()=>{
+ const frame=normalizeCommerceSemanticFrame({operation:'ASK_FACT',confidence:0.97,intent:'customer_guidance'})!;
+ for(const text of ['幫我整理選機時應該考慮嘅取捨，同講下一步應補充咩資料嗎？','What should I measure before choosing, and what trade-offs should I consider?','你會先問我邊一個問題？']){assert(!isCurrentRequirementsRecap(text),text);assert(isCustomerGuidanceRequest(text,frame),text);}
+ for(const text of ['Recap the ZX-731 booking.','Summarize the premium plan.','整理返 ZX-731 預約。','請總結呢張對話嘅需求，同我最新更正嘅客廳面積及預算；唔好查外部資料。'])assert(isCurrentRequirementsRecap(text),text);
+ for(const text of ['What should I measure and what is the current price?','請整理選購取捨，推薦現貨型號','What trade-offs should I consider under your warranty policy?'])assert(!isCustomerGuidanceRequest(text,frame),text);
+ assert(!isCustomerGuidanceRequest('What should I measure?',{...frame,requested_facts:['stock']}));assert(!isCustomerGuidanceRequest('What should I measure?',{...frame,ambiguity:{is_ambiguous:true}}));
+});
+Deno.test('semantic rejection diagnostics identify only fixed contract invariants without retaining provider contents',()=>{
+ const wire=(delta:unknown)=>({operation:'ASK_FACT',confidence:0.97,delta_json:typeof delta==='string'?delta:JSON.stringify(delta)});
+ const cases:[unknown,string][]=[
+  [wire('{secret'), 'wire_delta_json'],[wire({correction:'PRIVATE-SECRET'}),'wire_delta_fields'],
+  [wire({customer_facts:[{key:'budget',value_json:'PRIVATE-SECRET'}]}),'wire_value_json'],
+  [wire({entities:[{name:'item',kind:'physical_product',constraints_json:'[]'}]}),'wire_entity_object'],
+  [{operation:'ASK_FACT',confidence:2},'canonical_confidence'],[{operation:'WRONG',confidence:1},'canonical_operation'],
+  [wire({entities:Array(13).fill({name:'item',kind:'physical_product'})}),'canonical_array_bounds'],
+  [wire({customer_facts:[{key:'x'}]}),'canonical_fact'],
+  [wire({entities:[{name:'item',kind:'PRIVATE-SECRET'}]}),'canonical_entity_kind'],
+ ];
+ for(const [input,expected] of cases){const reasons:string[]=[];const decoded=decodeCommerceSemanticWire(input,r=>reasons.push(r));const result=normalizeCommerceSemanticFrame(decoded,r=>reasons.push(r));assert(result===null);assert(reasons[0]===expected,JSON.stringify(reasons));assert(!JSON.stringify(reasons).includes('PRIVATE-SECRET'));}
+});
+
+Deno.test('advertised compact inner grammar cannot demand forbidden outer fields',()=>{
+ const p=COMMERCE_SEMANTIC_DELTA_SCHEMA.properties;
+ assert(!Object.hasOwn(p,'operation')&&!Object.hasOwn(p,'confidence'));
+ assert(Object.hasOwn(p,'customer_correction')&&Object.hasOwn(p,'explicit_negations')&&Object.hasOwn(p,'transaction_state'));
+ assert(!Object.hasOwn(p,'lifecycle')&&!Object.hasOwn(p,'correction')&&!Object.hasOwn(p,'negations'));
+ assert(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS.endsWith(JSON.stringify(COMMERCE_SEMANTIC_DELTA_SCHEMA)));
 });

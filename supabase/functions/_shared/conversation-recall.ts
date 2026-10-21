@@ -1845,7 +1845,8 @@ function renderCustomerRecap(value: unknown, language: string): string {
   const inactive = entities.filter(e => ["deferred", "cancelled"].includes(e.status));
   const regions=(Array.isArray(v.regions)?v.regions:[]).map(object).filter(r=>r!==null);
   const regionNames:Record<string,[string,string,string]>={hong_kong:["香港","香港","Hong Kong"],taiwan:["台灣","台湾","Taiwan"],macau:["澳門","澳门","Macau"],singapore:["新加坡","新加坡","Singapore"]};
-  const retained = !entities.length ? (Array.isArray(v.customer_facts)?v.customer_facts:[]).map(object).flatMap(f=>{
+  const retained = (Array.isArray(v.customer_facts)?v.customer_facts:[]).map(object).flatMap(f=>{
+    if(entities.length && ["quantity","horsepower","room_size","brand_required"].includes(String(f?.key)))return [];
     if(!f || !["customer","canonical_commerce"].includes(String(f.authority)) || regions.some(r=>r?.region===f.region && r.temporal_scope==="future"))return [];
     const region=regionNames[String(f.region)]?.[l];
     const prefix=region ? region+(l===2?": ":" "):"";
@@ -1853,10 +1854,10 @@ function renderCustomerRecap(value: unknown, language: string): string {
     if(f.key==="horsepower" && Array.isArray(f.value) && f.value.every(x=>typeof x==="string"))return [prefix+f.value.map(x=>l===2?String(x).replace(/匹/g," hp"):String(x)).join(l===2?", ":"、")];
     if(f.key==="room_size" && Array.isArray(f.value))return f.value.flatMap(x=>{const row=object(x);return row && typeof row.label==="string" && typeof row.value==="string" ? [prefix+display(row.label)+" "+display(row.value)] : [];});
     if(f.key==="brand_required" && typeof f.value==="boolean")return [prefix+(f.value?["你要求指定品牌","你要求指定品牌","you require a specific brand"]:["你冇限定品牌","你没有限定品牌","you do not require a specific brand"])[l]];
-    const names: Record<string, [string,string,string]> = {product_count:["商品數量","商品数量","product count"],staff_count:["人手","人手","staff count"],app_interest:["App 需要","App 需要","app needed"],preferred_interface:["使用介面","使用界面","preferred interface"],current_market:["目前市場","目前市场","current market"],desired_features:["需要功能","需要功能","required features"],future_markets:["未來市場","未来市场","future markets"]};
+    const names: Record<string, [string,string,string]> = {budget:["預算","预算","budget"],room_area:["面積","面积","room area"],product_count:["商品數量","商品数量","product count"],staff_count:["人手","人手","staff count"],app_interest:["App 需要","App 需要","app needed"],preferred_interface:["使用介面","使用界面","preferred interface"],current_market:["目前市場","目前市场","current market"],desired_features:["需要功能","需要功能","required features"],future_markets:["未來市場","未来市场","future markets"]};
     const value = f.value === null ? ["未確認","未确认","unknown"][l] : typeof f.value === "boolean" ? (f.value ? ["需要","需要","yes"][l] : ["不需要","不需要","no"][l]) : typeof f.value === "string" ? regionNames[f.value]?.[l] ?? display(f.value) : JSON.stringify(f.value);
     return value === undefined ? [] : [prefix+(names[String(f.key)]?.[l] ?? display(String(f.key)))+": "+value];
-  }) : [];
+  });
   const retainedText=retained.length ? ["而家記低咗","目前已记录","I have noted " ][l]+retained.join(l===2?"; ":"；")+(l===2?".":"。") : "";
   const first = l === 2
     ? [active.length ? `I've noted ${active.map(describe).join("; ")}.` : "",
@@ -1866,7 +1867,8 @@ function renderCustomerRecap(value: unknown, language: string): string {
     : retainedText || ["暫時未記低任何具體要求。", "暂时没有记录具体要求。"][l];
   const confirmed = Array.isArray(v.confirmed_entity_ids) ? v.confirmed_entity_ids : [];
   const global = v.selection_provenance === "global";
-  const items = global && entities.length ? ["項目：", "项目：", "Items: "][l] + first : first;
+  const items = (global && entities.length ? ["項目：", "项目：", "Items: "][l] + first : first) +
+    (entities.length && retainedText ? (l === 2 ? " " : "") + retainedText : "");
   const pendingBooking = active.some(e => object(e.attributes.capabilities)?.requires_booking === true && !confirmed.includes(e.entity_id));
   const qualifications: string[] = [];
   if (pendingBooking) qualifications.push(["預約要求仍需職員確認，未成為已確認預約。", "预约要求仍需职员确认，尚未成为已确认预约。", "The booking still needs staff confirmation and is not confirmed yet."][l]);
