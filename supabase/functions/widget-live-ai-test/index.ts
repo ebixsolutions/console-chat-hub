@@ -465,10 +465,11 @@ return async (req: Request) => {
     // Both tenants use separate, server-verified admission; never use a
     // non-UAT default or browser field to authorize synthetic paid traffic.
     const originalCandidate = originalPreviewCandidate(authData.user,resolved.companyId,resolved.channelId) && (membership as any).role === "admin";
-    const original = originalPreviewActor(authData.user,resolved.companyId,resolved.channelId,deps.env) &&
+    const originalRoute = action !== "send" && action !== "open_authorized";
+    const original = originalRoute && originalPreviewActor(authData.user,resolved.companyId,resolved.channelId,deps.env) &&
       (membership as any).role === "admin";
     const execution = original ? {ready:true as const,remote_ready:false,allowed_conversations:[] as string[]} :
-      originalCandidate ? {ready:false as const,failure:executionFailure("ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED")} :
+      originalCandidate && originalRoute ? {ready:false as const,failure:executionFailure("ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED")} :
       await uatExecutionReadiness(admin as any,resolved.companyId,deps.env,{actorId:authData.user.id,channelId:resolved.channelId});
     if (action === "history") {
       return json(req, {
@@ -477,7 +478,7 @@ return async (req: Request) => {
         isolation_ready: true,
         runtime_contract: "c3-widget-control-v2",
         actor_id: authData.user.id,
-        execution_class: originalCandidate ? "authenticated_admin_preview" : "synthetic_uat",
+        execution_class: originalCandidate && originalRoute ? "authenticated_admin_preview" : "synthetic_uat",
         execution_ready: execution.ready,
         authorized_preview_available: execution.ready && execution.allowed_conversations.length > 0,
         execution_failure: execution.ready ? null : execution.failure,
@@ -574,10 +575,11 @@ return async (req: Request) => {
       });
     }
 
-    if (action !== "send") {
+    if (action !== "send" && action !== "original_preview_send") {
       return json(req, { success: false, error: "invalid_action" }, 400);
     }
 
+    if(action === "original_preview_send" && !originalCandidate) return json(req,{success:false,error:"original_preview_actor_denied",retryable:false},403);
     const query = typeof (body as Record<string, unknown>).query === "string"
       ? String((body as Record<string, unknown>).query).trim()
       : "";
@@ -593,12 +595,9 @@ return async (req: Request) => {
     const underHumanControl = existingControl?.ok && (HUMAN_CONTROL_STATUSES.has(String(existingControl.conversation.status)) || Boolean(existingControl.conversation.assigned_agent_id));
     const controlOnly = isExplicitHandoffRequest(query);
     const localConversation = classifyNonFactualConversation(query) !== null;
-    if (original && !underHumanControl && !controlOnly && !localConversation && existingControl?.ok && existingControl.conversation.metadata_source?.execution_class !== "authenticated_admin_preview") {
-      const synthetic=await uatExecutionReadiness(admin as any,resolved.companyId,deps.env,{actorId:authData.user.id,channelId:resolved.channelId});
-      if(!synthetic.ready) return json(req,{success:false,error:"live_ai_execution_unavailable",failure:synthetic.failure,retryable:false},503);
-      if(synthetic.allowed_conversations.length && !synthetic.allowed_conversations.includes(requestedConversationId)) return json(req,{success:false,error:"live_ai_conversation_not_authorized",retryable:false},403);
-    }
-    if(originalCandidate && !original && !requestedConversationId) return json(req,{success:false,error:"live_ai_execution_unavailable",failure:executionFailure("ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED"),retryable:false},503);
+    if(original && !underHumanControl && !controlOnly && !localConversation && existingControl?.ok && existingControl.conversation.metadata_source?.execution_class !== "authenticated_admin_preview")
+      return json(req,{success:false,error:"original_preview_new_conversation_required",retryable:false},403);
+    if(originalCandidate && originalRoute && !original && !requestedConversationId) return json(req,{success:false,error:"live_ai_execution_unavailable",failure:executionFailure("ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED"),retryable:false},503);
     if (!execution.ready && !underHumanControl && !controlOnly && !localConversation) return json(req,{success:false,error:"live_ai_execution_unavailable",failure:execution.failure,retryable:false,correlation_id:correlationId},503);
     if (execution.ready && execution.allowed_conversations.length && !execution.allowed_conversations.includes(requestedConversationId || await testConversationId(authData.user.id,resolved.channelId,String((body as any).client_message_id))) && !underHumanControl && !controlOnly) return json(req,{success:false,error:"live_ai_conversation_not_authorized",retryable:false,correlation_id:correlationId},403);
 

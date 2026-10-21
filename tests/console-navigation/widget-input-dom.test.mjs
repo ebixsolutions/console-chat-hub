@@ -63,11 +63,12 @@ function reset(){
  };
 }
 async function mount(t){const host=document.createElement('div');document.body.appendChild(host);const root=createRoot(host);await act(async()=>root.render(React.createElement(PreviewWidget,props)));let closed=false;const close=async()=>{if(!closed){closed=true;await act(async()=>root.unmount());host.remove();}};t.after(close);return {host,root,close,user:userEvent.setup({document})};}
+const isSend=c=>c.action==='send'||c.action==='original_preview_send';
 const field=r=>r.host.querySelector('input');
 const button=(r,label)=>[...r.host.querySelectorAll('button')].find(b=>b.textContent===label||b.getAttribute('aria-label')===label);
 const edit=async(r,text)=>act(async()=>r.user.type(field(r),text));
 const click=async(r,el)=>act(async()=>r.user.click(el));
-function noDispatch(){assert.equal(calls.filter(c=>c.action==='send').length,0,'input must never dispatch');assert.equal(network,0);}
+function noDispatch(){assert.equal(calls.filter(c=>isSend(c)).length,0,'input must never dispatch');assert.equal(network,0);}
 test('original Preview archive is readable but Send, Enter and emoji cannot write; new conversation restores draft input',async t=>{
  reset();f.readOnly=true;f.human=true;window.localStorage.setItem(key,conversation);
  const r=await mount(t);
@@ -179,13 +180,13 @@ test('authorized free-form opens server-selected ticket and sends unchanged text
  const invoke=f.invoke;
  f.invoke=async(name,args)=>{
   if(args.body.action==='open_authorized'){calls.push(args.body);return {error:null,data:{success:true,conversation_id:conversation,conversation_status:'open',read_only:false,messages:[]}};}
-  if(args.body.action==='send'){calls.push(args.body);return {error:null,data:{success:true,conversation_id:conversation,conversation_status:'open',delivery_receipt:{persisted:true,conversation_id:conversation,client_message_id:args.body.client_message_id,visitor_message_id:channel},messages:[{id:channel,role:'assistant',content:'Isolated persisted answer'}]}};}
+  if(isSend(args.body)){calls.push(args.body);return {error:null,data:{success:true,conversation_id:conversation,conversation_status:'open',delivery_receipt:{persisted:true,conversation_id:conversation,client_message_id:args.body.client_message_id,visitor_message_id:channel},messages:[{id:channel,role:'assistant',content:'Isolated persisted answer'}]}};}
   return invoke(name,args);
  };
  const r=await mount(t);const open=button(r,'Open authorized AI conversation');assert(open);await click(r,open);
  assert.deepEqual(calls.find(c=>c.action==='open_authorized'),{action:'open_authorized'});
  await edit(r,'Please compare options for my business.');await click(r,button(r,'Send'));
- const sends=calls.filter(c=>c.action==='send');assert.equal(sends.length,1);assert.equal(sends[0].test_conversation_id,conversation);assert.equal(sends[0].query,'Please compare options for my business.');assert.match(sends[0].client_message_id,/^[a-f0-9-]{36}$/i);assert.match(r.host.textContent,/Isolated persisted answer/);assert.equal(network,0);
+ const sends=calls.filter(c=>isSend(c));assert.equal(sends.length,1);assert.equal(sends[0].test_conversation_id,conversation);assert.equal(sends[0].query,'Please compare options for my business.');assert.match(sends[0].client_message_id,/^[a-f0-9-]{36}$/i);assert.match(r.host.textContent,/Isolated persisted answer/);assert.equal(network,0);
 });
 test('authorized free-form entry requires verified actor and execution readiness',async t=>{
  for(const overrides of [{actor_id:'other'},{execution_ready:false},{authorized_preview_available:false}]){
@@ -200,13 +201,13 @@ test('authorized free-form cannot switch away from unresolved delivery',async t=
 });
 test('original account Preview uses normal free-form Send without lease ticket selection or browser authority flags',async t=>{
  reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_class:'authenticated_admin_preview',execution_ready:true,remote_ready:false,authorized_preview_available:false,history:[]}};
- const invoke=f.invoke;f.invoke=async(name,args)=>{if(args.body.action==='send'){calls.push(args.body);return {error:null,data:{success:true,conversation_id:conversation,conversation_status:'open',delivery_receipt:{persisted:true,conversation_id:conversation,client_message_id:args.body.client_message_id,visitor_message_id:channel},messages:[{id:channel,role:'assistant',content:'Isolated original Preview reply'}]}};}return invoke(name,args);};
- const r=await mount(t);assert.equal(button(r,'Open authorized AI conversation'),undefined);await edit(r,'Help me compare options for my new business, in Cantonese.');await click(r,button(r,'Send'));const first=calls.find(c=>c.action==='send');assert.equal(first.query,'Help me compare options for my new business, in Cantonese.');assert.deepEqual(Object.keys(first).sort(),['action','client_message_id','query']);assert.match(r.host.textContent,/Isolated original Preview reply/);await edit(r,'Correction: my room is 150 square feet.');await click(r,button(r,'Send'));const sends=calls.filter(c=>c.action==='send');assert.equal(sends.length,2);assert.equal(sends[1].test_conversation_id,conversation);assert.notEqual(sends[1].client_message_id,first.client_message_id);assert.equal(network,0);
+ const invoke=f.invoke;f.invoke=async(name,args)=>{if(isSend(args.body)){calls.push(args.body);return {error:null,data:{success:true,conversation_id:conversation,conversation_status:'open',delivery_receipt:{persisted:true,conversation_id:conversation,client_message_id:args.body.client_message_id,visitor_message_id:channel},messages:[{id:channel,role:'assistant',content:'Isolated original Preview reply'}]}};}return invoke(name,args);};
+ const r=await mount(t);assert.equal(button(r,'Open authorized AI conversation'),undefined);await edit(r,'Help me compare options for my new business, in Cantonese.');await click(r,button(r,'Send'));const first=calls.find(c=>isSend(c));assert.equal(first.query,'Help me compare options for my new business, in Cantonese.');assert.equal(first.action,'original_preview_send');assert.deepEqual(Object.keys(first).sort(),['action','client_message_id','query']);assert.match(r.host.textContent,/Isolated original Preview reply/);await edit(r,'Correction: my room is 150 square feet.');await click(r,button(r,'Send'));const sends=calls.filter(c=>isSend(c));assert.equal(sends.length,2);assert.equal(sends[1].test_conversation_id,conversation);assert.notEqual(sends[1].client_message_id,first.client_message_id);assert.equal(network,0);
 });
 test('original account missing paid authorization remains explicit, preserves draft and never auto-retries',async t=>{
  reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_class:'authenticated_admin_preview',execution_ready:false,remote_ready:false,execution_failure:{code:'ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED',stage:'admission',retryable:false},history:[]}};
- const invoke=f.invoke;f.invoke=async(name,args)=>{if(args.body.action==='send'){calls.push(args.body);return {error:null,data:{success:false,error:'live_ai_execution_unavailable',retryable:false,failure:{code:'ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED'}}};}return invoke(name,args);};
- const r=await mount(t);assert.match(r.host.textContent,/ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED/);await edit(r,'A real free-form business question');await click(r,button(r,'Send'));assert.equal(field(r).value,'A real free-form business question');assert.equal(window.localStorage.getItem(key+':pending'),null);assert.equal(calls.filter(c=>c.action==='send').length,1);assert.equal(network,0);
+ const invoke=f.invoke;f.invoke=async(name,args)=>{if(isSend(args.body)){calls.push(args.body);return {error:null,data:{success:false,error:'live_ai_execution_unavailable',retryable:false,failure:{code:'ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED'}}};}return invoke(name,args);};
+ const r=await mount(t);assert.match(r.host.textContent,/ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED/);await edit(r,'A real free-form business question');await click(r,button(r,'Send'));assert.equal(field(r).value,'A real free-form business question');assert.equal(window.localStorage.getItem(key+':pending'),null);assert.equal(calls.filter(c=>isSend(c)).length,1);assert.equal(network,0);
 });
 test('original permission never converts a restored synthetic ticket; New Conversation opens the normal original Preview draft',async t=>{
  reset();window.localStorage.setItem(key,conversation);f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_class:'authenticated_admin_preview',execution_ready:true,remote_ready:false,history:[]}};

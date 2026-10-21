@@ -9,10 +9,11 @@
     "original": "Authenticated Admin-created widget_live_test -> generate-reply; old test markers alone were not paid permission.",
     "regression": "Current fixed Company/test-marker dispatch classification forces all original Preview operations into synthetic lease admission. open_authorized cannot restore either account without that lease.",
     "repair": "Explicit authenticated_admin_preview classification. Exact original verified-email Admin + active own Company/Channel; own-origin checks; signed server receipt binds actor/email/company/channel/conversation/session and permission revision. Original widget_live_test/test_mode/exclude_training markers remain. Genuine manual Preview uses existing Production Vertex path only after explicit paid permission. Existing c3_uat_widget tickets never become manual/ordinary.",
-    "chain": "Original normal free-form Send/New Conversation -> marked visitor Session and ticket -> receive-widget-message actual owner JWT -> original receive_widget_message_tx -> service-JWT generate-reply -> existing Memory/correction/Summary/handoff/AI suppression/idempotent commit -> authenticated own Widget polling.",
+    "chain": "Normal UI Send explicitly invokes original_preview_send -> existing marked Session/ticket -> authenticated receive-widget-message -> original transaction -> service-JWT generate-reply -> original Memory/Summary/handoff/idempotent persistence -> authenticated polling. Existing send remains UAT.",
     "no_new_subsystems": "No accounting table/RPC, vendor backend, credential, model, endpoint, duplicated generator or browser permission flag. No total budget or historical quota fabricated.",
     "existing_synthetic_threads": "Original account sees existing synthetic ticket read-only with New Conversation instruction; metadata/lease rules stay intact.",
-    "reconciliation": "Read-only probes both original and prior synthetic deterministic ticket identities; ambiguity denies. Revoking paid permission still permits authenticated owned history/polling."
+    "reconciliation": "Read-only probes both original and prior synthetic deterministic ticket identities; ambiguity denies. Revoking paid permission still permits authenticated owned history/polling.",
+    "traffic_purpose": "Dedicated original_preview_send action selects original Preview purpose only after server Auth/paid permission checks. Existing send/open_authorized retain synthetic UAT admission even for the same original Admin and even when normal Preview paid permission is active. The action itself grants nothing."
   },
   "accounts": [
     {
@@ -32,16 +33,24 @@
       "sha256": "c31d3e387a6b26ae46296bf7d8a948c895a94466ffb5c16c47807186b268b4e1"
     },
     {
+      "path": "src/lib/widget-live-recovery.ts",
+      "sha256": "4e74bbfc16117d6ff2dcb362c8cd4af3fe37bde987f9d136d2bd26156c2df274"
+    },
+    {
       "path": "src/routes/_authenticated/console.widget-preview.tsx",
-      "sha256": "90d013fece910c220b19340ac2221810ea41f4c447318f296f01cb66618656d4"
+      "sha256": "7b306c7b85d44bd6bd52b1a3bef078d4f355ffc8c183e75f4de8f5948aecae92"
     },
     {
       "path": "supabase/functions/_shared/execution-failure.ts",
-      "sha256": "38b4f1c08955a53931f2cd43f6c560b15900403cc712804dbd65a2f2d7238cfd"
+      "sha256": "6d437d5e690ae0c748e345a12a73928ccaf9121d2c38eab10539a0b4ccdcfef1"
     },
     {
       "path": "supabase/functions/_shared/model-attempt-accounting.ts",
       "sha256": "481d5138fe0312f8ddf32818802eed786091c8509e82287ae07f2b0bb90476a7"
+    },
+    {
+      "path": "supabase/functions/_shared/original-widget-preview.ts",
+      "sha256": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738"
     },
     {
       "path": "supabase/functions/_shared/uat-execution-contract.ts",
@@ -57,7 +66,7 @@
     },
     {
       "path": "supabase/functions/widget-live-ai-test/index.ts",
-      "sha256": "8bf718fbe0a51bf3697dd44e6fbf685b2f84bd3fda9dc71d12c5f3fd0db06746"
+      "sha256": "a358f9db80a0858cd04ccf49585bec28ddfd09ed49b36115ec266d357e21fb1e"
     },
     {
       "path": "supabase/functions/widget-poll-messages/index.ts",
@@ -72,20 +81,16 @@
       "sha256": "3ab95c2c8da33785572252c0cda2a7230d72c255606678a1ed3d0df1704a07e1"
     },
     {
-      "path": "tests/console-navigation/widget-input-dom.test.mjs",
-      "sha256": "4d3dc0b925fc68a11962639e8e0fb6fb7cf3dc349f7ec5a4b5c27fc1cf87a32f"
-    },
-    {
-      "path": "supabase/functions/_shared/original-widget-preview.ts",
-      "sha256": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738"
-    },
-    {
       "path": "tests/c3-widget-live-auth/original-preview-ingress.test.mjs",
       "sha256": "b5a62c2133f4a420e0d531e59aad778fc685737edf8306fb2641f89c83c05f35"
     },
     {
       "path": "tests/c3-widget-live-auth/original-preview.test.mjs",
-      "sha256": "3da1331212f149e9fc62fd3f06f85b977d91282d64e70d21efd6409ebc29bcad"
+      "sha256": "b2a6782671013425713d62fd53b778208fedefdb7dcbf25819cfd4e0db853d7f"
+    },
+    {
+      "path": "tests/console-navigation/widget-input-dom.test.mjs",
+      "sha256": "08f445943ef2310f727b057551f08bc7dae34115162eb8230d70cbe491e7a271"
     }
   ],
   "release": {
@@ -137,7 +142,7 @@
             "sha256": "b8c05ccb43b43cbf3360943ade89d0f5212a7ce26ebde16da3d5878c2b47d826"
           }
         ],
-        "target_sha256": "6859ce6896bbcb63da1bc200c79e3b4cd9f448c85a505f42db6bbccc70c8cb9e",
+        "target_sha256": "f048e39276529cdab643860d9f0cbf2a4cb00607550276f4208064ebc04ff414",
         "target": [
           {
             "path": "functions/_shared/conversational-routing.ts",
@@ -145,7 +150,7 @@
           },
           {
             "path": "functions/_shared/execution-failure.ts",
-            "sha256": "38b4f1c08955a53931f2cd43f6c560b15900403cc712804dbd65a2f2d7238cfd"
+            "sha256": "6d437d5e690ae0c748e345a12a73928ccaf9121d2c38eab10539a0b4ccdcfef1"
           },
           {
             "path": "functions/_shared/handoff-intent.ts",
@@ -177,13 +182,13 @@
           },
           {
             "path": "functions/widget-live-ai-test/index.ts",
-            "sha256": "8bf718fbe0a51bf3697dd44e6fbf685b2f84bd3fda9dc71d12c5f3fd0db06746"
+            "sha256": "a358f9db80a0858cd04ccf49585bec28ddfd09ed49b36115ec266d357e21fb1e"
           }
         ],
         "changed": [
           {
             "path": "functions/_shared/execution-failure.ts",
-            "sha256": "38b4f1c08955a53931f2cd43f6c560b15900403cc712804dbd65a2f2d7238cfd"
+            "sha256": "6d437d5e690ae0c748e345a12a73928ccaf9121d2c38eab10539a0b4ccdcfef1"
           },
           {
             "path": "functions/_shared/original-widget-preview.ts",
@@ -195,7 +200,7 @@
           },
           {
             "path": "functions/widget-live-ai-test/index.ts",
-            "sha256": "8bf718fbe0a51bf3697dd44e6fbf685b2f84bd3fda9dc71d12c5f3fd0db06746"
+            "sha256": "a358f9db80a0858cd04ccf49585bec28ddfd09ed49b36115ec266d357e21fb1e"
           }
         ],
         "removed": []
@@ -720,7 +725,7 @@
             "sha256": "0731769d66c0c7207f4114ad1de84807e52d61e2c64a24dbed40de31e5611d55"
           }
         ],
-        "target_sha256": "e7f3c96b9f050d3d471b8b880dabd88ccefce8c5f6f4cec0660c3300ab17bee1",
+        "target_sha256": "0b6f426916d57a8db1e07f371040eb644fafca8ad429cde61a0e20fa209dc235",
         "target": [
           {
             "path": "functions/_shared/authoritative-commit-readback.ts",
@@ -888,7 +893,7 @@
           },
           {
             "path": "functions/_shared/execution-failure.ts",
-            "sha256": "38b4f1c08955a53931f2cd43f6c560b15900403cc712804dbd65a2f2d7238cfd"
+            "sha256": "6d437d5e690ae0c748e345a12a73928ccaf9121d2c38eab10539a0b4ccdcfef1"
           },
           {
             "path": "functions/_shared/generation-terminal-guard.ts",
@@ -1030,7 +1035,7 @@
         "changed": [
           {
             "path": "functions/_shared/execution-failure.ts",
-            "sha256": "38b4f1c08955a53931f2cd43f6c560b15900403cc712804dbd65a2f2d7238cfd"
+            "sha256": "6d437d5e690ae0c748e345a12a73928ccaf9121d2c38eab10539a0b4ccdcfef1"
           },
           {
             "path": "functions/_shared/model-attempt-accounting.ts",

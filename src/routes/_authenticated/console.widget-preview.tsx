@@ -840,6 +840,7 @@ function PreviewWidget({
   const [conversationReadOnlyReason, setConversationReadOnlyReason] = useState<string | null>(null);
   const [conversationVerified, setConversationVerified] = useState(false);
   const [executionReady, setExecutionReady] = useState(false);
+  const [originalPreviewMode, setOriginalPreviewMode] = useState(false);
   const [authorizedPreviewAvailable, setAuthorizedPreviewAvailable] = useState(false);
   const [remoteReady, setRemoteReady] = useState(false);
   const [liveFailure, setLiveFailure] = useState<string | null>(null);
@@ -952,6 +953,7 @@ function PreviewWidget({
     composing.current = false;
     emojiCaret.current = null;
     setExecutionReady(false);
+    setOriginalPreviewMode(false);
     setAuthorizedPreviewAvailable(false);
     setRemoteReady(false);
     setHistoryFailure(false);
@@ -1066,6 +1068,7 @@ function PreviewWidget({
       setRuntimeReason(ready ? widgetRuntimeBlockReason(data,user?.id) : null);
       setHistoryFailure(Boolean(error) || data?.success !== true);
       setExecutionReady(ready && data?.execution_ready === true);
+      setOriginalPreviewMode(ready && verifiedWidgetRuntime(data,user?.id) && data?.execution_class === "authenticated_admin_preview");
       setAuthorizedPreviewAvailable(ready && verifiedWidgetRuntime(data,user?.id) && data?.execution_ready === true && data?.authorized_preview_available === true);
       setRemoteReady(ready && data?.remote_ready === true);
       if (ready && Array.isArray(data.history)) {
@@ -1078,6 +1081,7 @@ function PreviewWidget({
         setScopeFailure("scope_lookup_failed");
         setExecutionFailure(null);
         setExecutionReady(false);
+    setOriginalPreviewMode(false);
         setAuthorizedPreviewAvailable(false);
         setRemoteReady(false);
         setHistoryFailure(true);
@@ -1188,7 +1192,7 @@ function PreviewWidget({
 
     try {
       const { data, error } = await invokeLiveWidget({
-            action: "send",
+            action: originalPreviewMode ? "original_preview_send" : "send",
             client_message_id: pending.id,
             query: text,
             ...(testConversationId

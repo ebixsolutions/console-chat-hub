@@ -3,7 +3,7 @@
 export function isBusinessAdmissionFailure(value: unknown): boolean {
   const v = value as {success?: boolean; retryable?: boolean; error?: string} | null;
   return v?.success === false && v.retryable === false &&
-    ["live_ai_execution_unavailable", "live_ai_conversation_not_authorized"].includes(v.error ?? "");
+    ["live_ai_execution_unavailable", "live_ai_conversation_not_authorized", "original_preview_new_conversation_required", "original_preview_actor_denied"].includes(v.error ?? "");
 }
 
 type ReadMessage = {id: string; role: string; metadata?: Record<string, unknown> | null};

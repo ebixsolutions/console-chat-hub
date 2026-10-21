@@ -23,7 +23,7 @@ export function safeExecutionCode(value: unknown): string | null {
 }
 export function executionFailure(code: unknown, options: {stage?: unknown; request_id?: unknown; source_message_id?: unknown; http_status?: unknown} = {}): ExecutionFailure {
   const safeCode = safeExecutionCode(code) ?? "SEMANTIC_INTERPRETER_UNAVAILABLE";
-  const inferred: ExecutionStage = safeCode === "UAT_TIMEOUT_OUTCOME_UNKNOWN" ? "timeout" : safeCode === "UAT_NETWORK_OUTCOME_UNKNOWN" ? "network" : /^(?:UAT_|DISPATCH_|PREACTIVATION_)/.test(safeCode) || safeCode === "LLM_ACCOUNTING_DENIED" ? "admission"
+  const inferred: ExecutionStage = safeCode === "UAT_TIMEOUT_OUTCOME_UNKNOWN" ? "timeout" : safeCode === "UAT_NETWORK_OUTCOME_UNKNOWN" ? "network" : /^(?:UAT_|DISPATCH_|PREACTIVATION_|ORIGINAL_PREVIEW_)/.test(safeCode) || safeCode === "LLM_ACCOUNTING_DENIED" ? "admission"
     : safeCode === "LLM_CONFIG_MISSING" ? "config" : safeCode === "LLM_TIMEOUT" ? "timeout" : safeCode === "LLM_NETWORK" ? "network"
     : safeCode === "LLM_NON_2XX" ? "provider_http" : safeCode === "LLM_INVALID_OUTPUT" ? "decode" : safeCode === "LLM_GROUNDING_REJECTED" ? "canonical_validation"
     : safeCode === "KB_NO_MATCH" ? "kb_no_match" : safeCode === "KB_TOOL_FAILURE" ? "kb_tool" : safeCode === "PERSISTENCE_FAILED" ? "persistence" : "unexpected";
