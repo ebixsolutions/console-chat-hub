@@ -2,6 +2,7 @@ import { uatRun } from "./uat-execution-contract.ts";
 import {
   type AccountingRpc,
   ModelAccountingError,
+  sha256,
 } from "./model-attempt-accounting.ts";
 export function remoteAccountingSecret(
   credential: { kind: string; value: string },
@@ -69,17 +70,26 @@ export async function prepareRemoteRetrieval(
   signal?: AbortSignal,
   service: "kb" | "coach_sync" = "kb",
   requestBody?: string,
+  admittedMode?: "legacy" | "uat" | "authenticated_preview",
 ): Promise<Record<string, string>> {
-  // The bounded synthetic scope alone requires the new remote contract; other tenants retain their accepted authority.
-  if (company !== "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec") return {};
-  if (service === "kb") { uatRun(company); return {}; } // Absent/invalid run denies; actual POST uses durable admission.
+  // Only accountedModelFetch supplies admittedMode after persisted identity and
+  // provider checks. Existing callers keep their prior scope. Never turn a
+  // Company UUID into a Synthetic UAT classification for an original Preview.
+  const original=service==="kb" && admittedMode==="authenticated_preview";
+  if(service==="kb" && admittedMode==="legacy")return {};
+  if(!original) {
+    if (company !== "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec") return {};
+    if (service === "kb") { uatRun(company); return {}; }
+  }
+  if(original && (!company || !requestBody))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
   const scope: RemoteScope = {
-    company,
+    company:company!,
     tenant,
     operation: `${service}:${crypto.randomUUID()}`,
     expires: Math.floor(Date.now() / 1000) + 60,
     nonce: crypto.randomUUID(),
     service,
+    ...(original ? {request_sha256:await sha256(requestBody!)} : {}),
   };
   const payload = JSON.stringify(scope);
   const signature = await signRemote(payload, credential);
@@ -91,7 +101,7 @@ export async function prepareRemoteRetrieval(
         method: "GET",
         redirect: "error",
         headers: {
-          "x-ai-company-id": company,
+          "x-ai-company-id": company!,
           "x-c3-accounting-scope": payload,
           "x-c3-accounting-signature": signature,
         },
@@ -101,10 +111,10 @@ export async function prepareRemoteRetrieval(
       },
     );
   } catch {
-    throw new ModelAccountingError("KB_DOWNSTREAM_ACCOUNTING_UNAVAILABLE");
+    throw new ModelAccountingError(original ? "UAT_REMOTE_BOUND_UNVERIFIED" : "KB_DOWNSTREAM_ACCOUNTING_UNAVAILABLE");
   }
   if (!response.ok) {
-    throw new ModelAccountingError("KB_DOWNSTREAM_ACCOUNTING_UNPROVEN");
+    throw new ModelAccountingError(original ? "UAT_REMOTE_BOUND_UNVERIFIED" : "KB_DOWNSTREAM_ACCOUNTING_UNPROVEN");
   }
   const text = await response.text();
   if (
@@ -113,12 +123,12 @@ export async function prepareRemoteRetrieval(
       response.headers.get("x-c3-accounting-signature") ?? "",
       credential,
     )
-  ) throw new ModelAccountingError("KB_DOWNSTREAM_ACCOUNTING_UNPROVEN");
+  ) throw new ModelAccountingError(original ? "UAT_REMOTE_BOUND_UNVERIFIED" : "KB_DOWNSTREAM_ACCOUNTING_UNPROVEN");
   let body: any;
   try {
     body = JSON.parse(text);
   } catch {
-    throw new ModelAccountingError("KB_DOWNSTREAM_ACCOUNTING_UNPROVEN");
+    throw new ModelAccountingError(original ? "UAT_REMOTE_BOUND_UNVERIFIED" : "KB_DOWNSTREAM_ACCOUNTING_UNPROVEN");
   }
   if (
     body.protocol !== "c3-shared-attempt-v1" || body.nonce !== scope.nonce ||
@@ -129,10 +139,14 @@ export async function prepareRemoteRetrieval(
     !["retrieval_only", "shared_atomic_attempts"].includes(body.mode) ||
     !/^[a-f0-9]{64}$/.test(body.runtime_sha256 ?? "")
   ) {
-    throw new ModelAccountingError("KB_DOWNSTREAM_ACCOUNTING_UNPROVEN");
+    throw new ModelAccountingError(original ? "UAT_REMOTE_BOUND_UNVERIFIED" : "KB_DOWNSTREAM_ACCOUNTING_UNPROVEN");
   }
+  // The synthetic shared-attempt callback does not authorize original Preview.
+  // Even a signed remote 200 cannot opt that scope into a different paid run.
+  // Current B-O is Vertex-only and denies before this preparation is called.
+  if(original && body.mode!=="retrieval_only")throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
   return {
-    "x-ai-company-id": company,
+    "x-ai-company-id": company!,
     "x-c3-accounting-scope": payload,
     "x-c3-accounting-signature": signature,
     "x-c3-accounting-mode": body.mode,

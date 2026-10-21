@@ -486,7 +486,7 @@ export async function fetchKBRag(
   queryInput: KBQueryInput,
   scope: KBResolvedScope,
   endpointCfg: KBEndpointConfig,
-  opts?: { timeoutMs?: number; signal?: AbortSignal; uatContext?: {conversationId: string; operationId: string} },
+  opts?: { timeoutMs?: number; signal?: AbortSignal; uatContext?: {conversationId: string; operationId: string; sourceMessageId?: string} },
 ): Promise<KBRagResponse> {
   const query = queryInput.query.trim();
   if (!query) {
@@ -531,22 +531,6 @@ export async function fetchKBRag(
     max_full_content_chunks: 3,
     score_threshold: 0.05,
   });
-  let accountingHeaders: Record<string, string>;
-  try {
-    accountingHeaders = await prepareRemoteRetrieval(
-      scope.aiCompanyId,
-      scope.singaporeTenantId,
-      remoteAccountingSecret(credential, endpointCfg),
-      endpointCfg.ragUrl,
-      fetch,
-      opts?.signal,
-      "kb",
-      requestBody,
-    );
-  } catch(error) {
-    const failure=failureFromError(error);
-    return {success:false,chunks:[],citations:[],documents:[],error_code:failure.code,failure};
-  }
   const controller = new AbortController();
   const abortFromRequest = () => controller.abort(opts?.signal?.reason);
   if (opts?.signal?.aborted) abortFromRequest();
@@ -557,6 +541,17 @@ export async function fetchKBRag(
     () => controller.abort(),
     opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS,
   );
+  const started=Date.now();
+  const uuid=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+  const trace=(stage:"kb_scope_resolved"|"kb_admission_or_transport_result",failure?:ExecutionFailure,status?:number)=>{
+    if(!uuid.test(opts?.uatContext?.sourceMessageId ?? "") || !uuid.test(opts?.uatContext?.conversationId ?? ""))return;
+    console.log(JSON.stringify({endpoint:"generate-reply",stage,conversation_id:opts!.uatContext!.conversationId,
+      source_message_id:opts!.uatContext!.sourceMessageId,company_id:scope.aiCompanyId,
+      canonical_kb_tenant:/^[a-z0-9_-]{1,100}$/i.test(scope.singaporeTenantId) ? scope.singaporeTenantId : null,
+      endpoint_class:"singapore_context_search",elapsed_ms:Date.now()-started,
+      ...(failure ? {failure_code:failure.code,failure_stage:failure.stage} : {}),...(status ? {http_status:status} : {})}));
+  };
+  trace("kb_scope_resolved");
   let response: Response;
   try {
     const init: RequestInit = {
@@ -565,14 +560,17 @@ export async function fetchKBRag(
       headers: {
         "Content-Type": "application/json",
         ...singaporeCredentialHeaders(credential, endpointCfg),
-        ...accountingHeaders,
       },
       body: requestBody,
       signal: controller.signal,
     };
-    response = await accountedModelFetch(createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey()), {companyId:scope.aiCompanyId, legacyAuthority:scope.legacyAuthority, conversationId:opts?.uatContext?.conversationId ?? null, operationId:opts?.uatContext?.operationId ?? "", provider:"singapore-kb",purpose:"kb_embedding",slot:"context-search",attempt:1,request:requestBody},endpointCfg.ragUrl,init);
+    response = await accountedModelFetch(createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey()), {companyId:scope.aiCompanyId, legacyAuthority:scope.legacyAuthority, conversationId:opts?.uatContext?.conversationId ?? null, operationId:opts?.uatContext?.operationId ?? "", provider:"singapore-kb",purpose:"kb_embedding",slot:"context-search",attempt:1,request:requestBody},endpointCfg.ragUrl,init,fetch,undefined,async admittedMode=>await prepareRemoteRetrieval(
+      scope.aiCompanyId,scope.singaporeTenantId,remoteAccountingSecret(credential,endpointCfg),
+      endpointCfg.ragUrl,fetch,opts?.signal,"kb",requestBody,admittedMode,
+    ));
 
   } catch (err) {
+    trace("kb_admission_or_transport_result",failureFromError(err));
     clearTimeout(timeout);
     opts?.signal?.removeEventListener("abort", abortFromRequest);
     return {
@@ -587,6 +585,7 @@ export async function fetchKBRag(
     };
   }
 
+  trace("kb_admission_or_transport_result",undefined,response.status);
   clearTimeout(timeout);
   opts?.signal?.removeEventListener("abort", abortFromRequest);
   if (!response.ok) {

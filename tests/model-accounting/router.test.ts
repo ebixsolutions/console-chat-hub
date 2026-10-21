@@ -1,3 +1,5 @@
+import {accountedModelFetch,sha256} from "../../supabase/functions/_shared/model-attempt-accounting.ts";
+import {UAT_REVISION} from "../../supabase/functions/_shared/uat-execution-contract.ts";
 import {
   callModel,
   type LlmCall,
@@ -283,4 +285,35 @@ Deno.test("Phase-1 synthetic run excludes Phase-2 Coach regardless of global fla
   assert(!phase1CoachAllowed("4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec", false));
   assert(phase1CoachAllowed("other-tenant", true));
   assert(!phase1CoachAllowed("other-tenant", false));
+});
+
+Deno.test("conditional original KB preparation requires signed request-bound retrieval-only evidence; it is not paid authority",async()=>{
+ const secret='isolated-contract-key-not-production',endpoint='https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search',request=JSON.stringify({query:'fixture only',company_id:101});
+ for(const company of ['3d6e17b5-ec79-4f75-aa7f-eaa824ff8493','4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec']) {
+  for(const fault of ['none','tenant','company','nonce','request','runtime','signature','shared','malformed']) {
+   let calls=0;
+   const upstream:typeof fetch=async(url,init)=>{
+    calls++;assert(String(url)===endpoint+'/model-accounting-contract' && init?.method==='GET');assert(init.redirect==='error');
+    const scope=JSON.parse(new Headers(init.headers).get('x-c3-accounting-scope')!);assert(scope.company===company && scope.tenant==='101');assert(scope.request_sha256===await sha256(request));
+    const body={...scope,protocol:'c3-shared-attempt-v1',mode:fault==='shared'?'shared_atomic_attempts':'retrieval_only',runtime_sha256:'a'.repeat(64)};
+    if(fault==='tenant')body.tenant='202';if(fault==='company')body.company='foreign';if(fault==='nonce')body.nonce=crypto.randomUUID();if(fault==='request')body.request_sha256='0'.repeat(64);if(fault==='runtime')body.runtime_sha256='unverified';
+    const raw=fault==='malformed'?'not json':JSON.stringify(body);
+    return new Response(raw,{headers:{'x-c3-accounting-signature':fault==='signature'?'0'.repeat(64):await signRemote(raw,secret)}});
+   };
+   let denied=false;
+   try {const headers=await prepareRemoteRetrieval(company,'101',secret,endpoint,upstream,undefined,'kb',request,'authenticated_preview');assert(fault==='none');assert(headers['x-c3-accounting-mode']==='retrieval_only');assert(!JSON.stringify(headers).includes(secret));}
+   catch(error){denied=true;assert(fault!=='none');assert(['KB_DOWNSTREAM_ACCOUNTING_UNPROVEN','UAT_REMOTE_BOUND_UNVERIFIED'].includes((error as {code:string}).code));}
+   assert(denied===(fault!=='none') && calls===1);
+  }
+ }
+});
+Deno.test("synthetic KB remote-bound denial still precedes preparation and all remote transport",async()=>{
+ const keys=['C3_TEMP_UAT_RUN_ID','C3_TEMP_UAT_SOURCE_REVISION'];const before=keys.map(k=>Deno.env.get(k));
+ Deno.env.set(keys[0],'12345678-1234-4234-8234-123456789abc');Deno.env.set(keys[1],UAT_REVISION);
+ let prepared=0,transport=0,reserved=0;
+ const company='4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec',conversation='22222222-2222-4222-8222-222222222222';
+ const db={from(table:string){const q={select(){return q;},eq(){return q;},async maybeSingle(){return {data:table==='company'?{id:company}:{id:conversation,company_id:company,metadata_source:{source:'c3_uat_widget',synthetic:true}},error:null};}};return q;},async rpc(){reserved++;return {data:null,error:{code:'P0001',message:'UAT_REMOTE_BOUND_UNVERIFIED'}};}};
+ const request=JSON.stringify({query:'fixture',company_id:101});
+ try {let denied=false;try{await accountedModelFetch(db,{companyId:company,conversationId:conversation,operationId:'kb:'+crypto.randomUUID(),provider:'singapore-kb',purpose:'kb_embedding',slot:'context-search',attempt:1,request},'https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search',{method:'POST',body:request},async()=>{transport++;return Response.json({});},undefined,async()=>{prepared++;return {};});}catch(error){denied=true;assert((error as {code:string}).code==='UAT_REMOTE_BOUND_UNVERIFIED');}assert(denied && reserved===1 && prepared===0 && transport===0);}
+ finally {keys.forEach((k,i)=>before[i]===undefined?Deno.env.delete(k):Deno.env.set(k,before[i]!));}
 });

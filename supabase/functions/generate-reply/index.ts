@@ -735,6 +735,7 @@ async function commitAiReplyWithControlGate(
     b2_source_message_id: source_message_id,
   };
   let attemptedEvidence: Record<string, unknown> | null = null;
+  const gateStarted=Date.now();
   const b2 = await executeB2RpcPersistence(
     supabaseAdmin,
     {
@@ -763,6 +764,12 @@ async function commitAiReplyWithControlGate(
     },
   );
 
+  const gateFacts=b2.snapshot ? collectKnownCommerceFacts(b2.snapshot.state) : [];
+  console.log(JSON.stringify({endpoint:"generate-reply",stage:"b2_gate_result",conversation_id,source_message_id,
+    company_id:b2.snapshot?.company_id ?? null,state_revision:b2.snapshot?.commerce_state_revision ?? expectedRevision,
+    known_fact_count:gateFacts.filter(f=>!/\.attributes\.customer_goal\.missing\.\d+$/.test(f.path)).length,
+    missing_slot_count:gateFacts.filter(f=>/\.attributes\.customer_goal\.missing\.\d+$/.test(f.path)).length,
+    gate_decision:b2.decision.decision,gate_code:b2.decision.code,commit_attempted:b2.committed,gate_commit_ms:Date.now()-gateStarted}));
   if (!b2.committed) {
     console.warn("[generate-reply] B2 prevented AI reply persistence:", {
       conversation_id,
@@ -791,6 +798,8 @@ async function commitAiReplyWithControlGate(
     const reconciled = await reconcileDeliveredMemoryReply(supabaseAdmin as unknown as LongMemoryDbClient, {
       conversation_id, source_message_id, reply_message_id:receipt.message_id,
     });
+    console.log(JSON.stringify({endpoint:"generate-reply",stage:"reply_receipt",conversation_id,source_message_id,
+      reply_message_id:receipt.message_id,idempotent:receipt.idempotent,memory_resolution:reconciled===true,gate_to_receipt_ms:Date.now()-gateStarted}));
     return reconciled ? receipt : {ok:false as const,result:"memory_resolution_failed" as const};
   };
   const recoverAmbiguousAcknowledgement = async () => {
@@ -5797,6 +5806,7 @@ async function orchestrationGenerateReply(
         userQuery,
         _kbTenantResult.scope,
         requestSignal,
+        source_message_id ?? undefined,
       );
     if (!ragResult || !ragResult.success) {
       const failure=ragResult?.failure ?? executionFailure("KB_TOOL_FAILURE");
@@ -7406,6 +7416,7 @@ async function callKBAdapter(
   userMessage: string,
   scope: KBResolvedScope,
   signal?: AbortSignal,
+  sourceMessageId?: string,
 ): Promise<{
   success: boolean;
   failure?: ExecutionFailure;
@@ -7443,7 +7454,7 @@ async function callKBAdapter(
     { query: userMessage, top_k: 5 },
     scope,
     endpointCfg,
-    { timeoutMs: 15000, signal, uatContext: { conversationId: _conversation_id, operationId: `kb:generate-reply:${_conversation_id}:${crypto.randomUUID()}` } },
+    { timeoutMs: 15000, signal, uatContext: { conversationId: _conversation_id, operationId: `kb:generate-reply:${sourceMessageId ?? _conversation_id}:${crypto.randomUUID()}`, sourceMessageId } },
   );
   if (!result.success) {
     return { success: false, no_answer: true, retrieval_quality: "failed", failure:result.failure ?? executionFailure("KB_TOOL_FAILURE") };

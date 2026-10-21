@@ -42,11 +42,11 @@ export async function accountedModelFetch(
   init: RequestInit,
   upstream: typeof fetch = fetch,
   onDispatch?: () => void,
+  prepare?: (mode: "legacy" | "uat" | "authenticated_preview") => Promise<Record<string,string>>,
 ): Promise<Response> {
   let mode: "legacy" | "uat" | "authenticated_preview";
   try {
     mode = await trustedDispatchScope(db, meta.companyId, meta.conversationId, meta.legacyAuthority);
-    if (mode === "uat") return await uatFetch(db, {...meta, operationId: `${meta.slot}:${meta.operationId}`}, url, init, upstream, onDispatch);
   } catch (e) {
     if (e instanceof UatDenied) throw new ModelAccountingError(e.code);
     // A failed provider transport is not an admission denial. Unknown outcomes
@@ -68,13 +68,25 @@ export async function accountedModelFetch(
     if(new TextEncoder().encode(meta.request).length>256000 || !Number.isInteger(body.generationConfig?.maxOutputTokens) ||
       body.generationConfig.maxOutputTokens<1 || body.generationConfig.maxOutputTokens>8192)
       throw new ModelAccountingError("ORIGINAL_PREVIEW_PROVIDER_DENIED");
-    onDispatch?.();
-    return await upstream(url,{...init,redirect:"error"});
   }
+  // Prepare remote retrieval only after trusted identity and provider admission.
+  // The mode is server-derived here; no HTTP/body flag can select this branch.
+  const prepareInit=async(value:RequestInit):Promise<RequestInit>=>{
+    const extraHeaders=await prepare?.(mode);
+    return extraHeaders ? {...value,headers:{...Object.fromEntries(new Headers(value.headers).entries()),...extraHeaders}} : value;
+  };
+  if(mode==="uat") {
+    // The synthetic durable quota/bound admission still precedes preparation
+    // and remote I/O. A denied reservation must not call the preparation hook.
+    const transport:typeof fetch=prepare ? async(input,options)=>await upstream(input,await prepareInit(options ?? {})) : upstream;
+    try {return await uatFetch(db,{...meta,operationId:`${meta.slot}:${meta.operationId}`},url,init,transport,onDispatch);}
+    catch(error){if(error instanceof UatDenied)throw new ModelAccountingError(error.code);throw error;}
+  }
+  const preparedInit=await prepareInit(init);
   // Established authenticated Production path: preserve exact provider request/response.
   // Permanent Guard is deferred; no new endpoint, provider, credential or tenant scope.
   onDispatch?.();
-  return await upstream(url, init);
+  return await upstream(url, mode==="authenticated_preview" ? {...preparedInit,redirect:"error"} : preparedInit);
 }
 
 /** Historical deferred Guard contract. No six-Function runtime caller uses this API. */
