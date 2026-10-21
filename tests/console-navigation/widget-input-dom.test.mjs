@@ -174,3 +174,27 @@ test('pending without conversation id has read-only reconciliation, never automa
 });
 
 test('same-company/channel response for another authenticated actor is not send authority',async t=>{reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'foreign-actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:false,remote_ready:false,history:[]}};const r=await mount(t);await edit(r,'Who are you?');assert(button(r,'Send').disabled);assert.match(r.host.textContent,/authenticated_actor_mismatch/);noDispatch();});
+test('authorized free-form opens server-selected ticket and sends unchanged text and stable delivery ID',async t=>{
+ reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,authorized_preview_available:true,history:[]}};
+ const invoke=f.invoke;
+ f.invoke=async(name,args)=>{
+  if(args.body.action==='open_authorized'){calls.push(args.body);return {error:null,data:{success:true,conversation_id:conversation,conversation_status:'open',read_only:false,messages:[]}};}
+  if(args.body.action==='send'){calls.push(args.body);return {error:null,data:{success:true,conversation_id:conversation,conversation_status:'open',delivery_receipt:{persisted:true,conversation_id:conversation,client_message_id:args.body.client_message_id,visitor_message_id:channel},messages:[{id:channel,role:'assistant',content:'Isolated persisted answer'}]}};}
+  return invoke(name,args);
+ };
+ const r=await mount(t);const open=button(r,'Open authorized AI conversation');assert(open);await click(r,open);
+ assert.deepEqual(calls.find(c=>c.action==='open_authorized'),{action:'open_authorized'});
+ await edit(r,'Please compare options for my business.');await click(r,button(r,'Send'));
+ const sends=calls.filter(c=>c.action==='send');assert.equal(sends.length,1);assert.equal(sends[0].test_conversation_id,conversation);assert.equal(sends[0].query,'Please compare options for my business.');assert.match(sends[0].client_message_id,/^[a-f0-9-]{36}$/i);assert.match(r.host.textContent,/Isolated persisted answer/);assert.equal(network,0);
+});
+test('authorized free-form entry requires verified actor and execution readiness',async t=>{
+ for(const overrides of [{actor_id:'other'},{execution_ready:false},{authorized_preview_available:false}]){
+  reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,authorized_preview_available:true,history:[],...overrides}};
+  const r=await mount(t);assert.equal(button(r,'Open authorized AI conversation'),undefined);assert(!calls.some(c=>c.action==='open_authorized'));noDispatch();await r.close();
+ }
+});
+test('authorized free-form cannot switch away from unresolved delivery',async t=>{
+ reset();window.localStorage.setItem(key+':pending',JSON.stringify({id:channel,text:'Unresolved prior delivery'}));
+ f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,authorized_preview_available:true,history:[]}};
+ const r=await mount(t);const open=button(r,'Open authorized AI conversation');assert(open);assert(open.disabled);await click(r,open);assert(!calls.some(c=>c.action==='open_authorized'));noDispatch();
+});

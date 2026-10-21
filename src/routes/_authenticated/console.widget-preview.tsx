@@ -839,6 +839,7 @@ function PreviewWidget({
   const [conversationReadOnly, setConversationReadOnly] = useState(false);
   const [conversationVerified, setConversationVerified] = useState(false);
   const [executionReady, setExecutionReady] = useState(false);
+  const [authorizedPreviewAvailable, setAuthorizedPreviewAvailable] = useState(false);
   const [remoteReady, setRemoteReady] = useState(false);
   const [liveFailure, setLiveFailure] = useState<string | null>(null);
   const [historyFailure, setHistoryFailure] = useState(false);
@@ -949,6 +950,7 @@ function PreviewWidget({
     composing.current = false;
     emojiCaret.current = null;
     setExecutionReady(false);
+    setAuthorizedPreviewAvailable(false);
     setRemoteReady(false);
     setHistoryFailure(false);
     setConversationFailure(false);
@@ -990,24 +992,27 @@ function PreviewWidget({
     setMessages((previous) => mergeWidgetMessages(previous, mapped));
   };
 
-  const loadLiveConversation = async (conversationId: string, switching = false, signal?: AbortSignal) => {
+  const loadLiveConversation = async (conversationId: string, switching = false, signal?: AbortSignal, authorized = false) => {
+    if (authorized && (pendingSend.current || replyInFlight.current || !scopeReady || !runtimeReady || !executionReady)) return;
     if (switching) { setConversationVerified(false); setConversationReadOnly(true); }
     const epoch = switching ? ++conversationEpoch.current : conversationEpoch.current;
     let result;
-    try { result = await invokeLiveWidget({ action: "load", test_conversation_id: conversationId }, signal); }
+    try { result = await invokeLiveWidget(authorized ? {action:"open_authorized"} : { action: "load", test_conversation_id: conversationId }, signal); }
     catch {
       if (epoch === conversationEpoch.current && !signal?.aborted) setConversationFailure(true);
       return;
     }
     const { data, error } = result;
     if (epoch !== conversationEpoch.current || signal?.aborted) return;
-    if (error || !data || data.success !== true || data.conversation_id !== conversationId) {
+    if (error || !data || data.success !== true || (authorized
+      ? !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(data.conversation_id ?? "") || data.read_only !== false
+      : data.conversation_id !== conversationId)) {
       setConversationFailure(true);
       return;
     }
     if (switching) {
       setMessages([]);
-      setInput(pendingSend.current?.text ?? readDraft(conversationId));
+      setInput(pendingSend.current?.text ?? readDraft(data.conversation_id));
       setTyping(false);
       replyInFlight.current = false;
     }
@@ -1058,6 +1063,7 @@ function PreviewWidget({
       setRuntimeReason(ready ? widgetRuntimeBlockReason(data,user?.id) : null);
       setHistoryFailure(Boolean(error) || data?.success !== true);
       setExecutionReady(ready && data?.execution_ready === true);
+      setAuthorizedPreviewAvailable(ready && verifiedWidgetRuntime(data,user?.id) && data?.execution_ready === true && data?.authorized_preview_available === true);
       setRemoteReady(ready && data?.remote_ready === true);
       if (ready && Array.isArray(data.history)) {
         setHistory(data.history as LiveAiHistoryItem[]);
@@ -1069,6 +1075,7 @@ function PreviewWidget({
         setScopeFailure("scope_lookup_failed");
         setExecutionFailure(null);
         setExecutionReady(false);
+        setAuthorizedPreviewAvailable(false);
         setRemoteReady(false);
         setHistoryFailure(true);
       }
@@ -1512,6 +1519,11 @@ function PreviewWidget({
       </div>
 
       <div className="border-t bg-white p-3">
+        {mode === "live" && scopeReady && runtimeReady && executionReady && authorizedPreviewAvailable && (
+          <button type="button" className="mb-2 text-xs underline" disabled={typing || Boolean(pendingSend.current)} onClick={() => void loadLiveConversation("",true,undefined,true)}>
+            {lang === "zh" ? "開啟已授權 AI 對話" : "Open authorized AI conversation"}
+          </button>
+        )}
         {mode === "live" && scopeReady && runtimeReady && (!executionReady || !remoteReady) && (
           <p role="status" className="mb-2 text-xs text-amber-800">
             {lang === "zh"

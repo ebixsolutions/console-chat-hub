@@ -450,6 +450,7 @@ return async (req: Request) => {
         runtime_contract: "c3-widget-control-v2",
         actor_id: authData.user.id,
         execution_ready: execution.ready,
+        authorized_preview_available: execution.ready && execution.allowed_conversations.length > 0,
         execution_failure: execution.ready ? null : execution.failure,
         remote_ready: execution.ready && execution.remote_ready,
         company_id: resolved.companyId,
@@ -468,7 +469,25 @@ return async (req: Request) => {
       // Deterministic lookup only. A missing row is not proof of non-delivery.
       requestedConversationId = await testConversationId(authData.user.id, resolved.channelId, String((body as any).client_message_id));
     }
-    if (action === "load" || action === "reconcile") {
+    if (action === "open_authorized") {
+      // A bounded lease names existing tickets. A random new-draft ID cannot
+      // inherit that authority. Resolve only from the server's allowlist, then
+      // apply the same persisted actor/Tenant/Channel checks as an explicit load.
+      if (!execution.ready) return json(req,{success:false,error:"live_ai_execution_unavailable",failure:execution.failure,retryable:false},503);
+      requestedConversationId = "";
+      for (const id of execution.allowed_conversations) {
+        const candidate = await loadOwnedTestConversation(admin,id,authData.user.id,resolved);
+        if (!candidate.ok) {
+          if (candidate.status >= 500) return json(req,{success:false,error:candidate.error},candidate.status);
+          continue;
+        }
+        if (candidate.conversation.status !== "open" || candidate.conversation.assigned_agent_id) continue;
+        requestedConversationId = id;
+        break;
+      }
+      if (!requestedConversationId) return json(req,{success:false,error:"authorized_preview_unavailable",retryable:false},409);
+    }
+    if (action === "load" || action === "reconcile" || action === "open_authorized") {
       const owned = await loadOwnedTestConversation(
         admin,
         requestedConversationId,
@@ -491,8 +510,13 @@ return async (req: Request) => {
         }
         return json(req, { success: false, error: owned.error }, owned.status);
       }
-      const {data: session,error: sessionError} = await admin.from("visitor_session").select("session_token").eq("id",owned.conversation.visitor_session_id).eq("channel_config_id",resolved.channelId).maybeSingle();
+      const {data: session,error: sessionError} = await admin.from("visitor_session").select("id,channel_config_id,visitor_fingerprint,visitor_metadata,session_token").eq("id",owned.conversation.visitor_session_id).eq("channel_config_id",resolved.channelId).maybeSingle();
       if (sessionError || !session?.session_token) return json(req,{success:false,error:"test_session_lookup_failed"},500);
+      if (action === "open_authorized" && (session.id !== owned.conversation.visitor_session_id || session.channel_config_id !== resolved.channelId ||
+        session.visitor_fingerprint !== `widget-live-test:${authData.user.id}` || session.visitor_metadata?.source !== "c3_uat_widget" ||
+        session.visitor_metadata?.owner_user_id !== authData.user.id || session.visitor_metadata?.test_mode !== true ||
+        session.visitor_metadata?.exclude_training !== true || session.visitor_metadata?.scope_mode !== "canonical"))
+        return json(req,{success:false,error:"authorized_preview_session_denied"},403);
       const poll = await widgetRequest(supabaseUrl,serviceKey,tokenMatch[1],origin,"widget-poll-messages",{conversation_id:requestedConversationId,session_token:session.session_token});
       return json(req, {
         success: true,

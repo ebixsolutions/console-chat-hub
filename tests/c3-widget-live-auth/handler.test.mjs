@@ -17,12 +17,12 @@ async function check(name, options={}, expected=200, body={action:'history'}) {
  const ownCompany=options.ownCompany===true;
  const scopeCompany=ownCompany?'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493':company;
  const scopeChannel=ownCompany?'b0000000-0000-0000-0000-000000000001':channel;
- const conversation={id:company,company_id:scopeCompany,channel_config_id:scopeChannel,status:options.human?'pending':'open',visitor_session_id:channel,metadata_source:{source:'c3_uat_widget',synthetic:true,owner_user_id:user,exclude_training:true}};
+ const conversation={id:company,company_id:scopeCompany,channel_config_id:scopeChannel,status:options.closed?'closed':options.human?'pending':'open',visitor_session_id:channel,metadata_source:{source:'c3_uat_widget',synthetic:true,owner_user_id:user,exclude_training:true}};
  globalThis.fetch=async(url,init)=>{requests.push({url,body:JSON.parse(init.body)}); const data=String(url).endsWith('receive-widget-message')?{message_id:channel,ai_reply_pending:false,idempotent:true}:{messages:[{id:channel,role:'agent',content:'synthetic response'}],conversation_status:options.human?'pending':'open',human_support:{state:options.human?'waiting':'none',queue_position:2,estimated_wait_minutes:4}}; return new Response(JSON.stringify({success:true,data}));};
  const row={company_id:scopeCompany,role:options.role??'admin',is_active:options.active??true};
  const memberships=options.ambiguous?[row,{...row,company_id:channel}]:[row];
- const client={rpc:async()=>options.missingRpc?({error:{code:'PGRST202'},data:null}):({error:null,data:{ready:true,remote_ready:false,allowed_conversations:[company],actor_id:options.leaseActor??user,channel_id:scopeChannel,run_id:ownCompany?env.FRANKIE_DEMO_UAT_RUN_ID:env.C3_TEMP_UAT_RUN_ID,revision:ownCompany?FRANKIE_DEMO_REVISION:env.C3_TEMP_UAT_SOURCE_REVISION}}),from(table){const chain={singleRow:false,select(){return this},eq(k,v){calls.push([table,k,v]);return this},is(k,v){calls.push([table,k,v]);return this},order(){return this},limit(){return this},maybeSingle(){this.singleRow=true;return this},then(resolve){
- let data=table==='company_membership'?memberships:table==='company'?{id:scopeCompany,is_active:options.companyActive??true}:table==='channel_config'?{id:scopeChannel,company_id:scopeCompany,is_active:true,channel_type:'web_widget',allowed_origins:['https://preview--console-chat-hub.lovable.app']}:table==='conversations'?(this.singleRow?{...conversation,metadata_source:options.foreignOwner?{...conversation.metadata_source,owner_user_id:channel}:conversation.metadata_source}:[]):table==='visitor_session'?{session_token:'synthetic-session-token-with-32-characters'}:[];
+ const client={rpc:async()=>options.missingRpc?({error:{code:'PGRST202'},data:null}):({error:null,data:{ready:true,remote_ready:false,allowed_conversations:options.allowed??[company],actor_id:options.leaseActor??user,channel_id:scopeChannel,run_id:ownCompany?env.FRANKIE_DEMO_UAT_RUN_ID:env.C3_TEMP_UAT_RUN_ID,revision:ownCompany?FRANKIE_DEMO_REVISION:env.C3_TEMP_UAT_SOURCE_REVISION}}),from(table){const chain={singleRow:false,select(){return this},eq(k,v){calls.push([table,k,v]);return this},is(k,v){calls.push([table,k,v]);return this},order(){return this},limit(){return this},maybeSingle(){this.singleRow=true;return this},then(resolve){
+ let data=table==='company_membership'?memberships:table==='company'?{id:scopeCompany,is_active:options.companyActive??true}:table==='channel_config'?{id:scopeChannel,company_id:scopeCompany,is_active:true,channel_type:'web_widget',allowed_origins:['https://preview--console-chat-hub.lovable.app']}:table==='conversations'?(this.singleRow?{...conversation,metadata_source:options.foreignOwner?{...conversation.metadata_source,owner_user_id:channel}:conversation.metadata_source}:[]):table==='visitor_session'?{id:channel,channel_config_id:scopeChannel,visitor_fingerprint:'widget-live-test:'+user,visitor_metadata:{source:'c3_uat_widget',owner_user_id:options.foreignSession?channel:user,test_mode:true,exclude_training:true,scope_mode:'canonical'},session_token:'synthetic-session-token-with-32-characters'}:[];
  resolve({data,status:options.providerError?401:200,error:table==='company_membership'&&options.providerError?{code:'PGRST301',message:secret}:null});
  }};return chain;}};
  const env={C3_TEMP_UAT_RUN_ID:company,C3_TEMP_UAT_SOURCE_REVISION:'c3-3322877-bounded-uat-r2',SUPABASE_SECRET_KEY:secret,SUPABASE_URL:'https://nrfxhqabwblzxoushgnm.supabase.co',SUPABASE_ANON_KEY:'public-key',...(options.env??{})};
@@ -38,6 +38,7 @@ async function check(name, options={}, expected=200, body={action:'history'}) {
  const responseText=await response.text(); assert.equal(response.status,expected,responseText);
  assert(!responseText.includes(secret));assert(!JSON.stringify(logs).includes(secret));assert(!JSON.stringify(logs).includes(token));
  if(expected===200&&options.isolated!==false && body.action==='history') {const h=JSON.parse(responseText);assert.equal(h.runtime_contract,'c3-widget-control-v2');assert.equal(h.actor_id,user);assert.equal(typeof h.execution_ready,'boolean');assert.equal(typeof h.remote_ready,'boolean');if(options.expectFrankieReady)assert.equal(h.execution_ready,true);assert(calls.some(c=>c[0]==='conversations'&&c[1]==='company_id'&&c[2]===scopeCompany));assert(calls.some(c=>c[0]==='conversations'&&c[1]==='channel_config_id'&&c[2]===scopeChannel));}
+ if(body.action==='open_authorized'){assert(!requests.some(r=>r.url.endsWith('receive-widget-message')));if(expected===200){assert(calls.some(c=>c[0]==='conversations'&&c[1]==='company_id'&&c[2]===scopeCompany));assert(calls.some(c=>c[0]==='conversations'&&c[1]==='channel_config_id'&&c[2]===scopeChannel));assert.equal(requests.length,1);assert(requests[0].url.endsWith('widget-poll-messages'));assert.equal(JSON.parse(responseText).conversation_id,company);}else assert.equal(requests.length,0);}
  if(options.providerError)assert.equal(logs[0].provider_http_class,'4xx');
  if(body.action==='send'&&expected>=400)assert.equal(requests.length,0);
  if(body.action==='send'&&expected===200){assert(requests.some(r=>r.url.endsWith('receive-widget-message'))); assert(!requests.some(r=>r.url.endsWith('generate-reply'))); assert.equal(requests[0].body.client_message_id,body.client_message_id);assert.equal(requests[0].body.conversation_id,company);}
@@ -87,6 +88,22 @@ await check('foreign lease actor denied before paid send',{leaseActor:channel},5
 await check('canonical send',{},200,{action:'send',test_conversation_id:company,client_message_id:channel,query:'synthetic generic request'});
 await check('human control send remains ordinary widget',{human:true},200,{action:'send',test_conversation_id:company,client_message_id:channel,query:'synthetic reply'});
 await check('missing stable message id rejected before writes',{},400,{action:'send',query:'synthetic'});
+
+// Bounded free-form entry: selection is read-only; no create or paid dispatch.
+for(const ownCompany of [false,true]){
+ const env=ownCompany?{FRANKIE_DEMO_UAT_RUN_ID:company,FRANKIE_DEMO_UAT_SOURCE_REVISION:FRANKIE_DEMO_REVISION}:{};
+ await check('authorized Preview opens own leased ticket '+ownCompany,{ownCompany,env},200,{action:'open_authorized'});
+ await check('authorized Preview denies foreign owner '+ownCompany,{ownCompany,env,foreignOwner:true},409,{action:'open_authorized'});
+ await check('authorized Preview denies foreign Session '+ownCompany,{ownCompany,env,foreignSession:true},403,{action:'open_authorized'});
+ await check('authorized Preview skips closed '+ownCompany,{ownCompany,env,closed:true},409,{action:'open_authorized'});
+ await check('authorized Preview skips human control '+ownCompany,{ownCompany,env,human:true},409,{action:'open_authorized'});
+ await check('authorized Preview cannot invent allowlist '+ownCompany,{ownCompany,env,allowed:[]},409,{action:'open_authorized'});
+ await check('authorized free-form keeps canonical receive path '+ownCompany,{ownCompany,env},200,{action:'send',test_conversation_id:company,client_message_id:channel,query:'Please help me compare options for my business.'});
+}
+await check('authorized Preview foreign lease actor denies',{leaseActor:channel},503,{action:'open_authorized'});
+await check('authorized Preview absent lease denies without reads upstream',{env:{C3_TEMP_UAT_RUN_ID:undefined}},503,{action:'open_authorized'});
+await check('authorized Preview never accepts client grant',{env:{C3_TEMP_UAT_RUN_ID:undefined}},400,{action:'open_authorized',company_id:company});
+
 // Real shared model-dispatch admission boundary, exercised without any upstream traffic.
 {
  const originalDeno=globalThis.Deno;
