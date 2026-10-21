@@ -54,6 +54,7 @@ function reset(){
   Object.assign(fixture,{user:{id:'actor'},historyError:false,loadError:false,loadThrows:false,human:false,assigned:false,generating:false,rows:[{id:'v0',role:'visitor',content:'Existing request'}],send:null,historyRows:[{conversation_id:conversation,message_count:1,latest_preview:'Existing request'}]});
   fixture.invoke=async(name,{body})=>{
     calls.push({name,body});assert.equal(name,'widget-live-ai-test');
+    if(body.action==='readiness')return {error:null,data:{success:true,admission_action:'readiness',runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,execution_ready:false,remote_ready:false,company_id:company,channel_id:channel}};
     if(body.action==='history')return fixture.historyError?{error:new Error('unavailable'),data:null}:{error:null,data:{success:true,runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:true,execution_ready:false,remote_ready:false,company_id:company,channel_id:channel,history:fixture.historyRows}};
     if(body.action==='load'){
       if(fixture.loadThrows)throw new Error('network');
@@ -75,13 +76,13 @@ async function close(r){await act(async()=>r.unmount());}
 const sends=()=>calls.filter(x=>x.body.action==='send');
 
 test('business readiness does not disable local identity/presence or explicit human request; mount only reads',async()=>{
-  reset();const r=await mount();assert.equal(sends().length,0);assert(calls.every(x=>['history','load'].includes(x.body.action)));
+  reset();const r=await mount();assert.equal(sends().length,0);assert(calls.every(x=>['readiness','load'].includes(x.body.action)));
   for(const input of ['你是誰','有人吗？','Please connect me to human support']){await enter(r,input);assert.equal(button(r,'Send').props.disabled,false);await click(r,'Send');}
   assert.deepEqual(sends().map(x=>x.body.query),['你是誰','有人吗？','Please connect me to human support']);await close(r);
 });
-test('history transport failure is not empty history or business admission; retry restores verified scope',async()=>{
+test('history transport failure is not empty history and does not revoke independent verified scope',async()=>{
   reset();fixture.historyError=true;const r=await mount();await click(r,'Conversation History');assert.match(content(r),/History.*(?:unavailable|could not be loaded)/);assert(!content(r).includes('No Live AI Test history yet.'));assert.equal(r.root.findByType('input').props.disabled,false);assert.equal(button(r,'Send').props.disabled,true);
-  fixture.historyError=false;await click(r,'Retry connection');assert.equal(r.root.findByType('input').props.disabled,false);assert.equal(sends().length,0);await close(r);
+  assert.match(content(r),/scopeReady=true/);fixture.historyError=false;await click(r,'Conversation History');await click(r,'Conversation History');assert(!content(r).includes('History could not be loaded'));assert.equal(r.root.findByType('input').props.disabled,false);assert.equal(sends().length,0);await close(r);
 });
 test('three polling failures preserve messages, pause reads and explicitly restart the SAME conversation',async()=>{
   reset();const r=await mount();fixture.loadError=true;await tick();await tick();await tick();assert.match(content(r),/Conversation refresh failed/);assert.match(content(r),/Existing request/);const count=calls.length;await tick();assert.equal(calls.length,count);

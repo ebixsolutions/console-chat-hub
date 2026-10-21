@@ -830,7 +830,14 @@ function PreviewWidget({
   const storageKey = user && scopeCompanyId && scopeChannelId
     ? `widget_live_test:${user.id}:${scopeCompanyId}:${scopeChannelId}` : null;
   const [testConversationId, setTestConversationId] = useState<string | null>(null);
-  const [scopeReady, setScopeReady] = useState(false);
+  const [scopeVerified, setScopeReady] = useState(false);
+  const [admittedScope, setAdmittedScope] = useState<string | null>(null);
+  const scopeReady = scopeVerified && admittedScope === storageKey;
+  const [admissionLoading, setAdmissionLoading] = useState(false);
+  const admissionRequest = useRef(0);
+  const historyRequest = useRef(0);
+  const currentScope = useRef(storageKey);
+  currentScope.current = storageKey;
   const [runtimeReady, setRuntimeReady] = useState(false);
   const [runtimeReason, setRuntimeReason] = useState<string | null>(null);
   const [scopeFailure, setScopeFailure] = useState<string | null>(null);
@@ -1044,14 +1051,16 @@ function PreviewWidget({
     return { humanControl: underHumanControl };
   };
 
-  const loadLiveHistory = async () => {
-    const epoch = conversationEpoch.current;
+  const loadLiveReadiness = async (signal?: AbortSignal) => {
+    const request = ++admissionRequest.current;
     if (!storageKey) return;
-    setHistoryLoading(true);
+    setAdmissionLoading(true);
+    setScopeReady(false);
+    setRuntimeReady(false);
     try {
-      const { data, error } = await invokeLiveWidget({ action: "history" });
-      if (epoch !== conversationEpoch.current) return;
-      const ready = !error && data?.success === true && data.isolation_ready === true && data.company_id === scopeCompanyId && data.channel_id === scopeChannelId;
+      const { data, error } = await invokeLiveWidget({ action: "readiness" }, signal);
+      if (request !== admissionRequest.current || currentScope.current !== storageKey || signal?.aborted) return;
+      const ready = !error && data?.success === true && data.admission_action === "readiness" && data.isolation_ready === true && data.company_id === scopeCompanyId && data.channel_id === scopeChannelId;
       let reason: string | null = null;
       if (error) {
         const status = error?.context?.status;
@@ -1063,31 +1072,46 @@ function PreviewWidget({
       setScopeFailure(reason);
       const executionCode = data?.execution_failure?.code;
       setExecutionFailure(ready && ["ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED", "ORIGINAL_PREVIEW_PROVIDER_DENIED", "UAT_AUTHORIZATION_ABSENT", "UAT_SOURCE_OR_RUN_DENIED", "UAT_DEPENDENCY_MISSING", "UAT_ADMISSION_DENIED", "UAT_REMOTE_BOUND_UNVERIFIED", "UAT_SCOPE_DENIED", "UAT_ISOLATION_DENIED"].includes(executionCode) ? executionCode : null);
+      setAdmittedScope(storageKey);
       setScopeReady(ready);
       setRuntimeReady(ready && verifiedWidgetRuntime(data,user?.id));
       setRuntimeReason(ready ? widgetRuntimeBlockReason(data,user?.id) : null);
-      setHistoryFailure(Boolean(error) || data?.success !== true);
       setExecutionReady(ready && data?.execution_ready === true);
       setOriginalPreviewMode(ready && verifiedWidgetRuntime(data,user?.id) && data?.execution_class === "authenticated_admin_preview");
       setAuthorizedPreviewAvailable(ready && verifiedWidgetRuntime(data,user?.id) && data?.execution_ready === true && data?.authorized_preview_available === true);
       setRemoteReady(ready && data?.remote_ready === true);
-      if (ready && Array.isArray(data.history)) {
-        setHistory(data.history as LiveAiHistoryItem[]);
-      }
     } catch {
-      if (epoch === conversationEpoch.current) {
+      if (request === admissionRequest.current && currentScope.current === storageKey && !signal?.aborted) {
         setScopeReady(false);
         setRuntimeReady(false);
         setScopeFailure("scope_lookup_failed");
         setExecutionFailure(null);
         setExecutionReady(false);
-    setOriginalPreviewMode(false);
+        setOriginalPreviewMode(false);
         setAuthorizedPreviewAvailable(false);
         setRemoteReady(false);
-        setHistoryFailure(true);
       }
     } finally {
-      if (epoch === conversationEpoch.current) setHistoryLoading(false);
+      if (request === admissionRequest.current && currentScope.current === storageKey && !signal?.aborted) setAdmissionLoading(false);
+    }
+  };
+
+  const loadLiveHistory = async () => {
+    if (!storageKey) return;
+    const request = ++historyRequest.current;
+    setHistoryLoading(true);
+    try {
+      const {data,error} = await invokeLiveWidget({action:"history"});
+      if (request !== historyRequest.current || currentScope.current !== storageKey) return;
+      const valid = !error && data?.success === true && data.isolation_ready === true &&
+        data.company_id === scopeCompanyId && data.channel_id === scopeChannelId &&
+        verifiedWidgetRuntime(data,user?.id) && Array.isArray(data.history);
+      setHistoryFailure(!valid);
+      if (valid) setHistory(data.history as LiveAiHistoryItem[]);
+    } catch {
+      if (request === historyRequest.current && currentScope.current === storageKey) setHistoryFailure(true);
+    } finally {
+      if (request === historyRequest.current && currentScope.current === storageKey) setHistoryLoading(false);
     }
   };
 
@@ -1115,7 +1139,12 @@ function PreviewWidget({
 
   useEffect(() => {
     if (mode !== "live") return;
-    void loadLiveHistory();
+    const controller = new AbortController();
+    setHistory([]);
+    setHistoryFailure(false);
+    setHistoryLoading(false);
+    void loadLiveReadiness(controller.signal);
+    return () => { controller.abort(); admissionRequest.current += 1; historyRequest.current += 1; };
   }, [mode, storageKey]);
 
   useEffect(() => {
@@ -1355,7 +1384,7 @@ function PreviewWidget({
       setHistoryOpen(false);
       setMenuOpen(false);
       setEmojiOpen(false);
-      void loadLiveHistory();
+      void loadLiveReadiness();
       return;
     }
 
@@ -1543,12 +1572,12 @@ function PreviewWidget({
         )}
         {mode === "live" && !scopeReady && (
           <div className="mb-2 text-xs text-slate-500">
-            <p role={historyLoading ? "status" : "alert"}>
-              {historyLoading
+            <p role={admissionLoading ? "status" : "alert"}>
+              {admissionLoading
                 ? (lang === "zh" ? "正在核實隔離測試範圍；KB 存取尚未確認。" : "Verifying isolated test scope; KB access is not yet confirmed.")
                 : (lang === "zh" ? "暫時無法連接此測試 channel。請選擇獲准使用的 channel，或請管理員核對設定。KB 存取尚未確認。" : "This test channel is unavailable. Select an authorized channel or ask an administrator to check its settings. KB access is not yet confirmed.")}
             </p>
-            {!historyLoading && scopeFailure && <p role="status">{scopeFailure === "isolated_scope_unavailable"
+            {!admissionLoading && scopeFailure && <p role="status">{scopeFailure === "isolated_scope_unavailable"
               ? (lang === "zh" ? "目前帳戶沒有此 C3 隔離測試範圍；這不代表沒有自己公司的 Widget 權限。" : "C3 isolated test scope is not available for this account. This does not deny access to your own company's ordinary Widget.")
               : scopeFailure === "selected_scope_mismatch"
               ? (lang === "zh" ? "所選公司／channel 與伺服器核實的測試範圍不一致；傳送已阻擋。" : "The selected company/channel does not match the server-verified test scope. Sending is blocked.")
@@ -1562,8 +1591,8 @@ function PreviewWidget({
               ? (lang === "zh" ? "HTTP 503：測試 scope／channel 服務未就緒；這不是未登入的證據。" : "HTTP 503: test scope/channel service is not ready. This is not proof of being signed out.")
               : (lang === "zh" ? "未能核實測試連線；尚未獲准傳送。" : "Test connection could not be verified. Sending is not authorized.")}</p>}
             <p>{lang === "zh" ? "你可以先在本機編寫草稿；完成 channel 核實前不能傳送。" : "You can compose a local draft. Sending stays unavailable until this channel is verified."}</p>
-            {!historyLoading && scopeFailure === "isolated_scope_unavailable" && onSwitchToOrdinary && <div role="status"><button type="button" className="font-medium underline text-blue-700" onClick={onSwitchToOrdinary}>{lang === "zh" ? "改用自己公司的普通 Widget（受控測試）" : "Switch to my company\'s Ordinary Widget (control-only)"}</button><p>{lang === "zh" ? "這個帳戶沒有 C3 隔離測試權限；普通 Widget 只能測試指定控制句。" : "This account has no C3 test scope. Ordinary Preview supports only four controlled messages, not real AI/KB quality tests."}</p></div>}
-            {!historyLoading && storageKey && <button type="button" className="mt-1 underline" onClick={() => void loadLiveHistory()}>{lang === "zh" ? "重試連線" : "Retry connection"}</button>}
+            {!admissionLoading && scopeFailure === "isolated_scope_unavailable" && onSwitchToOrdinary && <div role="status"><button type="button" className="font-medium underline text-blue-700" onClick={onSwitchToOrdinary}>{lang === "zh" ? "改用自己公司的普通 Widget（受控測試）" : "Switch to my company\'s Ordinary Widget (control-only)"}</button><p>{lang === "zh" ? "這個帳戶沒有 C3 隔離測試權限；普通 Widget 只能測試指定控制句。" : "This account has no C3 test scope. Ordinary Preview supports only four controlled messages, not real AI/KB quality tests."}</p></div>}
+            {!admissionLoading && storageKey && <button type="button" className="mt-1 underline" onClick={() => void loadLiveReadiness()}>{lang === "zh" ? "重試連線" : "Retry connection"}</button>}
           </div>
         )}
         {mode === "live" && scopeReady && !runtimeReady && <p role="alert" className="mb-2 text-xs text-amber-800">{lang === "zh" ? "目前後端未證實支援受控傳送契約；歷史可讀、草稿可編輯，但不會傳送或執行商業 AI。這不代表發布版前端過時。" : "The backend has not proven the controlled-send contract. History and local drafts remain available; sending and business AI are blocked. This does not establish a stale published frontend."}</p>}
@@ -1575,7 +1604,7 @@ function PreviewWidget({
             {lang === "zh" ? "此對話已結束；請使用「新對話」開始另一個問題。" : "This conversation is resolved. Use New Conversation to start another request."}
           </p>
         )}
-        {mode === "live" && historyFailure && <p role="alert" className="mb-2 text-xs text-red-600">{lang === "zh" ? "歷史清單未能載入；這不代表沒有歷史對話。請重試連線。" : "History could not be loaded; this does not mean the history is empty. Retry the connection."}</p>}
+        {mode === "live" && historyFailure && <p role="alert" className="mb-2 text-xs text-red-600">{lang === "zh" ? "歷史清單未能載入；這不代表沒有歷史對話。請重新開啟對話歷史重試。" : "History could not be loaded; this does not mean the history is empty. Reopen Conversation History to retry."}</p>}
         {mode === "live" && (conversationFailure || pendingSend.current) && testConversationId && (
           <div className="mb-2 text-xs text-red-600">
             {conversationFailure && <p role="alert">{lang === "zh" ? "對話讀取失敗，現有訊息已保留。" : "Conversation refresh failed. Existing messages are retained."}</p>}

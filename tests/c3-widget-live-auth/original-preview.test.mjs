@@ -9,7 +9,7 @@ const body=JSON.stringify({contents:[{role:'user',parts:[{text:'Compare options 
 function setup(account,{grant=true}={}){
  f.account=account;f.user={id:crypto.randomUUID(),email:account.email,email_confirmed_at:'2026-01-01T00:00:00Z'};
  f.env={SUPABASE_URL:'https://nrfxhqabwblzxoushgnm.supabase.co',SUPABASE_ANON_KEY:'public',SUPABASE_SECRET_KEY:'isolated-secret-not-production',LLM_PROVIDER:'vertex',GOOGLE_SERVICE_ACCOUNT_JSON:'isolated-provider-config',GOOGLE_PROJECT_ID:'fixture-project',GOOGLE_REGION:'asia-east1',LLM_MODEL_GENERATION:'gemini-2.5-flash',...(grant?{ORIGINAL_WIDGET_PREVIEW_AUTHORIZATION:ORIGINAL_PREVIEW_AUTHORIZATION}:{})};
- f.rows={company_membership:[{user_id:f.user.id,company_id:account.company,role:'admin',is_active:true}],company:[{id:account.company,is_active:true}],channel_config:[{id:account.channel,company_id:account.company,is_active:true,channel_type:'web_widget',allowed_origins:['https://console-chat-hub.lovable.app']}],visitor_session:[],conversations:[],messages:[]};f.rpc=[];f.transport=[];f.provider=0;f.writes=0;
+ f.rows={company_membership:[{user_id:f.user.id,company_id:account.company,role:'admin',is_active:true}],company:[{id:account.company,is_active:true}],channel_config:[{id:account.channel,company_id:account.company,is_active:true,channel_type:'web_widget',allowed_origins:['https://console-chat-hub.lovable.app']}],visitor_session:[],conversations:[],messages:[]};f.logs=[];f.rpc=[];f.transport=[];f.provider=0;f.writes=0;
  f.db={rpc:async(n)=>{f.rpc.push(n);throw Error('Original Preview must not borrow synthetic quota/registration');},from(table){let filters=[],single=false,op=null,payload,fields='',opts={};const q={
  select(s,o={}){fields=s;opts=o;return q;},eq(k,v){filters.push([k,v]);return q;},is(k,v){filters.push([k,v]);return q;},neq(k,v){filters.push([k,v,true]);return q;},order(){return q;},limit(){return q;},maybeSingle(){single=true;return q;},single(){single=true;return q;},insert(v){op='insert';payload=v;return q;},delete(){op='delete';return q;},update(v){op='update';payload=v;return q;},then(resolve,reject){return Promise.resolve().then(()=>{
  const get=(r,k)=>k.includes('->>')?r[k.split('->>')[0]]?.[k.split('->>')[1]]:r[k];let rows=(f.rows[table]??[]).filter(r=>filters.every(([k,v,ne])=>ne?get(r,k)!==v:get(r,k)===v));
@@ -29,7 +29,7 @@ function setup(account,{grant=true}={}){
  }
  assert(String(url).endsWith('widget-poll-messages'));return Response.json({success:true,data:{messages:f.rows.messages.filter(m=>m.conversation_id===c.id),human_support:{state:c.status==='pending'?'waiting':'none'},ai_generating:false}});
  };
- f.handler=createWidgetLiveHandler({env:k=>f.env[k],getAdminKey:()=>f.env.SUPABASE_SECRET_KEY,log(){},createClient:(url,key)=>key==='public'?{auth:{getUser:async()=>({data:{user:f.user},error:null})},rpc:async()=>{throw Error('Original actor must use own Channel, not B12 registration');}}:f.db});
+ f.handler=createWidgetLiveHandler({env:k=>f.env[k],getAdminKey:()=>f.env.SUPABASE_SECRET_KEY,log(event){f.logs.push(event);},createClient:(url,key)=>key==='public'?{auth:{getUser:async()=>({data:{user:f.user},error:null})},rpc:async()=>{throw Error('Original actor must use own Channel, not B12 registration');}}:f.db});
 }
 async function request(b){const r=await f.handler(new Request('https://function.invalid',{method:'POST',headers:{Authorization:'Bearer isolated-verified-actor',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(b)}));return {status:r.status,data:await r.json()};}
 async function start(){const id=crypto.randomUUID();const r=await request({action:'original_preview_send',client_message_id:id,query:'Please compare options for my business.'});assert.equal(r.status,200,JSON.stringify(r));return {r,id,c:f.rows.conversations[0]};}
@@ -64,3 +64,23 @@ test('email mismatch and unconfirmed email cannot mint original Preview authorit
 
 test('existing send action stays Synthetic UAT even for an explicitly paid-authorized original account',async()=>{for(const account of ORIGINAL_PREVIEW_ACCOUNTS){setup(account);const r=await request({action:'send',client_message_id:crypto.randomUUID(),query:'Compare business options.'});assert.equal(r.status,503);assert.equal(r.data.failure.code,'UAT_AUTHORIZATION_ABSENT');assert.equal(f.writes,0);assert.equal(f.provider,0);}});
 test('dedicated original action cannot grant access to another authenticated email',async()=>{setup(ORIGINAL_PREVIEW_ACCOUNTS[0]);f.user.email='other@example.invalid';const r=await request({action:'original_preview_send',client_message_id:crypto.randomUUID(),query:'Business query'});assert.equal(r.status,403);assert.equal(f.writes,0);assert.equal(f.provider,0);});
+
+for(const account of ORIGINAL_PREVIEW_ACCOUNTS){
+ test(account.email+': lightweight trusted admission performs no archive reads, writes or model dispatch',async()=>{
+  setup(account);const from=f.db.from;
+  f.db.from=function(table){if(['conversations','visitor_session','messages'].includes(table))throw Error('Readiness must not read history');return from.call(this,table);};
+  const r=await request({action:'readiness'});assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.admission_action,'readiness');assert.equal(r.data.runtime_contract,'c3-widget-control-v2');assert.equal(r.data.actor_id,f.user.id);assert.equal(r.data.company_id,account.company);assert.equal(r.data.channel_id,account.channel);assert.equal(r.data.execution_class,'authenticated_admin_preview');assert.equal(r.data.execution_ready,true);assert.equal(r.data.remote_ready,false);assert(!('history' in r.data));assert.equal(f.logs.length,1);assert.equal(f.logs[0].action,'readiness');assert.equal(f.logs[0].stage,'admission_complete');assert.equal(f.logs[0].status,200);assert(Number.isFinite(f.logs[0].elapsed_ms)&&f.logs[0].elapsed_ms>=0);assert.equal(f.logs[0].correlation_id,r.data.correlation_id);assert(!JSON.stringify(f.logs).includes(f.env.SUPABASE_SECRET_KEY));assert.equal(f.writes,0);assert.equal(f.provider,0);assert.equal(f.transport.length,0);assert.equal(f.rpc.length,0);
+ });
+ test(account.email+': history can remain pending while independent admission completes; revocation still denies paid readiness',async()=>{
+  setup(account);const from=f.db.from;let release;const barrier=new Promise(resolve=>{release=resolve;});
+  f.db.from=function(table){const q=from.call(this,table);if(table==='conversations'){const then=q.then;q.then=(resolve,reject)=>barrier.then(()=>then.call(q,resolve,reject));}return q;};
+  let historyDone=false;const history=request({action:'history'}).then(r=>{historyDone=true;return r;});
+  const ready=await request({action:'readiness'});assert.equal(ready.status,200);assert.equal(ready.data.execution_ready,true);assert.equal(historyDone,false);release();assert.equal((await history).status,200);
+  delete f.env.ORIGINAL_WIDGET_PREVIEW_AUTHORIZATION;const denied=await request({action:'readiness'});assert.equal(denied.status,200);assert.equal(denied.data.execution_ready,false);assert.equal(denied.data.execution_failure.code,'ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED');assert.equal(f.writes,0);assert.equal(f.provider,0);
+ });
+ test(account.email+': lightweight admission retains role, Origin and client Tenant-injection denials',async()=>{
+  setup(account);f.rows.company_membership[0].role='agent';assert.equal((await request({action:'readiness'})).status,403);
+  setup(account);f.rows.channel_config[0].allowed_origins=['https://other.invalid'];assert.equal((await request({action:'readiness'})).status,503);
+  setup(account);assert.equal((await request({action:'readiness',company_id:ORIGINAL_PREVIEW_ACCOUNTS.find(a=>a!==account).company})).status,400);assert.equal(f.writes,0);assert.equal(f.provider,0);
+ });
+}

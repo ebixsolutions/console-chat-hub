@@ -375,6 +375,9 @@ async function widgetRequest(url: string, key: string, token: string, origin: st
 export function createWidgetLiveHandler(deps = { createClient, getAdminKey: getSupabaseAdminKey, env: (name: string) => Deno.env.get(name), log: (event: unknown) => console.error(JSON.stringify(event)) }) {
 return async (req: Request) => {
   const correlationId = crypto.randomUUID();
+  const requestStarted = Date.now();
+  let readAction: "readiness" | "history" | null = null;
+  let readStage = "admission";
   const diagnostic = (stage: string, provider: any, status: number) => deps.log({ endpoint: "widget-live-ai-test", stage, provider_code: typeof provider?.code === "string" && (/^(?:PGRST[0-9]{3}|[0-9A-Z]{5})$/.test(provider.code) || ["bad_jwt","jwt_expired","user_not_found","session_not_found","ADMIN_KEY_MISSING"].includes(provider.code)) ? provider.code : "unclassified", http_class: `${Math.floor(status / 100)}xx`, provider_http_class: Number.isInteger(provider?.status) && provider.status>=100 && provider.status<600 ? `${Math.floor(provider.status/100)}xx` : "unavailable", provider_error_class: ["AuthApiError", "AuthSessionMissingError", "AuthRetryableFetchError"].includes(provider?.name) ? provider.name : "unclassified", project_ref: deps.env("SUPABASE_URL") === "https://nrfxhqabwblzxoushgnm.supabase.co" ? "nrfxhqabwblzxoushgnm" : "local_or_unverified_environment", correlation_id: correlationId });
   if (req.method === "OPTIONS") {
     const origin = req.headers.get("Origin") ?? "";
@@ -471,8 +474,12 @@ return async (req: Request) => {
     const execution = original ? {ready:true as const,remote_ready:false,allowed_conversations:[] as string[]} :
       originalCandidate && originalRoute ? {ready:false as const,failure:executionFailure("ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED")} :
       await uatExecutionReadiness(admin as any,resolved.companyId,deps.env,{actorId:authData.user.id,channelId:resolved.channelId});
-    if (action === "history") {
-      return json(req, {
+    if (action === "readiness" || action === "history") {
+      readAction = action;
+      // Admission is independent of archive retrieval. History retains the
+      // existing response fields for older clients, but cannot authorize the
+      // new client's Send state.
+      const admission = {
         success: true,
         mode: "persistent_live_ai_test",
         isolation_ready: true,
@@ -485,8 +492,17 @@ return async (req: Request) => {
         remote_ready: execution.ready && execution.remote_ready,
         company_id: resolved.companyId,
         channel_id: resolved.channelId,
-        history: await listOwnedTestHistory(admin, authData.user.id, resolved),
-      });
+        admission_action: action,
+        correlation_id: correlationId,
+      };
+      if (action === "readiness") {
+        deps.log({endpoint:"widget-live-ai-test",action,stage:"admission_complete",status:200,elapsed_ms:Date.now()-requestStarted,correlation_id:correlationId});
+        return json(req, admission);
+      }
+      readStage = "history";
+      const history = await listOwnedTestHistory(admin, authData.user.id, resolved);
+      deps.log({endpoint:"widget-live-ai-test",action,stage:"history_complete",status:200,elapsed_ms:Date.now()-requestStarted,correlation_id:correlationId});
+      return json(req, {...admission, history});
     }
 
     let requestedConversationId =
@@ -661,6 +677,7 @@ return async (req: Request) => {
       messages,
     });
   } catch (e) {
+    if (readAction) deps.log({endpoint:"widget-live-ai-test",action:readAction,stage:readStage,status:500,elapsed_ms:Date.now()-requestStarted,correlation_id:correlationId});
     diagnostic("unexpected", null, 500);
     return json(req, { success: false, error: "internal_error" }, 500);
   }

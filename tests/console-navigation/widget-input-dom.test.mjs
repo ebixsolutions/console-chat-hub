@@ -54,10 +54,11 @@ function reset(){
  document.body.innerHTML='';window.localStorage.clear();intervals=new Map();calls=[];network=0;
  globalThis.setInterval=fn=>{const id={};intervals.set(id,fn);return id;};globalThis.clearInterval=id=>intervals.delete(id);
  Object.assign(f,{actor:{id:'actor'},ready:true,wrongTenant:false,status:'open',human:false,readOnly:false});
- f.historyResponse=null;
+ f.readinessResponse=null;f.historyResponse=null;
  f.invoke=async(name,{body})=>{calls.push(body);assert.equal(name,'widget-live-ai-test');
+  if(body.action==='readiness' && f.readinessResponse)return f.readinessResponse;
   if(body.action==='history' && f.historyResponse)return f.historyResponse;
-  if(body.action==='history')return {error:null,data:{success:true,runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:f.ready,execution_ready:false,remote_ready:false,company_id:f.wrongTenant?'foreign':company,channel_id:channel,history:[]}};
+  if(body.action==='history'||body.action==='readiness')return {error:null,data:{success:true,admission_action:"readiness",runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:f.ready,execution_ready:false,remote_ready:false,company_id:f.wrongTenant?'foreign':company,channel_id:channel,history:[]}};
   if(body.action==='load')return {error:null,data:{success:true,conversation_id:body.test_conversation_id,conversation_status:f.status,human_control:f.human,read_only:f.readOnly,messages:[]}};
   return {error:new Error('Unexpected dispatch trapped by local fixture'),data:null};
  };
@@ -80,7 +81,7 @@ test('original Preview archive is readable but Send, Enter and emoji cannot writ
  await edit(r,'A new draft');assert.equal(field(r).value,'A new draft');noDispatch();
 });
 test('switching from current conversation to archive blocks input before delayed read completes',async t=>{
- reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,execution_ready:false,remote_ready:false,company_id:company,channel_id:channel,history:[{conversation_id:conversation,message_count:3,latest_preview:'Original answer',read_only:true}]}};
+ reset();f.historyResponse={error:null,data:{success:true,admission_action:"history",runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,execution_ready:false,remote_ready:false,company_id:company,channel_id:channel,history:[{conversation_id:conversation,message_count:3,latest_preview:'Original answer',read_only:true}]}};
  const invoke=f.invoke;let complete;
  f.invoke=async(name,args)=>args.body.action==='load'?await new Promise(resolve=>{complete=resolve;}):invoke(name,args);
  const r=await mount(t);await click(r,button(r,'Conversation History'));
@@ -154,7 +155,7 @@ test('local draft is separated by Channel and survives an unrelated server poll'
 
 test('scope diagnostics preserve HTTP auth, conflict and readiness distinctions without dispatch',async t=>{
  for(const status of [401,403,409,503]){
-  reset();f.historyResponse={data:null,error:{context:new Response('{}',{status})}};const r=await mount(t);
+  reset();f.readinessResponse={data:null,error:{context:new Response('{}',{status})}};const r=await mount(t);
   assert.match(r.host.textContent,new RegExp('HTTP '+status));assert.equal(button(r,'Send').disabled,true);await edit(r,'safe local draft');noDispatch();await r.close();
  }
 });
@@ -163,20 +164,20 @@ test('non-C3 scope and selected-channel mismatch are explicit, draft-only and ne
  reset();f.wrongTenant=true;const wrong=await mount(t);assert.match(wrong.host.textContent,/selected company\/channel does not match/);assert.equal(button(wrong,'Send').disabled,true);noDispatch();
 });
 test('execution and remote readiness are not described as role denial or empty KB',async t=>{
- reset();f.historyResponse={data:{success:true,runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:true,company_id:company,channel_id:channel,execution_ready:false,execution_failure:{code:'UAT_REMOTE_BOUND_UNVERIFIED',stage:'admission',retryable:false},remote_ready:false,history:[]},error:null};const r=await mount(t);assert.match(r.host.textContent,/UAT_REMOTE_BOUND_UNVERIFIED/);noDispatch();await r.close();
- reset();f.historyResponse={data:{success:true,runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,history:[]},error:null};const remote=await mount(t);assert.match(remote.host.textContent,/remote KB queries are not yet authorized/);noDispatch();
+ reset();f.readinessResponse={data:{success:true,admission_action:"readiness",runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:true,company_id:company,channel_id:channel,execution_ready:false,execution_failure:{code:'UAT_REMOTE_BOUND_UNVERIFIED',stage:'admission',retryable:false},remote_ready:false,history:[]},error:null};const r=await mount(t);assert.match(r.host.textContent,/UAT_REMOTE_BOUND_UNVERIFIED/);noDispatch();await r.close();
+ reset();f.readinessResponse={data:{success:true,admission_action:"readiness",runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,history:[]},error:null};const remote=await mount(t);assert.match(remote.host.textContent,/remote KB queries are not yet authorized/);noDispatch();
 });
 
 test('actual v13-shaped history lacks send admission proof; HTTP200 cannot authorize Send',async t=>{
- reset();f.historyResponse={data:{success:true,mode:'persistent_live_ai_test',isolation_ready:true,company_id:company,channel_id:channel,history:[]},error:null};const r=await mount(t);await edit(r,'Check energy label');assert.equal(button(r,'Send').disabled,true);assert.match(r.host.textContent,/backend has not proven/);assert.match(r.host.textContent,/backend_runtime_contract_unverified/);noDispatch();
+ reset();f.readinessResponse={data:{success:true,admission_action:"readiness",mode:'persistent_live_ai_test',isolation_ready:true,company_id:company,channel_id:channel,history:[]},error:null};const r=await mount(t);await edit(r,'Check energy label');assert.equal(button(r,'Send').disabled,true);assert.match(r.host.textContent,/backend has not proven/);assert.match(r.host.textContent,/backend_runtime_contract_unverified/);noDispatch();
 });
 test('pending without conversation id has read-only reconciliation, never automatic resend or New bypass',async t=>{
  reset();const id='10000000-0000-4000-8000-000000000001';window.localStorage.setItem(key+':pending',JSON.stringify({id,text:'unknown original'}));const r=await mount(t);assert.match(r.host.textContent,/previous_delivery_unresolved/);const check=button(r,'Check original delivery');assert(check);await click(r,check);assert.equal(calls.filter(c=>c.action==='reconcile').length,1);assert.equal(button(r,'Send').disabled,true);assert.equal(field(r).value,'unknown original');noDispatch();
 });
 
-test('same-company/channel response for another authenticated actor is not send authority',async t=>{reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'foreign-actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:false,remote_ready:false,history:[]}};const r=await mount(t);await edit(r,'Who are you?');assert(button(r,'Send').disabled);assert.match(r.host.textContent,/authenticated_actor_mismatch/);noDispatch();});
+test('same-company/channel response for another authenticated actor is not send authority',async t=>{reset();f.readinessResponse={error:null,data:{success:true,admission_action:"readiness",runtime_contract:'c3-widget-control-v2',actor_id:'foreign-actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:false,remote_ready:false,history:[]}};const r=await mount(t);await edit(r,'Who are you?');assert(button(r,'Send').disabled);assert.match(r.host.textContent,/authenticated_actor_mismatch/);noDispatch();});
 test('authorized free-form opens server-selected ticket and sends unchanged text and stable delivery ID',async t=>{
- reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,authorized_preview_available:true,history:[]}};
+ reset();f.readinessResponse={error:null,data:{success:true,admission_action:"readiness",runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,authorized_preview_available:true,history:[]}};
  const invoke=f.invoke;
  f.invoke=async(name,args)=>{
   if(args.body.action==='open_authorized'){calls.push(args.body);return {error:null,data:{success:true,conversation_id:conversation,conversation_status:'open',read_only:false,messages:[]}};}
@@ -190,27 +191,66 @@ test('authorized free-form opens server-selected ticket and sends unchanged text
 });
 test('authorized free-form entry requires verified actor and execution readiness',async t=>{
  for(const overrides of [{actor_id:'other'},{execution_ready:false},{authorized_preview_available:false}]){
-  reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,authorized_preview_available:true,history:[],...overrides}};
+  reset();f.readinessResponse={error:null,data:{success:true,admission_action:"readiness",runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,authorized_preview_available:true,history:[],...overrides}};
   const r=await mount(t);assert.equal(button(r,'Open authorized AI conversation'),undefined);assert(!calls.some(c=>c.action==='open_authorized'));noDispatch();await r.close();
  }
 });
 test('authorized free-form cannot switch away from unresolved delivery',async t=>{
  reset();window.localStorage.setItem(key+':pending',JSON.stringify({id:channel,text:'Unresolved prior delivery'}));
- f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,authorized_preview_available:true,history:[]}};
+ f.readinessResponse={error:null,data:{success:true,admission_action:"readiness",runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_ready:true,remote_ready:false,authorized_preview_available:true,history:[]}};
  const r=await mount(t);const open=button(r,'Open authorized AI conversation');assert(open);assert(open.disabled);await click(r,open);assert(!calls.some(c=>c.action==='open_authorized'));noDispatch();
 });
 test('original account Preview uses normal free-form Send without lease ticket selection or browser authority flags',async t=>{
- reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_class:'authenticated_admin_preview',execution_ready:true,remote_ready:false,authorized_preview_available:false,history:[]}};
+ reset();f.readinessResponse={error:null,data:{success:true,admission_action:"readiness",runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_class:'authenticated_admin_preview',execution_ready:true,remote_ready:false,authorized_preview_available:false,history:[]}};
  const invoke=f.invoke;f.invoke=async(name,args)=>{if(isSend(args.body)){calls.push(args.body);return {error:null,data:{success:true,conversation_id:conversation,conversation_status:'open',delivery_receipt:{persisted:true,conversation_id:conversation,client_message_id:args.body.client_message_id,visitor_message_id:channel},messages:[{id:channel,role:'assistant',content:'Isolated original Preview reply'}]}};}return invoke(name,args);};
  const r=await mount(t);assert.equal(button(r,'Open authorized AI conversation'),undefined);await edit(r,'Help me compare options for my new business, in Cantonese.');await click(r,button(r,'Send'));const first=calls.find(c=>isSend(c));assert.equal(first.query,'Help me compare options for my new business, in Cantonese.');assert.equal(first.action,'original_preview_send');assert.deepEqual(Object.keys(first).sort(),['action','client_message_id','query']);assert.match(r.host.textContent,/Isolated original Preview reply/);await edit(r,'Correction: my room is 150 square feet.');await click(r,button(r,'Send'));const sends=calls.filter(c=>isSend(c));assert.equal(sends.length,2);assert.equal(sends[1].test_conversation_id,conversation);assert.notEqual(sends[1].client_message_id,first.client_message_id);assert.equal(network,0);
 });
 test('original account missing paid authorization remains explicit, preserves draft and never auto-retries',async t=>{
- reset();f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_class:'authenticated_admin_preview',execution_ready:false,remote_ready:false,execution_failure:{code:'ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED',stage:'admission',retryable:false},history:[]}};
+ reset();f.readinessResponse={error:null,data:{success:true,admission_action:"readiness",runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_class:'authenticated_admin_preview',execution_ready:false,remote_ready:false,execution_failure:{code:'ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED',stage:'admission',retryable:false},history:[]}};
  const invoke=f.invoke;f.invoke=async(name,args)=>{if(isSend(args.body)){calls.push(args.body);return {error:null,data:{success:false,error:'live_ai_execution_unavailable',retryable:false,failure:{code:'ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED'}}};}return invoke(name,args);};
  const r=await mount(t);assert.match(r.host.textContent,/ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED/);await edit(r,'A real free-form business question');await click(r,button(r,'Send'));assert.equal(field(r).value,'A real free-form business question');assert.equal(window.localStorage.getItem(key+':pending'),null);assert.equal(calls.filter(c=>isSend(c)).length,1);assert.equal(network,0);
 });
 test('original permission never converts a restored synthetic ticket; New Conversation opens the normal original Preview draft',async t=>{
- reset();window.localStorage.setItem(key,conversation);f.historyResponse={error:null,data:{success:true,runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_class:'authenticated_admin_preview',execution_ready:true,remote_ready:false,history:[]}};
+ reset();window.localStorage.setItem(key,conversation);f.readinessResponse={error:null,data:{success:true,admission_action:"readiness",runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_class:'authenticated_admin_preview',execution_ready:true,remote_ready:false,history:[]}};
  const invoke=f.invoke;f.invoke=async(name,args)=>args.body.action==='load'?{error:null,data:{success:true,conversation_id:conversation,read_only:true,read_only_reason:'synthetic_uat_start_new_original_preview',messages:[]}}:invoke(name,args);
  const r=await mount(t);assert.match(r.host.textContent,/Select New Conversation/);assert(!r.host.textContent.includes('disabled for this archive'));assert.equal(field(r).disabled,true);await click(r,button(r,'New Conversation'));assert.equal(field(r).disabled,false);await edit(r,'A new unrestricted customer-service question');assert.equal(field(r).value,'A new unrestricted customer-service question');noDispatch();
+});
+
+const trustedAdmission=()=>({error:null,data:{success:true,admission_action:'readiness',runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,company_id:company,channel_id:channel,execution_class:'authenticated_admin_preview',execution_ready:true,remote_ready:false}});
+test('Send admission never requests history; slow or failed lazy history cannot revoke verified readiness',async t=>{
+ reset();f.readinessResponse=trustedAdmission();const invoke=f.invoke;let finishHistory;
+ f.invoke=(name,args)=>args.body.action==='history'?(calls.push(args.body),new Promise(resolve=>{finishHistory=resolve;})):invoke(name,args);
+ const r=await mount(t);assert.deepEqual(calls.map(c=>c.action),['readiness']);await edit(r,'Which appliance specifications should I compare?');assert.equal(button(r,'Send').disabled,false);
+ await click(r,button(r,'Conversation History'));assert(finishHistory);assert.equal(button(r,'Send').disabled,false);
+ await act(async()=>finishHistory({error:{context:new Response('{}',{status:503})},data:null}));
+ assert.match(r.host.textContent,/History could not be loaded/);assert.equal(button(r,'Send').disabled,false);assert.match(r.host.textContent,/scopeReady=true · runtimeReady=true · executionReady=true/);noDispatch();
+});
+test('successful history cannot authorize Send while independent admission is unresolved or rejected',async t=>{
+ reset();const invoke=f.invoke;let finishAdmission;
+ f.invoke=(name,args)=>args.body.action==='readiness'?(calls.push(args.body),new Promise(resolve=>{finishAdmission=resolve;})):invoke(name,args);
+ const r=await mount(t);await edit(r,'An ordinary free-form question');await click(r,button(r,'Conversation History'));
+ assert.equal(button(r,'Send').disabled,true);assert.match(r.host.textContent,/scope_not_verified/);
+ await act(async()=>finishAdmission({error:null,data:{...trustedAdmission().data,admission_action:'history'}}));assert.equal(button(r,'Send').disabled,true);noDispatch();
+});
+test('New Conversation does not invalidate independent admission; obsolete readiness cannot overwrite the newer response',async t=>{
+ reset();const invoke=f.invoke;const pending=[];
+ f.invoke=(name,args)=>args.body.action==='readiness'?(calls.push(args.body),new Promise(resolve=>pending.push(resolve))):invoke(name,args);
+ const r=await mount(t);await click(r,button(r,'New Conversation'));assert.equal(pending.length,2);
+ await act(async()=>pending[1](trustedAdmission()));await edit(r,'Please explain comparison criteria');assert.equal(button(r,'Send').disabled,false);
+ await act(async()=>pending[0]({error:{context:new Response('{}',{status:401})},data:null}));assert.equal(button(r,'Send').disabled,false);assert.equal(calls.filter(c=>c.action==='history').length,0);noDispatch();
+});
+test('a different Company/Channel cannot inherit or receive a stale admission response',async t=>{
+ reset();f.readinessResponse=trustedAdmission();const r=await mount(t);await edit(r,'My local draft');assert.equal(button(r,'Send').disabled,false);
+ const invoke=f.invoke;let finish;
+ f.invoke=(name,args)=>args.body.action==='readiness'?(calls.push(args.body),new Promise(resolve=>{finish=resolve;})):invoke(name,args);
+ await act(async()=>r.root.render(React.createElement(PreviewWidget,{...props,scopeChannelId:'foreign-channel'})));
+ await edit(r,'Foreign scope draft');assert.equal(button(r,'Send').disabled,true);
+ await act(async()=>finish(trustedAdmission()));assert.equal(button(r,'Send').disabled,true);assert.match(r.host.textContent,/selected company\/channel does not match/);noDispatch();
+});
+
+test('a lazy history timeout leaves independently verified Send authority and the local draft intact',async t=>{
+ reset();f.readinessResponse=trustedAdmission();const invoke=f.invoke;
+ f.invoke=(name,args)=>args.body.action==='history'?(calls.push(args.body),Promise.reject(new DOMException('History timed out','TimeoutError'))):invoke(name,args);
+ const r=await mount(t);await edit(r,'Keep this draft while loading history');await click(r,button(r,'Conversation History'));
+ assert.match(r.host.textContent,/History could not be loaded/);assert.match(r.host.textContent,/scopeReady=true · runtimeReady=true/);assert.equal(field(r).value,'Keep this draft while loading history');assert.equal(button(r,'Send').disabled,false);noDispatch();
 });
