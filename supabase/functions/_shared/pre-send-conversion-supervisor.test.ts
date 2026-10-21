@@ -1442,7 +1442,10 @@ Deno.test('replacement-only room correction requires exact fresh canonical scope
  state.entities=[{entity_id:'air_conditioner:living_room',category:'air_conditioner',brand:null,model:null,quantity:1,status:'researching',attributes:{room_sizes:{living_room:'150平方呎'}},constraints:{},provenance:{source_type:'customer',source_message_id:SOURCE_ID}}];
  const evaluate=(draft:string,s=state)=>evaluateB2BeforeCommit({proposed_response:draft,persistence_kind:'ai_reply',snapshot:snapshot(s)});
  assertEquals(evaluate('按最新客廳150平方呎，先量度安裝位置。').decision,'allow','resolved customer measurement is usable without erasing the ledger');
- for(const draft of ['客廳180平方呎，先量度安裝位置。','客廳150平方呎及180平方呎，先量度安裝位置。','按最新資料已完成安裝。'])assert(evaluate(draft).decision!=='allow',draft);
+ assertEquals(evaluate('先量度安裝位置與散熱空間。').decision,'allow','advice without a measurement claim must not remain an unresolved correction after exact canonical readback');
+ assert(evaluate('按180平方呎量度安裝位置。').decision!=='allow','unlabelled stale area remains denied');
+ for(const draft of ['客廳180平方呎，先量度安裝位置。','客廳150平方呎及180平方呎，先量度安裝位置。'])assert(evaluate(draft).decision!=='allow',draft);
+ assertEquals(evaluate('按最新資料已完成安裝。').code,'INSTALLATION_COMPLETION_NOT_CANONICALLY_PROVABLE','general advice never authorizes an installation completion');
  const wrong=structuredClone(state);wrong.entities[0].attributes.room_sizes={living_room:'180平方呎'};assert(evaluate('客廳150平方呎，先量度安裝位置。',wrong).decision!=='allow','stale canonical state is not proof');
  const vague=structuredClone(state);vague.latest_corrections=['記住我最新嗰個更正'];assert(evaluate('客廳150平方呎，先量度安裝位置。',vague).decision!=='allow','vague correction remains unresolved');
  const cancelled=structuredClone(state);cancelled.entities[0].status='cancelled';assert(evaluate('客廳150平方呎，先量度安裝位置。',cancelled).decision!=='allow','cancelled entity is not an active owner');

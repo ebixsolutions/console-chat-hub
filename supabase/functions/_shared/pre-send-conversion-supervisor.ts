@@ -330,7 +330,7 @@ const DELIVERY_COMPLETED =
 const INSTALLATION_CONFIRMED =
   /(?:installation (?:is |has been )?(?:confirmed|arranged|scheduled)|安裝已確認|安装已确认|已安排安裝|已安排安装|安裝安排已確認|安装安排已确认)/i;
 const INSTALLATION_COMPLETED =
-  /(?:installation (?:is |has been )?(?:completed|installed|finished|executed)|successfully installed|安裝已完成|安装已完成|已經安裝|已经安装|安裝完成|安装完成)/i;
+  /(?:installation (?:is |has been )?(?:completed|installed|finished|executed)|successfully installed|安裝已完成|安装已完成|已完成安裝|已完成安装|已經安裝|已经安装|安裝完成|安装完成)/i;
 const GENERIC_COMPLETION =
   /(?:action|request|operation|process|booking|reservation).{0,24}(?:completed|processed|executed|done|finished)|(?:completed|processed|executed|done|finished).{0,24}(?:action|request|operation|process|booking|reservation)|(?:操作|動作|动作|請求|请求|流程|程序|預約|预约).{0,20}(?:已完成|完成咗|完成了|已執行|已执行|已處理|已处理)/i;
 
@@ -1141,8 +1141,13 @@ function evaluateCorrections(text: string, state: ConversationCommerceState): B2
         e.status !== "cancelled" && e.status !== "deferred" &&
         isRecord(e.attributes.room_sizes) && scope && e.attributes.room_sizes[scope] === replacement.value);
       const draftSizes = retainedRoomSizes(text);
-      if (scope && owners.length === 1 && draftSizes.length > 0 &&
-        draftSizes.some(size => scopeOf(size.label) === scope && size.value === replacement.value) &&
+      const draftAreaValues = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(?:平方呎|平方尺|sq\s*ft|sqft|呎|尺)/gi)]
+        .map(match => `${match[1]}平方呎`);
+      // Ordinary advice need not repeat the corrected area. A fresh exact
+      // canonical match resolves the correction; any proposed area claim must
+      // still repeat that scoped value, including otherwise unlabelled numbers.
+      if (scope && owners.length === 1 && draftAreaValues.every(value => value === replacement.value) &&
+        (draftAreaValues.length === 0 || draftSizes.some(size => scopeOf(size.label) === scope && size.value === replacement.value)) &&
         draftSizes.every(size => scopeOf(size.label) === scope && size.value === replacement.value)) return null;
       return { decision: "indeterminate", code: "LATEST_CORRECTION_UNRESOLVED" };
     }

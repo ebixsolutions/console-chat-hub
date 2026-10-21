@@ -1114,8 +1114,8 @@
     "supabase/functions/_shared/commerce-state-authority.ts": "7909ca99fc24c9982a73a9725e00bfe023cd6fec88ae2b6e6ac6951b7538997d",
     "tests/emergency-p0/provider-request.test.ts": "e734531ceca400f4b1306da412c9d42764182c58fd40b5d867a35c118687ae5b",
     "supabase/functions/_shared/conversation-recall.ts": "3024cb3e4b6bb8f875a4423fba1ffab8a8eea76dbfadeb0d0be8cf4236b00ac6",
-    "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "a0cd624d77b490abf58bdea214a4fe67cbfaf39a036c107c21e91a5c0bc1e711",
-    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "1b9f33221f8e6abea849a1632bd8137ef0ac3749b9bffa1d7c7a232b9c2a608f",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "f806919cfd65690a8110a75989d42c2dd5c98237ea6630b4d6847a339986c669",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "3c40a0cb80911807c71384266c1b6c819c22d93d7e3e0ac677db94e5d62b535f",
     "supabase/functions/_shared/conversation-long-memory.ts": "c16735718fcc5f8db768af338a746ec8ae8ce6f2f5d1c45758d06eddc8ecd005"
   },
   "live_execution_deployment_authorized": false,
