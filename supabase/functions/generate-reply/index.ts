@@ -4932,6 +4932,14 @@ async function orchestrationGenerateReply(
 
   const _customerGuidance = isCustomerGuidanceRequest(_h1LastMsg, _a3SemanticFrame) &&
     classifyLocalTopicRisk(_h1LastMsg)?.level !== "high";
+  console.log(JSON.stringify({
+    event: "customer_guidance_routing",
+    source_message_id: _h1SourceMessageId,
+    semantic_valid: Boolean(_a3SemanticFrame),
+    semantic_intent_class: _a3SemanticFrame?.intent === "customer_guidance" ? "customer_guidance" : "other",
+    requested_fact_count: _a3SemanticFrame?.requested_facts.length ?? 0,
+    guidance_selected: _customerGuidance,
+  }));
   const _customerGuidanceInstruction = _customerGuidance
     ? "General customer decision support: answer the actual question with useful trade-offs or one relevant clarification. Use only customer-authored context for exact needs and measurements. Do not assert merchant model recommendations, specifications, prices, stock, policy, suitability guarantees or completed actions. Do not invent numerical thresholds. Distinguish general advice from facts needing verification."
     : "";

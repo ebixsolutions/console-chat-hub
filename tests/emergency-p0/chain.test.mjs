@@ -384,3 +384,15 @@ test('malformed compact output cannot commit customer state or hide a canonical 
  assert.equal(r.body.generation_success,false);assert.equal(f.tables.conversation_memory_state.length,0);assert.equal(f.tables.conversation_commerce_state.length,0);assert(!f.requests.some(x=>/c3_commit_conversation_memory_tx|upsert_conversation_commerce_state_v1/.test(x.url)));
  assert(JSON.stringify(f.events).includes('wire_delta_fields'));assert.equal(f.commits.length,1);await f.run();assert.equal(f.commits.length,1);
 });
+
+// New real Hosted failure receipt: ORIGINAL_PREVIEW_PROVIDER_DENIED during
+// published_kb_lookup for this non-factual question. Valid model alternatives
+// below reproduce the brittle routing class; raw Hosted model output was not retained.
+for(const [intent,requested_facts] of [['ask_fact',[]],['explore_options',['selection_tradeoffs','site_measurements']],['customer_guidance',['installation_dimensions']]])test('Hosted 80b1afec full handler never sends general advice to KB: '+intent,async()=>{
+ const text='你好，我想換冷氣給家中兩位長者使用。客廳180平方呎，預算HK$6,000，重視夜間安靜及省電。未選型號，請解釋選購時應如何取捨，並告訴我要量度哪些現場尺寸；暫時不用查外部產品或報價。';
+ const answer='先量度安裝位置、出入通道及門窗開啟空間。夜間安靜與省電都重要，實際型號的聲量和耗電資料仍需核實。你們主要在甚麼時段使用冷氣？';
+ const f=fixture(text,{fullChain:true,answer,semantic:wireDelta({intent,requested_facts,entities:[{name:'冷氣',kind:'physical_product',confidence:0.97}],customer_facts:[{key:'room_area',value_json:JSON.stringify({amount:180,unit:'平方呎'})},{key:'budget',value_json:JSON.stringify({amount:6000,unit:'HKD'})}]})});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits[0]?.content,answer);assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));assert(f.requests.filter(x=>x.url.endsWith(':generateContent')).length>=2);assert.equal(f.commits.length,1);
+ const diagnostic=f.events.flat().filter(e=>typeof e==='string').map(e=>{try{return JSON.parse(e)}catch{return null}}).find(e=>e?.event==='customer_guidance_routing');assert.equal(diagnostic?.guidance_selected,true);assert(!JSON.stringify(diagnostic).includes(text));
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+});

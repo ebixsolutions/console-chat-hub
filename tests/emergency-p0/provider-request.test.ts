@@ -70,3 +70,15 @@ Deno.test('advertised compact inner grammar cannot demand forbidden outer fields
  assert(!Object.hasOwn(p,'lifecycle')&&!Object.hasOwn(p,'correction')&&!Object.hasOwn(p,'negations'));
  assert(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS.endsWith(JSON.stringify(COMMERCE_SEMANTIC_DELTA_SCHEMA)));
 });
+
+Deno.test('Hosted 80b1afec general advice routing is independent of a valid free-form model label',()=>{
+ const frame={intent:'ASK_FACT',confidence:0.97,requested_facts:[] as string[],ambiguity:{is_ambiguous:false}};
+ const question='你好，我想換冷氣給家中兩位長者使用。客廳180平方呎，預算HK$6,000，重視夜間安靜及省電。未選型號，請解釋選購時應如何取捨，並告訴我要量度哪些現場尺寸；暫時不用查外部產品或報價。';
+ for(const intent of ['customer_guidance','ask_fact','explore_options','customer_context_update'])assert(isCustomerGuidanceRequest(question,{...frame,intent}));
+ assert(isCustomerGuidanceRequest('What should I measure and what selection criteria should I consider?',{...frame,requested_facts:['selection_tradeoffs','site_measurements']}));
+ assert(isCustomerGuidanceRequest(question,{...frame,requested_facts:['installation_dimensions']}));
+ assert(!isCustomerGuidanceRequest('What should I measure?',{...frame,requested_facts:['stock']}));
+ assert(!isCustomerGuidanceRequest('What should I measure?',{...frame,requested_facts:['unknown_fact']}));
+ for(const text of ['What should I measure and what is the current price?','不用查外部產品，但你們有現貨嗎？請說明選購取捨。','What trade-offs should I consider under your warranty policy?'])assert(!isCustomerGuidanceRequest(text,frame));
+ assert(!isCustomerGuidanceRequest(question,{...frame,confidence:0.2}));assert(!isCustomerGuidanceRequest(question,{...frame,ambiguity:{is_ambiguous:true}}));assert(!isCustomerGuidanceRequest(question,null));
+});

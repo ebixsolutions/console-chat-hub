@@ -369,17 +369,29 @@ export function isCurrentRequirementsRecap(question: string): boolean {
 }
 
 /** General decision support is not a request for current merchant evidence.
- * Both a validated semantic proposal and the customer's actual speech act must
- * agree. A model label alone cannot remove a merchant lookup requirement. */
+ * A validated frame is required, but its free-form intent label is not lookup
+ * authority. The customer's speech act must independently request general
+ * guidance and must not ask for current merchant facts. */
 export function isCustomerGuidanceRequest(question: string, semantic: {
   intent: string; confidence: number; requested_facts: string[];
   ambiguity: { is_ambiguous: boolean };
 } | null): boolean {
-  if (!semantic || semantic.intent !== "customer_guidance" || semantic.confidence < 0.62 ||
-      semantic.ambiguity.is_ambiguous || semantic.requested_facts.length) return false;
+  if (!semantic || semantic.confidence < 0.62 || semantic.ambiguity.is_ambiguous) return false;
   const text = withoutExcludedLookups(clean(question));
   if (/\b(?:price|cost|stock|warranty|policy|specifications?|availability|recommend.*(?:products?|options?))\b|售價|售价|庫存|库存|保養|保养|政策|規格|规格|推薦|推荐|現貨|现货|你[哋們们]?有|你[哋們们]?嘅/i.test(text)) return false;
-  return /(?:取捨|取舍|選購|选购|選機|选机|應(?:該)?(?:準備|補充|考虑|考慮)|應該考慮|应该考虑|先問|先问)|\b(?:trade[ -]?offs?|selection criteria|what.*(?:ask|prepare|measure)|how.*(?:choose|select))\b/i.test(text);
+  if (!/(?:取捨|取舍|選購|选购|選機|选机|應(?:該)?(?:準備|補充|考虑|考慮)|應該考慮|应该考虑|先問|先问)|\b(?:trade[ -]?offs?|selection criteria|what.*(?:ask|prepare|measure)|how.*(?:choose|select))\b/i.test(text)) return false;
+  // A valid model can describe the same speech act as ASK_FACT, or include
+  // abstract advice/checklist targets in requested_facts. Neither authorizes
+  // a merchant lookup. Unknown targets still fail closed unless the customer
+  // explicitly excluded that lookup; affirmative merchant requests above win.
+  const generalTargets = semantic.requested_facts.every(fact => {
+    const target = fact.replace(/[_-]+/g, " ");
+    if (/\b(?:price|cost|stock|warranty|policy|specifications?|availability|models?|products?)\b|售價|售价|庫存|库存|保養|保养|政策|規格|规格|型號|型号/i.test(target)) return false;
+    return /\b(?:trade\s*offs?|selection criteria|selection considerations|selection advice|site measurements?|onsite measurements?|measurement checklist|dimensions to measure|clarifications?|next question|information to prepare)\b|取捨|取舍|選購考慮|选购考虑|量度清單|量度清单|現場尺寸|现场尺寸|補充資料|补充资料/i.test(target);
+  });
+  const lookupExplicitlyExcluded = text !== clean(question) &&
+    /(?:唔查|唔使查|不要查|不查|不用查|毋須查|do not (?:look up|check|query)|don't (?:look up|check|query)|no (?:lookup|lookups))/i.test(question);
+  return generalTargets || lookupExplicitlyExcluded;
 }
 
 /**
