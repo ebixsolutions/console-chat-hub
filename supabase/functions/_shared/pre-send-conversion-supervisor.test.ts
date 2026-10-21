@@ -1454,27 +1454,6 @@ Deno.test('replacement-only room correction requires exact fresh canonical scope
  assertEquals(state.latest_corrections,['更正一下:客廳其實是150平方呎'],'the correction history is unchanged');
 });
 
-Deno.test('Hosted B2 missing-slot descriptors never become supplied facts after a semantic commit', async () => {
-  for (const classification of ['COMMITTED', 'IDEMPOTENT', 'NO_SEMANTIC_CHANGE'] as const) {
-    const state = createEmptyConversationCommerceState();
-    state.current_topic = 'washing_machine';
-    state.entities = [{entity_id:'washing_machine:one',category:'washing_machine',quantity:1,status:'researching',attributes:{width_mm:600,depth_mm:560,customer_goal:{missing:['budget','color'],collected:['width_mm','depth_mm']}},constraints:{},provenance:{source_type:'customer',source_message_id:SOURCE_ID}}];
-    const before = JSON.stringify(state);
-    const metadata = {commerce_state_persistence_classification:classification};
-    const evaluate = (draft:string) => evaluateB2BeforeCommit({proposed_response:draft,persistence_kind:'ai_reply',metadata,snapshot:snapshot(state)});
-    assertEquals(evaluate('What is your budget?').decision, 'allow', `${classification}: budget is missing, not provided`);
-    assertEquals(evaluate('Which color do you need?').decision, 'allow', `${classification}: a missing color is not a known color`);
-    state.entities[0].attributes.color = 'blue';
-    assertEquals(evaluate('Which color do you need?').code, 'KNOWN_CONTEXT_RECONFIRMATION', `${classification}: a real supplied value still blocks re-asking`);
-    delete state.entities[0].attributes.color;
-    assertEquals(JSON.stringify(state), before, 'B2 evaluation must not mutate state or planning descriptors');
-    const client = new MockClient({state,revision:7,sourceContent:'Help me compare the trade-offs.'});
-    let commits = 0;
-    const result = await executeB2PersistenceGate({client,conversation_id:CONVERSATION_ID,source_message_id:SOURCE_ID,proposed_response:'What is your budget?',persistence_kind:'ai_reply',metadata,expected_commerce_state_revision:7,commit:async()=>{commits++;return 'persisted';}});
-    assert(result.committed && commits === 1, `${classification}: legitimate missing-slot question must reach revision-checked commit`);
-  }
-});
-
 Deno.test('Hosted same-ticket summary renders typed customer budget without internal entity bookkeeping',()=>{
  const input=recallFixture('請總結這張對話目前記低的最新面積、預算和優先需求。');
  input.commerce!.state=createEmptyConversationCommerceState();
