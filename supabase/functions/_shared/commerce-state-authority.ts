@@ -331,13 +331,25 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
     (recallLanguage || interrogative);
 }
 
+// A negative lookup instruction is not a request for merchant evidence. Keep
+// one grammar for clause removal and routing so ordinary wording variants do
+// not disagree. This never grants provider/KB admission.
+const EXCLUDED_LOOKUP = /(?:唔查|唔使查|唔需要查|不要查|不查|不用查|不需要查|不需查|無需查|无需查|毋須查|毋须查|do not (?:look up|check|query)|don't (?:look up|check|query)|no (?:lookup|lookups))/i;
+
 /** A question asking for the currently retained requirements supplies no new fact. */
 export function withoutExcludedLookups(question: string): string {
   // Only discard an explicit instruction NOT to perform a lookup. A negative
   // customer fact and an actual question about a negative condition remain data.
-  return question.split(/[，,。;；\n]|\bbut\b|但(?:係|是)?|\band(?=\s+(?:check|query|look up)\b)|同埋(?=查)/i).filter(clause =>
-    !/(?:唔查|唔使查|不要查|不查|不用查|毋須查|do not (?:look up|check|query)|don't (?:look up|check|query)|no (?:lookup|lookups))/i.test(clause)
-  ).join("; ");
+  return question.split(/[，,。;；\n]|\bbut\b|但(?:係|是)?|\band(?=\s+(?:check|query|look up)\b)|同埋(?=查)/i).filter(clause => {
+    const excluded = EXCLUDED_LOOKUP.exec(clause);
+    if (!excluded) return true;
+    // Never erase an affirmative request that shares the negative clause.
+    // E.g. "do not check models and check stock" still needs merchant evidence.
+    const before = clause.slice(0, excluded.index);
+    const after = clause.slice(excluded.index + excluded[0].length);
+    const affirmative = /(?:推薦|推荐|現貨|现货|你[哋們们]?有)|(?:請|请|及|並|并|再|也|亦|同埋).{0,4}(?:查|報價|报价)|\b(?:recommend|check|query|look up)\b/i;
+    return affirmative.test(before) || affirmative.test(after);
+  }).join("; ");
 }
 
 export function isCurrentRequirementsRecap(question: string): boolean {
@@ -378,7 +390,7 @@ export function isCustomerGuidanceRequest(question: string, semantic: {
 } | null): boolean {
   if (!semantic || semantic.confidence < 0.62 || semantic.ambiguity.is_ambiguous) return false;
   const text = withoutExcludedLookups(clean(question));
-  if (/\b(?:price|cost|stock|warranty|policy|specifications?|availability|recommend.*(?:products?|options?))\b|售價|售价|庫存|库存|保養|保养|政策|規格|规格|推薦|推荐|現貨|现货|你[哋們们]?有|你[哋們们]?嘅/i.test(text)) return false;
+  if (/\b(?:price|cost|stock|warranty|policy|specifications?|availability|recommend.*(?:products?|options?))\b|售價|售价|報價|报价|價錢|价钱|幾錢|几钱|庫存|库存|保養|保养|政策|規格|规格|推薦|推荐|現貨|现货|你[哋們们]?有|你[哋們们]?嘅/i.test(text)) return false;
   if (!/(?:取捨|取舍|選購|选购|選機|选机|應(?:該)?(?:準備|補充|考虑|考慮)|應該考慮|应该考虑|先問|先问)|\b(?:trade[ -]?offs?|selection criteria|what.*(?:ask|prepare|measure)|how.*(?:choose|select))\b/i.test(text)) return false;
   // A valid model can describe the same speech act as ASK_FACT, or include
   // abstract advice/checklist targets in requested_facts. Neither authorizes
@@ -390,7 +402,7 @@ export function isCustomerGuidanceRequest(question: string, semantic: {
     return /\b(?:trade\s*offs?|selection criteria|selection considerations|selection advice|site measurements?|onsite measurements?|measurement checklist|dimensions to measure|clarifications?|next question|information to prepare)\b|取捨|取舍|選購考慮|选购考虑|量度清單|量度清单|現場尺寸|现场尺寸|補充資料|补充资料/i.test(target);
   });
   const lookupExplicitlyExcluded = text !== clean(question) &&
-    /(?:唔查|唔使查|不要查|不查|不用查|毋須查|do not (?:look up|check|query)|don't (?:look up|check|query)|no (?:lookup|lookups))/i.test(question);
+    EXCLUDED_LOOKUP.test(question);
   return generalTargets || lookupExplicitlyExcluded;
 }
 

@@ -314,7 +314,7 @@ export async function interpretCommerceSemantics(
     purpose: "evaluation",
     system: SYSTEM +
       COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS +
-      "\nProvider wire format: customer_facts records use value_json (a JSON-encoded typed value) instead of value. Entity attributes and constraints use attributes_json and constraints_json (JSON-encoded objects) instead of attributes/constraints. Preserve all named values/units, false, zero and null. All other fields use the stated contract. For corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraints and customer_correction=true. Output budget 4096 tokens; omit unchanged/default fields. Do not include reasoning.",
+      "\nProvider wire format: only delta_json is JSON-encoded. Its contents use native customer_facts value and native entity attributes/constraints exactly as shown in the example and delta schema. Preserve all named values/units, false, zero and null. All other fields use the stated contract. For corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraints and customer_correction=true. Output budget 4096 tokens; omit unchanged/default fields. Do not include reasoning.",
     user: buildUser(input, persistentStateSummary),
     maxTokens: 4096,
     operationId: `commerce-semantic:${input.source_message_id}`,

@@ -363,7 +363,7 @@ for(const alias of ['lifecycle','correction','negations'])test('prompt/decoder i
  const r=await f.load(path.join(root,'supabase/functions/_shared/commerce-semantic-interpreter.ts')).interpretCommerceSemantics({company_id:company,conversation_id:ticket,source_message_id:source,latest:'Please correct my requirements',persistent_state_summary:'{}'});
  assert.equal(r.frame,null);assert.equal(r.contract_rejection,'wire_delta_fields');assert(!JSON.stringify(r).includes('PRIVATE-SECRET'));
  const request=f.requests.find(x=>x.url.includes('aiplatform')).body.systemInstruction.parts[0].text;
- assert(request.includes('customer_correction'));assert(request.includes('"value_json"'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
+ assert(request.includes('customer_correction'));assert(request.includes('"value"'));assert(request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
 });
 
 test('Hosted Frankie correction then same-ticket Summary retains latest canonical Memory and passes unchanged B2',async()=>{
@@ -395,4 +395,25 @@ for(const [intent,requested_facts] of [['ask_fact',[]],['explore_options',['sele
  const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits[0]?.content,answer);assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));assert(f.requests.filter(x=>x.url.endsWith(':generateContent')).length>=2);assert.equal(f.commits.length,1);
  const diagnostic=f.events.flat().filter(e=>typeof e==='string').map(e=>{try{return JSON.parse(e)}catch{return null}}).find(e=>e?.event==='customer_guidance_routing');assert.equal(diagnostic?.guidance_selected,true);assert(!JSON.stringify(diagnostic).includes(text));
  const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+});
+
+// Actual Hosted efec7018: canonical semantic success, two requested targets,
+// guidance_selected=false, then persisted execution-unavailable reply. Raw
+// provider delta was not retained; these are valid deterministic reproductions.
+for(const requested_facts of [['installation_dimensions','selection_steps'],['model_selection','onsite_checks']])test('Hosted efec7018 same-ticket correction advice generates a real-provider-path answer without KB: '+requested_facts.join(','),async()=>{
+ const c=hostedP0[0];
+ const initial=fixture(c.text,{fullChain:true,semantic:wireDelta({intent:'customer_guidance',entities:[{name:c.product,kind:'physical_product',confidence:0.97}],customer_facts:Object.entries(c.facts).map(([key,value])=>({key,value_json:JSON.stringify(value)})),requested_facts:[]})});await initial.run();
+ const text='更正一下：客廳其實是150平方呎，預算改為HK$5,000；兩位長者和夜間安靜、省電的優先次序不變。請以這些最新資料說明量度及選購的下一步，不需要查型號或報價。';
+ const answer='按最新客廳150平方呎及HK$5,000預算，先量度安裝位置和出入通道，記下兩位長者夜間使用的需要；實際型號的噪音和耗電資料仍需核實。';
+ const f=fixture(text,{source:uuid(111),fullChain:true,answer,previous:initial.tables,history:initial.tables.messages,semantic:wireDelta({intent:'customer_context_update',customer_correction:true,customer_facts:[{key:'room_area',value_json:'{"amount":150,"unit":"平方呎"}'},{key:'budget',value_json:'{"amount":5000,"unit":"HKD"}'}],requested_facts},'UPDATE_ITEM')});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits[0]?.content,answer,JSON.stringify({r,metadata:f.commits[0]?.metadata,state:f.tables.conversation_commerce_state,memory:f.tables.conversation_memory_state,events:f.events}));assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));assert(f.requests.filter(x=>x.url.endsWith(':generateContent')).length>=2);assert.equal(f.commits.length,1);
+ const memory=f.tables.conversation_memory_state[0].memory;assert.equal(memory.current_customer_facts.find(x=>x.key==='room_area').value.amount,150);assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);assert(memory.latest_corrections.length>0);assert(memory.cancelled_or_superseded.length>0);assert(!memory.current_customer_facts.some(x=>x.key==='corrected_delivery_address'));
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+});
+
+test('Hosted a6626087 Authe free-form prompt follows native compact grammar through actual handler and B2',async()=>{
+ const text='你好，我想買一部洗衣機俾三人家庭用，擺機位置闊600毫米、深560毫米，平時最在意洗衣時嘈音。你可以先幫我整理選機時應該考慮嘅取捨，同講下一步應補充咩資料嗎？';
+ const answer='三人家庭可以先考慮每次衣量、洗衣時段及可用空間的取捨。請量度門位和喉管所需空間；具體型號能否放進600毫米闊、560毫米深的位置仍須核對資料。你們主要在哪個時段洗衣？';
+ const f=fixture(text,{fullChain:true,answer,semantic:wireDelta({intent:'customer_guidance',entities:[{name:'洗衣機',kind:'physical_product',confidence:0.97,constraints:{width:{amount:600,unit:'mm'},depth:{amount:560,unit:'mm'}}}],customer_facts:[{key:'family_size',value:3},{key:'priority',value:'quiet operation'}],requested_facts:[]})});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits[0]?.content,answer,JSON.stringify({r,events:f.events}));assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));assert(f.requests.filter(x=>x.url.endsWith(':generateContent')).length>=2);assert.equal(f.commits.length,1);const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
 });

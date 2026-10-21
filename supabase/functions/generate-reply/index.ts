@@ -4936,6 +4936,8 @@ async function orchestrationGenerateReply(
     event: "customer_guidance_routing",
     source_message_id: _h1SourceMessageId,
     semantic_valid: Boolean(_a3SemanticFrame),
+    semantic_confidence_admitted: Boolean(_a3SemanticFrame && _a3SemanticFrame.confidence >= 0.62),
+    semantic_unambiguous: Boolean(_a3SemanticFrame && !_a3SemanticFrame.ambiguity.is_ambiguous),
     semantic_intent_class: _a3SemanticFrame?.intent === "customer_guidance" ? "customer_guidance" : "other",
     requested_fact_count: _a3SemanticFrame?.requested_facts.length ?? 0,
     guidance_selected: _customerGuidance,

@@ -82,3 +82,23 @@ Deno.test('Hosted 80b1afec general advice routing is independent of a valid free
  for(const text of ['What should I measure and what is the current price?','不用查外部產品，但你們有現貨嗎？請說明選購取捨。','What trade-offs should I consider under your warranty policy?'])assert(!isCustomerGuidanceRequest(text,frame));
  assert(!isCustomerGuidanceRequest(question,{...frame,confidence:0.2}));assert(!isCustomerGuidanceRequest(question,{...frame,ambiguity:{is_ambiguous:true}}));assert(!isCustomerGuidanceRequest(question,null));
 });
+
+Deno.test('Hosted efec7018 correction advice recognizes explicit no-lookup instructions without merchant admission',()=>{
+ const frame={intent:'customer_context_update',confidence:0.97,requested_facts:['installation_dimensions','selection_steps'],ambiguity:{is_ambiguous:false}};
+ const correction='更正一下：客廳其實是150平方呎，預算改為HK$5,000；兩位長者和夜間安靜、省電的優先次序不變。請以這些最新資料說明量度及選購的下一步，不需要查型號或報價。';
+ assert(isCustomerGuidanceRequest(correction,frame),'the actual second-turn wording must remain general advice');
+ for(const negative of ['不需要查','不需查','無需查','无需查','唔需要查','不用查'])assert(isCustomerGuidanceRequest('請說明選購取捨；'+negative+'型號或報價。',frame),negative);
+ for(const text of ['請說明選購取捨；不需要查型號，但請查報價。','請說明選購取捨；不需要查型號及請查保養。','請推薦現貨，不需要查型號。','請說明選購取捨，現在價錢幾多？'])assert(!isCustomerGuidanceRequest(text,frame),text);
+ assert(!isCustomerGuidanceRequest(correction,{...frame,confidence:0.2}));assert(!isCustomerGuidanceRequest(correction,{...frame,ambiguity:{is_ambiguous:true}}));assert(!isCustomerGuidanceRequest(correction,null));
+});
+
+Deno.test('Hosted a6626087 compact prompt uses one encoding layer and canonical typed values; malformed legacy fields stay rejected',()=>{
+ const delta={intent:'customer_guidance',entities:[{name:'洗衣機',kind:'physical_product',confidence:0.97,constraints:{max_depth:{amount:560,unit:'mm'}}}],customer_facts:[{key:'priority',value:'quiet operation'},{key:'family_size',value:3},{key:'auto_renew',value:false},{key:'seats',value:0},{key:'date',value:null}]};
+ const wire={operation:'ADD_ITEM',confidence:0.97,delta_json:JSON.stringify(delta)};
+ const frame=normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(wire))!;assert(frame);assert(frame.customer_facts);assert(frame.customer_facts[0].value==='quiet operation');assert(frame.customer_facts[2].value===false);assert(frame.customer_facts[3].value===0);assert(frame.customer_facts[4].value===null);assert((frame.entities[0].constraints.max_depth as any).amount===560);
+ const props=COMMERCE_SEMANTIC_DELTA_SCHEMA.properties;assert('value' in props.customer_facts.items.properties);assert(!('value_json' in props.customer_facts.items.properties));
+ assert(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS.includes('Do not add a second JSON encoding layer'));
+ for(const facts of [[{key:'priority',value_json:'quiet operation'}],[{key:'size',value_json:560}],[{key:'size',value:560,value_json:'560'}]])assert(decodeCommerceSemanticWire({...wire,delta_json:JSON.stringify({customer_facts:facts})})===null);
+ assert(decodeCommerceSemanticWire({...wire,delta_json:JSON.stringify({entities:[{name:'item',kind:'physical_product',attributes:{a:1},attributes_json:'{"a":2}'}]})})===null);
+ assert(!normalizeCommerceSemanticFrame(decodeCommerceSemanticWire({...wire,delta_json:JSON.stringify({customer_facts:[{key:'too_deep',value:{a:{b:{c:{d:1}}}}}]})})));
+});

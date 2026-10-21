@@ -25,7 +25,7 @@ import {
   type B2TrustedLifecycleCommit,
   verifyEntityLifecycleTransition,
 } from "./b2-journey-progress-contract.ts";
-import { roomSizeCorrection } from "./conversation-long-memory.ts";
+import { roomSizeCorrection, retainedRoomSizes } from "./conversation-long-memory.ts";
 import { isCanonicalConversationMemory, type CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
 import { canonicalJson, sameCanonicalJson } from "./canonical-json.ts";
@@ -1126,6 +1126,26 @@ function evaluateCorrections(text: string, state: ConversationCommerceState): B2
   const parsed = parseCorrection(latest);
   if (!parsed) {
     if (!responseTouchesCommerce(text, state)) return null;
+    // Replacement-only room corrections have no repeated old value. Resolve
+    // only an exact, single scoped measurement already present in the fresh
+    // canonical state; a label or a client metadata flag is never proof.
+    const replacementOnly = /^(?:更正|修正|correction).{0,12}(?:客廳|客厅|大房|細房|细房|小房|living\s+room|(?:large|small)\s+bedroom).{0,12}(?:其實是|其實係|其实是|其實|其实|是|係|改為|改为|=|:|：)\s*\d+(?:\.\d+)?\s*(?:平方呎|平方尺|sq\s*ft|sqft|呎|尺)[。.!！]?$/i.test(latest);
+    const replacementSizes = replacementOnly ? retainedRoomSizes(latest) : [];
+    if (replacementSizes.length === 1) {
+      const replacement = replacementSizes[0];
+      const scopeOf = (label: string) => /(?:客廳|客厅|living\s+room)/i.test(label) ? "living_room"
+        : /(?:大房|large\s+bedroom)/i.test(label) ? "large_bedroom"
+        : /(?:細房|细房|小房|small\s+bedroom)/i.test(label) ? "small_bedroom" : null;
+      const scope = scopeOf(replacement.label);
+      const owners = state.entities.filter(e => e.category === "air_conditioner" &&
+        e.status !== "cancelled" && e.status !== "deferred" &&
+        isRecord(e.attributes.room_sizes) && scope && e.attributes.room_sizes[scope] === replacement.value);
+      const draftSizes = retainedRoomSizes(text);
+      if (scope && owners.length === 1 && draftSizes.length > 0 &&
+        draftSizes.some(size => scopeOf(size.label) === scope && size.value === replacement.value) &&
+        draftSizes.every(size => scopeOf(size.label) === scope && size.value === replacement.value)) return null;
+      return { decision: "indeterminate", code: "LATEST_CORRECTION_UNRESOLVED" };
+    }
     const correctionScope = correctionDomains(latest, state);
     if (unresolvedCorrectionCarriesConcreteResolution(latest)) return null;
     if (correctionScope.size === 0) return { decision: "indeterminate", code: "LATEST_CORRECTION_UNRESOLVED" };

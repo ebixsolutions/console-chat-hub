@@ -419,11 +419,26 @@ export const COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA: Record<string, unknown> = {
 
 /** The outer schema owns operation/confidence. They are forbidden in the inner
  * delta, including its advertised grammar, not merely stripped after decode. */
+const compactDeltaProperties = Object.fromEntries(Object.entries(
+  COMMERCE_SEMANTIC_WIRE_SCHEMA.properties as Record<string, unknown>,
+).filter(([key]) => !["operation", "confidence"].includes(key)));
+const compactEntity = structuredClone((compactDeltaProperties.entities as {
+  items: { properties: Record<string, unknown> };
+}).items);
+delete compactEntity.properties.attributes_json;
+delete compactEntity.properties.constraints_json;
+compactEntity.properties.attributes = { type: "object", additionalProperties: decisionContextSchema() };
+compactEntity.properties.constraints = { type: "object", additionalProperties: decisionContextSchema() };
 export const COMMERCE_SEMANTIC_DELTA_SCHEMA = {
   type: "object", additionalProperties: false,
-  properties: Object.fromEntries(Object.entries(
-    COMMERCE_SEMANTIC_WIRE_SCHEMA.properties as Record<string, unknown>,
-  ).filter(([key]) => !["operation", "confidence"].includes(key))),
+  properties: {
+    ...compactDeltaProperties,
+    customer_facts: { type: "array", maxItems: 16, items: {
+      type: "object", required: ["key", "value"],
+      properties: { key: { type: "string" }, value: decisionContextSchema() },
+    } },
+    entities: { type: "array", maxItems: 12, items: compactEntity },
+  },
 };
 
 /** The inner grammar and prompt share one source of truth. Never advertise aliases
@@ -432,8 +447,10 @@ export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS =
   "Outer JSON has exactly operation, confidence, delta_json in that order. " +
   "delta_json is a JSON-encoded object with only current-turn optional fields from the following wire schema; " +
   "omit operation/confidence from it and omit unchanged/default fields. Use the string {} when empty. " +
-  "Inside delta_json customer_facts use value_json, and entities use attributes_json/constraints_json, " +
-  "each containing JSON-encoded typed values/objects, never double-encoded JSON. " +
+  "Encode only the delta object as delta_json. INSIDE that decoded object, customer_facts use {key,value} with native typed JSON values, " +
+  "and entities use native attributes/constraints objects. Do not use value_json, attributes_json or constraints_json inside delta_json. " +
+  "Strings are ordinary JSON strings; numbers, objects, arrays, false, zero and null stay native values. Do not add a second JSON encoding layer. " +
+  "Valid outer example: " + JSON.stringify({operation:"ASK_FACT",confidence:0.97,delta_json:JSON.stringify({customer_facts:[{key:"priority",value:"quiet operation"},{key:"maximum_depth",value:{amount:560,unit:"mm"}},{key:"auto_renew",value:false},{key:"seats",value:0},{key:"date",value:null}]})}) + ". " +
   "Use customer_correction, explicit_negations and the four separate *_state fields exactly as named; " +
   "there are no lifecycle, correction or negations aliases. Schema: " +
   JSON.stringify(COMMERCE_SEMANTIC_DELTA_SCHEMA);
@@ -477,6 +494,7 @@ export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSema
               const out = { ...entity };
               for (const key of ["attributes", "constraints"])
                 if (Object.hasOwn(entity, key + "_json")) {
+                  if (Object.hasOwn(entity, key)) throw new Error("wire_entity_object");
                   const decoded = decode(entity[key + "_json"]);
                   if (!isRecord(decoded)) throw new Error("wire_entity_object");
                   out[key] = decoded;
@@ -487,11 +505,11 @@ export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSema
         : {}),
       ...(Array.isArray(value.customer_facts)
         ? {
-            customer_facts: value.customer_facts.map((fact) =>
-              isRecord(fact) && Object.hasOwn(fact, "value_json")
-                ? { ...fact, value: decode(fact.value_json) }
-                : fact,
-            ),
+            customer_facts: value.customer_facts.map((fact) => {
+              if (!isRecord(fact) || !Object.hasOwn(fact, "value_json")) return fact;
+              if (Object.hasOwn(fact, "value")) throw new Error("wire_value_json");
+              return { ...fact, value: decode(fact.value_json) };
+            }),
           }
         : {}),
     };
