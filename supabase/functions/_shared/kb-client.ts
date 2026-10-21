@@ -564,24 +564,24 @@ export async function fetchKBRag(
       body: requestBody,
       signal: controller.signal,
     };
-    response = await accountedModelFetch(createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey()), {companyId:scope.aiCompanyId, legacyAuthority:scope.legacyAuthority, conversationId:opts?.uatContext?.conversationId ?? null, operationId:opts?.uatContext?.operationId ?? "", provider:"singapore-kb",purpose:"kb_embedding",slot:"context-search",attempt:1,request:requestBody},endpointCfg.ragUrl,init,fetch,undefined,async admittedMode=>await prepareRemoteRetrieval(
+    response = await accountedModelFetch(createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey()), {companyId:scope.aiCompanyId, legacyAuthority:scope.legacyAuthority, conversationId:opts?.uatContext?.conversationId ?? null, operationId:opts?.uatContext?.operationId ?? "", provider:"singapore-kb",purpose:"kb_embedding",slot:"context-search",attempt:1,request:requestBody},endpointCfg.ragUrl,init,fetch,undefined,async function accountingHeaders(admittedMode){return await prepareRemoteRetrieval(
       scope.aiCompanyId,scope.singaporeTenantId,remoteAccountingSecret(credential,endpointCfg),
       endpointCfg.ragUrl,fetch,opts?.signal,"kb",requestBody,admittedMode,
-    ));
+    );});
 
-  } catch (err) {
-    trace("kb_admission_or_transport_result",failureFromError(err));
+  } catch (error) {
+    const failure=failureFromError(error);
+    trace("kb_admission_or_transport_result",failure);
     clearTimeout(timeout);
     opts?.signal?.removeEventListener("abort", abortFromRequest);
     return {
-      success: false,
-      chunks: [],
-      citations: [],
-      documents: [],
-      error_code: err instanceof DOMException && err.name === "AbortError" ? "KB_TIMEOUT" : "KB_FETCH_ERROR",
-      failure: err && typeof err === "object" && "code" in err
-        ? failureFromError(err)
-        : executionFailure(err instanceof Error && err.name === "AbortError" ? "LLM_TIMEOUT" : "LLM_NETWORK"),
+      success:false,chunks:[],citations:[],documents:[],
+      // Preserve transport labels; propagate actual closed admission failures
+      // rather than hiding a provider/remote-scope denial as a generic fetch error.
+      ...(error && typeof error==="object" && "code" in error && !(error instanceof DOMException)
+        ? {error_code:failure.code,failure}
+        : {error_code:error instanceof DOMException && error.name==="AbortError" ? "KB_TIMEOUT" : "KB_FETCH_ERROR",
+          failure:executionFailure(error instanceof Error && error.name==="AbortError" ? "LLM_TIMEOUT" : "LLM_NETWORK")}),
     };
   }
 

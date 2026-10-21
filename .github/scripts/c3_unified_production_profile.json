@@ -1034,7 +1034,7 @@
     "supabase/functions/_shared/conversational-routing.ts": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3",
     "supabase/functions/_shared/execution-failure.ts": "6d437d5e690ae0c748e345a12a73928ccaf9121d2c38eab10539a0b4ccdcfef1",
     "supabase/functions/_shared/generation-terminal-guard.ts": "b594946be00d0df338d8bc74cfc42ec0bf7dcdb4438c63262b2fb9b8b2dfadc5",
-    "supabase/functions/_shared/kb-client.ts": "d4b1af44eef4e55b5915043462193f9ae0a727f2e86e8b76e5ed2acce9f6d02c",
+    "supabase/functions/_shared/kb-client.ts": "5501ea391696ef27d05228d75d0348ee04fffcaabe868b5d8d42a8bb02407a7d",
     "supabase/functions/_shared/llm-router.ts": "064e3634d22c75cdaf1757963827839b22e596d55e47de64d75b105f438693e8",
     "supabase/functions/_shared/model-attempt-accounting.ts": "751f5c9e715628e1d1db154bf7fdfc6327723c7d4889ff96664f4528d29f1b44",
     "supabase/functions/_shared/natural-customer-response.ts": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854",
