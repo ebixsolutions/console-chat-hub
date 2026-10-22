@@ -341,10 +341,7 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "kb_rag_invalid_json" }, 409);
   }
 
-  const parsed = parseAggregationResponse(ragJson) as ReturnType<typeof parseAggregationResponse> & {
-    selectedDocumentId?: string;
-    llmContext: { full_content_evidence: Array<{ document_id: string; content: string }> };
-  };
+  const parsed = parseAggregationResponse(ragJson);
   const selectedSameDocument =
     parsed.ok && parsed.contextFound && parsed.selectedDocumentId === documentId;
   const sameDocumentEvidence =
