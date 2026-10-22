@@ -387,6 +387,7 @@
     "supabase/config.toml",
     "supabase/functions/_shared/b2-journey-progress-contract.ts",
     "supabase/functions/_shared/bounded-decision-context.ts",
+    "supabase/functions/_shared/canonical-grounding.ts",
     "supabase/functions/_shared/canonical-kb-direct-answer.ts",
     "supabase/functions/_shared/ce-automation-engine.ts",
     "supabase/functions/_shared/ce-evaluation-scope.ts",
