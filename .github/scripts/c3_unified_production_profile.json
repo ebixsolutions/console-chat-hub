@@ -1129,7 +1129,7 @@
     "bun.lock": "b3c9fe54ef2f39ec48d896594781fbd4ffab6f7518218febd4c8f4e4a6366143",
     "package.json": "1bac7a064dd9e028c6b785c9322b7c22e15b41ee6d3d7b8724ffde7ba03cb462",
     "src/integrations/supabase/previewAuthStorage.ts": "5b00130146b77ecd8ed49f118c640d3e75aa7c5e76695f3b9e3f7f8833719f0a",
-    "package-lock.json": "cd4e542205531862df9e9982c13ddab7ddd464a56f38d9d95ecb140c862e040a"
+    "package-lock.json": "7d788934e09c9bc573ff891a3b31b4877d6bd2dafddba62807220bed23d5740e"
   },
   "live_execution_deployment_authorized": false,
   "authorized_widget_hosted_build_sha256": {
