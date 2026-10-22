@@ -56,16 +56,20 @@ export async function authenticatedInboxAuthority(db:Db,actor:string,company:str
 export async function authenticatedInboxIdentity(db:Db,authority:object|undefined,company:string|null,conversation:string|null):Promise<InboxIdentity> {
   const a=authority && inboxAuthorities.get(authority);
   if(!a || a.expires<=Date.now() || a.company!==company || a.conversation!==conversation || !db.from)throw new UatDenied("INBOX_AUTHORITY_DENIED");
-  const roles=await db.from("user_roles").select("role").eq("user_id",a.actor);
+  const roles=a.operation==="knowledge" ? await db.from("user_roles").select("role").eq("user_id",a.actor) : {data:[],error:null};
   const membership=await db.from("company_membership").select("company_id,role,is_active").eq("user_id",a.actor).eq("company_id",a.company).eq("is_active",true).maybeSingle();
   const owner=await db.from("company").select("id,is_active").eq("id",a.company).maybeSingle();
   const ticket=await db.from("conversations").select("id,company_id,channel_config_id,visitor_session_id,metadata_source,status,assigned_agent_id").eq("id",a.conversation).eq("company_id",a.company).maybeSingle();
-  if(roles.error || !roles.data?.some((r:any)=>["admin","supervisor","agent"].includes(r.role)) || membership.error || membership.data?.is_active!==true || !["admin","supervisor","agent"].includes(membership.data.role) || owner.error || owner.data?.is_active!==true || ticket.error || ticket.data?.id!==a.conversation || ticket.data.company_id!==a.company)throw new UatDenied("INBOX_AUTHORITY_DENIED");
+  if((a.operation==="knowledge" && (roles.error || !roles.data?.some((r:any)=>["admin","supervisor"].includes(r.role)))) || membership.error || membership.data?.is_active!==true || !["admin","supervisor","agent"].includes(membership.data.role) || owner.error || owner.data?.is_active!==true || ticket.error || ticket.data?.id!==a.conversation || ticket.data.company_id!==a.company)throw new UatDenied("INBOX_AUTHORITY_DENIED");
   const c=ticket.data,m=c.metadata_source;
-  const elevated=roles.data.some((r:any)=>["admin","supervisor"].includes(r.role)) && ["admin","supervisor"].includes(membership.data.role);
-  if(!elevated) {
-    const agent=await db.from("agent_profile").select("id").eq("user_id",a.actor).maybeSingle();
-    if(a.operation!=="policy" || membership.data.role!=="agent" || !roles.data.some((r:any)=>r.role==="agent") || agent.error || !agent.data?.id || c.assigned_agent_id!==agent.data.id)throw new UatDenied("INBOX_AUTHORITY_DENIED");
+  const elevated=["admin","supervisor"].includes(membership.data.role);
+  // Knowledge retains its original global-role + Company-role checks. Agent
+  // tools retain validateAgent's active profile + canonical Company-role model;
+  // a global user_roles row is not an extra prerequisite for an assigned Agent.
+  if(a.operation==="knowledge" && !elevated)throw new UatDenied("INBOX_AUTHORITY_DENIED");
+  if(a.operation!=="knowledge") {
+    const agent=await db.from("agent_profile").select("id,status").eq("user_id",a.actor).maybeSingle();
+    if(agent.error || !agent.data?.id || agent.data.status!=="active" || !elevated && (a.operation!=="policy" || membership.data.role!=="agent" || c.assigned_agent_id!==agent.data.id))throw new UatDenied("INBOX_AUTHORITY_DENIED");
   }
   if(m?.synthetic===true || m?.source==="c3_uat_widget")throw new UatDenied("INBOX_SYNTHETIC_SCOPE_DENIED");
   if((m?.widget_live_test===true || m?.source==="widget_live_test") && !await verifyOriginalPreview(db,c,undefined,false))throw new UatDenied("INBOX_AUTHORITY_DENIED");

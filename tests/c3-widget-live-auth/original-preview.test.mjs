@@ -369,7 +369,7 @@ test('unknown Inbox network outcome cannot be replayed with the same opaque oper
  await assert.rejects(run(),/isolated unknown delivery/);await assert.rejects(run(),e=>e.code==='INBOX_REPLAY_DENIED');assert.equal(calls,1);
 });
 test('assigned independent Agent can obtain only its own policy context; original owner markers are preserved',async()=>{
- const x=await setupInbox();const staff=crypto.randomUUID(),profile=crypto.randomUUID();f.rows.user_roles.push({user_id:staff,role:'agent'});f.rows.company_membership.push({user_id:staff,company_id:x.c.company_id,role:'agent',is_active:true});f.rows.agent_profile.push({id:profile,user_id:staff,status:'active',role:'agent'});x.c.assigned_agent_id=profile;x.c.status='pending';
+ const x=await setupInbox();const staff=crypto.randomUUID(),profile=crypto.randomUUID();f.rows.company_membership.push({user_id:staff,company_id:x.c.company_id,role:'agent',is_active:true});f.rows.agent_profile.push({id:profile,user_id:staff,status:'active',role:'agent'});x.c.assigned_agent_id=profile;x.c.status='pending';
  const token=await authenticatedInboxAuthority(f.db,staff,x.c.company_id,x.c.id,'policy');assert.equal(await trustedDispatchScope(f.db,x.c.company_id,x.c.id,token),'authenticated_inbox');assert.equal(x.c.metadata_source.owner_user_id,f.user.id);assert.equal(x.c.status,'pending');
  x.c.assigned_agent_id=crypto.randomUUID();await assert.rejects(trustedDispatchScope(f.db,x.c.company_id,x.c.id,token),e=>e.code==='INBOX_AUTHORITY_DENIED');assert.equal(x.posts(),0);
 });
@@ -377,4 +377,8 @@ test('assigned independent Agent can obtain only its own policy context; origina
 test('server jurisdiction unspecified cannot invent a specification topic; real specs still require grounded evidence',()=>{
  for(const text of ['Please check this policy.\nJurisdiction: unspecified','請檢查這份政策。\nJurisdiction: unspecified','请检查这份政策。\nJurisdiction: unspecified'])assert(!deriveCurrentGroundingTarget(text).topic_ids.includes('specification'));
  for(const text of ['What are the specs?','Show the specification.','請提供規格','请提供规格'])assert(deriveCurrentGroundingTarget(text).topic_ids.includes('specification'));
+});
+
+test('Policy profile revocation denies an already minted context without requiring a global role row',async()=>{
+ const x=await setupInbox();f.rows.user_roles=[];const token=await authenticatedInboxAuthority(f.db,f.user.id,x.c.company_id,x.c.id,'policy');assert.equal(await trustedDispatchScope(f.db,x.c.company_id,x.c.id,token),'authenticated_inbox');f.rows.agent_profile[0].status='inactive';await assert.rejects(trustedDispatchScope(f.db,x.c.company_id,x.c.id,token),e=>e.code==='INBOX_AUTHORITY_DENIED');assert.equal(x.posts(),0);
 });
