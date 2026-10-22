@@ -4,7 +4,8 @@ import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { requirementMutationText } from "./commerce-state-authority.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
-  COMMERCE_SEMANTIC_NATIVE_INSTRUCTIONS,
+  COMMERCE_SEMANTIC_TYPED_INSTRUCTIONS,
+  COMMERCE_SEMANTIC_TYPED_SCHEMA,
   type SemanticContractRejection,
   type SemanticContractDiagnostic,
   type CommerceSemanticFrame,
@@ -316,7 +317,7 @@ export async function interpretCommerceSemantics(
   try { result = await callModel({
     purpose: "evaluation",
     system: SYSTEM +
-      COMMERCE_SEMANTIC_NATIVE_INSTRUCTIONS +
+      COMMERCE_SEMANTIC_TYPED_INSTRUCTIONS +
       "\nFor corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraints and customer_correction=true. Output budget 4096 tokens; omit unchanged/default fields. Do not include reasoning.",
     user: buildUser(input, persistentStateSummary),
     maxTokens: 4096,
@@ -325,9 +326,9 @@ export async function interpretCommerceSemantics(
     conversationId: input.conversation_id,
     tag: "commerce-semantic-interpreter",
     responseFormat: "json",
-    // JSON MIME mode requests a single JSON document without the unsupported
-    // dynamic-key schema or an unconstrained JSON-in-a-string escape layer.
-    // Provider schema enforcement is not substituted for canonical validation.
+    responseSchema: COMMERCE_SEMANTIC_TYPED_SCHEMA,
+    // Fixed typed paths are supported provider fields, not dynamic-key JSON
+    // grammar embedded in a prompt. Strict decode + original canonical still win.
     thinkingBudget: 0,
     signal: input.signal,
   }); } catch (error) {

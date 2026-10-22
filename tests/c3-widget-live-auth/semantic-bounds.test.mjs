@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import Ajv from 'ajv';
 import {build} from 'esbuild';
 const out=await build({stdin:{contents:`export * from './supabase/functions/_shared/commerce-semantic-frame.ts'; export * from './supabase/functions/_shared/bounded-decision-context.ts';`,resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
-const {COMMERCE_SEMANTIC_NATIVE_SCHEMA,normalizeCommerceSemanticFrame,decodeCommerceSemanticWire,normalizeDecisionContext}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
+const {COMMERCE_SEMANTIC_NATIVE_SCHEMA,COMMERCE_SEMANTIC_TYPED_SCHEMA,normalizeCommerceSemanticFrame,decodeCommerceSemanticWire,normalizeDecisionContext}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
 const validate=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_NATIVE_SCHEMA);
 const entity=(attributes={},constraints={})=>({name:'requested service',kind:'service',confidence:0.97,attributes,constraints});
 const frame=e=>({operation:'UPDATE_ITEM',confidence:0.97,entities:[e]});
@@ -61,7 +61,7 @@ test('actual interpreter carries safe canonical bounds diagnostics, preserves na
  try {
   for(const latest of ['細房約80呎，大房100呎，客廳就180呎。','小房约80平方英尺，大房100，客厅180。','The small room is 80 sq ft, the larger room 100, and the lounge 180.']) {
    let calls=0;
-   globalThis.__semanticBoundsModel=async input=>{calls++;assert(input.system.includes('80 characters per key'));assert(input.system.includes('96 scalar leaves'));assert.equal(input.responseFormat,'json');assert.equal(input.responseSchema,undefined);
+   globalThis.__semanticBoundsModel=async input=>{calls++;assert(input.system.includes('80 characters per key'));assert(input.system.includes('96 scalar leaves'));assert.equal(input.responseFormat,'json');assert.deepEqual(input.responseSchema,COMMERCE_SEMANTIC_TYPED_SCHEMA);
     return {ok:true,request_id:'isolated-source',text:JSON.stringify(frame(entity({rooms:{one:{measurement:{amount:80}}}})))};};
    const input={company_id:'isolated-company',conversation_id:'isolated-conversation',source_message_id:'isolated-source',latest,persistent_state_summary:'{}'};
    const rejected=await interpretCommerceSemantics(input);assert.equal(calls,1);assert.equal(rejected.frame,null);assert.equal(rejected.contract_rejection,'canonical_entity_bounds');assert.equal(rejected.contract_diagnostic.container,'attributes');assert.equal(rejected.contract_diagnostic.violation.code,'depth');assert.equal(rejected.contract_diagnostic.violation.actual,4);assert.equal(rejected.failure.stage,'canonical_validation');
@@ -69,4 +69,48 @@ test('actual interpreter carries safe canonical bounds diagnostics, preserves na
    const valid=await interpretCommerceSemantics(input);assert.equal(valid.failure_code,null);assert.equal(valid.frame.customer_facts[0].value.amount,80);assert.equal(valid.frame.customer_facts[2].value.unit,'sq_ft');
   }
  }finally {previous===undefined?delete globalThis.__semanticBoundsModel:globalThis.__semanticBoundsModel=previous;}
+});
+
+function nodes(value,path=[]) {
+ const kind=value===null?'null':Array.isArray(value)?'array':typeof value;
+ return [{path,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},
+  ...((kind==='object'||kind==='array')?Object.entries(value).flatMap(([k,v])=>nodes(v,[...path,k])):[])];
+}
+const typed=(value={})=>({context_encoding:'typed_paths_v1',operation:'UPDATE_ITEM',confidence:0.98,...value});
+test('typed provider schema serializes through the real Vertex generation-config builder without dynamic-key/schema escape fields',async()=>{
+ const c=await build({stdin:{contents:"export {buildVertexGenerationConfig} from './supabase/functions/_shared/vertex-generation-config.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
+ const {buildVertexGenerationConfig}=await import('data:text/javascript;base64,'+Buffer.from(c.outputFiles[0].text).toString('base64'));
+ const cfg=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_TYPED_SCHEMA,0,'gemini-2.5-flash');
+ assert.equal(cfg.responseMimeType,'application/json');assert.equal(cfg.responseSchema.type,'OBJECT');
+ assert.equal(cfg.responseSchema.properties.entities.items.properties.attributes_nodes.items.properties.path.maxItems,'3');
+ assert.equal(cfg.responseSchema.properties.customer_facts.items.properties.value_nodes.items.properties.path.maxItems,'2');
+ assert(!/additionalProperties|delta_json|value_json|attributes_json/.test(JSON.stringify(cfg.responseSchema)));
+});
+for(const value of [false,0,null,{},[],{amount:80,unit:'sq_ft'},{rooms:[80,100,180],unit:'sq_ft'},{dimensions:{width:70,height:55},unit:'cm',room:null}])test('typed paths losslessly preserve customer fact '+JSON.stringify(value),()=>{
+ const f=normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(typed({customer_facts:[{key:'customer_measurement',value_nodes:nodes(value).reverse()}]})));
+ assert(f);assert.deepEqual(f.customer_facts[0].value,value);
+});
+for(const name of ['subscription','rental','service'])test('generic typed contexts retain multientity source/negation/correction/units: '+name,()=>{
+ const attributes={quantity:{amount:0,unit:'seats'},renewal:false,requested_date:null,source:'current_customer_turn'};
+ const frame=normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(typed({customer_correction:true,explicit_negations:['not paid'],entities:[{name,kind:name,confidence:0.99,attributes_nodes:nodes(attributes),constraints_nodes:nodes({measurement:{width:70,height:55,unit:'cm'},room:null})}]})));
+ assert(frame);assert.deepEqual(frame.entities[0].attributes,attributes);assert.equal(frame.entities[0].constraints.room,null);assert.equal(frame.customer_correction,true);assert.deepEqual(frame.explicit_negations,['not paid']);
+});
+for(const bad of [
+ [{path:[],kind:'object'},{path:['a','b','c','d'],kind:'number',number:80}],
+ [{path:[],kind:'object'},{path:['a','b'],kind:'number',number:80}],
+ [{path:[],kind:'object'},{path:['a'],kind:'boolean',boolean:'false'}],
+ [{path:[],kind:'object'},{path:['a'],kind:'null',number:0}],
+ [{path:[],kind:'object'},{path:['a'],kind:'number',number:1},{path:['a'],kind:'number',number:2}],
+ [{path:[],kind:'array'},{path:['1'],kind:'number',number:80}],
+ [{path:[],kind:'object'},{path:['__proto__'],kind:'object'}],
+ [{path:[],kind:'object'},{path:['a'],kind:'number',number:1},{path:[' a '],kind:'number',number:2}],
+])test('malformed typed graph is wholly rejected without guessing/truncation: '+JSON.stringify(bad),()=>{
+ let reason;assert.equal(decodeCommerceSemanticWire(typed({entities:[{name:'generic',kind:'service',confidence:0.9,attributes_nodes:bad}]}),r=>reason=r),null);assert.equal(reason,'wire_context_nodes');
+});
+test('provider typed transport does not loosen canonical field/leaf/text limits or accept mixed aliases',()=>{
+ for(const attributes of [Object.fromEntries(Array.from({length:41},(_,i)=>['f'+i,i])),{text:'x'.repeat(301)},Object.fromEntries(Array.from({length:9},(_,i)=>['g'+i,Array(12).fill(0)]))]) {
+  let reason;const result=normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(typed({entities:[{name:'generic',kind:'service',confidence:0.9,attributes_nodes:nodes(attributes)}]})),r=>reason=r);
+  assert.equal(result,null);assert.equal(reason,'canonical_entity_bounds');
+ }
+ assert.equal(decodeCommerceSemanticWire(typed({entities:[{name:'generic',kind:'service',confidence:0.9,attributes_nodes:nodes({ok:true}),attributes:{ok:true}}]})),null);
 });

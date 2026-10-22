@@ -495,10 +495,103 @@ export const COMMERCE_SEMANTIC_NATIVE_INSTRUCTIONS =
     customer_facts:[{key:"maximum_depth",value:{amount:560,unit:"mm"}},{key:"auto_renew",value:false}]}) +
   ". Canonical JSON grammar: " + JSON.stringify(COMMERCE_SEMANTIC_NATIVE_SCHEMA);
 
+// Fixed provider fields avoid unsupported dynamic-key schemas. Paths describe
+// the original value; they are not extra wrappers in the canonical context.
+// No JSON-in-a-string, guessed flattening, truncation or relaxed depth limit.
+const typedNodesSchema = (maxDepth: number) => ({
+  type: "array", items: { type: "object", required: ["path", "kind"],
+    properties: {
+      path: {type: "array", items: {type: "string"}, maxItems: maxDepth},
+      kind: {type: "string", enum: ["object", "array", "string", "number", "boolean", "null"]},
+      text: {type: "string"}, number: {type: "number"}, boolean: {type: "boolean"},
+    }, propertyOrdering: ["path", "kind", "text", "number", "boolean"],
+  },
+});
+const typedProperties = structuredClone(COMMERCE_SEMANTIC_WIRE_SCHEMA.properties) as Record<string, any>;
+for (const key of ["attributes", "constraints"]) {
+  delete typedProperties.entities.items.properties[key + "_json"];
+  typedProperties.entities.items.properties[key + "_nodes"] = typedNodesSchema(DECISION_CONTEXT_LIMITS.depth);
+}
+typedProperties.customer_facts.items = {type: "object", required: ["key", "value_nodes"],
+  properties: {key: {type: "string"}, value_nodes: typedNodesSchema(DECISION_CONTEXT_LIMITS.depth - 1)}};
+export const COMMERCE_SEMANTIC_TYPED_SCHEMA: Record<string, unknown> = {
+  type: "object", required: ["context_encoding", "operation", "confidence"],
+  propertyOrdering: ["context_encoding", "operation", "confidence"],
+  properties: {context_encoding: {type: "string", enum: ["typed_paths_v1"]}, ...typedProperties},
+};
+export const COMMERCE_SEMANTIC_TYPED_INSTRUCTIONS =
+  "Return one native JSON object. Follow the supplied response schema. context_encoding is typed_paths_v1. Emit only current-turn semantic changes, not a copy of prior state. " +
+  "Dynamic customer contexts use attributes_nodes, constraints_nodes, and customer_facts {key,value_nodes}. " +
+  "Each nodes list contains exactly one root node at path [], then explicitly declared parents and children; order is irrelevant. " +
+  "Object children append the original field name; array children append a contiguous zero-based decimal index. " +
+  "kind is object/array/string/number/boolean/null. Only string has text, number has number, boolean has boolean; null/object/array have no scalar value field. " +
+  "Preserve false, zero, null, empty objects/arrays, quantities, units, customer sources, entity association and latest correction. Never turn missing data into a fact. " +
+  "attributes/constraints root must be object; their original path depth is at most 3. A customer fact value has path depth at most 2 because canonical storage adds its fact wrapper. " +
+  "Use at most 40 fields per object, 12 entries per array, 96 scalar leaves, 80 characters per key and 300 normalized characters per string. " +
+  "Represent measurements directly with amount and unit under the relevant fact/entity. Do not add redundant measurement/value/requirements wrappers. " +
+  "Customer background measurements/counts are customer_facts, not new commerce items. Keep a supplied room/entity name; an unresolved association stays unknown for targeted clarification. " +
+  "Do not omit facts to satisfy a limit, encode JSON into strings, emit raw attributes/constraints/value or mix legacy encodings. Canonical validation independently rejects invalid proposals.";
+
+function decodeContextNodes(raw: unknown, depthLimit: number): unknown {
+  const fail = (): never => { throw new Error("wire_context_nodes"); };
+  // The finite canonical tree cannot contain more nodes than this bound.
+  const maxNodes = Array.from({length: depthLimit + 1}, (_, d) => DECISION_CONTEXT_LIMITS.fields ** d).reduce((a,b) => a+b, 0);
+  if (!Array.isArray(raw) || !raw.length || raw.length > maxNodes) return fail();
+  const nodes = new Map<string, {path: string[]; value: unknown; kind: string}>();
+  for (const node of raw) {
+    if (!isRecord(node) || !Array.isArray(node.path) || node.path.length > depthLimit || node.path.some(p => typeof p !== "string" || !p || p.length > 80 || ["__proto__", "prototype", "constructor"].includes(p))) return fail();
+    const kind = node.kind;
+    const field = kind === "string" ? "text" : kind === "number" ? "number" : kind === "boolean" ? "boolean" : null;
+    if (!["object","array","string","number","boolean","null"].includes(String(kind)) || Object.keys(node).some(k => !["path","kind",...(field ? [field] : [])].includes(k))) return fail();
+    if (field && (typeof node[field] !== kind || kind === "number" && !Number.isFinite(node[field]))) return fail();
+    const key = JSON.stringify(node.path);
+    if (nodes.has(key)) return fail();
+    nodes.set(key, {path: node.path as string[], kind: kind as string,
+      value: kind === "object" ? Object.create(null) : kind === "array" ? [] : kind === "null" ? null : node[field!]});
+  }
+  const root = nodes.get("[]"); if (!root) return fail();
+  for (const node of [...nodes.values()].sort((a,b) => a.path.length-b.path.length)) {
+    if (!node.path.length) continue;
+    const parent = nodes.get(JSON.stringify(node.path.slice(0,-1))), key = node.path.at(-1)!;
+    if (!parent || !["object","array"].includes(parent.kind)) return fail();
+    if (parent.kind === "array") {
+      if (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= DECISION_CONTEXT_LIMITS.items) return fail();
+      (parent.value as unknown[])[Number(key)] = node.value;
+    } else {
+      const normalized = key.normalize("NFKC").replace(/\s+/g," ").trim();
+      if (!normalized || Object.keys(parent.value as object).some(k => k.normalize("NFKC").replace(/\s+/g," ").trim() === normalized)) return fail();
+      (parent.value as Record<string,unknown>)[key] = node.value;
+    }
+  }
+  for (const n of nodes.values()) if (n.kind === "array" && Object.keys(n.value as object).length !== (n.value as unknown[]).length) return fail();
+  return root.value;
+}
+
+function decodeTypedContextFrame(value: Record<string, unknown>): Record<string, unknown> {
+  if (value.context_encoding !== "typed_paths_v1" || Object.keys(value).some(k => !Object.hasOwn(COMMERCE_SEMANTIC_TYPED_SCHEMA.properties as object,k))) throw new Error("wire_context_nodes");
+  const out = {...value}; delete out.context_encoding;
+  if (Array.isArray(value.entities)) out.entities = value.entities.map(entity => {
+    if (!isRecord(entity) || Object.keys(entity).some(k => !Object.hasOwn(typedProperties.entities.items.properties,k))) throw new Error("wire_context_nodes");
+    const e = {...entity};
+    for (const key of ["attributes","constraints"]) if (Object.hasOwn(entity,key+"_nodes")) {
+      const context = decodeContextNodes(entity[key+"_nodes"], DECISION_CONTEXT_LIMITS.depth);
+      if (!isRecord(context)) throw new Error("wire_context_nodes");
+      e[key] = context; delete e[key+"_nodes"];
+    }
+    return e;
+  });
+  if (Array.isArray(value.customer_facts)) out.customer_facts = value.customer_facts.map(fact => {
+    if (!isRecord(fact) || Object.keys(fact).some(k => !["key","value_nodes"].includes(k)) || !Object.hasOwn(fact,"value_nodes")) throw new Error("wire_context_nodes");
+    return {key: fact.key, value: decodeContextNodes(fact.value_nodes, DECISION_CONTEXT_LIMITS.depth-1)};
+  });
+  return out;
+}
+
 export type SemanticContractRejection =
   | "wire_object" | "wire_outer_fields" | "wire_delta_size_or_type"
   | "wire_delta_json" | "wire_delta_fields" | "wire_value_json"
   | "wire_entity_object" | "canonical_object" | "canonical_operation"
+  | "wire_context_nodes"
   | "canonical_confidence" | "canonical_array_bounds" | "canonical_fact"
   | "canonical_fact_bounds" | "canonical_entity" | "canonical_entity_kind"
   | "canonical_entity_name" | "canonical_entity_bounds";
@@ -511,6 +604,10 @@ type RejectSemantic = (reason: SemanticContractRejection, diagnostic?: SemanticC
 
 export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSemantic): unknown {
   const reject = (reason: SemanticContractRejection): null => { onReject?.(reason); return null; };
+  if (!isRecord(value)) return reject("wire_object");
+  if (Object.hasOwn(value, "context_encoding")) {
+    try { value = decodeTypedContextFrame(value); } catch { return reject("wire_context_nodes"); }
+  }
   if (!isRecord(value)) return reject("wire_object");
   if (Object.hasOwn(value, "delta_json")) {
     try {

@@ -17,6 +17,11 @@ assert.equal(sdkRequire('@supabase/supabase-js/package.json').version,'2.45.0');
 const compiledCode=new Map();
 const uuid=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const company=uuid(1),ticket=uuid(2),source=uuid(3);
+function typedContextNodes(value,at=[]) {
+ const kind=value===null?'null':Array.isArray(value)?'array':typeof value;
+ return [{path:at,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},
+  ...((kind==='object'||kind==='array')?Object.entries(value).flatMap(([k,v])=>typedContextNodes(v,[...at,k])):[])];
+}
 function fixture(text,options={}) {
  const company=options.company ?? (options.originalPreview?'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493':uuid(1)),source=options.source??uuid(3);
  const requests=[],logs=[],commits=[],events=[]; let handler,mode=options.mode || 'ok',foreign=false;
@@ -47,9 +52,10 @@ function fixture(text,options={}) {
     return Response.json({candidates:[{content:{parts:[{text}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}});
    }
    assert.equal(body.generationConfig.responseMimeType,'application/json');
-   assert.equal(body.generationConfig.responseSchema,undefined);
-   assert(body.systemInstruction.parts[0].text.includes('Return one native JSON object'));
-   assert(body.systemInstruction.parts[0].text.includes('Canonical JSON grammar:'));
+   assert.deepEqual(body.generationConfig.responseSchema.properties.context_encoding.enum,['typed_paths_v1']);
+   assert.equal(body.generationConfig.responseSchema.properties.entities.items.properties.attributes_nodes.items.properties.path.maxItems,'3');
+   assert(body.systemInstruction.parts[0].text.includes('Follow the supplied response schema'));
+   assert(body.systemInstruction.parts[0].text.includes('Canonical validation independently rejects invalid proposals'));
    if(mode==='400')return Response.json({error:{status:'INVALID_ARGUMENT',message:'response schema too complex; PRIVATE-SECRET user@example.invalid',details:[{fieldViolations:[{field:'generation_config.response_schema',description:'PRIVATE-SECRET'}]}]}},{status:400});
    if(mode==='timeout')return await new Promise((resolve,reject)=>{if(init.signal?.aborted)return reject(new DOMException('isolated','AbortError'));init.signal?.addEventListener('abort',()=>reject(new DOMException('isolated','AbortError')),{once:true})});
    if(mode==='malformed')return Response.json({candidates:[{content:{parts:[{text:'{broken'}]},finishReason:'STOP'}]});
@@ -400,7 +406,7 @@ for(const alias of ['lifecycle','correction','negations'])test('prompt/decoder i
  const r=await f.load(path.join(root,'supabase/functions/_shared/commerce-semantic-interpreter.ts')).interpretCommerceSemantics({company_id:company,conversation_id:ticket,source_message_id:source,latest:'Please correct my requirements',persistent_state_summary:'{}'});
  assert.equal(r.frame,null);assert.equal(r.contract_rejection,'wire_delta_fields');assert(!JSON.stringify(r).includes('PRIVATE-SECRET'));
  const request=f.requests.find(x=>x.url.includes('aiplatform')).body.systemInstruction.parts[0].text;
- assert(request.includes('customer_correction'));assert(request.includes('"value"'));assert(request.includes('Return one native JSON object'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
+ assert(request.includes('customer_correction'));assert(request.includes('value_nodes'));assert(request.includes('Return one native JSON object'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
 });
 
 test('Hosted Frankie correction then same-ticket Summary retains latest canonical Memory and passes unchanged B2',async()=>{
@@ -579,4 +585,34 @@ test('Frankie 4123 paired window dimensions persist as one source-bound observat
 for(const op of ['ASK_FACT','NO_STATE_CHANGE'])for(const ambiguous of [false,true])test('Frankie general guidance keeps existing history and same-ticket state with alternate semantic operation '+op+' ambiguity '+ambiguous,async()=>{
  const first=fixture('想換冷氣，兩間睡房加個客廳，應該點揀好？',{originalPreview:true,fullChain:true,answer:'先考慮使用時間、房間面積及安裝條件。',semantic:{operation:'ASK_FACT',confidence:0.97,intent:'customer_guidance',requested_facts:[]}});await first.run();
  const f=fixture('想換冷氣，兩間睡房加個客廳，應該點揀好？',{originalPreview:true,fullChain:true,source:uuid(230),previous:first.tables,history:first.tables.messages,answer:'可以先比較舒適度、耗電與安裝條件；具體匹數及型號仍須核實。',semantic:{operation:op,confidence:0.96,intent:'ask_for_advice',requested_facts:['cooling_requirements'],ambiguity:{is_ambiguous:ambiguous,reason:ambiguous?'Room measurements not known':null}}});await f.run();assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));assert.equal(f.tables.conversation_commerce_state[0].company_id,first.tables.conversation_commerce_state[0].company_id);
+});
+
+for(const [business,latest,values] of [
+ ['rooms','細房約80呎，大房100呎，客廳就180呎。',{small_room:{amount:80,unit:'sq_ft'},large_room:{amount:100,unit:'sq_ft'},living_room:{amount:180,unit:'sq_ft'}}],
+ ['service','The meeting room is 80 sq ft, the training room 100, and the lobby 180.',{meeting_room:{amount:80,unit:'sq_ft'},training_room:{amount:100,unit:'sq_ft'},lobby:{amount:180,unit:'sq_ft'}}],
+ ['subscription','更正：訂閱席位是0，不自動續期，租賃日期未定。',{subscription_seats:0,auto_renew:false,rental_date:null}],
+])test('actual complete handler sends constrained typed schema, decodes '+business+' and preserves source-bound Memory without paid repair',async()=>{
+ const semantic={context_encoding:'typed_paths_v1',operation:'NO_STATE_CHANGE',confidence:0.98,intent:'customer_context_update',customer_correction:business==='subscription',customer_facts:Object.entries(values).map(([key,value])=>({key,value_nodes:typedContextNodes(value)}))};
+ const f=fixture(latest,{originalPreview:true,fullChain:true,semantic});const r=await f.run();
+ assert.equal(r.status,200,JSON.stringify(r));
+ const requests=f.requests.filter(x=>x.url.endsWith(':generateContent')&&x.body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.'));
+ assert.equal(requests.length,1);const config=requests[0].body.generationConfig;
+ assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['typed_paths_v1']);
+ assert.equal(config.responseSchema.properties.entities.items.properties.attributes_nodes.items.properties.path.maxItems,'3');
+ assert(!JSON.stringify(f.events).includes('canonical_entity_bounds'));assert(!f.requests.some(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered')));
+ const memory=f.tables.conversation_memory_state.at(-1)?.memory;assert(memory,JSON.stringify({r,events:f.events.slice(-8)}));
+ for(const [key,value] of Object.entries(values)){const fact=memory.current_customer_facts.find(x=>x.key===key);assert(fact,JSON.stringify(memory));assert.deepEqual(fact.value,value);assert.equal(fact.source_message_id,source);}
+});
+
+test('actual complete handler retains original depth4 failure as rejection; schema does not relax canonical or dispatch a repair',async()=>{
+ const f=fixture('Customer provides new measurements',{originalPreview:true,fullChain:true,semantic:{operation:'UPDATE_ITEM',confidence:0.98,entities:[{name:'generic rental',kind:'rental',confidence:0.98,attributes:{room:{measurement:{area:{amount:80}}}}}]}});
+ await f.run();assert(JSON.stringify(f.events).includes('canonical_entity_bounds'));assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1);assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.generation_success,false);assert.equal(f.commits[0].metadata.degraded,true);assert.equal(f.tables.conversation_memory_state.length,0);
+});
+
+test('typed semantic same-ticket area/correction/Summary uses latest Memory without erasing prior facts or repeated goal intake',async()=>{
+ const seed=fixture('想換冷氣，兩間睡房加個客廳，應該點揀好？',{originalPreview:true,fullChain:true,answer:'先比較每個房間的使用時間、面積及安裝限制。',semantic:{context_encoding:'typed_paths_v1',operation:'ASK_FACT',confidence:0.98,intent:'customer_guidance',requested_facts:[]}});await seed.run();
+ const first=fixture('細房約80呎，大房100呎，客廳就180呎。',{originalPreview:true,fullChain:true,source:uuid(410),previous:seed.tables,history:seed.tables.messages,semantic:{context_encoding:'typed_paths_v1',operation:'NO_STATE_CHANGE',confidence:0.98,intent:'customer_context_update',customer_facts:[['small_room_area',80],['large_room_area',100],['living_room_area',180]].map(([key,amount])=>({key,value_nodes:typedContextNodes({amount,unit:'sq_ft'})}))}});const area=await first.run();assert.equal(area.status,200);assert.equal(first.commits[0].metadata.degraded,undefined,JSON.stringify(area));assert.doesNotMatch(area.body.reply,/你今次最想完成哪一件事|你这次最想完成哪一件事|What would you most like to complete now/);
+ const corrected=fixture('更正：細房改為90平方呎，其餘不變。',{originalPreview:true,fullChain:true,source:uuid(411),previous:first.tables,history:first.tables.messages,semantic:{context_encoding:'typed_paths_v1',operation:'UPDATE_ITEM',confidence:0.98,intent:'customer_context_update',customer_correction:true,customer_facts:[{key:'small_room_area',value_nodes:typedContextNodes({amount:90,unit:'sq_ft'})}]}});await corrected.run();
+ const facts=corrected.tables.conversation_memory_state.at(-1).memory.current_customer_facts;assert.equal(facts.find(x=>x.key==='small_room_area').value.amount,90);assert.equal(facts.find(x=>x.key==='large_room_area').value.amount,100);assert.equal(facts.find(x=>x.key==='living_room_area').value.amount,180);assert.equal(facts.find(x=>x.key==='small_room_area').source_message_id,uuid(411));
+ const summary=fixture('請總結我最新需要，先唔使查產品。',{originalPreview:true,fullChain:true,source:uuid(412),previous:corrected.tables,history:corrected.tables.messages,semantic:{context_encoding:'typed_paths_v1',operation:'ASK_FACT',confidence:0.98,intent:'requirements_recap',requested_facts:[]}});const r=await summary.run();assert.equal(r.status,200,JSON.stringify(r));assert.match(r.body.reply,/90/);assert.match(r.body.reply,/100/);assert.match(r.body.reply,/180/);assert.doesNotMatch(r.body.reply,/(^|\D)80(?:\D|$)/);assert(!summary.requests.some(x=>x.url.includes('context-search')));assert.equal(summary.commits.length,1);const replay=await summary.run();assert.equal(replay.body.idempotent,true);assert.equal(summary.commits.length,1);assert.equal(summary.requests.filter(x=>x.url.includes('aiplatform')).length,0);
 });
