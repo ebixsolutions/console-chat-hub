@@ -39,10 +39,12 @@ export async function savedResponseOperation(
     .maybeSingle();
   if (ce || !company?.is_active)
     return { ok: false as const, error: "saved_response_scope_denied" };
+  // saved_response is absent from generated types; type-only view, same client.
+  const sr = db as unknown as SupabaseClient;
   const columns = "id,title,content,revision";
   if (data.action === "list") {
     const result = await readInboxConversations((from, to) =>
-      db
+      sr
         .from("saved_response")
         .select(columns, { count: "exact" })
         .eq("company_id", companyId)
@@ -58,7 +60,7 @@ export async function savedResponseOperation(
   if (data.action === "delete") {
     if (!data.id || !data.revision)
       return { ok: false as const, error: "saved_response_revision_required" };
-    const { data: rows, error } = await db
+    const { data: rows, error } = await sr
       .from("saved_response")
       .delete()
       .eq("id", data.id)
@@ -78,7 +80,7 @@ export async function savedResponseOperation(
     return { ok: false as const, error: "saved_response_request_id_required" };
   const result = data.id
     ? data.revision
-      ? await db
+      ? await sr
           .from("saved_response")
           .update({ title: data.title, content: data.content, revision: data.revision + 1 })
           .eq("id", data.id)
@@ -87,7 +89,7 @@ export async function savedResponseOperation(
           .eq("revision", data.revision)
           .select(columns)
       : { data: null, error: { message: "revision_required", code: "revision_required" } }
-    : await db
+    : await sr
         .from("saved_response")
         .insert({
           id: data.create_id,
@@ -98,7 +100,7 @@ export async function savedResponseOperation(
         })
         .select(columns);
   if (!data.id && result.error?.code === "23505") {
-    const existing = await db
+    const existing = await sr
       .from("saved_response")
       .select(columns)
       .eq("id", data.create_id!)
@@ -111,7 +113,7 @@ export async function savedResponseOperation(
       existing.data?.content === data.content &&
       existing.data?.revision === 1
     )
-      return { ok: true as const, rows: [existing.data as SavedResponse] };
+      return { ok: true as const, rows: [existing.data as unknown as SavedResponse] };
   }
   return result.error
     ? { ok: false as const, error: "saved_response_save_failed" }

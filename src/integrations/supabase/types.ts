@@ -1707,12 +1707,6 @@ export type Database = {
           },
         ]
       }
-      saved_response: {
-        Row: { id: string; company_id: string; owner_id: string; title: string; content: string; revision: number; created_at: string; updated_at: string }
-        Insert: { id?: string; company_id: string; owner_id: string; title: string; content: string; revision?: number; created_at?: string; updated_at?: string }
-        Update: { title?: string; content?: string; revision?: number }
-        Relationships: []
-      }
       channel_config: {
         Row: {
           allowed_origins: string[] | null
