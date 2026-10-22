@@ -435,21 +435,25 @@ async function liveMetadataFixture(fault='none') {
   }else if(u.pathname.endsWith('/KBDocumentVersion')){
    value={id:row().active_version_id,document_id:row().id,company_id:34,tenant_id:'fixture-remote-tenant',content_hash:hash,raw_content_snapshot:content,review_status:'approved',vector_status:'generated'};
    if(fault==='unknown-version')delete value.id;
+   if(fault==='python-published-shape'){value.review_status='pending';value.vector_status='not_generated';value.raw_content_snapshot=' \n'+content+'\u0085';}
+   if(fault==='rejected-version')value.review_status='rejected';
    if(fault==='stale-hash')value.raw_content_snapshot='Stale source';
   }else{
-   value={id:'dynamic-chunk-'+sequence,document_id:row().id,version_id:row().active_version_id,company_id:34,tenant_id:'fixture-remote-tenant',chunk_type:'full_content',chunk_text:content,environment:'production',status:'active',embedding_status:'generated',embedding_dimensions:768,embedding_vector:{values:[1]}};
+   value={id:'dynamic-chunk-'+sequence,document_id:row().id,version_id:row().active_version_id,company_id:34,tenant_id:'fixture-remote-tenant',chunk_type:'full_content',chunk_text:content,environment:'production',status:'active',embedding_status:'generated',embedding_dimensions:768,embedding_vector:{values:Array(768).fill(0.1)}};
    if(fault==='stale-chunk-version')value.version_id='old';if(fault==='foreign-chunk')value.company_id=35;
+   if(fault==='python-published-shape')value.chunk_text='\u0085'+content+' \n';
+   if(fault==='bad-vector-shape')value.embedding_vector={values:[1]};
    if(fault==='wrong-metadata-tenant')value.tenant_id='foreign';if(fault==='staging-chunk')value.environment='staging';
   }
   return Response.json([value]);
  };
  return {...x,binding,up,posts:()=>posts,gets:()=>gets,next:()=>{sequence++;docReads=0;},prepare:async(mode,permit)=>await prepareRemoteRetrieval(x.c.company_id,'34',x.secret,x.endpoint,up,undefined,'kb',x.request,mode,permit)};
 }
-for(const fault of ['none','no-match','old-grant','no-risk-approval','reuse-api-key','metadata-unauthorized','preflight-foreign','revoke-preflight','rotate-rag-key','rotate-bearer','rotate-evidence','revoke-after-dispatch','payload-version','wrong-content','duplicate-chunk','unpublished','publication-race','unknown-version','stale-hash','stale-chunk-version','foreign-chunk','wrong-metadata-tenant','staging-chunk','no-bearer','human-control','synthetic','cross-company','foreign-actor'])test('dynamic Singapore metadata/full admission contract: '+fault,async()=>{
+for(const fault of ['none','no-match','old-grant','no-risk-approval','reuse-api-key','metadata-unauthorized','preflight-foreign','revoke-preflight','rotate-rag-key','rotate-bearer','rotate-evidence','revoke-after-dispatch','payload-version','wrong-content','duplicate-chunk','unpublished','publication-race','unknown-version','stale-hash','stale-chunk-version','foreign-chunk','wrong-metadata-tenant','staging-chunk','no-bearer','human-control','synthetic','cross-company','foreign-actor','python-published-shape','rejected-version','bad-vector-shape'])test('dynamic Singapore metadata/full admission contract: '+fault,async()=>{
  const x=await liveMetadataFixture(fault);
  const action=()=>accountedModelFetch(f.db,x.meta,x.endpoint,{method:'POST',body:x.request,headers:{'x-api-key':x.secret}},x.up,undefined,x.prepare);
- if(['none','no-match'].includes(fault)){
-  const r=await action(),v=await r.json();assert.equal(v.context_found,fault!=='no-match');assert.equal(x.posts(),1);if(fault==='none'){assert.equal(v.selected_documents[0].authority.version_id,'dynamic-version-1');assert.equal(v.llm_context,undefined);assert(x.gets()>=5);}
+ if(['none','no-match','python-published-shape'].includes(fault)){
+  const r=await action(),v=await r.json();assert.equal(v.context_found,fault!=='no-match');assert.equal(x.posts(),1);if(fault!=='no-match'){assert.equal(v.selected_documents[0].authority.version_id,'dynamic-version-1');assert.equal(v.llm_context,undefined);assert(x.gets()>=5);}
  }else{await assert.rejects(action,e=>e.code && e.code!=='KB_NO_MATCH');if(['old-grant','no-risk-approval','reuse-api-key','metadata-unauthorized','preflight-foreign','revoke-preflight','rotate-rag-key','rotate-bearer','rotate-evidence','no-bearer','human-control','synthetic','cross-company','foreign-actor'].includes(fault))assert.equal(x.posts(),0);}
 });
 test('dynamic metadata supports newly published documents beyond a fixed ten-document snapshot',async()=>{

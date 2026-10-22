@@ -130,6 +130,12 @@
     "guards": "Original attested route and Synthetic controls unchanged. kb_bounds_verified=false; UAT_REMOTE_BOUND_UNVERIFIED preserved for original unverified route. New alternative never labels remote bounds/runtime as verified.",
     "no_new_backend": true,
     "FUNCTIONAL_UAT_ACCEPTED": false,
-    "VIBECODE_FUNCTIONAL_HANDOFF_READY": false
+    "VIBECODE_FUNCTIONAL_HANDOFF_READY": false,
+    "existing_python_producer_compatibility": {
+      "document_version_hash": "SHA256 of Python strip(raw_content_snapshot), matching existing hash_content. Original facts/units/false/zero/null are never removed. Chunk returned content matches Python whitespace collapse exactly.",
+      "version_labels": "Publication authority comes from current published/live/indexed document, active version ID/hash and actual generated production chunks. Existing writer does not update version.vector_status; pending/not_generated labels alone do not fabricate or invalidate a verified active version. Explicit rejected/outdated/failed versions still deny.",
+      "vector_shape": "Actual persisted vector array must be finite and match declared dimensions; labels alone do not qualify.",
+      "live_status": "Source contract only; actual Singapore metadata response remains unverified."
+    }
   }
 }

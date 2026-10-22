@@ -185,6 +185,14 @@ async function boundedJson(response:Response):Promise<any> {
   const bytes=new Uint8Array(n);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}
   try{return JSON.parse(new TextDecoder().decode(bytes));}catch{return deny("KB_TOOL_FAILURE");}
 }
+// Match the existing Python hash_content(strip) and _normalize_text(split)
+// contracts exactly, including NEL/control whitespace, without altering facts.
+function pythonStrip(value:string):string {
+  return value.replace(/^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu,"");
+}
+function pythonNormalize(value:string):string {
+  return pythonStrip(value).replace(/[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/gu," ");
+}
 function ownedMetadata(row:any,s:LiveSession):boolean {
   return object(row) && String(row.company_id)===FRANKIE_KB_SCOPE.tenant && row.tenant_id===s.policy.metadata_tenant_id;
 }
@@ -252,8 +260,8 @@ export async function bindLiveMetadataResponse(response:Response,session:object,
     const doc=documents.get(hit.document_id);
     if(!currentDocument(doc,s) || doc.id!==hit.document_id || hit.title!==doc.name || hit.source_type!==doc.source_type)return deny();
     const version=versions.get(doc.active_version_id);
-    if(!ownedMetadata(version,s) || version.id!==doc.active_version_id || version.document_id!==doc.id || version.review_status!=="approved" || version.vector_status!=="generated" ||
-      version.content_hash!==doc.content_hash || typeof version.raw_content_snapshot!=="string" || await digest(version.raw_content_snapshot)!==version.content_hash)return deny();
+    if(!ownedMetadata(version,s) || version.id!==doc.active_version_id || version.document_id!==doc.id || version.review_status==="rejected" || version.vector_status==="outdated" || version.vector_status==="failed" ||
+      version.content_hash!==doc.content_hash || typeof version.raw_content_snapshot!=="string" || await digest(pythonStrip(version.raw_content_snapshot))!==version.content_hash)return deny();
     for(const claim of [hit,hit.authority,hit.metadata].filter(object)){
       if(claim.company_id!==undefined && String(claim.company_id)!==FRANKIE_KB_SCOPE.tenant || claim.tenant_id!==undefined && String(claim.tenant_id)!==FRANKIE_KB_SCOPE.tenant ||
         claim.version_id!==undefined && claim.version_id!==doc.active_version_id || claim.version!==undefined && claim.version!==doc.active_version_id ||
@@ -264,10 +272,11 @@ export async function bindLiveMetadataResponse(response:Response,session:object,
       if(!safeId(part?.chunk_id) || seenChunks.has(part.chunk_id) || !["rag_summary","full_content","faq_pair","section"].includes(part.chunk_type) || typeof part.content!=="string" || !part.content.trim())return deny();
       seenChunks.add(part.chunk_id);
       const chunk=chunks.get(part.chunk_id);
+      const vector=Array.isArray(chunk?.embedding_vector)?chunk.embedding_vector:chunk?.embedding_vector?.values;
       if(!ownedMetadata(chunk,s) || chunk.id!==part.chunk_id || chunk.document_id!==doc.id || chunk.version_id!==doc.active_version_id || chunk.environment!=="production" || chunk.status!=="active" ||
         !["generated","completed"].includes(chunk.embedding_status) || chunk.chunk_type!==part.chunk_type || typeof chunk.chunk_text!=="string" ||
-        !chunk.embedding_vector || !Number.isSafeInteger(chunk.embedding_dimensions) || chunk.embedding_dimensions<1 ||
-        await digest(chunk.chunk_text.trim().replace(/\s+/gu," "))!==await digest(part.content))return deny();
+        !Array.isArray(vector) || !Number.isSafeInteger(chunk.embedding_dimensions) || chunk.embedding_dimensions<1 || vector.length!==chunk.embedding_dimensions || vector.some((v:unknown)=>typeof v!=="number" || !Number.isFinite(v)) ||
+        await digest(pythonNormalize(chunk.chunk_text))!==await digest(part.content))return deny();
     }
     checks.push({id:doc.id,fingerprint:fingerprint(doc)});
     hit.authority={tenant_id:FRANKIE_KB_SCOPE.tenant,version_id:doc.active_version_id,publication_state:"published",currentness:"current"};
