@@ -891,3 +891,20 @@ for(const company of ['3d6e17b5-ec79-4f75-aa7f-eaa824ff8493','4e0ea9f6-11d5-4968
  i.memory!.current_customer_facts=[{key:'room_size',value:[{label:'客廳',value:'150平方呎'}],authority:'customer',source_message_id:i.source_message_id,entity_id:null,region:null},{key:'budget',value:{amount:5000,unit:'HKD'},authority:'customer',source_message_id:i.source_message_id,entity_id:null,region:null},{key:'priority',value:['quiet_operation_at_night','energy_efficiency'],authority:'customer',source_message_id:i.source_message_id,entity_id:null,region:null}];
  const before=JSON.stringify(i),r=prepareConversationRecall(i,'zh-TW');assert(r.reply?.includes('150平方呎'),JSON.stringify(r));assert(r.reply?.includes('HK$5,000'),JSON.stringify(r));assert(r.reply?.includes('夜間安靜') && r.reply?.includes('能源效益'),JSON.stringify(r));assert(!r.reply?.includes('quiet_operation_at_night'));assert(JSON.stringify(i)===before,'read-only Summary changed canonical lifecycle/state');
 });
+
+for (const [text,expected] of [
+ ['我想換客廳冷氣，暫時唔使查產品或報價。','active'],
+ ['書房想換冷氣，暫時不用查外部資料，先講量度方法。','active'],
+ ['I want an air conditioner for the study; do not look up prices for now.','active'],
+ ['Consider an air conditioner, without checking vendor products yet.','active'],
+ ['唔使查報價；客廳冷氣暫時唔買住。','deferred'],
+ ['我要冷氣，唔使查報價；取消冷氣。','cancelled'],
+ ['I want an air conditioner; do not check prices; defer the air conditioner.','deferred'],
+ ['I want an air conditioner; without checking prices, cancel the air conditioner.','cancelled'],
+] as const)Deno.test('lookup instruction and genuine lifecycle remain independent: '+text,()=>{
+ const setup='我要一部客廳冷氣。';const scope={conversation_id:'17000000-0000-4000-8000-000000000001',company_id:'17000000-0000-4000-8000-000000000002',language:'zh-TW' as const,history:[]};
+ const previous=reduceTurn(createEmptyConversationCommerceState(),{...scope,source_message_id:'17000000-0000-4000-8000-000000000102',text:setup},buildCommerceEntityHints([setup]));
+ const state=reduceTurn(previous,{...scope,source_message_id:'17000000-0000-4000-8000-000000000103',text},buildCommerceEntityHints([text,setup]));
+ assert(state.entities.length>0,JSON.stringify(state));
+ assert(state.entities.every(e=>expected==='active'?!['deferred','cancelled'].includes(e.status):e.status===expected),JSON.stringify(state));
+});

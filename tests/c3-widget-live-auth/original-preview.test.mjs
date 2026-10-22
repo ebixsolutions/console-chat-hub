@@ -10,7 +10,7 @@ const body=JSON.stringify({contents:[{role:'user',parts:[{text:'Compare options 
 function setup(account,{grant=true}={}){
  f.account=account;f.user={id:crypto.randomUUID(),email:account.email,email_confirmed_at:'2026-01-01T00:00:00Z'};
  f.env={SUPABASE_URL:'https://nrfxhqabwblzxoushgnm.supabase.co',SUPABASE_ANON_KEY:'public',SUPABASE_SECRET_KEY:'isolated-secret-not-production',LLM_PROVIDER:'vertex',GOOGLE_SERVICE_ACCOUNT_JSON:'isolated-provider-config',GOOGLE_PROJECT_ID:'fixture-project',GOOGLE_REGION:'asia-east1',LLM_MODEL_GENERATION:'gemini-2.5-flash',...(grant?{ORIGINAL_WIDGET_PREVIEW_AUTHORIZATION:ORIGINAL_PREVIEW_AUTHORIZATION}:{})};
- f.rows={company_membership:[{user_id:f.user.id,company_id:account.company,role:'admin',is_active:true}],company:[{id:account.company,is_active:true}],channel_config:[{id:account.channel,company_id:account.company,is_active:true,channel_type:'web_widget',allowed_origins:['https://console-chat-hub.lovable.app']}],visitor_session:[],conversations:[],messages:[]};f.logs=[];f.rpc=[];f.transport=[];f.provider=0;f.writes=0;f.deferAnswer=false;f.omitVisitor=false;f.tasks=[];f.releaseGeneration=null;
+ f.rows={company_membership:[{user_id:f.user.id,company_id:account.company,role:'admin',is_active:true}],company:[{id:account.company,is_active:true}],channel_config:[{id:account.channel,company_id:account.company,is_active:true,channel_type:'web_widget',allowed_origins:['https://console-chat-hub.lovable.app']}],visitor_session:[],conversations:[],messages:[]};f.logs=[];f.rpc=[];f.transport=[];f.provider=0;f.writes=0;f.deferAnswer=false;f.omitVisitor=false;f.afterReceive=null;f.tasks=[];f.releaseGeneration=null;
  f.db={rpc:async(n)=>{f.rpc.push(n);throw Error('Original Preview must not borrow synthetic quota/registration');},from(table){let filters=[],single=false,op=null,payload,fields='',opts={};const q={
  select(s,o={}){fields=s;opts=o;return q;},eq(k,v){filters.push([k,v]);return q;},is(k,v){filters.push([k,v]);return q;},neq(k,v){filters.push([k,v,true]);return q;},order(){return q;},limit(){return q;},maybeSingle(){single=true;return q;},single(){single=true;return q;},insert(v){op='insert';payload=v;return q;},delete(){op='delete';return q;},update(v){op='update';payload=v;return q;},then(resolve,reject){return Promise.resolve().then(()=>{
  const get=(r,k)=>k.includes('->>')?r[k.split('->>')[0]]?.[k.split('->>')[1]]:r[k];let rows=(f.rows[table]??[]).filter(r=>filters.every(([k,v,ne])=>ne?get(r,k)!==v:get(r,k)===v));
@@ -18,7 +18,7 @@ function setup(account,{grant=true}={}){
  if(op==='delete'){f.rows[table]=f.rows[table].filter(r=>!rows.includes(r));f.writes++;}
  if(op==='update'){rows.forEach(r=>Object.assign(r,payload));f.writes++;}
  if(table==='messages'&&fields.includes('archive:')&&f.omitVisitor)rows=[];
- if(table==='messages'&&fields.includes('archive:'))rows=rows.map(r=>{const c=f.rows.conversations.find(c=>c.id===r.conversation_id);return {...r,archive:{...c,archive_session:f.rows.visitor_session.find(s=>s.id===c.visitor_session_id)}};});
+ if(table==='messages'&&fields.includes('archive:'))rows=rows.map(r=>{const c=f.rows.conversations.find(c=>c.id===r.conversation_id);return {...r,archive:{...c,archive_channel:f.rows.channel_config.find(ch=>ch.id===c.channel_config_id),archive_session:f.rows.visitor_session.find(s=>s.id===c.visitor_session_id)}};});
  return {data:single?(rows[0]??null):rows,error:null,count:rows.length};}).then(resolve,reject);}};return q;}};
  globalThis.__c3KbClient=(url,key)=>{assert.equal(url,f.env.SUPABASE_URL);assert.equal(key,f.env.SUPABASE_SECRET_KEY);return f.db;};
  f.url='https://asia-east1-aiplatform.googleapis.com/v1/projects/fixture-project/locations/asia-east1/publishers/google/models/gemini-2.5-flash:generateContent';
@@ -28,6 +28,7 @@ function setup(account,{grant=true}={}){
  let m=f.rows.messages.find(m=>m.role==='visitor'&&m.metadata.client_message_id===b.client_message_id);const repeated=!!m;
  if(!m){m={id:crypto.randomUUID(),conversation_id:c.id,role:'visitor',content:b.content,is_recalled:false,metadata:{client_message_id:b.client_message_id}};f.rows.messages.push(m);
  if(c.status==='open') {const generate=async()=>{if(f.deferAnswer)await new Promise(resolve=>{f.releaseGeneration=resolve;});await accountedModelFetch(f.db,{companyId:c.company_id,conversationId:c.id,operationId:'generate-reply-'+m.id,provider:'vertex',purpose:'generation',slot:'generation',attempt:1,request:body},f.url,{method:'POST',body},f.upstream);f.rows.messages.push({id:crypto.randomUUID(),conversation_id:c.id,role:'assistant',content:'Isolated provider reply',is_recalled:false,metadata:{source_message_id:m.id,generation_success:true}});};if(f.deferAnswer)f.tasks.push(generate());else await generate();}}
+ if(f.afterReceive)f.afterReceive();
  return Response.json({success:true,data:{message_id:m.id,ai_reply_pending:f.deferAnswer&&c.status==='open',idempotent:repeated}});
  }
  assert(String(url).endsWith('widget-poll-messages'));return Response.json({success:true,data:{messages:f.rows.messages.filter(m=>m.conversation_id===c.id&&(!f.omitVisitor||m.role!=='visitor')),human_support:{state:c.status==='pending'?'waiting':'none'},ai_generating:false}});
@@ -145,4 +146,9 @@ for(const account of ORIGINAL_PREVIEW_ACCOUNTS)for(const fault of ['none','grant
  try{await accountedModelFetch(f.db,meta,endpoint,{method:'POST',body:request},up,undefined,async(mode,permit)=>fault==='proof-bypass'?{}:await prepareRemoteRetrieval(account.company,tenant,secret,endpoint,up,undefined,'kb',request,mode,fault==='forged-permit'?{}:permit));}catch(e){error=e;}
  if(fault==='none'){assert.equal(error,undefined);assert.equal(get,1);assert.equal(post,1);}else{assert(error);assert.equal(post,0);if(['grant-absent','wrong-actor','foreign-tenant','proof-bypass','forged-permit'].includes(fault))assert.equal(get,0);}
  assert.equal(f.provider,1,'no extra Vertex retry');assert.equal(f.rpc.length,0,'no synthetic quota or new accounting backend');
+});
+
+for(const account of ORIGINAL_PREVIEW_ACCOUNTS)test(account.email+': Origin revocation between durable receive and receipt fails closed without another poll or resend',async()=>{
+ setup(account);f.afterReceive=()=>{f.rows.channel_config[0].allowed_origins=[];};const id=crypto.randomUUID();
+ const r=await request({action:'original_preview_send',client_message_id:id,query:'Please explain selection trade-offs without a lookup.'});assert.equal(r.status,403);assert.equal(r.data.error,'widget_origin_or_channel_revoked');assert.equal(r.data.delivery_receipt,undefined);assert.equal(f.rows.messages.filter(m=>m.role==='visitor').length,1);assert.equal(f.transport.filter(u=>u.endsWith('receive-widget-message')).length,1);assert.equal(f.transport.filter(u=>u.endsWith('widget-poll-messages')).length,0);
 });

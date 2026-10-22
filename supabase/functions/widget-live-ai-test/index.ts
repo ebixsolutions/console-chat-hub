@@ -665,7 +665,7 @@ return async (req: Request) => {
       // Confirm only the exact durable Visitor row. Do not put another HTTP
       // poll/full transcript read on the send ACK path. The original client
       // polling mechanism still owns eventual AI/Agent delivery.
-      const receipt=await admin.from("messages").select("id,role,content,created_at,metadata,archive:conversations!inner(id,company_id,channel_config_id,visitor_session_id,metadata_source,status,assigned_agent_id,archive_session:visitor_session!inner(id,channel_config_id,visitor_fingerprint,visitor_metadata))")
+      const receipt=await admin.from("messages").select("id,role,content,created_at,metadata,archive:conversations!inner(id,company_id,channel_config_id,visitor_session_id,metadata_source,status,assigned_agent_id,archive_channel:channel_config_id(id,company_id,is_active,channel_type,allowed_origins),archive_session:visitor_session!inner(id,channel_config_id,visitor_fingerprint,visitor_metadata))")
         .eq("id",sent.message_id).eq("conversation_id",conversationId).eq("role","visitor").eq("is_recalled",false).maybeSingle();
       const row=receipt.data as Record<string,any>|null,parent=row?.archive,s=parent?.archive_session,sm=s?.visitor_metadata;
       if(receipt.error || !row || row.id!==sent.message_id || row.role!=="visitor" || row.content!==query || row.metadata?.client_message_id!==clientMessageId ||
@@ -673,6 +673,8 @@ return async (req: Request) => {
         !originalPreviewMetadata(parent.metadata_source,authData.user.id) || s?.id!==parent.visitor_session_id || s.channel_config_id!==resolved.channelId ||
         s.visitor_fingerprint!==`widget-live-test:${authData.user.id}` || sm?.source!=="widget_live_test" || sm.owner_user_id!==authData.user.id || sm.test_mode!==true || sm.exclude_training!==true || sm.scope_mode!=="canonical")
         return json(req,{success:false,error:"visitor_receipt_unverified"},503);
+      const currentChannel=parent.archive_channel;
+      if(!currentChannel || currentChannel.id!==resolved.channelId || currentChannel.company_id!==resolved.companyId || currentChannel.is_active!==true || currentChannel.channel_type!=="web_widget" || !Array.isArray(currentChannel.allowed_origins) || !currentChannel.allowed_origins.includes(origin))return json(req,{success:false,error:"widget_origin_or_channel_revoked"},403);
       if(!await verifyOriginalPreview(admin,parent,undefined,false))return json(req,{success:false,error:"original_preview_authority_denied"},403);
       receiptState=parent;
       const human=HUMAN_CONTROL_STATUSES.has(String(parent.status)) || Boolean(parent.assigned_agent_id);

@@ -347,7 +347,7 @@ export function withoutExcludedLookups(question: string): string {
     // E.g. "do not check models and check stock" still needs merchant evidence.
     const before = clause.slice(0, excluded.index);
     const after = clause.slice(excluded.index + excluded[0].length);
-    const affirmative = /(?:推薦|推荐|現貨|现货|你[哋們们]?有)|(?:請|请|及|並|并|再|也|亦|同埋).{0,4}(?:查|報價|报价)|\b(?:recommend|check|query|look up)\b/i;
+    const affirmative = /(?:取消|暫緩|暂缓|先擺低|先放低|推薦|推荐|現貨|现货|你[哋們们]?有)|(?:請|请|及|並|并|再|也|亦|同埋).{0,4}(?:查|報價|报价)|\b(?:cancel|defer|pause|hold off|recommend|check|query|look up)\b/i;
     return affirmative.test(before) || affirmative.test(after);
   }).join("; ");
 }

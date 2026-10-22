@@ -38,6 +38,7 @@ import {
   type CommerceDimensionAttribute,
   inferCommerceDimensionAttribute,
   isCurrentRequirementsRecap,
+  withoutExcludedLookups,
   customerBusinessText,
   requirementMutationText,
   splitCustomerOperationClauses,
@@ -997,10 +998,12 @@ export function parseSpaceScopedCommerceQuantity(text: string): number | null {
 }
 
 function detectCancellation(text: string): boolean {
+  text = withoutExcludedLookups(text);
   return /(?:取消|唔要|不要|唔買|不买|不買|唔裝|不裝|不装|cancel|remove it|drop it|not install|won't install|do not install)/i.test(text);
 }
 
 function detectDeferral(text: string): boolean {
+  text = withoutExcludedLookups(text);
   return /(?:暫時唔|暫時不|暂时不|未決定(?:買|购|購|要)?住|未决定(?:买|购|要)?|稍後先|稍后再|later|hold off|defer|not decided yet)/i.test(text);
 }
 
@@ -1964,6 +1967,15 @@ function reduceSingleTurn(
     occurred_at: input.occurred_at ?? null,
     entity_hints: hints,
     current_language: input.language,
+  }).filter(event => {
+    // Frozen lexical extraction sees the complete utterance. Lookup deferral is
+    // an instruction about evidence retrieval, not a product lifecycle event.
+    // Keep all factual extraction; validate only these proposed status changes
+    // against the same scoped language used by the runtime lifecycle adapter.
+    if (event.type !== "SET_ENTITY_STATUS") return true;
+    if (event.status === "deferred") return detectDeferral(input.text);
+    if (event.status === "cancelled") return detectCancellation(input.text);
+    return true;
   });
   // Semantic interpretation owns entity mutations, but it has no address
   // component contract. Keep deterministic delivery events so a complete
