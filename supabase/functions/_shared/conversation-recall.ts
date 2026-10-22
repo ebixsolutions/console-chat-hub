@@ -1843,6 +1843,10 @@ function renderCustomerRecap(value: unknown, language: string): string {
       if (sun === "strong_afternoon_sun") facts.push(`${rooms[room]?.[l] ?? room.replace(/_/g," ")} ${["下午日照強", "下午日晒较强", "has strong afternoon sun"][l]}`);
     }
     if (e.attributes.sunlight === "strong_afternoon_sun") facts.push(["下午日照強", "下午日晒较强", "strong afternoon sun"][l]);
+    if (e.attributes.sunlight === "none") facts.push(["客戶表示冇西斜", "客户表示没有西晒", "customer reports no afternoon sun"][l]);
+    for(const [room,sun] of Object.entries(object(e.attributes.room_sunlight)??{}))if(sun==="none")facts.push(`${rooms[room]?.[l]??room.replace(/_/g," ")} ${["冇西斜","没有西晒","has no afternoon sun"][l]}`);
+    const opening=object(e.attributes.window_opening_observation);
+    if(opening&&typeof opening.width_mm==="number"&&typeof opening.height_mm==="number")facts.push(`${opening.width_mm} mm × ${opening.height_mm} mm${opening.scope?` (${rooms[String(opening.scope)]?.[l]??String(opening.scope)})`:["（所屬窗口未確認）","（所属窗口未确认）"," (opening scope not confirmed)"][l]}`);
     if (e.attributes.installation_type === "window_unit") facts.push(["窗口機", "窗口机", "window unit"][l]);
     if (Number.isInteger(e.attributes.door_count)) facts.push(l === 2 ? `${e.attributes.door_count} doors` : `${e.attributes.door_count}門`);
     if (l === 2) return renderEnglishRequirement(e,label(e)) + (facts.length ? ", "+facts.join(", ") : "");

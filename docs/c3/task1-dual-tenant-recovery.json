@@ -1655,5 +1655,17 @@
     "Assistant": 427,
     "model_attempts": 3520,
     "historical_debits_retained": true
+  },
+  "task1_user_acceptance_scope_amendment": {
+    "date": "2026-10-22",
+    "director_instruction": "FRANKIE-ONLY RECOVERY: CLOSE VERIFIED ROUTING, STATE AND KB FAILURES",
+    "contract_id_unchanged": "C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1",
+    "required_user_actor": "frankien.ng@gmail.com",
+    "authe_login_mapping_paid_tests_hosted_pass_not_prerequisites": true,
+    "authe_and_history_preserved": true,
+    "cross_tenant_safety_full_uat_original_cases_denominators_thresholds_human_coverage_unchanged": true,
+    "no_new_task_gate_branch": true,
+    "no_new_production_or_kb_paid_authorization": true,
+    "current_status": "OPEN_NOT_ACCEPTED"
   }
 }

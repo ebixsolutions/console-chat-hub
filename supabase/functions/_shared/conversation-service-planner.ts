@@ -14,6 +14,7 @@ import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { activeCustomerGoal, customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { requiresSemanticKnowledge, scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
+import { isPersonalOrderStatusRequest } from "./commerce-state-authority.ts";
 import { DecisionContextLimitError } from "./bounded-decision-context.ts";
 import { classifyHandoffIntent, classifyHumanServiceDiscussion, type HandoffIntentCategory } from "./handoff-intent.ts";
 
@@ -547,6 +548,9 @@ export function planConversationService(
     recall_detail: clean(input.recall.detail, 100) || undefined,
   };
   if (input.explicit_handoff) return { ...base, action: "explicit_handoff" };
+  // A personal order enquiry is not a product/policy KB lookup. No live order
+  // connector is asserted here; the existing honest intake route owns it.
+  if (isPersonalOrderStatusRequest(question)) return {...base, action:"customer_issue_next_step",issue_kind:"order_status_lookup",safe_assumptions:["no_live_account_or_order_state","no_completed_action_without_runtime_evidence"]};
   const serviceDiscussion = classifyHumanServiceDiscussion(question);
   // Raw, bounded service control precedes recall and historical Commerce slots.
   // It is read-only: this does not commit the optional semantic interpretation.
@@ -1008,11 +1012,11 @@ export function renderServicePlanReply(
         .map(text=>text.match(/(?:訂單|订单|參考編號|参考编号|order|reference|ref)\s*(?:number|no\.?|#|:|：)?\s*([A-Z0-9][A-Z0-9-]{3,})/i)?.[1]).find(ref=>ref && /\d/.test(ref));
       return provided
         ? [
-          `我記低咗參考編號 ${provided}；目前我未能讀取即時訂單狀態，呢個需要客服核對。`,
-          `已记录参考编号 ${provided}；目前我无法读取实时订单状态，需要客服核对。`,
-          `I have reference ${provided}. I cannot read the live order status here; support needs to check it.`,
+          `我記低咗參考編號 ${provided}；目前我未能讀取即時訂單狀態，呢個需要客服核對。你可以要求真人協助；目前尚未轉交。`,
+          `已记录参考编号 ${provided}；目前我无法读取实时订单状态，需要客服核对。你可以要求真人协助；目前尚未转交。`,
+          `I have reference ${provided}. I cannot read the live order status here; support needs to check it. You can ask for human support; no transfer has been made.`,
         ][l]
-        : ["可以幫你整理查詢；目前我未能讀取即時訂單狀態。你有訂單或參考編號嗎？", "可以帮你整理查询；目前我无法读取实时订单状态。你有订单或参考编号吗？", "I can help with the enquiry, but I cannot read the live order status here. What is the order or reference number?"][l];
+        : ["可以幫你整理查詢；目前我未能讀取即時訂單狀態。你有訂單或參考編號嗎？如不方便提供，可以要求真人協助；目前尚未轉交。", "可以帮你整理查询；目前我无法读取实时订单状态。你有订单或参考编号吗？如不方便提供，可以要求真人协助；目前尚未转交。", "I can help with the enquiry, but I cannot read the live order status here. What is the order or reference number? You can also ask for human support; no transfer has been made."][l];
     }
     if (plan.issue_kind === "product_operation_failure") {
       const models = exactProductIdentifiers(plan.customer_turn ?? "");

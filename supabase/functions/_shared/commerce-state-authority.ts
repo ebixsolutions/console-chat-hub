@@ -388,7 +388,7 @@ export function isCustomerGuidanceRequest(question: string, semantic: {
   intent: string; confidence: number; requested_facts: string[];
   ambiguity: { is_ambiguous: boolean };
 } | null): boolean {
-  if (!semantic || semantic.confidence < 0.62 || semantic.ambiguity.is_ambiguous) return false;
+  if (!semantic || semantic.confidence < 0.62) return false;
   const lookupText = withoutExcludedLookups(clean(question));
   // A customer's explicit priority ranking is not an assertion/request for a
   // merchant price. Keep affirmative/current merchant requests even when they
@@ -404,18 +404,11 @@ export function isCustomerGuidanceRequest(question: string, semantic: {
   // appliance keyword or an old answer. Merchant evidence still wins above.
   const selectionQuestion = /(?:點(?:樣)?|怎(?:樣|么)|如何).{0,6}(?:揀|選|选|比較|比较|考慮|考虑|取捨|取舍|準備|准备)|(?:從|从|按|依).{0,8}(?:哪些|甚麼|什么|咩).{0,8}(?:方面|因素|條件|条件).{0,8}(?:比較|比较|選|选)|\b(?:how|what).{0,32}(?:choose|select|compare|pick|prioriti[sz]e|balance|weigh|evaluate|assess|prepare|measure)\b/iu.test(text);
   if (!selectionQuestion && !/(?:取捨|取舍|選購|选购|選機|选机|應(?:該)?(?:準備|補充|考虑|考慮)|應該考慮|应该考虑|先問|先问)|(?:現場|现场|量度|量測|量测|測量|测量).{0,24}(?:應|应|要|先).{0,8}(?:記低|记低|記錄|记录|留意|注意|準備|准备|量度|量測|量测)|\b(?:trade[ -]?offs?|selection criteria|what.*(?:ask|prepare|measure)|how.*(?:choose|select))\b/i.test(text)) return false;
-  // A valid model can describe the same speech act as ASK_FACT, or include
-  // abstract advice/checklist targets in requested_facts. Neither authorizes
-  // a merchant lookup. Unknown targets still fail closed unless the customer
-  // explicitly excluded that lookup; affirmative merchant requests above win.
-  const generalTargets = semantic.requested_facts.every(fact => {
-    const target = fact.replace(/[_-]+/g, " ");
-    if (/\b(?:price|cost|stock|warranty|policy|specifications?|availability|models?|products?)\b|售價|售价|庫存|库存|保養|保养|政策|規格|规格|型號|型号/i.test(target)) return false;
-    return /\b(?:trade\s*offs?|selection criteria|selection considerations|selection advice|site measurements?|onsite measurements?|measurement checklist|dimensions to measure|clarifications?|next question|information to prepare)\b|取捨|取舍|選購考慮|选购考虑|量度清單|量度清单|現場尺寸|现场尺寸|補充資料|补充资料/i.test(target);
-  });
-  const lookupExplicitlyExcluded = lookupText !== clean(question) &&
-    EXCLUDED_LOOKUP.test(question);
-  return generalTargets || lookupExplicitlyExcluded;
+  // Requested targets and free labels describe a model interpretation, not
+  // merchant authority. The bounded customer speech act above owns this
+  // decision. Ambiguity constrains state binding and recommendations, not the
+  // ability to explain general trade-offs or ask for a genuinely missing fact.
+  return true;
 }
 
 /**
@@ -972,4 +965,30 @@ export function splitCustomerOperationClauses(text: string): string[] {
     .replace(/\band\s+(?=(?:change|defer|pause|cancel|return|back\s+to|give|summari[sz]e)\b)/giu,"；")
     .replace(/(?:同埋|並且|并且)(?=(?:將|将|把|更正|改|暫緩|暂缓|取消|講返|回到|總結|总结))/gu,"；");
   return (separated.match(/[^，；;。!?！？]+[!?！？]?/g)??[]).map(part=>part.trim()).filter(Boolean);
+}
+
+
+/** Customer-reported site observation. Questions, uncertainty and double
+ * negation remain unknown; absence is a real value, never a positive keyword. */
+export function customerSunExposure(text: string): "none" | "strong_afternoon_sun" | null {
+  const t=clean(text,1600);
+  if(!/(?:西斜|西曬|西晒|下午.{0,6}(?:日照|曬|晒)|afternoon\s+sun|west[- ]?facing)/iu.test(t) || /[?？]|有冇|有沒有|有没有|唔知|不知道|不清楚|冇講|未講|(?:not sure|unknown|don't know|not said|never said|is there|does .*have)|如果|假如|假設|假设|也許|也许|可能|\b(?:if|suppose|perhaps)\b/iu.test(t))return null;
+  if(/(?:唔係|不是|并非|並非|not).{0,4}(?:冇|沒有|没有|無|无|no\b)/iu.test(t))return null;
+  return /(?:冇|沒有|没有|無|无|不受|唔會|不會|不会|no\b|not\b|without\b).{0,25}(?:西斜|西曬|西晒|下午|afternoon|west)/iu.test(t) ? "none" : "strong_afternoon_sun";
+}
+
+/** Explicit paired axes and a declared metric unit only. An unlabelled pair
+ * never invents width/height, and this parser never assigns it to a room. */
+export function customerDimensionPair(text: string): {width_mm:number;height_mm:number;reported_width:number;reported_height:number;reported_unit:string}|null {
+  const t=clean(text,1600);let m=t.match(/(?<![-\d.])(\d+(?:\.\d+)?)\s*(?:\(\s*(?:W|width|闊|寬|宽)\s*\)|(?:W|width|闊|寬|宽))\s*(mm|cm|毫米|厘米|公分)?\s*[x×*]\s*(\d+(?:\.\d+)?)\s*(?:\(\s*(?:H|height|高)\s*\)|(?:H|height|高))\s*(mm|cm|毫米|厘米|公分)/iu);
+  m ??= t.match(/(?:W|width|闊(?:度)?|寬(?:度)?|宽(?:度)?)\s*[:：=]?\s*(\d+(?:\.\d+)?)\s*(mm|cm|毫米|厘米|公分)?\s*(?:[x×*,，]|by)?\s*(?:H|height|高(?:度)?)\s*[:：=]?\s*(\d+(?:\.\d+)?)\s*(mm|cm|毫米|厘米|公分)/iu);
+  if(!m)return null;
+  const unit=m[4].toLowerCase(),first=(m[2]??m[4]).toLowerCase();
+  const w=Number(m[1]),h=Number(m[3]),ws=/cm|厘米|公分/.test(first)?10:1,hs=/cm|厘米|公分/.test(unit)?10:1;
+  return w>0&&h>0&&w*ws<=100000&&h*hs<=100000?{width_mm:w*ws,height_mm:h*hs,reported_width:w,reported_height:h,reported_unit:first===unit?unit:first+"/"+unit}:null;
+}
+
+export function isPersonalOrderStatusRequest(text:string):boolean {
+ const t=clean(text,1600);
+ return /訂單|订单|\border\b/iu.test(t) && /狀況|状况|狀態|状态|進度|进度|去到邊|去到边|到哪|出貨|出货|送貨未|送货没|\b(?:status|track|tracking|where|shipped|progress)\b/iu.test(t) && !/政策|條款|条款|一般|通常|幾日|几天|privacy|policy|terms|usually|how long/iu.test(t);
 }

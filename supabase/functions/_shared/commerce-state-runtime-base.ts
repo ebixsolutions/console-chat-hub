@@ -38,6 +38,8 @@ import {
   type CommerceDimensionAttribute,
   inferCommerceDimensionAttribute,
   isCurrentRequirementsRecap,
+  customerSunExposure,
+  customerDimensionPair,
   withoutExcludedLookups,
   customerBusinessText,
   requirementMutationText,
@@ -1846,18 +1848,28 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
   if (ac.length === 1 && (categories.length === 1 && categories[0].key === "air_conditioner" || !categories.length && reduced.current_topic === "air_conditioner")) {
     const facts: CommerceStateEvent[] = [];
     if (/窗口(?:冷氣|機|机)|window\s+(?:unit|air)/iu.test(input.text)) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"installation_type",value:"window_unit",provenance});
-    const sunPattern = /西斜|西曬|西晒|下午.{0,6}(?:曬|晒|日照)|afternoon\s+sun|west[- ]?facing/iu;
-    if (sunPattern.test(input.text)) {
-      const sunlight = { ...(ac[0].attributes.room_sunlight as Record<string, string> ?? {}) };
-      for (const clause of input.text.split(/[，,。;；]/u)) {
-        if (!sunPattern.test(clause)) continue;
-        const scope = roomScope(clause);
-        const all = /全部|所有|all\s+(?:rooms|spaces)/iu.test(clause);
-        if (scope && !all) sunlight[scope] = "strong_afternoon_sun";
-        else if (all) for (const room of Object.keys(ac[0].attributes.room_sizes as Record<string, unknown> ?? {})) sunlight[room] = "strong_afternoon_sun";
-        else facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"sunlight",value:"strong_afternoon_sun",provenance});
+    const sunlight = { ...(ac[0].attributes.room_sunlight as Record<string, string> ?? {}) };
+    for (const clause of input.text.split(/[，,。;；]/u)) {
+      if(/以前|之前|曾經|曾经|previously|historically/iu.test(clause))continue;
+      const exposure=customerSunExposure(clause);if(exposure===null)continue;
+      const scope=roomScope(clause),all=/全屋|全間|全间|全部|所有|all\s+(?:rooms|spaces)|whole\s+(?:home|house)/iu.test(clause);
+      if(scope&&!all)sunlight[scope]=exposure;
+      else {
+        facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"sunlight",value:exposure,provenance});
+        if(all)for(const room of new Set([...Object.keys(ac[0].attributes.room_sizes as object ?? {}),...Object.keys(sunlight)]))sunlight[room]=exposure;
+        const semantic=ac[0].attributes.semantic_attributes;
+        if(semantic && typeof semantic==="object" && !Array.isArray(semantic))facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"semantic_attributes",value:{...semantic,...("sun_exposure" in semantic?{sun_exposure:exposure}:{}),...("sunlight" in semantic?{sunlight:exposure}:{})},provenance});
       }
-      if (Object.keys(sunlight).length) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"room_sunlight",value:sunlight,provenance});
+    }
+    if(Object.keys(sunlight).length)facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"room_sunlight",value:sunlight,provenance});
+    const pair=customerDimensionPair(input.text);
+    const pending=ac[0].attributes.window_opening_observation as Record<string,unknown>|undefined;
+    const windowContext=ac[0].attributes.installation_type==="window_unit" || reduced.installation.pending_checks.includes("window_opening_check");
+    if(windowContext && (pair || pending && pending.scope===null && roomScope(input.text))) {
+      const scope=roomScope(input.text);
+      const observation=pair?{...pair,unit:"mm",source_message_id:input.source_message_id,recorded_at:input.occurred_at??null,scope}: {...pending,scope,scope_source_message_id:input.source_message_id};
+      facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"window_opening_observation",value:observation,provenance});
+      if(scope)facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"room_window_openings",value:{...(ac[0].attributes.room_window_openings as object??{}),[scope]:observation},provenance});
     }
     const eachSpace = /(?:各|每).{0,8}(?:一|1)\s*(?:部|台)/iu.test(input.text);
     const roomAllocation = eachSpace && Object.keys(ac[0].attributes.room_sizes as object ?? {}).length > 0

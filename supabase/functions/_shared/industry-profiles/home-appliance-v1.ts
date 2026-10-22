@@ -1,3 +1,4 @@
+import { customerSunExposure, customerDimensionPair } from "../commerce-state-authority.ts";
 import { matchesReferenceLabel, type IndustryProfile } from "../industry-agent-registry.ts";
 import type { ConversationCommerceState } from "../commerce-state-contract.ts";
 import type { ContextualCandidate } from "../contextual-customer-update.ts";
@@ -199,7 +200,7 @@ function journeyObservations(text: string): string[] {
   if (hasTwoBedroomLivingContext(text)) values.push("space_plan");
   if (/(?:細房|小房|大房|書房|书房|客廳|客厅|living room|bedroom|study).{0,14}\d{2,4}\s*(?:平方呎|平方英尺|sq\.?\s*ft|ft²|呎)|\d{2,4}\s*(?:平方呎|平方英尺|sq\.?\s*ft|ft²|呎).{0,14}(?:房|客廳|客厅|living room|bedroom|study)/iu.test(text)) values.push("room_sizes");
   if (/(?:窗口位|窗口機|窗口机|分體位|分体位|分體機|分体机|window\s*(?:opening|unit|air)|split[- ]?unit|installation\s*type)/iu.test(text)) values.push("installation_type");
-  if (/(?:西斜|西曬|西晒|下午.{0,6}(?:日照|曬|晒)|afternoon\s+sun|west[- ]?facing)/iu.test(text)) values.push("sunlight");
+  if (customerSunExposure(text) !== null) values.push("sunlight");
   if (/(?:闊|宽|高|深|width|height|depth).{0,12}\d{2,4}\s*(?:mm|毫米)/iu.test(text)) values.push("dimensions");
   if (/(?:容量|公升|升|litres?|liters?|\d+\s*l\b|幾多人|几个人|people)/iu.test(text)) values.push("capacity");
   return [...new Set(values)];
@@ -234,6 +235,13 @@ export function homeApplianceCustomerJourneySignal(input: {
   const policy = HOME_APPLIANCE_JOURNEY_POLICIES[category];
   if (!policy) return null;
   const observed = journeyObservations(text);
+  const windowPair=category==="air_conditioner"?customerDimensionPair(text):null;
+  const current=prior?input.state.entities.find(e=>e.entity_id===prior.entity_id):null;
+  const windowContext=current?.attributes.installation_type==="window_unit" || input.state.installation.pending_checks.includes("window_opening_check");
+  if(windowPair&&windowContext)observed.push("window_dimensions");
+  const windowScope=HOME_APPLIANCE_ROOMS.find(r=>r.aliases.some(alias=>matchesReferenceLabel(text,alias)))?.key;
+  const pending=current?.attributes.window_opening_observation as Record<string,unknown>|undefined;
+  if(pending?.scope===null && windowScope)observed.push("window_scope");
   const fridge = input.state.entities.filter((entity) => entity.category === "refrigerator" && !["cancelled", "deferred"].includes(entity.status));
   const dimensionValues: Record<string, number> = {};
   if (category === "refrigerator") {
@@ -260,7 +268,10 @@ export function homeApplianceCustomerJourneySignal(input: {
     collected,
     missing,
     response_intent: next ? "request_highest_value_missing_information" : "advance_decision",
-    reply: category === "refrigerator" && next === "dimensions" && Object.keys(dimensionValues).length
+    reply: pending?.scope===null && windowScope ? (input.language==="en"?`The ${pending.width_mm} mm × ${pending.height_mm} mm opening belongs to ${windowScope.replaceAll("_"," ")}; the other rooms remain separate.`:input.language==="zh-CN"?`已记下这组 ${pending.width_mm} mm × ${pending.height_mm} mm 尺寸属于${HOME_APPLIANCE_ROOMS.find(r=>r.key===windowScope)?.label["zh-CN"]??windowScope}；其他房间仍分开记录。`:`已記低呢組 ${pending.width_mm} mm × ${pending.height_mm} mm 尺寸屬於${HOME_APPLIANCE_ROOMS.find(r=>r.key===windowScope)?.label["zh-TW"]??windowScope}；其他房間仍分開記錄。`)
+      : windowPair&&windowContext ? (input.language==="en"?`I have a width of ${windowPair.width_mm} mm and height of ${windowPair.height_mm} mm. ${windowScope?"Those measurements belong to the named room; product fit still needs verified specifications.":"Which room does this opening belong to? I have not applied these dimensions to the other rooms."}`:input.language==="zh-CN"?`已记下宽 ${windowPair.width_mm} mm、高 ${windowPair.height_mm} mm。${windowScope?"这是所指房间的窗口尺寸；产品是否适合仍需核实规格。":"这是哪个房间的窗口？我没有把这一组尺寸套用到其他房间。"}`:`已記低闊 ${windowPair.width_mm} mm、高 ${windowPair.height_mm} mm。${windowScope?"呢組係所指房間嘅窗口尺寸；產品是否合適仍要核實規格。":"呢個係邊間房嘅窗口？我未將呢組尺寸套用到其他房間。"}`)
+      : category === "air_conditioner" && customerSunExposure(text)==="none" && !next ? (input.language==="en"?"I have noted the reported absence of west-facing afternoon sun. What are the usable width and height of each window opening? Suitability still requires verified product data and a site check.":input.language==="zh-CN"?"已记下没有西晒；仍需按各房面积及安装条件核对。各窗口可用的宽度和高度是多少？型号适用性仍须核实。":"已記低冇西斜；仍需按各房面積及安裝條件核對。各窗口可用嘅闊度同高度係幾多？型號適用性仍須核實。")
+      : category === "refrigerator" && next === "dimensions" && Object.keys(dimensionValues).length
       ? (() => {
         const names: Record<string, [string,string,string]> = {width:["闊度","宽度","width"],height:["高度","高度","height"],depth:["深度","深度","depth"]};
         const l = input.language === "en" ? 2 : input.language === "zh-CN" ? 1 : 0;

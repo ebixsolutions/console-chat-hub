@@ -1,3 +1,4 @@
+import { customerDimensionPair, customerSunExposure } from "./commerce-state-authority.ts";
 import {
   type ConversationRecallInput,
   prepareConversationRecall,
@@ -908,3 +909,13 @@ for (const [text,expected] of [
  assert(state.entities.length>0,JSON.stringify(state));
  assert(state.entities.every(e=>expected==='active'?!['deferred','cancelled'].includes(e.status):e.status===expected),JSON.stringify(state));
 });
+
+for(const text of ['全屋都沒有西斜','全屋都没有西斜','所有房間都冇下午西曬','The whole house has no afternoon sun'])Deno.test('Frankie bbd3/e1c6 explicit absence replaces positive sunlight consistently: '+text,()=>{
+ const i=recallFixture('請總結目前已記錄的要求。');const s=i.commerce!.state;s.entities=s.entities.slice(0,1);s.current_topic='air_conditioner';const e=s.entities[0];e.entity_id='air_conditioner:unscoped';e.category='air_conditioner';e.status='researching';e.attributes={customer_goal:{category:'air_conditioner',objective:'replace_existing_appliance',journey_stage:'sizing_guidance',collected:['room_sizes','installation_type'],missing:['sunlight'],response_intent:'request_highest_value_missing_information',source_message_id:i.source_message_id,updated_at:null},sunlight:'strong_afternoon_sun',semantic_attributes:{sun_exposure:'none'},room_sizes:{small_bedroom:'80平方呎',large_bedroom:'100平方呎',living_room:'180平方呎'},room_sunlight:{small_bedroom:'strong_afternoon_sun'}};
+ const out=reduceTurn(s,{conversation_id:i.conversation_id,company_id:i.company_id,source_message_id:i.source_message_id,text,language:'zh-TW',history:[]},buildCommerceEntityHints([text]));const ac=out.entities.find(e=>e.category==='air_conditioner')!;assert(ac.attributes.sunlight==='none',JSON.stringify(out));assert(Object.values(ac.attributes.room_sunlight as object).every(v=>v==='none'),JSON.stringify(out));assert((ac.attributes.semantic_attributes as Record<string,unknown>).sun_exposure==='none');
+ const before=JSON.stringify(out);i.commerce!.state=out;const recap=prepareConversationRecall(i,'zh-TW');assert(recap.decision.handled && recap.reply?.includes('冇西斜'),JSON.stringify(recap));assert(!recap.reply?.includes('下午日照強'));assert(JSON.stringify(out)===before);
+});
+
+for(const text of ['70 (W) x 55 (H) cm','70(W)×55(H)cm','width 70cm, height 55cm','闊70厘米，高55厘米','W70cm H550mm'])Deno.test('Frankie paired-axis dimensions retain declared units: '+text,()=>{const d=customerDimensionPair(text);assert(d?.width_mm===700&&d.height_mm===550,JSON.stringify(d));});
+for(const text of ['70 x 55 cm','70W x55H','-70(W)x55(H)cm','CW-SUL70BA'])Deno.test('unlabelled or invalid dimensions cannot invent an opening: '+text,()=>{assert(customerDimensionPair(text)===null,JSON.stringify(customerDimensionPair(text)));});
+for(const text of ['有冇西斜？','全屋有沒有西斜','不是沒有西斜','I am not sure about afternoon sun','如果沒有西斜呢？','If there is no afternoon sun'])Deno.test('uncertain sunlight is not affirmative or an absence: '+text,()=>{assert(customerSunExposure(text)===null);});
