@@ -173,7 +173,6 @@ export async function accountedModelFetch(
   }
   const preparedInit=await prepareInit(init);
   if(kbPermit && (preparedInit.method!=="POST" || String(preparedInit.body)!==meta.request))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
-  if(kbPermit && !consumeOriginalPreviewKBPermit(kbPermit))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
   // Established authenticated Production path: preserve exact provider request/response.
   // Permanent Guard is deferred; no new endpoint, provider, credential or tenant scope.
   if(mode==="authenticated_inbox") {
@@ -184,6 +183,8 @@ export async function accountedModelFetch(
     if(used.has(identity))throw new ModelAccountingError("INBOX_REPLAY_DENIED");
     used.add(identity);inboxDispatched.set(meta.legacyAuthority!,used);
   }
+  // No asynchronous work may separate the final evidence consumption from I/O.
+  if(kbPermit && !consumeOriginalPreviewKBPermit(kbPermit))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
   onDispatch?.();
   const response=await upstream(url, (mode==="authenticated_preview" || mode==="authenticated_inbox") ? {...preparedInit,redirect:"error"} : preparedInit);
   if(kbPermit) {

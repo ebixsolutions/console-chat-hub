@@ -382,3 +382,9 @@ test('server jurisdiction unspecified cannot invent a specification topic; real 
 test('Policy profile revocation denies an already minted context without requiring a global role row',async()=>{
  const x=await setupInbox();f.rows.user_roles=[];const token=await authenticatedInboxAuthority(f.db,f.user.id,x.c.company_id,x.c.id,'policy');assert.equal(await trustedDispatchScope(f.db,x.c.company_id,x.c.id,token),'authenticated_inbox');f.rows.agent_profile[0].status='inactive';await assert.rejects(trustedDispatchScope(f.db,x.c.company_id,x.c.id,token),e=>e.code==='INBOX_AUTHORITY_DENIED');assert.equal(x.posts(),0);
 });
+
+test('evidence expiring during the final asynchronous role recheck denies before Inbox paid I/O',async()=>{
+ const x=await setupInbox();const token=await authenticatedInboxAuthority(f.db,f.user.id,x.c.company_id,x.c.id,'knowledge');const meta={...x.meta,legacyAuthority:token};const originalNow=Date.now,from=f.db.from;let prepared=false;
+ f.db.from=function(table){if(prepared&&table==='channel_config')Date.now=()=>originalNow()+600000;return from.call(this,table);};
+ try{await assert.rejects(accountedModelFetch(f.db,meta,x.endpoint,{method:'POST',body:x.request},x.upstream,undefined,async(mode,permit)=>{const h=await x.prepare(mode,permit);prepared=true;return h;}),e=>e.code==='UAT_REMOTE_BOUND_UNVERIFIED');assert.equal(x.posts(),0);}finally{Date.now=originalNow;}
+});
