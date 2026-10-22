@@ -169,7 +169,7 @@ async function loadPayload(
   }
 
   const expectedTypes = ["accuracy", "context", "hallucination", "policy", "sales", "tone"];
-  const actualTypes = details.map((d) => String(d.evaluator_type)).sort();
+  const actualTypes = details.map((d: { evaluator_type: unknown }) => String(d.evaluator_type)).sort();
   if (JSON.stringify(actualTypes) !== JSON.stringify(expectedTypes)) {
     return { ok: false, error: "evaluation_details_contract_mismatch" };
   }
