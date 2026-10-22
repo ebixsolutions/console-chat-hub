@@ -48,7 +48,7 @@ export function queryEmbeddingEvidence(binding:any):QueryEmbeddingEvidence|null 
   if(binding?.evidence_reference!==undefined) {
     if(typeof binding.evidence_reference!=="string" || !/^[a-z0-9_-]{1,80}$/.test(binding.evidence_reference) || binding.attestation_payload!==undefined || binding.attestation_signature!==undefined)return null;
     let evidence:any;try{evidence=JSON.parse(Deno.env.get("KB_QUERY_EMBEDDING_EVIDENCE_JSON")??"null");}catch{return null;}
-    if(evidence?.version!==1 || Object.keys(evidence).some(k=>!["version","records"].includes(k)) || !Array.isArray(evidence.records) || evidence.records.length>20)return null;
+    if(![1,2].includes(evidence?.version) || Object.keys(evidence).some(k=>!["version","records"].includes(k)) || !Array.isArray(evidence.records) || evidence.records.length>20)return null;
     const matches=evidence.records.filter((r:any)=>r?.reference_id===binding.evidence_reference);
     if(matches.length!==1)return null;
     const {reference_id:_,...record}=matches[0];
@@ -135,5 +135,145 @@ export async function bindQueryEmbeddingResponse(response:Response,a:QueryEmbedd
       tenant_id:a.tenant,version_id:reviewed.version_id,publication_state:"published",currentness:"current"};
   }
   // Only selected, attested document evidence is consumed by the existing parser.
+  return Response.json({success:true,context_found:true,selected_documents:data.selected_documents,citations:[]},{headers:{"Cache-Control":"no-store"}});
+}
+
+/** Proposed alternative to operator-pinned snapshots. DEFAULT OFF and not
+ * authorized by old B settings: version3 Preview / version2 Inbox must opt in.
+ * Authenticated live entity reads establish current evidence at observation,
+ * not a pinned runtime, a future publication lock or a remote spending cap. */
+export const LIVE_METADATA_MODE = "query_embedding_live_metadata_v1";
+export type LiveMetadataPolicy = {
+  reference_id:string; remote_mode:typeof LIVE_METADATA_MODE;
+  metadata_tenant_id:string;
+  metadata_api_contract:"singapore_entities_bearer_v1";
+  accepted_remote_risk:"unattested_runtime_cost_and_publication_race_v1";
+  max_query_bytes:2048;
+};
+type LiveSession={policy:LiveMetadataPolicy;credential:string;authorization:string;tokens:string;expires:number};
+const liveSessions=new WeakMap<object,LiveSession>();
+const liveBase="https://py.ebixmall.com/py-knowledge-base/api/entities/";
+const safeId=(s:unknown):s is string=>typeof s==="string" && /^[a-zA-Z0-9_-]{1,160}$/.test(s);
+export function liveMetadataPolicy(binding:any):LiveMetadataPolicy|null {
+  if(binding?.remote_mode!==LIVE_METADATA_MODE || binding.allow_remote_embedding!==true ||
+    !safeId(binding.evidence_reference) || binding.remote_runtime_sha256!==undefined || binding.attestation_payload!==undefined || binding.attestation_signature!==undefined)return null;
+  let config:any;try{config=JSON.parse(Deno.env.get("KB_QUERY_EMBEDDING_EVIDENCE_JSON")??"null");}catch{return null;}
+  if(config?.version!==2 || Object.keys(config).some(k=>!["version","records"].includes(k)) || !Array.isArray(config.records) || config.records.length>20)return null;
+  const rows=config.records.filter((x:any)=>x?.reference_id===binding.evidence_reference);
+  if(rows.length!==1)return null;
+  const p=rows[0];
+  if(Object.keys(p).some(k=>!["reference_id","remote_mode","metadata_tenant_id","metadata_api_contract","accepted_remote_risk","max_query_bytes"].includes(k)) ||
+    p.remote_mode!==LIVE_METADATA_MODE || !safeId(p.metadata_tenant_id) || p.metadata_api_contract!=="singapore_entities_bearer_v1" ||
+    p.accepted_remote_risk!=="unattested_runtime_cost_and_publication_race_v1" || p.max_query_bytes!==2048)return null;
+  return {...p};
+}
+export function liveMetadataSessionMatches(session:object,policy:LiveMetadataPolicy):boolean {
+  const s=liveSessions.get(session);return !!s && currentLiveMetadataSession(session) && canonicalJson(s.policy)===canonicalJson(policy);
+}
+export function currentLiveMetadataSession(session:object):boolean {
+  const s=liveSessions.get(session);
+  return !!s && s.expires>Date.now() && Deno.env.get("KB_QUERY_EMBEDDING_EVIDENCE_JSON")===s.authorization && Deno.env.get("KB_RAG_TENANT_TOKENS_JSON")===s.tokens;
+}
+async function boundedJson(response:Response):Promise<any> {
+  if(!response.ok) {
+    await response.body?.cancel();return deny([401,403].includes(response.status)?"UAT_AUTHORIZATION_DENIED":"KB_TOOL_FAILURE");
+  }
+  const reader=response.body?.getReader();if(!reader)return deny("KB_TOOL_FAILURE");
+  const parts:Uint8Array[]=[];let n=0;
+  try{for(;;){const r=await reader.read();if(r.done)break;n+=r.value.length;if(n>2_000_000){await reader.cancel();return deny("KB_TOOL_FAILURE");}parts.push(r.value);}}
+  finally{reader.releaseLock();}
+  const bytes=new Uint8Array(n);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}
+  try{return JSON.parse(new TextDecoder().decode(bytes));}catch{return deny("KB_TOOL_FAILURE");}
+}
+function ownedMetadata(row:any,s:LiveSession):boolean {
+  return object(row) && String(row.company_id)===FRANKIE_KB_SCOPE.tenant && row.tenant_id===s.policy.metadata_tenant_id;
+}
+function currentDocument(row:any,s:LiveSession):boolean {
+  return ownedMetadata(row,s) && safeId(row.id) && safeId(row.active_version_id) && row.status==="published" &&
+    row.available_to_live_console===true && row.production_vector_status==="indexed" && hash(row.content_hash);
+}
+async function metadata(session:object,path:string,upstream:typeof fetch,signal?:AbortSignal):Promise<any> {
+  const s=liveSessions.get(session);if(!s || !currentLiveMetadataSession(session))return deny();
+  const response=await upstream(liveBase+path,{method:"GET",redirect:"error",cache:"no-store",headers:{Authorization:`Bearer ${s.credential}`,Accept:"application/json"},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(5000)]):AbortSignal.timeout(5000)});
+  const value=await boundedJson(response);if(!currentLiveMetadataSession(session))return deny();return value;
+}
+/** A credential is taken only from the existing server tenant Bearer binding.
+ * No RAG API-key reuse, JWT minting, service-role header or credential export. */
+export async function prepareLiveMetadata(policy:LiveMetadataPolicy,ragCredential:string,upstream:typeof fetch=fetch,signal?:AbortSignal):Promise<object> {
+  const current=liveMetadataPolicy({remote_mode:LIVE_METADATA_MODE,allow_remote_embedding:true,evidence_reference:policy.reference_id});
+  if(!current || canonicalJson(current)!==canonicalJson(policy))return deny();
+  const tokens=Deno.env.get("KB_RAG_TENANT_TOKENS_JSON")??"";let parsed:any;
+  try{parsed=JSON.parse(tokens);}catch{return deny();}
+  const credential=parsed?.[FRANKIE_KB_SCOPE.tenant];
+  if(typeof credential!=="string" || !credential.trim() || credential===ragCredential || /[\r\n]/.test(credential))return deny();
+  const session={};liveSessions.set(session,{policy,credential,authorization:Deno.env.get("KB_QUERY_EMBEDDING_EVIDENCE_JSON")??"",tokens,expires:Date.now()+60000});
+  // Verify actual metadata access before any paid RAG request. A record label
+  // alone is insufficient; missing/incompatible authority denies without RAG.
+  const docs=await metadata(session,"KBDocument?_limit=1&company_id=34&status=published&available_to_live_console=true&production_vector_status=indexed",upstream,signal);
+  if(!Array.isArray(docs) || docs.length!==1 || !currentDocument(docs[0],liveSessions.get(session)!))return deny();
+  return session;
+}
+async function metadataSet(session:object,entity:string,ids:string[],upstream:typeof fetch,signal?:AbortSignal):Promise<Map<string,any>> {
+  if(!ids.length || ids.length>20 || new Set(ids).size!==ids.length || ids.some(x=>!safeId(x)))return deny();
+  const query=encodeURIComponent(JSON.stringify({id:{$in:ids},company_id:34}));
+  const rows=await metadata(session,`${entity}?_limit=${ids.length}&q=${query}`,upstream,signal);
+  if(!Array.isArray(rows) || rows.length!==ids.length || rows.some(x=>!object(x) || !ids.includes(x.id as string)) || new Set(rows.map(x=>x.id)).size!==rows.length)return deny();
+  return new Map(rows.map(x=>[x.id,x]));
+}
+/** Bind only current, authenticated Singapore metadata for each returned hit.
+ * No static document allowlist. No truncation or invented/omitted versions.
+ * Re-read every document after chunk verification to detect intervening change;
+ * a change after that read remains an explicitly acknowledged remote race. */
+export async function bindLiveMetadataResponse(response:Response,session:object,upstream:typeof fetch=fetch,signal?:AbortSignal):Promise<Response> {
+  if(!currentLiveMetadataSession(session))return deny();
+  if(!response.ok)return response;
+  const s=liveSessions.get(session)!,data=await boundedJson(response);
+  if(data?.success!==true || typeof data.context_found!=="boolean" || !Array.isArray(data.selected_documents) || data.selected_documents.length>5)return deny("KB_TOOL_FAILURE");
+  if(data.company_id!==undefined && String(data.company_id)!==FRANKIE_KB_SCOPE.tenant || data.tenant_id!==undefined && String(data.tenant_id)!==FRANKIE_KB_SCOPE.tenant)return deny();
+  if(!data.context_found){if(data.selected_documents.length)return deny("KB_TOOL_FAILURE");return Response.json({success:true,context_found:false,selected_documents:[],citations:[]});}
+  if(!data.selected_documents.length)return deny("KB_TOOL_FAILURE");
+  // Existing GET filter supports $in. Batch each dependent layer; no N+1
+  // metadata loop, new API, or bulk mutation endpoint is introduced.
+  const ids=data.selected_documents.map((d:any)=>d?.document_id);
+  const documents=await metadataSet(session,"KBDocument",ids,upstream,signal);
+  if([...documents.values()].some(d=>!currentDocument(d,s)))return deny();
+  const versionIds=[...documents.values()].map(d=>d.active_version_id);
+  const versions=await metadataSet(session,"KBDocumentVersion",versionIds,upstream,signal);
+  const chunkIds=data.selected_documents.flatMap((d:any)=>{
+    if(!Array.isArray(d?.evidence) || d.evidence.length>3)return deny();
+    return [...(d.summary?[d.summary]:[]),...d.evidence].map((c:any)=>c?.chunk_id);
+  });
+  const chunks=await metadataSet(session,"KBVectorChunk",chunkIds,upstream,signal);
+  const seenDocs=new Set<string>(),seenChunks=new Set<string>(),checks:Array<{id:string;fingerprint:string}>=[];
+  const fingerprint=(d:any)=>canonicalJson([d.id,d.company_id,d.tenant_id,d.status,d.available_to_live_console,d.production_vector_status,d.active_version_id,d.content_hash,d.name,d.source_type]);
+  for(const hit of data.selected_documents){
+    if(!safeId(hit?.document_id) || seenDocs.has(hit.document_id) || !Array.isArray(hit.evidence) || hit.evidence.length>3)return deny();
+    seenDocs.add(hit.document_id);
+    const doc=documents.get(hit.document_id);
+    if(!currentDocument(doc,s) || doc.id!==hit.document_id || hit.title!==doc.name || hit.source_type!==doc.source_type)return deny();
+    const version=versions.get(doc.active_version_id);
+    if(!ownedMetadata(version,s) || version.id!==doc.active_version_id || version.document_id!==doc.id || version.review_status!=="approved" || version.vector_status!=="generated" ||
+      version.content_hash!==doc.content_hash || typeof version.raw_content_snapshot!=="string" || await digest(version.raw_content_snapshot)!==version.content_hash)return deny();
+    for(const claim of [hit,hit.authority,hit.metadata].filter(object)){
+      if(claim.company_id!==undefined && String(claim.company_id)!==FRANKIE_KB_SCOPE.tenant || claim.tenant_id!==undefined && String(claim.tenant_id)!==FRANKIE_KB_SCOPE.tenant ||
+        claim.version_id!==undefined && claim.version_id!==doc.active_version_id || claim.version!==undefined && claim.version!==doc.active_version_id ||
+        claim.status!==undefined && claim.status!=="published" || claim.publication_state!==undefined && claim.publication_state!=="published" || claim.currentness!==undefined && claim.currentness!=="current")return deny();
+    }
+    const evidence=[...(hit.summary?[hit.summary]:[]),...hit.evidence];if(!evidence.length)return deny();
+    for(const part of evidence){
+      if(!safeId(part?.chunk_id) || seenChunks.has(part.chunk_id) || !["rag_summary","full_content","faq_pair","section"].includes(part.chunk_type) || typeof part.content!=="string" || !part.content.trim())return deny();
+      seenChunks.add(part.chunk_id);
+      const chunk=chunks.get(part.chunk_id);
+      if(!ownedMetadata(chunk,s) || chunk.id!==part.chunk_id || chunk.document_id!==doc.id || chunk.version_id!==doc.active_version_id || chunk.environment!=="production" || chunk.status!=="active" ||
+        !["generated","completed"].includes(chunk.embedding_status) || chunk.chunk_type!==part.chunk_type || typeof chunk.chunk_text!=="string" ||
+        !chunk.embedding_vector || !Number.isSafeInteger(chunk.embedding_dimensions) || chunk.embedding_dimensions<1 ||
+        await digest(chunk.chunk_text.trim().replace(/\s+/gu," "))!==await digest(part.content))return deny();
+    }
+    checks.push({id:doc.id,fingerprint:fingerprint(doc)});
+    hit.authority={tenant_id:FRANKIE_KB_SCOPE.tenant,version_id:doc.active_version_id,publication_state:"published",currentness:"current"};
+  }
+  const finalDocuments=await metadataSet(session,"KBDocument",ids,upstream,signal);
+  for(const c of checks){const current=finalDocuments.get(c.id);if(!currentDocument(current,s) || fingerprint(current)!==c.fingerprint)return deny();}
+  if(!currentLiveMetadataSession(session))return deny();
   return Response.json({success:true,context_found:true,selected_documents:data.selected_documents,citations:[]},{headers:{"Cache-Control":"no-store"}});
 }

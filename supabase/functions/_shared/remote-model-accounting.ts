@@ -1,7 +1,7 @@
 import { uatRun } from "./uat-execution-contract.ts";
-import { verifyQueryEmbeddingEvidence } from "./preview-kb-query-embedding.ts";
+import { verifyQueryEmbeddingEvidence, prepareLiveMetadata } from "./preview-kb-query-embedding.ts";
 import {
-  originalPreviewKBRemoteScope,verifyOriginalPreviewKBRemoteProof,type OriginalPreviewKBPermit,
+  originalPreviewKBRemoteScope,verifyOriginalPreviewKBRemoteProof,verifyOriginalPreviewKBLiveProof,type OriginalPreviewKBPermit,
   type AccountingRpc,
   ModelAccountingError,
   sha256,
@@ -87,6 +87,11 @@ export async function prepareRemoteRetrieval(
   if(original && (!company || !requestBody))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
   const permitted=original ? originalPreviewKBRemoteScope(originalPermit,company,tenant,endpoint,requestBody) : null;
   if(original && !permitted)throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
+  if(original && permitted?.livePolicy){
+    const session=await prepareLiveMetadata(permitted.livePolicy,credential,upstream,signal);
+    if(!verifyOriginalPreviewKBLiveProof(originalPermit,session))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
+    return {};
+  }
   if(original && permitted?.evidence) {
     // Separately approved legacy query-embedding compatibility: verify existing
     // operator evidence offline, not a fictional retrieval_only remote route.

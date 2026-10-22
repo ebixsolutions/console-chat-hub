@@ -388,3 +388,117 @@ test('evidence expiring during the final asynchronous role recheck denies before
  f.db.from=function(table){if(prepared&&table==='channel_config')Date.now=()=>originalNow()+600000;return from.call(this,table);};
  try{await assert.rejects(accountedModelFetch(f.db,meta,x.endpoint,{method:'POST',body:x.request},x.upstream,undefined,async(mode,permit)=>{const h=await x.prepare(mode,permit);prepared=true;return h;}),e=>e.code==='UAT_REMOTE_BOUND_UNVERIFIED');assert.equal(x.posts(),0);}finally{Date.now=originalNow;}
 });
+
+// Revised contract proposal: actual handler + dynamic authenticated Singapore
+// metadata adapters. Isolated only; zero live model/KB calls and no Hosted PASS.
+async function liveMetadataFixture(fault='none') {
+ const x=await embeddingFixture();let sequence=1,posts=0,gets=0,docReads=0;
+ const mode='query_embedding_live_metadata_v1',reference_id='frankie-live-metadata';
+ const original=JSON.parse(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION).bindings[0];
+ const binding=Object.fromEntries(['actor_id','company_id','channel_id','tenant_id','endpoint','provider','purpose'].map(k=>[k,original[k]]));
+ Object.assign(binding,{remote_mode:mode,allow_remote_embedding:true,evidence_reference:reference_id});
+ f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify({version:fault==='old-grant'?2:3,bindings:[binding]});
+ f.env.KB_QUERY_EMBEDDING_EVIDENCE_JSON=JSON.stringify({version:2,records:[{reference_id,remote_mode:mode,metadata_tenant_id:'fixture-remote-tenant',metadata_api_contract:'singapore_entities_bearer_v1',accepted_remote_risk:fault==='no-risk-approval'?'not-approved':'unattested_runtime_cost_and_publication_race_v1',max_query_bytes:2048}]});
+ f.env.KB_RAG_TENANT_TOKENS_JSON=JSON.stringify({'34':fault==='reuse-api-key'?x.secret:'isolated-existing-metadata-bearer'});
+ if(fault==='no-bearer')delete f.env.KB_RAG_TENANT_TOKENS_JSON;
+ if(fault==='human-control')x.c.status='pending';
+ if(fault==='synthetic'){x.c.metadata_source.source='c3_uat_widget';x.c.metadata_source.synthetic=true;}
+ if(fault==='cross-company')x.meta.companyId=ORIGINAL_PREVIEW_ACCOUNTS[1].company;
+ if(fault==='foreign-actor'){const g=JSON.parse(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION);g.bindings[0].actor_id=crypto.randomUUID();f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify(g);}
+ const doc=()=>({id:'dynamic-doc-'+sequence,company_id:34,tenant_id:'fixture-remote-tenant',name:'Current service policy',source_type:'policy',status:'published',available_to_live_console:true,production_vector_status:'indexed',active_version_id:'dynamic-version-'+sequence,content_hash:null});
+ const content='Current subscription pause and service policy '+sequence;
+ const hash=await fixtureDigest(content);
+ const row=()=>({...doc(),content_hash:hash});
+ const up=async(url,init)=>{
+  const headers=new Headers(init.headers);assert.equal(init.redirect,'error');
+  if(init.method==='POST'){
+   posts++;assert.equal(String(url),x.endpoint);assert.equal(headers.get('x-api-key'),x.secret);assert.equal(headers.has('authorization'),false);
+   if(fault==='revoke-after-dispatch')delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
+   if(fault==='no-match')return Response.json({success:true,context_found:false,selected_documents:[]});
+   const hit={document_id:row().id,title:row().name,source_type:'policy',document_score:0.99,evidence:[{chunk_id:'dynamic-chunk-'+sequence,chunk_type:'full_content',content,score:0.99}]};
+   if(fault==='payload-version')hit.version_id='other-version';
+   if(fault==='wrong-content')hit.evidence[0].content='Unverified policy';
+   if(fault==='duplicate-chunk')hit.evidence.push({...hit.evidence[0]});
+   return Response.json({success:true,context_found:true,selected_documents:[hit],llm_context:{combined_text:'NEVER TRUST THIS'}});
+  }
+  gets++;assert.equal(init.method,'GET');assert.equal(headers.get('authorization'),'Bearer isolated-existing-metadata-bearer');assert.equal(headers.has('x-api-key'),false);assert.equal(headers.has('x-service-role-secret'),false);
+  const u=new URL(url);assert.equal(u.origin,'https://py.ebixmall.com');assert(u.pathname.startsWith('/py-knowledge-base/api/entities/'));
+  if(fault==='metadata-unauthorized')return Response.json({}, {status:403});
+  if(fault==='revoke-preflight')delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
+  if(fault==='rotate-rag-key')f.env.KB_SINGAPORE_TENANT_API_KEYS_JSON=JSON.stringify({'34':'rotated'});
+  if(fault==='rotate-bearer')f.env.KB_RAG_TENANT_TOKENS_JSON=JSON.stringify({'34':'rotated'});
+  if(fault==='rotate-evidence')f.env.KB_QUERY_EMBEDDING_EVIDENCE_JSON='null';
+  if(u.search&&!u.searchParams.has('q')){const d=row();if(fault==='preflight-foreign')d.company_id=35;return Response.json([d]);}
+  let value;
+  if(u.pathname.endsWith('/KBDocument')){
+   docReads++;value=row();if(fault==='unpublished')value.status='draft';if(fault==='publication-race'&&docReads>1)value.active_version_id='changed-version';
+  }else if(u.pathname.endsWith('/KBDocumentVersion')){
+   value={id:row().active_version_id,document_id:row().id,company_id:34,tenant_id:'fixture-remote-tenant',content_hash:hash,raw_content_snapshot:content,review_status:'approved',vector_status:'generated'};
+   if(fault==='unknown-version')delete value.id;
+   if(fault==='stale-hash')value.raw_content_snapshot='Stale source';
+  }else{
+   value={id:'dynamic-chunk-'+sequence,document_id:row().id,version_id:row().active_version_id,company_id:34,tenant_id:'fixture-remote-tenant',chunk_type:'full_content',chunk_text:content,environment:'production',status:'active',embedding_status:'generated',embedding_dimensions:768,embedding_vector:{values:[1]}};
+   if(fault==='stale-chunk-version')value.version_id='old';if(fault==='foreign-chunk')value.company_id=35;
+   if(fault==='wrong-metadata-tenant')value.tenant_id='foreign';if(fault==='staging-chunk')value.environment='staging';
+  }
+  return Response.json([value]);
+ };
+ return {...x,binding,up,posts:()=>posts,gets:()=>gets,next:()=>{sequence++;docReads=0;},prepare:async(mode,permit)=>await prepareRemoteRetrieval(x.c.company_id,'34',x.secret,x.endpoint,up,undefined,'kb',x.request,mode,permit)};
+}
+for(const fault of ['none','no-match','old-grant','no-risk-approval','reuse-api-key','metadata-unauthorized','preflight-foreign','revoke-preflight','rotate-rag-key','rotate-bearer','rotate-evidence','revoke-after-dispatch','payload-version','wrong-content','duplicate-chunk','unpublished','publication-race','unknown-version','stale-hash','stale-chunk-version','foreign-chunk','wrong-metadata-tenant','staging-chunk','no-bearer','human-control','synthetic','cross-company','foreign-actor'])test('dynamic Singapore metadata/full admission contract: '+fault,async()=>{
+ const x=await liveMetadataFixture(fault);
+ const action=()=>accountedModelFetch(f.db,x.meta,x.endpoint,{method:'POST',body:x.request,headers:{'x-api-key':x.secret}},x.up,undefined,x.prepare);
+ if(['none','no-match'].includes(fault)){
+  const r=await action(),v=await r.json();assert.equal(v.context_found,fault!=='no-match');assert.equal(x.posts(),1);if(fault==='none'){assert.equal(v.selected_documents[0].authority.version_id,'dynamic-version-1');assert.equal(v.llm_context,undefined);assert(x.gets()>=5);}
+ }else{await assert.rejects(action,e=>e.code && e.code!=='KB_NO_MATCH');if(['old-grant','no-risk-approval','reuse-api-key','metadata-unauthorized','preflight-foreign','revoke-preflight','rotate-rag-key','rotate-bearer','rotate-evidence','no-bearer','human-control','synthetic','cross-company','foreign-actor'].includes(fault))assert.equal(x.posts(),0);}
+});
+test('dynamic metadata supports newly published documents beyond a fixed ten-document snapshot',async()=>{
+ const x=await liveMetadataFixture();
+ for(let n=1;n<=12;n++){const r=await accountedModelFetch(f.db,{...x.meta,operationId:'dynamic:'+crypto.randomUUID()},x.endpoint,{method:'POST',body:x.request,headers:{'x-api-key':x.secret}},x.up,undefined,x.prepare);const v=await r.json();assert.equal(v.selected_documents[0].authority.version_id,'dynamic-version-'+n);x.next();}
+ assert.equal(x.posts(),12);
+});
+test('dynamic metadata canonical fetchKBRag preserves grounded version/source and safe failure classification',async()=>{
+ const x=await liveMetadataFixture();globalThis.__c3KbClient=()=>f.db;globalThis.fetch=x.up;
+ try{const scope=await resolveTenantScope(x.c.id,undefined,x.c.company_id);const r=await fetchKBRag({query:'Please explain the current subscription policy',top_k:3},scope.scope,resolveKBEndpoint(),{uatContext:{conversationId:x.c.id,operationId:'dynamic-parser:'+crypto.randomUUID()}});assert.equal(r.success,true,JSON.stringify(r));assert.equal(r.documents[0].authority.version,'dynamic-version-1');assert.equal(r.documents[0].chunks[0].content.includes('subscription'),true);}finally{globalThis.fetch=realFetch;}
+});
+async function dynamicInboxFixture(fault='none'){
+ const x=await liveMetadataFixture(fault);f.env.SUPABASE_SERVICE_ROLE_KEY=f.env.SUPABASE_SECRET_KEY;f.env.LLM_MODEL_ASSIST='gemini-2.5-flash';f.env.GOOGLE_SERVICE_ACCOUNT_JSON='{}';
+ f.rows.user_roles=[{user_id:f.user.id,role:'admin'}];f.rows.agent_profile=[{id:crypto.randomUUID(),user_id:f.user.id,role:'admin',status:'active',display_name:'Isolated actor'}];f.rows.upstream_call_log=[];
+ f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify({version:2,bindings:[{...x.binding,operations:['knowledge','policy'],allow_assist:true}]});
+ if(fault==='inbox-revoked')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;
+ if(fault==='agent-revoked')f.rows.agent_profile[0].status='inactive';
+ const from=f.db.from;f.db.from=function(table){const q=from.call(this,table);q.in=()=>q;q.not=()=>q;return q;};f.db.auth={getUser:async()=>({data:{user:f.user},error:null})};globalThis.__c3InboxClient=()=>f.db;
+ let models=0;const prompts=[];
+ globalThis.fetch=async(url,init)=>{
+  if(String(url)!==f.url)return await x.up(url,init);
+  models++;const b=JSON.parse(init.body);const prompt=b.contents.flatMap(c=>c.parts.map(p=>p.text??'')).join('');prompts.push(prompt);
+  const answer=prompt.includes('Text to check:')?{status:'warning',summary:'Isolated grounded assessment',issues:[{excerpt:'subscription',policy_label:'Evidence 1',severity:'warning'}]}:{queries:[]};
+  return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(answer)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
+ };
+ const send=async(kind)=>{
+  const body=kind==='knowledge'?{query:'current service policy',top_k:3,conversation_id:x.c.id}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT UNIQUE: Please pause my subscription.':'CONVERSATION UNIQUE: Please pause my subscription.',context_mode:kind==='draft'?'draft':'conversation'};
+  const response=await(kind==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:response.status,data:await response.json()};
+ };
+ return {...x,send,models:()=>models,prompts};
+}
+for(const kind of ['knowledge','conversation','draft'])for(const fault of ['none','no-match','metadata-unauthorized','wrong-content','inbox-revoked','agent-revoked'])test('actual dynamic metadata Inbox '+kind+': '+fault,async()=>{
+ const x=await dynamicInboxFixture(fault);try{
+  const r=await x.send(kind);
+  if(fault==='none'){assert.equal(r.status,200,JSON.stringify(r));if(kind==='knowledge'){assert.equal(r.data.results?.[0]?.document_id,'dynamic-doc-1',JSON.stringify(r));assert.equal(r.data.results?.[0]?.content.includes('subscription'),true);}else{assert.equal(r.data.result.status,'warning');assert(x.prompts.some(p=>p.includes(kind==='draft'?'DRAFT UNIQUE':'CONVERSATION UNIQUE')));}}
+  else if(fault==='no-match'){assert.equal(r.status,200,JSON.stringify(r));if(kind!=='knowledge'){assert.equal(r.data.result.status,'insufficient_evidence');assert.equal(x.models(),0);}}
+  else if(fault==='agent-revoked'&&kind==='knowledge'){assert.equal(r.status,200,JSON.stringify(r));}
+  else{assert(r.status>=400,JSON.stringify(r));assert.notEqual(r.data.result?.status,'compliant');assert.notEqual(r.data.failure?.code,'KB_NO_MATCH');}
+ }finally{globalThis.fetch=realFetch;}
+});
+test('renewable signed evidence remains compatible inside revised mixed evidence settings',async()=>{
+ const x=await embeddingFixture();const g=JSON.parse(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION),b=g.bindings[0];
+ const keys=['remote_mode','remote_runtime_sha256','deployment_evidence_sha256','embedding_config_sha256','lineage_evidence_sha256','attestation_payload','attestation_signature'];
+ const record=Object.fromEntries(keys.map(k=>[k,b[k]]));record.reference_id='existing-attestation';
+ for(const k of ['deployment_evidence_sha256','lineage_evidence_sha256','attestation_payload','attestation_signature'])delete b[k];b.evidence_reference='existing-attestation';
+ f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify(g);f.env.KB_QUERY_EMBEDDING_EVIDENCE_JSON=JSON.stringify({version:2,records:[record,{reference_id:'unrelated-preserved-record'}]});
+ const r=await accountedModelFetch(f.db,x.meta,x.endpoint,{method:'POST',body:x.request},x.upstream,undefined,x.prepare);assert.equal(r.status,200);assert.equal(x.posts(),1);
+});
+test('dynamic permission does not consume, drop or rewrite unrelated standing bindings',async()=>{
+ const x=await liveMetadataFixture();const g=JSON.parse(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION),other={...x.binding,actor_id:crypto.randomUUID(),company_id:crypto.randomUUID()};g.bindings.push(other);f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify(g);const before=f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
+ const r=await accountedModelFetch(f.db,x.meta,x.endpoint,{method:'POST',body:x.request,headers:{'x-api-key':x.secret}},x.up,undefined,x.prepare);assert.equal(r.status,200);assert.equal(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION,before);assert.deepEqual(JSON.parse(before).bindings[1],other);
+});
