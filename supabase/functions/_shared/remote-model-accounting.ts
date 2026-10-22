@@ -1,5 +1,6 @@
 import { uatRun } from "./uat-execution-contract.ts";
 import {
+  originalPreviewKBRemoteScope,verifyOriginalPreviewKBRemoteProof,type OriginalPreviewKBPermit,
   type AccountingRpc,
   ModelAccountingError,
   sha256,
@@ -71,6 +72,7 @@ export async function prepareRemoteRetrieval(
   service: "kb" | "coach_sync" = "kb",
   requestBody?: string,
   admittedMode?: "legacy" | "uat" | "authenticated_preview",
+  originalPermit?:OriginalPreviewKBPermit,
 ): Promise<Record<string, string>> {
   // Only accountedModelFetch supplies admittedMode after persisted identity and
   // provider checks. Existing callers keep their prior scope. Never turn a
@@ -82,6 +84,8 @@ export async function prepareRemoteRetrieval(
     if (service === "kb") { uatRun(company); return {}; }
   }
   if(original && (!company || !requestBody))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
+  const permitted=original ? originalPreviewKBRemoteScope(originalPermit,company,tenant,endpoint,requestBody) : null;
+  if(original && !permitted)throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
   const scope: RemoteScope = {
     company:company!,
     tenant,
@@ -144,7 +148,7 @@ export async function prepareRemoteRetrieval(
   // The synthetic shared-attempt callback does not authorize original Preview.
   // Even a signed remote 200 cannot opt that scope into a different paid run.
   // Current B-O is Vertex-only and denies before this preparation is called.
-  if(original && body.mode!=="retrieval_only")throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
+  if(original && (body.mode!=="retrieval_only" || body.runtime_sha256!==permitted!.runtime || !verifyOriginalPreviewKBRemoteProof(originalPermit,body.runtime_sha256)))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
   return {
     "x-ai-company-id": company!,
     "x-c3-accounting-scope": payload,

@@ -884,3 +884,10 @@ for (const [name,language,configure,expected] of [
   if(language==="en")assert(!/[一-龿]/.test(r.reply),r.reply);
  });
 }
+
+for(const company of ['3d6e17b5-ec79-4f75-aa7f-eaa824ff8493','4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec'])Deno.test('Hosted 5dacabe8 Summary retains customer measurements when entity lacks matching attributes: '+company,()=>{
+ const i=recallFixture('請總結同票目前最新要求。');i.company_id=company;i.commerce!.company_id=company;i.memory!.company_id=company;
+ i.commerce!.state.entities=i.commerce!.state.entities.slice(0,1);i.commerce!.state.entities[0].attributes={};i.commerce!.state.entities[0].status='deferred';
+ i.memory!.current_customer_facts=[{key:'room_size',value:[{label:'客廳',value:'150平方呎'}],authority:'customer',source_message_id:i.source_message_id,entity_id:null,region:null},{key:'budget',value:{amount:5000,unit:'HKD'},authority:'customer',source_message_id:i.source_message_id,entity_id:null,region:null},{key:'priority',value:['quiet_operation_at_night','energy_efficiency'],authority:'customer',source_message_id:i.source_message_id,entity_id:null,region:null}];
+ const before=JSON.stringify(i),r=prepareConversationRecall(i,'zh-TW');assert(r.reply?.includes('150平方呎'),JSON.stringify(r));assert(r.reply?.includes('HK$5,000'),JSON.stringify(r));assert(r.reply?.includes('夜間安靜') && r.reply?.includes('能源效益'),JSON.stringify(r));assert(!r.reply?.includes('quiet_operation_at_night'));assert(JSON.stringify(i)===before,'read-only Summary changed canonical lifecycle/state');
+});

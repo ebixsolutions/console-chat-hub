@@ -564,9 +564,9 @@ export async function fetchKBRag(
       body: requestBody,
       signal: controller.signal,
     };
-    response = await accountedModelFetch(createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey()), {companyId:scope.aiCompanyId, legacyAuthority:scope.legacyAuthority, conversationId:opts?.uatContext?.conversationId ?? null, operationId:opts?.uatContext?.operationId ?? "", provider:"singapore-kb",purpose:"kb_embedding",slot:"context-search",attempt:1,request:requestBody},endpointCfg.ragUrl,init,fetch,undefined,async function accountingHeaders(admittedMode){return await prepareRemoteRetrieval(
+    response = await accountedModelFetch(createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey()), {companyId:scope.aiCompanyId, legacyAuthority:scope.legacyAuthority, conversationId:opts?.uatContext?.conversationId ?? null, operationId:opts?.uatContext?.operationId ?? "", provider:"singapore-kb",purpose:"kb_embedding",slot:"context-search",attempt:1,request:requestBody},endpointCfg.ragUrl,init,fetch,undefined,async function accountingHeaders(admittedMode,originalPermit){return await prepareRemoteRetrieval(
       scope.aiCompanyId,scope.singaporeTenantId,remoteAccountingSecret(credential,endpointCfg),
-      endpointCfg.ragUrl,fetch,opts?.signal,"kb",requestBody,admittedMode,
+      endpointCfg.ragUrl,fetch,opts?.signal,"kb",requestBody,admittedMode,originalPermit,
     );});
 
   } catch (error) {

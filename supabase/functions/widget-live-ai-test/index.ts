@@ -659,24 +659,46 @@ return async (req: Request) => {
     const receiveMs=Date.now()-receiveStarted;
     if (!isUuid(sent.message_id)) return json(req,{success:false,error:"visitor_receipt_unverified"},503);
     const pollStarted=Date.now();
-    const poll = await widgetRequest(supabaseUrl,serviceKey,tokenMatch[1],origin,"widget-poll-messages",{
-      conversation_id:conversationId,session_token:session.session_token,
-    });
-    const pollMs=Date.now()-pollStarted;
+    let receiptState:any=null;
+    let poll:any;
+    if(original) {
+      // Confirm only the exact durable Visitor row. Do not put another HTTP
+      // poll/full transcript read on the send ACK path. The original client
+      // polling mechanism still owns eventual AI/Agent delivery.
+      const receipt=await admin.from("messages").select("id,role,content,created_at,metadata,archive:conversations!inner(id,company_id,channel_config_id,visitor_session_id,metadata_source,status,assigned_agent_id,archive_session:visitor_session!inner(id,channel_config_id,visitor_fingerprint,visitor_metadata))")
+        .eq("id",sent.message_id).eq("conversation_id",conversationId).eq("role","visitor").eq("is_recalled",false).maybeSingle();
+      const row=receipt.data as Record<string,any>|null,parent=row?.archive,s=parent?.archive_session,sm=s?.visitor_metadata;
+      if(receipt.error || !row || row.id!==sent.message_id || row.role!=="visitor" || row.content!==query || row.metadata?.client_message_id!==clientMessageId ||
+        parent?.id!==conversationId || parent.company_id!==resolved.companyId || parent.channel_config_id!==resolved.channelId ||
+        !originalPreviewMetadata(parent.metadata_source,authData.user.id) || s?.id!==parent.visitor_session_id || s.channel_config_id!==resolved.channelId ||
+        s.visitor_fingerprint!==`widget-live-test:${authData.user.id}` || sm?.source!=="widget_live_test" || sm.owner_user_id!==authData.user.id || sm.test_mode!==true || sm.exclude_training!==true || sm.scope_mode!=="canonical")
+        return json(req,{success:false,error:"visitor_receipt_unverified"},503);
+      if(!await verifyOriginalPreview(admin,parent,undefined,false))return json(req,{success:false,error:"original_preview_authority_denied"},403);
+      receiptState=parent;
+      const human=HUMAN_CONTROL_STATUSES.has(String(parent.status)) || Boolean(parent.assigned_agent_id);
+      poll={messages:[{id:row.id,role:row.role,content:row.content,created_at:row.created_at,metadata:{client_message_id:clientMessageId}}],ai_generating:!human && sent.ai_reply_pending===true,
+        human_support:{state:human ? parent.assigned_agent_id ? "assigned" : "waiting" : "none"}};
+    } else {
+      poll = await widgetRequest(supabaseUrl,serviceKey,tokenMatch[1],origin,"widget-poll-messages",{
+        conversation_id:conversationId,session_token:session.session_token,
+      });
+    }
+    const receiptReadMs=Date.now()-pollStarted;
+    const pollMs=original ? 0 : receiptReadMs;
     // The existing receive transaction and EdgeRuntime.waitUntil own durable
-    // dispatch. One authenticated poll verifies the persisted Visitor; the
-    // existing client poll delivers the eventual answer without server waiting.
+    // dispatch. The exact scoped Visitor read verifies persistence; the existing
+    // client poll delivers the eventual answer without server waiting.
     const messages = poll.messages ?? [];
     if (original && !messages.some((m:any)=>m.id===sent.message_id && m.role==="visitor" && m.content===query))
       return json(req,{success:false,error:"visitor_receipt_unverified"},503);
-    const {data: state,error: stateError} = await admin.from("conversations").select("status,assigned_agent_id").eq("id",conversationId).eq("company_id",resolved.companyId).eq("channel_config_id",resolved.channelId).maybeSingle();
+    const {data: state,error: stateError} = receiptState ? {data:receiptState,error:null} : await admin.from("conversations").select("status,assigned_agent_id").eq("id",conversationId).eq("company_id",resolved.companyId).eq("channel_config_id",resolved.channelId).maybeSingle();
     if (stateError || !state) return json(req,{success:false,error:"test_conversation_lookup_failed"},500);
     const latestAssistant = [...messages].reverse().find((m:any) => m.role === "assistant" && m.metadata?.source_message_id === sent.message_id);
     const humanControl=HUMAN_CONTROL_STATUSES.has(String(state.status ?? "")) || Boolean(state.assigned_agent_id) ||
       Boolean(poll.human_support?.state && poll.human_support.state!=="none");
     deps.log({endpoint:"widget-live-ai-test",action,stage:"visitor_receipt_verified",source_message_id:sent.message_id,
       conversation_id:conversationId,correlation_id:correlationId,elapsed_ms:Date.now()-requestStarted,
-      receive_ms:receiveMs,poll_ms:pollMs,reply_persisted:Boolean(latestAssistant),generation_pending:sent.ai_reply_pending===true && !latestAssistant && !humanControl});
+      receive_ms:receiveMs,poll_ms:pollMs,receipt_read_ms:original ? receiptReadMs : 0,reply_persisted:Boolean(latestAssistant),generation_pending:sent.ai_reply_pending===true && !latestAssistant && !humanControl});
     return json(req, {
       success: true,
       mode: "persistent_live_ai_test",

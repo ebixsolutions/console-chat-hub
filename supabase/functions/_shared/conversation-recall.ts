@@ -1797,6 +1797,16 @@ export function prepareConversationRecall(
  * It renders current values and lifecycle, never an internal Markdown/JSON
  * projection, historical corrections, or the wording that requested recall.
  */
+export function renderCanonicalCustomerFactRecap(state:ConversationCommerceState,language:string):string|null {
+  const values=object(state.customer_constraints.customer_reported_facts);
+  const facts=Object.entries(values??{}).flatMap(([key,value])=>{
+    const row=object(value),p=object(row?.provenance);
+    return row && Object.prototype.hasOwnProperty.call(row,"value") && p?.source_type==="customer" && typeof p.source_message_id==="string"
+      ? [{key,value:row.value,authority:"customer",source_message_id:p.source_message_id}] : [];
+  });
+  return facts.length ? renderCustomerRecap({customer_facts:facts},language) : null;
+}
+
 function renderCustomerRecap(value: unknown, language: string): string {
   const v = object(value) ?? {};
   const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
@@ -1849,7 +1859,9 @@ function renderCustomerRecap(value: unknown, language: string): string {
     // Canonical entity bookkeeping is already rendered by describe(). It is
     // not a customer-facing fact label and must not leak into the recap.
     if (String(f?.key).startsWith("entity:")) return [];
-    if(entities.length && ["quantity","horsepower","room_size","brand_required"].includes(String(f?.key)))return [];
+    // The existence of an entity does not prove it contains the customer fact.
+    // In particular a deferred/undecided entity may have no area attributes.
+    // Keep current customer facts rather than dropping them from the Summary.
     if(!f || !["customer","canonical_commerce"].includes(String(f.authority)) || regions.some(r=>r?.region===f.region && r.temporal_scope==="future"))return [];
     const region=regionNames[String(f.region)]?.[l];
     const prefix=region ? region+(l===2?": ":" "):"";
@@ -1857,23 +1869,25 @@ function renderCustomerRecap(value: unknown, language: string): string {
     if(f.key==="horsepower" && Array.isArray(f.value) && f.value.every(x=>typeof x==="string"))return [prefix+f.value.map(x=>l===2?String(x).replace(/匹/g," hp"):String(x)).join(l===2?", ":"、")];
     if(f.key==="room_size" && Array.isArray(f.value))return f.value.flatMap(x=>{const row=object(x);return row && typeof row.label==="string" && typeof row.value==="string" ? [prefix+display(row.label)+" "+display(row.value)] : [];});
     if(f.key==="brand_required" && typeof f.value==="boolean")return [prefix+(f.value?["你要求指定品牌","你要求指定品牌","you require a specific brand"]:["你冇限定品牌","你没有限定品牌","you do not require a specific brand"])[l]];
-    const names: Record<string, [string,string,string]> = {priority:["優先需求","优先需求","priority"],budget:["預算","预算","budget"],room_area:["面積","面积","room area"],product_count:["商品數量","商品数量","product count"],staff_count:["人手","人手","staff count"],app_interest:["App 需要","App 需要","app needed"],preferred_interface:["使用介面","使用界面","preferred interface"],current_market:["目前市場","目前市场","current market"],desired_features:["需要功能","需要功能","required features"],future_markets:["未來市場","未来市场","future markets"]};
+    const names: Record<string, [string,string,string]> = {team_size:["團隊人數","团队人数","team size"],monthly_budget:["每月預算","每月预算","monthly budget"],automatic_renewal:["自動續訂","自动续订","automatic renewal"],preferred_interface_language:["介面語言","界面语言","interface language"],business_type:["業務類型","业务类型","business type"],priority:["優先需求","优先需求","priority"],budget:["預算","预算","budget"],room_area:["面積","面积","room area"],product_count:["商品數量","商品数量","product count"],staff_count:["人手","人手","staff count"],app_interest:["App 需要","App 需要","app needed"],preferred_interface:["使用介面","使用界面","preferred interface"],current_market:["目前市場","目前市场","current market"],desired_features:["需要功能","需要功能","required features"],future_markets:["未來市場","未来市场","future markets"]};
     const renderValue = (raw:unknown):string|undefined => {
       if(raw===null)return ["未確認","未确认","unknown"][l];
       if(typeof raw==="boolean")return (raw?["需要","需要","yes"]:["不需要","不需要","no"])[l];
-      if(typeof raw==="string")return regionNames[raw]?.[l] ?? ({'quiet operation':["安靜運作","安静运行","quiet operation"]} as Record<string,string[]>)[raw]?.[l] ?? display(raw);
+      if(typeof raw==="string")return regionNames[raw]?.[l] ?? ({'quiet operation':["安靜運作","安静运行","quiet operation"],quiet_operation_at_night:["夜間安靜","夜间安静","quiet operation at night"],energy_efficiency:["能源效益","能源效率","energy efficiency"],price:["價錢","价格","price"]} as Record<string,string[]>)[raw]?.[l] ?? display(raw.replace(/_/g," "));
       if(typeof raw==="number" && Number.isFinite(raw))return String(raw);
       if(Array.isArray(raw))return raw.map(renderValue).filter(x=>x!==undefined).join(l===2?", ":"、") || undefined;
       const typed=object(raw);
-      if(typed && typeof typed.amount==="number" && Number.isFinite(typed.amount) && typeof typed.unit==="string") {
-        const amount=typed.amount.toLocaleString('en-US',{maximumFractionDigits:20});
+      const number=typed?.amount ?? typed?.quantity;
+      if(typed && typeof number==="number" && Number.isFinite(number) && typeof typed.unit==="string") {
+        const amount=number.toLocaleString('en-US',{maximumFractionDigits:20});
         const currency:Record<string,string>={HKD:'HK$',USD:'US$',TWD:'NT$'};
-        return currency[typed.unit] ? currency[typed.unit]+amount : amount+' '+display(typed.unit);
+        const units:Record<string,string[]>={sq_ft:["平方呎","平方呎","sq ft"],person:["人","人","people"]};
+        return currency[typed.unit] ? currency[typed.unit]+amount : amount+' '+(units[typed.unit]?.[l] ?? display(typed.unit.replace(/_/g," ")));
       }
       return undefined; // Never serialize an internal object as customer prose.
     };
     const value = renderValue(f.value);
-    return value === undefined ? [] : [prefix+(names[String(f.key)]?.[l] ?? display(String(f.key)))+": "+value];
+    return value === undefined ? [] : [prefix+(names[String(f.key)]?.[l] ?? display(String(f.key).replace(/_/g," ")))+": "+value];
   });
   const retainedText=retained.length ? ["而家記低咗","目前已记录","I have noted " ][l]+retained.join(l===2?"; ":"；")+(l===2?".":"。") : "";
   const first = l === 2

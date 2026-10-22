@@ -1,3 +1,4 @@
+import {authorizeOriginalPreviewKB} from "../../supabase/functions/_shared/model-attempt-accounting.ts";
 import {accountedModelFetch,sha256} from "../../supabase/functions/_shared/model-attempt-accounting.ts";
 import {UAT_REVISION} from "../../supabase/functions/_shared/uat-execution-contract.ts";
 import {
@@ -288,7 +289,8 @@ Deno.test("Phase-1 synthetic run excludes Phase-2 Coach regardless of global fla
 });
 
 Deno.test("conditional original KB preparation requires signed request-bound retrieval-only evidence; it is not paid authority",async()=>{
- const secret='isolated-contract-key-not-production',endpoint='https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search',request=JSON.stringify({query:'fixture only',company_id:101});
+ const secret='isolated-contract-key-not-production',endpoint='https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search',request=JSON.stringify({query:'fixture only',company_id:101,candidate_top_k:10,max_documents:5,max_summary_chunks:1,max_full_content_chunks:3,score_threshold:0.05});
+ const savedGrant=Deno.env.get('ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION'),savedMap=Deno.env.get('KB_SINGAPORE_TENANT_MAP_JSON');try {
  for(const company of ['3d6e17b5-ec79-4f75-aa7f-eaa824ff8493','4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec']) {
   for(const fault of ['none','tenant','company','nonce','request','runtime','signature','shared','malformed']) {
    let calls=0;
@@ -300,12 +302,17 @@ Deno.test("conditional original KB preparation requires signed request-bound ret
     const raw=fault==='malformed'?'not json':JSON.stringify(body);
     return new Response(raw,{headers:{'x-c3-accounting-signature':fault==='signature'?'0'.repeat(64):await signRemote(raw,secret)}});
    };
+   const actor='00000000-0000-4000-8000-000000000009',channel=company.startsWith('3d6e')?'b0000000-0000-0000-0000-000000000001':'0405282f-77dc-47cf-8074-99dd3dc6c393',conversation='00000000-0000-4000-8000-000000000010';
+   Deno.env.set('KB_SINGAPORE_TENANT_MAP_JSON',JSON.stringify({[company]:'101'}));Deno.env.set('ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION',JSON.stringify({version:1,bindings:[{actor_id:actor,company_id:company,channel_id:channel,tenant_id:'101',endpoint,provider:'singapore-kb',purpose:'kb_embedding',remote_mode:'retrieval_only',allow_remote_embedding:false,remote_runtime_sha256:'a'.repeat(64)}]}));
+   const db={from:()=>({select(){return this},eq(){return this},maybeSingle:async()=>({data:{id:conversation,company_id:company,channel_config_id:channel,metadata_source:{owner_user_id:actor}},error:null})})};
+   const permit=await authorizeOriginalPreviewKB(db,{companyId:company,conversationId:conversation,provider:'singapore-kb',purpose:'kb_embedding',slot:'context-search',attempt:1,request},endpoint,{method:'POST',body:request});assert(permit);
    let denied=false;
-   try {const headers=await prepareRemoteRetrieval(company,'101',secret,endpoint,upstream,undefined,'kb',request,'authenticated_preview');assert(fault==='none');assert(headers['x-c3-accounting-mode']==='retrieval_only');assert(!JSON.stringify(headers).includes(secret));}
+   try {const headers=await prepareRemoteRetrieval(company,'101',secret,endpoint,upstream,undefined,'kb',request,'authenticated_preview',permit);assert(fault==='none');assert(headers['x-c3-accounting-mode']==='retrieval_only');assert(!JSON.stringify(headers).includes(secret));}
    catch(error){denied=true;assert(fault!=='none');assert(['KB_DOWNSTREAM_ACCOUNTING_UNPROVEN','UAT_REMOTE_BOUND_UNVERIFIED'].includes((error as {code:string}).code));}
    assert(denied===(fault!=='none') && calls===1);
   }
  }
+ }finally{for(const [key,value] of [['ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION',savedGrant],['KB_SINGAPORE_TENANT_MAP_JSON',savedMap]])value===undefined?Deno.env.delete(key!):Deno.env.set(key!,value);}
 });
 Deno.test("synthetic KB remote-bound denial still precedes preparation and all remote transport",async()=>{
  const keys=['C3_TEMP_UAT_RUN_ID','C3_TEMP_UAT_SOURCE_REVISION'];const before=keys.map(k=>Deno.env.get(k));

@@ -139,7 +139,9 @@ export function looksLikeInjection(input: string): boolean {
 }
 
 function serviceClient(): SupabaseClient {
-  return createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey());
+  return createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey(),{
+    auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false},
+  });
 }
 
 function log(tag: string, fields: Record<string, unknown>): void {

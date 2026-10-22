@@ -221,6 +221,16 @@ export function semanticFrameToStateEvents(
   }
   const p = provenance(sourceMessageId, occurredAt);
   const events: CommerceStateEvent[] = [];
+  // Generic customer background/requirements have a canonical owner even when
+  // there is no purchasable entity. Use the existing constraint event/CAS path,
+  // keeping typed values and server provenance, never merchant authority.
+  const customerFacts=frame.customer_facts ?? [];
+  if(frame.operation!=="NO_STATE_CHANGE" && customerFacts.length) {
+    const old=previous.customer_constraints.customer_reported_facts;
+    const facts:Record<string,unknown>=old && typeof old==="object" && !Array.isArray(old) ? {...old as Record<string,unknown>} : {};
+    for(const fact of customerFacts)if(!["__proto__","prototype","constructor"].includes(fact.key))facts[fact.key]={value:fact.value,provenance:p};
+    events.push({type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:facts});
+  }
 
   for (const entity of frame.entities) {
     if (entity.confidence < 0.55) continue;

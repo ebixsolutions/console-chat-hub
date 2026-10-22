@@ -4,6 +4,7 @@ import { resolveIndustryProfile } from "../_shared/industry-runtime-adapter.ts";
 import { phase1CoachAllowed } from "../_shared/remote-model-accounting.ts";
 import {
   prepareConversationRecall,
+  renderCanonicalCustomerFactRecap,
   type RecallCommerceSnapshot,
   type TrustedPersistedMemoryReadback,
 } from "../_shared/conversation-recall.ts";
@@ -4888,10 +4889,12 @@ async function orchestrationGenerateReply(
     outcome: _a3Commerce,
     authoritative_address_correction: Boolean(_c3ResolvedAddressCorrection),
   });
+  const _customerGuidance = isCustomerGuidanceRequest(_h1LastMsg, _a3SemanticFrame) &&
+    classifyLocalTopicRisk(_h1LastMsg)?.level !== "high";
   // A product clarification may coexist with customer-owned changes. Commit
   // those changes and refresh bounded context before emitting an AI reply.
   // Explicit R1 is handled by its control transaction farther below.
-  if (!_explicitHandoffRequested && _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")) {
+  if (!_explicitHandoffRequested && !_customerGuidance && _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")) {
     const immediate = await persistNaturalImmediateResponse(
       supabaseAdmin, conversation_id, _h1SourceMessageId,
       _effectiveNaturalCustomerIntent, _visitorLang,
@@ -4908,7 +4911,7 @@ async function orchestrationGenerateReply(
     { explicit_handoff: isHandoffIntent(_h1LastMsg) },
   );
   if (
-    !_explicitHandoffRequested && _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
+    !_explicitHandoffRequested && !_customerGuidance && _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
     _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
   ) {
@@ -4967,8 +4970,6 @@ async function orchestrationGenerateReply(
     );
   }
 
-  const _customerGuidance = isCustomerGuidanceRequest(_h1LastMsg, _a3SemanticFrame) &&
-    classifyLocalTopicRisk(_h1LastMsg)?.level !== "high";
   console.log(JSON.stringify({
     event: "customer_guidance_routing",
     source_message_id: _h1SourceMessageId,
@@ -4980,7 +4981,7 @@ async function orchestrationGenerateReply(
     guidance_selected: _customerGuidance,
   }));
   const _customerGuidanceInstruction = _customerGuidance
-    ? "General customer decision support: answer the actual question with useful trade-offs or one relevant clarification. Use only customer-authored context for exact needs and measurements. Do not assert merchant model recommendations, specifications, prices, stock, policy, suitability guarantees or completed actions. Do not invent numerical thresholds. Distinguish general advice from facts needing verification."
+    ? "General customer decision support: answer the actual question first with useful trade-offs in 3-5 short points, without a lengthy introduction or repeating the question. Use the latest customer-authored Memory and corrections for exact needs and measurements; Preserve false and zero; null remains unknown, never a confirmed value. Do not ask again for a supplied product type, purpose, quantity, area, budget or priority. A request for a measurement checklist calls for declarative instructions about unmeasured site dimensions, not a questionnaire reconfirming known requirements. If an unprovided fact is essential to the actual decision, ask one narrowly scoped question about that missing fact after answering the supported part. Do not assert merchant model recommendations, specifications, prices, stock, policy, suitability guarantees or completed actions. Do not invent numerical thresholds. Distinguish general advice from facts needing verification."
     : "";
   const _naturalGuidanceReply: string | null = null;
 
@@ -4989,7 +4990,7 @@ async function orchestrationGenerateReply(
     _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     _c3Recall.decision.handled && _c3Recall.decision.fact_type === "summary" &&
     Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
-  const _c3PlannedReply = _customerGuidance ? null : _c3IsGroundedReadOnlyRecap
+  let _c3PlannedReply = _customerGuidance ? null : _c3IsGroundedReadOnlyRecap
     ? _c3Recall.reply
     : _c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")
     ? null
@@ -5014,7 +5015,15 @@ async function orchestrationGenerateReply(
   // explicit_handoff_tx path instead of committing a clarification-shaped AI
   // reply that leaves the conversation under AI control.
   if (_c3PlannedReply && !_explicitHandoffRequested) {
-    const readOnlyRecapProof = _c3IsGroundedReadOnlyRecap && _c3Memory &&
+    // The Frozen portfolio proof requires at least one commerce entity. A
+    // customer-only recap must not claim that exemption. Use only the actual
+    // customer facts in the canonical state with its existing readback proof;
+    // never fabricate a projection from Memory or change a historical ticket.
+    const customerOnlyReply = _c3IsGroundedReadOnlyRecap && _c3CommerceSnapshot?.state.entities.length === 0
+      ? renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang) : null;
+    const customerOnlyRecap = Boolean(customerOnlyReply);
+    if(customerOnlyReply)_c3PlannedReply=customerOnlyReply;
+    const readOnlyRecapProof = _c3IsGroundedReadOnlyRecap && !customerOnlyRecap && _c3Memory &&
         _c3CommerceSnapshot && _c3ReadOnlyMemoryHash && _c3ReadOnlyMemorySource
       ? await buildB2ReadOnlyRecapProof({
         conversation_id, company_id: _criticalE2ExpectedTenantId ?? "",
@@ -5040,6 +5049,8 @@ async function orchestrationGenerateReply(
       ..._c3Recall.metadata,
       response_route: readOnlyRecapProof
         ? "canonical_memory_recall"
+        : customerOnlyRecap
+        ? "commerce_state_answer"
         : _naturalGuidanceReply
         ? "product_guidance"
         : _c3ServicePlan.action === "historical_calculation"
@@ -5050,6 +5061,12 @@ async function orchestrationGenerateReply(
         ? "c3_current_state_checklist"
         : _c3Recall.metadata.response_route,
       service_plan_version: _c3ServicePlan.version,
+      ...(customerOnlyRecap && _c3CommerceSnapshot ? {
+        customer_fact_recall:true,commerce_authority:"CONVERSATION_STATE",transaction_mutation:"NONE",
+        commerce_state_revision:_c3CommerceSnapshot.revision,commerce_state_persist_result:"read_only",
+        commerce_state_persistence_classification:"NO_SEMANTIC_CHANGE",commerce_state_path:"commerce.authoritative_projection",
+        commerce_state_readback_proof:buildB2AuthoritativeReadbackProof(_c3CommerceSnapshot.state,"commerce.authoritative_projection"),
+      } : {}),
       service_action: _c3ServicePlan.action,
       missing_slots: _c3ServicePlan.missing_slots,
       clarification_target: _c3ServicePlan.clarification_target,
@@ -6646,7 +6663,7 @@ async function orchestrationGenerateReply(
     : [
       basePrompt,
       CUSTOMER_CONVERSATION_POLICY,
-      buildServicePlanPromptBlock(_c3ServicePlan),
+      _customerGuidance ? "" : buildServicePlanPromptBlock(_c3ServicePlan),
       _conversationContinuityBlock,
       _c3MemoryContext,
       returnToAiGuard,
@@ -6706,7 +6723,7 @@ async function orchestrationGenerateReply(
       required_parts: [
         basePrompt,
         CUSTOMER_CONVERSATION_POLICY,
-        buildServicePlanPromptBlock(_c3ServicePlan),
+        _customerGuidance ? "" : buildServicePlanPromptBlock(_c3ServicePlan),
         returnToAiGuard,
         _customerAdvisoryBlock,
         _customerGuidanceInstruction,
@@ -6732,6 +6749,7 @@ async function orchestrationGenerateReply(
     companyId: _generationCompanyId,
     conversationId: conversation_id,
     tag: "generate-reply-orchestration",
+    ...(_customerGuidance ? {thinkingBudget:0} : {}),
     responseFormat: "text",
     signal: requestSignal,
   });
@@ -6950,7 +6968,7 @@ async function orchestrationGenerateReply(
         user:_generationUserInput,maxTokens:resolveGenerationMaxTokens(),
         operationId:`generate-reply:orchestration:${conversation_id}:${source_message_id}:known-context-repair`,
         companyId:_generationCompanyId,conversationId:conversation_id,
-        tag:"generate-reply-known-context-repair",responseFormat:"text",signal:requestSignal});
+        tag:"generate-reply-known-context-repair",thinkingBudget:0,responseFormat:"text",signal:requestSignal});
       if (repaired.ok) {
         aiReplyContent = repaired.text;
         committed = await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,source_message_id,

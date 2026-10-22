@@ -1953,7 +1953,8 @@ function reduceSingleTurn(
   // Identity-only correction frames contain no corrected value. They cannot
   // suppress an explicitly scoped deterministic customer assignment.
   const semanticAuthoritative = semanticProposed &&
-    semanticEventsRaw.some(event => event.type !== "SET_CONTEXT" && event.type !== "ENSURE_ENTITY");
+    semanticEventsRaw.some(event => event.type !== "SET_CONTEXT" && event.type !== "ENSURE_ENTITY" &&
+      !(event.type==="SET_CUSTOMER_CONSTRAINT" && event.key==="customer_reported_facts"));
   let semanticEvents = bookingWithoutDelivery
     ? semanticEventsRaw.filter((event) => event.type !== "SET_DELIVERY")
     : semanticEventsRaw;
