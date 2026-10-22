@@ -971,10 +971,17 @@ export function splitCustomerOperationClauses(text: string): string[] {
 /** Customer-reported site observation. Questions, uncertainty and double
  * negation remain unknown; absence is a real value, never a positive keyword. */
 export function customerSunExposure(text: string): "none" | "strong_afternoon_sun" | null {
-  const t=clean(text,1600);
+  const observe=(t:string):"none"|"strong_afternoon_sun"|null=>{
   if(!/(?:西斜|西曬|西晒|下午.{0,6}(?:日照|曬|晒)|afternoon\s+sun|west[- ]?facing)/iu.test(t) || /[?？]|有冇|有沒有|有没有|唔知|不知道|不清楚|冇講|未講|(?:not sure|unknown|don't know|not said|never said|is there|does .*have)|如果|假如|假設|假设|也許|也许|可能|\b(?:if|suppose|perhaps)\b/iu.test(t))return null;
   if(/(?:唔係|不是|并非|並非|not).{0,4}(?:冇|沒有|没有|無|无|no\b)/iu.test(t))return null;
   return /(?:冇|沒有|没有|無|无|不受|唔會|不會|不会|no\b|not\b|without\b).{0,25}(?:西斜|西曬|西晒|下午|afternoon|west)/iu.test(t) ? "none" : "strong_afternoon_sun";
+  };
+  // A factual observation and a subsequent advice question are separate speech
+  // acts. Question/conditional guards apply to their own clause, never erase a
+  // preceding explicit observation. Conflicting observations stay unbound here;
+  // the existing scoped runtime merger handles each clause separately.
+  const values=clean(text,1600).split(/[，,。;；\n]|(?<=[.!?])\s+/u).map(observe).filter((v):v is "none"|"strong_afternoon_sun"=>v!==null);
+  return values.length && new Set(values).size===1 ? values[0] : null;
 }
 
 /** Explicit paired axes and a declared metric unit only. An unlabelled pair
