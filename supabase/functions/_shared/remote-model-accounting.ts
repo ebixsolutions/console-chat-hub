@@ -1,4 +1,5 @@
 import { uatRun } from "./uat-execution-contract.ts";
+import { verifyQueryEmbeddingEvidence } from "./preview-kb-query-embedding.ts";
 import {
   originalPreviewKBRemoteScope,verifyOriginalPreviewKBRemoteProof,type OriginalPreviewKBPermit,
   type AccountingRpc,
@@ -86,6 +87,15 @@ export async function prepareRemoteRetrieval(
   if(original && (!company || !requestBody))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
   const permitted=original ? originalPreviewKBRemoteScope(originalPermit,company,tenant,endpoint,requestBody) : null;
   if(original && !permitted)throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
+  if(original && permitted?.evidence) {
+    // Separately approved legacy query-embedding compatibility: verify existing
+    // operator evidence offline, not a fictional retrieval_only remote route.
+    // No remote I/O occurs here; the single original RAG POST follows only
+    // after this opaque permit is consumed by accountedModelFetch.
+    const attestation=await verifyQueryEmbeddingEvidence(permitted.evidence,credential);
+    if(!verifyOriginalPreviewKBRemoteProof(originalPermit,permitted.runtime,attestation))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
+    return {};
+  }
   const scope: RemoteScope = {
     company:company!,
     tenant,

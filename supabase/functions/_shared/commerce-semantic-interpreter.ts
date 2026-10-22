@@ -6,6 +6,7 @@ import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
   COMMERCE_SEMANTIC_NATIVE_INSTRUCTIONS,
   type SemanticContractRejection,
+  type SemanticContractDiagnostic,
   type CommerceSemanticFrame,
   decodeCommerceSemanticWire,
   normalizeCommerceSemanticFrame,
@@ -36,6 +37,7 @@ export interface CommerceSemanticInterpretResult {
   failure?: ExecutionFailure;
   request_id?: string;
   contract_rejection?: SemanticContractRejection;
+  contract_diagnostic?: SemanticContractDiagnostic;
 }
 
 const SYSTEM = `You are a multilingual commerce semantic interpreter.
@@ -358,7 +360,11 @@ export async function interpretCommerceSemantics(
     };
   }
   let contractRejection: SemanticContractRejection | undefined;
-  const rejected = (reason: SemanticContractRejection) => { contractRejection ??= reason; };
+  let contractDiagnostic: SemanticContractDiagnostic | undefined;
+  const rejected = (reason: SemanticContractRejection, diagnostic?: SemanticContractDiagnostic) => {
+    contractRejection ??= reason;
+    contractDiagnostic ??= diagnostic;
+  };
   const frame = normalizeCommerceSemanticFrame(
     decodeCommerceSemanticWire(parsed, rejected), rejected,
   );
@@ -369,6 +375,7 @@ export async function interpretCommerceSemantics(
       failure_code: "LLM_INVALID_OUTPUT",
       failure_stage: "semantic_contract",
       contract_rejection: contractRejection,
+      contract_diagnostic: contractDiagnostic,
       failure: executionFailure("LLM_INVALID_OUTPUT",{stage:"canonical_validation",request_id:result.request_id,source_message_id:input.source_message_id}),
       request_id: result.request_id,
     };

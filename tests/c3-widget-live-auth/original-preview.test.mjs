@@ -1,10 +1,11 @@
+import './semantic-bounds.test.mjs';
 import {execFileSync} from 'node:child_process';
 import test from 'node:test';import assert from 'node:assert/strict';import {build} from 'esbuild';
 // Actual wrapper + signed persisted authority + paid-dispatch boundary. Only
 // Auth/DB/Widget transport/provider are isolated adapters. Never Hosted PASS.
 const f={};globalThis.Deno={env:{get:k=>f.env?.[k]},serve(){}};
-const out=await build({stdin:{contents:`export {createWidgetLiveHandler} from './supabase/functions/widget-live-ai-test/index.ts'; export * from './supabase/functions/_shared/original-widget-preview.ts'; export {trustedDispatchScope} from './supabase/functions/_shared/uat-execution-contract.ts'; export {accountedModelFetch} from './supabase/functions/_shared/model-attempt-accounting.ts'; export {prepareRemoteRetrieval,signRemote} from './supabase/functions/_shared/remote-model-accounting.ts'; export {fetchKBRag,resolveTenantScope,resolveKBEndpoint} from './supabase/functions/_shared/kb-client.ts';`,resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'sdk-transport-only',setup(b){if(process.env.C3_KB_ADMISSION_SOURCE_REF)b.onLoad({filter:/supabase\/functions\/_shared\/(kb-client|model-attempt-accounting|remote-model-accounting)\.ts$/},a=>({contents:execFileSync('git',['show',process.env.C3_KB_ADMISSION_SOURCE_REF+':'+a.path.slice(process.cwd().length+1)],{encoding:'utf8'}),loader:'ts'}));b.onResolve({filter:/^https:\/\/esm.sh\//},a=>({path:a.path,namespace:'sdk'}));b.onLoad({filter:/.*/,namespace:'sdk'},()=>({contents:'export const createClient=(url,key)=>globalThis.__c3KbClient(url,key);'}));}}]});
-const {createWidgetLiveHandler,ORIGINAL_PREVIEW_AUTHORIZATION,ORIGINAL_PREVIEW_ACCOUNTS,signOriginalPreview,verifyOriginalPreview,trustedDispatchScope,accountedModelFetch,fetchKBRag,resolveTenantScope,resolveKBEndpoint,prepareRemoteRetrieval,signRemote}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
+const out=await build({stdin:{contents:`export {createWidgetLiveHandler} from './supabase/functions/widget-live-ai-test/index.ts'; export * from './supabase/functions/_shared/original-widget-preview.ts'; export {trustedDispatchScope} from './supabase/functions/_shared/uat-execution-contract.ts'; export {accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit} from './supabase/functions/_shared/model-attempt-accounting.ts'; export {prepareRemoteRetrieval,signRemote} from './supabase/functions/_shared/remote-model-accounting.ts'; export {fetchKBRag,resolveTenantScope,resolveKBEndpoint} from './supabase/functions/_shared/kb-client.ts';`,resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'sdk-transport-only',setup(b){if(process.env.C3_KB_ADMISSION_SOURCE_REF)b.onLoad({filter:/supabase\/functions\/_shared\/(kb-client|model-attempt-accounting|remote-model-accounting)\.ts$/},a=>({contents:execFileSync('git',['show',process.env.C3_KB_ADMISSION_SOURCE_REF+':'+a.path.slice(process.cwd().length+1)],{encoding:'utf8'}),loader:'ts'}));b.onResolve({filter:/^https:\/\/esm.sh\//},a=>({path:a.path,namespace:'sdk'}));b.onLoad({filter:/.*/,namespace:'sdk'},()=>({contents:'export const createClient=(url,key)=>globalThis.__c3KbClient(url,key);'}));}}]});
+const {createWidgetLiveHandler,ORIGINAL_PREVIEW_AUTHORIZATION,ORIGINAL_PREVIEW_ACCOUNTS,signOriginalPreview,verifyOriginalPreview,trustedDispatchScope,accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit,fetchKBRag,resolveTenantScope,resolveKBEndpoint,prepareRemoteRetrieval,signRemote}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
 const realFetch=globalThis.fetch;const realKbClient=globalThis.__c3KbClient;test.after(()=>{globalThis.fetch=realFetch;if(realKbClient===undefined)delete globalThis.__c3KbClient;else globalThis.__c3KbClient=realKbClient;});
 const body=JSON.stringify({contents:[{role:'user',parts:[{text:'Compare options for my business.'}]}],generationConfig:{maxOutputTokens:2048}});
 function setup(account,{grant=true}={}){
@@ -151,4 +152,103 @@ for(const account of ORIGINAL_PREVIEW_ACCOUNTS)for(const fault of ['none','grant
 for(const account of ORIGINAL_PREVIEW_ACCOUNTS)test(account.email+': Origin revocation between durable receive and receipt fails closed without another poll or resend',async()=>{
  setup(account);f.afterReceive=()=>{f.rows.channel_config[0].allowed_origins=[];};const id=crypto.randomUUID();
  const r=await request({action:'original_preview_send',client_message_id:id,query:'Please explain selection trade-offs without a lookup.'});assert.equal(r.status,403);assert.equal(r.data.error,'widget_origin_or_channel_revoked');assert.equal(r.data.delivery_receipt,undefined);assert.equal(f.rows.messages.filter(m=>m.role==='visitor').length,1);assert.equal(f.transport.filter(u=>u.endsWith('receive-widget-message')).length,1);assert.equal(f.transport.filter(u=>u.endsWith('widget-poll-messages')).length,0);
+});
+
+// Every credential/runtime/evidence here is an isolated fixture. No model, KB
+// server or Production is contacted; these are not Hosted acceptance receipts.
+const fixtureDigest=async s=>Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))).toString('hex');
+async function embeddingFixture(fault='none') {
+ setup(ORIGINAL_PREVIEW_ACCOUNTS[0]);f.user.id='3bdf936e-b543-41d8-9fff-fa020a85f3f6';f.rows.company_membership[0].user_id=f.user.id;
+ const {c}=await start(),secret='isolated-existing-kb-key-not-production';
+ const content='Isolated published subscription policy; not merchant data.';
+ const endpoint='https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search';
+ const a={protocol:'original-preview-query-embedding-v1',actor:f.user.id,company:c.company_id,channel:c.channel_config_id,tenant:'34',endpoint,
+  runtime_sha256:await fixtureDigest('ISOLATED_RUNTIME_NOT_LIVE'),deployment_evidence_sha256:await fixtureDigest('ISOLATED_DEPLOYMENT_RECEIPT'),embedding_config_sha256:await fixtureDigest('ISOLATED_EMBEDDING_SETTINGS'),lineage_evidence_sha256:await fixtureDigest('ISOLATED_LINEAGE_RECEIPT'),
+  observed_at:Math.floor(Date.now()/1000)-1,expires:Math.floor(Date.now()/1000)+600,
+  deployment_pinned_until_expiry:true,lineage_pinned_until_expiry:true,query_embedding_calls:1,embedding_retries:0,generation_calls:0,ingestion_allowed:false,reindex_allowed:false,max_query_bytes:2048,
+  documents:[{document_id:'fixture-published-policy',version_id:'fixture-version-2',chunks:[{chunk_id:'fixture-chunk-2',content_sha256:await fixtureDigest(content)}]}]};
+ if(fault==='expired')a.expires=a.observed_at-1;
+ if(fault==='future')a.observed_at=Math.floor(Date.now()/1000)+100;
+ if(fault==='retries')a.embedding_retries=1;
+ if(fault==='generation')a.generation_calls=1;
+ if(fault==='mutable-runtime')a.deployment_pinned_until_expiry=false;
+ if(fault==='mutable-lineage')a.lineage_pinned_until_expiry=false;
+ if(fault==='ingestion')a.ingestion_allowed=true;
+ if(fault==='foreign-attestation')a.tenant='35';
+ a.lineage_evidence_sha256=await fixtureDigest(JSON.stringify(a.documents,(_key,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v));
+ if(fault==='lineage-digest')a.lineage_evidence_sha256=await fixtureDigest('WRONG_LINEAGE_SNAPSHOT');
+ const payload=JSON.stringify(a);
+ const binding={actor_id:fault==='actor'?crypto.randomUUID():f.user.id,company_id:c.company_id,channel_id:c.channel_config_id,tenant_id:'34',endpoint,provider:'singapore-kb',purpose:'kb_embedding',remote_mode:'query_embedding_attested_v1',allow_remote_embedding:true,
+  remote_runtime_sha256:fault==='runtime'?await fixtureDigest('OTHER_RUNTIME'):a.runtime_sha256,deployment_evidence_sha256:a.deployment_evidence_sha256,lineage_evidence_sha256:a.lineage_evidence_sha256,
+  embedding_config_sha256:a.embedding_config_sha256,
+  attestation_payload:payload,attestation_signature:fault==='signature'?'f'.repeat(64):await signRemote(payload,secret)};
+ if(fault!=='no-grant')f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify({version:2,bindings:[binding]});
+ if(fault==='BO-revoked')delete f.env.ORIGINAL_WIDGET_PREVIEW_AUTHORIZATION;
+ if(fault==='human-control')c.status='pending';
+ if(fault==='assigned-agent')c.assigned_agent_id=crypto.randomUUID();
+ f.env.KB_SINGAPORE_TENANT_MAP_JSON=JSON.stringify({[c.company_id]:fault==='mapping'?'35':'34'});
+ f.env.KB_SINGAPORE_TENANT_API_KEYS_JSON=JSON.stringify({'34':secret});
+ const request=JSON.stringify({query:'What is the published subscription policy?',company_id:34,candidate_top_k:10,max_documents:5,max_summary_chunks:1,max_full_content_chunks:3,score_threshold:0.05});
+ const meta={companyId:c.company_id,conversationId:c.id,operationId:'kb:'+crypto.randomUUID(),provider:'singapore-kb',purpose:'kb_embedding',slot:'context-search',attempt:fault==='attempt'?2:1,request};
+ let posts=0;
+ const upstream=async(url,init)=>{
+  assert.equal(String(url),endpoint,'existing API only; no invented accounting endpoint');assert.equal(init.method,'POST');assert.equal(init.redirect,'error');posts++;
+  if(fault==='unknown')throw new TypeError('isolated transport unknown');
+  if(fault==='revoke-response')delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
+  if(fault==='no-match')return Response.json({success:true,context_found:false,selected_documents:[],citations:[]});
+  const d={document_id:'fixture-published-policy',title:'Fixture policy',source_type:'policy',document_score:0.99,evidence:[{chunk_id:'fixture-chunk-2',chunk_type:'full_content',content:fault==='changed-content'?'Changed unreviewed content':content,score:0.99}]};
+  if(fault==='foreign-response')d.tenant_id='35';
+  if(fault==='old-version')d.version_id='fixture-version-1';
+  if(fault==='draft')d.authority={publication_state:'draft'};
+  if(fault==='unreviewed-chunk')d.evidence[0].chunk_id='unreviewed-chunk';
+  return Response.json({success:true,context_found:true,selected_documents:[d],llm_context:{combined_text:'UNTRUSTED COMBINED TEXT'}});
+ };
+ const prepare=async(mode,permit)=>{
+  if(fault==='proof-bypass')return {};
+  const headers=await prepareRemoteRetrieval(c.company_id,'34',secret,endpoint,upstream,undefined,'kb',request,mode,permit);
+  if(fault==='revoke-prepare')delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
+  return headers;
+ };
+ return {c,secret,endpoint,request,meta,upstream,prepare,posts:()=>posts};
+}
+
+for(const fault of ['none','no-match','no-grant','BO-revoked','human-control','assigned-agent','actor','mapping','attempt','signature','expired','future','runtime','lineage-digest','retries','generation','ingestion','mutable-runtime','mutable-lineage','foreign-attestation','proof-bypass','revoke-prepare','revoke-response','foreign-response','old-version','draft','changed-content','unreviewed-chunk','unknown'])test('Frankie separately authorized existing query embedding, closed controls and current lineage: '+fault,async()=>{
+ const x=await embeddingFixture(fault);let result,error;
+ try{result=await accountedModelFetch(f.db,x.meta,x.endpoint,{method:'POST',body:x.request},x.upstream,undefined,x.prepare);}catch(e){error=e;}
+ const afterDispatch=['revoke-response','foreign-response','old-version','draft','changed-content','unreviewed-chunk','unknown'].includes(fault);
+ if(['none','no-match'].includes(fault)) {
+  assert.equal(error,undefined);assert.equal(x.posts(),1);
+  const data=await result.json();assert.equal(data.context_found,fault==='none');
+  if(fault==='none'){assert.equal(data.selected_documents[0].authority.tenant_id,'34');assert.equal(data.selected_documents[0].authority.version_id,'fixture-version-2');assert.equal(data.selected_documents[0].authority.currentness,'current');assert(!JSON.stringify(data).includes('UNTRUSTED COMBINED TEXT'));}
+ }else {assert(error,'fault admitted');assert.equal(x.posts(),afterDispatch?1:0);}
+ assert.equal(f.provider,1,'no additional Vertex repair/retry');assert.equal(f.rpc.length,0,'no synthetic quota/new accounting subsystem');
+});
+
+test('existing query embedding integrates with the canonical KB parser and published version authority',async()=>{
+ const x=await embeddingFixture();const scope=await resolveTenantScope(x.c.id,undefined,x.c.company_id);assert.equal(scope.resolved,true);
+ globalThis.fetch=x.upstream;
+ const result=await fetchKBRag({query:'What is the published subscription policy?',top_k:3},scope.scope,resolveKBEndpoint(),{uatContext:{conversationId:x.c.id,operationId:'kb:'+crypto.randomUUID()}});
+ assert.equal(result.success,true,JSON.stringify(result));assert.equal(result.documents.length,1);assert.equal(result.documents[0].authority.version,'fixture-version-2');assert.equal(result.documents[0].authority.publication_state,'published');assert.equal(x.posts(),1);
+});
+
+test('one opaque query-embedding permit cannot be concurrently consumed twice or replayed',async()=>{
+ const x=await embeddingFixture();const permit=await authorizeOriginalPreviewKB(f.db,x.meta,x.endpoint,{method:'POST',body:x.request});assert(permit);
+ assert.equal(consumeOriginalPreviewKBPermit(permit),false,'unverified evidence consumed');
+ await x.prepare('authenticated_preview',permit);
+ const outcomes=await Promise.all([Promise.resolve().then(()=>consumeOriginalPreviewKBPermit(permit)),Promise.resolve().then(()=>consumeOriginalPreviewKBPermit(permit))]);
+ assert.deepEqual(outcomes,[true,false]);assert.equal(consumeOriginalPreviewKBPermit(permit),false);assert.equal(x.posts(),0);
+ // This proves same-isolate opaque-capability consumption only, not a durable
+ // cross-isolate billing cap or the existing database exactly-once contract.
+});
+
+test('continued send keeps two distinct control/fresh-owner reads, removes the third duplicate, and reports safe stages',async()=>{
+ setup(ORIGINAL_PREVIEW_ACCOUNTS[0]);const {c}=await start();const from=f.db.from,transport=globalThis.fetch;let beforeReceive=true,ownerReads=0;
+ f.db.from=function(table){if(beforeReceive&&table==='conversations')ownerReads++;return from.call(this,table);};
+ globalThis.fetch=async(url,init)=>{if(String(url).endsWith('receive-widget-message'))beforeReceive=false;return await transport(url,init);};
+ const r=await request({action:'original_preview_send',test_conversation_id:c.id,client_message_id:crypto.randomUUID(),query:'Please correct the service term to twelve months.'});
+ assert.equal(r.status,200,JSON.stringify(r));assert.equal(ownerReads,2,'control snapshot + fresh pre-dispatch read, no redundant middle query');
+ const trace=f.logs.at(-1);assert.equal(trace.stage,'visitor_receipt_verified');
+ for(const k of ['admission_ms','ownership_read_ms','session_read_ms','receive_ms','receipt_read_ms'])assert(Number.isFinite(trace[k])&&trace[k]>=0,k);
+ assert.equal(trace.poll_ms,0);assert.equal(f.provider,2);
+ c.status='resolved';const closed=await request({action:'original_preview_send',test_conversation_id:c.id,client_message_id:crypto.randomUUID(),query:'Another service question'});assert.equal(closed.status,409);assert.equal(f.provider,2);
 });

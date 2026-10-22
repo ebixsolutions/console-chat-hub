@@ -620,7 +620,10 @@ return async (req: Request) => {
     // Do not create a visitor/session merely to discover that the execution
     // environment is not activated. Human-controlled messages and explicit R1
     // remain ordinary widget operations and never require model admission.
+    const admissionMs=Date.now()-requestStarted;
+    const controlReadStarted=Date.now();
     const existingControl = requestedConversationId ? await loadOwnedTestConversation(admin,requestedConversationId,authData.user.id,resolved) : null;
+    let ownershipReadMs=Date.now()-controlReadStarted;
     const underHumanControl = existingControl?.ok && (HUMAN_CONTROL_STATUSES.has(String(existingControl.conversation.status)) || Boolean(existingControl.conversation.assigned_agent_id));
     const controlOnly = isExplicitHandoffRequest(query);
     const localConversation = classifyNonFactualConversation(query) !== null;
@@ -631,25 +634,27 @@ return async (req: Request) => {
     if (execution.ready && execution.allowed_conversations.length && !execution.allowed_conversations.includes(requestedConversationId || await testConversationId(authData.user.id,resolved.channelId,String((body as any).client_message_id))) && !underHumanControl && !controlOnly) return json(req,{success:false,error:"live_ai_conversation_not_authorized",retryable:false,correlation_id:correlationId},403);
 
     let conversationId = requestedConversationId;
-    if (conversationId) {
-      const owned = await loadOwnedTestConversation(admin, conversationId, authData.user.id, resolved);
-      if (!owned.ok) return json(req, { success: false, error: owned.error }, owned.status);
-      if (owned.conversation.status === "resolved" || owned.conversation.status === "closed") {
-        return json(req, { success: false, error: "test_conversation_resolved" }, 409);
-      }
-
-    } else {
+    if (!conversationId) {
       const created = await createTestConversation(admin, authData.user.id, resolved, String((body as any).client_message_id),original ? authData.user : undefined);
       if (!created.ok) return json(req, { success: false, error: created.error }, created.status);
       conversationId = created.conversationId;
     }
 
     // Use the ordinary visitor transaction/poll path, including queue and AI suppression.
+    // Keep this fresh pre-dispatch owner read and the post-receipt rechecks.
+    // The removed middle read had no intervening operation and repeated this
+    // exact query; it was neither an atomic lock nor a new authority boundary.
+    const ownerReadStarted=Date.now();
     const owned = await loadOwnedTestConversation(admin, conversationId, authData.user.id, resolved);
+    ownershipReadMs+=Date.now()-ownerReadStarted;
     if (!owned.ok) return json(req,{success:false,error:owned.error},owned.status);
+    if (owned.conversation.status === "resolved" || owned.conversation.status === "closed")
+      return json(req,{success:false,error:"test_conversation_resolved"},409);
+    const sessionReadStarted=Date.now();
     const {data: session, error: sessionError} = await admin.from("visitor_session").select("session_token")
       .eq("id", owned.conversation.visitor_session_id).eq("channel_config_id", resolved.channelId).maybeSingle();
     if (sessionError || !session?.session_token) return json(req,{success:false,error:"test_session_lookup_failed"},500);
+    const sessionReadMs=Date.now()-sessionReadStarted;
     const clientMessageId = (body as any).client_message_id;
     if (!isUuid(clientMessageId)) return json(req,{success:false,error:"invalid_client_message_id"},400);
     const receiveStarted=Date.now();
@@ -700,6 +705,7 @@ return async (req: Request) => {
       Boolean(poll.human_support?.state && poll.human_support.state!=="none");
     deps.log({endpoint:"widget-live-ai-test",action,stage:"visitor_receipt_verified",source_message_id:sent.message_id,
       conversation_id:conversationId,correlation_id:correlationId,elapsed_ms:Date.now()-requestStarted,
+      admission_ms:admissionMs,ownership_read_ms:ownershipReadMs,session_read_ms:sessionReadMs,
       receive_ms:receiveMs,poll_ms:pollMs,receipt_read_ms:original ? receiptReadMs : 0,reply_persisted:Boolean(latestAssistant),generation_pending:sent.ai_reply_pending===true && !latestAssistant && !humanControl});
     return json(req, {
       success: true,

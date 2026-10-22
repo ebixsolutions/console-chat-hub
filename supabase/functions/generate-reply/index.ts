@@ -4514,6 +4514,7 @@ async function orchestrationGenerateReply(
         event: "semantic_interpretation_rejected", code: semanticResult.failure_code,
         stage: semanticResult.failure_stage, request_id: semanticResult.request_id,
         contract_rejection: semanticResult.contract_rejection,
+        contract_diagnostic: semanticResult.contract_diagnostic,
       }));
     } catch (error) {
       _semanticDiagnostic = failureFromError(error,{request_id:`commerce-semantic:${_h1SourceMessageId}`,source_message_id:_h1SourceMessageId});

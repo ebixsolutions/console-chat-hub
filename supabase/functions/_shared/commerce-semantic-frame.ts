@@ -1,6 +1,8 @@
 import {
   decisionContextSchema,
   DecisionContextLimitError,
+  DECISION_CONTEXT_LIMITS,
+  type DecisionContextLimitDiagnostic,
   normalizeDecisionContext,
   type DecisionValue,
 } from "./bounded-decision-context.ts";
@@ -427,15 +429,26 @@ const compactEntity = structuredClone((compactDeltaProperties.entities as {
 }).items);
 delete compactEntity.properties.attributes_json;
 delete compactEntity.properties.constraints_json;
-compactEntity.properties.attributes = { type: "object", additionalProperties: decisionContextSchema() };
-compactEntity.properties.constraints = { type: "object", additionalProperties: decisionContextSchema() };
+// This is the grammar advertised to the semantic producer, not a new provider
+// API schema. Keep other callers of decisionContextSchema unchanged.
+function semanticDecisionValueSchema(depth = 2): Record<string, unknown> {
+  const scalar = {type:["string","number","boolean","null"],maxLength:DECISION_CONTEXT_LIMITS.text};
+  if (!depth) return scalar;
+  const child = semanticDecisionValueSchema(depth - 1);
+  return {anyOf:[scalar,{type:"array",maxItems:DECISION_CONTEXT_LIMITS.items,items:child},
+    {type:"object",maxProperties:DECISION_CONTEXT_LIMITS.fields,propertyNames:{minLength:1,maxLength:80},additionalProperties:child}]};
+}
+const semanticContextObject = () => ({ type: "object", maxProperties: DECISION_CONTEXT_LIMITS.fields,
+  propertyNames: {minLength: 1, maxLength: 80}, additionalProperties: semanticDecisionValueSchema() });
+compactEntity.properties.attributes = semanticContextObject();
+compactEntity.properties.constraints = semanticContextObject();
 export const COMMERCE_SEMANTIC_DELTA_SCHEMA = {
   type: "object", additionalProperties: false,
   properties: {
     ...compactDeltaProperties,
     customer_facts: { type: "array", maxItems: 16, items: {
       type: "object", required: ["key", "value"],
-      properties: { key: { type: "string" }, value: decisionContextSchema() },
+      properties: { key: { type: "string",minLength:1,maxLength:120 }, value: semanticDecisionValueSchema() },
     } },
     entities: { type: "array", maxItems: 12, items: compactEntity },
   },
@@ -474,6 +487,10 @@ export const COMMERCE_SEMANTIC_NATIVE_INSTRUCTIONS =
   "Do not emit delta_json, value_json, attributes_json or constraints_json. " +
   "customer_facts use {key,value}; value and entity attributes/constraints retain native typed JSON, including false, zero, null, arrays and bounded objects. " +
   "Omit unchanged/default fields. Never repair an invalid value by dropping a constraint. " +
+  "For each attributes/constraints object, its root is depth 0; scalars may be at depth 3, but no value/container may occur deeper. " +
+  "Use at most 40 fields per object, 12 entries per array, 96 scalar leaves per complete attributes/constraints object, 80 characters per key and 300 normalized characters per string. " +
+  "A measurement can be {\"amount\":80,\"unit\":\"sq_ft\"}; do not wrap it in repeated value/measurement/requirements objects or copy the persistent state. " +
+  "Customer-owned background measurements/counts are named customer_facts with native typed values; they are not new commerce items. Preserve the supplied entity association, and leave an unresolved association unassigned for clarification. " +
   "Example: " + JSON.stringify({operation:"UPDATE_ITEM",confidence:0.97,customer_correction:true,
     customer_facts:[{key:"maximum_depth",value:{amount:560,unit:"mm"}},{key:"auto_renew",value:false}]}) +
   ". Canonical JSON grammar: " + JSON.stringify(COMMERCE_SEMANTIC_NATIVE_SCHEMA);
@@ -485,7 +502,12 @@ export type SemanticContractRejection =
   | "canonical_confidence" | "canonical_array_bounds" | "canonical_fact"
   | "canonical_fact_bounds" | "canonical_entity" | "canonical_entity_kind"
   | "canonical_entity_name" | "canonical_entity_bounds";
-type RejectSemantic = (reason: SemanticContractRejection) => void;
+export type SemanticContractDiagnostic = {
+  container: "attributes" | "constraints" | "customer_fact";
+  entity_index?: number;
+  violation: DecisionContextLimitDiagnostic;
+};
+type RejectSemantic = (reason: SemanticContractRejection, diagnostic?: SemanticContractDiagnostic) => void;
 
 export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSemantic): unknown {
   const reject = (reason: SemanticContractRejection): null => { onReject?.(reason); return null; };
@@ -600,7 +622,7 @@ function normalizeAmbiguity(value: unknown, confidence: number): CommerceSemanti
 }
 
 export function normalizeCommerceSemanticFrame(value: unknown, onReject?: RejectSemantic): CommerceSemanticFrame | null {
-  const reject = (reason: SemanticContractRejection): null => { onReject?.(reason); return null; };
+  const reject = (reason: SemanticContractRejection, diagnostic?: SemanticContractDiagnostic): null => { onReject?.(reason, diagnostic); return null; };
   if (!isRecord(value)) return reject("canonical_object");
   const rawOperation = clean(value.operation, 40) as CommerceSemanticOperation;
   if (!OPERATIONS.has(rawOperation)) return reject("canonical_operation");
@@ -649,7 +671,7 @@ export function normalizeCommerceSemanticFrame(value: unknown, onReject?: Reject
         value: normalizeDecisionContext({ fact: raw.value }).fact,
       });
     } catch (error) {
-      if (error instanceof DecisionContextLimitError) return reject("canonical_fact_bounds");
+      if (error instanceof DecisionContextLimitError) return reject("canonical_fact_bounds", error.diagnostic ? {container:"customer_fact",violation:error.diagnostic} : undefined);
       throw error;
     }
   }
@@ -663,13 +685,17 @@ export function normalizeCommerceSemanticFrame(value: unknown, onReject?: Reject
     const q = raw.quantity == null ? null : Number(raw.quantity);
     const quantity = q === null || !Number.isFinite(q) || q < 0 ? null : q;
     let attributes: Record<string, DecisionValue>, constraints: Record<string, DecisionValue>;
-    try {
-      attributes = normalizeDecisionContext(raw.attributes);
-      constraints = normalizeDecisionContext(raw.constraints);
-    } catch (error) {
-      if (error instanceof DecisionContextLimitError) return reject("canonical_entity_bounds");
-      throw error;
+    const contexts: Record<string, Record<string, DecisionValue>> = {};
+    for (const container of ["attributes", "constraints"] as const) {
+      try { contexts[container] = normalizeDecisionContext(raw[container]); }
+      catch (error) {
+        if (error instanceof DecisionContextLimitError) return reject("canonical_entity_bounds", error.diagnostic ?
+          {container, entity_index:entities.length, violation:error.diagnostic} : undefined);
+        throw error;
+      }
     }
+    attributes = contexts.attributes;
+    constraints = contexts.constraints;
     entities.push({
       entity_ref: clean(raw.entity_ref, 120) || `semantic:${entities.length + 1}`,
       name,
