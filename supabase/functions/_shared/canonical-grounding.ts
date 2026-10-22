@@ -136,7 +136,7 @@ function topicTokens(text: string): string[] {
     ],
     [
       "specification",
-      /(?:spec(?:ification)?s?|規格|规格|噪音|noise|\bdb\b|dimension|尺寸)/i,
+      /(?:\bspec(?:ification)?s?\b|規格|规格|噪音|noise|\bdb\b|dimension|尺寸)/i,
     ],
     ["payment", /(?:payment|付款|支付)/i],
     [

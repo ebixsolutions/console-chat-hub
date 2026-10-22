@@ -1117,7 +1117,7 @@
     "supabase/functions/widget-poll-messages/index.ts": "70d966005455079b30522706cac608f9a9126d83dd81363a6c595bef2c48c8e8",
     "supabase/functions/_shared/original-widget-preview.ts": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738",
     "tests/c3-widget-live-auth/original-preview-ingress.test.mjs": "b5a62c2133f4a420e0d531e59aad778fc685737edf8306fb2641f89c83c05f35",
-    "tests/c3-widget-live-auth/original-preview.test.mjs": "939f30c1f3b240bf782851610ac950f389106e1df811f04be63ce4058c292712",
+    "tests/c3-widget-live-auth/original-preview.test.mjs": "dcd8ca205af161fcdc16354d9bfd06b49bc34532b26d1e37c0a17a71c3436b6c",
     "docs/c3/task1-original-preview-paid-recovery.json": "fd517c370874450228eee8f75b1c3c01ddaa3ae3b15c93b2ac27f2a4016dacbd",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "539787c95e867a248fa95e018d60bf68c4814c0112f26ed19bb95b556fc7ecca",
     "supabase/functions/_shared/commerce-state-authority.ts": "379e473071b379e030b2d3c11de6def41565d7a234594b67f06c8f12e8711d55",
@@ -1142,7 +1142,8 @@
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "e6c07d15f45b5b563ca936ae7a7d03a9ffdf9d100691f48667f8147f4edd7d02",
     "tools/c3-kb-readonly-attestation.py": "e7dfc3a648a1b58fd8c37d54856c7749f0291ebbce4e3df942804620547f1554",
     "docs/c3/task1-frankie-kb-semantic-recovery.json": "a5d570fbe6f0cc7ef8149b53d37f6a3b101f702b9808ed87416de78ec43f3237",
-    "supabase/functions/agent-assist/index.ts": "97d9221f3c65651e249370b0013475621650e1f0bff4535de02200d870374510"
+    "supabase/functions/agent-assist/index.ts": "97d9221f3c65651e249370b0013475621650e1f0bff4535de02200d870374510",
+    "supabase/functions/_shared/canonical-grounding.ts": "cf0e00f16feca90cbf71db6c748325f44190bee673ce7cc299bf7440241ea351"
   },
   "live_execution_deployment_authorized": false,
   "authorized_widget_hosted_build_sha256": {
