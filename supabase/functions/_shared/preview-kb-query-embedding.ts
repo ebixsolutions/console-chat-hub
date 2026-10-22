@@ -20,7 +20,7 @@ export type QueryEmbeddingEvidence = {
   attestation_payload: string;
   attestation_signature: string;
 };
-type Document = {document_id:string;version_id:string;chunks:Array<{chunk_id:string;content_sha256:string}>};
+type Document = {document_id:string;version_id:string;chunks:Array<{chunk_id:string;chunk_type:string;content_sha256:string}>};
 export type QueryEmbeddingAttestation = typeof FRANKIE_KB_SCOPE & {
   protocol:"original-preview-query-embedding-v1";runtime_sha256:string;
   deployment_evidence_sha256:string;embedding_config_sha256:string;lineage_evidence_sha256:string;
@@ -73,7 +73,7 @@ export async function verifyQueryEmbeddingEvidence(e:QueryEmbeddingEvidence,cred
     if(!object(d) || Object.keys(d).some(k=>!["document_id","version_id","chunks"].includes(k)) || !id(d.document_id) || !id(d.version_id) || docs.has(d.document_id) || !Array.isArray(d.chunks) || !d.chunks.length || d.chunks.length>40)return deny();
     docs.add(d.document_id);
     for(const c of d.chunks) {
-      if(!object(c) || Object.keys(c).some(k=>!["chunk_id","content_sha256"].includes(k)) || !id(c.chunk_id) || !hash(c.content_sha256) || chunks.has(c.chunk_id))return deny();
+      if(!object(c) || Object.keys(c).some(k=>!["chunk_id","chunk_type","content_sha256"].includes(k)) || !id(c.chunk_id) || !["rag_summary","full_content","faq_pair","section"].includes(c.chunk_type) || !hash(c.content_sha256) || chunks.has(c.chunk_id))return deny();
       chunks.add(c.chunk_id);
     }
   }
@@ -115,9 +115,10 @@ export async function bindQueryEmbeddingResponse(response:Response,a:QueryEmbedd
     }
     for(const c of [...(d.summary?[d.summary]:[]),...d.evidence]) {
       const known=reviewed.chunks.find(v=>v.chunk_id===c?.chunk_id);
-      if(!known || typeof c.content!=="string" || await digest(c.content)!==known.content_sha256)return deny();
+      if(!known || c.chunk_type!==known.chunk_type || typeof c.content!=="string" || await digest(c.content)!==known.content_sha256)return deny();
     }
-    d.authority={tenant_id:a.tenant,version_id:reviewed.version_id,publication_state:"published",currentness:"current"};
+    d.authority={...(object(d.metadata)?d.metadata:{}),...(object(d.authority)?d.authority:{}),
+      tenant_id:a.tenant,version_id:reviewed.version_id,publication_state:"published",currentness:"current"};
   }
   // Only selected, attested document evidence is consumed by the existing parser.
   return Response.json({success:true,context_found:true,selected_documents:data.selected_documents,citations:[]},{headers:{"Cache-Control":"no-store"}});

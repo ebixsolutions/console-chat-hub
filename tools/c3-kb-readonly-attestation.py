@@ -63,7 +63,7 @@ def attest(root, receipt_path, document_ids, seconds, out):
         db.execute(text("SET TRANSACTION READ ONLY"))
         company = db.query(Company).filter(Company.id == 34).one()
         assert isinstance(company.api_key, str) and company.api_key
-        rows = db.query(KBDocument.id, KBDocument.active_version_id, KBVectorChunk.id,
+        rows = db.query(KBDocument.id, KBDocument.active_version_id, KBVectorChunk.id, KBVectorChunk.chunk_type,
                         KBVectorChunk.chunk_text).join(KBVectorChunk, KBVectorChunk.document_id == KBDocument.id).filter(
             KBDocument.id.in_(document_ids), KBDocument.status == "published",
             KBDocument.available_to_live_console.is_(True), KBDocument.production_vector_status == "indexed",
@@ -72,10 +72,11 @@ def attest(root, receipt_path, document_ids, seconds, out):
             KBVectorChunk.embedding_status.in_(["completed", "generated"]),
             KBVectorChunk.embedding_vector.isnot(None)).all()
         docs = {}
-        for doc, version, chunk, content in rows:
+        for doc, version, chunk, chunk_type, content in rows:
             assert version and chunk and content
+            assert chunk_type in ["rag_summary", "full_content", "faq_pair", "section"], "Unsupported chunk type; do not relabel evidence"
             entry = docs.setdefault(str(doc), dict(document_id=str(doc), version_id=str(version), chunks=[]))
-            entry["chunks"].append(dict(chunk_id=str(chunk), content_sha256=digest(" ".join(content.strip().split()).encode())))
+            entry["chunks"].append(dict(chunk_id=str(chunk), chunk_type=chunk_type, content_sha256=digest(" ".join(content.strip().split()).encode())))
         assert set(docs) == set(document_ids), "Every requested document needs current published/indexed lineage"
         documents = sorted(docs.values(), key=lambda d: d["document_id"])
         for d in documents:

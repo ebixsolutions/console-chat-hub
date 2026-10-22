@@ -166,7 +166,7 @@ async function embeddingFixture(fault='none') {
   runtime_sha256:await fixtureDigest('ISOLATED_RUNTIME_NOT_LIVE'),deployment_evidence_sha256:await fixtureDigest('ISOLATED_DEPLOYMENT_RECEIPT'),embedding_config_sha256:await fixtureDigest('ISOLATED_EMBEDDING_SETTINGS'),lineage_evidence_sha256:await fixtureDigest('ISOLATED_LINEAGE_RECEIPT'),
   observed_at:Math.floor(Date.now()/1000)-1,expires:Math.floor(Date.now()/1000)+600,
   deployment_pinned_until_expiry:true,lineage_pinned_until_expiry:true,query_embedding_calls:1,embedding_retries:0,generation_calls:0,ingestion_allowed:false,reindex_allowed:false,max_query_bytes:2048,
-  documents:[{document_id:'fixture-published-policy',version_id:'fixture-version-2',chunks:[{chunk_id:'fixture-chunk-2',content_sha256:await fixtureDigest(content)}]}]};
+  documents:[{document_id:'fixture-published-policy',version_id:'fixture-version-2',chunks:[{chunk_id:'fixture-chunk-2',chunk_type:'full_content',content_sha256:await fixtureDigest(content)}]}]};
  if(fault==='expired')a.expires=a.observed_at-1;
  if(fault==='future')a.observed_at=Math.floor(Date.now()/1000)+100;
  if(fault==='retries')a.embedding_retries=1;
@@ -196,11 +196,12 @@ async function embeddingFixture(fault='none') {
   if(fault==='unknown')throw new TypeError('isolated transport unknown');
   if(fault==='revoke-response')delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
   if(fault==='no-match')return Response.json({success:true,context_found:false,selected_documents:[],citations:[]});
-  const d={document_id:'fixture-published-policy',title:'Fixture policy',source_type:'policy',document_score:0.99,evidence:[{chunk_id:'fixture-chunk-2',chunk_type:'full_content',content:fault==='changed-content'?'Changed unreviewed content':content,score:0.99}]};
+  const d={document_id:'fixture-published-policy',title:'Fixture policy',source_type:'policy',document_score:0.99,metadata:{regions:['HK'],entity_ids:['subscription-fixture']},evidence:[{chunk_id:'fixture-chunk-2',chunk_type:'full_content',content:fault==='changed-content'?'Changed unreviewed content':content,score:0.99}]};
   if(fault==='foreign-response')d.tenant_id='35';
   if(fault==='old-version')d.version_id='fixture-version-1';
   if(fault==='draft')d.authority={publication_state:'draft'};
   if(fault==='unreviewed-chunk')d.evidence[0].chunk_id='unreviewed-chunk';
+  if(fault==='chunk-type')d.evidence[0].chunk_type='rag_summary';
   return Response.json({success:true,context_found:true,selected_documents:[d],llm_context:{combined_text:'UNTRUSTED COMBINED TEXT'}});
  };
  const prepare=async(mode,permit)=>{
@@ -212,14 +213,15 @@ async function embeddingFixture(fault='none') {
  return {c,secret,endpoint,request,meta,upstream,prepare,posts:()=>posts};
 }
 
-for(const fault of ['none','no-match','no-grant','BO-revoked','human-control','assigned-agent','actor','mapping','attempt','signature','expired','future','runtime','lineage-digest','retries','generation','ingestion','mutable-runtime','mutable-lineage','foreign-attestation','proof-bypass','revoke-prepare','revoke-response','foreign-response','old-version','draft','changed-content','unreviewed-chunk','unknown'])test('Frankie separately authorized existing query embedding, closed controls and current lineage: '+fault,async()=>{
+for(const fault of ['none','no-match','no-grant','BO-revoked','human-control','assigned-agent','actor','mapping','attempt','signature','expired','future','runtime','lineage-digest','retries','generation','ingestion','mutable-runtime','mutable-lineage','foreign-attestation','proof-bypass','revoke-prepare','revoke-response','foreign-response','old-version','draft','changed-content','unreviewed-chunk','chunk-type','unknown'])test('Frankie separately authorized existing query embedding, closed controls and current lineage: '+fault,async()=>{
  const x=await embeddingFixture(fault);let result,error;
  try{result=await accountedModelFetch(f.db,x.meta,x.endpoint,{method:'POST',body:x.request},x.upstream,undefined,x.prepare);}catch(e){error=e;}
- const afterDispatch=['revoke-response','foreign-response','old-version','draft','changed-content','unreviewed-chunk','unknown'].includes(fault);
+ const afterDispatch=['revoke-response','foreign-response','old-version','draft','changed-content','unreviewed-chunk','chunk-type','unknown'].includes(fault);
  if(['none','no-match'].includes(fault)) {
   assert.equal(error,undefined);assert.equal(x.posts(),1);
   const data=await result.json();assert.equal(data.context_found,fault==='none');
   if(fault==='none'){assert.equal(data.selected_documents[0].authority.tenant_id,'34');assert.equal(data.selected_documents[0].authority.version_id,'fixture-version-2');assert.equal(data.selected_documents[0].authority.currentness,'current');assert(!JSON.stringify(data).includes('UNTRUSTED COMBINED TEXT'));}
+  if(fault==='none'){assert.deepEqual(data.selected_documents[0].authority.regions,['HK']);assert.deepEqual(data.selected_documents[0].authority.entity_ids,['subscription-fixture']);}
  }else {assert(error,'fault admitted');assert.equal(x.posts(),afterDispatch?1:0);}
  assert.equal(f.provider,1,'no additional Vertex repair/retry');assert.equal(f.rpc.length,0,'no synthetic quota/new accounting subsystem');
 });
