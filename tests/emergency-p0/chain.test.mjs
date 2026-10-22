@@ -54,7 +54,7 @@ function fixture(text,options={}) {
    assert.equal(body.generationConfig.responseMimeType,'application/json');
    assert.deepEqual(body.generationConfig.responseSchema.properties.context_encoding.enum,['typed_paths_v1']);
    assert.equal(body.generationConfig.responseSchema.properties.entities.items.properties.attributes_nodes.items.properties.path.maxItems,'3');
-   assert(body.systemInstruction.parts[0].text.includes('Follow the supplied response schema'));
+   assert(body.systemInstruction.parts[0].text.includes('Follow the supplied response schema'));assert(!body.systemInstruction.parts[0].text.includes('array of {key,value}'));assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=typed_paths_v1'));assert(body.systemInstruction.parts[0].text.includes('in constraints_nodes'));
    assert(body.systemInstruction.parts[0].text.includes('Canonical validation independently rejects invalid proposals'));
    if(mode==='400')return Response.json({error:{status:'INVALID_ARGUMENT',message:'response schema too complex; PRIVATE-SECRET user@example.invalid',details:[{fieldViolations:[{field:'generation_config.response_schema',description:'PRIVATE-SECRET'}]}]}},{status:400});
    if(mode==='timeout')return await new Promise((resolve,reject)=>{if(init.signal?.aborted)return reject(new DOMException('isolated','AbortError'));init.signal?.addEventListener('abort',()=>reject(new DOMException('isolated','AbortError')),{once:true})});
