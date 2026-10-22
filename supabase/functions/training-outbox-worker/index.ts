@@ -121,7 +121,8 @@ function compactError(code: string): string {
 }
 
 async function loadPayload(
-  admin: ReturnType<typeof createClient>,
+  // deno-lint-ignore no-explicit-any
+  admin: any,
   row: OutboxRow,
 ): Promise<
   | { ok: true; payload: Record<string, unknown> }
@@ -272,7 +273,8 @@ async function loadPayload(
 }
 
 async function markFailure(
-  admin: ReturnType<typeof createClient>,
+  // deno-lint-ignore no-explicit-any
+  admin: any,
   row: OutboxRow,
   attempts: number,
   code: string,
@@ -308,7 +310,8 @@ Deno.serve(async (req) => {
   if (!supabaseUrl || !serviceRole) {
     return json({ ok: false, error: "database_not_configured" }, 503);
   }
-  const admin = createClient(supabaseUrl, serviceRole);
+  // deno-lint-ignore no-explicit-any
+  const admin: any = createClient(supabaseUrl, serviceRole);
 
   const batchSize = positiveIntEnv(
     "TRAINING_OUTBOX_BATCH_SIZE",
