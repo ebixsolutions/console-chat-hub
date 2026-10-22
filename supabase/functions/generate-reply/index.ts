@@ -4993,8 +4993,10 @@ async function orchestrationGenerateReply(
     _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     _c3Recall.decision.handled && _c3Recall.decision.fact_type === "summary" &&
     Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
-  let _c3PlannedReply = _customerGuidance ? null : _c3IsGroundedReadOnlyRecap
-    ? _c3Recall.reply
+  const _c3CustomerOnlyReply = _c3IsGroundedReadOnlyRecap && _c3CommerceSnapshot?.state.entities.length === 0
+    ? renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang) : null;
+  const _c3PlannedReply = _customerGuidance ? null : _c3IsGroundedReadOnlyRecap
+    ? _c3CustomerOnlyReply ?? _c3Recall.reply
     : _c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")
     ? null
     : _naturalGuidanceReply ?? applyServiceTone(
@@ -5022,10 +5024,8 @@ async function orchestrationGenerateReply(
     // customer-only recap must not claim that exemption. Use only the actual
     // customer facts in the canonical state with its existing readback proof;
     // never fabricate a projection from Memory or change a historical ticket.
-    const customerOnlyReply = _c3IsGroundedReadOnlyRecap && _c3CommerceSnapshot?.state.entities.length === 0
-      ? renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang) : null;
+    const customerOnlyReply = _c3CustomerOnlyReply;
     const customerOnlyRecap = Boolean(customerOnlyReply);
-    if(customerOnlyReply)_c3PlannedReply=customerOnlyReply;
     const readOnlyRecapProof = _c3IsGroundedReadOnlyRecap && !customerOnlyRecap && _c3Memory &&
         _c3CommerceSnapshot && _c3ReadOnlyMemoryHash && _c3ReadOnlyMemorySource
       ? await buildB2ReadOnlyRecapProof({

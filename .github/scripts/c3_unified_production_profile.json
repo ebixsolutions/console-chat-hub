@@ -1047,7 +1047,7 @@
     "supabase/functions/_shared/widget-preview-authority.ts": "ddc26a7c3cc533d47bb0689bac79fcaa0c9eaa96c11e01878121e8d61f3a86aa",
     "supabase/functions/_shared/widget-preview-control.ts": "9e2e79b7b8db2b5f3b8d892ef6d56f3d86e8a9f296e31a9751784e27e6a9b394",
     "supabase/functions/create-visitor-session/index.ts": "1c779cd1466945daa29e17c2912631d0cd6da187d44727ba1674bae28a97f019",
-    "supabase/functions/generate-reply/index.ts": "9b1b06a675d992bea7a34ae664fceb8ea2afd999a38f0a9a9f057d4aa07b5700",
+    "supabase/functions/generate-reply/index.ts": "a7ddf695e189889ef1df1e20e3af1ee5355887ff925898c546df1340656a5833",
     "supabase/functions/kb-search-proxy/index.ts": "c2e61bd8d06856c6606e509182e6050d29083afca3f4df6326971ed096aa97a7",
     "supabase/functions/receive-widget-message/index.ts": "1813dbe405db9c1550614dc5b7cb96e247194329fa2cc1fec2e03e8330322632",
     "supabase/functions/widget-live-ai-test/index.ts": "b3f08d920616d0005eb73e626a6e6fe8ece65ce0b99b6ef381697e9f81309ee3",
