@@ -9,7 +9,11 @@ export type DecisionContextLimitDiagnostic = {
   limit: number;
 };
 export class DecisionContextLimitError extends Error {
-  constructor(public readonly diagnostic?: DecisionContextLimitDiagnostic) { super("decision_context_limit"); this.name = "DecisionContextLimitError"; }
+  readonly diagnostic?: DecisionContextLimitDiagnostic;
+  constructor(diagnostic?: DecisionContextLimitDiagnostic) {
+    super("decision_context_limit"); this.name = "DecisionContextLimitError";
+    this.diagnostic = diagnostic;
+  }
 }
 const privateKey = /(?:^|_)(?:password|secret|token|jwt|authorization|cookie|credential|session|email|phone|user_id|street_address)(?:_|$)/i;
 const clean = (s: string) => s.normalize("NFKC").replace(/\s+/g, " ").trim();

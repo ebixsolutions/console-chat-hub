@@ -1137,7 +1137,7 @@
     "package-lock.json": "7d788934e09c9bc573ff891a3b31b4877d6bd2dafddba62807220bed23d5740e",
     "supabase/functions/_shared/conversation-service-planner.ts": "db2bad59c056f80598ebf96ceb1933528670daff42ad21dee537ea8ecb450eed",
     "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts": "918dc0e6c2f02e2eae10ba304bfa514f570c5c81e78e41debab4cc6818127d3b",
-    "supabase/functions/_shared/bounded-decision-context.ts": "b66d46724c5498cca433c37b6f74d1f36f4fefeca1272c3c8ef78d017495b781",
+    "supabase/functions/_shared/bounded-decision-context.ts": "ffbe80dea5845b3d26c1cb29c4cca1ee90c385c51c2caa341865d9797beeab5d",
     "supabase/functions/_shared/preview-kb-query-embedding.ts": "da56d017497e49410b0fa71464e197e35a4c86a9d1bc86bdacda7ef0045950ab",
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "4f8ca6aeb73aea93b114249ef7b15c27b8a04ba4af5e94856517dabef6c7d165",
     "tools/c3-kb-readonly-attestation.py": "2ea3de523ad23973c185388e68b8736b72ecfb3215e7da0647bdbfb6121bfc6b",
