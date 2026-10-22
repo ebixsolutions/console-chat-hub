@@ -20,7 +20,8 @@ Deno.test('customer priority rankings do not request merchant facts; affirmative
  const frame={intent:'customer_guidance',confidence:0.97,requested_facts:[] as string[],ambiguity:{is_ambiguous:false}};
  for(const q of ['夜間安靜比初期價錢更重要。請解釋如何取捨，暫時不查產品或報價。','Quiet operation matters more than upfront price. What trade-offs should I consider?','I prioritize accessibility over price. How should I choose a rental service?','更正：預算HK$5,000。安全比價錢更重要，請解釋選購取捨。'])assert(isCustomerGuidanceRequest(q,frame),q);
  for(const q of ['安靜比價錢更重要，但請查最新價錢。','Quiet operation matters more than upfront price, but what is your current price?','I prioritize accessibility over price. What is your warranty policy?','請比較A及B的價錢，並講解取捨。'])assert(!isCustomerGuidanceRequest(q,frame),q);
- assert(!isCustomerGuidanceRequest('安靜比價錢更重要，請解釋取捨。',{...frame,requested_facts:['current_price']}));
+ assert(isCustomerGuidanceRequest('安靜比價錢更重要，請解釋取捨。',{...frame,requested_facts:['current_price']}),'model target cannot turn a customer priority into a merchant claim');
+ assert(!isCustomerGuidanceRequest('請查最新價錢，並解釋取捨。',{...frame,requested_facts:[]}), 'actual merchant request still requires evidence even when frame omits target');
 });
 Deno.test('documented Vertex serialization includes JSON schema, typed int64 bounds and valid model thinking controls',()=>{
  const cfg=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,0,'gemini-2.5-flash');
@@ -63,7 +64,7 @@ Deno.test('general preparation/decision support never becomes retained-state rec
  for(const text of ['幫我整理選機時應該考慮嘅取捨，同講下一步應補充咩資料嗎？','What should I measure before choosing, and what trade-offs should I consider?','你會先問我邊一個問題？']){assert(!isCurrentRequirementsRecap(text),text);assert(isCustomerGuidanceRequest(text,frame),text);}
  for(const text of ['Recap the ZX-731 booking.','Summarize the premium plan.','整理返 ZX-731 預約。','請總結呢張對話嘅需求，同我最新更正嘅客廳面積及預算；唔好查外部資料。'])assert(isCurrentRequirementsRecap(text),text);
  for(const text of ['What should I measure and what is the current price?','請整理選購取捨，推薦現貨型號','What trade-offs should I consider under your warranty policy?'])assert(!isCustomerGuidanceRequest(text,frame),text);
- assert(!isCustomerGuidanceRequest('What should I measure?',{...frame,requested_facts:['stock']}));assert(!isCustomerGuidanceRequest('What should I measure?',{...frame,ambiguity:{is_ambiguous:true}}));
+ assert(isCustomerGuidanceRequest('What should I measure?',{...frame,requested_facts:['stock']}),'model target alone cannot authorize merchant lookup');assert(isCustomerGuidanceRequest('What should I measure?',{...frame,ambiguity:{is_ambiguous:true}}),'ambiguity allows general measurement guidance without assigning unknown facts');
 });
 Deno.test('semantic rejection diagnostics identify only fixed contract invariants without retaining provider contents',()=>{
  const wire=(delta:unknown)=>({operation:'ASK_FACT',confidence:0.97,delta_json:typeof delta==='string'?delta:JSON.stringify(delta)});
@@ -93,10 +94,11 @@ Deno.test('Hosted 80b1afec general advice routing is independent of a valid free
  for(const intent of ['customer_guidance','ask_fact','explore_options','customer_context_update'])assert(isCustomerGuidanceRequest(question,{...frame,intent}));
  assert(isCustomerGuidanceRequest('What should I measure and what selection criteria should I consider?',{...frame,requested_facts:['selection_tradeoffs','site_measurements']}));
  assert(isCustomerGuidanceRequest(question,{...frame,requested_facts:['installation_dimensions']}));
- assert(!isCustomerGuidanceRequest('What should I measure?',{...frame,requested_facts:['stock']}));
- assert(!isCustomerGuidanceRequest('What should I measure?',{...frame,requested_facts:['unknown_fact']}));
+ assert(isCustomerGuidanceRequest('What should I measure?',{...frame,requested_facts:['stock']}),'model target alone cannot authorize merchant lookup');
+ assert(isCustomerGuidanceRequest('What should I measure?',{...frame,requested_facts:['unknown_fact']}));
+ assert(!isCustomerGuidanceRequest('What should I measure, and what stock do you currently have?',{...frame,requested_facts:[]}));
  for(const text of ['What should I measure and what is the current price?','不用查外部產品，但你們有現貨嗎？請說明選購取捨。','What trade-offs should I consider under your warranty policy?'])assert(!isCustomerGuidanceRequest(text,frame));
- assert(!isCustomerGuidanceRequest(question,{...frame,confidence:0.2}));assert(!isCustomerGuidanceRequest(question,{...frame,ambiguity:{is_ambiguous:true}}));assert(!isCustomerGuidanceRequest(question,null));
+ assert(!isCustomerGuidanceRequest(question,{...frame,confidence:0.2}));assert(isCustomerGuidanceRequest(question,{...frame,ambiguity:{is_ambiguous:true}}),'ambiguity constrains state binding, not safe guidance');assert(!isCustomerGuidanceRequest(question,null));
 });
 
 Deno.test('Hosted efec7018 correction advice recognizes explicit no-lookup instructions without merchant admission',()=>{
@@ -105,7 +107,8 @@ Deno.test('Hosted efec7018 correction advice recognizes explicit no-lookup instr
  assert(isCustomerGuidanceRequest(correction,frame),'the actual second-turn wording must remain general advice');
  for(const negative of ['不需要查','不需查','無需查','无需查','唔需要查','不用查'])assert(isCustomerGuidanceRequest('請說明選購取捨；'+negative+'型號或報價。',frame),negative);
  for(const text of ['請說明選購取捨；不需要查型號，但請查報價。','請說明選購取捨；不需要查型號及請查保養。','請推薦現貨，不需要查型號。','請說明選購取捨，現在價錢幾多？'])assert(!isCustomerGuidanceRequest(text,frame),text);
- assert(!isCustomerGuidanceRequest(correction,{...frame,confidence:0.2}));assert(!isCustomerGuidanceRequest(correction,{...frame,ambiguity:{is_ambiguous:true}}));assert(!isCustomerGuidanceRequest(correction,null));
+ assert(!isCustomerGuidanceRequest(correction,{...frame,confidence:0.2}));assert(isCustomerGuidanceRequest(correction,{...frame,ambiguity:{is_ambiguous:true}}));
+ assert(!isCustomerGuidanceRequest(correction+'但請查最新價錢。',{...frame,requested_facts:[],ambiguity:{is_ambiguous:true}}));assert(!isCustomerGuidanceRequest(correction,null));
 });
 
 Deno.test('Hosted a6626087 compact prompt uses one encoding layer and canonical typed values; malformed legacy fields stay rejected',()=>{
@@ -124,5 +127,5 @@ Deno.test('Hosted 4df129e5 onsite observation advice remains general across natu
  const question='如果長者對晚上風聲特別敏感，我去現場量度時應先記低哪幾項環境情況，才方便之後跟安裝師傅討論？請沿用最新面積及預算，暫時不用查商戶產品。';
  for(const text of [question,'現場測量時應留意哪些環境資料？不用查產品。','现场测量时要先记录哪些环境资料？不用查产品。'])assert(isCustomerGuidanceRequest(text,frame),text);
  for(const text of [question+'但請查現貨。',question+'請推薦型號。',question+'請確認你們的保養政策。'])assert(!isCustomerGuidanceRequest(text,frame),text);
- assert(!isCustomerGuidanceRequest(question,{...frame,ambiguity:{is_ambiguous:true}}));assert(!isCustomerGuidanceRequest(question,{...frame,confidence:0.2}));assert(!isCustomerGuidanceRequest(question,null));
+ assert(isCustomerGuidanceRequest(question,{...frame,ambiguity:{is_ambiguous:true}}),'ambiguity constrains state binding, not safe guidance');assert(!isCustomerGuidanceRequest(question,{...frame,confidence:0.2}));assert(!isCustomerGuidanceRequest(question,null));
 });

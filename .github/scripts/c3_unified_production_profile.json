@@ -1116,7 +1116,7 @@
     "docs/c3/task1-original-preview-paid-recovery.json": "fd517c370874450228eee8f75b1c3c01ddaa3ae3b15c93b2ac27f2a4016dacbd",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "1e41f1947e7f3d4f50d9bfa38cb214bf782005272378f70d5b76c493ef98e128",
     "supabase/functions/_shared/commerce-state-authority.ts": "63d9bbc3b17b96b23fc35a8335ee35350cbdad0b2e0dfc404652a79ff348dddd",
-    "tests/emergency-p0/provider-request.test.ts": "6a4abc0f0a9628b86ba3ae658c43ddc8603c817adcf41082e0af8fea3f3b4b69",
+    "tests/emergency-p0/provider-request.test.ts": "cfeb6f726fe5728b2feecb2ecd56685305dd4101b3920ed39ee81a6d973ed6a5",
     "supabase/functions/_shared/conversation-recall.ts": "5ebac7affaaa05923be68804689dbea3bd569a7e5de5116c846b9d7e3ad2e542",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "253041423ef4c917d0eff97c546f27a0d8141e00006f094016b3c0573763e853",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "3c40a0cb80911807c71384266c1b6c819c22d93d7e3e0ac677db94e5d62b535f",
