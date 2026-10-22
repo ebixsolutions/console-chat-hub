@@ -9,6 +9,7 @@ export interface ExecutionFailure {
   http_status?: number;
 }
 const codes = new Set([
+  "INBOX_CONVERSATION_REQUIRED", "INBOX_REPLAY_DENIED", "INBOX_AUTHORITY_DENIED", "INBOX_SYNTHETIC_SCOPE_DENIED", "INBOX_PAID_SCOPE_DENIED",
   "ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED", "ORIGINAL_PREVIEW_PROVIDER_DENIED",
   "UAT_HISTORY_EVIDENCE_REQUIRED", "UAT_HISTORY_EVIDENCE_INVALID", "UAT_HISTORY_BOUND_UNPROVED", "UAT_QUOTA_HISTORY_DRIFT", "UAT_CUMULATIVE_QUOTA_LIMIT", "UAT_ISOLATION_DENIED", "UAT_COUNT_TOKENS_LIMIT_REQUIRED", "UAT_COUNT_TOKENS_SCOPE_DENIED", "UAT_CONTROLLED_ENVELOPE_DENIED", "UAT_PROVIDER_OUTCOME_UNKNOWN",
   "LLM_CONFIG_MISSING", "LLM_INPUT_BLOCKED", "LLM_TIMEOUT", "LLM_NETWORK", "LLM_NON_2XX", "LLM_INVALID_OUTPUT", "LLM_GROUNDING_REJECTED", "LLM_ACCOUNTING_DENIED",
@@ -23,7 +24,7 @@ export function safeExecutionCode(value: unknown): string | null {
 }
 export function executionFailure(code: unknown, options: {stage?: unknown; request_id?: unknown; source_message_id?: unknown; http_status?: unknown} = {}): ExecutionFailure {
   const safeCode = safeExecutionCode(code) ?? "SEMANTIC_INTERPRETER_UNAVAILABLE";
-  const inferred: ExecutionStage = safeCode === "UAT_TIMEOUT_OUTCOME_UNKNOWN" ? "timeout" : safeCode === "UAT_NETWORK_OUTCOME_UNKNOWN" ? "network" : /^(?:UAT_|DISPATCH_|PREACTIVATION_|ORIGINAL_PREVIEW_)/.test(safeCode) || safeCode === "LLM_ACCOUNTING_DENIED" ? "admission"
+  const inferred: ExecutionStage = safeCode === "UAT_TIMEOUT_OUTCOME_UNKNOWN" ? "timeout" : safeCode === "UAT_NETWORK_OUTCOME_UNKNOWN" ? "network" : /^(?:UAT_|DISPATCH_|PREACTIVATION_|ORIGINAL_PREVIEW_|INBOX_)/.test(safeCode) || safeCode === "LLM_ACCOUNTING_DENIED" ? "admission"
     : safeCode === "LLM_CONFIG_MISSING" ? "config" : safeCode === "LLM_TIMEOUT" ? "timeout" : safeCode === "LLM_NETWORK" ? "network"
     : safeCode === "LLM_NON_2XX" ? "provider_http" : safeCode === "LLM_INVALID_OUTPUT" ? "decode" : safeCode === "LLM_GROUNDING_REJECTED" ? "canonical_validation"
     : safeCode === "KB_NO_MATCH" ? "kb_no_match" : safeCode === "KB_TOOL_FAILURE" ? "kb_tool" : safeCode === "PERSISTENCE_FAILED" ? "persistence" : "unexpected";

@@ -41,6 +41,20 @@ const active = (a:QueryEmbeddingAttestation) => Number.isSafeInteger(a.observed_
   a.observed_at<=Math.floor(Date.now()/1000) && a.expires>Math.floor(Date.now()/1000) && a.expires-a.observed_at<=3600;
 
 export function queryEmbeddingEvidence(binding:any):QueryEmbeddingEvidence|null {
+  // Permission and renewable evidence are independent. An existing operator
+  // may refresh this signed read-only receipt under a separately approved
+  // automation scope; users do not renew B-O or their paid grant per test.
+  // Runtime + embedding configuration remain pinned by the standing grant.
+  if(binding?.evidence_reference!==undefined) {
+    if(typeof binding.evidence_reference!=="string" || !/^[a-z0-9_-]{1,80}$/.test(binding.evidence_reference) || binding.attestation_payload!==undefined || binding.attestation_signature!==undefined)return null;
+    let evidence:any;try{evidence=JSON.parse(Deno.env.get("KB_QUERY_EMBEDDING_EVIDENCE_JSON")??"null");}catch{return null;}
+    if(evidence?.version!==1 || Object.keys(evidence).some(k=>!["version","records"].includes(k)) || !Array.isArray(evidence.records) || evidence.records.length>20)return null;
+    const matches=evidence.records.filter((r:any)=>r?.reference_id===binding.evidence_reference);
+    if(matches.length!==1)return null;
+    const {reference_id:_,...record}=matches[0];
+    if(Object.keys(record).some(k=>!["remote_mode","remote_runtime_sha256","deployment_evidence_sha256","embedding_config_sha256","lineage_evidence_sha256","attestation_payload","attestation_signature"].includes(k)) || record.remote_runtime_sha256!==binding.remote_runtime_sha256 || record.embedding_config_sha256!==binding.embedding_config_sha256)return null;
+    return queryEmbeddingEvidence({...record,allow_remote_embedding:binding.allow_remote_embedding,remote_mode:binding.remote_mode});
+  }
   return binding?.remote_mode===QUERY_EMBEDDING_MODE && binding.allow_remote_embedding===true &&
     hash(binding.remote_runtime_sha256) && hash(binding.deployment_evidence_sha256) && hash(binding.embedding_config_sha256) && hash(binding.lineage_evidence_sha256) &&
     typeof binding.attestation_payload==="string" && new TextEncoder().encode(binding.attestation_payload).length<=32768 &&

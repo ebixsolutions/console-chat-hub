@@ -1,5 +1,5 @@
 import { buildVertexEndpoint } from "./vertex-generation-config.ts";
-import { uatFetch, UatDenied, trustedDispatchScope } from "./uat-execution-contract.ts";
+import { uatFetch, UatDenied, trustedDispatchScope, authenticatedInboxIdentity } from "./uat-execution-contract.ts";
 import { ORIGINAL_PREVIEW_ACCOUNTS } from "./original-widget-preview.ts";
 import { FRANKIE_KB_SCOPE, queryEmbeddingEvidence, verifiedQueryEmbeddingAttestation, bindQueryEmbeddingResponse,
   type QueryEmbeddingEvidence, type QueryEmbeddingAttestation } from "./preview-kb-query-embedding.ts";
@@ -42,8 +42,10 @@ export async function sha256(value: string): Promise<string> {
 /** Optional, separately approved server permission. B-O alone never grants KB.
  * A permission is inert until the existing remote proof matches the exact
  * request and reviewed runtime. No configuration is installed by this module. */
-type Scope = {company:string;actor:string;channel:string;tenant:string;endpoint:string;request:string;runtime:string;authorization:string;expires:number;verified:boolean;used:boolean;evidence?:QueryEmbeddingEvidence;attestation?:QueryEmbeddingAttestation};
+type Scope = {company:string;actor:string;channel:string;tenant:string;endpoint:string;request:string;runtime:string;authorization:string;authorizationKey:string;expires:number;verified:boolean;used:boolean;evidence?:QueryEmbeddingEvidence;attestation?:QueryEmbeddingAttestation};
 const permits=new WeakMap<object,Scope>();
+const inboxDispatched=new WeakMap<object,Set<string>>();
+const inboxGrounded=new WeakMap<object,{authorization:string;expires:number}>();
 const endpoint="https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search";
 const uuid=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 export type OriginalPreviewKBPermit=object;
@@ -66,10 +68,10 @@ export async function authorizeOriginalPreviewKB(db:any,meta:{companyId:string|n
     if(!b || b.actor_id!==actor || b.company_id!==meta.companyId || b.channel_id!==channel || b.tenant_id!==tenant || b.endpoint!==endpoint || b.provider!=="singapore-kb" || b.purpose!=="kb_embedding")return false;
     if(grant.version===1)return b.remote_mode==="retrieval_only" && b.allow_remote_embedding===false && /^[a-f0-9]{64}$/.test(b.remote_runtime_sha256??"") && Object.keys(b).every(k=>fields.includes(k));
     return actor===FRANKIE_KB_SCOPE.actor && meta.companyId===FRANKIE_KB_SCOPE.company && channel===FRANKIE_KB_SCOPE.channel && tenant===FRANKIE_KB_SCOPE.tenant && !!queryEmbeddingEvidence(b) &&
-      Object.keys(b).every(k=>[...fields,"deployment_evidence_sha256","embedding_config_sha256","lineage_evidence_sha256","attestation_payload","attestation_signature"].includes(k));
+      Object.keys(b).every(k=>[...fields,"deployment_evidence_sha256","embedding_config_sha256","lineage_evidence_sha256","attestation_payload","attestation_signature","evidence_reference"].includes(k));
   });
   if(matches.length!==1)return null;
-  const token={};permits.set(token,{company:meta.companyId,actor,channel,tenant,endpoint,request:meta.request,runtime:matches[0].remote_runtime_sha256,authorization:Deno.env.get("ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION")!,expires:Date.now()+60000,verified:false,used:false,...(grant.version===2?{evidence:queryEmbeddingEvidence(matches[0])!}:{})});return token;
+  const token={};permits.set(token,{company:meta.companyId,actor,channel,tenant,endpoint,request:meta.request,runtime:matches[0].remote_runtime_sha256,authorization:Deno.env.get("ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION")!,authorizationKey:"ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION",expires:Date.now()+60000,verified:false,used:false,...(grant.version===2?{evidence:queryEmbeddingEvidence(matches[0])!}:{})});return token;
 }
 
 export function originalPreviewKBRemoteScope(permit:object|undefined,company:string|null,tenant:string,url:string,request:string|undefined):{runtime:string;evidence?:QueryEmbeddingEvidence}|null {
@@ -81,15 +83,37 @@ export function verifyOriginalPreviewKBRemoteProof(permit:object|undefined,runti
   if(s.evidence && (!attestation || !verifiedQueryEmbeddingAttestation(attestation) || attestation.runtime_sha256!==s.runtime ||
     attestation.deployment_evidence_sha256!==s.evidence.deployment_evidence_sha256 || attestation.embedding_config_sha256!==s.evidence.embedding_config_sha256 ||
     attestation.lineage_evidence_sha256!==s.evidence.lineage_evidence_sha256))return false;
+  if(attestation && (attestation.actor!==s.actor || attestation.company!==s.company || attestation.channel!==s.channel || attestation.tenant!==s.tenant || attestation.endpoint!==s.endpoint))return false;
   s.attestation=attestation;s.verified=true;return true;
 }
+function currentPermitEvidence(s:Scope):boolean {
+  if(!s.evidence)return true;
+  try {const grant=JSON.parse(Deno.env.get(s.authorizationKey)??"null");const bindings=grant.bindings.filter((b:any)=>b.actor_id===s.actor && b.company_id===s.company && b.channel_id===s.channel && b.tenant_id===s.tenant && b.endpoint===s.endpoint);return bindings.length===1 && JSON.stringify(queryEmbeddingEvidence(bindings[0]))===JSON.stringify(s.evidence);}catch{return false;}
+}
 export function consumeOriginalPreviewKBPermit(permit:object|undefined):boolean {
-  const s=permit && permits.get(permit);if(!s || s.used || !s.verified || s.expires<=Date.now() || Deno.env.get("ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION")!==s.authorization)return false;
-  if(s.evidence && (!s.attestation || s.attestation.expires*1000<=Date.now()))return false;
+  const s=permit && permits.get(permit);if(!s || s.used || !s.verified || s.expires<=Date.now() || Deno.env.get(s.authorizationKey)!==s.authorization)return false;
+  if(s.evidence && (!currentPermitEvidence(s) || !s.attestation || s.attestation.expires*1000<=Date.now()))return false;
   try {if(String(JSON.parse(Deno.env.get("KB_SINGAPORE_TENANT_MAP_JSON")??"null")?.[s.company])!==s.tenant)return false;}catch{return false;}
   s.used=true;return true;
 }
 
+/** Separately approved manual Inbox scope, never inferred from B-O or ticket
+ * ownership. Evidence is verified by the same remote guard before any RAG I/O. */
+async function inboxBinding(db:AccountingRpc,meta:ModelAttempt):Promise<any> {
+  const a=await authenticatedInboxIdentity(db,meta.legacyAuthority,meta.companyId,meta.conversationId);
+  let g:any,map:any;try {g=JSON.parse(Deno.env.get("AUTHENTICATED_INBOX_KB_AUTHORIZATION")??"null");map=JSON.parse(Deno.env.get("KB_SINGAPORE_TENANT_MAP_JSON")??"null");}catch{throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");}
+  if(g?.version!==1 || Object.keys(g).some(k=>!["version","bindings"].includes(k)) || !Array.isArray(g.bindings) || g.bindings.length>20)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
+  const matches=g.bindings.filter((b:any)=>b?.actor_id===a.actor && b.company_id===a.company && b.channel_id===a.channel && b.tenant_id===String(map?.[a.company]) && b.endpoint===endpoint &&
+    Array.isArray(b.operations) && b.operations.length>0 && b.operations.every((o:any)=>["knowledge","policy"].includes(o)) && b.operations.includes(a.operation) && b.provider==="singapore-kb" && b.purpose==="kb_embedding" && typeof b.allow_assist==="boolean" && !!queryEmbeddingEvidence(b) &&
+    Object.keys(b).every(k=>["actor_id","company_id","channel_id","tenant_id","endpoint","operations","provider","purpose","allow_assist","remote_mode","allow_remote_embedding","remote_runtime_sha256","deployment_evidence_sha256","embedding_config_sha256","lineage_evidence_sha256","attestation_payload","attestation_signature","evidence_reference"].includes(k)));
+  if(matches.length!==1)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
+  return matches[0];
+}
+async function authorizeInboxKB(db:AccountingRpc,meta:ModelAttempt,url:string,init:RequestInit):Promise<OriginalPreviewKBPermit> {
+  const b=await inboxBinding(db,meta);let r:any;try{r=JSON.parse(meta.request);}catch{throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");}
+  if(meta.provider!=="singapore-kb" || meta.purpose!=="kb_embedding" || meta.slot!=="context-search" || meta.attempt!==1 || url!==endpoint || init.method!=="POST" || String(init.body)!==meta.request || new TextEncoder().encode(meta.request).length>8192 || typeof r.query!=="string" || !r.query.trim() || new TextEncoder().encode(r.query).length>2048 || String(r.company_id)!==b.tenant_id || !Number.isSafeInteger(r.company_id) || Object.keys(r).some(k=>!["query","company_id","candidate_top_k","max_documents","max_summary_chunks","max_full_content_chunks","score_threshold"].includes(k)) || !Number.isInteger(r.candidate_top_k) || r.candidate_top_k<1 || r.candidate_top_k>50 || r.max_documents!==5 || r.max_summary_chunks!==1 || r.max_full_content_chunks!==3 || r.score_threshold!==0.05)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
+  const token={};permits.set(token,{company:meta.companyId!,actor:b.actor_id,channel:b.channel_id,tenant:b.tenant_id,endpoint,request:meta.request,runtime:b.remote_runtime_sha256,authorization:Deno.env.get("AUTHENTICATED_INBOX_KB_AUTHORIZATION")!,authorizationKey:"AUTHENTICATED_INBOX_KB_AUTHORIZATION",expires:Date.now()+60000,verified:false,used:false,evidence:queryEmbeddingEvidence(b)!});return token;
+}
 export async function accountedModelFetch(
   db: AccountingRpc,
   meta: ModelAttempt,
@@ -97,9 +121,9 @@ export async function accountedModelFetch(
   init: RequestInit,
   upstream: typeof fetch = fetch,
   onDispatch?: () => void,
-  prepare?: (mode: "legacy" | "uat" | "authenticated_preview", permit?:OriginalPreviewKBPermit) => Promise<Record<string,string>>,
+  prepare?: (mode: "legacy" | "uat" | "authenticated_preview" | "authenticated_inbox", permit?:OriginalPreviewKBPermit) => Promise<Record<string,string>>,
 ): Promise<Response> {
-  let mode: "legacy" | "uat" | "authenticated_preview";
+  let mode: "legacy" | "uat" | "authenticated_preview" | "authenticated_inbox";
   try {
     mode = await trustedDispatchScope(db, meta.companyId, meta.conversationId, meta.legacyAuthority);
   } catch (e) {
@@ -109,11 +133,16 @@ export async function accountedModelFetch(
     throw e;
   }
   let kbPermit:OriginalPreviewKBPermit|undefined;
+  if(mode==="authenticated_inbox") {
+    const b=await inboxBinding(db,meta);
+    if(meta.provider==="singapore-kb") {if(!prepare)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");kbPermit=await authorizeInboxKB(db,meta,url,init);}
+    else if(!b.allow_assist || !meta.legacyAuthority || inboxGrounded.get(meta.legacyAuthority)?.authorization!==Deno.env.get("AUTHENTICATED_INBOX_KB_AUTHORIZATION") || (inboxGrounded.get(meta.legacyAuthority)?.expires ?? 0)<=Date.now() || meta.provider!=="vertex" || meta.purpose!=="assist")throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
+  }
   if(mode==="authenticated_preview" && meta.provider==="singapore-kb") {
     kbPermit=await authorizeOriginalPreviewKB(db,meta,url,init) ?? undefined;
     if(!kbPermit || !prepare)throw new ModelAccountingError("ORIGINAL_PREVIEW_PROVIDER_DENIED");
   }
-  if (mode === "authenticated_preview" && !kbPermit) {
+  if ((mode === "authenticated_preview" || mode === "authenticated_inbox") && !kbPermit) {
     // Explicit original-account paid permission, not synthetic admission and
     // never ordinary traffic reclassification. Existing provider only, bounded
     // original retry/output controls; no new ledger or inferred UAT balance.
@@ -147,13 +176,23 @@ export async function accountedModelFetch(
   if(kbPermit && !consumeOriginalPreviewKBPermit(kbPermit))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
   // Established authenticated Production path: preserve exact provider request/response.
   // Permanent Guard is deferred; no new endpoint, provider, credential or tenant scope.
+  if(mode==="authenticated_inbox") {
+    await inboxBinding(db,meta);
+    if(!meta.operationId || meta.operationId.length>240)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
+    const identity=JSON.stringify([meta.operationId,meta.provider,meta.slot,meta.attempt]);
+    const used=inboxDispatched.get(meta.legacyAuthority!) ?? new Set<string>();
+    if(used.has(identity))throw new ModelAccountingError("INBOX_REPLAY_DENIED");
+    used.add(identity);inboxDispatched.set(meta.legacyAuthority!,used);
+  }
   onDispatch?.();
-  const response=await upstream(url, mode==="authenticated_preview" ? {...preparedInit,redirect:"error"} : preparedInit);
+  const response=await upstream(url, (mode==="authenticated_preview" || mode==="authenticated_inbox") ? {...preparedInit,redirect:"error"} : preparedInit);
   if(kbPermit) {
     const s=permits.get(kbPermit)!;
     if(s.evidence) {
-      if(!s.attestation || Deno.env.get("ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION")!==s.authorization)throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
-      return await bindQueryEmbeddingResponse(response,s.attestation);
+      if(!currentPermitEvidence(s) || !s.attestation || Deno.env.get(s.authorizationKey)!==s.authorization)throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
+      const bound=await bindQueryEmbeddingResponse(response,s.attestation);
+      if(mode==="authenticated_inbox" && bound.ok && meta.legacyAuthority)inboxGrounded.set(meta.legacyAuthority,{authorization:s.authorization,expires:Math.min(s.expires,s.attestation.expires*1000)});
+      return bound;
     }
   }
   return response;

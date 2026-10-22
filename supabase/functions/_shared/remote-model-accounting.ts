@@ -72,13 +72,13 @@ export async function prepareRemoteRetrieval(
   signal?: AbortSignal,
   service: "kb" | "coach_sync" = "kb",
   requestBody?: string,
-  admittedMode?: "legacy" | "uat" | "authenticated_preview",
+  admittedMode?: "legacy" | "uat" | "authenticated_preview" | "authenticated_inbox",
   originalPermit?:OriginalPreviewKBPermit,
 ): Promise<Record<string, string>> {
   // Only accountedModelFetch supplies admittedMode after persisted identity and
   // provider checks. Existing callers keep their prior scope. Never turn a
   // Company UUID into a Synthetic UAT classification for an original Preview.
-  const original=service==="kb" && admittedMode==="authenticated_preview";
+  const original=service==="kb" && (admittedMode==="authenticated_preview" || admittedMode==="authenticated_inbox");
   if(service==="kb" && admittedMode==="legacy")return {};
   if(!original) {
     if (company !== "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec") return {};

@@ -4,8 +4,8 @@ import test from 'node:test';import assert from 'node:assert/strict';import {bui
 // Actual wrapper + signed persisted authority + paid-dispatch boundary. Only
 // Auth/DB/Widget transport/provider are isolated adapters. Never Hosted PASS.
 const f={};globalThis.Deno={env:{get:k=>f.env?.[k]},serve(){}};
-const out=await build({stdin:{contents:`export {createWidgetLiveHandler} from './supabase/functions/widget-live-ai-test/index.ts'; export * from './supabase/functions/_shared/original-widget-preview.ts'; export {trustedDispatchScope} from './supabase/functions/_shared/uat-execution-contract.ts'; export {accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit} from './supabase/functions/_shared/model-attempt-accounting.ts'; export {prepareRemoteRetrieval,signRemote} from './supabase/functions/_shared/remote-model-accounting.ts'; export {fetchKBRag,resolveTenantScope,resolveKBEndpoint} from './supabase/functions/_shared/kb-client.ts';`,resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'sdk-transport-only',setup(b){if(process.env.C3_KB_ADMISSION_SOURCE_REF)b.onLoad({filter:/supabase\/functions\/_shared\/(kb-client|model-attempt-accounting|remote-model-accounting)\.ts$/},a=>({contents:execFileSync('git',['show',process.env.C3_KB_ADMISSION_SOURCE_REF+':'+a.path.slice(process.cwd().length+1)],{encoding:'utf8'}),loader:'ts'}));b.onResolve({filter:/^https:\/\/esm.sh\//},a=>({path:a.path,namespace:'sdk'}));b.onLoad({filter:/.*/,namespace:'sdk'},()=>({contents:'export const createClient=(url,key)=>globalThis.__c3KbClient(url,key);'}));}}]});
-const {createWidgetLiveHandler,ORIGINAL_PREVIEW_AUTHORIZATION,ORIGINAL_PREVIEW_ACCOUNTS,signOriginalPreview,verifyOriginalPreview,trustedDispatchScope,accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit,fetchKBRag,resolveTenantScope,resolveKBEndpoint,prepareRemoteRetrieval,signRemote}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
+const out=await build({stdin:{contents:`export {createWidgetLiveHandler} from './supabase/functions/widget-live-ai-test/index.ts'; export * from './supabase/functions/_shared/original-widget-preview.ts'; export {authenticatedInboxAuthority,trustedDispatchScope} from './supabase/functions/_shared/uat-execution-contract.ts'; export {accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit} from './supabase/functions/_shared/model-attempt-accounting.ts'; export {prepareRemoteRetrieval,signRemote} from './supabase/functions/_shared/remote-model-accounting.ts'; export {fetchKBRag,resolveTenantScope,resolveKBEndpoint} from './supabase/functions/_shared/kb-client.ts';`,resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'sdk-transport-only',setup(b){if(process.env.C3_KB_ADMISSION_SOURCE_REF)b.onLoad({filter:/supabase\/functions\/_shared\/(kb-client|model-attempt-accounting|remote-model-accounting)\.ts$/},a=>({contents:execFileSync('git',['show',process.env.C3_KB_ADMISSION_SOURCE_REF+':'+a.path.slice(process.cwd().length+1)],{encoding:'utf8'}),loader:'ts'}));b.onResolve({filter:/^https:\/\/esm.sh\//},a=>({path:a.path,namespace:'sdk'}));b.onLoad({filter:/.*/,namespace:'sdk'},()=>({contents:'export const createClient=(url,key)=>globalThis.__c3KbClient(url,key);'}));}}]});
+const {createWidgetLiveHandler,ORIGINAL_PREVIEW_AUTHORIZATION,ORIGINAL_PREVIEW_ACCOUNTS,signOriginalPreview,verifyOriginalPreview,authenticatedInboxAuthority,trustedDispatchScope,accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit,fetchKBRag,resolveTenantScope,resolveKBEndpoint,prepareRemoteRetrieval,signRemote}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
 const realFetch=globalThis.fetch;const realKbClient=globalThis.__c3KbClient;test.after(()=>{globalThis.fetch=realFetch;if(realKbClient===undefined)delete globalThis.__c3KbClient;else globalThis.__c3KbClient=realKbClient;});
 const body=JSON.stringify({contents:[{role:'user',parts:[{text:'Compare options for my business.'}]}],generationConfig:{maxOutputTokens:2048}});
 function setup(account,{grant=true}={}){
@@ -160,7 +160,7 @@ const fixtureDigest=async s=>Buffer.from(await crypto.subtle.digest('SHA-256',ne
 async function embeddingFixture(fault='none') {
  setup(ORIGINAL_PREVIEW_ACCOUNTS[0]);f.user.id='3bdf936e-b543-41d8-9fff-fa020a85f3f6';f.rows.company_membership[0].user_id=f.user.id;
  const {c}=await start(),secret='isolated-existing-kb-key-not-production';
- const content='Isolated published subscription policy; not merchant data.';
+ const content='Isolated published subscription policy; not merchant data. Specification review applies.';
  const endpoint='https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search';
  const a={protocol:'original-preview-query-embedding-v1',actor:f.user.id,company:c.company_id,channel:c.channel_config_id,tenant:'34',endpoint,
   runtime_sha256:await fixtureDigest('ISOLATED_RUNTIME_NOT_LIVE'),deployment_evidence_sha256:await fixtureDigest('ISOLATED_DEPLOYMENT_RECEIPT'),embedding_config_sha256:await fixtureDigest('ISOLATED_EMBEDDING_SETTINGS'),lineage_evidence_sha256:await fixtureDigest('ISOLATED_LINEAGE_RECEIPT'),
@@ -253,4 +253,123 @@ test('continued send keeps two distinct control/fresh-owner reads, removes the t
  for(const k of ['admission_ms','ownership_read_ms','session_read_ms','receive_ms','receipt_read_ms'])assert(Number.isFinite(trace[k])&&trace[k]>=0,k);
  assert.equal(trace.poll_ms,0);assert.equal(f.provider,2);
  c.status='resolved';const closed=await request({action:'original_preview_send',test_conversation_id:c.id,client_message_id:crypto.randomUUID(),query:'Another service question'});assert.equal(closed.status,409);assert.equal(f.provider,2);
+});
+
+// Inbox entrypoints are bundled with all actual decision/authorization/router/
+// parsing modules. Only Auth SDK transport, OAuth token transport and network
+// adapters are isolated; these assertions are NOT Hosted or live KB evidence.
+async function inboxHandler(slug){
+ const oldServe=Deno.serve;let handler;Deno.serve=h=>{handler=h;};
+ try {
+  const out=await build({entryPoints:[`supabase/functions/${slug}/index.ts`],bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'isolated-auth-transport',setup(b){
+   b.onResolve({filter:/^(?:https:\/\/esm.sh\/|npm:)@supabase\/supabase-js/},()=>({path:'sdk',namespace:'transport'}));
+   b.onResolve({filter:/^npm:google-auth-library/},()=>({path:'oauth',namespace:'transport'}));
+   b.onLoad({filter:/.*/,namespace:'transport'},a=>({contents:a.path==='sdk'?'export const createClient=(url,key)=>globalThis.__c3InboxClient(url,key);':'export class GoogleAuth {async getClient(){return {getAccessToken:async()=>({token:"isolated-not-production"})}}}'}));
+  }}]});
+  await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));assert.equal(typeof handler,'function');return handler;
+ }finally{Deno.serve=oldServe;}
+}
+const knowledgeHandler=await inboxHandler('kb-search-proxy'),policyHandler=await inboxHandler('agent-assist');
+const priorInboxClient=globalThis.__c3InboxClient;test.after(()=>{if(priorInboxClient===undefined)delete globalThis.__c3InboxClient;else globalThis.__c3InboxClient=priorInboxClient;});
+async function setupInbox(fault='none'){
+ const x=await embeddingFixture(['signature','expired','foreign-response','changed-content','no-match'].includes(fault)?fault:'none');
+ f.env.SUPABASE_SERVICE_ROLE_KEY=f.env.SUPABASE_SECRET_KEY;f.env.LLM_MODEL_ASSIST='gemini-2.5-flash';f.env.GOOGLE_SERVICE_ACCOUNT_JSON='{}';
+ f.rows.user_roles=[{user_id:f.user.id,role:'admin'}];f.rows.agent_profile=[{id:crypto.randomUUID(),user_id:f.user.id,role:'admin',status:'active',display_name:'Isolated actor'}];f.rows.upstream_call_log=[];
+ const binding=JSON.parse(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION).bindings[0];
+ f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify({version:1,bindings:[{...binding,operations:['knowledge','policy'],allow_assist:true}]});
+ if(fault==='no-inbox-grant')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;
+ if(fault==='no-assist'){const g=JSON.parse(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION);g.bindings[0].allow_assist=false;f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify(g);}
+ if(fault==='BO-revoked')delete f.env.ORIGINAL_WIDGET_PREVIEW_AUTHORIZATION;
+ if(fault==='no-preview-grant')delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
+ if(fault==='human-control')x.c.status='pending';
+ if(fault==='role')f.rows.user_roles[0].role='qa';
+ if(fault==='inactive-membership')f.rows.company_membership[0].is_active=false;
+ if(fault==='foreign-ticket')x.c.company_id=crypto.randomUUID();
+ if(fault==='synthetic'){x.c.metadata_source={...x.c.metadata_source,source:'c3_uat_widget',synthetic:true};}
+ if(fault==='wrong-channel')f.rows.channel_config[0].company_id=crypto.randomUUID();
+ if(fault==='assigned-agent'||fault==='unassigned-agent'){
+  f.rows.user_roles[0].role='agent';f.rows.company_membership[0].role='agent';f.rows.agent_profile[0].role='agent';x.c.assigned_agent_id=fault==='assigned-agent'?f.rows.agent_profile[0].id:crypto.randomUUID();
+ }
+ const from=f.db.from;f.db.from=function(table){const q=from.call(this,table);q.in=()=>q;q.not=()=>q;return q;};
+ const auth={getUser:async()=>({data:{user:fault==='unauthenticated'?null:f.user},error:null})};f.db.auth=auth;
+ globalThis.__c3InboxClient=(url,key)=>{assert.equal(url,f.env.SUPABASE_URL);assert([f.env.SUPABASE_SECRET_KEY,f.env.SUPABASE_ANON_KEY].includes(key));return f.db;};
+ let model=0;const prompts=[];
+ globalThis.fetch=async(url,init)=>{
+  if(String(url)===x.endpoint){if(fault==='tool-failure')return new Response(null,{status:503});if(fault==='revoke-on-return')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;return await x.upstream(url,init);}
+  assert.equal(String(url),f.url,'no unrelated provider or accounting endpoint');model++;const b=JSON.parse(init.body);const text=b.contents.map(c=>c.parts.map(p=>p.text??'').join('')).join('');prompts.push(text);
+  let answer={queries:[]};if(text.includes('Text to check:'))answer=fault==='invalid-policy'?{status:'violation',summary:'invalid fixture',issues:[]}:{status:'warning',summary:'Isolated policy assessment',issues:[{excerpt:'fixture',policy_label:'Evidence 1',severity:'warning'}]};
+  return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(answer)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
+ };
+ const request=async(slug,content='Please assess my subscription cancellation draft.')=>{
+  const body=slug==='knowledge'?{query:'published subscription policy',top_k:3,conversation_id:x.c.id}:{tool_type:'check_policy',conversation_id:x.c.id,content,context_mode:'conversation'};
+  const r=await(slug==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};
+ };
+ return {...x,send:request,model:()=>model,prompts};
+}
+for(const fault of ['none','BO-revoked','no-preview-grant','human-control','no-inbox-grant','role','inactive-membership','foreign-ticket','synthetic','wrong-channel','signature','expired','foreign-response','changed-content','tool-failure','no-match','revoke-on-return'])test('actual Inbox Knowledge handler preserves ticket and separates staff authority/paid scope: '+fault,async()=>{
+ const x=await setupInbox(fault);const marker=JSON.stringify(x.c.metadata_source),before=f.rows.messages.length;
+ const r=await x.send('knowledge');
+ if(['none','BO-revoked','no-preview-grant','human-control','no-match'].includes(fault)){assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.success,true);if(fault==='no-match')assert.equal(r.data.results.length,0);else assert(r.data.results.length>0,JSON.stringify(r));}
+ else {assert(r.status>=400,JSON.stringify(r));assert.notEqual(r.data.failure?.code,'KB_NO_MATCH');assert.equal(r.data.success===true,false);if(['no-inbox-grant','role','inactive-membership','foreign-ticket','synthetic','wrong-channel','signature','expired'].includes(fault))assert.equal(x.posts(),0);}
+ assert.equal(JSON.stringify(x.c.metadata_source),marker);assert.equal(f.rows.messages.length,before,'Inbox does not dispatch customer replies');assert.equal(f.rpc.length,0);
+});
+for(const fault of ['none','BO-revoked','human-control','assigned-agent','unassigned-agent','no-inbox-grant','no-assist','signature','no-match','tool-failure','invalid-policy'])test('actual Policy handler grounds evidence and refuses false compliant: '+fault,async()=>{
+ const x=await setupInbox(fault);const r=await x.send('policy','DRAFT DISTINCT: Please check this text.');
+ if(['none','BO-revoked','human-control'].includes(fault)){assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.result.status,'warning');assert(x.prompts.some(p=>p.includes('DRAFT DISTINCT')));assert(x.prompts.some(p=>p.includes('Isolated published subscription policy')));}
+ else if(fault==='no-match'){assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.result.status,'insufficient_evidence');assert.equal(x.model(),0);}
+ else {assert(r.status>=400,JSON.stringify(r));assert.notEqual(r.data.result?.status,'compliant');}
+});
+for(const fault of ['none','role-revoked','membership-revoked','channel-revoked','forged','foreign-conversation','operation'])test('opaque Inbox context rechecks revocation and cannot be serialized/spoofed: '+fault,async()=>{
+ const x=await setupInbox();const token=await authenticatedInboxAuthority(f.db,f.user.id,x.c.company_id,x.c.id,'knowledge');
+ if(fault==='role-revoked')f.rows.user_roles=[];
+ if(fault==='membership-revoked')f.rows.company_membership[0].is_active=false;
+ if(fault==='channel-revoked')f.rows.channel_config[0].is_active=false;
+ if(fault==='operation'){const g=JSON.parse(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION);g.bindings[0].operations=['policy'];f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify(g);}
+ const meta={...x.meta,legacyAuthority:fault==='forged'?JSON.parse(JSON.stringify(token)):token,conversationId:fault==='foreign-conversation'?crypto.randomUUID():x.c.id};let error;
+ try {await accountedModelFetch(f.db,meta,x.endpoint,{method:'POST',body:x.request},x.upstream,undefined,x.prepare);}catch(e){error=e;}
+ if(fault==='none'){assert.equal(error,undefined);assert.equal(x.posts(),1);}else {assert(error);assert.equal(x.posts(),0);}
+});
+
+for(const fault of ['none','missing','duplicate','runtime','config','expired','signature','revoked'])test('standing permission consumes independently renewable signed evidence: '+fault,async()=>{
+ const x=await setupInbox(fault==='expired'||fault==='signature'?fault:'none');
+ const original=JSON.parse(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION),b=original.bindings[0];
+ const keys=['remote_mode','remote_runtime_sha256','deployment_evidence_sha256','embedding_config_sha256','lineage_evidence_sha256','attestation_payload','attestation_signature'];
+ const record=Object.fromEntries(keys.map(k=>[k,b[k]]));record.reference_id='frankie-tenant34-query-embedding';
+ for(const k of ['deployment_evidence_sha256','lineage_evidence_sha256','attestation_payload','attestation_signature'])delete b[k];
+ b.evidence_reference=record.reference_id;
+ f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify(original);
+ if(fault==='runtime')record.remote_runtime_sha256='b'.repeat(64);
+ if(fault==='config')record.embedding_config_sha256='c'.repeat(64);
+ if(fault!=='missing')f.env.KB_QUERY_EMBEDDING_EVIDENCE_JSON=JSON.stringify({version:1,records:fault==='duplicate'?[record,record]:[record]});
+ if(fault==='revoked')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;
+ const unchanged=f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION,r=await x.send('knowledge');
+ if(fault==='none'){assert.equal(r.status,200,JSON.stringify(r));assert(r.data.results.length);assert.equal(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION,unchanged);}
+ else {assert(r.status>=400,JSON.stringify(r));assert.equal(x.posts(),0);}
+});
+test('same opaque Inbox operation concurrent duplicate has at most one dispatch; unknown stays consumed in this isolate',async()=>{
+ const x=await setupInbox();const token=await authenticatedInboxAuthority(f.db,f.user.id,x.c.company_id,x.c.id,'knowledge');const meta={...x.meta,legacyAuthority:token};
+ const run=()=>accountedModelFetch(f.db,meta,x.endpoint,{method:'POST',body:x.request},x.upstream,undefined,x.prepare);
+ const r=await Promise.allSettled([run(),run()]);assert.equal(r.filter(r=>r.status==='fulfilled').length,1);assert.equal(r.filter(r=>r.status==='rejected'&&r.reason.code==='INBOX_REPLAY_DENIED').length,1);assert.equal(x.posts(),1);await assert.rejects(run(),e=>e.code==='INBOX_REPLAY_DENIED');assert.equal(x.posts(),1);
+});
+test('Policy conversation and draft checks pass their distinct submitted input to the governed model',async()=>{
+ const x=await setupInbox();for(const text of ['CONVERSATION INPUT: Please check these statements.','DRAFT INPUT: Please check this reply.']){const r=await x.send('policy',text);assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.result.status,'warning');assert(x.prompts.some(p=>p.includes(text)));}
+ assert.equal(x.posts(),2);assert.equal(f.rows.messages.filter(m=>m.role==='assistant').length,1,'no Inbox result sent to visitor');
+});
+test('omitting conversation cannot turn a manual Inbox request into legacy paid dispatch',async()=>{
+ const x=await setupInbox();const r=await knowledgeHandler(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify({query:'published subscription policy'})}));
+ assert.equal(r.status,403,await r.clone().text());assert.equal((await r.json()).failure.code,'INBOX_CONVERSATION_REQUIRED');assert.equal(x.posts(),0);
+});
+test('Preview B-O and policy grant cannot fund a different authenticated staff tool',async()=>{
+ const x=await setupInbox();const r=await policyHandler(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify({tool_type:'grammar',conversation_id:x.c.id,content:'Please check this text.'})}));
+ assert.equal(r.status,502);assert.equal(x.posts(),0);assert.equal(x.model(),0);
+});
+test('unknown Inbox network outcome cannot be replayed with the same opaque operation',async()=>{
+ const x=await setupInbox();const token=await authenticatedInboxAuthority(f.db,f.user.id,x.c.company_id,x.c.id,'knowledge');const meta={...x.meta,legacyAuthority:token};let calls=0;
+ const run=()=>accountedModelFetch(f.db,meta,x.endpoint,{method:'POST',body:x.request},async()=>{calls++;throw new TypeError('isolated unknown delivery');},undefined,x.prepare);
+ await assert.rejects(run(),/isolated unknown delivery/);await assert.rejects(run(),e=>e.code==='INBOX_REPLAY_DENIED');assert.equal(calls,1);
+});
+test('assigned independent Agent can obtain only its own policy context; original owner markers are preserved',async()=>{
+ const x=await setupInbox();const staff=crypto.randomUUID(),profile=crypto.randomUUID();f.rows.user_roles.push({user_id:staff,role:'agent'});f.rows.company_membership.push({user_id:staff,company_id:x.c.company_id,role:'agent',is_active:true});f.rows.agent_profile.push({id:profile,user_id:staff,status:'active',role:'agent'});x.c.assigned_agent_id=profile;x.c.status='pending';
+ const token=await authenticatedInboxAuthority(f.db,staff,x.c.company_id,x.c.id,'policy');assert.equal(await trustedDispatchScope(f.db,x.c.company_id,x.c.id,token),'authenticated_inbox');assert.equal(x.c.metadata_source.owner_user_id,f.user.id);assert.equal(x.c.status,'pending');
+ x.c.assigned_agent_id=crypto.randomUUID();await assert.rejects(trustedDispatchScope(f.db,x.c.company_id,x.c.id,token),e=>e.code==='INBOX_AUTHORITY_DENIED');assert.equal(x.posts(),0);
 });

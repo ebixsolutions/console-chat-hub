@@ -34,15 +34,52 @@ export async function legacyPreactivationAuthority(db: {from:(table:string)=>any
   if(Deno.env.get("KB_PREACTIVATION_ENABLED")!=="true" || tenant!==Deno.env.get("KB_PREACTIVATION_TENANT_ID")?.trim())throw new UatDenied("PREACTIVATION_SCOPE_DENIED");
   const memberships=await db.from("company_membership").select("company_id").eq("user_id",user);
   const roles=await db.from("user_roles").select("role").eq("user_id",user);
-  if(memberships.error || roles.error || !Array.isArray(memberships.data) || memberships.data.length || !roles.data?.some((r:any)=>["admin","supervisor"].includes(r.role)))throw new UatDenied("PREACTIVATION_ACTOR_DENIED");
+  if(memberships.error || roles.error || !Array.isArray(memberships.data) || memberships.data.length || !roles.data?.some((r:any)=>["admin","supervisor","agent"].includes(r.role)))throw new UatDenied("PREACTIVATION_ACTOR_DENIED");
   if(conversation){const ticket=await db.from("conversations").select("id,company_id").eq("id",conversation).maybeSingle();if(ticket.error || ticket.data?.id!==conversation || ticket.data.company_id!==null)throw new UatDenied("PREACTIVATION_TICKET_DENIED");}
   const token={};preactivation.set(token,{conversation,tenant,expires:Date.now()+60000});return token;
+}
+/** Opaque authenticated Inbox operation. Ticket provenance is not the actor's
+ * execution authority. Mint only after getUser()/validateAgent(), then recheck
+ * persisted roles/membership/ticket/channel at every dispatch. No browser flag
+ * or serialized object can reconstruct this capability. Reading a human-owned
+ * ticket never enables the automatic reply path or changes its human state. */
+export type InboxOperation = "knowledge" | "policy" | "translate" | "grammar" | "suggest_reply" | "knowledge_helper" | "handoff_context";
+type InboxIdentity = {actor:string;company:string;conversation:string;channel:string;operation:InboxOperation;expires:number};
+const inboxAuthorities = new WeakMap<object,InboxIdentity>();
+export async function authenticatedInboxAuthority(db:Db,actor:string,company:string,conversation:string,operation:InboxOperation):Promise<object> {
+  if(!["knowledge","policy","translate","grammar","suggest_reply","knowledge_helper","handoff_context"].includes(operation) || ![actor,company,conversation].every(v=>/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(v)))throw new UatDenied("INBOX_AUTHORITY_DENIED");
+  const token={},identity={actor,company,conversation,operation,channel:"",expires:Date.now()+120000};
+  inboxAuthorities.set(token,identity);
+  try {const checked=await authenticatedInboxIdentity(db,token,company,conversation);identity.channel=checked.channel;return token;}
+  catch(error){inboxAuthorities.delete(token);throw error;}
+}
+export async function authenticatedInboxIdentity(db:Db,authority:object|undefined,company:string|null,conversation:string|null):Promise<InboxIdentity> {
+  const a=authority && inboxAuthorities.get(authority);
+  if(!a || a.expires<=Date.now() || a.company!==company || a.conversation!==conversation || !db.from)throw new UatDenied("INBOX_AUTHORITY_DENIED");
+  const roles=await db.from("user_roles").select("role").eq("user_id",a.actor);
+  const membership=await db.from("company_membership").select("company_id,role,is_active").eq("user_id",a.actor).eq("company_id",a.company).eq("is_active",true).maybeSingle();
+  const owner=await db.from("company").select("id,is_active").eq("id",a.company).maybeSingle();
+  const ticket=await db.from("conversations").select("id,company_id,channel_config_id,visitor_session_id,metadata_source,status,assigned_agent_id").eq("id",a.conversation).eq("company_id",a.company).maybeSingle();
+  if(roles.error || !roles.data?.some((r:any)=>["admin","supervisor","agent"].includes(r.role)) || membership.error || membership.data?.is_active!==true || !["admin","supervisor","agent"].includes(membership.data.role) || owner.error || owner.data?.is_active!==true || ticket.error || ticket.data?.id!==a.conversation || ticket.data.company_id!==a.company)throw new UatDenied("INBOX_AUTHORITY_DENIED");
+  const c=ticket.data,m=c.metadata_source;
+  const elevated=roles.data.some((r:any)=>["admin","supervisor"].includes(r.role)) && ["admin","supervisor"].includes(membership.data.role);
+  if(!elevated) {
+    const agent=await db.from("agent_profile").select("id").eq("user_id",a.actor).maybeSingle();
+    if(a.operation!=="policy" || membership.data.role!=="agent" || !roles.data.some((r:any)=>r.role==="agent") || agent.error || !agent.data?.id || c.assigned_agent_id!==agent.data.id)throw new UatDenied("INBOX_AUTHORITY_DENIED");
+  }
+  if(m?.synthetic===true || m?.source==="c3_uat_widget")throw new UatDenied("INBOX_SYNTHETIC_SCOPE_DENIED");
+  if((m?.widget_live_test===true || m?.source==="widget_live_test") && !await verifyOriginalPreview(db,c,undefined,false))throw new UatDenied("INBOX_AUTHORITY_DENIED");
+  const channel=await db.from("channel_config").select("id,company_id,is_active").eq("id",c.channel_config_id).eq("company_id",a.company).maybeSingle();
+  if(channel.error || channel.data?.id!==c.channel_config_id || channel.data.company_id!==a.company || channel.data.is_active!==true || a.channel && a.channel!==c.channel_config_id)throw new UatDenied("INBOX_AUTHORITY_DENIED");
+  return {...a,channel:c.channel_config_id};
 }
 /** Identity comes from service-side persistence and existing authenticated caller scopes.
  * The fixed Director synthetic company never falls through to legacy dispatch.
  * A request body flag, tenant UUID or missing lease cannot grant UAT privileges. */
-export async function trustedDispatchScope(db: Db, company: string | null, conversation: string | null, authority?: object): Promise<"legacy" | "uat" | "authenticated_preview"> {
+export async function trustedDispatchScope(db: Db, company: string | null, conversation: string | null, authority?: object): Promise<"legacy" | "uat" | "authenticated_preview" | "authenticated_inbox"> {
+  if(authority && inboxAuthorities.has(authority)){await authenticatedInboxIdentity(db,authority,company,conversation);return "authenticated_inbox";}
   if(company===null && authority){const grant=preactivation.get(authority);if(grant && grant.conversation===conversation && grant.expires>Date.now() && Deno.env.get("KB_PREACTIVATION_ENABLED")==="true" && grant.tenant===Deno.env.get("KB_PREACTIVATION_TENANT_ID")?.trim()){if(conversation){if(!db.from)throw new UatDenied("PREACTIVATION_TICKET_DENIED");const ticket=await db.from("conversations").select("id,company_id").eq("id",conversation).maybeSingle();if(ticket.error || ticket.data?.id!==conversation || ticket.data.company_id!==null)throw new UatDenied("PREACTIVATION_TICKET_DENIED");}return "legacy";}throw new UatDenied("PREACTIVATION_AUTHORITY_DENIED");}
+  if(authority)throw new UatDenied("INBOX_AUTHORITY_DENIED");
   if (!company || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(company) || !db.from) throw new UatDenied("DISPATCH_COMPANY_UNPROVEN");
   try {
     const owner = await db.from("company").select("id").eq("id", company).maybeSingle();

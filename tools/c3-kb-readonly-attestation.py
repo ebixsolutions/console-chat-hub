@@ -104,6 +104,17 @@ def attest(root, receipt_path, document_ids, seconds, out):
     out.mkdir(parents=True, exist_ok=True)
     (out/"Lineage-Metadata.json").write_bytes(lineage_bytes)
     (out/"PROPOSED-NOT-INSTALLED-KB-Grant.json").write_text(json.dumps(dict(version=2, bindings=[binding]), indent=2)+"\n")
+    # Proposals only: a standing permission stays unchanged when an approved
+    # existing operator refreshes independently signed evidence. No installer,
+    # scheduler, remote endpoint, credential export or automatic grant creation.
+    reference = "frankie-tenant34-query-embedding"
+    evidence_keys = ["remote_mode", "remote_runtime_sha256", "deployment_evidence_sha256", "embedding_config_sha256", "lineage_evidence_sha256", "attestation_payload", "attestation_signature"]
+    record = dict(reference_id=reference, **{k: binding[k] for k in evidence_keys})
+    (out/"PROPOSED-NOT-INSTALLED-KB-Evidence.json").write_text(json.dumps(dict(version=1, records=[record]), indent=2)+"\n")
+    standing = {k: v for k, v in binding.items() if k not in ["deployment_evidence_sha256", "lineage_evidence_sha256", "attestation_payload", "attestation_signature"]}
+    standing["evidence_reference"] = reference
+    (out/"PROPOSED-NOT-INSTALLED-Standing-Preview-Grant.json").write_text(json.dumps(dict(version=2, bindings=[standing]), indent=2)+"\n")
+    (out/"PROPOSED-NOT-INSTALLED-Standing-Inbox-Grant.json").write_text(json.dumps(dict(version=1, bindings=[dict(standing, operations=["knowledge", "policy"], allow_assist=True)]), indent=2)+"\n")
     (out/"Read-Only-Receipt.json").write_text(json.dumps(dict(
         status="EVIDENCE_COLLECTED_NOT_ACTIVATED", runtime_sha256=receipt["runtime_sha256"],
         deployment_evidence_sha256=digest(receipt_bytes), embedding_config_sha256=embedding_config_sha, lineage_evidence_sha256=digest(lineage_bytes),

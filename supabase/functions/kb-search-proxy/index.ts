@@ -1,4 +1,5 @@
-import { legacyPreactivationAuthority } from "../_shared/uat-execution-contract.ts";
+import { safeExecutionCode, executionFailure } from "../_shared/execution-failure.ts";
+import { authenticatedInboxAuthority, legacyPreactivationAuthority } from "../_shared/uat-execution-contract.ts";
 import { uatMap } from "../_shared/uat-execution-contract.ts";
 import {
   resolveKBEndpoint,
@@ -546,6 +547,11 @@ Deno.serve(async (req) => {
       scope = standalone.scope;
     }
 
+    if(scope.aiCompanyId && !conversationId)throw Object.assign(new Error("INBOX_CONVERSATION_REQUIRED"),{code:"INBOX_CONVERSATION_REQUIRED"});
+    if(scope.aiCompanyId && conversationId) {
+      scope={...scope,legacyAuthority:await authenticatedInboxAuthority(admin,user.id,scope.aiCompanyId,conversationId,"knowledge")};
+    }
+
     const queryMode = body?.query_mode === "auto_context" ? "auto_context" : "manual";
     const derived = buildTrustedRetrievalQuery(query, recentTurns, queryMode === "auto_context");
     const endpoint = resolveKBEndpoint();
@@ -643,6 +649,8 @@ Deno.serve(async (req) => {
       policy_evidence: policyEvidence,
     }, 200, req);
   } catch (e) {
+    const code=e && typeof e==="object" && "code" in e ? safeExecutionCode(e.code) : null;
+    if(code)return jsonResponse({success:false,error:"execution_denied",failure:executionFailure(code)},403,req);
     const name = (e as Error).message === "KB_DOCUMENT_EVIDENCE_MISMATCH"
       ? "KB_DOCUMENT_EVIDENCE_MISMATCH"
       : (e as Error).name;
