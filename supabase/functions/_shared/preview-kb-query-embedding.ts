@@ -145,7 +145,13 @@ export async function bindQueryEmbeddingResponse(response:Response,a:QueryEmbedd
  * response. Separate explicit grant: metadata-mode approval cannot enable it.
  * Missing native authority remains unknown and denies, never filled locally.
  */
-const ragAuthorityFailure=(reason:string):never=>{throw Object.assign(new Error("KB_TOOL_FAILURE"),{code:"KB_TOOL_FAILURE",reason});};
+const RAG_VALIDATION_RULES = ["envelope", "citations_shape", "no_match_shape", "no_match_counts", "selected_documents_empty", "document_shape", "optional_authority_shape", "citation_lineage"] as const;
+type RagValidationRule = typeof RAG_VALIDATION_RULES[number];
+export function ragValidationRule(error: unknown): RagValidationRule | undefined {
+  const value = error && typeof error === "object" && "validation_rule" in error ? error.validation_rule : undefined;
+  return RAG_VALIDATION_RULES.find(rule => rule === value);
+}
+const ragAuthorityFailure=(reason:string,validation_rule?:RagValidationRule):never=>{throw Object.assign(new Error("KB_TOOL_FAILURE"),{code:"KB_TOOL_FAILURE",reason,...(validation_rule ? {validation_rule} : {})});};
 type ServiceRead = {tenant:string; relevance:string|null};
 // Out-of-band, server-only provenance: an API body/browser flag cannot mint it.
 const serviceResponses=new WeakMap<Response,Map<string,ServiceRead>>();
@@ -167,18 +173,23 @@ async function bindOriginalAggregation(data:any):Promise<{response:Response;grou
   };
   check(data);check(data.metadata);check(data.meta);
   if(data.authority_contract!==undefined && data.authority_contract!=="singapore_rag_published_v1")return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
-  if(!Array.isArray(data.citations))return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
+  if(!Array.isArray(data.citations))return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","citations_shape");
   if(!data.context_found){
-    if(data.selected_documents.length || data.citations.length)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
-    if(data.llm_context!==undefined && data.llm_context!==null && (!object(data.llm_context) || data.llm_context.summary_count!==0 || data.llm_context.evidence_count!==0))return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
+    if(data.selected_documents.length || data.citations.length)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","no_match_shape");
+    if(data.llm_context!==undefined && data.llm_context!==null && (!object(data.llm_context) || data.llm_context.summary_count!==0 || data.llm_context.evidence_count!==0))return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","no_match_counts");
     return {response:Response.json({success:true,context_found:false,selected_documents:[],citations:[]},{headers:{"Cache-Control":"no-store"}}),grounded:false};
   }
-  if(!data.selected_documents.length)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
+  if(!data.selected_documents.length)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","selected_documents_empty");
   const docs=new Set<string>(),chunks=new Set<string>(),owners=new Map<string,string>(),proofs=new Map<string,ServiceRead>();
   for(const d of data.selected_documents){
-    if(!object(d) || !id(d.document_id) || docs.has(String(d.document_id)) || typeof d.title!=="string" || !d.title.trim() || typeof d.source_type!=="string" || !d.source_type.trim() || typeof d.document_score!=="number" || !Number.isFinite(d.document_score) || !Array.isArray(d.evidence) || !d.evidence.length || d.evidence.length>3)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
+    // The authorized aggregation producer can select a summary-only document
+    // (zero content chunks) alongside answerable documents. Retain it for
+    // orientation; canonical grounding still requires matching full_content.
+    // Empty legacy display metadata is not a tenant/publication assertion.
+    if(!object(d) || !id(d.document_id) || docs.has(String(d.document_id)) || typeof d.title!=="string" || typeof d.source_type!=="string" || typeof d.document_score!=="number" || !Number.isFinite(d.document_score) || !Array.isArray(d.evidence) || d.evidence.length>3 ||
+      d.summary!==undefined && d.summary!==null && !object(d.summary) || !d.evidence.length && !object(d.summary))return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","document_shape");
     docs.add(String(d.document_id));
-    if(d.authority!==undefined && !object(d.authority) || d.metadata!==undefined && !object(d.metadata))return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
+    if(d.authority!=null && !object(d.authority) || d.metadata!=null && !object(d.metadata))return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","optional_authority_shape");
     const versions=[d.version_id,d.version,(d.authority as any)?.version_id,(d.authority as any)?.version,(d.metadata as any)?.version_id,(d.metadata as any)?.version].filter(v=>v!==undefined && v!==null);
     if(versions.some(v=>!id(v)) || new Set(versions).size>1)return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
     for(const claim of [d,d.authority,d.metadata])check(claim,versions[0] as string|undefined);
@@ -195,7 +206,7 @@ async function bindOriginalAggregation(data:any):Promise<{response:Response;grou
   }
   const cited=new Set<string>();
   for(const c of data.citations){
-    if(!object(c) || !docs.has(String(c.document_id)) || cited.has(String(c.document_id)) || c.chunk_id!==undefined && owners.get(String(c.chunk_id))!==c.document_id)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
+    if(!object(c) || !docs.has(String(c.document_id)) || cited.has(String(c.document_id)) || c.chunk_id!==undefined && owners.get(String(c.chunk_id))!==c.document_id)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","citation_lineage");
     check(c);cited.add(String(c.document_id));
   }
   for(const d of data.selected_documents){const citation=data.citations.find((c:any)=>c.document_id===d.document_id);proofs.set(d.document_id,{tenant:FRANKIE_KB_SCOPE.tenant,relevance:typeof citation?.relevance==="string"?citation.relevance:null});}
@@ -211,8 +222,9 @@ async function bindOriginalAggregation(data:any):Promise<{response:Response;grou
 export async function bindRagApiResponse(response:Response,policy:RagApiPolicy):Promise<{response:Response;grounded:boolean}> {
   if(!ragApiPolicy({...policy,allow_remote_embedding:true}))return deny();
   if(!response.ok)return {response,grounded:false};
+  try {
   const data=await boundedJson(response);
-  if(!object(data) || data.success!==true || typeof data.context_found!=="boolean" || !Array.isArray(data.selected_documents) || data.selected_documents.length>5)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
+  if(!object(data) || data.success!==true || typeof data.context_found!=="boolean" || !Array.isArray(data.selected_documents) || data.selected_documents.length>5)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","envelope");
   if(policy.rag_api_contract==="singapore_rag_aggregation_v1")return await bindOriginalAggregation(data);
   if(data.authority_contract!==policy.rag_api_contract || data.company_id===undefined)return ragAuthorityFailure("KB_RAG_AUTHORITY_MISSING");
   if(String(data.company_id)!==FRANKIE_KB_SCOPE.tenant || data.tenant_id!==undefined && String(data.tenant_id)!==FRANKIE_KB_SCOPE.tenant)return ragAuthorityFailure("KB_RAG_TENANT_CONFLICT");
@@ -244,6 +256,11 @@ export async function bindRagApiResponse(response:Response,policy:RagApiPolicy):
   // Preserve actual source/version assertions. Never synthesize CURRENT_KB
   // metadata for old unversioned responses or use combined_text as evidence.
   return {response:Response.json({success:true,context_found:true,selected_documents:data.selected_documents,citations:[]},{headers:{"Cache-Control":"no-store"}}),grounded:true};
+  } catch (error) {
+    // Actual transport status, never inferred from a generic outer Function 200.
+    if(error && typeof error === "object" && "reason" in error)Object.assign(error,{remote_http_status:response.status});
+    throw error;
+  }
 }
 
 export const LIVE_METADATA_MODE = "query_embedding_live_metadata_v1";

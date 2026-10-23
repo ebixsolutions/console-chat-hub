@@ -47,7 +47,7 @@ export function scopedServiceKnowledgeQuery(
     .map(readEntity);
   const followup = trusted ? resolveFactualFollowup(question, history) : null;
   const context = {
-    ...(followup ? {resolved_subject:followup.subject} : {}),
+    ...(followup ? {resolved_subject:followup.subject, prior_subject_question:followup.prior_question.slice(0,240)} : {}),
     question: clean(question),
     topic: topic ? clean(topic) : null,
     requested_facts: trusted?.requested_facts ?? [],

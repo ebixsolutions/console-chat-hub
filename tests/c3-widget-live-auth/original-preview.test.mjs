@@ -659,6 +659,8 @@ async function originalAggregationFixture(fault='none',inbox=false,responseFixtu
   if(fault==='401'||fault==='403')return Response.json({success:false},{status:Number(fault)});
   if(fault==='timeout')throw new DOMException('isolated','AbortError');
   if(fault==='invalid-json')return new Response('{broken');
+  if(fault==='oversized')return new Response(' '.repeat(2_000_001));
+  if(fault==='empty-body')return new Response(null);
   if(fault==='revoke')delete f.env[inbox?'AUTHENTICATED_INBOX_KB_AUTHORIZATION':'ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION'];
   const data=structuredClone(responseFixture),doc=data.selected_documents[0],chunk=doc.evidence[0];
   if(fault==='no-match')return Response.json({success:true,context_found:false,selected_documents:[],citations:[]});
@@ -768,4 +770,39 @@ test('Knowledge UI response parser separates success/no-match from service, acce
  }
  assert.equal(await knowledgeFailureState(null,{context:new Response('private provider payload and credentials',{status:502})}),'service_failure');
  assert.equal(kbErrorFamily({error:'<script>secret</script>'},502),'service_failure');
+});
+
+// Producer contract: vector_store.py selects summary chunks independently of
+// content chunks (0..max_full_content_chunks). This is a derived fixture,
+// never the uncaptured body of the v243 Hosted failure.
+function withSummaryOnlyCandidate(sample=directorOriginalRag) {
+ const data=structuredClone(sample),d=structuredClone(data.selected_documents[0]);
+ d.document_id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';d.summary.chunk_id='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';d.evidence=[];
+ data.selected_documents.unshift(d);data.citations.unshift({...data.citations[0],document_id:d.document_id});return data;
+}
+test('authenticated legacy response with summary-only candidate preserves other full-content evidence',async()=>{
+ const data=withSummaryOnlyCandidate(),x=await originalAggregationFixture('none',false,data);try{const r=await x.search();assert(r.success,JSON.stringify(r));assert.equal(r.documents.length,2);assert.equal(r.documents[0].llm_context.full_content_evidence.length,0);const g=selectCanonicalGrounding(r.documents,{requestText:'什麼是四電一腦？',expectedTenantId:'34',requiresCurrentKb:true});assert.equal(g.document?.document_id,directorOriginalRag.selected_documents[0].document_id);assert.equal(g.authority_decision.provenance.currentness,'unknown');assert.equal(x.posts(),1);}finally{globalThis.fetch=realFetch;}
+});
+
+for(const [name,mutate,valid] of [
+ ['summary-only response',d=>{d.selected_documents=d.selected_documents.slice(0,1);d.citations=d.citations.slice(0,1);d.selected_documents[0].evidence=[];},true],
+ ['empty optional display metadata',d=>{d.selected_documents[0].title='';d.selected_documents[0].source_type='';},true],
+ ['nullable optional authority metadata',d=>{d.selected_documents[0].authority=null;d.selected_documents[0].metadata=null;},true],
+ ['empty evidence without summary',d=>{d.selected_documents[0].summary=null;d.selected_documents[0].evidence=[];},false],
+ ['non-array evidence',d=>{d.selected_documents[0].evidence={};},false],
+ ['malformed summary',d=>{d.selected_documents[0].summary=false;},false],
+ ['malformed authority',d=>{d.selected_documents[0].authority=42;},false],
+ ['malformed descriptive type',d=>{d.selected_documents[0].source_type=42;},false],
+ ['foreign summary candidate',d=>{d.selected_documents[0].evidence=[];d.selected_documents[0].tenant_id=35;},false],
+ ['conflicting summary authority',d=>{d.selected_documents[0].evidence=[];d.selected_documents[0].authority={version_id:'v1'};d.selected_documents[0].summary.version_id='v2';},false],
+ ['duplicate document',d=>{d.selected_documents.push(structuredClone(d.selected_documents[0]));},false],
+ ['invalid envelope',d=>{d.context_found='true';},false],
+])test('legacy binding and canonical parser: '+name,async()=>{
+ const data=structuredClone(directorOriginalRag);mutate(data);const x=await originalAggregationFixture('none',false,data);try{const r=await x.search();assert.equal(r.success,valid,JSON.stringify(r));assert.equal(x.posts(),1);if(valid){assert.equal(r.documents[0].authority.currentness,'unknown');assert.equal(r.documents[0].authority.version,null);if(!data.selected_documents[0].evidence.length){const g=selectCanonicalGrounding(r.documents,{requestText:'四電一腦',expectedTenantId:'34'});assert.equal(g.document,null,'orientation never becomes full-content authority');}}else{assert.equal(r.failure.code,'KB_TOOL_FAILURE');assert.notEqual(r.failure.code,'KB_NO_MATCH');}}finally{globalThis.fetch=realFetch;}
+});
+for(const [fault,code] of [['oversized','KB_RESPONSE_TOO_LARGE'],['empty-body','KB_RESPONSE_EMPTY']])test('authenticated binding retains bounded decode failure: '+fault,async()=>{const x=await originalAggregationFixture(fault);try{const r=await x.search();assert.equal(r.success,false);assert.equal(r.diagnostic_code,code);assert.equal(r.failure.stage,'decode');assert.equal(x.posts(),1);}finally{globalThis.fetch=realFetch;}});
+
+test('actual repository Python aggregation producer interoperates with authenticated binding and canonical grounding',async()=>{
+ const data=JSON.parse(execFileSync('python3',['tests/edge/singapore-aggregation-producer-contract.py'],{encoding:'utf8'}));
+ const x=await originalAggregationFixture('none',false,data);try{const r=await x.search('What is Harbor Care?');assert(r.success,JSON.stringify(r));const g=selectCanonicalGrounding(r.documents,{requestText:'What is Harbor Care?',expectedTenantId:'34'});assert.equal(g.document?.document_id,'2'.repeat(32));assert.equal(g.authority_decision.provenance.currentness,'unknown');assert.equal(g.authority_decision.provenance.version,null);assert.equal(x.posts(),1);}finally{globalThis.fetch=realFetch;}
 });

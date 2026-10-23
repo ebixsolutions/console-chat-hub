@@ -3059,12 +3059,20 @@ function evidenceSupportsJurisdiction(
   chunks: Array<{ content?: string; title?: string }>,
 ): boolean {
   if (!jurisdiction) return true;
-  const needle = jurisdiction.toLocaleLowerCase();
-  return chunks.some((chunk) =>
-    `${chunk.title ?? ""}\n${chunk.content ?? ""}`.toLocaleLowerCase().includes(
-      needle,
-    )
-  );
+  // Match jurisdiction names across the already supported languages; an
+  // explicit geographic synonym is evidence, not a guessed market scope.
+  const aliases: Record<string, RegExp> = {
+    "香港": /香港|全港|hong\s*kong|\bhk\b/iu,
+    "澳門": /澳門|澳门|macau|macao/iu,
+    "新加坡": /新加坡|singapore/iu,
+    "台灣": /台灣|台湾|taiwan/iu,
+    "中國大陸": /中國大陸|中国大陆|內地|内地|mainland\s*china/iu,
+    "Mars": /mars|火星/iu,
+  };
+  return chunks.some((chunk) => {
+    const text = `${chunk.title ?? ""}\n${chunk.content ?? ""}`;
+    return aliases[jurisdiction]?.test(text) ?? text.toLocaleLowerCase().includes(jurisdiction.toLocaleLowerCase());
+  });
 }
 
 type FlagSet = {
@@ -5993,7 +6001,9 @@ async function orchestrationGenerateReply(
         minScore,
         requirePublished: true,
         requestText: userQuery,
-        currentTurnText: _canonicalTurn.operation === "PRONOUN_OR_ELLIPSIS" && _semanticRetrieval.mode === "contextual"
+        currentTurnText: _factualFollowup
+          ? `${_factualFollowup.subject} ${_h1LastMsg}`
+          : _canonicalTurn.operation === "PRONOUN_OR_ELLIPSIS" && _semanticRetrieval.mode === "contextual"
           ? _semanticRetrieval.query : _h1LastMsg,
         expectedTenantId: _kbTenantResult.scope.singaporeTenantId,
         expectedEntityIds: _c1CurrentTarget.entity_ids,

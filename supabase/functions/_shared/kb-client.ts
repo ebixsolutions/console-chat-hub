@@ -1,7 +1,7 @@
 import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
 import { legacyPreactivationAuthority } from "./uat-execution-contract.ts";
 import { accountedModelFetch } from "./model-attempt-accounting.ts";
-import { bindRagServiceDocument, ragServiceDocument } from "./preview-kb-query-embedding.ts";
+import { bindRagServiceDocument, ragServiceDocument, ragValidationRule } from "./preview-kb-query-embedding.ts";
 import {
   prepareRemoteRetrieval,
   remoteAccountingSecret,
@@ -546,13 +546,13 @@ export async function fetchKBRag(
   );
   const started=Date.now();
   const uuid=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
-  const trace=(stage:"kb_scope_resolved"|"kb_admission_or_transport_result",failure?:ExecutionFailure,status?:number,reason?:unknown)=>{
+  const trace=(stage:"kb_scope_resolved"|"kb_admission_or_transport_result",failure?:ExecutionFailure,status?:number,reason?:unknown,rule?:string)=>{
     if(!uuid.test(opts?.uatContext?.sourceMessageId ?? "") || !uuid.test(opts?.uatContext?.conversationId ?? ""))return;
     console.log(JSON.stringify({endpoint:"generate-reply",stage,conversation_id:opts!.uatContext!.conversationId,
       source_message_id:opts!.uatContext!.sourceMessageId,company_id:scope.aiCompanyId,
       canonical_kb_tenant:/^[a-z0-9_-]{1,100}$/i.test(scope.singaporeTenantId) ? scope.singaporeTenantId : null,
       endpoint_class:"singapore_context_search",elapsed_ms:Date.now()-started,
-      ...(failure ? {failure_code:failure.code,failure_stage:failure.stage} : {}),...(status ? {http_status:status} : {}),
+      ...(failure ? {failure_code:failure.code,failure_stage:failure.stage} : {}),...(status ? {http_status:status} : {}),...(rule ? {validation_rule:rule} : {}),
       ...(typeof reason==="string" && ["KB_RAG_RESPONSE_INVALID","KB_RAG_AUTHORITY_MISSING","KB_RAG_TENANT_CONFLICT","KB_RAG_AUTHORITY_CONFLICT","KB_RAG_CHUNK_INVALID","KB_RAG_CONTENT_MISMATCH"].includes(reason)?{authority_reason:reason}:{})}));
   };
   trace("kb_scope_resolved");
@@ -577,7 +577,8 @@ export async function fetchKBRag(
     const reason=error && typeof error==="object" && "reason" in error && typeof error.reason==="string" &&
       ["KB_RESPONSE_EMPTY","KB_RESPONSE_TOO_LARGE","KB_RESPONSE_INVALID_JSON","KB_RAG_RESPONSE_INVALID","KB_RAG_AUTHORITY_MISSING","KB_RAG_TENANT_CONFLICT","KB_RAG_AUTHORITY_CONFLICT","KB_RAG_CHUNK_INVALID","KB_RAG_CONTENT_MISMATCH"].includes(error.reason) ? error.reason : undefined;
     const failure=failureFromError(error,reason ? {stage:reason.startsWith("KB_RESPONSE_") ? "decode" : "canonical_validation"} : {});
-    trace("kb_admission_or_transport_result",failure,undefined,error && typeof error==="object" && "reason" in error ? error.reason : undefined);
+    const observedStatus = error && typeof error === "object" && "remote_http_status" in error && typeof error.remote_http_status === "number" && error.remote_http_status >= 200 && error.remote_http_status < 300 ? error.remote_http_status : undefined;
+    trace("kb_admission_or_transport_result",failure,observedStatus,error && typeof error==="object" && "reason" in error ? error.reason : undefined,ragValidationRule(error));
     clearTimeout(timeout);
     opts?.signal?.removeEventListener("abort", abortFromRequest);
     return {

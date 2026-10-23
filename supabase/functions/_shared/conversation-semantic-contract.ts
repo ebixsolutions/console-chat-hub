@@ -304,7 +304,7 @@ function factualSubject(question: string): string | null {
   const text = clean(question).replace(/[？?。.!！]+$/u, "").trim();
   const match = /^(?:什麼|什么|甚麼)是\s*(.+)$/u.exec(text) ??
     /^(?:何謂|何谓|請解釋|请解释|解釋|解释)(?:一下)?\s*(.+)$/u.exec(text) ??
-    /^(.+?)(?:係|是)(?:咩|乜|甚麼|什麼|什么)(?:呢|呀|啊)?$/u.exec(text) ??
+    /^(.+?)(?:係|是)(?:講|讲|指)?(?:咩|乜|甚麼|什麼|什么)(?:呢|呀|啊)?$/u.exec(text) ??
     /^(?:what (?:is|are)|explain|describe|definition of|meaning of)\s+(?:the\s+)?(.+)$/iu.exec(text) ??
     /^(?:actually[, ]+i meant|i meant|correction[:：]|改成|改返|其實係|其实是)\s*(.+)$/iu.exec(text);
   const subject = match?.[1]?.replace(/^[「『“"']|[」』”"']$/gu, "").trim();
@@ -322,9 +322,10 @@ export function resolveFactualFollowup(
 ): FactualFollowupContext | null {
   const turn = classifyCanonicalConversationTurn(question, history);
   if (!["PRONOUN_OR_ELLIPSIS", "FOLLOW_UP_FACTUAL"].includes(turn.operation) ||
-      !/(?:你.{0,8}(?:頭先|剛才|刚才).{0,8}(?:講|讲|說|说)|嗰個|呢個|那個|那个|這個|这个|上述|\b(?:that|this|it|its|same|previous|earlier)\b)/iu.test(question) ||
+      !/(?:你.{0,8}(?:頭先|剛才|刚才).{0,8}(?:講|讲|說|说)|嗰個|呢個|那個|那个|這個|这个|上述|佢|它|該|该|\b(?:that|this|it|its|same|previous|earlier)\b)/iu.test(question) ||
       /(?:嗰兩個|那兩個|那两个|which of|which one|邊個|哪個|哪个)/iu.test(question)) return null;
   let anchor: GroundedAnswerAnchor | null = null;
+  let anchorLabel = "";
   for (const [index, row] of history.entries()) {
     const text = clean(row.content);
     const role = String(row.role ?? "").toLowerCase();
@@ -334,8 +335,17 @@ export function resolveFactualFollowup(
       if (anchor) continue;
       anchor = findPriorGroundedAnswer([row]);
       if (!anchor?.source_message_id) return null;
+      const citations = metadataRecord(row.metadata)?.citations;
+      const citation = Array.isArray(citations) ? citations.map(metadataRecord).find(c => c?.document_id === anchor!.document_id) : null;
+      anchorLabel = clean(citation?.label ?? citation?.display_label);
     } else if (CUSTOMER.has(role)) {
-      const subject = factualSubject(text) ?? resolveFactualFollowup(text, history.slice(index + 1))?.subject;
+      const originalSubject = factualSubject(text) ?? resolveFactualFollowup(text, history.slice(index + 1))?.subject;
+      // A quoted name in a source-bound citation can disambiguate the
+      // customer's descriptive wording only when the customer actually used
+      // that name. It is a retrieval referent, never reused current authority.
+      const quoted = [...anchorLabel.matchAll(/[「『“"]([^」』”"]{2,160})[」』”"]/gu)]
+        .map(m => m[1]).filter(name => text.normalize("NFKC").toLowerCase().includes(name.normalize("NFKC").toLowerCase()));
+      const subject = originalSubject && quoted.length === 1 ? quoted[0] : originalSubject;
       if (!subject || !anchor?.source_message_id || row.id !== anchor.source_message_id) return null;
       return {subject, prior_question:text, prior_answer:anchor.content.slice(0,1200), source_message_id:anchor.source_message_id};
     }

@@ -786,3 +786,24 @@ test('same-ticket reference cannot turn an unrelated HTTP200 document into curre
  const unrelated=JSON.parse(JSON.stringify(sample).replaceAll('四電一腦','Unrelated subscription'));unrelated.selected_documents[0].evidence[0].content='Unrelated subscription features include reporting and team seats.';
  const f=fixture('你頭先講嗰個計劃包括啲乜？',{originalPreview:true,fullChain:true,previous:seed.tables,history:[...seed.tables.messages].reverse(),source:uuid(883),originalRagResponse:unrelated,semantic:providerWire({intent:'other',topic:'features',requested_facts:['features']},'ASK_FACT')});await f.run();assert.equal(f.commits[0]?.metadata.response_route,'kb_no_current_evidence');assert.equal(f.commits[0].metadata.citations.length,0);assert(!f.requests.some(x=>x.url.endsWith(':generateContent')&&!x.body.generationConfig.responseSchema));
 });
+
+test('v243 natural query: valid summary-only candidate cannot poison full evidence or same-ticket pronoun continuation',async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const summary=structuredClone(sample.selected_documents[0]);summary.document_id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';summary.summary.chunk_id='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';summary.evidence=[];
+ const mixed={...sample,selected_documents:[summary,...sample.selected_documents],citations:[{...sample.citations[0],document_id:summary.document_id},...sample.citations]};
+ const answer='「四電一腦」包括空調機、洗衣機、雪櫃、電視機、電腦、列印機、掃描器及顯示器。';
+ const first=fixture('香港四電一腦回收計劃係講乜？',{originalPreview:true,fullChain:true,originalRagResponse:mixed,answer,semantic:providerWire({intent:'other',requested_facts:['definition of 四電一腦']},'ASK_FACT')});await first.run();
+ assert.equal(first.commits[0]?.content,answer,JSON.stringify({commits:first.commits,events:first.events.slice(-5)}));assert.equal(first.commits[0].metadata.citation_lineage.selected_document_id,sample.selected_documents[0].document_id);assert.notEqual(first.tables.conversations[0].status,'pending');
+ const next=fixture('咁佢涵蓋邊幾類電器？',{originalPreview:true,fullChain:true,previous:first.tables,history:[...first.tables.messages].reverse(),source:uuid(890),originalRagResponse:mixed,answer,semantic:providerWire({intent:'other',topic:'features',requested_facts:['features']},'ASK_FACT')});await next.run();
+ assert(JSON.stringify(next.requests.find(x=>x.url.includes('context-search'))?.body).includes('四電一腦'),'pronoun needs source-bound subject, not a generic feature query');assert.equal(next.commits[0]?.content,answer,JSON.stringify(next.commits));
+ assert.equal(next.commits[0].metadata.citation_lineage.selected_document_id,sample.selected_documents[0].document_id);
+ for(const f of [first,next]){const calls=()=>f.requests.filter(x=>x.url.includes('context-search')||x.url.includes('aiplatform')).length;const before=calls();await f.run();assert.equal(f.commits.length,1);assert.equal(calls(),before);}
+});
+
+for(const kind of ['summary-only','invalid-document'])test('legacy KB response does not manufacture authority or human control: '+kind,async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));sample.selected_documents[0].evidence=[];if(kind==='invalid-document')sample.selected_documents[0].summary=null;
+ const f=fixture('香港四電一腦回收計劃係講乜？',{originalPreview:true,fullChain:true,env:{ESC_ENABLE_S0:'false'},originalRagResponse:sample,semantic:providerWire({intent:'other',requested_facts:['definition of 四電一腦']},'ASK_FACT')});await f.run();
+ assert.equal(f.commits.length,1);assert(!f.requests.some(x=>x.url.endsWith(':generateContent')&&!x.body.generationConfig.responseSchema));assert(!f.requests.some(x=>/handoff_tx/.test(x.url)));assert.equal(f.tables.conversations[0].status,'open');assert(!f.commits[0].metadata.citations?.length);
+ if(kind==='summary-only')assert.equal(f.commits[0].metadata.response_route,'kb_no_current_evidence');else{const traces=f.events.flat().map(x=>{try{return JSON.parse(x)}catch{return null}}).filter(Boolean);const reject=traces.find(x=>x.authority_reason==='KB_RAG_RESPONSE_INVALID');assert.equal(reject?.validation_rule,'document_shape');assert.equal(reject.http_status,200);}
+ const paid=()=>f.requests.filter(x=>x.url.includes('context-search')||x.url.includes('aiplatform')).length;const before=paid();await f.run();assert.equal(f.commits.length,1);assert.equal(paid(),before);
+});

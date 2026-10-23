@@ -198,7 +198,7 @@ function candidateText(document: KBDocumentCandidate): string {
 function jurisdictions(text: string): string[] {
   const found: string[] = [];
   if (/(mars|火星)/i.test(text)) found.push("mars");
-  if (/(香港|hong\s*kong|\bhk\b)/i.test(text)) found.push("hong_kong");
+  if (/(香港|全港|hong\s*kong|\bhk\b)/i.test(text)) found.push("hong_kong");
   if (/(澳門|澳门|macau|macao)/i.test(text)) found.push("macau");
   if (/(新加坡|singapore)/i.test(text)) found.push("singapore");
   if (/(台灣|台湾|taiwan)/i.test(text)) found.push("taiwan");
