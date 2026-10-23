@@ -1,3 +1,4 @@
+import { resolveFactualFollowup, type SemanticHistoryRow } from "./conversation-semantic-contract.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import { DecisionContextLimitError, mergeDecisionContext, normalizeDecisionContext } from "./bounded-decision-context.ts";
@@ -13,6 +14,7 @@ export function scopedServiceKnowledgeQuery(
   question: string,
   frame: CommerceSemanticFrame | null | undefined,
   state: ConversationCommerceState | null,
+  history: SemanticHistoryRow[] = [],
 ): string {
   const trusted = frame && frame.confidence >= 0.62 && !frame.ambiguity.is_ambiguous ? frame : null;
   const semanticEntities = trusted?.entities.filter(e => e.confidence >= 0.62) ?? [];
@@ -43,7 +45,9 @@ export function scopedServiceKnowledgeQuery(
       [e.entity_id,e.model,e.attributes.model,e.attributes.name,e.attributes.product_name].some(v => normalize(v) === normalize(ref)));
   const prior = entities.filter(e => !current.some(c => matches(e,c)))
     .map(readEntity);
+  const followup = trusted ? resolveFactualFollowup(question, history) : null;
   const context = {
+    ...(followup ? {resolved_subject:followup.subject} : {}),
     question: clean(question),
     topic: topic ? clean(topic) : null,
     requested_facts: trusted?.requested_facts ?? [],

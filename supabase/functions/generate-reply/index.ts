@@ -1,3 +1,4 @@
+import { resolveFactualFollowup, buildFactualFollowupPrompt } from "../_shared/conversation-semantic-contract.ts";
 import { originalPreviewEnabled } from "../_shared/original-widget-preview.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "../_shared/execution-failure.ts";
 import { resolveIndustryProfile } from "../_shared/industry-runtime-adapter.ts";
@@ -4812,7 +4813,11 @@ async function orchestrationGenerateReply(
         role: typeof row.role === "string" ? row.role : "unknown",
         content: String(row.content ?? ""),
         id: typeof row.id === "string" ? row.id : null,
+        metadata: row.metadata,
       }));
+  const _factualFollowup = _a3SemanticFrame?.ambiguity.is_ambiguous ? null
+    : resolveFactualFollowup(_h1LastMsg, _c3RecentServiceMessages);
+  const _factualFollowupPrompt = buildFactualFollowupPrompt(_factualFollowup);
   const _c3TrustedCustomerContext = await fetchTrustedCustomerContext({
     conversation_id,
     company_id: _criticalE2ExpectedTenantId ?? "",
@@ -5984,6 +5989,7 @@ async function orchestrationGenerateReply(
     const _groundingSelection = selectCanonicalGrounding(
       ragResult.documents ?? [],
       {
+        expectedSubject: _factualFollowup?.subject,
         minScore,
         requirePublished: true,
         requestText: userQuery,
@@ -6677,6 +6683,7 @@ async function orchestrationGenerateReply(
       _emotionReplyStrategyBlock,
       buildMaskedContextBlock(customerContext, opaqueCustomerRef),
       buildRagBlock(ragResult),
+      _factualFollowupPrompt,
     ].filter((s) => s && s.length > 0).join("\n\n");
   const { data: newestMessages } = await supabaseAdmin
     .from("messages")
@@ -6735,6 +6742,7 @@ async function orchestrationGenerateReply(
         _emotionReplyStrategyBlock,
         buildMaskedContextBlock(customerContext, opaqueCustomerRef),
         buildRagBlock(ragResult),
+        _factualFollowupPrompt,
       ],
       memory_part: _c3MemoryContext,
       continuity_part: _conversationContinuityBlock,
@@ -6748,6 +6756,7 @@ async function orchestrationGenerateReply(
     purpose: "generation",
     system: finalSystemPrompt,
     user: _generationUserInput,
+    factualFollowup: _factualFollowup ?? undefined,
     maxTokens: resolveGenerationMaxTokens(),
     operationId:
       `generate-reply:orchestration:${conversation_id}:${source_message_id}`,
@@ -6788,8 +6797,9 @@ async function orchestrationGenerateReply(
       return new Response(JSON.stringify({success:false,error:"AI service error",failure,retryable:false}),{status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
     }
     if (llm.code === "LLM_GROUNDING_REJECTED") {
-      const recoveryReply = GROUNDING_RECOVERY_WORDING[_visitorLang] ??
-        GROUNDING_RECOVERY_WORDING.en;
+      const recoveryReply = _factualFollowup
+        ? (_visitorLang === "en" ? "I found relevant source material, but could not reliably validate this answer. This does not mean the information is unavailable." : "我搵到相關資料，但今次未能可靠核實回答；呢個唔代表資料不存在。")
+        : GROUNDING_RECOVERY_WORDING[_visitorLang] ?? GROUNDING_RECOVERY_WORDING.en;
       const committed = await commitAiReplyWithControlGate(
         supabaseAdmin,
         conversation_id,

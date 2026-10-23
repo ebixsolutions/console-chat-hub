@@ -1,3 +1,4 @@
+import { contradictsAvailableFollowupEvidence, type FactualFollowupContext } from "./conversation-semantic-contract.ts";
 import { uatExecutionReadiness } from "./uat-execution-readiness.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
 import { trustedDispatchScope, UatDenied, UAT_THINKING } from "./uat-execution-contract.ts";
@@ -64,6 +65,8 @@ export type LlmResult =
 export type ModelPurpose = "evaluation" | "assist" | "generation";
 
 export interface LlmCall {
+  /** Supplied only by the source-bound handler after canonical KB selection. */
+  factualFollowup?: FactualFollowupContext;
   purpose: ModelPurpose;
   system: string;
   user: string;
@@ -564,6 +567,9 @@ async function verifyGroundedGeneration(
   // customer/conversation itself supplied (preferences, quantities, reference
   // ids, prior requests, recap state). It MUST NOT authorize product/company/
   // policy facts that remain KB/prior-grounded-only.
+  if (call.factualFollowup && contradictsAvailableFollowupEvidence(answer)) {
+    return {ok:false, reason:"followup_denies_available_evidence"};
+  }
   const conversationEvidence = extractCustomerConversationEvidence(call.user);
   const exact = validateExactFactGrounding(
     answer,
@@ -610,12 +616,15 @@ async function verifyGroundedGeneration(
     "Conversation Context C1 is a separate, non-authoritative evidence class. It may support only facts explicitly supplied by the customer or already present as conversational state, including preferences, requested features, quantities/SKU counts, customer-provided order/reference ids, prior requests, and faithful recap/acknowledgement of those facts.",
     "Never use C1 to support a new product, company, policy, price, eligibility, availability, procedure, jurisdiction, roadmap, guarantee, refund, account-status or other external factual claim. Those claims require the authoritative E* evidence above.",
     "Do not use outside knowledge or assumptions.",
+    "Claims that information does not exist or is unavailable are factual claims, not politeness. Reject a blanket no-data answer when applicable E* evidence answers the current request. Answer supported parts before acknowledging specific missing details.",
     "Politeness, conversational transitions, questions, and non-factual wording do not need evidence.",
     "Any unsupported external factual claim makes grounded=false. A faithful restatement of customer-provided/conversation facts is allowed when supported by C1.",
     "evidence_chunk_ids may contain supplied E* aliases and C1 when they materially support the answer. This field is audit metadata; grounded must still reflect the rules above.",
     "Return JSON only with grounded, unsupported_claims, evidence_chunk_ids.",
   ].join("\n");
   const verifierUser = [
+    "Current request and resolved conversational referent (reference only, never external authority):",
+    JSON.stringify({question:call.user, followup:call.factualFollowup ?? null}),
     "Authoritative Evidence:",
     verifierEvidence.evidence_text,
     "",

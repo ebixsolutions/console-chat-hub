@@ -415,7 +415,7 @@ function requestedSlot(question: string): string | null {
 }
 
 function buildKbQuery(question: string, input: ServicePlanInput): string {
-  return scopedServiceKnowledgeQuery(question, input.semantic_frame, input.commerce);
+  return scopedServiceKnowledgeQuery(question, input.semantic_frame, input.commerce, input.recent_messages);
 }
 
 /**

@@ -728,3 +728,61 @@ for(const mutate of [w=>w.nodes.push({path:['unknown_merchant_authority'],kind:'
  assert.equal(f.tables.conversation_memory_state.length,0);assert(f.commits.every(x=>x.metadata.degraded===true));
  assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1);assert(!f.requests.some(x=>x.url.includes('context-search')));
 });
+
+// Actual ASK_FACT failure class; isolated transport is not Hosted acceptance.
+test('same-ticket ASK_FACT binds the antecedent in retrieval and the bounded generation prompt',async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const seed=fixture('四電一腦係咩？',{originalPreview:true,fullChain:true,originalRagResponse:sample,answer:'「四電一腦」是生產者責任計劃下的受管制電器，包括空調機、洗衣機及電腦。',semantic:providerWire({intent:'other',requested_facts:['definition of 四電一腦']},'ASK_FACT')});await seed.run();
+ const unrelated=structuredClone(sample.selected_documents[0]);unrelated.document_id='d9eb561203e94f66a0d275fdd811b4aa';unrelated.title='Unrelated subscription';unrelated.source_type='Product';unrelated.document_score=0.99;unrelated.summary.chunk_id='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';unrelated.summary.content='Unrelated subscription features include reporting and team seats.';unrelated.evidence[0]={...unrelated.evidence[0],chunk_id:'43495117c6d64b369ee2e0e58311152a',score:0.99,content:unrelated.summary.content};
+ const candidates={...sample,selected_documents:[unrelated,...sample.selected_documents],citations:[{document_id:unrelated.document_id,label:unrelated.title,source_type:'Product',relevance:'medium'},...sample.citations]};
+ const f=fixture('你頭先講嗰個計劃包括啲乜？',{originalPreview:true,fullChain:true,previous:seed.tables,history:[...seed.tables.messages].reverse(),source:uuid(880),originalRagResponse:candidates,answer:'這份資料列出空調機、洗衣機、雪櫃、電視機、電腦、列印機、掃描器及顯示器。',semantic:providerWire({intent:'other',topic:'features',requested_facts:['features']},'ASK_FACT')});
+ await f.run();
+ const retrieval=f.requests.find(x=>x.url.includes('context-search'));assert(retrieval,'fresh retrieval required');assert(JSON.stringify(retrieval.body).includes('四電一腦'),'resolved subject survives valid ASK_FACT');
+ const generation=f.requests.find(x=>x.url.endsWith(':generateContent')&&!x.body.generationConfig.responseSchema);assert(generation,JSON.stringify({commits:f.commits,events:f.events.slice(-7)}));assert(generation.body.systemInstruction.parts[0].text.includes('RESOLVED_FACTUAL_FOLLOWUP'),'reference must survive bounded Memory envelope');
+ assert.equal(f.commits[0]?.metadata.citation_lineage.selected_document_id,sample.selected_documents[0].document_id);
+ const dispatches=()=>f.requests.filter(x=>x.url.includes("context-search")||x.url.includes("aiplatform")).length;const before=dispatches();await f.run();assert.equal(f.commits.length,1);assert.equal(dispatches(),before);
+});
+
+for (const [subject,question,followup] of [
+ ['Harbor Care','What is Harbor Care?','What does that plan include?'],
+ ['租用保障','租用保障係咩？','嗰個包括啲乜？'],
+ ['Atlas warranty','What is Atlas warranty?','What does that policy cover?'],
+]) test('generic source-bound factual follow-up uses fresh matching evidence: '+subject,async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8').replaceAll('四電一腦',subject));
+ const doc=sample.selected_documents[0];doc.evidence[0].content=subject+' includes inspection and collection. The version date is not supplied.';doc.summary.content=doc.evidence[0].content;sample.llm_context.combined_text=doc.evidence[0].content;
+ const seed=fixture(question,{originalPreview:true,fullChain:true,originalRagResponse:sample,answer:subject+' includes inspection and collection.',semantic:providerWire({intent:'other',requested_facts:[subject]},'ASK_FACT')});await seed.run();
+ const f=fixture(followup,{originalPreview:true,fullChain:true,previous:seed.tables,history:[...seed.tables.messages].reverse(),source:uuid(881),originalRagResponse:sample,answer:subject+' includes inspection and collection.',semantic:providerWire({intent:'other',topic:'features',requested_facts:['features']},'ASK_FACT')});await f.run();
+ assert(JSON.stringify(f.requests.find(x=>x.url.includes('context-search'))?.body).includes(subject),JSON.stringify({seed:seed.commits,reply:f.commits,events:f.events.slice(-3),query:f.requests.find(x=>x.url.includes('context-search'))?.body}));assert.equal(f.commits[0]?.metadata.citation_lineage.selected_document_id,sample.selected_documents[0].document_id,JSON.stringify(f.commits[0]?.metadata));
+});
+
+test('a blanket no-data draft cannot pass even an all-positive isolated verifier',async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const seed=fixture('四電一腦係咩？',{originalPreview:true,fullChain:true,originalRagResponse:sample,answer:'「四電一腦」包括空調機、洗衣機及電腦。',semantic:providerWire({intent:'other',requested_facts:['definition of 四電一腦']},'ASK_FACT')});await seed.run();
+ const bad='很抱歉，我目前沒有關於「生產者責任計劃」的詳細資料。';
+ const f=fixture('你頭先講嗰個計劃包括啲乜？',{originalPreview:true,fullChain:true,previous:seed.tables,history:[...seed.tables.messages].reverse(),source:uuid(882),originalRagResponse:sample,answer:bad,semantic:providerWire({intent:'other',requested_facts:['features']},'ASK_FACT')});await f.run();assert.notEqual(f.commits[0]?.content,bad);assert.equal(f.commits[0]?.metadata.source_error_code,'LLM_GROUNDING_REJECTED');assert(!f.commits[0].content.includes('哪一點'));assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')&&!x.body.generationConfig.responseSchema).length,1,'no extra generation attempt');
+});
+
+// Pure reference/quality checks share the production implementation, no provider.
+test('reference resolver respects nearest correction, topic boundaries, missing lineage and repeated follow-ups',()=>{
+ const f=fixture('unused');const m=f.load(path.join(root,'supabase/functions/_shared/conversation-semantic-contract.ts'));
+ const prior=(subject,id='previous')=>[{role:'assistant',content:subject+' includes inspection and collection.',metadata:{source_message_id:id,citation_lineage:{selected_document_id:'document',evidence_chunk_ids:['chunk']}}},{id,role:'visitor',content:'What is '+subject+'?'}];
+ const q='What does that plan include?';
+ assert.equal(m.resolveFactualFollowup(q,prior('Harbor Care'))?.subject,'Harbor Care');
+ assert.equal(m.resolveFactualFollowup('Actually I meant Atlas warranty',prior('Harbor Care')),null);
+ assert.equal(m.resolveFactualFollowup('Different topic: What is Atlas warranty?',prior('Harbor Care')),null);
+ assert.equal(m.resolveFactualFollowup('Which of those plans?',prior('Harbor Care')),null);
+ assert.equal(m.resolveFactualFollowup(q,[{id:'new',role:'visitor',content:'Cancel that request.'},...prior('Harbor Care')]),null);
+ assert.equal(m.resolveFactualFollowup(q,[{role:'assistant',content:'An uncited answer'},...prior('Harbor Care')]),null);
+ assert.equal(m.resolveFactualFollowup(q,[{role:'assistant',content:'Wrong source',metadata:{source_message_id:'different',citation_lineage:{selected_document_id:'document',evidence_chunk_ids:['chunk']}}},{id:'previous',role:'visitor',content:'What is Harbor Care?'}]),null);
+ const corrected=prior('Atlas warranty','corrected');corrected[1].content='Actually I meant Atlas warranty';assert.equal(m.resolveFactualFollowup(q,corrected)?.subject,'Atlas warranty');
+ const repeated=[{role:'assistant',content:'It includes inspection.',metadata:{source_message_id:'followup',citation_lineage:{selected_document_id:'document',evidence_chunk_ids:['chunk']}}},{id:'followup',role:'visitor',content:q},...prior('Harbor Care')];assert.equal(m.resolveFactualFollowup('And what does it cover?',repeated)?.subject,'Harbor Care');
+ for(const denied of ['很抱歉，我目前沒有關於這個計劃的詳細資料。','I do not have information about that plan.'])assert(m.contradictsAvailableFollowupEvidence(denied));
+ for(const allowed of ['This plan includes inspection. I do not have information about its expiry date.','資料包括檢查及收集；未提供版本日期。','目前文件未列出能源級別，我不會估計。'])assert(!m.contradictsAvailableFollowupEvidence(allowed));
+});
+
+test('same-ticket reference cannot turn an unrelated HTTP200 document into current authority',async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const seed=fixture('四電一腦係咩？',{originalPreview:true,fullChain:true,originalRagResponse:sample,answer:'「四電一腦」包括空調機、洗衣機及電腦。',semantic:providerWire({intent:'other',requested_facts:['definition of 四電一腦']},'ASK_FACT')});await seed.run();
+ const unrelated=JSON.parse(JSON.stringify(sample).replaceAll('四電一腦','Unrelated subscription'));unrelated.selected_documents[0].evidence[0].content='Unrelated subscription features include reporting and team seats.';
+ const f=fixture('你頭先講嗰個計劃包括啲乜？',{originalPreview:true,fullChain:true,previous:seed.tables,history:[...seed.tables.messages].reverse(),source:uuid(883),originalRagResponse:unrelated,semantic:providerWire({intent:'other',topic:'features',requested_facts:['features']},'ASK_FACT')});await f.run();assert.equal(f.commits[0]?.metadata.response_route,'kb_no_current_evidence');assert.equal(f.commits[0].metadata.citations.length,0);assert(!f.requests.some(x=>x.url.endsWith(':generateContent')&&!x.body.generationConfig.responseSchema));
+});

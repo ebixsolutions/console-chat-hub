@@ -12,6 +12,8 @@ import {
 } from "./commerce-state-authority.ts";
 
 export interface CanonicalGroundingOptions {
+  /** Server-resolved same-ticket subject, independently required in fresh evidence. */
+  expectedSubject?: string;
   minScore?: number;
   policyOnly?: boolean;
   requirePublished?: boolean;
@@ -447,6 +449,8 @@ export function selectCanonicalGrounding(
 
   for (const document of documents ?? []) {
     const service=ragServiceDocument(document);
+    if (options.expectedSubject && !document.llm_context.full_content_evidence.some(e =>
+      e.content.normalize("NFKC").toLowerCase().includes(options.expectedSubject!.normalize("NFKC").toLowerCase()))) continue;
     if (document.llm_context.selected_document_id !== document.document_id) {
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
