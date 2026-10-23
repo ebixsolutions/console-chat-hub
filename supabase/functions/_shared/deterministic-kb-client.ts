@@ -40,7 +40,7 @@ export interface KBFullChunk {
   score: number;
   chunk_type: "rag_summary" | "full_content" | "faq_pair" | "section";
   source_type: string;
-  status: "published" | "historical" | "superseded" | "cancelled" | "draft";
+  status: "published" | "historical" | "superseded" | "cancelled" | "draft" | "unknown";
 }
 export interface KBCitationChunk {
   display_label: string;

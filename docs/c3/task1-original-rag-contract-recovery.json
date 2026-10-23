@@ -1,54 +1,119 @@
 {
-  "task": "AI-ABC-C3 same Task1 / PR12 Frankie-only functional recovery",
-  "baseline_head": "224e76a63c819fcf4f82e2ef328027e8620bdabf",
-  "baseline_tree": "37f8b4bc033a87cd7e29d954921ff63c1e932a1f",
-  "production_preimages": {"generate-reply":234,"kb-search-proxy":30,"agent-assist":80},
-  "status": "SOURCE_IMPLEMENTED_DEFAULT_OFF_NOT_DEPLOYED_NOT_HOSTED_PASS",
-  "remote_mode": "query_embedding_rag_authority_v1",
-  "endpoint": "https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search",
-  "trust_boundary": "Use the existing Company34 server RAG API key and authenticated HTTPS RAG response. No browser chunks, metadata Bearer, independent management API, pinning snapshot, synthetic relabel or legacy bypass.",
-  "historical_comparison": {
-    "reference": "1dba39af35d3b643144bd581a6d4c24eecbe62e8",
-    "kb_auth": "Unchanged resolver: tenant-scoped x-api-key preferred; historical credential success does not establish current values, access or publication.",
-    "original_parser": "Structured document evidence, not combined_text, supplies knowledge. Original unversioned response cannot establish a current active version under the present business authority contract.",
-    "memory": "KB owns authenticated tenant retrieval and publication filtering; Chatbot owns actor/RBAC/company mapping, context/requery, selection, natural answer, Memory, persistence and human control. Source documents are not a new customer question."
+  "status": "SOURCE_IMPLEMENTED_NEW_BYTES_AND_TRUST_REVISION_REQUIRE_EXACT_APPROVAL",
+  "mode": "query_embedding_rag_authority_v1",
+  "original_api_contract": "singapore_rag_aggregation_v1",
+  "accepted_remote_risk": "authenticated_tenant_rag_filter_unversioned_v1",
+  "scope": {
+    "account": "frankien.ng@gmail.com",
+    "actor": "3bdf936e-b543-41d8-9fff-fa020a85f3f6",
+    "company": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    "channel": "b0000000-0000-0000-0000-000000000001",
+    "tenant": "34",
+    "endpoint": "https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search"
   },
-  "producer_reference": {
-    "source": "Previously supplied Singapore Python app/services/vector_store.py, not Base44",
-    "reference_sha256": "23b0d4ae44184466699f9ceb49fb052aec9c301dfd8389c6b80a6184c4d1ec41",
-    "reference_patched_sha256": "5bbc5e66101c309dee1e6fdaa2e260b1a760f739bf2349e163d3b1d9557c602a",
-    "patch": "docs/c3/singapore-rag-native-authority.patch",
-    "live_runtime_identity": "UNKNOWN; neither reference hash is claimed as a deployed binary hash",
-    "existing_predicates": ["Company resolved from x-api-key", "KBVectorChunk.company_id", "production active generated chunks", "KBDocument published/live/indexed", "chunk.version_id equals document.active_version_id"],
-    "exact_missing_response_fields_in_reference": ["authority_contract", "authenticated company_id", "document authority tenant/version/publication/currentness/content hash", "chunk document/version/content hash"],
-    "existing_endpoint_addition": "Add assertions from already-selected actual DB rows, without another endpoint, credential, embedding call, retry, filter removal or backend. A missing/null DB version/hash still fails closed at consumer.",
-    "current_live_response": "NOT_READ: existing legal Work channels cannot execute the private deployed RAG credential, and no authenticated Frankie browser session is available. No failure of Singapore API is inferred."
+  "sample": {
+    "file": "tests/c3-widget-live-auth/fixtures/director-original-rag-response.json",
+    "origin": "DIRECTOR_SUPPLIED_API_RESPONSE_NOT_WORK_HOSTED_REQUEST",
+    "original_upload_sha256": "f5fd3ee039663f50d0e0f352f40a3df7609c9e9c60bb9faa7e481eff3cd899fb",
+    "preserved": [
+      "complete content",
+      "citations.relevance=low",
+      "missing authority_contract/company/version/publication/hash fields"
+    ]
   },
-  "response_requirements": {
-    "authority_contract": "singapore_rag_published_v1",
-    "company_id": 34,
-    "document_authority": ["tenant_id=34", "actual version_id", "publication_state=published", "currentness=current", "actual stored content_sha256"],
-    "chunk_authority": ["actual chunk_id", "matching document_id/version_id", "finite score", "supported chunk type", "nonempty content", "SHA256 matches exact returned UTF8 content"],
-    "unknown": "Missing version/currentness remains unknown and rejects; never fabricate or accept an old unversioned body.",
-    "errors": "HTTP auth/transport errors remain tool/admission errors; only a valid authenticated no-context response is KB_NO_MATCH. Policy without qualified evidence remains insufficient_evidence."
+  "service_responsibility": {
+    "authentication": "existing X-API-Key resolves Company from server Company.api_key; client Company is not authority",
+    "reference_source": "supplied Singapore app/routers/rag_ops.py and app/services/vector_store.py",
+    "read_filters": [
+      "Company",
+      "production",
+      "active generated chunks",
+      "published document",
+      "available_to_live_console",
+      "production_vector_status=indexed",
+      "chunk.version_id=document.active_version_id"
+    ],
+    "live_binary_attestation": false,
+    "independent_remote_tenant_echo": false,
+    "current_key34_contents_verified": false
   },
-  "smallest_new_decision_not_repeat_AB": {
-    "source_release": "Only complete changed generate-reply, kb-search-proxy, agent-assist bundles. No receive/Widget/frontend Publish or unrelated functions.",
-    "trust_revision": "Approve native authenticated RAG publication/version/chunk assertions in place of independent metadata readback for this new mode only. Existing metadata/attested/synthetic modes retain their guards.",
-    "accepted_remote_risk": "authenticated_rag_authority_no_independent_metadata_v1",
-    "residual": ["No independent index or runtime attestation", "Response hashes prove internal byte consistency, not an independent index snapshot", "Service can change publication after response; no remote atomic lock", "Client one POST/query2048/no retry is not a remote embedding/retry or cumulative USD hard cap"],
-    "required_config": ["ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION version4", "AUTHENTICATED_INBOX_KB_AUTHORIZATION version3"],
-    "no_third_setting": "This mode does not use KB_QUERY_EMBEDDING_EVIDENCE_JSON. Preserve that setting for existing modes; no metadata_tenant_id or manual probe.",
-    "binding_fields": {"remote_mode":"query_embedding_rag_authority_v1","allow_remote_embedding":true,"rag_api_contract":"singapore_rag_published_v1","accepted_remote_risk":"authenticated_rag_authority_no_independent_metadata_v1"},
-    "scope": {"actor":"3bdf936e-b543-41d8-9fff-fa020a85f3f6","company":"3d6e17b5-ec79-4f75-aa7f-eaa824ff8493","channel":"b0000000-0000-0000-0000-000000000001","tenant":"34","account":"frankien.ng@gmail.com"},
-    "inbox": {"operations":["knowledge","policy"],"allow_assist":true},
-    "configuration_channel": "Existing actual nrfx administration only; Work connectors cannot read or revision-merge existing secret values. No authorization in Source, new probe function, SQL or credential extraction workaround.",
-    "producer_condition": "First use an authorized existing authenticated RAG receipt to check fields. If present, no Singapore deploy needed. If absent as in supplied reference, apply only the reviewed additive existing-endpoint patch against verified actual source, through an existing authorized deployment channel. Such channel is not exposed to Work; do not pretend it ran."
+  "consumer_responsibility": [
+    "authenticated actor/role/Company/Channel/conversation/session",
+    "existing server tenant mapping and credential resolver",
+    "separate current exact paid authorization; B-O alone cannot dispatch KB",
+    "exact HTTPS endpoint; one client POST/no client retry/query2048UTF8",
+    "bounded original JSON and real document/chunk reference integrity",
+    "deny explicit Tenant/publication/currentness/version/hash contradiction",
+    "out-of-band service authority cannot be minted by returned JSON/client flags",
+    "retain version=null/currentness=unknown/publication=null when absent",
+    "low relevance retained; require actual contextual support; Knowledge rerank and existing answer verification still apply",
+    "Policy only actual policy evidence; no-match remains insufficient_evidence",
+    "canonical state/source revision/B2/atomic commit/human control retained"
+  ],
+  "no_new_dependency": [
+    "metadata Bearer",
+    "metadata endpoints",
+    "fixed document list",
+    "short-lived pinning",
+    "operator script",
+    "Singapore response extension",
+    "new backend or probe Function"
+  ],
+  "old_modes": "strict native response, live metadata, signed attestation and Synthetic guards retained unchanged; original aggregation is explicit contract choice inside existing RAG mode",
+  "trust_revision": {
+    "old": "native response fields and hashes required",
+    "new": "trust existing authenticated RAG service published/active-version filter contract; actual per-document version remains unknown",
+    "residual_risks": [
+      "sample/source do not attest currently deployed filters or actual secret contents",
+      "no independent remote Tenant echo/version/currentness/runtime/index attestation",
+      "cannot prove remote publication consistency after response",
+      "one client POST/timeout does not cap internal embeddings/retries/cumulative USD",
+      "unknown/in-flight charges cannot be revoked retroactively"
+    ],
+    "no_unknown_promoted_to_current": true,
+    "kb_bounds_verified": false,
+    "UAT_REMOTE_BOUND_UNVERIFIED": "preserved for other modes and unauthorized operations"
   },
-  "policy_consumer_repair": "Horizontal-only commerce identifier whitespace prevents a terminal subscription/order token from consuming the next Canonical customer context or Jurisdiction line. Genuine explicit IDs and policy applicability negatives are retained.",
-  "revocation": "Guarded removal of only this native-mode actor/channel bindings; preserve metadata modes, B-O and unrelated/concurrent bindings. Check current grant/map/key before paid dispatch and after response. Do not replay unknown delivery or promise cancellation/refund of dispatched usage.",
-  "protected_bytes": ["conversation-semantic-contract.ts", "commerce-state-reducer.ts", "commerce-semantic-frame.ts", "commerce-semantic-interpreter.ts", "uat-execution-contract.ts"],
-  "FUNCTIONAL_UAT_ACCEPTED": false,
-  "VIBECODE_FUNCTIONAL_HANDOFF_READY": false,
-  "formal_UAT": "Deferred intact to next stage; Source/native isolated tests never count as Hosted."
+  "settings": {
+    "generator": "node tools/c3-original-rag-activation.mjs OUTPUT_DIRECTORY",
+    "names": [
+      "ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION",
+      "AUTHENTICATED_INBOX_KB_AUTHORIZATION"
+    ],
+    "preview_schema_version": 4,
+    "inbox_schema_version": 3,
+    "old_b176_values_do_not_activate_original_aggregation": true,
+    "preimage_status": "ABSENT_DIRECTOR_REPORTED_RECHECK_BEFORE_SAVE",
+    "if_absent": "create exact generated non-secret Name/Value; no nonexistent JSON merge",
+    "if_present": "preserve legal new values and unrelated bindings; conditional/serialized current-value merge, never overwrite blindly",
+    "do_not_modify": [
+      "KB_SINGAPORE_TENANT_API_KEYS_JSON",
+      "KB_QUERY_EMBEDDING_EVIDENCE_JSON",
+      "ORIGINAL_WIDGET_PREVIEW_AUTHORIZATION"
+    ]
+  },
+  "fees": "same Frankie-only Preview query embedding/retrieval and manual Knowledge/Policy assist operations/limits as approved B; new trust conditions still require approval; no public Embedded/Synthetic/other accounts",
+  "protected": [
+    "B2",
+    "Frozen reducer",
+    "semantic schema/typed decoder",
+    "Memory/correction/Summary",
+    "R1/R2/E1/E2",
+    "human suppression",
+    "Tenant/CAS/idempotency"
+  ],
+  "release": [
+    "generate-reply complete bundle",
+    "kb-search-proxy complete bundle",
+    "agent-assist complete bundle"
+  ],
+  "not_release": [
+    "receive",
+    "Widget",
+    "frontend",
+    "Singapore backend"
+  ],
+  "rollback": "remove only newly installed bindings if still exact current values; merge-preserve unrelated changes. Reverse only actually written assist80/proxy30/generate234 full preimages. Preserve business evidence.",
+  "hosted": "NOT_RUN_NEW_BYTES_UNAPPROVED; Director Published page exists and is usable; Work does not inherit its session; no protected-browser bypass",
+  "formal_uat": "deferred intact; no acceptance flags advanced"
 }

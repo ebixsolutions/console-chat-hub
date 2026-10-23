@@ -1,11 +1,12 @@
-import type { KBFullChunk } from "./deterministic-kb-client.ts";
+import type { KBFullChunk } from "./kb-client.ts";
+import { ragServiceDocument } from "./preview-kb-query-embedding.ts";
 import type { CurrentGroundingTarget } from "./canonical-grounding.ts";
 import type { ReferenceAuthorityDecision } from "./commerce-state-authority.ts";
 
 export interface PersistedKBCitation {
   label: string;
   source_type: string;
-  relevance?: "high" | "medium";
+  relevance?: "high" | "medium" | "low";
   document_id: string;
   chunk_id?: string;
   chunk_type: "full_content";
@@ -56,7 +57,8 @@ export function buildCitationMetadata(
   if (binding.authorityDecision.decision !== "USE_CURRENT_KB") return null;
   const evidenceState = binding.authorityDecision.provenance.currentness ??
     "unknown";
-  if (evidenceState !== "current") return null;
+  const serviceUnknown=evidenceState==="unknown" && binding.authorityDecision.selected_authority_class==="PUBLISHED_KB_SERVICE" && !!binding.authorityDecision.provenance.tenant_id;
+  if (evidenceState !== "current" && !serviceUnknown) return null;
   const targetEntityModel = sourceBoundValues(
     binding.currentTarget.entity_ids,
     binding.authorityDecision.provenance.entity_ids,
@@ -84,6 +86,8 @@ export function buildCitationMetadata(
     if (!chunk.content?.trim()) continue;
     if (!Number.isFinite(chunk.score)) continue;
     if (chunk.document_id !== selected) return null;
+    const service=ragServiceDocument(chunk);
+    if(serviceUnknown && service?.tenant!==binding.authorityDecision.provenance.tenant_id)return null;
 
     const chunkId = typeof chunk.chunk_id === "string" && chunk.chunk_id.trim()
       ? chunk.chunk_id.trim()
@@ -101,7 +105,7 @@ export function buildCitationMetadata(
     const rawSourceType = typeof chunk.source_type === "string"
       ? chunk.source_type.trim().slice(0, 40)
       : "";
-    const relevance: "high" | "medium" = chunk.score >= 0.85
+    const relevance: "high" | "medium" | "low" = service?.relevance?.toLowerCase()==="low" ? "low" : chunk.score >= 0.85
       ? "high"
       : "medium";
 

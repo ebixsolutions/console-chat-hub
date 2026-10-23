@@ -1,6 +1,7 @@
 import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
 import { legacyPreactivationAuthority } from "./uat-execution-contract.ts";
 import { accountedModelFetch } from "./model-attempt-accounting.ts";
+import { bindRagServiceDocument, ragServiceDocument } from "./preview-kb-query-embedding.ts";
 import {
   prepareRemoteRetrieval,
   remoteAccountingSecret,
@@ -50,9 +51,10 @@ export interface KBFullChunk {
   score: number;
   chunk_type: "rag_summary" | "full_content" | "faq_pair" | "section";
   source_type: string;
-  status: "published" | "historical" | "superseded" | "cancelled" | "draft";
+  status: "published" | "historical" | "superseded" | "cancelled" | "draft" | "unknown";
 }
 export interface KBCitationChunk {
+  retrieval_relevance?: string;
   display_label: string;
   content: string;
   score: number;
@@ -646,7 +648,19 @@ export async function fetchKBRag(
     };
   }
 
-  const documents = parsed.documents.map(mapDocumentCandidate);
+  const documents = parsed.documents.map((candidate)=>{
+    const document=mapDocumentCandidate(candidate);
+    bindRagServiceDocument(response,document);
+    const service=ragServiceDocument(document);
+    if(service){
+      for(const chunk of document.chunks)bindRagServiceDocument(response,chunk);
+      // Absence is not a published/current/version assertion. Publication
+      // eligibility comes separately from the authenticated service contract.
+      if(!candidate.authority.publication_state)for(const chunk of document.chunks)chunk.status="unknown";
+      if(service.relevance)for(const citation of document.citations)citation.retrieval_relevance=service.relevance;
+    }
+    return document;
+  });
   const single = documents.length === 1 ? documents[0] : undefined;
   return {
     success: true,

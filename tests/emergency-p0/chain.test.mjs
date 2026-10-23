@@ -63,6 +63,7 @@ function fixture(text,options={}) {
    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(semantic)}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}});
   }
   if(options.fullChain && url.origin==='https://py.ebixmall.com') {
+   if(options.originalRagResponse)return Response.json(options.originalRagResponse);
    if(options.kbNoMatch)return Response.json({success:true,context_found:false,selected_documents:[],citations:[]});
    if(options.kbHttp)return new Response('PRIVATE-SECRET',{status:503});
    if(options.kbBadJson)return new Response('{private');
@@ -156,7 +157,8 @@ function fixture(text,options={}) {
    const original=load(path.join(root,'supabase/functions/_shared/original-widget-preview.ts'));
    env.ORIGINAL_WIDGET_PREVIEW_AUTHORIZATION=original.ORIGINAL_PREVIEW_AUTHORIZATION;env.SUPABASE_SERVICE_ROLE_KEY='isolated-service-jwt';
    const account=original.ORIGINAL_PREVIEW_ACCOUNTS.find(a=>a.company===company);assert(account);
-   const actor=uuid(70),channel=account.channel,session=uuid(71);
+   const actor=options.originalRagResponse?'3bdf936e-b543-41d8-9fff-fa020a85f3f6':uuid(70),channel=account.channel,session=uuid(71);
+   if(options.originalRagResponse)env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify({version:4,bindings:[{actor_id:actor,company_id:company,channel_id:channel,tenant_id:'34',endpoint:'https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search',provider:'singapore-kb',purpose:'kb_embedding',remote_mode:'query_embedding_rag_authority_v1',allow_remote_embedding:true,rag_api_contract:'singapore_rag_aggregation_v1',accepted_remote_risk:'authenticated_tenant_rag_filter_unversioned_v1'}]});
    conversation.channel_config_id=channel;conversation.visitor_session_id=session;
    conversation.metadata_source={source:'widget_live_test',widget_live_test:true,test_mode:true,exclude_training:true,execution_class:'authenticated_admin_preview',owner_user_id:actor,scope_mode:'canonical'};
    conversation.metadata_source.original_preview_authority=await original.signOriginalPreview({id:actor,email:account.email,email_confirmed_at:'2026-01-01'},company,channel,ticket,session);
@@ -615,4 +617,12 @@ test('typed semantic same-ticket area/correction/Summary uses latest Memory with
  const corrected=fixture('更正：細房改為90平方呎，其餘不變。',{originalPreview:true,fullChain:true,source:uuid(411),previous:first.tables,history:first.tables.messages,semantic:{context_encoding:'typed_paths_v1',operation:'UPDATE_ITEM',confidence:0.98,intent:'customer_context_update',customer_correction:true,customer_facts:[{key:'small_room_area',value_nodes:typedContextNodes({amount:90,unit:'sq_ft'})}]}});await corrected.run();
  const facts=corrected.tables.conversation_memory_state.at(-1).memory.current_customer_facts;assert.equal(facts.find(x=>x.key==='small_room_area').value.amount,90);assert.equal(facts.find(x=>x.key==='large_room_area').value.amount,100);assert.equal(facts.find(x=>x.key==='living_room_area').value.amount,180);assert.equal(facts.find(x=>x.key==='small_room_area').source_message_id,uuid(411));
  const summary=fixture('請總結我最新需要，先唔使查產品。',{originalPreview:true,fullChain:true,source:uuid(412),previous:corrected.tables,history:corrected.tables.messages,semantic:{context_encoding:'typed_paths_v1',operation:'ASK_FACT',confidence:0.98,intent:'requirements_recap',requested_facts:[]}});const r=await summary.run();assert.equal(r.status,200,JSON.stringify(r));assert.match(r.body.reply,/90/);assert.match(r.body.reply,/100/);assert.match(r.body.reply,/180/);assert.doesNotMatch(r.body.reply,/(^|\D)80(?:\D|$)/);assert(!summary.requests.some(x=>x.url.includes('context-search')));assert.equal(summary.commits.length,1);const replay=await summary.run();assert.equal(replay.body.idempotent,true);assert.equal(summary.commits.length,1);assert.equal(summary.requests.filter(x=>x.url.includes('aiplatform')).length,0);
+});
+test('Director raw original RAG JSON runs complete Preview generation and guarded persistence without fabricated version',async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const answer='這份「四電一腦」生產者責任計劃資料列出空調機、洗衣機、雪櫃、電視機、電腦、列印機、掃描器及顯示器，並說明相同種類及數量舊電器的除舊服務。';
+ const f=fixture(sample.query,{originalPreview:true,fullChain:true,originalRagResponse:sample,answer,semantic:wireDelta({intent:'merchant_policy',requested_facts:['四電一腦'],entities:[]})});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify({r,events:f.events.slice(-6)}));assert.equal(f.commits.length,1,JSON.stringify(r));assert.equal(f.commits[0].content,answer,JSON.stringify({r,metadata:f.commits[0].metadata,events:f.events}));assert.notEqual(r.body.response_route,'terminal_failure_recovery');
+ assert(f.requests.some(q=>q.url.includes('/rag/context-search')));assert(f.requests.some(q=>q.url.endsWith(':generateContent')&&!q.body.systemInstruction?.parts?.[0]?.text?.includes('commerce semantic interpreter')));
+ assert.equal(f.commits[0].metadata.reference_authority.provenance.currentness,'unknown');assert.equal(f.commits[0].metadata.reference_authority.provenance.version,null);assert.equal(f.commits[0].metadata.citations[0].relevance,'low');assert.equal(f.commits[0].metadata.citation_lineage.evidence_state,'unknown');
 });

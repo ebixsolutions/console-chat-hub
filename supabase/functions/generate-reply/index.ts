@@ -6497,7 +6497,7 @@ async function orchestrationGenerateReply(
       const route = "canonical_kb_direct_answer";
       const priceFact = _canonicalKbDirectAnswer.price_fact;
       const trustedProof: B2KbPriceProof | null =
-        priceFact && _canonicalKbTenantId &&
+        priceFact && _c1AuthorityDecision.provenance.currentness === "current" && _canonicalKbTenantId &&
           typeof conversation.company_id === "string"
           ? {
             field: "selling_price",
@@ -6540,7 +6540,7 @@ async function orchestrationGenerateReply(
           unresolved_fact_fields: _canonicalKbDirectAnswer.unresolved_fact_fields ?? [],
           kb_retrieval_request: ragResult?.query_text_preview ?? null,
           authoritative_kb_facts: (_canonicalKbDirectAnswer.structured_facts ?? []).map((fact) => ({
-            ...fact, authority: "CURRENT_KB", currentness_at_answer: "current",
+            ...fact, authority: _c1AuthorityDecision.selected_authority_class, currentness_at_answer: _c1AuthorityDecision.provenance.currentness ?? "unknown",
             source_message_id, tenant_id: _canonicalKbTenantId,
           })),
           product_follow_up_arbitration:
@@ -7093,7 +7093,7 @@ function buildRagBlock(
     const sections: string[] = [
       "Knowledge Base grounding rules:",
       "- Answer ONLY from the evidence below.",
-      "- The server has already selected this evidence using tenant, entity, region, publication, currentness, source precedence, and version authority.",
+      "- The server selected authorized evidence using its actual source authority. Published/live eligibility may come from the authenticated KB service contract; missing version/currentness remain unknown, not independently verified or pinned.",
       "- Similarity indicates relevance only; it never overrides authority or currentness.",
       "- Never use rejected, unselected, historical, superseded, or cancelled material as a current fact.",
       "- The RAG summary is orientation only; never use it alone for exact facts.",

@@ -2,8 +2,9 @@ import type {
   KBDocumentCandidate,
   KBFullChunk,
   KBLLMContextEvidence,
-} from "./deterministic-kb-client.ts";
+} from "./kb-client.ts";
 import { detectExplicitJurisdiction } from "./conversation-runtime-state.ts";
+import { ragServiceDocument } from "./preview-kb-query-embedding.ts";
 import {
   type ReferenceAuthorityDecision,
   type ReferenceEvidenceCandidate,
@@ -352,6 +353,16 @@ function lexicalRelevance(
   return score;
 }
 
+function serviceTopicMatch(request:string,document:KBDocumentCandidate):boolean {
+  const q=request.normalize("NFKC").toLowerCase(),text=candidateText(document).normalize("NFKC").toLowerCase();
+  const tokens=q.match(/[a-z0-9][a-z0-9_-]{3,}|[\p{Script=Han}]{4,}/gu)??[];
+  for(const token of tokens){
+    if(/^[\p{Script=Han}]+$/u.test(token)){for(let i=0;i<=token.length-4;i++)if(text.includes(token.slice(i,i+4)))return true;}
+    else if(!["what","which","please","policy","information","details","about","current","customer","context","canonical","published","request","retrieval"].includes(token) && text.includes(token))return true;
+  }
+  return false;
+}
+
 function extractStructuredClaims(
   evidence: KBLLMContextEvidence[],
 ): Array<{ key: string; value: string }> {
@@ -404,6 +415,7 @@ export function selectCanonicalGrounding(
   }> = [];
 
   for (const document of documents ?? []) {
+    const service=ragServiceDocument(document);
     if (document.llm_context.selected_document_id !== document.document_id) {
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
@@ -420,8 +432,14 @@ export function selectCanonicalGrounding(
 
     const currentTargetRequest = currentTurnText || requestText;
     const lexicalScore = lexicalRelevance(currentTargetRequest, document);
+    const serviceTopic=!!service && serviceTopicMatch(currentTargetRequest,document);
+    // A low relevance tag is retained, never equated to a supported answer.
+    // Exact contextual evidence and the unchanged generation verifier are still
+    // required; unrelated low hits cannot reach Knowledge/Policy as grounding.
+    if(service?.relevance?.toLowerCase()==="low" && !serviceTopic)continue;
+    const policyEligible=document.source_type.toLowerCase().includes("policy") || !!service && /(?:政策|條款|条款|須知|须知|守則|退貨|退货|退款|保養|保修|\bpolicy\b|\bterms\b|\brefund\b|\breturns\b)/iu.test(candidateText(document));
     const effectiveMinScore =
-      strongLexicalEvidenceMatch(currentTargetRequest, document)
+      strongLexicalEvidenceMatch(currentTargetRequest, document) || serviceTopic
         ? Math.min(minScore, STRONG_LEXICAL_SCORE_FLOOR)
         : minScore;
     const chunks = document.chunks.filter(
@@ -429,8 +447,8 @@ export function selectCanonicalGrounding(
         c.content.trim() &&
         Number.isFinite(c.score) &&
         c.score >= effectiveMinScore &&
-        (!requirePublished || c.status === "published") &&
-        (!policyOnly || c.source_type.toLowerCase().includes("policy")),
+        (!requirePublished || c.status === "published" || c.status === "unknown" && !!service) &&
+        (!policyOnly || policyEligible),
     );
     const fullContentIds = new Set(
       chunks.filter((c) => c.chunk_type === "full_content").map((c) =>
@@ -442,13 +460,13 @@ export function selectCanonicalGrounding(
         e.content.trim() &&
         Number.isFinite(e.score) &&
         e.score >= effectiveMinScore &&
-        (!policyOnly || e.source_type.toLowerCase().includes("policy")) &&
+        (!policyOnly || policyEligible) &&
         fullContentIds.has(e.chunk_id ?? e.content),
     );
 
     if (
       requirePublished && evidence.length > 0 &&
-      chunks.every((c) => c.status !== "published")
+      chunks.every((c) => c.status !== "published") && !service
     ) {
       return { ok: false, error: "KB_EVIDENCE_NOT_PUBLISHED" };
     }
@@ -457,7 +475,7 @@ export function selectCanonicalGrounding(
     const applicability = assessApplicability(document, currentTargetRequest);
     const metadata = document.authority;
     const declaredCurrentness = metadata?.currentness ?? "unknown";
-    const effectiveCurrentness = declaredCurrentness === "unknown"
+    const effectiveCurrentness = declaredCurrentness === "unknown" && !service
       // The authenticated Singapore endpoint is explicitly the published/live
       // read path. Missing optional currentness metadata is bound to that
       // server-side contract, never to a client assertion.
@@ -473,17 +491,24 @@ export function selectCanonicalGrounding(
       authorityCandidate: {
         source_id: document.document_id,
         source_type: document.source_type,
-        authority_class: effectiveCurrentness === "current"
+        authority_class: service && effectiveCurrentness==="unknown" ? "PUBLISHED_KB_SERVICE" : effectiveCurrentness === "current"
           ? "CURRENT_KB"
           : "HISTORICAL",
-        tenant_id: metadata?.tenant_id ?? options.expectedTenantId ?? null,
-        publication_state: metadata?.publication_state ?? "published",
+        tenant_id: metadata?.tenant_id ?? service?.tenant ?? options.expectedTenantId ?? null,
+        publication_state: metadata?.publication_state ?? (service ? null : "published"),
         currentness: effectiveCurrentness,
         entity_ids: unique([
           ...(metadata?.entity_ids ?? []),
           ...namedTargetTokens(candidateText(document)),
         ]),
         topic_ids: unique([
+          // Free semantic fact labels are not a fixed taxonomy. Accept one as
+          // a document topic only when the actual returned evidence contains
+          // that label; never infer it merely from the customer's request.
+          ...(service ? expectedTopicIds.filter(topic=>{
+            const key=topic.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"");
+            return key.length>=3 && candidateText(document).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"").includes(key);
+          }) : []),
           ...(document.source_type.toLowerCase() === "product" ? ["product_facts"] : []),
           ...(metadata?.claims ?? []).map((claim) => claim.key),
           ...topicTokens(candidateText(document)),

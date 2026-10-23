@@ -51,6 +51,7 @@ export type ReferenceAuthorityClass =
   | "CANONICAL_TRANSACTION"
   | "DETERMINISTIC_CALCULATION"
   | "CURRENT_KB"
+  | "PUBLISHED_KB_SERVICE"
   | "CUSTOMER_CONTEXT"
   | "HISTORICAL"
   | "MODEL_INFERENCE";
@@ -607,6 +608,7 @@ const REFERENCE_AUTHORITY_RANK: Record<ReferenceAuthorityClass, number> = {
   CANONICAL_TRANSACTION: 500,
   DETERMINISTIC_CALCULATION: 500,
   CURRENT_KB: 400,
+  PUBLISHED_KB_SERVICE: 400,
   CUSTOMER_CONTEXT: 300,
   HISTORICAL: 100,
   MODEL_INFERENCE: 0,
@@ -636,6 +638,10 @@ function normalizedPublicationState(candidate: ReferenceEvidenceCandidate): stri
 }
 
 function isCurrentPublishedReference(candidate: ReferenceEvidenceCandidate): boolean {
+  // Explicit original API service-contract authority, not an invented version
+  // or currentness assertion. The consumer attaches it only out of band after
+  // scoped authenticated RAG admission. Provenance remains unknown/null.
+  if(candidate.authority_class==="PUBLISHED_KB_SERVICE")return !!candidate.tenant_id && ["","published","live"].includes(normalizedPublicationState(candidate)) && ["unknown","current"].includes(referenceCurrentness(candidate));
   if (candidate.authority_class !== "CURRENT_KB") return true;
   const publication = normalizedPublicationState(candidate);
   const currentness = referenceCurrentness(candidate);
@@ -765,7 +771,7 @@ function decisionForClass(authorityClass: ReferenceAuthorityClass): ReferenceAut
   if (authorityClass === "DETERMINISTIC_CALCULATION") {
     return "USE_DETERMINISTIC_CALCULATION";
   }
-  if (authorityClass === "CURRENT_KB") return "USE_CURRENT_KB";
+  if (authorityClass === "CURRENT_KB" || authorityClass === "PUBLISHED_KB_SERVICE") return "USE_CURRENT_KB";
   if (authorityClass === "CUSTOMER_CONTEXT") return "USE_CUSTOMER_CONTEXT";
   if (authorityClass === "HISTORICAL") return "HISTORICAL_ONLY";
   return "INSUFFICIENT_EVIDENCE";
@@ -850,7 +856,7 @@ export function resolveReferenceAuthority(
         (candidate) =>
           candidate.authority_class === "CANONICAL_TRANSACTION" ||
           candidate.authority_class === "DETERMINISTIC_CALCULATION" ||
-          candidate.authority_class === "CURRENT_KB",
+          candidate.authority_class === "CURRENT_KB" || candidate.authority_class === "PUBLISHED_KB_SERVICE",
       )
     : eligible;
 

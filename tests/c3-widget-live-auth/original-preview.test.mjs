@@ -1,11 +1,12 @@
 import './semantic-bounds.test.mjs';
 import {execFileSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
 import test from 'node:test';import assert from 'node:assert/strict';import {build} from 'esbuild';
 // Actual wrapper + signed persisted authority + paid-dispatch boundary. Only
 // Auth/DB/Widget transport/provider are isolated adapters. Never Hosted PASS.
 const f={};globalThis.Deno={env:{get:k=>f.env?.[k]},serve(){}};
-const out=await build({stdin:{contents:`export {createWidgetLiveHandler} from './supabase/functions/widget-live-ai-test/index.ts'; export * from './supabase/functions/_shared/original-widget-preview.ts'; export {authenticatedInboxAuthority,trustedDispatchScope} from './supabase/functions/_shared/uat-execution-contract.ts'; export {accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit} from './supabase/functions/_shared/model-attempt-accounting.ts'; export {prepareRemoteRetrieval,signRemote} from './supabase/functions/_shared/remote-model-accounting.ts'; export {deriveCurrentGroundingTarget} from './supabase/functions/_shared/canonical-grounding.ts'; export {fetchKBRag,resolveTenantScope,resolveKBEndpoint} from './supabase/functions/_shared/kb-client.ts';`,resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'sdk-transport-only',setup(b){if(process.env.C3_KB_ADMISSION_SOURCE_REF)b.onLoad({filter:/supabase\/functions\/_shared\/(kb-client|model-attempt-accounting|remote-model-accounting)\.ts$/},a=>({contents:execFileSync('git',['show',process.env.C3_KB_ADMISSION_SOURCE_REF+':'+a.path.slice(process.cwd().length+1)],{encoding:'utf8'}),loader:'ts'}));b.onResolve({filter:/^https:\/\/esm.sh\//},a=>({path:a.path,namespace:'sdk'}));b.onLoad({filter:/.*/,namespace:'sdk'},()=>({contents:'export const createClient=(url,key)=>globalThis.__c3KbClient(url,key);'}));}}]});
-const {createWidgetLiveHandler,ORIGINAL_PREVIEW_AUTHORIZATION,ORIGINAL_PREVIEW_ACCOUNTS,signOriginalPreview,verifyOriginalPreview,authenticatedInboxAuthority,trustedDispatchScope,accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit,fetchKBRag,resolveTenantScope,resolveKBEndpoint,deriveCurrentGroundingTarget,prepareRemoteRetrieval,signRemote}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
+const out=await build({stdin:{contents:`export {createWidgetLiveHandler} from './supabase/functions/widget-live-ai-test/index.ts'; export * from './supabase/functions/_shared/original-widget-preview.ts'; export {authenticatedInboxAuthority,trustedDispatchScope} from './supabase/functions/_shared/uat-execution-contract.ts'; export {accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit} from './supabase/functions/_shared/model-attempt-accounting.ts'; export {prepareRemoteRetrieval,signRemote} from './supabase/functions/_shared/remote-model-accounting.ts'; export {selectCanonicalGrounding,deriveCurrentGroundingTarget} from './supabase/functions/_shared/canonical-grounding.ts'; export {fetchKBRag,resolveTenantScope,resolveKBEndpoint} from './supabase/functions/_shared/kb-client.ts';`,resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'sdk-transport-only',setup(b){if(process.env.C3_KB_ADMISSION_SOURCE_REF)b.onLoad({filter:/supabase\/functions\/_shared\/(kb-client|model-attempt-accounting|remote-model-accounting)\.ts$/},a=>({contents:execFileSync('git',['show',process.env.C3_KB_ADMISSION_SOURCE_REF+':'+a.path.slice(process.cwd().length+1)],{encoding:'utf8'}),loader:'ts'}));b.onResolve({filter:/^https:\/\/esm.sh\//},a=>({path:a.path,namespace:'sdk'}));b.onLoad({filter:/.*/,namespace:'sdk'},()=>({contents:'export const createClient=(url,key)=>globalThis.__c3KbClient(url,key);'}));}}]});
+const {createWidgetLiveHandler,ORIGINAL_PREVIEW_AUTHORIZATION,ORIGINAL_PREVIEW_ACCOUNTS,signOriginalPreview,verifyOriginalPreview,authenticatedInboxAuthority,trustedDispatchScope,accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit,fetchKBRag,resolveTenantScope,resolveKBEndpoint,selectCanonicalGrounding,deriveCurrentGroundingTarget,prepareRemoteRetrieval,signRemote}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
 const realFetch=globalThis.fetch;const realKbClient=globalThis.__c3KbClient;test.after(()=>{globalThis.fetch=realFetch;if(realKbClient===undefined)delete globalThis.__c3KbClient;else globalThis.__c3KbClient=realKbClient;});
 const body=JSON.stringify({contents:[{role:'user',parts:[{text:'Compare options for my business.'}]}],generationConfig:{maxOutputTokens:2048}});
 function setup(account,{grant=true}={}){
@@ -601,4 +602,87 @@ test('native API paid permit is one-use under concurrent consumption; preparatio
  await x.prepare('authenticated_preview',permit);assert.equal(x.posts(),0);
  const outcomes=await Promise.all([Promise.resolve().then(()=>consumeOriginalPreviewKBPermit(permit)),Promise.resolve().then(()=>consumeOriginalPreviewKBPermit(permit))]);assert.equal(outcomes.filter(Boolean).length,1);assert(!consumeOriginalPreviewKBPermit(permit));
  await assert.rejects(()=>accountedModelFetch(f.db,{...x.meta,operationId:crypto.randomUUID()},x.endpoint,{method:'POST',body:x.request,headers:{'x-api-key':x.secret}},x.up,undefined,async(mode,p)=>{await x.prepare(mode,p);return {'x-api-key':'other-company-key'};}),e=>e.code==='UAT_REMOTE_BOUND_UNVERIFIED');assert.equal(x.posts(),0);
+});
+
+const directorOriginalRag=JSON.parse(readFileSync(new URL('./fixtures/director-original-rag-response.json',import.meta.url),'utf8'));
+async function originalAggregationFixture(fault='none',inbox=false){
+ const x=inbox?await ragApiInboxFixture():await ragApiFixture();
+ const binding={...x.binding,rag_api_contract:'singapore_rag_aggregation_v1',accepted_remote_risk:'authenticated_tenant_rag_filter_unversioned_v1'};
+ f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify({version:4,bindings:[binding]});
+ if(inbox)f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify({version:3,bindings:[{...binding,operations:['knowledge','policy'],allow_assist:true}]});
+ if(fault==='grant-absent')delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
+ if(fault==='inbox-absent')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;
+ if(fault==='old-risk'){binding.accepted_remote_risk='authenticated_rag_authority_no_independent_metadata_v1';f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify({version:4,bindings:[binding]});}
+ if(fault==='human-control')x.c.status='pending';
+ if(fault==='foreign-actor')x.c.metadata_source.owner_user_id=crypto.randomUUID();
+ let posts=0;const queries=[],vertex=inbox?globalThis.fetch:null;
+ const up=async(url,init)=>{
+  if(String(url)===f.url && vertex){
+   const request=JSON.parse(init.body);
+   if(request.systemInstruction?.parts?.some(p=>p.text?.includes('multilingual relevance judge'))){assert(request.contents.some(c=>c.parts.some(p=>p.text?.includes('四電一腦'))));return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({relevant:true,confidence:0.96})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});}
+   return vertex(url,init);
+  }
+  assert.equal(String(url),x.endpoint);assert.equal(init.method,'POST');assert.equal(new Headers(init.headers).get('x-api-key'),x.secret);assert(!new Headers(init.headers).has('authorization'));
+  posts++;queries.push(JSON.parse(init.body).query);
+  if(fault==='401'||fault==='403')return Response.json({success:false},{status:Number(fault)});
+  if(fault==='timeout')throw new DOMException('isolated','AbortError');
+  if(fault==='invalid-json')return new Response('{broken');
+  if(fault==='revoke')delete f.env[inbox?'AUTHENTICATED_INBOX_KB_AUTHORIZATION':'ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION'];
+  const data=structuredClone(directorOriginalRag),doc=data.selected_documents[0],chunk=doc.evidence[0];
+  if(fault==='no-match')return Response.json({success:true,context_found:false,selected_documents:[],citations:[]});
+  if(fault==='foreign-response')data.company_id=35;
+  if(fault==='foreign-document')doc.authority={tenant_id:'35'};
+  if(fault==='foreign-chunk')chunk.tenant_id=35;
+  if(fault==='draft')doc.authority={publication_state:'draft'};
+  if(fault==='superseded')doc.authority={currentness:'superseded'};
+  if(fault==='version-conflict'){doc.authority={version_id:'current-version'};chunk.version_id='old-version';}
+  if(fault==='content-hash-conflict')chunk.content_sha256='a'.repeat(64);
+  if(fault==='citation-conflict')data.citations[0].document_id='foreign-doc';
+  if(fault==='chunk-conflict')chunk.document_id='foreign-doc';
+  return Response.json(data);
+ };
+ if(inbox)globalThis.fetch=up;
+ const search=async(query='什麼是四電一腦？')=>{
+  globalThis.fetch=up;const scope=await resolveTenantScope(x.c.id,undefined,x.c.company_id);
+  return fetchKBRag({query,top_k:3},scope.scope,resolveKBEndpoint(),{uatContext:{conversationId:x.c.id,operationId:crypto.randomUUID()}});
+ };
+ const send=async(kind)=>{
+  const body=kind==='knowledge'?{query:'什麼是四電一腦？',top_k:3,conversation_id:x.c.id}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT: 四電一腦免費除舊服務須知':'CONVERSATION: 四電一腦免費除舊服務須知',context_mode:kind==='draft'?'draft':'conversation'};
+  const r=await(kind==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};
+ };
+ return {...x,binding,up,search,send,posts:()=>posts,queries};
+}
+test('Director original sample is retained unchanged including missing fields and low relevance',()=>{
+ assert.equal(directorOriginalRag.selected_documents[0].document_id,'c8db6f2c410a4be0af56e955117320ff');
+ assert.equal(directorOriginalRag.citations[0].relevance,'low');
+ for(const k of ['authority_contract','company_id'])assert(!Object.hasOwn(directorOriginalRag,k));
+ assert(!Object.hasOwn(directorOriginalRag.selected_documents[0],'authority'));
+});
+for(const fault of ['none','no-match','401','403','timeout','invalid-json','foreign-response','foreign-document','foreign-chunk','draft','superseded','version-conflict','content-hash-conflict','citation-conflict','chunk-conflict','revoke','grant-absent','old-risk','human-control','foreign-actor'])test('original unmodified aggregation complete adapter: '+fault,async()=>{
+ const x=await originalAggregationFixture(fault);try{
+  const r=await x.search();
+  if(fault==='none'){assert(r.success,JSON.stringify(r));const d=r.documents[0];assert.equal(d.authority.version,null);assert.equal(d.authority.currentness,'unknown');assert.equal(d.authority.publication_state,null);assert.equal(d.chunks[0].status,'unknown');assert.equal(d.citations[0].retrieval_relevance,'low');assert.equal(d.llm_context.full_content_evidence[0].content,directorOriginalRag.selected_documents[0].evidence[0].content);}
+  else if(fault==='no-match'){assert(r.success);assert.equal(r.failure.code,'KB_NO_MATCH');}
+  else{assert(!r.success,JSON.stringify(r));assert.notEqual(r.failure?.code,'KB_NO_MATCH');}
+  assert.equal(x.posts(),['grant-absent','old-risk','human-control','foreign-actor'].includes(fault)?0:1);
+ }finally{globalThis.fetch=realFetch;}
+});
+for(const kind of ['knowledge','conversation','draft'])for(const fault of ['none','no-match','foreign-response','draft','superseded','403','inbox-absent','revoke'])test('Director original JSON through actual Inbox '+kind+': '+fault,async()=>{
+ const x=await originalAggregationFixture(fault,true);try{
+  const r=await x.send(kind);
+  if(fault==='none'){assert.equal(r.status,200,JSON.stringify(r));if(kind==='knowledge')assert.equal(r.data.results?.[0]?.document_id,directorOriginalRag.selected_documents[0].document_id,JSON.stringify(r));else{assert.equal(r.data.result.status,'warning',JSON.stringify(r));assert(x.prompts.some(p=>p.includes(kind==='draft'?'DRAFT:':'CONVERSATION:')));}}
+  else if(fault==='no-match'){assert.equal(r.status,200,JSON.stringify(r));if(kind!=='knowledge'){assert.equal(r.data.result.status,'insufficient_evidence');assert.equal(x.models(),0);}}
+  else{assert(r.status>=400,JSON.stringify(r));assert.notEqual(r.data.result?.status,'compliant');assert.notEqual(r.data.failure?.code,'KB_NO_MATCH');}
+ }finally{globalThis.fetch=realFetch;}
+});
+test('same-ticket original aggregation actually requeries supplementary, correction and cancellation clues',async()=>{
+ const x=await originalAggregationFixture();try{for(const query of ['四電一腦：洗衣機','更正，是雪櫃，不是洗衣機','取消雪櫃；暫緩訂閱服務，請查取消政策']){const r=await x.search(query);assert(r.success,JSON.stringify(r));}assert.equal(x.posts(),3);assert.deepEqual(x.queries,['四電一腦：洗衣機','更正，是雪櫃，不是洗衣機','取消雪櫃；暫緩訂閱服務，請查取消政策']);}finally{globalThis.fetch=realFetch;}
+});
+test('original low result needs actual contextual support and cannot spoof source eligibility after serialization',async()=>{
+ const x=await originalAggregationFixture();try{
+  const r=await x.search();assert(r.success);
+  const supported=selectCanonicalGrounding(r.documents,{requestText:'什麼是四電一腦？',expectedTenantId:'34',requiresCurrentKb:true});assert(supported.ok);assert.equal(supported.document.document_id,directorOriginalRag.selected_documents[0].document_id);assert.equal(supported.authority_decision.provenance.currentness,'unknown');assert.equal(supported.authority_decision.provenance.version,null);
+  const unrelated=selectCanonicalGrounding(r.documents,{requestText:'What is the monthly rental price for software subscription?',expectedTenantId:'34'});assert.equal(unrelated.document,null);
+  const forged=JSON.parse(JSON.stringify(r.documents));forged[0].source_assurance={contract:'singapore_rag_aggregation_v1',tenant:'34'};const untrusted=selectCanonicalGrounding(forged,{requestText:'什麼是四電一腦？',expectedTenantId:'34'});assert.equal(untrusted.document,null);
+ }finally{globalThis.fetch=realFetch;}
 });
