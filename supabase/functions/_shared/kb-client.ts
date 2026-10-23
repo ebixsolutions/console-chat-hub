@@ -543,13 +543,14 @@ export async function fetchKBRag(
   );
   const started=Date.now();
   const uuid=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
-  const trace=(stage:"kb_scope_resolved"|"kb_admission_or_transport_result",failure?:ExecutionFailure,status?:number)=>{
+  const trace=(stage:"kb_scope_resolved"|"kb_admission_or_transport_result",failure?:ExecutionFailure,status?:number,reason?:unknown)=>{
     if(!uuid.test(opts?.uatContext?.sourceMessageId ?? "") || !uuid.test(opts?.uatContext?.conversationId ?? ""))return;
     console.log(JSON.stringify({endpoint:"generate-reply",stage,conversation_id:opts!.uatContext!.conversationId,
       source_message_id:opts!.uatContext!.sourceMessageId,company_id:scope.aiCompanyId,
       canonical_kb_tenant:/^[a-z0-9_-]{1,100}$/i.test(scope.singaporeTenantId) ? scope.singaporeTenantId : null,
       endpoint_class:"singapore_context_search",elapsed_ms:Date.now()-started,
-      ...(failure ? {failure_code:failure.code,failure_stage:failure.stage} : {}),...(status ? {http_status:status} : {})}));
+      ...(failure ? {failure_code:failure.code,failure_stage:failure.stage} : {}),...(status ? {http_status:status} : {}),
+      ...(typeof reason==="string" && ["KB_RAG_RESPONSE_INVALID","KB_RAG_AUTHORITY_MISSING","KB_RAG_TENANT_CONFLICT","KB_RAG_AUTHORITY_CONFLICT","KB_RAG_CHUNK_INVALID","KB_RAG_CONTENT_MISMATCH"].includes(reason)?{authority_reason:reason}:{})}));
   };
   trace("kb_scope_resolved");
   let response: Response;
@@ -571,7 +572,7 @@ export async function fetchKBRag(
 
   } catch (error) {
     const failure=failureFromError(error);
-    trace("kb_admission_or_transport_result",failure);
+    trace("kb_admission_or_transport_result",failure,undefined,error && typeof error==="object" && "reason" in error ? error.reason : undefined);
     clearTimeout(timeout);
     opts?.signal?.removeEventListener("abort", abortFromRequest);
     return {

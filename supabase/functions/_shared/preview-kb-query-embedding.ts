@@ -142,6 +142,65 @@ export async function bindQueryEmbeddingResponse(response:Response,a:QueryEmbedd
  * authorized by old B settings: version3 Preview / version2 Inbox must opt in.
  * Authenticated live entity reads establish current evidence at observation,
  * not a pinned runtime, a future publication lock or a remote spending cap. */
+/** Original authenticated RAG transport, with authority carried by its own
+ * response. Separate explicit grant: metadata-mode approval cannot enable it.
+ * Missing native authority remains unknown and denies, never filled locally.
+ */
+export const RAG_API_MODE = "query_embedding_rag_authority_v1";
+export type RagApiPolicy = {
+  remote_mode:typeof RAG_API_MODE;
+  rag_api_contract:"singapore_rag_published_v1";
+  accepted_remote_risk:"authenticated_rag_authority_no_independent_metadata_v1";
+};
+export function ragApiPolicy(binding:any):RagApiPolicy|null {
+  return binding?.remote_mode===RAG_API_MODE && binding.allow_remote_embedding===true &&
+    binding.rag_api_contract==="singapore_rag_published_v1" &&
+    binding.accepted_remote_risk==="authenticated_rag_authority_no_independent_metadata_v1" &&
+    ["evidence_reference","remote_runtime_sha256","attestation_payload","attestation_signature"].every(k=>binding[k]===undefined)
+    ? {remote_mode:RAG_API_MODE,rag_api_contract:binding.rag_api_contract,accepted_remote_risk:binding.accepted_remote_risk} : null;
+}
+const ragAuthorityFailure=(reason:string):never=>{throw Object.assign(new Error("KB_TOOL_FAILURE"),{code:"KB_TOOL_FAILURE",reason});};
+/** No metadata GET, fallback legacy path, fabricated version or model retry.
+ * These are authenticated service assertions, not an independently verified
+ * index snapshot or runtime/cost attestation. Approval must accept that boundary.
+ */
+export async function bindRagApiResponse(response:Response,policy:RagApiPolicy):Promise<{response:Response;grounded:boolean}> {
+  if(!ragApiPolicy({...policy,allow_remote_embedding:true}))return deny();
+  if(!response.ok)return {response,grounded:false};
+  const data=await boundedJson(response);
+  if(!object(data) || data.success!==true || typeof data.context_found!=="boolean" || !Array.isArray(data.selected_documents) || data.selected_documents.length>5)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
+  if(data.authority_contract!==policy.rag_api_contract || data.company_id===undefined)return ragAuthorityFailure("KB_RAG_AUTHORITY_MISSING");
+  if(String(data.company_id)!==FRANKIE_KB_SCOPE.tenant || data.tenant_id!==undefined && String(data.tenant_id)!==FRANKIE_KB_SCOPE.tenant)return ragAuthorityFailure("KB_RAG_TENANT_CONFLICT");
+  if(!data.context_found){
+    if(data.selected_documents.length)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
+    return {response:Response.json({success:true,context_found:false,selected_documents:[],citations:[]},{headers:{"Cache-Control":"no-store"}}),grounded:false};
+  }
+  if(!data.selected_documents.length)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
+  const docs=new Set<string>(),chunks=new Set<string>();
+  for(const doc of data.selected_documents){
+    if(!object(doc) || !id(doc.document_id) || docs.has(doc.document_id as string) || typeof doc.title!=="string" || !doc.title.trim() || typeof doc.source_type!=="string" || !doc.source_type.trim() || typeof doc.document_score!=="number" || !Number.isFinite(doc.document_score) || !Array.isArray(doc.evidence) || !doc.evidence.length || doc.evidence.length>3)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
+    docs.add(doc.document_id as string);
+    const a=doc.authority;
+    if(!object(a) || !id(a.version_id) || !hash(a.content_sha256) || a.tenant_id===undefined || a.publication_state===undefined || a.currentness===undefined)return ragAuthorityFailure("KB_RAG_AUTHORITY_MISSING");
+    if(String(a.tenant_id)!==FRANKIE_KB_SCOPE.tenant || a.publication_state!=="published" || a.currentness!=="current")return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
+    for(const claim of [doc,a,doc.metadata].filter(object)){
+      if(claim.company_id!==undefined && String(claim.company_id)!==FRANKIE_KB_SCOPE.tenant || claim.tenant_id!==undefined && String(claim.tenant_id)!==FRANKIE_KB_SCOPE.tenant ||
+        claim.version_id!==undefined && claim.version_id!==a.version_id || claim.version!==undefined && claim.version!==a.version_id ||
+        claim.status!==undefined && claim.status!=="published" || claim.publication_state!==undefined && claim.publication_state!=="published" ||
+        claim.currentness!==undefined && claim.currentness!=="current" || claim.is_current===false)return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
+    }
+    for(const part of [...(doc.summary?[doc.summary]:[]),...doc.evidence]){
+      if(!object(part) || !id(part.chunk_id) || chunks.has(part.chunk_id as string) || part.document_id!==doc.document_id || part.version_id!==a.version_id ||
+        !["rag_summary","full_content","faq_pair","section"].includes(String(part.chunk_type)) || typeof part.content!=="string" || !part.content.trim() || typeof part.score!=="number" || !Number.isFinite(part.score) || !hash(part.content_sha256))return ragAuthorityFailure("KB_RAG_CHUNK_INVALID");
+      if(await digest(part.content)!==part.content_sha256)return ragAuthorityFailure("KB_RAG_CONTENT_MISMATCH");
+      chunks.add(part.chunk_id as string);
+    }
+  }
+  // Preserve actual source/version assertions. Never synthesize CURRENT_KB
+  // metadata for old unversioned responses or use combined_text as evidence.
+  return {response:Response.json({success:true,context_found:true,selected_documents:data.selected_documents,citations:[]},{headers:{"Cache-Control":"no-store"}}),grounded:true};
+}
+
 export const LIVE_METADATA_MODE = "query_embedding_live_metadata_v1";
 export type LiveMetadataPolicy = {
   reference_id:string; remote_mode:typeof LIVE_METADATA_MODE;

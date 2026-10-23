@@ -1,7 +1,7 @@
 import { uatRun } from "./uat-execution-contract.ts";
 import { verifyQueryEmbeddingEvidence, prepareLiveMetadata } from "./preview-kb-query-embedding.ts";
 import {
-  originalPreviewKBRemoteScope,verifyOriginalPreviewKBRemoteProof,verifyOriginalPreviewKBLiveProof,type OriginalPreviewKBPermit,
+  originalPreviewKBRemoteScope,verifyOriginalPreviewKBRemoteProof,verifyOriginalPreviewKBLiveProof,prepareOriginalPreviewKBApiAdmission,type OriginalPreviewKBPermit,
   type AccountingRpc,
   ModelAccountingError,
   sha256,
@@ -87,6 +87,12 @@ export async function prepareRemoteRetrieval(
   if(original && (!company || !requestBody))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
   const permitted=original ? originalPreviewKBRemoteScope(originalPermit,company,tenant,endpoint,requestBody) : null;
   if(original && !permitted)throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
+  if(original && permitted?.apiPolicy){
+    if(!prepareOriginalPreviewKBApiAdmission(originalPermit))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
+    // Existing authenticated RAG POST only. Publication/version/chunk authority
+    // must come from that response; no new control-plane credential or request.
+    return {};
+  }
   if(original && permitted?.livePolicy){
     const session=await prepareLiveMetadata(permitted.livePolicy,credential,upstream,signal);
     if(!verifyOriginalPreviewKBLiveProof(originalPermit,session))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");

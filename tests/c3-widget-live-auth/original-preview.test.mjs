@@ -506,3 +506,99 @@ test('dynamic permission does not consume, drop or rewrite unrelated standing bi
  const x=await liveMetadataFixture();const g=JSON.parse(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION),other={...x.binding,actor_id:crypto.randomUUID(),company_id:crypto.randomUUID()};g.bindings.push(other);f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify(g);const before=f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
  const r=await accountedModelFetch(f.db,x.meta,x.endpoint,{method:'POST',body:x.request,headers:{'x-api-key':x.secret}},x.up,undefined,x.prepare);assert.equal(r.status,200);assert.equal(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION,before);assert.deepEqual(JSON.parse(before).bindings[1],other);
 });
+
+async function ragApiFixture(fault='none'){
+ const x=await embeddingFixture(),base=JSON.parse(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION).bindings[0];
+ const binding=Object.fromEntries(['actor_id','company_id','channel_id','tenant_id','endpoint','provider','purpose'].map(k=>[k,base[k]]));
+ Object.assign(binding,{remote_mode:'query_embedding_rag_authority_v1',allow_remote_embedding:true,rag_api_contract:'singapore_rag_published_v1',accepted_remote_risk:'authenticated_rag_authority_no_independent_metadata_v1'});
+ f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify({version:fault==='old-grant'?3:4,bindings:[binding]});
+ delete f.env.KB_RAG_TENANT_TOKENS_JSON;delete f.env.KB_QUERY_EMBEDDING_EVIDENCE_JSON;
+ if(fault==='grant-absent')delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
+ if(fault==='risk-not-approved'){const g=JSON.parse(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION);g.bindings[0].accepted_remote_risk='not-approved';f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify(g);}
+ if(fault==='human-control')x.c.status='pending';
+ if(fault==='foreign-actor')x.c.metadata_source.owner_user_id=crypto.randomUUID();
+ if(fault==='synthetic'){x.c.metadata_source.source='c3_uat_widget';x.c.metadata_source.synthetic=true;}
+ let posts=0;const requests=[];
+ const up=async(url,init)=>{
+  requests.push({url:String(url),method:init.method,query:JSON.parse(init.body).query});assert.equal(String(url),x.endpoint);assert.equal(init.method,'POST');assert.equal(init.redirect,'error');
+  const h=new Headers(init.headers);assert.equal(h.get('x-api-key'),x.secret);assert(!h.has('authorization'));assert(!h.has('x-service-role-secret'));posts++;
+  if(fault==='http-denied')return Response.json({success:false},{status:403});
+  if(fault==='tool-failure')return Response.json({success:false},{status:502});
+  if(fault==='invalid-json')return new Response('not JSON');
+  if(fault==='revoked')delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
+  if(fault==='rotate-key')f.env.KB_SINGAPORE_TENANT_API_KEYS_JSON=JSON.stringify({'34':'rotated'});
+  if(fault==='remap')f.env.KB_SINGAPORE_TENANT_MAP_JSON=JSON.stringify({[x.c.company_id]:'35'});
+  const content='Published service subscription: you may request a pause; eligibility requires review.';
+  const part={document_id:'api-doc-'+posts,chunk_id:'api-chunk-'+posts,version_id:'api-version-'+posts,chunk_type:'full_content',content,score:0.99,content_sha256:await fixtureDigest(content)};
+  const doc={document_id:part.document_id,title:'Current service policy',source_type:'policy',document_score:0.99,evidence:[part],authority:{tenant_id:'34',version_id:part.version_id,content_sha256:await fixtureDigest('Full current policy source'),publication_state:'published',currentness:'current'}};
+  const data={success:true,company_id:34,authority_contract:'singapore_rag_published_v1',context_found:true,selected_documents:[doc],llm_context:{combined_text:'UNTRUSTED answer; never use as customer input'}};
+  if(fault==='no-match'){data.context_found=false;data.selected_documents=[];}
+  if(fault==='original-unversioned-response'){delete data.authority_contract;delete data.company_id;delete doc.authority;delete part.document_id;delete part.version_id;delete part.content_sha256;}
+  if(fault==='missing-version')delete doc.authority.version_id;
+  if(fault==='missing-currentness')delete doc.authority.currentness;
+  if(fault==='draft')doc.authority.publication_state='draft';
+  if(fault==='superseded')doc.authority.currentness='superseded';
+  if(fault==='foreign-response')data.company_id=35;
+  if(fault==='foreign-document')doc.authority.tenant_id='35';
+  if(fault==='foreign-chunk')part.document_id='other-document';
+  if(fault==='stale-chunk')part.version_id='old-version';
+  if(fault==='tampered-content')part.content='Unsupported refund promise';
+  if(fault==='duplicate-chunk')doc.evidence.push({...part});
+  if(fault==='metadata-conflict')doc.metadata={currentness:'historical'};
+  return Response.json(data);
+ };
+ return {...x,binding,up,posts:()=>posts,requests,prepare:async(mode,permit)=>prepareRemoteRetrieval(x.c.company_id,'34',x.secret,x.endpoint,up,undefined,'kb',x.request,mode,permit)};
+}
+test('server retrieval labels cannot become cross-line commerce entity identifiers',()=>{
+ for(const input of ['pause subscription\nCanonical customer context: business','請暫停訂閱\nCanonical customer context: business','pause subscription\r\nJurisdiction: unspecified']){
+  const t=deriveCurrentGroundingTarget(input);assert(!t.entity_ids.some(id=>/canonical|jurisdiction/i.test(id)),JSON.stringify(t));
+ }
+ for(const input of ['subscription ID SUB-123','order # ORD-456','訂閱編號 SUB-123'])assert(deriveCurrentGroundingTarget(input).entity_ids.some(id=>/123|456/.test(id)),input);
+});
+for(const fault of ['none','no-match','old-grant','grant-absent','risk-not-approved','human-control','foreign-actor','synthetic','http-denied','tool-failure','invalid-json','revoked','rotate-key','remap','original-unversioned-response','missing-version','missing-currentness','draft','superseded','foreign-response','foreign-document','foreign-chunk','stale-chunk','tampered-content','duplicate-chunk','metadata-conflict'])test('original RAG API authority / complete paid boundary: '+fault,async()=>{
+ const x=await ragApiFixture(fault);const action=()=>accountedModelFetch(f.db,x.meta,x.endpoint,{method:'POST',body:x.request,headers:{'x-api-key':x.secret}},x.up,undefined,x.prepare);
+ if(['none','no-match','http-denied','tool-failure'].includes(fault)){
+  const r=await action();assert.equal(r.status,fault==='http-denied'?403:fault==='tool-failure'?502:200);if(r.ok){const v=await r.json();assert.equal(v.context_found,fault!=='no-match');assert.equal(v.llm_context,undefined);if(fault==='none')assert.equal(v.selected_documents[0].authority.version_id,'api-version-1');}assert.equal(x.posts(),1);
+ }else{
+  await assert.rejects(action,e=>e.code && e.code!=='KB_NO_MATCH');
+  if(['old-grant','grant-absent','risk-not-approved','human-control','foreign-actor','synthetic'].includes(fault))assert.equal(x.posts(),0);
+ }
+ assert(x.requests.every(r=>r.method==='POST'&&r.url===x.endpoint),'no metadata GET or accounting endpoint');assert.equal(f.rpc.length,0,'no new accounting backend');
+});
+test('native RAG adapter retains exact lineage and distinguishes no-match from missing authority',async()=>{
+ for(const fault of ['none','no-match','original-unversioned-response','http-denied']){
+  const x=await ragApiFixture(fault),scope=await resolveTenantScope(x.c.id,undefined,x.c.company_id);globalThis.fetch=x.up;
+  try{const result=await fetchKBRag({query:'A new service subscription policy',top_k:3},scope.scope,resolveKBEndpoint(),{uatContext:{conversationId:x.c.id,operationId:crypto.randomUUID()}});
+   if(fault==='none'){assert(result.success,JSON.stringify(result));assert.equal(result.documents[0].authority.version,'api-version-1');assert.equal(result.documents[0].authority.currentness,'current');}
+   else if(fault==='no-match'){assert(result.success);assert.equal(result.failure.code,'KB_NO_MATCH');}
+   else{assert(!result.success);assert.equal(result.failure.code,'KB_TOOL_FAILURE');}
+  }finally{globalThis.fetch=realFetch;}
+ }
+});
+async function ragApiInboxFixture(fault='none'){
+ const x=await ragApiFixture(fault);f.env.SUPABASE_SERVICE_ROLE_KEY=f.env.SUPABASE_SECRET_KEY;f.env.LLM_MODEL_ASSIST='gemini-2.5-flash';f.env.GOOGLE_SERVICE_ACCOUNT_JSON='{}';
+ f.rows.user_roles=[{user_id:f.user.id,role:'admin'}];f.rows.agent_profile=[{id:crypto.randomUUID(),user_id:f.user.id,role:'admin',status:'active'}];f.rows.upstream_call_log=[];
+ f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify({version:3,bindings:[{...x.binding,operations:['knowledge','policy'],allow_assist:true}]});
+ if(fault==='inbox-grant-absent')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;
+ if(fault==='role-revoked')f.rows.agent_profile[0].status='inactive';
+ const from=f.db.from;f.db.from=function(table){const q=from.call(this,table);q.in=()=>q;q.not=()=>q;return q;};f.db.auth={getUser:async()=>({data:{user:f.user},error:null})};globalThis.__c3InboxClient=()=>f.db;
+ let models=0;const prompts=[];globalThis.fetch=async(url,init)=>{if(String(url)!==f.url)return x.up(url,init);models++;const prompt=JSON.parse(init.body).contents.flatMap(c=>c.parts.map(p=>p.text??'')).join('');prompts.push(prompt);return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(prompt.includes('Text to check:')?{status:'warning',summary:'Source-backed policy review',issues:[{excerpt:'subscription',policy_label:'Evidence 1',severity:'warning'}]}:{queries:[]})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});};
+ const send=async(kind)=>{const body=kind==='knowledge'?{query:'published service policy',top_k:3,conversation_id:x.c.id}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT: pause subscription':'CONVERSATION: pause subscription',context_mode:kind==='draft'?'draft':'conversation'};const r=await(kind==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};};return {...x,send,models:()=>models,prompts};
+}
+for(const kind of ['knowledge','conversation','draft'])for(const fault of ['none','no-match','original-unversioned-response','http-denied','tampered-content','inbox-grant-absent'])test('complete Inbox native RAG '+kind+': '+fault,async()=>{
+ const x=await ragApiInboxFixture(fault);try{const r=await x.send(kind);
+  if(fault==='none'){assert.equal(r.status,200,JSON.stringify(r));if(kind==='knowledge')assert.equal(r.data.results?.[0]?.document_id,'api-doc-1');else{assert.equal(r.data.result.status,'warning',JSON.stringify({r,requests:x.requests,targets:x.requests.map(r=>deriveCurrentGroundingTarget(r.query))}));assert(x.prompts.some(p=>p.includes(kind==='draft'?'DRAFT:':'CONVERSATION:')));}}
+  else if(fault==='no-match'){assert.equal(r.status,200,JSON.stringify(r));if(kind!=='knowledge'){assert.equal(r.data.result.status,'insufficient_evidence');assert.equal(x.models(),0);}}
+  else{assert(r.status>=400,JSON.stringify(r));assert.notEqual(r.data.result?.status,'compliant');assert.notEqual(r.data.failure?.code,'KB_NO_MATCH');}
+ }finally{globalThis.fetch=realFetch;}
+});
+test('native RAG same-ticket supplementary clues perform a new request with new returned document authority',async()=>{
+ const x=await ragApiFixture(),scope=await resolveTenantScope(x.c.id,undefined,x.c.company_id);globalThis.fetch=x.up;
+ try{for(const query of ['service pause','service pause after renewal clarification']){const r=await fetchKBRag({query,top_k:3},scope.scope,resolveKBEndpoint(),{uatContext:{conversationId:x.c.id,operationId:crypto.randomUUID()}});assert(r.success,JSON.stringify(r));assert.equal(r.documents[0].authority.version,'api-version-'+x.posts());}assert.equal(x.posts(),2);assert(x.requests.every(r=>r.method==='POST'));}finally{globalThis.fetch=realFetch;}
+});
+test('native API paid permit is one-use under concurrent consumption; preparation cannot replace the bound credential',async()=>{
+ const x=await ragApiFixture(),permit=await authorizeOriginalPreviewKB(f.db,x.meta,x.endpoint,{method:'POST',body:x.request,headers:{'x-api-key':x.secret}});assert(permit);
+ await x.prepare('authenticated_preview',permit);assert.equal(x.posts(),0);
+ const outcomes=await Promise.all([Promise.resolve().then(()=>consumeOriginalPreviewKBPermit(permit)),Promise.resolve().then(()=>consumeOriginalPreviewKBPermit(permit))]);assert.equal(outcomes.filter(Boolean).length,1);assert(!consumeOriginalPreviewKBPermit(permit));
+ await assert.rejects(()=>accountedModelFetch(f.db,{...x.meta,operationId:crypto.randomUUID()},x.endpoint,{method:'POST',body:x.request,headers:{'x-api-key':x.secret}},x.up,undefined,async(mode,p)=>{await x.prepare(mode,p);return {'x-api-key':'other-company-key'};}),e=>e.code==='UAT_REMOTE_BOUND_UNVERIFIED');assert.equal(x.posts(),0);
+});

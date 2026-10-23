@@ -90,7 +90,7 @@ function namedTargetTokens(text: string): string[] {
   // earlier product answer to be reused for this newly named object.
   for (
     const match of text.matchAll(
-      /\b(order|transaction|invoice|shipment|booking|subscription|account|case|ticket|claim)\s*(?:number|no\.?|id|#|[:\uFF1A-])?\s*((?!(?:is|was|not|has|status|state|confirmed|paid|pending|cancelled|canceled|the|my|a)\b)[a-z0-9][a-z0-9._/-]{1,80})\b/gi,
+      /\b(order|transaction|invoice|shipment|booking|subscription|account|case|ticket|claim)[ \t]*(?:number|no\.?|id|#|[:\uFF1A-])?[ \t]*((?!(?:is|was|not|has|status|state|confirmed|paid|pending|cancelled|canceled|the|my|a)\b)[a-z0-9][a-z0-9._/-]{1,80})\b/gi,
     )
   ) {
     const kind = match[1].toLowerCase();
@@ -100,7 +100,7 @@ function namedTargetTokens(text: string): string[] {
   }
   for (
     const match of text.matchAll(
-      /(?:\u8A02\u55AE|\u8BA2\u5355|\u4EA4\u6613|\u767C\u7968|\u53D1\u7968|\u904B\u55AE|\u8FD0\u5355|\u9810\u8A02|\u9884\u8BA2|\u8A02\u95B1|\u8BA2\u9605|\u5E33\u6236|\u8D26\u6237|\u500B\u6848|\u4E2A\u6848|\u5DE5\u55AE|\u5DE5\u5355|\u7D22\u511F|\u7D22\u8D54)\s*(?:\u7DE8\u865F|\u7F16\u53F7|id|#|[:\uFF1A-])?\s*([a-z0-9][a-z0-9._/-]{1,80})/gi,
+      /(?:\u8A02\u55AE|\u8BA2\u5355|\u4EA4\u6613|\u767C\u7968|\u53D1\u7968|\u904B\u55AE|\u8FD0\u5355|\u9810\u8A02|\u9884\u8BA2|\u8A02\u95B1|\u8BA2\u9605|\u5E33\u6236|\u8D26\u6237|\u500B\u6848|\u4E2A\u6848|\u5DE5\u55AE|\u5DE5\u5355|\u7D22\u511F|\u7D22\u8D54)[ \t]*(?:\u7DE8\u865F|\u7F16\u53F7|id|#|[:\uFF1A-])?[ \t]*([a-z0-9][a-z0-9._/-]{1,80})/gi,
     )
   ) {
     targets.push(match[0].toLowerCase().replace(/\s+/g, " ").trim());
