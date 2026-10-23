@@ -634,6 +634,9 @@ async function originalAggregationFixture(fault='none',inbox=false){
   if(fault==='foreign-document')doc.authority={tenant_id:'35'};
   if(fault==='foreign-chunk')chunk.tenant_id=35;
   if(fault==='draft')doc.authority={publication_state:'draft'};
+  if(fault==='active-document')doc.status='active';
+  if(fault==='staging-chunk')chunk.environment='staging';
+  if(fault==='foreign-meta')data.meta.company_id=35;
   if(fault==='superseded')doc.authority={currentness:'superseded'};
   if(fault==='version-conflict'){doc.authority={version_id:'current-version'};chunk.version_id='old-version';}
   if(fault==='content-hash-conflict')chunk.content_sha256='a'.repeat(64);
@@ -658,7 +661,7 @@ test('Director original sample is retained unchanged including missing fields an
  for(const k of ['authority_contract','company_id'])assert(!Object.hasOwn(directorOriginalRag,k));
  assert(!Object.hasOwn(directorOriginalRag.selected_documents[0],'authority'));
 });
-for(const fault of ['none','no-match','401','403','timeout','invalid-json','foreign-response','foreign-document','foreign-chunk','draft','superseded','version-conflict','content-hash-conflict','citation-conflict','chunk-conflict','revoke','grant-absent','old-risk','human-control','foreign-actor'])test('original unmodified aggregation complete adapter: '+fault,async()=>{
+for(const fault of ['none','no-match','401','403','timeout','invalid-json','foreign-response','foreign-document','foreign-chunk','draft','active-document','staging-chunk','foreign-meta','superseded','version-conflict','content-hash-conflict','citation-conflict','chunk-conflict','revoke','grant-absent','old-risk','human-control','foreign-actor'])test('original unmodified aggregation complete adapter: '+fault,async()=>{
  const x=await originalAggregationFixture(fault);try{
   const r=await x.search();
   if(fault==='none'){assert(r.success,JSON.stringify(r));const d=r.documents[0];assert.equal(d.authority.version,null);assert.equal(d.authority.currentness,'unknown');assert.equal(d.authority.publication_state,null);assert.equal(d.chunks[0].status,'unknown');assert.equal(d.citations[0].retrieval_relevance,'low');assert.equal(d.llm_context.full_content_evidence[0].content,directorOriginalRag.selected_documents[0].evidence[0].content);}

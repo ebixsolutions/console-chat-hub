@@ -179,13 +179,13 @@ async function bindOriginalAggregation(data:any):Promise<{response:Response;grou
   // Trust only the separately approved authenticated endpoint's tenant-key +
   // production/published/live/indexed/active-version filter contract. This is
   // not independent live attestation. Missing version/publication stays unknown.
-  const check=(claim:any,version?:string)=>{
+  const check=(claim:any,version?:string,chunk=false)=>{
     if(!object(claim))return;
     if(claim.company_id!==undefined && String(claim.company_id)!==FRANKIE_KB_SCOPE.tenant || claim.tenant_id!==undefined && String(claim.tenant_id)!==FRANKIE_KB_SCOPE.tenant)return ragAuthorityFailure("KB_RAG_TENANT_CONFLICT");
-    if(claim.publication_state!==undefined && claim.publication_state!=="published" && claim.publication_state!=="live" || claim.status!==undefined && !["published","live","active"].includes(String(claim.status)) || claim.currentness!==undefined && !["current","unknown"].includes(String(claim.currentness)) || claim.is_current===false)return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
+    if(claim.publication_state!==undefined && claim.publication_state!=="published" && claim.publication_state!=="live" || claim.status!==undefined && !["published","live",...(chunk?["active"]:[])].includes(String(claim.status)) || claim.currentness!==undefined && !["current","unknown"].includes(String(claim.currentness)) || claim.is_current===false || claim.is_published===false || claim.available_to_live_console===false || claim.environment!==undefined && claim.environment!=="production")return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
     if(version && (claim.version_id!==undefined && claim.version_id!==version || claim.version!==undefined && claim.version!==version))return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
   };
-  check(data);check(data.metadata);
+  check(data);check(data.metadata);check(data.meta);
   if(data.authority_contract!==undefined && data.authority_contract!=="singapore_rag_published_v1")return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
   if(!Array.isArray(data.citations))return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");
   if(!data.context_found){
@@ -205,7 +205,7 @@ async function bindOriginalAggregation(data:any):Promise<{response:Response;grou
     const chunkVersions=new Set<string>();
     for(const c of [...(d.summary?[d.summary]:[]),...d.evidence]){
       if(!object(c) || !id(c.chunk_id) || chunks.has(String(c.chunk_id)) || !["rag_summary","full_content","faq_pair","section"].includes(String(c.chunk_type)) || typeof c.content!=="string" || !c.content.trim() || typeof c.score!=="number" || !Number.isFinite(c.score) || c.document_id!==undefined && c.document_id!==d.document_id)return ragAuthorityFailure("KB_RAG_CHUNK_INVALID");
-      check(c,versions[0] as string|undefined);check(c.metadata,versions[0] as string|undefined);
+      check(c,versions[0] as string|undefined,true);check(c.metadata,versions[0] as string|undefined,true);
       if(c.version_id!==undefined){if(!id(c.version_id))return ragAuthorityFailure("KB_RAG_CHUNK_INVALID");chunkVersions.add(String(c.version_id));}
       if(c.content_sha256!==undefined && (!hash(c.content_sha256) || await digest(c.content)!==c.content_sha256))return ragAuthorityFailure("KB_RAG_CONTENT_MISMATCH");
       chunks.add(String(c.chunk_id));
