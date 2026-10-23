@@ -22,6 +22,7 @@ function typedContextNodes(value,at=[]) {
  return [{path:at,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},
   ...((kind==='object'||kind==='array')?Object.entries(value).flatMap(([k,v])=>typedContextNodes(v,[...at,k])):[])];
 }
+const providerWire=(delta,operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:0.98,nodes:typedContextNodes(delta)});
 function fixture(text,options={}) {
  const company=options.company ?? (options.originalPreview?'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493':uuid(1)),source=options.source??uuid(3);
  const requests=[],logs=[],commits=[],events=[]; let handler,mode=options.mode || 'ok',foreign=false;
@@ -52,10 +53,15 @@ function fixture(text,options={}) {
     return Response.json({candidates:[{content:{parts:[{text}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}});
    }
    assert.equal(body.generationConfig.responseMimeType,'application/json');
-   assert.deepEqual(body.generationConfig.responseSchema.properties.context_encoding.enum,['typed_paths_v1']);
-   assert.equal(body.generationConfig.responseSchema.properties.entities.items.properties.attributes_nodes.items.properties.path.maxItems,'3');
-   assert(body.systemInstruction.parts[0].text.includes('Follow the supplied response schema'));assert(!body.systemInstruction.parts[0].text.includes('array of {key,value}'));assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=typed_paths_v1'));assert(body.systemInstruction.parts[0].text.includes('in constraints_nodes'));
+   assert.deepEqual(body.generationConfig.responseSchema.properties.context_encoding.enum,['semantic_paths_v2']);
+   assert.equal(body.generationConfig.responseSchema.properties.nodes.items.properties.path.maxItems,'6');
+   assert(body.systemInstruction.parts[0].text.includes('Follow the supplied response schema'));assert(!body.systemInstruction.parts[0].text.includes('array of {key,value}'));assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_paths_v2'));assert(body.systemInstruction.parts[0].text.includes('in constraints'));
    assert(body.systemInstruction.parts[0].text.includes('Canonical validation independently rejects invalid proposals'));
+   if(options.enforceSmallTransport){
+    assert(Buffer.byteLength(JSON.stringify(body.generationConfig.responseSchema))<1100);
+    assert.deepEqual(Object.keys(body.generationConfig.responseSchema.properties),['context_encoding','operation','confidence','nodes']);
+    assert(!body.systemInstruction.parts[0].text.includes('supply required neutral transport defaults'));
+   }
    if(options.enforceSchemaBranchBudget){
     const inspect=s=>{if(s.properties){const optional=Object.keys(s.properties).filter(k=>!s.required?.includes(k));if(optional.length>3)throw Error('isolated-provider-schema-branch-budget');Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);};
     inspect(body.generationConfig.responseSchema);
@@ -412,7 +418,7 @@ for(const alias of ['lifecycle','correction','negations'])test('prompt/decoder i
  const r=await f.load(path.join(root,'supabase/functions/_shared/commerce-semantic-interpreter.ts')).interpretCommerceSemantics({company_id:company,conversation_id:ticket,source_message_id:source,latest:'Please correct my requirements',persistent_state_summary:'{}'});
  assert.equal(r.frame,null);assert.equal(r.contract_rejection,'wire_delta_fields');assert(!JSON.stringify(r).includes('PRIVATE-SECRET'));
  const request=f.requests.find(x=>x.url.includes('aiplatform')).body.systemInstruction.parts[0].text;
- assert(request.includes('customer_correction'));assert(request.includes('value_nodes'));assert(request.includes('Return one native JSON object'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
+ assert(request.includes('customer_correction'));assert(request.includes('semantic_paths_v2'));assert(request.includes('customer_facts'));assert(request.includes('flat typed tree'));assert(request.includes('nodes'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
 });
 
 test('Hosted Frankie correction then same-ticket Summary retains latest canonical Memory and passes unchanged B2',async()=>{
@@ -603,8 +609,8 @@ for(const [business,latest,values] of [
  assert.equal(r.status,200,JSON.stringify(r));
  const requests=f.requests.filter(x=>x.url.endsWith(':generateContent')&&x.body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.'));
  assert.equal(requests.length,1);const config=requests[0].body.generationConfig;
- assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['typed_paths_v1']);
- assert.equal(config.responseSchema.properties.entities.items.properties.attributes_nodes.items.properties.path.maxItems,'3');
+ assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_paths_v2']);
+ assert.equal(config.responseSchema.properties.nodes.items.properties.path.maxItems,'6');
  assert(!JSON.stringify(f.events).includes('canonical_entity_bounds'));assert(!f.requests.some(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered')));
  const memory=f.tables.conversation_memory_state.at(-1)?.memory;assert(memory,JSON.stringify({r,events:f.events.slice(-8)}));
  for(const [key,value] of Object.entries(values)){const fact=memory.current_customer_facts.find(x=>x.key===key);assert(fact,JSON.stringify(memory));assert.deepEqual(fact.value,value);assert.equal(fact.source_message_id,source);}
@@ -643,4 +649,46 @@ test('Hosted d268773f branch regression: constrained semantic request reaches or
  assert.equal(f.commits[0].metadata.citations[0].relevance,'low');
  assert(f.requests.some(x=>x.url.endsWith(':generateContent')&&!x.body.systemInstruction?.parts?.[0]?.text?.includes('commerce semantic interpreter')));
  const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+});
+
+test('v239 actual failure class: shallow provider transport -> canonical merchant request -> original RAG -> B2 -> one persisted answer',async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const answer='這份「四電一腦」生產者責任計劃資料列出空調機、洗衣機、雪櫃、電視機、電腦、列印機、掃描器及顯示器，並說明相同種類及數量舊電器的除舊服務。';
+ const f=fixture('請根據知識庫解釋四電一腦及舊電器回收安排',{originalPreview:true,fullChain:true,enforceSmallTransport:true,originalRagResponse:sample,answer,
+  semantic:providerWire({intent:'merchant_policy',requested_facts:['四電一腦','舊電器回收安排']},'ASK_FACT')});
+ const r=await f.run();assert.equal(r.status,200);assert.equal(f.commits.length,1);assert.equal(f.commits[0].content,answer);assert(!f.commits[0].metadata.degraded);
+ assert.equal(f.requests.filter(x=>x.url.includes('context-search')).length,1);assert.equal(f.commits[0].metadata.reference_authority.provenance.currentness,'unknown');
+ assert.equal(f.commits[0].metadata.b2_gate_contract,'executeB2PersistenceGate:allow_after_revalidation');
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+});
+for(const [industry,values] of [
+ ['subscription',{subscription_seats:0,auto_renew:false,renewal_date:null}],
+ ['service',{site_dimensions:{width:70,height:55,unit:'cm'},room:null,west_sun:false}],
+ ['rental',{rental_quantity:{amount:2,unit:'units'},rental_date:null,delivery_required:false}],
+])test('complete handler receives new transport, preserves '+industry+' typed facts, latest correction and same-ticket Summary',async()=>{
+ const question={subscription:'I need a subscription with 0 seats, no automatic renewal and no renewal date yet. Please give general planning guidance without checking plans or prices.',service:'The site opening is 70 W by 55 H cm, room not yet confirmed, and there is no west sun. Please explain how to prepare without checking products.',rental:'I need 2 rental units, date not decided and no delivery required. Please explain how to plan the rental without checking products or prices.'}[industry];
+ const answer={subscription:'You specified zero seats, no automatic renewal and an undecided renewal date. First decide which people actually need access before committing to a plan.',service:'Your opening is 70 cm wide by 55 cm high, with no west sun. Confirm which room this opening belongs to before deciding on installation needs.',rental:'You need two rental units, with the date undecided and no delivery required. Confirm the use dates before committing to the rental.'}[industry];
+ const f=fixture(question,{originalPreview:true,fullChain:true,enforceSmallTransport:true,answer,
+  semantic:providerWire({intent:'customer_guidance',customer_facts:Object.entries(values).map(([key,value])=>({key,value})),...(industry==='rental'?{entities:[{name:'rental unit',kind:'rental',confidence:0.98,quantity:2}]}:{})})});
+ const r=await f.run();assert.equal(r.status,200);assert.equal(f.commits.length,1);assert(!f.commits[0].metadata.degraded,JSON.stringify({r,events:f.events.slice(-6),metadata:f.commits[0].metadata}));
+ const facts=f.tables.conversation_memory_state.at(-1).memory.current_customer_facts;
+ for(const [key,value] of Object.entries(values)){const fact=facts.find(x=>x.key===key);assert(fact);assert.deepEqual(fact.value,value);assert.equal(fact.source_message_id,source);}
+ assert.equal(f.requests.filter(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('commerce semantic interpreter')).length,1);
+ const key=Object.keys(values)[0],newValue={subscription:5,service:{width:75,height:55,unit:'cm'},rental:{amount:3,unit:'units'}}[industry];
+ const correctionText={subscription:'Correction from 0 subscription seats to 5 subscription seats. How should I prepare?',service:'Correction: the width is 75, not 70; keep the height and unit as before. Please give general preparation guidance.',rental:'Correction from 2 rental units to 3 rental units. How should I prepare?'}[industry];
+ const corrected=fixture(correctionText,{originalPreview:true,fullChain:true,enforceSmallTransport:true,previous:f.tables,history:f.tables.messages,source:uuid(810),
+  answer:{subscription:'For planning, use 5 subscription seats with no automatic renewal. Decide the renewal date before committing.',service:'Use the corrected 75 cm width and 55 cm height for planning. Record surrounding obstructions and access before deciding on installation.',rental:'For planning, use 3 rental units without delivery. Confirm the dates before committing.'}[industry],
+  semantic:providerWire({intent:'customer_guidance',customer_correction:true,customer_facts:[{key,value:newValue}],...(industry==='rental'?{entities:[{name:'rental unit',kind:'rental',confidence:0.98,quantity:3}]}:{})})});
+ const cr=await corrected.run();assert.equal(cr.status,200);assert(!corrected.commits[0].metadata.degraded,JSON.stringify({cr,events:corrected.events.slice(-6)}));
+ const latest=corrected.tables.conversation_memory_state.at(-1).memory.current_customer_facts;
+ for(const [k,value] of Object.entries({...values,[key]:newValue})){const fact=latest.find(x=>x.key===k);assert(fact);assert.deepEqual(fact.value,value);if(k===key)assert.equal(fact.source_message_id,uuid(810));}
+ const summary=fixture('Please summarize my latest requirements without looking up products.',{originalPreview:true,fullChain:true,enforceSmallTransport:true,previous:corrected.tables,history:corrected.tables.messages,source:uuid(811),semantic:providerWire({intent:'requirements_recap',requested_facts:[]},'ASK_FACT')});
+ const sr=await summary.run();assert.equal(sr.status,200);assert(!summary.commits[0].metadata.degraded,JSON.stringify({sr,metadata:summary.commits[0].metadata,events:summary.events.slice(-8),state:summary.tables.conversation_commerce_state[0]}));assert(summary.commits[0].content.includes(industry==='service'?'75':industry==='subscription'?'5':'3'));assert(!summary.requests.some(x=>x.url.includes('context-search')));
+ const replay=await summary.run();assert.equal(replay.body.idempotent,true);assert.equal(summary.commits.length,1);
+});
+for(const mutate of [w=>w.nodes.push({path:['unknown_merchant_authority'],kind:'boolean',boolean:true}),w=>w.nodes.push({path:['entities','0'],kind:'object'})])test('malformed new provider tree cannot create canonical Memory or bypass B2',async()=>{
+ const semantic=providerWire({});mutate(semantic);
+ const f=fixture('Update this requirement',{originalPreview:true,fullChain:true,enforceSmallTransport:true,semantic});await f.run();
+ assert.equal(f.tables.conversation_memory_state.length,0);assert(f.commits.every(x=>x.metadata.degraded===true));
+ assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1);assert(!f.requests.some(x=>x.url.includes('context-search')));
 });

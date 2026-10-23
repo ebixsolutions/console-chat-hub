@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import Ajv from 'ajv';
 import {build} from 'esbuild';
 const out=await build({stdin:{contents:`export * from './supabase/functions/_shared/commerce-semantic-frame.ts'; export * from './supabase/functions/_shared/bounded-decision-context.ts';`,resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
-const {COMMERCE_SEMANTIC_NATIVE_SCHEMA,COMMERCE_SEMANTIC_TYPED_SCHEMA,normalizeCommerceSemanticFrame,decodeCommerceSemanticWire,normalizeDecisionContext}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
+const {COMMERCE_SEMANTIC_NATIVE_SCHEMA,COMMERCE_SEMANTIC_TYPED_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,normalizeCommerceSemanticFrame,decodeCommerceSemanticWire,normalizeDecisionContext}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
 const validate=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_NATIVE_SCHEMA);
 const entity=(attributes={},constraints={})=>({name:'requested service',kind:'service',confidence:0.97,attributes,constraints});
 const frame=e=>({operation:'UPDATE_ITEM',confidence:0.97,entities:[e]});
@@ -61,7 +61,7 @@ test('actual interpreter carries safe canonical bounds diagnostics, preserves na
  try {
   for(const latest of ['細房約80呎，大房100呎，客廳就180呎。','小房约80平方英尺，大房100，客厅180。','The small room is 80 sq ft, the larger room 100, and the lounge 180.']) {
    let calls=0;
-   globalThis.__semanticBoundsModel=async input=>{calls++;assert(input.system.includes('80 characters per key'));assert(input.system.includes('96 scalar leaves'));assert.equal(input.responseFormat,'json');assert.deepEqual(input.responseSchema,COMMERCE_SEMANTIC_TYPED_SCHEMA);
+   globalThis.__semanticBoundsModel=async input=>{calls++;assert(input.system.includes('80 characters per key'));assert(input.system.includes('96 scalar leaves'));assert.equal(input.responseFormat,'json');assert.deepEqual(input.responseSchema,COMMERCE_SEMANTIC_PROVIDER_SCHEMA);
     return {ok:true,request_id:'isolated-source',text:JSON.stringify(frame(entity({rooms:{one:{measurement:{amount:80}}}})))};};
    const input={company_id:'isolated-company',conversation_id:'isolated-conversation',source_message_id:'isolated-source',latest,persistent_state_summary:'{}'};
    const rejected=await interpretCommerceSemantics(input);assert.equal(calls,1);assert.equal(rejected.frame,null);assert.equal(rejected.contract_rejection,'canonical_entity_bounds');assert.equal(rejected.contract_diagnostic.container,'attributes');assert.equal(rejected.contract_diagnostic.violation.code,'depth');assert.equal(rejected.contract_diagnostic.violation.actual,4);assert.equal(rejected.failure.stage,'canonical_validation');

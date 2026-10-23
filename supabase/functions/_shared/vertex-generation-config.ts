@@ -50,6 +50,18 @@ export function buildVertexEndpoint(project: string, region: string, model: stri
   return `https://${host}/v1/projects/${project}/locations/${region}/publishers/google/models/${model}:generateContent`;
 }
 
+/** Structural receipt only; never a provider-acceptance assertion or a log of
+ * schema field names/customer values. Useful for correlating compiler rejects. */
+export function vertexResponseSchemaDiagnostic(schema: Record<string, unknown>): Record<string, number | string> {
+  const normalized=normalizeVertexResponseSchema(schema);
+  let objects=0,arrays=0,enumValues=0;
+  const visit=(s:any)=>{if(s.type==="OBJECT")objects++;if(s.type==="ARRAY")arrays++;if(Array.isArray(s.enum))enumValues+=s.enum.length;
+    if(s.properties)Object.values(s.properties).forEach(visit);if(s.items)visit(s.items);if(s.anyOf)s.anyOf.forEach(visit);};
+  visit(normalized);
+  return {schema_bytes:new TextEncoder().encode(JSON.stringify(normalized)).length,objects,arrays,enum_values:enumValues,
+    transport:(normalized.properties as any)?.context_encoding?.enum?.[0]==="semantic_paths_v2"?"semantic_paths_v2":"other"};
+}
+
 export function buildVertexGenerationConfig(
   maxTokens: number, jsonOutput: boolean, responseSchema: Record<string, unknown> | undefined,
   thinkingBudget: number | undefined, model?: string,

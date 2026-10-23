@@ -1598,7 +1598,7 @@ const LABELS: Partial<Record<RecallFact, [string, string, string]>> = {
   entity_status: ["項目記錄", "项目记录", "Item record"],
 };
 const STATUS_TEXT: Record<string, [string, string, string]> = {
-  none: ["未建立", "未建立", "none recorded"],
+  none: ["未建立", "未建立", "none specified"],
   draft: ["草擬中", "草拟中", "draft"],
   pending_verification: ["待核實", "待核实", "pending verification"],
   verified: ["已核實", "已核实", "verified"],
@@ -1888,6 +1888,17 @@ function renderCustomerRecap(value: unknown, language: string): string {
         const units:Record<string,string[]>={sq_ft:["平方呎","平方呎","sq ft"],person:["人","人","people"]};
         return currency[typed.unit] ? currency[typed.unit]+amount : amount+' '+(units[typed.unit]?.[l] ?? display(typed.unit.replace(/_/g," ")));
       }
+      // A canonical customer fact may be a named dimensions/options record,
+      // not only amount/unit. Render its typed values rather than dropping it
+      // or exposing JSON. State/provenance envelopes never enter this value.
+      if (typed) {
+        const labels:Record<string,string[]>={width:["闊度","宽度","width"],height:["高度","高度","height"],unit:["單位","单位","unit"]};
+        const parts=Object.entries(typed).flatMap(([key,child])=>{
+          const value=renderValue(child);
+          return value===undefined?[]:[(labels[key]?.[l] ?? display(key.replace(/_/g," ")))+": "+value];
+        });
+        return parts.length?parts.join(l===2?", ":"、"):undefined;
+      }
       return undefined; // Never serialize an internal object as customer prose.
     };
     const value = renderValue(f.value);
@@ -1897,7 +1908,7 @@ function renderCustomerRecap(value: unknown, language: string): string {
   const first = l === 2
     ? [active.length ? `I've noted ${active.map(describe).join("; ")}.` : "",
         inactive.length ? inactive.map(describe).join("; ") + "." : "",
-        !entities.length ? retainedText || "I haven't recorded any specific requirements yet." : ""].filter(Boolean).join(" ")
+        !entities.length ? retainedText || "No specific requirements are available yet." : ""].filter(Boolean).join(" ")
     : entities.length ? ["而家記低咗", "目前已记录"][l] + entities.map(describe).join("；") + "。"
     : retainedText || ["暫時未記低任何具體要求。", "暂时没有记录具体要求。"][l];
   const confirmed = Array.isArray(v.confirmed_entity_ids) ? v.confirmed_entity_ids : [];
@@ -1925,13 +1936,13 @@ function renderCustomerRecap(value: unknown, language: string): string {
         cancelled: ["訂單已取消", "订单已取消", "the order is cancelled"],
       };
       const payments: Record<string, [string, string, string]> = {
-        none: ["未有付款記錄", "没有付款记录", "no payment has been recorded"],
+        none: ["未有付款記錄", "没有付款记录", "no payment record"],
         pending_quote: ["付款金額仍待核實", "付款金额仍待核实", "payment is awaiting a verified amount"],
         pending_payment: ["仍待付款", "仍待付款", "payment is pending"],
-        paid: ["已有已收款記錄", "已有收款记录", "payment is recorded as paid"],
+        paid: ["已有已收款記錄", "已有收款记录", "the payment record shows paid"],
         failed: ["付款未成功", "付款未成功", "payment was unsuccessful"],
-        refunded: ["已有退款記錄", "已有退款记录", "a refund is recorded"],
-        partially_refunded: ["已有部分退款記錄", "已有部分退款记录", "a partial refund is recorded"],
+        refunded: ["已有退款記錄", "已有退款记录", "the payment record shows a refund"],
+        partially_refunded: ["已有部分退款記錄", "已有部分退款记录", "the payment record shows a partial refund"],
       };
       const quotation = transaction.quotation_status ?? transaction.quotation;
       const quotationText = STATUS_TEXT[String(quotation)]

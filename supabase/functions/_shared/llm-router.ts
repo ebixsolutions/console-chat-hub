@@ -24,7 +24,7 @@ import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2.45.0";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { GoogleAuth } from "npm:google-auth-library@9.15.0";
 import { parseJsonObjectLoose, parseVertexResponse } from "./vertex-parse.ts";
-import { buildVertexGenerationConfig, buildVertexEndpoint, VertexRequestValidationError, safeVertexErrorDiagnostic } from "./vertex-generation-config.ts";
+import { buildVertexGenerationConfig, buildVertexEndpoint, VertexRequestValidationError, safeVertexErrorDiagnostic, vertexResponseSchemaDiagnostic } from "./vertex-generation-config.ts";
 
 export type LlmFailureCode =
   | "LLM_CONFIG_MISSING"
@@ -993,6 +993,8 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       let res: Response;
       try {
         const req = await adapter.buildRequest();
+        if(adapter.id==="vertex" && call.tag==="commerce-semantic-interpreter" && call.responseSchema && attempt===1)
+          log(call.tag,{event:"request_schema_prepared",request_id:requestId,...vertexResponseSchemaDiagnostic(call.responseSchema)});
         res = await accountedModelFetch(serviceClient(), {
           companyId: call.companyId, conversationId: call.conversationId, operationId: call.operationId, legacyAuthority: call.legacyAuthority,
           provider: adapter.id, purpose: call.purpose, slot: call.tag, attempt, request: req.body,

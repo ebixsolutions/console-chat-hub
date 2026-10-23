@@ -1,4 +1,5 @@
 import './semantic-bounds.test.mjs';
+import './semantic-provider-transport.test.mjs';
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';import assert from 'node:assert/strict';import {build} from 'esbuild';
@@ -605,6 +606,34 @@ test('native API paid permit is one-use under concurrent consumption; preparatio
 });
 
 const directorOriginalRag=JSON.parse(readFileSync(new URL('./fixtures/director-original-rag-response.json',import.meta.url),'utf8'));
+test('original Widget readiness reflects the same server grant/mapping/endpoint/key configuration as dispatch, without remote I/O or a KB success claim',async()=>{
+ const x=await ragApiFixture();
+ const baseline={provider:f.provider,transport:f.transport.length,writes:f.writes};
+ const r=await request({action:'readiness'});assert.equal(r.status,200);assert.equal(r.data.execution_ready,true);assert.equal(r.data.remote_ready,true);
+ assert.equal(r.data.remote_admission,'configuration_ready');assert.equal(r.data.remote_readiness_basis,'server_configuration_only');assert.equal(r.data.kb_retrieval_verified,false);
+ assert.equal(x.posts(),0);assert.equal(f.provider,baseline.provider);assert.equal(f.transport.length,baseline.transport);assert.equal(f.writes,baseline.writes);
+ const text=JSON.stringify(r);assert(!text.includes(x.secret));assert(!text.includes(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION));
+});
+for(const [fault,expected,mutate] of [
+ ['missing-grant','authorization_absent',()=>delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION],
+ ['invalid-grant','authorization_invalid',()=>f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION='{broken'],
+ ['duplicate-binding','scope_denied',()=>{const g=JSON.parse(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION);g.bindings.push(g.bindings[0]);f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify(g);}],
+ ['remapped-tenant','tenant_mapping_unverified',()=>f.env.KB_SINGAPORE_TENANT_MAP_JSON=JSON.stringify({[f.account.company]:'35'})],
+ ['missing-key','credential_unavailable',()=>delete f.env.KB_SINGAPORE_TENANT_API_KEYS_JSON],
+ ['changed-endpoint','endpoint_unverified',()=>f.env.KB_RAG_ENDPOINT='https://not-authorized.invalid/api/v1/rag/context-search'],
+ ['wrong-header','endpoint_unverified',()=>f.env.KB_SINGAPORE_API_KEY_HEADER='authorization'],
+])test('readiness immediately reflects '+fault+' without granting paid dispatch',async()=>{
+ const x=await ragApiFixture();const ready=await request({action:'readiness'});assert.equal(ready.data.remote_ready,true);
+ mutate();const denied=await request({action:'readiness'});assert.equal(denied.data.execution_ready,true,'KB config must not revoke independently valid original Vertex authority');
+ assert.equal(denied.data.remote_ready,false);assert.equal(denied.data.remote_admission,expected);assert.equal(denied.data.kb_retrieval_verified,false);assert.equal(x.posts(),0);
+ await assert.rejects(()=>accountedModelFetch(f.db,x.meta,x.endpoint,{method:'POST',body:x.request,headers:{'x-api-key':x.secret}},x.up,undefined,x.prepare));assert.equal(x.posts(),0);
+});
+test('configuration readiness cannot mint authority for a cross-actor or human-controlled ticket',async()=>{
+ for(const fault of ['foreign-actor','human-control','synthetic']){
+  const x=await ragApiFixture(fault);const r=await request({action:'readiness'});assert.equal(r.data.remote_ready,true,'this is only configuration scope, not ticket permission');
+  await assert.rejects(()=>accountedModelFetch(f.db,x.meta,x.endpoint,{method:'POST',body:x.request,headers:{'x-api-key':x.secret}},x.up,undefined,x.prepare));assert.equal(x.posts(),0);
+ }
+});
 async function originalAggregationFixture(fault='none',inbox=false){
  const x=inbox?await ragApiInboxFixture():await ragApiFixture();
  const binding={...x.binding,rag_api_contract:'singapore_rag_aggregation_v1',accepted_remote_risk:'authenticated_tenant_rag_filter_unversioned_v1'};

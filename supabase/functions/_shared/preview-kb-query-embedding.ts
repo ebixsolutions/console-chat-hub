@@ -1,3 +1,6 @@
+import { FRANKIE_KB_SCOPE, RAG_API_MODE, ORIGINAL_RAG_ACTIVATION, ragApiPolicy, type RagApiPolicy } from "./original-preview-kb-config.ts";
+export { FRANKIE_KB_SCOPE, RAG_API_MODE, ORIGINAL_RAG_ACTIVATION, ragApiPolicy } from "./original-preview-kb-config.ts";
+export type { RagApiPolicy } from "./original-preview-kb-config.ts";
 import { canonicalJson } from "./canonical-json.ts";
 /** Compatibility with the existing Singapore query-embedding API. DEFAULT OFF.
  * This is an alternative evidence protocol, not retrieval_only or a spending
@@ -6,11 +9,7 @@ import { canonicalJson } from "./canonical-json.ts";
  * require a new remote endpoint. Source ZIPs cannot attest a live deployment.
  */
 export const QUERY_EMBEDDING_MODE = "query_embedding_attested_v1";
-export const FRANKIE_KB_SCOPE = Object.freeze({
-  actor:"3bdf936e-b543-41d8-9fff-fa020a85f3f6", company:"3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
-  channel:"b0000000-0000-0000-0000-000000000001", tenant:"34",
-  endpoint:"https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search",
-});
+
 export type QueryEmbeddingEvidence = {
   remote_mode: typeof QUERY_EMBEDDING_MODE;
   remote_runtime_sha256: string;
@@ -146,25 +145,6 @@ export async function bindQueryEmbeddingResponse(response:Response,a:QueryEmbedd
  * response. Separate explicit grant: metadata-mode approval cannot enable it.
  * Missing native authority remains unknown and denies, never filled locally.
  */
-export const RAG_API_MODE = "query_embedding_rag_authority_v1";
-export const ORIGINAL_RAG_ACTIVATION = Object.freeze({
-  preview_version:4,inbox_version:3,
-  remote_mode:RAG_API_MODE,allow_remote_embedding:true,
-  rag_api_contract:"singapore_rag_aggregation_v1",
-  accepted_remote_risk:"authenticated_tenant_rag_filter_unversioned_v1",
-});
-export type RagApiPolicy = {
-  remote_mode:typeof RAG_API_MODE;
-  rag_api_contract:"singapore_rag_published_v1" | "singapore_rag_aggregation_v1";
-  accepted_remote_risk:"authenticated_rag_authority_no_independent_metadata_v1" | "authenticated_tenant_rag_filter_unversioned_v1";
-};
-export function ragApiPolicy(binding:any):RagApiPolicy|null {
-  return binding?.remote_mode===RAG_API_MODE && binding.allow_remote_embedding===true &&
-    (binding.rag_api_contract==="singapore_rag_published_v1" && binding.accepted_remote_risk==="authenticated_rag_authority_no_independent_metadata_v1" ||
-     binding.rag_api_contract==="singapore_rag_aggregation_v1" && binding.accepted_remote_risk==="authenticated_tenant_rag_filter_unversioned_v1") &&
-    ["evidence_reference","remote_runtime_sha256","attestation_payload","attestation_signature"].every(k=>binding[k]===undefined)
-    ? {remote_mode:RAG_API_MODE,rag_api_contract:binding.rag_api_contract,accepted_remote_risk:binding.accepted_remote_risk} : null;
-}
 const ragAuthorityFailure=(reason:string):never=>{throw Object.assign(new Error("KB_TOOL_FAILURE"),{code:"KB_TOOL_FAILURE",reason});};
 type ServiceRead = {tenant:string; relevance:string|null};
 // Out-of-band, server-only provenance: an API body/browser flag cannot mint it.

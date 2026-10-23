@@ -801,7 +801,7 @@ for (const language of ["zh-TW", "zh-CN", "en"]) {
 for (const [language, items, quote, order, payment, booking, site] of [
   ["zh-TW", "項目：", "報價階段：草擬中", "未建立訂單", "未有付款記錄", "預約要求仍需職員確認", "適用性仍要"],
   ["zh-CN", "项目：", "报价阶段：草拟中", "尚未建立订单", "没有付款记录", "预约要求仍需职员确认", "适用性仍需"],
-  ["en", "Items:", "Quotation stage: draft", "Order: no order has been placed", "no payment has been recorded", "booking still needs staff confirmation", "Suitability still needs"],
+  ["en", "Items:", "Quotation stage: draft", "Order: no order has been placed", "no payment record", "booking still needs staff confirmation", "Suitability still needs"],
 ] as const) {
   Deno.test("C3 COMPLETE global recap independent sections " + language, () => {
     const i = recallFixture("Summarize our current requirements");
@@ -847,7 +847,7 @@ Deno.test("C3 COMPONENT absent-state recap requires an explicit verified-read re
  const i=recallFixture("What do I currently have noted?");i.memory=null;i.commerce=null;
  assert(!resolveConversationRecall(i).handled);
  i.empty_state_verified=true;const r=prepareConversationRecall(i,"en");
- assert(r.decision.handled && r.reply?.includes("haven't recorded any specific requirements"));
+ assert(r.decision.handled && r.reply?.includes("No specific requirements are available yet"));
  i.company_id="";assert(!resolveConversationRecall(i).handled);
 });
 Deno.test("C3 COMPONENT semantic recap paraphrases share one read-only contract; external facts and mutations retain priority", () => {
@@ -868,7 +868,7 @@ for (const [name,language,configure,expected] of [
   ["R2 Cantonese equivalent","zh-TW",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].attributes.room_sizes={study:"137平方呎"};},["137平方呎","暫緩"]],
   ["R3 requested Booking remains unconfirmed","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0]={...i.commerce!.state.entities[0],category:"booking",quantity:5,attributes:{product_name:"BM-673 booking",unit:"sessions",requested_date:"2026-12-18",capabilities:{requires_booking:true}}};},["5 BM-673 sessions on 18 December 2026","still needs staff confirmation"]],
   ["R4 simple one entity","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=i.commerce!.state.entities.slice(0,1);},["air conditioner for 2 units"]],
-  ["R5 no active entity or business goal","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=[];i.memory!.active_entities=[];i.memory!.current_goal=null;},["haven't recorded any specific requirements"]],
+  ["R5 no active entity or business goal","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=[];i.memory!.active_entities=[];i.memory!.current_goal=null;},["No specific requirements are available yet"]],
   ["R6 A to B to A current recap","en",(i:ConversationRecallInput)=>{i.memory!.current_topic="washer";},["air conditioner for 2 units","is paused"]],
   ["R7 latest correction only","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].quantity=17;i.commerce!.state.latest_corrections=["2 items to 17 items"];},["air conditioner for 17 units"]],
   ["R8 cancelled item never active","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[1].status="cancelled";},["has been cancelled"]],

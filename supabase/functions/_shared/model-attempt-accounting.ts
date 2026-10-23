@@ -1,6 +1,7 @@
 import { buildVertexEndpoint } from "./vertex-generation-config.ts";
 import { uatFetch, UatDenied, trustedDispatchScope, authenticatedInboxIdentity } from "./uat-execution-contract.ts";
 import { ORIGINAL_PREVIEW_ACCOUNTS } from "./original-widget-preview.ts";
+import { originalPreviewRagConfiguration } from "./original-preview-kb-config.ts";
 import { FRANKIE_KB_SCOPE, queryEmbeddingEvidence, verifiedQueryEmbeddingAttestation, bindQueryEmbeddingResponse,
   liveMetadataPolicy, liveMetadataSessionMatches, currentLiveMetadataSession, bindLiveMetadataResponse, LIVE_METADATA_MODE,
   ragApiPolicy, bindRagApiResponse, RAG_API_MODE,
@@ -68,7 +69,7 @@ export async function authorizeOriginalPreviewKB(db:any,meta:{companyId:string|n
   const fields=["actor_id","company_id","channel_id","tenant_id","endpoint","provider","purpose","remote_mode","allow_remote_embedding","remote_runtime_sha256"];
   const matches=grant.bindings.filter((b:any)=>{
     if(!b || b.actor_id!==actor || b.company_id!==meta.companyId || b.channel_id!==channel || b.tenant_id!==tenant || b.endpoint!==endpoint || b.provider!=="singapore-kb" || b.purpose!=="kb_embedding")return false;
-    if(b.remote_mode===RAG_API_MODE)return grant.version===4 && actor===FRANKIE_KB_SCOPE.actor && meta.companyId===FRANKIE_KB_SCOPE.company && channel===FRANKIE_KB_SCOPE.channel && tenant===FRANKIE_KB_SCOPE.tenant && !!ragApiPolicy(b) && validLiveRagCredential(init,tenant) && Object.keys(b).every(k=>["actor_id","company_id","channel_id","tenant_id","endpoint","provider","purpose","remote_mode","allow_remote_embedding","rag_api_contract","accepted_remote_risk"].includes(k));
+    if(b.remote_mode===RAG_API_MODE)return originalPreviewRagConfiguration(name=>Deno.env.get(name),{actor,company:meta.companyId!,channel}).ready && validLiveRagCredential(init,tenant);
     if(grant.version>=3 && b.remote_mode===LIVE_METADATA_MODE)return actor===FRANKIE_KB_SCOPE.actor && meta.companyId===FRANKIE_KB_SCOPE.company && channel===FRANKIE_KB_SCOPE.channel && tenant===FRANKIE_KB_SCOPE.tenant && !!liveMetadataPolicy(b) && validLiveRagCredential(init,tenant) && Object.keys(b).every(k=>["actor_id","company_id","channel_id","tenant_id","endpoint","provider","purpose","remote_mode","allow_remote_embedding","evidence_reference"].includes(k));
     if(grant.version===1 || grant.version>=3 && b.remote_mode==="retrieval_only")return b.remote_mode==="retrieval_only" && b.allow_remote_embedding===false && /^[a-f0-9]{64}$/.test(b.remote_runtime_sha256??"") && Object.keys(b).every(k=>fields.includes(k));
     return actor===FRANKIE_KB_SCOPE.actor && meta.companyId===FRANKIE_KB_SCOPE.company && channel===FRANKIE_KB_SCOPE.channel && tenant===FRANKIE_KB_SCOPE.tenant && !!queryEmbeddingEvidence(b) &&
@@ -107,6 +108,7 @@ function validLiveRagCredential(init:RequestInit,tenant:string):boolean {
 }
 function currentPermitEvidence(s:Scope):boolean {
   if(s.apiPolicy){
+    if(s.authorizationKey==="ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION" && !originalPreviewRagConfiguration(name=>Deno.env.get(name),{actor:s.actor,company:s.company,channel:s.channel}).ready)return false;
     if(Deno.env.get("KB_SINGAPORE_TENANT_API_KEYS_JSON")!==s.ragKeys)return false;
     try{const g=JSON.parse(Deno.env.get(s.authorizationKey)??"null"),map=JSON.parse(Deno.env.get("KB_SINGAPORE_TENANT_MAP_JSON")??"null"),b=g.bindings.filter((x:any)=>x.actor_id===s.actor && x.company_id===s.company && x.channel_id===s.channel && x.tenant_id===s.tenant && x.endpoint===s.endpoint);return String(map?.[s.company])===s.tenant && b.length===1 && JSON.stringify(ragApiPolicy(b[0]))===JSON.stringify(s.apiPolicy);}catch{return false;}
   }

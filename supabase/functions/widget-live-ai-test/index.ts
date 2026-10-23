@@ -4,6 +4,7 @@ import { isExplicitHandoffRequest } from "../_shared/handoff-intent.ts";
 import { executionFailure } from "../_shared/execution-failure.ts";
 import { uatExecutionReadiness } from "../_shared/uat-execution-readiness.ts";
 import { FRANKIE_DEMO_COMPANY } from "../_shared/uat-execution-contract.ts";
+import { originalPreviewRagConfiguration } from "../_shared/original-preview-kb-config.ts";
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
@@ -484,7 +485,8 @@ return async (req: Request) => {
     const originalRoute = action !== "send" && action !== "open_authorized";
     const original = originalRoute && originalPreviewActor(authData.user,resolved.companyId,resolved.channelId,deps.env) &&
       (membership as any).role === "admin";
-    const execution = original ? {ready:true as const,remote_ready:false,allowed_conversations:[] as string[]} :
+    const remoteConfiguration=original ? originalPreviewRagConfiguration(deps.env,{actor:authData.user.id,company:resolved.companyId,channel:resolved.channelId}) : null;
+    const execution = original ? {ready:true as const,remote_ready:remoteConfiguration!.ready,allowed_conversations:[] as string[]} :
       originalCandidate && originalRoute ? {ready:false as const,failure:executionFailure("ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED")} :
       await uatExecutionReadiness(admin as any,resolved.companyId,deps.env,{actorId:authData.user.id,channelId:resolved.channelId});
     if (action === "readiness" || action === "history") {
@@ -503,6 +505,7 @@ return async (req: Request) => {
         authorized_preview_available: execution.ready && execution.allowed_conversations.length > 0,
         execution_failure: execution.ready ? null : execution.failure,
         remote_ready: execution.ready && execution.remote_ready,
+        ...(original ? {remote_admission:remoteConfiguration!.code,remote_readiness_basis:"server_configuration_only",kb_retrieval_verified:false} : {}),
         company_id: resolved.companyId,
         channel_id: resolved.channelId,
         admission_action: action,

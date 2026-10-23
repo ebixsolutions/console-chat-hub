@@ -550,6 +550,81 @@ export const COMMERCE_SEMANTIC_TYPED_INSTRUCTIONS =
   "An empty attributes_nodes or constraints_nodes context is one object root node at path [], not an empty list. Ambiguity defaults are is_ambiguous=false, reasons=[], clarification_question=null. These defaults are not customer-provided facts: never invent customer_facts or entities. " +
   "Typed nodes still emit only path, kind and the single matching scalar value field; never fill inactive scalar slots with dummy values. Do not omit facts to satisfy a limit, encode JSON into strings, emit raw attributes/constraints/value or mix legacy encodings. Canonical validation independently rejects invalid proposals.";
 
+/** One shallow provider grammar for the entire delta. Commerce fields live in
+ * typed paths, not an expanded recursive provider schema. The original native
+ * grammar and canonical validator still validate the reconstructed proposal.
+ * No neutral entity/fact/lifecycle fields are generated just to fill a schema. */
+export const COMMERCE_SEMANTIC_PROVIDER_SCHEMA: Record<string, unknown> = {
+  type: "object", required: ["context_encoding", "operation", "confidence", "nodes"],
+  propertyOrdering: ["context_encoding", "operation", "confidence", "nodes"],
+  properties: {
+    context_encoding: {type:"string", enum:["semantic_paths_v2"]},
+    operation: {type:"string", enum:[...OPERATIONS]},
+    confidence: {type:"number"},
+    nodes: typedNodesSchema(6),
+  },
+};
+export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V2 =
+  "Follow the supplied response schema. Return context_encoding=semantic_paths_v2, operation, confidence, nodes, in that order. " +
+  "nodes is a flat typed tree containing ONLY this turn's optional semantic delta. Root is exactly {path:[],kind:object}. " +
+  "Use the canonical field names below as root child paths. Do NOT put operation/confidence/context_encoding in nodes. " +
+  "Declare every object/array parent explicitly. Object children append the original key; array children append contiguous zero-based decimal indices. " +
+  "kind is object/array/string/number/boolean/null. Only string has text, only number has number, only boolean has boolean. Null and containers have no scalar field. " +
+  "No dummy scalar slots, JSON encoded inside strings, neutral facts, copied historical fields or truncated requirements. " +
+  "For example a newly supplied customer fact of zero seats has nodes " +
+  JSON.stringify([{path:[],kind:"object"},{path:["customer_facts"],kind:"array"},{path:["customer_facts","0"],kind:"object"},
+    {path:["customer_facts","0","key"],kind:"string",text:"seats"},{path:["customer_facts","0","value"],kind:"number",number:0}]) + ". " +
+  "Arrays, false, zero, null, entity association, quantities, units and latest corrections retain their actual types. " +
+  "For attributes/constraints their object root is depth 0 and canonical context depth remains at most 3; fact values have at most 2 further levels. " +
+  "Canonical limits remain 40 fields, 12 array entries, 96 scalar leaves, 80 characters per key, 300 normalized characters per context string. " +
+  "Canonical validation independently rejects invalid proposals. The following is semantic vocabulary for reconstruction, NOT the provider response schema: " +
+  JSON.stringify(COMMERCE_SEMANTIC_DELTA_SCHEMA);
+
+function decodeProviderSemanticTree(value: Record<string, unknown>): Record<string, unknown> {
+  const fail = (): never => {throw new Error("wire_context_nodes");};
+  if (Object.keys(value).some(k=>!["context_encoding","operation","confidence","nodes"].includes(k)) ||
+      value.context_encoding!=="semantic_paths_v2" || !Array.isArray(value.nodes) ||
+      !value.nodes.length || value.nodes.length>32768) return fail();
+  const nodes=new Map<string,{path:string[];kind:string;value:unknown}>();
+  for(const raw of value.nodes) {
+    if(!isRecord(raw) || !Array.isArray(raw.path) || raw.path.length>6 || raw.path.some(k=>typeof k!=="string" || !k || k.length>80 || ["__proto__","prototype","constructor"].includes(k)))return fail();
+    if(typeof raw.kind!=="string")return fail();
+    const kind=raw.kind,field=kind==="string"?"text":kind==="number"?"number":kind==="boolean"?"boolean":null;
+    if(!["object","array","string","number","boolean","null"].includes(kind) || Object.keys(raw).some(k=>!["path","kind",...(field?[field]:[])].includes(k)) ||
+      field && (typeof raw[field]!==kind || kind==="number"&&!Number.isFinite(raw[field])))return fail();
+    const key=JSON.stringify(raw.path);if(nodes.has(key))return fail();
+    nodes.set(key,{path:raw.path as string[],kind,value:kind==="object"?Object.create(null):kind==="array"?[]:kind==="null"?null:raw[field!]});
+  }
+  const root=nodes.get("[]");if(root?.kind!=="object")return fail();
+  for(const node of [...nodes.values()].sort((a,b)=>a.path.length-b.path.length)) {
+    if(!node.path.length)continue;
+    const parent=nodes.get(JSON.stringify(node.path.slice(0,-1))),key=node.path.at(-1)!;
+    if(!parent || !["object","array"].includes(parent.kind))return fail();
+    if(parent.kind==="array") {
+      // No sparse/unbounded allocations. Original per-field array limits are
+      // checked by the unchanged canonical validator after reconstruction.
+      if(!/^(0|[1-9][0-9]*)$/.test(key)||Number(key)>=20)return fail();
+      (parent.value as unknown[])[Number(key)]=node.value;
+    } else {
+      const clean=(s:string)=>s.normalize("NFKC").replace(/\s+/g," ").trim();
+      if(!clean(key)||["__proto__","prototype","constructor"].includes(clean(key))||Object.keys(parent.value as object).some(k=>clean(k)===clean(key)))return fail();
+      (parent.value as Record<string,unknown>)[key]=node.value;
+    }
+  }
+  for(const n of nodes.values())if(n.kind==="array"&&Object.keys(n.value as object).length!==(n.value as unknown[]).length)return fail();
+  const delta=root.value as Record<string,unknown>;
+  if(Object.keys(delta).some(k=>!Object.hasOwn(COMMERCE_SEMANTIC_DELTA_SCHEMA.properties,k)))return fail();
+  const closed=(v:unknown,keys:string[])=>isRecord(v)&&Object.keys(v).every(k=>keys.includes(k));
+  if(Array.isArray(delta.entities))for(const entity of delta.entities) {
+    if(!closed(entity,Object.keys(compactEntity.properties)))return fail();
+    if(isRecord(entity)&&entity.capabilities!==undefined&&!closed(entity.capabilities,Object.keys(typedProperties.entities.items.properties.capabilities.properties)))return fail();
+  }
+  if(Array.isArray(delta.customer_facts)&&delta.customer_facts.some(f=>!closed(f,["key","value"])))return fail();
+  if(Array.isArray(delta.referents)&&delta.referents.some(r=>!closed(r,["ref","source","confidence"])))return fail();
+  if(delta.ambiguity!==undefined&&!closed(delta.ambiguity,["is_ambiguous","reasons","clarification_question"]))return fail();
+  return {...delta,operation:value.operation,confidence:value.confidence};
+}
+
 function decodeContextNodes(raw: unknown, depthLimit: number): unknown {
   const fail = (): never => { throw new Error("wire_context_nodes"); };
   // The finite canonical tree cannot contain more nodes than this bound.
@@ -624,7 +699,7 @@ export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSema
   const reject = (reason: SemanticContractRejection): null => { onReject?.(reason); return null; };
   if (!isRecord(value)) return reject("wire_object");
   if (Object.hasOwn(value, "context_encoding")) {
-    try { value = decodeTypedContextFrame(value); } catch { return reject("wire_context_nodes"); }
+    try { value = value.context_encoding==="semantic_paths_v2" ? decodeProviderSemanticTree(value) : decodeTypedContextFrame(value); } catch { return reject("wire_context_nodes"); }
   }
   if (!isRecord(value)) return reject("wire_object");
   if (Object.hasOwn(value, "delta_json")) {
