@@ -71,6 +71,11 @@ test('CRM mount, context updates and tab selection send zero model/KB calls; exp
   await act(async()=>root.unmount());
 });
 test('CRM Agent cannot dispatch KB by visiting its tab',async()=>{reset();const root=await mount(components.crm.CRMPanel,{...crmProps,currentRole:'agent'});await click(root,'Knowledge');assert.equal(calls.length,0);assert.equal(button(root,'Search conversation knowledge'),undefined);await act(async()=>root.unmount());});
+test('CRM retains document/chunk lineage while rejecting below-threshold knowledge',async()=>{
+ reset();fixture.invoke=async()=>response({success:true,results:[{display_label:'Published service',content:'Authorized service evidence',score:0.9,source_type:'knowledge',document_id:idA,chunk_id:idB,chunk_type:'full_content'},{display_label:'Weak unrelated source',content:'Must remain hidden',score:0.74,document_id:idB,chunk_id:idA,chunk_type:'full_content'}]});
+ const root=await mount(components.crm.CRMPanel,crmProps);await click(root,'Knowledge');await click(root,'Search conversation knowledge');
+ const cards=root.root.findAll(n=>n.props['data-document-id']===idA);assert.equal(cards.length,1);assert.equal(cards[0].props['data-chunk-id'],idB);assert(text(root.toJSON()).includes('Authorized service evidence'));assert(!text(root.toJSON()).includes('Must remain hidden'));await act(async()=>root.unmount());
+});
 for(const [body,status,label] of [[{error:'forbidden_tenant_role'},403,'Requires Admin or Supervisor role'],[{error:'kb_tenant_unresolved'},503,'Knowledge access is not configured'],[{error:'kb_api_error',failure:{code:'KB_TOOL_FAILURE',stage:'decode'}},502,'Knowledge response could not be verified'],[{error:'kb_api_error',detail:'KB_HTTP_503',failure:{stage:'provider_http'}},502,'Knowledge service could not complete'],[{success:true,results:[]},200,'No relevant knowledge found']])test('CRM actual HTTP/error body renders correct Knowledge state: '+label,async()=>{
  reset();fixture.invoke=async(name,options)=>{calls.push({name,body:options.body});return response(body,status);};
  const root=await mount(components.crm.CRMPanel,crmProps);await click(root,'Knowledge');await click(root,'Search conversation knowledge');

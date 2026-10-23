@@ -28,6 +28,7 @@ export type KBResult = {
   score: number;
   source_type: string;
   document_id?: string;
+  chunk_id?: string;
   chunk_type?: "rag_summary" | "full_content" | "faq_pair" | "section" | "unknown";
 };
 
@@ -191,6 +192,7 @@ export function normalizeKBResults(value: unknown): KBResult[] | null {
           ? r.source_type.trim().slice(0, 80)
           : "knowledge",
       ...(typeof r.document_id === "string" ? { document_id: r.document_id } : {}),
+      ...(typeof r.chunk_id === "string" ? { chunk_id: r.chunk_id } : {}),
       chunk_type,
     });
   }
@@ -561,7 +563,7 @@ export function CRMPanel({
               {kbConnState === "empty" && !kbError && <div style={{ padding: 20, textAlign: "center" }}>{rc("kbEmpty")}</div>}
 
               {kbResults.map((r, i) => (
-                <div key={`${r.document_id ?? "doc"}-${i}`} style={cardStyle}>
+                <div key={`${r.document_id ?? "doc"}-${r.chunk_id ?? i}`} data-document-id={r.document_id} data-chunk-id={r.chunk_id} style={cardStyle}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
                     <div style={{ fontWeight: 600, fontSize: 11 }}>{r.display_label}</div>
                     <span style={{ fontSize: 9, color: "#6366f1" }}>

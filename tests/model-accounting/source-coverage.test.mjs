@@ -12,7 +12,12 @@ for(const f of ['_shared/kb-client.ts','customer360-coach-sync/index.ts']){
  const s=read(f);assert(s.includes('prepareRemoteRetrieval'));assert(s.includes('accountingHeaders'));
  if(f==='_shared/kb-client.ts'){
   // Admission is now propagated as a typed failure, rather than flattened to an old string.
-  assert(s.includes('const failure=failureFromError(error)'));
+  const source=ts.createSourceFile(f,s,ts.ScriptTarget.Latest,true,ts.ScriptKind.TS);
+  const typedFailures=[];
+  function visit(node){if(ts.isCallExpression(node)&&ts.isIdentifier(node.expression)&&node.expression.text==='failureFromError')typedFailures.push(node);ts.forEachChild(node,visit);}
+  visit(source);
+  assert.equal(typedFailures.length,1,'one typed admission/transport failure boundary');
+  assert(ts.isIdentifier(typedFailures[0].arguments[0])&&typedFailures[0].arguments[0].text==='error','retain the original typed error when enriching its diagnostic stage');
   assert(s.includes('error_code:failure.code,failure'));
   assert(s.includes('accountedModelFetch('));
  }else assert(s.includes('accounting_unproven')||s.includes('KB_DOWNSTREAM_ACCOUNTING_UNPROVEN'));
