@@ -56,6 +56,10 @@ function fixture(text,options={}) {
    assert.equal(body.generationConfig.responseSchema.properties.entities.items.properties.attributes_nodes.items.properties.path.maxItems,'3');
    assert(body.systemInstruction.parts[0].text.includes('Follow the supplied response schema'));assert(!body.systemInstruction.parts[0].text.includes('array of {key,value}'));assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=typed_paths_v1'));assert(body.systemInstruction.parts[0].text.includes('in constraints_nodes'));
    assert(body.systemInstruction.parts[0].text.includes('Canonical validation independently rejects invalid proposals'));
+   if(options.enforceSchemaBranchBudget){
+    const inspect=s=>{if(s.properties){const optional=Object.keys(s.properties).filter(k=>!s.required?.includes(k));if(optional.length>3)throw Error('isolated-provider-schema-branch-budget');Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);};
+    inspect(body.generationConfig.responseSchema);
+   }
    if(mode==='400')return Response.json({error:{status:'INVALID_ARGUMENT',message:'response schema too complex; PRIVATE-SECRET user@example.invalid',details:[{fieldViolations:[{field:'generation_config.response_schema',description:'PRIVATE-SECRET'}]}]}},{status:400});
    if(mode==='timeout')return await new Promise((resolve,reject)=>{if(init.signal?.aborted)return reject(new DOMException('isolated','AbortError'));init.signal?.addEventListener('abort',()=>reject(new DOMException('isolated','AbortError')),{once:true})});
    if(mode==='malformed')return Response.json({candidates:[{content:{parts:[{text:'{broken'}]},finishReason:'STOP'}]});
@@ -625,4 +629,18 @@ test('Director raw original RAG JSON runs complete Preview generation and guarde
  const r=await f.run();assert.equal(r.status,200,JSON.stringify({r,events:f.events.slice(-6)}));assert.equal(f.commits.length,1,JSON.stringify(r));assert.equal(f.commits[0].content,answer,JSON.stringify({r,metadata:f.commits[0].metadata,events:f.events}));assert.notEqual(r.body.response_route,'terminal_failure_recovery');
  assert(f.requests.some(q=>q.url.includes('/rag/context-search')));assert(f.requests.some(q=>q.url.endsWith(':generateContent')&&!q.body.systemInstruction?.parts?.[0]?.text?.includes('commerce semantic interpreter')));
  assert.equal(f.commits[0].metadata.reference_authority.provenance.currentness,'unknown');assert.equal(f.commits[0].metadata.reference_authority.provenance.version,null);assert.equal(f.commits[0].metadata.citations[0].relevance,'low');assert.equal(f.commits[0].metadata.citation_lineage.evidence_state,'unknown');
+});
+
+test('Hosted d268773f branch regression: constrained semantic request reaches original RAG and guarded delivery in one attempt',async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const f=fixture('什麼是四電一腦？',{originalPreview:true,fullChain:true,enforceSchemaBranchBudget:true,originalRagResponse:sample,
+  semantic:{context_encoding:'typed_paths_v1',operation:'ASK_FACT',confidence:0.98,intent:'merchant_policy',requested_facts:['四電一腦'],entities:[]},
+  answer:'這份「四電一腦」生產者責任計劃資料列出空調機、洗衣機、雪櫃、電視機、電腦、列印機、掃描器及顯示器，並說明相同種類及數量舊電器的除舊服務。'});
+ const r=await f.run();assert.equal(r.status,200);assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.degraded,undefined);
+ assert.equal(f.requests.filter(x=>x.url.includes('context-search')).length,1);
+ assert.equal(f.requests.filter(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.')).length,1);
+ assert.match(f.commits[0].content,/四電一腦/);assert.equal(f.commits[0].metadata.reference_authority.provenance.currentness,'unknown');
+ assert.equal(f.commits[0].metadata.citations[0].relevance,'low');
+ assert(f.requests.some(x=>x.url.endsWith(':generateContent')&&!x.body.systemInstruction?.parts?.[0]?.text?.includes('commerce semantic interpreter')));
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
 });

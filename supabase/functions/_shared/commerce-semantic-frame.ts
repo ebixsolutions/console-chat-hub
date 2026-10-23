@@ -514,11 +514,27 @@ for (const key of ["attributes", "constraints"]) {
 }
 typedProperties.customer_facts.items = {type: "object", required: ["key", "value_nodes"],
   properties: {key: {type: "string"}, value_nodes: typedNodesSchema(DECISION_CONTEXT_LIMITS.depth - 1)}};
+// Vertex compiles optional object fields into grammar branches. The previous
+// whole-frame grammar was rejected before inference (Hosted d268773f, HTTP400).
+// Require the already-supported canonical defaults instead of multiplying
+// optional branches. Keep typed scalar slots optional: the strict node decoder
+// requires exactly the value field matching kind, never fabricated dummy data.
+function orderSemanticTransport(schema: Record<string, any>): void {
+  if (schema.properties) {
+    const keys = Object.keys(schema.properties);
+    const typedNode = keys.includes("path") && keys.includes("kind");
+    if (!typedNode) schema.required = keys;
+    schema.propertyOrdering = keys;
+    for (const child of Object.values(schema.properties)) orderSemanticTransport(child as Record<string, any>);
+  }
+  if (schema.items) orderSemanticTransport(schema.items);
+}
 export const COMMERCE_SEMANTIC_TYPED_SCHEMA: Record<string, unknown> = {
   type: "object", required: ["context_encoding", "operation", "confidence"],
   propertyOrdering: ["context_encoding", "operation", "confidence"],
   properties: {context_encoding: {type: "string", enum: ["typed_paths_v1"]}, ...typedProperties},
 };
+orderSemanticTransport(COMMERCE_SEMANTIC_TYPED_SCHEMA);
 export const COMMERCE_SEMANTIC_TYPED_INSTRUCTIONS =
   "Return one native JSON object. Follow the supplied response schema. context_encoding is typed_paths_v1. Emit only current-turn semantic changes, not a copy of prior state. " +
   "Dynamic customer contexts use attributes_nodes, constraints_nodes, and customer_facts {key,value_nodes}. " +
@@ -530,7 +546,9 @@ export const COMMERCE_SEMANTIC_TYPED_INSTRUCTIONS =
   "Use at most 40 fields per object, 12 entries per array, 96 scalar leaves, 80 characters per key and 300 normalized characters per string. " +
   "Represent measurements directly with amount and unit under the relevant fact/entity. Do not add redundant measurement/value/requirements wrappers. " +
   "Customer background measurements/counts are customer_facts, not new commerce items. Keep a supplied room/entity name; an unresolved association stays unknown for targeted clarification. " +
-  "Do not omit facts to satisfy a limit, encode JSON into strings, emit raw attributes/constraints/value or mix legacy encodings. Canonical validation independently rejects invalid proposals.";
+  "All frame/entity/ambiguity/capability fields are required in fixed schema order. For unchanged or unspecified fields use only existing neutral defaults: [] for lists, false for correction/additive/capabilities unless explicitly supported, unknown for transaction/payment/booking/fulfillment state, und for unknown language, unknown for unknown intent, null for nullable text/quantity, and an empty string for an unresolved entity_ref. " +
+  "An empty attributes_nodes or constraints_nodes context is one object root node at path [], not an empty list. Ambiguity defaults are is_ambiguous=false, reasons=[], clarification_question=null. These defaults are not customer-provided facts: never invent customer_facts or entities. " +
+  "Typed nodes still emit only path, kind and the single matching scalar value field; never fill inactive scalar slots with dummy values. Do not omit facts to satisfy a limit, encode JSON into strings, emit raw attributes/constraints/value or mix legacy encodings. Canonical validation independently rejects invalid proposals.";
 
 function decodeContextNodes(raw: unknown, depthLimit: number): unknown {
   const fail = (): never => { throw new Error("wire_context_nodes"); };

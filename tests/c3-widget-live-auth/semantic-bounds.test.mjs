@@ -77,6 +77,36 @@ function nodes(value,path=[]) {
   ...((kind==='object'||kind==='array')?Object.entries(value).flatMap(([k,v])=>nodes(v,[...path,k])):[])];
 }
 const typed=(value={})=>({context_encoding:'typed_paths_v1',operation:'UPDATE_ITEM',confidence:0.98,...value});
+test('Hosted d268773f: provider transport has no combinatorial optional frame/entity/capability fields; node scalar exclusivity stays strict',()=>{
+ const inspect=s=>{
+  if(s.properties){
+   const keys=Object.keys(s.properties),optional=keys.filter(k=>!s.required?.includes(k));
+   assert.deepEqual(s.propertyOrdering,keys);
+   if(keys.includes('path')&&keys.includes('kind'))assert.deepEqual(optional,['text','number','boolean']);
+   else assert.deepEqual(optional,[],'optional commerce field grammar branches would regress Vertex400');
+   Object.values(s.properties).forEach(inspect);
+  }
+  if(s.items)inspect(s.items);
+ };
+ inspect(COMMERCE_SEMANTIC_TYPED_SCHEMA);
+ const before=structuredClone(COMMERCE_SEMANTIC_TYPED_SCHEMA);
+ before.required=['context_encoding','operation','confidence'];
+ assert(Object.keys(before.properties).filter(k=>!before.required.includes(k)).length>3,'retained previous transport shape must reproduce the branch-budget failure');
+});
+test('required neutral transport fields produce identical canonical meaning; explicit false/zero/null facts are never transport defaults',()=>{
+ const supplied=typed({customer_correction:true,customer_facts:[{key:'seats',value_nodes:nodes(0)},{key:'auto_renew',value_nodes:nodes(false)},{key:'requested_date',value_nodes:nodes(null)}],entities:[{name:'subscription',kind:'subscription',confidence:0.97,attributes_nodes:nodes({seats:0,auto_renew:false,date:null})}]});
+ const fill=(schema,value,key)=>{
+  if(value===undefined){if(schema.nullable)return null;if(schema.type==='array')return ['attributes_nodes','constraints_nodes'].includes(key)?nodes({}):[];if(schema.enum)return schema.enum.includes('unknown')?'unknown':schema.enum[0];if(schema.type==='boolean')return false;if(schema.type==='string')return key==='language'?'und':key==='intent'?'unknown':'';}
+  if(schema.properties){const out={...value};for(const k of schema.required??[])out[k]=fill(schema.properties[k],out[k],k);return out;}
+  return schema.items&&Array.isArray(value)?value.map(v=>fill(schema.items,v)):value;
+ };
+ const complete=fill(COMMERCE_SEMANTIC_TYPED_SCHEMA,supplied);
+ const a=normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(supplied));
+ const b=normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(complete));
+ assert(a);assert.deepEqual(b,a);assert.deepEqual(b.customer_facts.map(f=>f.value),[0,false,null]);
+ const invalid=structuredClone(complete);invalid.customer_facts[1].value_nodes[0].number=0;
+ assert.equal(decodeCommerceSemanticWire(invalid),null,'inactive scalar slots must still reject, never be silently removed');
+});
 test('typed provider schema serializes through the real Vertex generation-config builder without dynamic-key/schema escape fields',async()=>{
  const c=await build({stdin:{contents:"export {buildVertexGenerationConfig} from './supabase/functions/_shared/vertex-generation-config.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
  const {buildVertexGenerationConfig}=await import('data:text/javascript;base64,'+Buffer.from(c.outputFiles[0].text).toString('base64'));

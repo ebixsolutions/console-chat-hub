@@ -318,7 +318,7 @@ export async function interpretCommerceSemantics(
     purpose: "evaluation",
     system: SYSTEM +
       COMMERCE_SEMANTIC_TYPED_INSTRUCTIONS +
-      "\nFor corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraint values encoded in constraints_nodes and customer_correction=true. Output budget 4096 tokens; omit unchanged/default fields. Do not include reasoning.",
+      "\nFor corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraint values encoded in constraints_nodes and customer_correction=true. Output budget 4096 tokens; supply required neutral transport defaults but only current-turn customer facts and entities. Do not include reasoning.",
     user: buildUser(input, persistentStateSummary),
     maxTokens: 4096,
     operationId: `commerce-semantic:${input.source_message_id}`,
