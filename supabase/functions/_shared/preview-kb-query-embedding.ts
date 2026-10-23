@@ -282,12 +282,13 @@ async function boundedJson(response:Response):Promise<any> {
   if(!response.ok) {
     await response.body?.cancel();return deny([401,403].includes(response.status)?"UAT_AUTHORIZATION_DENIED":"KB_TOOL_FAILURE");
   }
-  const reader=response.body?.getReader();if(!reader)return deny("KB_TOOL_FAILURE");
+  const invalid=(reason:string):never=>{throw Object.assign(new Error("KB_TOOL_FAILURE"),{code:"KB_TOOL_FAILURE",reason});};
+  const reader=response.body?.getReader();if(!reader)return invalid("KB_RESPONSE_EMPTY");
   const parts:Uint8Array[]=[];let n=0;
-  try{for(;;){const r=await reader.read();if(r.done)break;n+=r.value.length;if(n>2_000_000){await reader.cancel();return deny("KB_TOOL_FAILURE");}parts.push(r.value);}}
+  try{for(;;){const r=await reader.read();if(r.done)break;n+=r.value.length;if(n>2_000_000){await reader.cancel();return invalid("KB_RESPONSE_TOO_LARGE");}parts.push(r.value);}}
   finally{reader.releaseLock();}
   const bytes=new Uint8Array(n);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}
-  try{return JSON.parse(new TextDecoder().decode(bytes));}catch{return deny("KB_TOOL_FAILURE");}
+  try{return JSON.parse(new TextDecoder().decode(bytes));}catch{return invalid("KB_RESPONSE_INVALID_JSON");}
 }
 // Match the existing Python hash_content(strip) and _normalize_text(split)
 // contracts exactly, including NEL/control whitespace, without altering facts.

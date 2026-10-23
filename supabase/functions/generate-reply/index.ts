@@ -5987,7 +5987,8 @@ async function orchestrationGenerateReply(
         minScore,
         requirePublished: true,
         requestText: userQuery,
-        currentTurnText: _h1LastMsg,
+        currentTurnText: _canonicalTurn.operation === "PRONOUN_OR_ELLIPSIS" && _semanticRetrieval.mode === "contextual"
+          ? _semanticRetrieval.query : _h1LastMsg,
         expectedTenantId: _kbTenantResult.scope.singaporeTenantId,
         expectedEntityIds: _c1CurrentTarget.entity_ids,
         expectedTopicIds: _c1CurrentTarget.topic_ids,

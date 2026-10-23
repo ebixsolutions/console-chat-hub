@@ -1,4 +1,5 @@
 import { safeExecutionCode, executionFailure } from "../_shared/execution-failure.ts";
+import { kbErrorFamily } from "../_shared/kb-error-contract.ts";
 import { authenticatedInboxAuthority, legacyPreactivationAuthority } from "../_shared/uat-execution-contract.ts";
 import { uatMap } from "../_shared/uat-execution-contract.ts";
 import {
@@ -63,7 +64,9 @@ function getCorsHeaders(req: Request): Record<string, string> {
   );
 }
 function jsonResponse(body: unknown, status: number, req: Request): Response {
-  return new Response(JSON.stringify(body), {
+  const result = status >= 400 && body && typeof body === "object"
+    ? {...body,knowledge_state:kbErrorFamily(body,status)} : body;
+  return new Response(JSON.stringify(result), {
     status,
     headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
   });
@@ -565,8 +568,12 @@ Deno.serve(async (req) => {
       console.error("[kb-search-proxy] KB API error", {
         code: result.error_code,
         scope_mode: scope.mode,
+        stage: result.failure?.stage,
+        diagnostic_code: result.diagnostic_code,
       });
-      return jsonResponse({ error: "kb_api_error", detail: result.error_code, failure:result.failure }, 502, req);
+      const body = {error:"kb_api_error",detail:result.error_code,failure:result.failure,diagnostic_code:result.diagnostic_code};
+      const family=kbErrorFamily(body);
+      return jsonResponse(body,family==="denied" ? 403 : family==="not_configured" ? 503 : 502,req);
     }
 
     const expansions = await deriveRetrievalExpansions({

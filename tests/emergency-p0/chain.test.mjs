@@ -676,6 +676,27 @@ for(const question of ['什麼是四電一腦？請根據現行知識庫資料�
  assert.equal(f.commits[0].metadata.b2_gate_contract,'executeB2PersistenceGate:allow_after_revalidation');
  const dispatches=()=>f.requests.filter(x=>x.url.includes('context-search')||x.url.includes('aiplatform')).length;const beforeReplay=dispatches();const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);assert.equal(dispatches(),beforeReplay);
 });
+
+for(const question of ['什麼是四電一腦？','四電一腦係咩？','可以解釋一下四電一腦嗎？','什麼是四電一腦？請根據現行知識庫資料解釋。','What is the meaning of this recycling scheme?','你頭先講嗰個計劃係乜？','免費除舊服務係咩？','除舊服務須知包括甚麼？'])test('17:00 Hosted regression: natural factual authority survives empty NO_STATE_CHANGE frame after a cited answer: '+question,async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const answer='資料列出空調機、洗衣機、雪櫃、電視機、電腦、列印機、掃描器及顯示器，並提供相同種類及數量舊電器的除舊服務。';
+ const seed=fixture(sample.query,{originalPreview:true,fullChain:true,originalRagResponse:sample,answer,semantic:providerWire({intent:'customer_guidance',requested_facts:['definition of 四電一腦']},'ASK_FACT')});await seed.run();
+ const f=fixture(question,{originalPreview:true,fullChain:true,previous:seed.tables,history:seed.tables.messages,source:uuid(850),originalRagResponse:sample,answer,
+  semantic:providerWire({intent:'customer_guidance',requested_facts:[]},'NO_STATE_CHANGE')});
+ const r=await f.run();assert.equal(r.status,200);assert.equal(f.commits[0]?.content,answer,JSON.stringify(f.commits[0]?.metadata));assert.equal(f.requests.filter(x=>x.url.includes('context-search')).length,1,'fresh legal retrieval, not stale citation reuse');
+ assert.equal(f.commits[0].metadata.b2_gate_contract,'executeB2PersistenceGate:allow_after_revalidation');assert.equal(f.commits[0].metadata.citation_lineage.selected_document_id,sample.selected_documents[0].document_id);
+ const before=f.requests.filter(x=>x.url.includes('context-search')).length;await f.run();assert.equal(f.commits.length,1);assert.equal(f.requests.filter(x=>x.url.includes('context-search')).length,before);
+});
+
+for(const question of ['What is cloud tenancy?','可以解釋一下訂閱席位嗎？','保單審核係咩？'])test('generic unknown factual subject gets legal retrieval and honest no-match, never borrowed unrelated citation: '+question,async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const f=fixture(question,{originalPreview:true,fullChain:true,originalRagResponse:sample,semantic:providerWire({intent:'customer_guidance',requested_facts:[]},'NO_STATE_CHANGE')});
+ await f.run();assert.equal(f.requests.filter(x=>x.url.includes('context-search')).length,1);assert.equal(f.commits[0].metadata.response_route,'kb_no_current_evidence');assert.equal(f.commits[0].metadata.citations.length,0);
+});
+test('uncertain factual referent requires clarification and cannot silently borrow prior source',async()=>{
+ const f=fixture('可以解釋嗰兩個入面嗰個嗎？',{originalPreview:true,fullChain:true,semantic:providerWire({intent:'customer_guidance',requested_facts:[],ambiguity:{is_ambiguous:true,reasons:['two plausible subjects'],clarification_question:'Which of the two subjects?'}},'NO_STATE_CHANGE')});
+ await f.run();assert(!f.requests.some(x=>x.url.includes('context-search')));assert(f.commits.length===1);assert.notEqual(f.commits[0].metadata.knowledge_state,'lookup_required');
+});
 for(const [industry,values] of [
  ['subscription',{subscription_seats:0,auto_renew:false,renewal_date:null}],
  ['service',{site_dimensions:{width:70,height:55,unit:'cm'},room:null,west_sun:false}],

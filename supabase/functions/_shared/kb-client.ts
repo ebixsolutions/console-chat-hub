@@ -110,6 +110,7 @@ export interface KBRagResponse {
   dropped_without_document_id?: number;
   dropped_without_content?: number;
   error_code?: string;
+  diagnostic_code?: string;
   failure?: ExecutionFailure;
 }
 export interface KBEndpointConfig {
@@ -573,7 +574,9 @@ export async function fetchKBRag(
     );});
 
   } catch (error) {
-    const failure=failureFromError(error);
+    const reason=error && typeof error==="object" && "reason" in error && typeof error.reason==="string" &&
+      ["KB_RESPONSE_EMPTY","KB_RESPONSE_TOO_LARGE","KB_RESPONSE_INVALID_JSON","KB_RAG_RESPONSE_INVALID","KB_RAG_AUTHORITY_MISSING","KB_RAG_TENANT_CONFLICT","KB_RAG_AUTHORITY_CONFLICT","KB_RAG_CHUNK_INVALID","KB_RAG_CONTENT_MISMATCH"].includes(error.reason) ? error.reason : undefined;
+    const failure=failureFromError(error,reason ? {stage:reason.startsWith("KB_RESPONSE_") ? "decode" : "canonical_validation"} : {});
     trace("kb_admission_or_transport_result",failure,undefined,error && typeof error==="object" && "reason" in error ? error.reason : undefined);
     clearTimeout(timeout);
     opts?.signal?.removeEventListener("abort", abortFromRequest);
@@ -582,7 +585,7 @@ export async function fetchKBRag(
       // Preserve transport labels; propagate actual closed admission failures
       // rather than hiding a provider/remote-scope denial as a generic fetch error.
       ...(error && typeof error==="object" && "code" in error && !(error instanceof DOMException)
-        ? {error_code:failure.code,failure}
+        ? {error_code:failure.code,failure,...(reason ? {diagnostic_code:reason} : {})}
         : {error_code:error instanceof DOMException && error.name==="AbortError" ? "KB_TIMEOUT" : "KB_FETCH_ERROR",
           failure:executionFailure(error instanceof Error && error.name==="AbortError" ? "LLM_TIMEOUT" : "LLM_NETWORK")}),
     };

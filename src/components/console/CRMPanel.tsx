@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { useCustomerContext } from "@/lib/customer360/useCustomerContext";
 import { deriveContextualKbAutoQuery } from "@/lib/console/contextualKbQuery";
+import { knowledgeFailureState, type KBErrorFamily } from "../../../supabase/functions/_shared/kb-error-contract";
 
 export type CRMConv = {
   id: string;
@@ -42,6 +43,9 @@ export type KBConnState =
   | "connected"
   | "empty"
   | "denied"
+  | "not_configured"
+  | "service_failure"
+  | "validation_failure"
   | "unavailable";
 
 export const RIGHT_COPY = {
@@ -58,6 +62,9 @@ export const RIGHT_COPY = {
   kbEmpty: { en: "No relevant knowledge found", zh: "未找到相關知識" },
   kbEmptySub: { en: "Try a different search or select a conversation", zh: "請嘗試其他搜尋或選取對話" },
   kbError: { en: "Knowledge base unavailable", zh: "知識庫無法存取" },
+  kbNotConfigured: { en: "Knowledge access is not configured or admitted for this conversation", zh: "此對話的知識庫存取尚未設定或獲准" },
+  kbServiceFailure: { en: "Knowledge service could not complete the search", zh: "知識庫服務未能完成搜尋" },
+  kbValidationFailure: { en: "Knowledge response could not be verified", zh: "未能驗證知識庫回傳資料" },
   kbDenied: { en: "Requires Admin or Supervisor role", zh: "需要 Admin 或 Supervisor 角色" },
   kbNoConv: { en: "Select a conversation to see recommendations", zh: "選取對話以查看推薦" },
   kbScore: { en: "Relevance", zh: "相關度" },
@@ -309,25 +316,18 @@ export function CRMPanel({
           body: { query: query.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id, query_mode: queryMode },
         });
         if (kbReqIdRef.current !== reqId) return;
-        if (error) {
-          setKbConnState("unavailable");
-          setKbError(rc("kbError"));
-          return;
-        }
-        if (data?.error === "forbidden") {
-          setKbConnState("denied");
-          setKbError(rc("kbDenied"));
-          return;
-        }
-        if (!data?.success) {
-          setKbConnState("unavailable");
-          setKbError(rc("kbError"));
+        const failure = await knowledgeFailureState(data,error);
+        if (kbReqIdRef.current !== reqId) return;
+        if (failure) {
+          setKbConnState(failure);
+          const copy:Record<KBErrorFamily,RCK>={denied:"kbDenied",not_configured:"kbNotConfigured",service_failure:"kbServiceFailure",validation_failure:"kbValidationFailure"};
+          setKbError(rc(copy[failure]));
           return;
         }
         const normalized = normalizeKBResults(data.results);
         if (normalized === null || (Array.isArray(data.results) && data.results.length > 0 && normalized.length === 0)) {
-          setKbConnState("unavailable");
-          setKbError(rc("kbError"));
+          setKbConnState("validation_failure");
+          setKbError(rc("kbValidationFailure"));
           return;
         }
         const relevant = filterRelevantKBResults(
@@ -338,8 +338,8 @@ export function CRMPanel({
         setKbConnState(relevant.length > 0 ? "connected" : "empty");
       } catch {
         if (kbReqIdRef.current !== reqId) return;
-        setKbConnState("unavailable");
-        setKbError(rc("kbError"));
+        setKbConnState("service_failure");
+        setKbError(rc("kbServiceFailure"));
       }
     },
     [conv?.id, rc],
@@ -443,6 +443,12 @@ export function CRMPanel({
         ? lang === "zh" ? "已連線" : "Connected"
         : kbConnState === "denied"
           ? lang === "zh" ? "權限不足" : "Permission denied"
+          : kbConnState === "not_configured"
+            ? lang === "zh" ? "尚未獲准" : "Not admitted"
+          : kbConnState === "validation_failure"
+            ? lang === "zh" ? "資料未能驗證" : "Response unverified"
+          : kbConnState === "service_failure"
+            ? lang === "zh" ? "服務失敗" : "Service failure"
           : kbConnState === "unavailable"
             ? lang === "zh" ? "無法存取" : "Unavailable"
             : lang === "zh" ? "尚未核實" : "Not verified";

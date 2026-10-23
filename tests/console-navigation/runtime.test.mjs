@@ -71,6 +71,11 @@ test('CRM mount, context updates and tab selection send zero model/KB calls; exp
   await act(async()=>root.unmount());
 });
 test('CRM Agent cannot dispatch KB by visiting its tab',async()=>{reset();const root=await mount(components.crm.CRMPanel,{...crmProps,currentRole:'agent'});await click(root,'Knowledge');assert.equal(calls.length,0);assert.equal(button(root,'Search conversation knowledge'),undefined);await act(async()=>root.unmount());});
+for(const [body,status,label] of [[{error:'forbidden_tenant_role'},403,'Requires Admin or Supervisor role'],[{error:'kb_tenant_unresolved'},503,'Knowledge access is not configured'],[{error:'kb_api_error',failure:{code:'KB_TOOL_FAILURE',stage:'decode'}},502,'Knowledge response could not be verified'],[{error:'kb_api_error',detail:'KB_HTTP_503',failure:{stage:'provider_http'}},502,'Knowledge service could not complete'],[{success:true,results:[]},200,'No relevant knowledge found']])test('CRM actual HTTP/error body renders correct Knowledge state: '+label,async()=>{
+ reset();fixture.invoke=async(name,options)=>{calls.push({name,body:options.body});return response(body,status);};
+ const root=await mount(components.crm.CRMPanel,crmProps);await click(root,'Knowledge');await click(root,'Search conversation knowledge');
+ const rendered=text(root.toJSON());assert(rendered.includes(label),rendered);assert.equal(calls.length,1);assert(!rendered.includes('KB_TOOL_FAILURE'));assert(!rendered.includes('UAT_REMOTE_BOUND_UNVERIFIED'));await act(async()=>root.unmount());
+});
 test('Agent handoff context requires explicit AI action and invalidates slow response after ticket switch',async()=>{
   reset();let finish;fixture.invoke=(name,options)=>{calls.push({name,body:options.body});return new Promise(resolve=>finish=resolve);};
   const root=await mount(components.agent.AgentToolPanel,agentProps);assert.equal(calls.length,0);

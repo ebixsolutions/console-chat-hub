@@ -14,7 +14,9 @@ import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { activeCustomerGoal, customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { requiresSemanticKnowledge, scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
-import { isPersonalOrderStatusRequest } from "./commerce-state-authority.ts";
+import { isPersonalOrderStatusRequest, isCustomerGuidanceRequest } from "./commerce-state-authority.ts";
+import { classifyCanonicalConversationTurn, isFactualExplanationQuestion } from "./conversation-semantic-contract.ts";
+import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state.ts";
 import { DecisionContextLimitError } from "./bounded-decision-context.ts";
 import { classifyHandoffIntent, classifyHumanServiceDiscussion, type HandoffIntentCategory } from "./handoff-intent.ts";
 
@@ -564,7 +566,20 @@ export function planConversationService(
     handoff_requested: false,
   };
   const semanticMerchantRead = requiresSemanticKnowledge(input.semantic_frame);
-  const merchantReadRequired = serviceDiscussion.kind === "merchant_evidence" || input.recall.reason === "CURRENT_KB_REQUIRED" || semanticMerchantRead;
+  // A memory slot miss says nothing about external factual authority. The
+  // provider may legitimately propose NO_STATE_CHANGE for a read; do not let
+  // that erase the already classified current factual speech act.
+  const canonicalTurn = classifyCanonicalConversationTurn(question, input.recent_messages ?? []);
+  const canonicalFactualRead = !input.recall.handled &&
+    input.semantic_frame != null && input.semantic_frame.confidence >= 0.62 &&
+    ["ASK_FACT","NO_STATE_CHANGE"].includes(input.semantic_frame.operation) &&
+    !input.semantic_frame.ambiguity.is_ambiguous &&
+    canonicalTurn.evidence_authority === "CURRENT_KB_REQUIRED" &&
+    ((canonicalTurn.reason === "standalone_factual_request" && input.recall.detail === "NO_SUPPORTED_FACT_SLOT") ||
+      isFactualExplanationQuestion(question) && ["NEW_FACTUAL_QUERY","PRONOUN_OR_ELLIPSIS"].includes(canonicalTurn.operation)) &&
+    !isCustomerGuidanceRequest(question, input.semantic_frame) &&
+    !isProductSupportProblem(question);
+  const merchantReadRequired = serviceDiscussion.kind === "merchant_evidence" || input.recall.reason === "CURRENT_KB_REQUIRED" || semanticMerchantRead || canonicalFactualRead;
   if (
     !semanticMerchantRead &&
     input.calculation_status &&
@@ -629,7 +644,9 @@ export function planConversationService(
   }
   if (merchantReadRequired) {
     let query: string;
-    try { query = buildKbQuery(question, input); }
+    try { query = canonicalFactualRead && !semanticMerchantRead
+      ? buildCanonicalRetrievalQuery(question, input.recent_messages ?? []).query
+      : buildKbQuery(question, input); }
     catch (error) {
       if (!(error instanceof DecisionContextLimitError)) throw error;
       return { ...base, action:"offer_handoff_or_reframe", knowledge_state:"tool_failure",

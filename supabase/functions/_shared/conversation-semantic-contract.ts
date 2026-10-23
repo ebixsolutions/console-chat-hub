@@ -69,7 +69,12 @@ const TOPIC_SWITCH = /^(?:算了|算啦|另外|轉個話題|转个话题|換個�
 const FOLLOW = /^(?:咁|那|那麼|那么|所以|另外|仲有|还有|如果|再|又|而|同埋|what about|and what about|then|so|also|in that case|how about)/i;
 const PRONOUN = /^(?:那個|那个|這個|这个|它|佢|他|她|嗰個|呢個|上述|剛才|刚才|之前|same|that|this|it|its|earlier|previous)|(?:呢|嗎|吗|about that|and that|same one|same thing)[。.!！?？\s]*$/i;
 const DOMAIN_ONLY = /^(?:我有|我想問|我想问|想問|想问|請問|请问)?\s*(?:一個|一个|個|个)?\s*(?:訂單|订单|退款|退貨|退货|換貨|换货|送貨|送货|物流|付款|產品|产品|保養|保修|維修|维修|問題|问题)\s*(?:問題|问题|嘅問題|的問題)?[。.!！?？\s]*$/;
-const QUESTIONISH = /[?？]|^(?:什麼|什么|如何|怎樣|怎样|哪|哪些|多久|幾耐|几耐|why|what|which|how|when|where)/i;
+const QUESTIONISH = /[?？]|^(?:什麼|什么|如何|怎樣|怎样|哪|哪些|多久|幾耐|几耐|why|what|which|how|when|where)|(?:係|是)(?:乜|咩|甚麼|什麼|什么)(?:呢|呀|啊)?$/i;
+/** A grammatical explanation request, independent of merchant/domain names. */
+export function isFactualExplanationQuestion(text: string): boolean {
+  return /(?:什麼|什么|甚麼)是\s*\S|何謂\s*\S|何谓\s*\S|\S.{0,180}(?:係|是)(?:咩|乜|甚麼|什麼|什么)|(?:解釋|解释)(?:一下)?\s*\S|\b(?:what (?:is|are)|meaning of|definition of|explain|describe)\s+\S/iu.test(text) &&
+    !/(?:我的|我嘅|我們的|我们|\bmy\b|\bour\b)/iu.test(text);
+}
 const CUSTOMER_CONTEXT_REQUIREMENTS = /(?:你|妳|您).{0,12}(?:還|还)?需要(?:我)?(?:再)?提供(?:什麼|什么|哪些|咩)(?:資料|资料|資訊|信息|details|information)|(?:還|还)需要(?:我)?提供(?:什麼|什么|哪些|咩)(?:資料|资料|資訊|信息)|what (?:information|details) do you (?:still )?need from me|what else do you need from me/i;
 const CUSTOMER_CONTEXT_UPDATE = /(?:^|[，,。.!！\s])(?:我只知道|我只知|我目前只知道|我現在只知道|我现在只知道|我沒有|我没有|我冇|不知道型號|不知道型号|唔知型號|型號(?:是|係)?未知|型号(?:是)?未知|品牌(?:是|係)|大約.{0,24}(?:買|购买|購買)|大概.{0,24}(?:買|购买|購買)|現在.{0,32}(?:不冷|唔凍|不能|無法|无法)|现在.{0,32}(?:不冷|不能|无法)|i only know|i (?:do not|don't) have (?:the )?(?:model|model number|order number)|the brand is|brand is|i bought (?:it )?.{0,40}ago|it (?:powers|turns) on but)/i;
 const CUSTOMER_OWNED_STATE_FIELD = /(?:sku|商品(?:數量|数量)?|產品(?:數量|数量)?|产品(?:数量)?|貨品(?:數量|数量)?|件(?:商品|產品|产品)?|staff|員工|员工|人手|同事|市場|市场|主要市場|主要市场|地區|地区|region|market|app(?:需求|需要|要求)?|push(?:需求|需要|要求)?|crm(?:需求|需要|要求)?|會員等級|会员等级)/i;
@@ -270,7 +275,7 @@ export function classifyCanonicalConversationTurn(
   if (TOPIC_SWITCH.test(latest)) {
     return base("TOPIC_SWITCH", "explicit_topic_switch", { needs_history: true, topic_action: "SWITCH" });
   }
-  if (PRONOUN.test(latest)) {
+  if (PRONOUN.test(latest) || QUESTIONISH.test(latest) && /(?:你|您).{0,4}(?:頭先|头先|剛才|刚才).{0,8}(?:講|讲|說|说)|\b(?:this|that|the previous)\s+(?:[\p{L}-]+\s+){0,3}(?:scheme|plan|service|policy|product|subscription)\b/iu.test(latest)) {
     return base("PRONOUN_OR_ELLIPSIS", "referential_follow_up_requires_history", { needs_history: true, topic_action: "KEEP" });
   }
   if (FOLLOW.test(latest)) {
@@ -279,6 +284,7 @@ export function classifyCanonicalConversationTurn(
   if (DOMAIN_ONLY.test(latest)) {
     return base("UNDERSPECIFIED", "semantic_intent_present_but_required_detail_missing", { requires_new_kb_retrieval: false, evidence_authority: "NONE" });
   }
+  if (isFactualExplanationQuestion(latest)) return base("NEW_FACTUAL_QUERY", "factual_explanation_request");
   if (QUESTIONISH.test(latest)) {
     return base("NEW_FACTUAL_QUERY", "standalone_factual_request");
   }

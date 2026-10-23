@@ -533,6 +533,10 @@ export function selectCanonicalGrounding(
           ...namedTargetTokens(candidateText(document)),
         ]),
         topic_ids: unique([
+          // "included features" is an answer facet, not a requirement that
+          // a source literally use that taxonomy word. Subject support still
+          // needs actual request/evidence overlap and all authority checks.
+          ...(serviceTopic && expectedTopicIds.includes("features") ? ["features"] : []),
           // Free semantic fact labels are not a fixed taxonomy. Accept one as
           // a document topic only when the actual returned evidence contains
           // that label; never infer it merely from the customer's request.
