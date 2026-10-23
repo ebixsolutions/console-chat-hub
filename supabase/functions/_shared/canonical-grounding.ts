@@ -363,6 +363,37 @@ function serviceTopicMatch(request:string,document:KBDocumentCandidate):boolean 
   return false;
 }
 
+/** Semantic requested_facts are descriptions, not source-owned taxonomy IDs.
+ * Resolve a bounded question/answer facet to its literal subject only when
+ * that whole subject occurs in BOTH the current request and returned full
+ * evidence. A retrieval score, title, translated guess, or shared single word
+ * cannot establish this binding. This does not grant source authority.
+ */
+function serviceFactTopicMatch(topic: string, request: string, document: KBDocumentCandidate): boolean {
+  const normalize = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+  const label = normalize(topic);
+  const subject = label
+    .replace(/^(?:(?:the )?(?:definition|meaning|explanation|description) of|what (?:is|are))\s+/u, "")
+    .replace(/\s+(?:definition|meaning|explanation|description)$/u, "")
+    .replace(/^(?:什麼是|什么是|何謂|何谓|解釋|解释)\s*/u, "")
+    .replace(/(?:的)?(?:定義|定义|意思|含義|含义)$/u, "")
+    .replace(/^[\s「」『』“”"'？?]+|[\s「」『』“”"'？?]+$/gu, "").trim();
+  if (!subject || subject === label || subject.length > 200) return false;
+  // Empty/generic facets are never topics; do not permit substring matches
+  // inside another Latin word, SKU, or a longer Chinese subject.
+  if (!/[\p{Script=Han}]{2,}|[a-z0-9][a-z0-9 _-]{3,}/u.test(subject) ||
+    /^(?:current information|information|details|policy|資料|资料|定義|定义)$/u.test(subject)) return false;
+  const containsSubject = (value: string) => {
+    const text = normalize(value);
+    const escaped = subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Han subjects need no spaces; exact whole subject, never n-gram overlap.
+    return /[\p{Script=Han}]/u.test(subject)
+      ? text.includes(subject)
+      : new RegExp(`(?:^|[^a-z0-9_-])${escaped}(?=$|[^a-z0-9_-])`, "u").test(text);
+  };
+  return containsSubject(request) && document.llm_context.full_content_evidence.some(e => containsSubject(e.content));
+}
+
 function extractStructuredClaims(
   evidence: KBLLMContextEvidence[],
 ): Array<{ key: string; value: string }> {
@@ -507,7 +538,7 @@ export function selectCanonicalGrounding(
           // that label; never infer it merely from the customer's request.
           ...(service ? expectedTopicIds.filter(topic=>{
             const key=topic.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"");
-            return key.length>=3 && candidateText(document).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"").includes(key);
+            return key.length>=3 && candidateText(document).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"").includes(key) || serviceFactTopicMatch(topic,currentTargetRequest,document);
           }) : []),
           ...(document.source_type.toLowerCase() === "product" ? ["product_facts"] : []),
           ...(metadata?.claims ?? []).map((claim) => claim.key),

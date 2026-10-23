@@ -637,7 +637,7 @@ test('configuration readiness cannot mint authority for a cross-actor or human-c
   await assert.rejects(()=>accountedModelFetch(f.db,x.meta,x.endpoint,{method:'POST',body:x.request,headers:{'x-api-key':x.secret}},x.up,undefined,x.prepare));assert.equal(x.posts(),0);
  }
 });
-async function originalAggregationFixture(fault='none',inbox=false){
+async function originalAggregationFixture(fault='none',inbox=false,responseFixture=directorOriginalRag){
  const x=inbox?await ragApiInboxFixture():await ragApiFixture();
  const binding={...x.binding,rag_api_contract:'singapore_rag_aggregation_v1',accepted_remote_risk:'authenticated_tenant_rag_filter_unversioned_v1'};
  f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify({version:4,bindings:[binding]});
@@ -660,7 +660,7 @@ async function originalAggregationFixture(fault='none',inbox=false){
   if(fault==='timeout')throw new DOMException('isolated','AbortError');
   if(fault==='invalid-json')return new Response('{broken');
   if(fault==='revoke')delete f.env[inbox?'AUTHENTICATED_INBOX_KB_AUTHORIZATION':'ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION'];
-  const data=structuredClone(directorOriginalRag),doc=data.selected_documents[0],chunk=doc.evidence[0];
+  const data=structuredClone(responseFixture),doc=data.selected_documents[0],chunk=doc.evidence[0];
   if(fault==='no-match')return Response.json({success:true,context_found:false,selected_documents:[],citations:[]});
   if(fault==='foreign-response')data.company_id=35;
   if(fault==='foreign-document')doc.authority={tenant_id:'35'};
@@ -719,5 +719,36 @@ test('original low result needs actual contextual support and cannot spoof sourc
   const supported=selectCanonicalGrounding(r.documents,{requestText:'什麼是四電一腦？',expectedTenantId:'34',requiresCurrentKb:true});assert(supported.ok);assert.equal(supported.document.document_id,directorOriginalRag.selected_documents[0].document_id);assert.equal(supported.authority_decision.provenance.currentness,'unknown');assert.equal(supported.authority_decision.provenance.version,null);
   const unrelated=selectCanonicalGrounding(r.documents,{requestText:'What is the monthly rental price for software subscription?',expectedTenantId:'34'});assert.equal(unrelated.document,null);
   const forged=JSON.parse(JSON.stringify(r.documents));forged[0].source_assurance={contract:'singapore_rag_aggregation_v1',tenant:'34'};const untrusted=selectCanonicalGrounding(forged,{requestText:'什麼是四電一腦？',expectedTenantId:'34'});assert.equal(untrusted.document,null);
+ }finally{globalThis.fetch=realFetch;}
+});
+
+for(const label of ['definition of 四電一腦','meaning of 四電一腦','四電一腦 definition','四電一腦的定義'])test('actual v240 wrong_topic regression: request-bound descriptive fact label '+label,async()=>{
+ const x=await originalAggregationFixture();try{
+  const r=await x.search();assert(r.success);
+  const selected=selectCanonicalGrounding(r.documents,{requestText:'什麼是四電一腦？',currentTurnText:'什麼是四電一腦？',expectedTopicIds:[label],expectedTenantId:'34',minScore:0.45});
+  assert.equal(selected.document?.document_id,directorOriginalRag.selected_documents[0].document_id,JSON.stringify(selected.authority_decision));
+  assert.equal(selected.authority_decision.provenance.currentness,'unknown');assert.equal(selected.authority_decision.provenance.version,null);
+  assert(selected.evidence.some(e=>e.chunk_id==='2ff14f99973c4f2eb1caa5454310f8ee'));
+  for(const wrong of ['definition of software rental','definition of 電腦','definition of current information']){
+   const rejected=selectCanonicalGrounding(r.documents,{requestText:'什麼是四電一腦？',expectedTopicIds:[wrong],expectedTenantId:'34',minScore:0.45});
+   assert.equal(rejected.document,null,wrong);
+  }
+  assert.equal(selectCanonicalGrounding(r.documents,{requestText:'什麼是四電一腦？',expectedTopicIds:[label],expectedTenantId:'35'}).document,null);
+ }finally{globalThis.fetch=realFetch;}
+});
+
+for(const [subject,question,label] of [
+ ['circular economy','What is circular economy?','definition of circular economy'],
+ ['cloud tenancy','Please explain cloud tenancy.','meaning of cloud tenancy'],
+ ['循環經濟','何謂循環經濟？','循環經濟的定義'],
+])test('descriptive fact binding is generic and needs actual full evidence: '+subject,async()=>{
+ const sample=JSON.parse(JSON.stringify(directorOriginalRag).replaceAll('四電一腦',subject));
+ const x=await originalAggregationFixture('none',false,sample);try{
+  const r=await x.search(question);assert(r.success);
+  const options={requestText:question,currentTurnText:question,expectedTopicIds:[label],expectedTenantId:'34',minScore:0.45};
+  const selected=selectCanonicalGrounding(r.documents,options);assert(selected.document,JSON.stringify(selected.authority_decision));
+  // A title/summary match cannot substitute for a subject absent in the body.
+  const doc=r.documents[0];doc.llm_context.full_content_evidence.forEach(e=>e.content='Unrelated published body without that subject.');
+  assert.equal(selectCanonicalGrounding(r.documents,options).document,null);
  }finally{globalThis.fetch=realFetch;}
 });

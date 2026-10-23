@@ -661,6 +661,21 @@ test('v239 actual failure class: shallow provider transport -> canonical merchan
  assert.equal(f.commits[0].metadata.b2_gate_contract,'executeB2PersistenceGate:allow_after_revalidation');
  const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
 });
+
+for(const question of ['什麼是四電一腦？請根據現行知識庫資料解釋。','什麼是四電一腦？'])test('v240 two Hosted wrong_topic failures: descriptive ASK_FACT reaches evidence prompt, citations and exactly-once B2 commit: '+question,async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const answer='這份「四電一腦」資料列出空調機、洗衣機、雪櫃、電視機、電腦、列印機、掃描器及顯示器。';
+ const f=fixture(question,{originalPreview:true,fullChain:true,enforceSmallTransport:true,originalRagResponse:sample,answer,
+  semantic:providerWire({intent:'customer_guidance',requested_facts:['definition of 四電一腦']},'ASK_FACT')});
+ const r=await f.run();assert.equal(r.status,200);assert.equal(f.commits.length,1);assert.equal(f.commits[0].content,answer,JSON.stringify(f.commits[0].metadata));
+ assert.equal(f.requests.filter(x=>x.url.includes('context-search')).length,1);
+ const generation=f.requests.filter(x=>x.url.endsWith(':generateContent')&&!x.body.systemInstruction?.parts?.[0]?.text?.includes('commerce semantic interpreter'));
+ assert(generation.some(x=>(x.body.systemInstruction?.parts??[]).concat(...(x.body.contents??[]).map(c=>c.parts??[])).some(p=>p.text?.includes(sample.selected_documents[0].evidence[0].content.replace('3480-9091','[PHONE]')))),'selected full-content evidence enters final generation');
+ assert.equal(f.commits[0].metadata.reference_authority.provenance.currentness,'unknown');assert.equal(f.commits[0].metadata.reference_authority.provenance.version,null);
+ assert.equal(f.commits[0].metadata.citations[0].document_id,sample.selected_documents[0].document_id);
+ assert.equal(f.commits[0].metadata.b2_gate_contract,'executeB2PersistenceGate:allow_after_revalidation');
+ const dispatches=()=>f.requests.filter(x=>x.url.includes('context-search')||x.url.includes('aiplatform')).length;const beforeReplay=dispatches();const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);assert.equal(dispatches(),beforeReplay);
+});
 for(const [industry,values] of [
  ['subscription',{subscription_seats:0,auto_renew:false,renewal_date:null}],
  ['service',{site_dimensions:{width:70,height:55,unit:'cm'},room:null,west_sun:false}],
