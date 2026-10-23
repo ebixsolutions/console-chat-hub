@@ -45,6 +45,15 @@ for(const [name,mutate] of [
  ['normalized-collision',w=>w.nodes.push({path:['topic'],kind:'string',text:'one'},{path:[' topic '],kind:'string',text:'two'})],
  ['nested-commerce-alias',w=>w.nodes=nodes({entities:[{name:'support',kind:'service',confidence:0.98,attributes_json:'{}'}]})],
  ['authority-injection',w=>w.nodes=nodes({entities:[{name:'support',kind:'service',confidence:0.98,capabilities:{merchant_promise:true}}]})],
+ ['string-context',w=>w.nodes=nodes({entities:[{name:'support',kind:'service',confidence:0.98,attributes:'{"width":70}'}]})],
+ ['array-context',w=>w.nodes=nodes({entities:[{name:'support',kind:'service',confidence:0.98,constraints:[false]}]})],
+ ['coerced-quantity',w=>w.nodes=nodes({entities:[{name:'support',kind:'service',confidence:0.98,quantity:false}]})],
+ ['negative-quantity',w=>w.nodes=nodes({entities:[{name:'support',kind:'service',confidence:0.98,quantity:-1}]})],
+ ['missing-entity-confidence',w=>w.nodes=nodes({entities:[{name:'support',kind:'service'}]})],
+ ['entity-confidence-range',w=>w.nodes=nodes({entities:[{name:'support',kind:'service',confidence:2}]})],
+ ['numeric-requested-fact',w=>w.nodes=nodes({requested_facts:[3]})],
+ ['string-ambiguity',w=>w.nodes=nodes({ambiguity:{is_ambiguous:'false'}})],
+ ['invalid-lifecycle-enum',w=>w.nodes=nodes({payment_state:'merchant_says_paid'})],
 ])test('flat transport fails closed before canonical mutation: '+name,()=>{
  const w=wire();mutate(w);let code;assert.equal(decodeCommerceSemanticWire(w,c=>code=c),null);assert.equal(code,'wire_context_nodes');
 });

@@ -622,6 +622,32 @@ function decodeProviderSemanticTree(value: Record<string, unknown>): Record<stri
   if(Array.isArray(delta.customer_facts)&&delta.customer_facts.some(f=>!closed(f,["key","value"])))return fail();
   if(Array.isArray(delta.referents)&&delta.referents.some(r=>!closed(r,["ref","source","confidence"])))return fail();
   if(delta.ambiguity!==undefined&&!closed(delta.ambiguity,["is_ambiguous","reasons","clarification_question"]))return fail();
+  // The small provider grammar types nodes, not Commerce fields. Reapply the
+  // native vocabulary's types/required fields/enums BEFORE normalization can
+  // coerce a malformed quantity or turn a string context into an empty object.
+  // Canonical bounds, sanitization and business authority remain unchanged.
+  const matches=(v:unknown,s:any):boolean=>{
+    if(v===null && s.nullable===true)return true;
+    if(s.anyOf)return s.anyOf.some((branch:any)=>matches(v,branch));
+    const type=v===null?"null":Array.isArray(v)?"array":typeof v;
+    if(!(Array.isArray(s.type)?s.type:[s.type]).includes(type))return false;
+    if(type==="number"&&!Number.isFinite(v))return false;
+    if(s.enum&&!s.enum.includes(v))return false;
+    if(type==="array")return (v as unknown[]).every(item=>matches(item,s.items));
+    if(type==="object"){
+      const object=v as Record<string,unknown>;
+      if((s.required??[]).some((key:string)=>!Object.hasOwn(object,key)))return false;
+      return Object.entries(object).every(([key,child])=>s.properties?.[key]
+        ? matches(child,s.properties[key])
+        : s.additionalProperties===false?false:typeof s.additionalProperties==="object"?matches(child,s.additionalProperties):true);
+    }
+    return true;
+  };
+  if(!matches(delta,COMMERCE_SEMANTIC_DELTA_SCHEMA))return fail();
+  for(const entry of [...(Array.isArray(delta.entities)?delta.entities:[]),...(Array.isArray(delta.referents)?delta.referents:[])]) {
+    if(isRecord(entry)&&(typeof entry.confidence!=="number"||entry.confidence<0||entry.confidence>1 ||
+      entry.quantity!==undefined&&entry.quantity!==null&&(typeof entry.quantity!=="number"||entry.quantity<0)))return fail();
+  }
   return {...delta,operation:value.operation,confidence:value.confidence};
 }
 

@@ -1127,9 +1127,9 @@
     "supabase/functions/widget-poll-messages/index.ts": "70d966005455079b30522706cac608f9a9126d83dd81363a6c595bef2c48c8e8",
     "supabase/functions/_shared/original-widget-preview.ts": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738",
     "tests/c3-widget-live-auth/original-preview-ingress.test.mjs": "b5a62c2133f4a420e0d531e59aad778fc685737edf8306fb2641f89c83c05f35",
-    "tests/c3-widget-live-auth/original-preview.test.mjs": "28e7c522b9792a4e872655f654e3f491479fa12c3de50675fc48138ae2568543",
+    "tests/c3-widget-live-auth/original-preview.test.mjs": "c62297a45bd059bc2d9cf2475ac8adec404569e00499573e718cc6d162b13593",
     "docs/c3/task1-original-preview-paid-recovery.json": "fd517c370874450228eee8f75b1c3c01ddaa3ae3b15c93b2ac27f2a4016dacbd",
-    "supabase/functions/_shared/commerce-semantic-frame.ts": "ec6aade93e0eab99151f4d8222189fd0f5f3799526c88c18fa8e445c8f92a13b",
+    "supabase/functions/_shared/commerce-semantic-frame.ts": "3fa61d7b7c44aca1993000bdc1c625d51c5447ec1a77254f16e71b2d3b8b2978",
     "supabase/functions/_shared/commerce-state-authority.ts": "69404af350451d612b1725f0b1d85bc14646eb272cd8a735ca86dd5156d3aa36",
     "tests/emergency-p0/provider-request.test.ts": "cfeb6f726fe5728b2feecb2ecd56685305dd4101b3920ed39ee81a6d973ed6a5",
     "supabase/functions/_shared/conversation-recall.ts": "c58ccfbdac4c34e4a6d4db841a100f1e66c28085196f068455fc20f9635270d2",
@@ -1161,8 +1161,8 @@
     "tests/c3-widget-live-auth/fixtures/director-original-rag-response.json": "5d8ea28f920f3d5baf6c1180c03fa9205ef5e236416d96f9e1834ad9c2690248",
     "tools/c3-original-rag-activation.mjs": "3580df52411b49b0929ce79c56a2f8a34cb430f5741c045e59ba9723c1c98458",
     "supabase/functions/_shared/vertex-generation-config.ts": "800e3ea51b8013c3312608f997051fe1e71c97949361d5cb6a181101398d48e5",
-    "supabase/functions/_shared/original-preview-kb-config.ts": "05fa5d7735e59a3f652056660f0eea279a1e68c6592974d465624555ff11e1c8",
-    "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "d965388457cdb488e03b7f3d6408387dd095d518e1c4db081a5fcb88dad3449e"
+    "supabase/functions/_shared/original-preview-kb-config.ts": "11e1a6c30d6b44f4e7faa606f6a454c6f91ef4dbf4cc12a158717de4612ccee8",
+    "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "252af6d05e22749c617a421665898752a38324499b006314a8e1fa945bba56d3"
   },
   "live_execution_deployment_authorized": false,
   "authorized_widget_hosted_build_sha256": {

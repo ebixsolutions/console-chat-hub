@@ -31,6 +31,10 @@ export function originalPreviewRagConfiguration(read:(name:string)=>string|undef
   const raw=read("ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION");
   if(!raw)return result("authorization_absent");
   let grant:any,map:any,keys:any;
+  // Same string-map shape required by the existing KB credential resolver.
+  // Coercing an array/number to "34" would give a misleading green status.
+  const stringMap=(v:any)=>v && typeof v==="object" && !Array.isArray(v) &&
+    Object.entries(v).every(([k,value])=>k.trim() && typeof value==="string" && value.trim());
   try{grant=JSON.parse(raw);}catch{return result("authorization_invalid");}
   if(grant?.version!==4 || !Array.isArray(grant.bindings) || grant.bindings.length>20 || Object.keys(grant).some(k=>!["version","bindings"].includes(k)))return result("authorization_invalid");
   if(scope.actor!==FRANKIE_KB_SCOPE.actor || scope.company!==FRANKIE_KB_SCOPE.company || scope.channel!==FRANKIE_KB_SCOPE.channel)return result("scope_denied");
@@ -39,12 +43,13 @@ export function originalPreviewRagConfiguration(read:(name:string)=>string|undef
   if(bindings.length!==1 || !ragApiPolicy(bindings[0]) || Object.keys(bindings[0]).some(k=>!fields.includes(k)) ||
      bindings[0].tenant_id!==FRANKIE_KB_SCOPE.tenant || bindings[0].endpoint!==FRANKIE_KB_SCOPE.endpoint || bindings[0].provider!=="singapore-kb" || bindings[0].purpose!=="kb_embedding")return result("scope_denied");
   try{map=JSON.parse(read("KB_SINGAPORE_TENANT_MAP_JSON")??"null");}catch{return result("tenant_mapping_unverified");}
-  if(!map || Array.isArray(map) || String(map[scope.company])!==bindings[0].tenant_id)return result("tenant_mapping_unverified");
+  if(!stringMap(map) || map[scope.company]!==bindings[0].tenant_id)return result("tenant_mapping_unverified");
   const configured=(read("KB_SINGAPORE_BASE_URL")??read("KB_RAG_ENDPOINT")??read("KB_RAG_BASE_URL")??"https://py.ebixmall.com/py-knowledge-base").trim().replace(/\/+$/,"");
   const endpoint=configured.endsWith("/api/v1/rag/context-search")?configured:configured+"/api/v1/rag/context-search";
   if(endpoint!==bindings[0].endpoint || (read("KB_SINGAPORE_API_KEY_HEADER")??"x-api-key").trim().toLowerCase()!=="x-api-key")return result("endpoint_unverified");
   try{keys=JSON.parse(read("KB_SINGAPORE_TENANT_API_KEYS_JSON")??"null");}catch{return result("credential_unavailable");}
-  const key=keys?.[bindings[0].tenant_id];
+  if(!stringMap(keys))return result("credential_unavailable");
+  const key=keys[bindings[0].tenant_id];
   if(typeof key!=="string" || key!==key.trim() || key.length<16 || key.length>4096 || /[\r\n\0]/.test(key))return result("credential_unavailable");
   return result("configuration_ready");
 }

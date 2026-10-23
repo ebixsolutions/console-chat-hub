@@ -619,7 +619,10 @@ for(const [fault,expected,mutate] of [
  ['invalid-grant','authorization_invalid',()=>f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION='{broken'],
  ['duplicate-binding','scope_denied',()=>{const g=JSON.parse(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION);g.bindings.push(g.bindings[0]);f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify(g);}],
  ['remapped-tenant','tenant_mapping_unverified',()=>f.env.KB_SINGAPORE_TENANT_MAP_JSON=JSON.stringify({[f.account.company]:'35'})],
+ ['coerced-tenant','tenant_mapping_unverified',()=>f.env.KB_SINGAPORE_TENANT_MAP_JSON=JSON.stringify({[f.account.company]:[34]})],
+ ['invalid-map-row','tenant_mapping_unverified',()=>f.env.KB_SINGAPORE_TENANT_MAP_JSON=JSON.stringify({[f.account.company]:'34',other:34})],
  ['missing-key','credential_unavailable',()=>delete f.env.KB_SINGAPORE_TENANT_API_KEYS_JSON],
+ ['invalid-key-row','credential_unavailable',()=>f.env.KB_SINGAPORE_TENANT_API_KEYS_JSON=JSON.stringify({'34':'isolated-scope-key',other:34})],
  ['changed-endpoint','endpoint_unverified',()=>f.env.KB_RAG_ENDPOINT='https://not-authorized.invalid/api/v1/rag/context-search'],
  ['wrong-header','endpoint_unverified',()=>f.env.KB_SINGAPORE_API_KEY_HEADER='authorization'],
 ])test('readiness immediately reflects '+fault+' without granting paid dispatch',async()=>{
