@@ -38,6 +38,8 @@ export interface GroundedAnswerAnchor {
   document_id: string;
   chunk_ids: string[];
   source_message_id: string | null;
+  /** Reference only, persisted with the source-bound grounded reply. */
+  request_subject?: string;
 }
 
 export interface CanonicalConversationTurn {
@@ -58,7 +60,7 @@ const CUSTOMER = new Set(["visitor", "customer", "user"]);
 const ASSISTANT = new Set(["assistant", "ai"]);
 const TRIVIAL = /^(hi|hello|hey|你好|嗨|哈囉|早安|午安|晚安|ok|okay|好的|好|嗯|謝謝|谢谢|thanks|thank you)[!！。.？?，,\s]*$/i;
 const CORRECTION = /(我講錯|我说错|我說錯|我要更正|我想更正|更正一下|其實係|其实是|改返|改成|actually[,\s]+i meant|\bi meant\b|correction\s*[:：]|不是.+(?:而)?是|唔係.+係|(?:唔係|不是).{0,60}(?:我要問|我想問|想問|想问)|not .+ but .+)/i;
-const SIMPLIFY = /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?(?:[。.!！?？\s]*$|.*(?:解釋|解释|講|讲|說|说|介紹|介绍))|(?:講|讲|說|说)(?:得|得再)?(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|(?:用|講|讲|說|说)(?:香港客戶|香港客户|一般客戶|一般客户|客戶|客户)?(?:聽得懂|听得懂|明白|易明)?(?:的|嘅)?(?:人話|人话|白話|白话|口語|口语|貼地|贴地)(?:回答|講|讲|說|说)?|(?:講|讲|說|说|回答)(?:得)?(?:自然|口語|口语|貼地|贴地)(?:一點|一点|啲)?|(?:將|把|幫我|帮我)?(?:上一個|上一个|上一個答案|上一个答案|之前(?:個|个)?答案|前一個答案|前一个答案)?(?:答案|回答)?(?:改短|縮短|缩短)(?:一點|一点|啲|些|點|点)?|(?:改短|縮短|缩短)(?:一點|一点|啲|些|點|点)?(?:上一個|上一个|答案|回答)?|explain(?: it| that)? (?:more )?simply|make it simpler|\bsimpler\b|\bshort(?:en|er)\b|(?:say|explain|answer).*(?:plain|natural|everyday|customer-friendly) (?:language|words|terms)/i;
+const SIMPLIFY = /(?:簡單|简单)(?:一點|一点|啲|些|點|点)?(?:[。.!！?？\s]*$|.*(?:解釋|解释|講|讲|說|说|介紹|介绍))|(?:講|讲|說|说)(?:得|得再)?(?:簡單|简单)(?:一點|一点|啲|些|點|点)?|(?:用|講|讲|說|说)(?:香港客戶|香港客户|一般客戶|一般客户|客戶|客户)?(?:聽得懂|听得懂|明白|易明)?(?:的|嘅)?(?:人話|人话|白話|白话|口語|口语|貼地|贴地)(?:回答|講|讲|說|说)?|(?:講|讲|說|说|回答)(?:得)?(?:自然|口語|口语|貼地|贴地)(?:一點|一点|啲)?|(?:將|把|幫我|帮我)?(?:上一個|上一个|上一個答案|上一个答案|之前(?:個|个)?答案|前一個答案|前一个答案)?(?:答案|回答)?(?:改短|縮短|缩短)(?:一點|一点|啲|些|點|点)?|(?:改短|縮短|缩短)(?:一點|一点|啲|些|點|点)?(?:上一個|上一个|答案|回答)?|explain(?: it| that)? (?:more )?simply|make it simpler|\bsimpl(?:er|ify|ified|ifying)\b|\bshort(?:en|er)\b|(?:say|explain|answer).*(?:plain|natural|everyday|customer-friendly) (?:language|words|terms)/i;
 const REPHRASE = /(換句話|换句话|另一種講法|另一种说法|改寫|改写|重新講|重新说|rephrase|rewrite|say that another way|word it differently)/i;
 const TRANSLATE = /(?:用|改用)(?:廣東話|广东话|繁體中文|繁体中文|簡體中文|简体中文|英文).*(?:講|讲|回答|答|解釋|解释|說|说|一次)?|\b(?:in|into)\s+(?:english|chinese|cantonese|traditional chinese|simplified chinese)\b|translate(?: that| it)?/i;
 const SUMMARY = /(?:總結|总结|概括|歸納|归纳).*(?:剛才|刚才|以上|之前|我們|我们|內容|内容|三點|三点)?|(?:根據|根据)?(?:已確認|已确认)(?:資料|资料).*(?:列|分成|整理成)?\s*(?:[一二兩两三四五六七八九十]|\d{1,2})\s*(?:點|点|項|项|條|条)|summari[sz]e(?: that| it| this| the above| what we discussed| our conversation)?/i;
@@ -159,7 +161,9 @@ export function findPriorGroundedAnswer(newestFirst: SemanticHistoryRow[], curre
       : [];
     if (!selected || ids.length === 0) continue;
     const source = typeof meta?.source_message_id === "string" ? meta.source_message_id : null;
-    return { content, document_id: selected, chunk_ids: ids, source_message_id: source };
+    const subject = typeof meta?.factual_request_subject === "string" ? meta.factual_request_subject.trim() : "";
+    return { content, document_id: selected, chunk_ids: ids, source_message_id: source,
+      ...(source && subject.length >= 2 && subject.length <= 160 ? {request_subject:subject} : {}) };
   }
   return null;
 }
@@ -319,6 +323,30 @@ export function factualSubject(question: string): string | null {
     ? subject : null;
 }
 
+/** A validated semantic name is a locating hint, not a source taxonomy ID or
+ * evidence authority. Accept one unambiguous literal mention from THIS turn;
+ * a translated/invented name, ambiguous names, or partial word never qualifies.
+ * Canonical selection still independently binds it to surviving full content,
+ * and the existing question-resolution verifier checks the entire request,
+ * including qualifiers and requested facets, before the original commit gate.
+ */
+export function literalFactualSubject(question: string, hints: string[]): string | null {
+  const normalize = (s:string) => s.normalize("NFKC").toLowerCase().replace(/\s+/gu," ").trim();
+  const q=normalize(question);
+  const names=[...new Map(hints.filter(s=>typeof s==="string").map(s=>[normalize(s),s.trim()])).values()]
+    .filter(s=>s.length>=2 && s.length<=160 && !/^(?:policy|service|scheme|programme|program|plan|product|features|details|政策|服務|服务|計劃|计划|產品|产品)$/iu.test(s))
+    .filter(s=>{
+      const name=normalize(s),start=q.indexOf(name);
+      if(start<0)return false;
+      const isWord=(c:string)=>/[a-z0-9_-]/u.test(c);
+      return !(isWord(name[0]) && start>0 && isWord(q[start-1])) &&
+        !(isWord(name[name.length-1]) && isWord(q[start+name.length]??""));
+    });
+  // Nested names may describe the same full designation; prefer the longest.
+  const maximal=names.filter(name=>!names.some(other=>normalize(other)!==normalize(name)&&normalize(other).includes(normalize(name))));
+  return maximal.length===1 ? maximal[0] : null;
+}
+
 /** Input must be the existing source/tenant bounded, newest-first ticket history.
  * Stop at the nearest customer subject; never skip a correction/topic switch to
  * revive an older citation. An unresolved or multi-subject reference stays open.
@@ -346,7 +374,9 @@ export function resolveFactualFollowup(
       const citation = Array.isArray(citations) ? citations.map(metadataRecord).find(c => c?.document_id === anchor!.document_id) : null;
       anchorLabel = clean(citation?.label ?? citation?.display_label);
     } else if (CUSTOMER.has(role)) {
-      const originalSubject = factualSubject(text) ?? resolveFactualFollowup(text, history.slice(index + 1))?.subject;
+      const originalSubject = factualSubject(text) ??
+        literalFactualSubject(text, anchor?.request_subject ? [anchor.request_subject] : []) ??
+        resolveFactualFollowup(text, history.slice(index + 1))?.subject;
       // A quoted name in a source-bound citation can disambiguate the
       // customer's descriptive wording only when the customer actually used
       // that name. It is a retrieval referent, never reused current authority.

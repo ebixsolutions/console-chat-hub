@@ -1,5 +1,6 @@
 import {
   classifyCanonicalConversationTurn,
+  literalFactualSubject,
   type ConversationOperation,
   type SemanticHistoryRow,
 } from "./conversation-semantic-contract.ts";
@@ -21,7 +22,7 @@ export interface PriorGroundedTransformContext {
   citations: Array<{
     label: string;
     source_type: string;
-    relevance: "high" | "medium";
+    relevance: "high" | "medium" | "low";
     document_id: string;
     chunk_id?: string;
     chunk_type: "full_content";
@@ -135,6 +136,38 @@ function sameLineage(
   return candidateDocumentId === documentId &&
     candidateChunkIds.length === chunkIds.length &&
     candidateChunkIds.every((id) => chunkIds.includes(id));
+}
+
+function hasBoundServiceAnswer(
+  initial: Record<string, unknown> | null,
+  history: SemanticHistoryRow[],
+  documentId: string,
+  chunkIds: string[],
+): boolean {
+  let meta = initial;
+  const seen = new Set<string>();
+  for (let depth = 0; meta && depth < 8; depth++) {
+    const sourceId = clean(meta.source_message_id, 200);
+    const lineage = record(meta.citation_lineage);
+    if (!sourceId || seen.has(sourceId) || meta.b2_source_message_id !== sourceId ||
+      meta.b2_gate_contract !== "executeB2PersistenceGate:allow_after_revalidation" ||
+      !sameLineage(documentId, chunkIds, clean(lineage?.selected_document_id, 200),
+        normalizedChunkIds(lineage?.evidence_chunk_ids))) return false;
+    seen.add(sourceId);
+    const authority = record(meta.reference_authority);
+    const sourceTurn = history.find(row => row.id === sourceId &&
+      ["visitor", "customer", "user"].includes(String(row.role ?? "").toLowerCase()));
+    if (authority?.decision === "USE_CURRENT_KB" && authority.selected_source_id === documentId &&
+      authority.selected_authority_class === "PUBLISHED_KB_SERVICE" && sourceTurn &&
+      literalFactualSubject(String(sourceTurn.content ?? ""),
+        [typeof meta.factual_request_subject === "string" ? meta.factual_request_subject : ""])) return true;
+    const transform = record(meta.transform_lineage);
+    if (transform?.authority !== "PRIOR_GROUNDED_ANSWER") return false;
+    const prior = history.find(row => ["assistant", "ai"].includes(String(row.role ?? "").toLowerCase()) &&
+      record(row.metadata)?.source_message_id === transform.prior_source_message_id);
+    meta = record(prior?.metadata);
+  }
+  return false;
 }
 
 function supportedPointCount(content: string): number {
@@ -301,6 +334,12 @@ export function resolvePriorGroundedTransform(
     ) return null;
     if (!transformTargetCompatible(latest, groundingTarget)) return null;
 
+    // Retrieval rank is not the verdict of the completed full-evidence answer
+    // check. A low-ranked published-service answer may be faithfully transformed
+    // only with its original server-persisted source, authority and B2 binding.
+    // Keep the original rank/currentness; this never admits a new KB source.
+    const boundServiceAnswer = hasBoundServiceAnswer(meta, newestFirst, selected, sourceChunks);
+
     if (!Array.isArray(meta?.citations) || meta.citations.length === 0) return null;
     const citations: PriorGroundedTransformContext["citations"] = [];
     for (const item of meta.citations.slice(0, 3)) {
@@ -311,7 +350,8 @@ export function resolvePriorGroundedTransform(
       const chunkType = clean(c.chunk_type, 40);
       const label = clean(c.label, 300) || "Knowledge Base source";
       const sourceType = clean(c.source_type, 80) || "unknown";
-      const relevance = c.relevance === "high" ? "high" : c.relevance === "medium" ? "medium" : null;
+      const relevance = c.relevance === "high" ? "high" : c.relevance === "medium" ? "medium"
+        : c.relevance === "low" && boundServiceAnswer ? "low" : null;
       const persistedEntityTargets = stringList(c.target_entity_model);
       const persistedTopicTargets = stringList(c.target_topics);
       const labelTarget = deriveCurrentGroundingTarget(label);

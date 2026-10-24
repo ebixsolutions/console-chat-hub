@@ -629,6 +629,9 @@ async function verifyGroundedGeneration(
     call.factualEvidenceAvailable
       ? "Also assess question_resolution separately from claim truth: supported means the answer addresses the requested subject and facet; partial means it gives useful applicable E* facts first and names only genuinely missing details; unsupported means irrelevant facts, an unhelpful no-data response, or failure to address the request. Never equate grounded claims with a resolved question. Return JSON with grounded, unsupported_claims, evidence_chunk_ids, question_resolution."
       : "Return JSON only with grounded, unsupported_claims, evidence_chunk_ids.",
+    ...(call.factualEvidenceAvailable
+      ? ["Check the COMPLETE current request, not only a locating name or retrieval query. A base service/plan/model is not evidence for a requested different tier, model, region or service scope. Partial means supported facts about the SAME requested subject with specific missing facets; it never permits substituting a related base offering for an unsupported qualified subject. Semantic names and conversation references cannot grant this applicability."]
+      : []),
   ].join("\n");
   const verifierUser = [
     "Current request and resolved conversational referent (reference only, never external authority):",

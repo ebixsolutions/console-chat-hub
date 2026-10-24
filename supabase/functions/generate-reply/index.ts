@@ -1,4 +1,4 @@
-import { resolveFactualFollowup, buildFactualFollowupPrompt } from "../_shared/conversation-semantic-contract.ts";
+import { resolveFactualFollowup, buildFactualFollowupPrompt, factualSubject, literalFactualSubject } from "../_shared/conversation-semantic-contract.ts";
 import { originalPreviewEnabled } from "../_shared/original-widget-preview.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "../_shared/execution-failure.ts";
 import { resolveIndustryProfile } from "../_shared/industry-runtime-adapter.ts";
@@ -4551,8 +4551,25 @@ async function orchestrationGenerateReply(
   let _c3ReadOnlyMemorySource: string | null = null;
   let _c3TrustedPersistedMemoryReadback: TrustedPersistedMemoryReadback | null = null;
   let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
+  // A factual subject/reference is not a customer-owned purchase requirement.
+  // Keep pure evidence reads out of the commerce mutation interpreter; a
+  // corrected lookup subject must not create an unresolved commerce correction.
+  // Mixed facts/constraints, quantity, lifecycle and option-research turns still
+  // use the unchanged state writer. Memory and B2 remain on their original path.
+  const _pureFactualSubjectRead = Boolean(_a3SemanticFrame &&
+    _a3SemanticFrame.operation === "ASK_FACT" && _a3SemanticFrame.confidence >= 0.72 &&
+    !_a3SemanticFrame.ambiguity.is_ambiguous && !_a3SemanticFrame.additive &&
+    _a3SemanticFrame.requested_facts.length > 0 && _a3SemanticFrame.entities.length > 0 &&
+    literalFactualSubject(_h1LastMsg,_a3SemanticFrame.entities.map(entity=>entity.name)) &&
+    !isCustomerGuidanceRequest(_h1LastMsg,_a3SemanticFrame) &&
+    !_a3SemanticFrame.customer_facts?.length &&
+    !["explore_options","recommend_options","compare_options"].includes(_a3SemanticFrame.intent) &&
+    [_a3SemanticFrame.transaction_state,_a3SemanticFrame.payment_state,_a3SemanticFrame.booking_state,_a3SemanticFrame.fulfillment_state].every(s=>s==="none"||s==="unknown") &&
+    _a3SemanticFrame.entities.every(entity=>entity.quantity===null && entity.unit===null &&
+      !Object.keys(entity.attributes).length && !Object.keys(entity.constraints).length &&
+      Object.values(entity.capabilities).every(value=>value===false)));
   if (
-    _criticalE2ExpectedTenantId &&
+    _criticalE2ExpectedTenantId && !_pureFactualSubjectRead && !_priorGroundedTransform &&
     (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) || _customerOwnedDelta || Boolean(_a3SemanticFrame) ||
       (_productFollowUpArbitration.kind === "resolved" &&
         _productFollowUpArbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" &&
@@ -4825,6 +4842,12 @@ async function orchestrationGenerateReply(
       }));
   const _factualFollowup = _a3SemanticFrame?.ambiguity.is_ambiguous ? null
     : resolveFactualFollowup(_h1LastMsg, _c3RecentServiceMessages);
+  const _semanticFactualSubject = !factualSubject(_h1LastMsg) &&
+      _a3SemanticFrame?.operation === "ASK_FACT" && _a3SemanticFrame.confidence >= 0.62 &&
+      !_a3SemanticFrame.ambiguity.is_ambiguous
+    ? literalFactualSubject(_h1LastMsg, _a3SemanticFrame.entities
+      .filter(entity=>entity.confidence>=0.62).map(entity=>entity.name))
+    : null;
   const _factualFollowupPrompt = buildFactualFollowupPrompt(_factualFollowup);
   const _c3TrustedCustomerContext = await fetchTrustedCustomerContext({
     conversation_id,
@@ -5009,7 +5032,7 @@ async function orchestrationGenerateReply(
     Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
   const _c3CustomerOnlyReply = _c3IsGroundedReadOnlyRecap && _c3CommerceSnapshot?.state.entities.length === 0
     ? renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang) : null;
-  const _c3PlannedReply = _customerGuidance ? null : _c3IsGroundedReadOnlyRecap
+  const _c3PlannedReply = _customerGuidance || _priorGroundedTransform ? null : _c3IsGroundedReadOnlyRecap
     ? _c3CustomerOnlyReply ?? _c3Recall.reply
     : _c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")
     ? null
@@ -5987,10 +6010,15 @@ async function orchestrationGenerateReply(
       _productKbContract?.topic_ids ?? [],
       _c1TargetChanged,
     );
+    // A free factual request's lexically inferred price/features/etc. are also
+    // requested facets, not source-owned taxonomy IDs. Partial applicable
+    // evidence may answer known facets; the unchanged full-request verifier
+    // still rejects irrelevant answers and unsupported factual claims.
+    if (!_productKbContract) _c1CurrentTarget = {..._c1CurrentTarget,topic_ids:[],explicit_topic:false};
     const _groundingSelection = selectCanonicalGrounding(
       ragResult.documents ?? [],
       {
-        expectedSubject: _factualFollowup?.subject,
+        expectedSubject: _factualFollowup?.subject ?? _semanticFactualSubject ?? undefined,
         minScore,
         requirePublished: true,
         requestText: userQuery,
@@ -6002,6 +6030,7 @@ async function orchestrationGenerateReply(
         expectedEntityIds: _c1CurrentTarget.entity_ids,
         expectedTopicIds: _c1CurrentTarget.topic_ids,
         semanticFactDescriptions: _productKbContract ? [] : _semanticTopicIds,
+        requireSubjectSupport: Boolean(_factualFollowup?.subject ?? _semanticFactualSubject),
         expectedRegion: _c1CurrentTarget.region,
         requiresCurrentKb: true,
         targetChanged: _c1CurrentTarget.target_changed,
@@ -6895,6 +6924,8 @@ async function orchestrationGenerateReply(
     ? {
       ...citationMetaBase,
       reference_authority: referenceAuthorityMetadata(_c1AuthorityDecision),
+      ...(_c1AuthorityDecision.decision === "USE_CURRENT_KB" && (_factualFollowup?.subject ?? _semanticFactualSubject)
+        ? {factual_request_subject:_factualFollowup?.subject ?? _semanticFactualSubject} : {}),
     }
     : citationMetaBase;
   if (_priorGroundedTransform && !citationMeta) {

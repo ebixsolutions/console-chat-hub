@@ -836,6 +836,110 @@ for(const [subject,question,body] of [
  assert.equal(next.commits[0]?.content,body,JSON.stringify(next.commits));assert(JSON.stringify(next.requests.find(x=>x.url.includes('context-search'))?.body).includes(subject));
 });
 
+for(const question of ['What is Harbor Care?','Could you explain Harbor Care?','I would like to know what Harbor Care includes.','Harbor Care 有啲咩服務？'])test('Task1A full handler natural phrasing retains full-content subject support: '+question,async()=>{
+ // Synthetic business content through the existing authenticated-service
+ // transport fixture, not a historical/live RAG response or source proof.
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const subject='Harbor Care',body='Harbor Care includes inspection and collection.',d=sample.selected_documents[0];
+ d.title=subject;d.evidence[0].content=body;d.summary.content=body;sample.citations[0].label=subject;
+ const semantic=providerWire({intent:'other',requested_facts:['included service scope'],entities:[{name:subject,kind:'service',confidence:0.98}]},'ASK_FACT');
+ const f=fixture(question,{originalPreview:true,fullChain:true,originalRagResponse:sample,answer:body,semantic});await f.run();
+ if(process.env.C3_TASK1A_EVIDENCE_DIR){const dest=path.resolve(process.env.C3_TASK1A_EVIDENCE_DIR);fs.mkdirSync(dest,{recursive:true});fs.writeFileSync(path.join(dest,hash(question)+'.json'),JSON.stringify({scope:'isolated complete handler; NOT Hosted',question,semantic,queries:f.requests.filter(r=>r.url.includes('context-search')).map(r=>r.body),commits:f.commits,events:f.events},null,2));}
+ assert.equal(f.commits[0]?.content,body,JSON.stringify({question,commits:f.commits,events:f.events.slice(-5)}));
+ assert.equal(f.commits[0]?.metadata.citation_lineage?.selected_document_id,d.document_id);
+ assert.equal(f.commits[0]?.metadata.reference_authority?.provenance.currentness,'unknown');
+ assert.equal(f.requests.filter(r=>r.url.includes('context-search')).length,1);
+ const followup=fixture('What does it include?',{originalPreview:true,fullChain:true,previous:f.tables,history:[...f.tables.messages].reverse(),source:uuid(910),originalRagResponse:sample,answer:body,semantic:providerWire({intent:'other',requested_facts:['included service scope']},'ASK_FACT')});await followup.run();
+ assert.equal(followup.commits[0]?.content,body,JSON.stringify(followup.commits));
+ assert.equal(followup.requests.filter(r=>r.url.includes('context-search')).length,1);
+ assert(JSON.stringify(followup.requests.find(r=>r.url.includes('context-search')).body).includes(subject));
+ assert.equal(followup.commits[0]?.metadata.citation_lineage?.selected_document_id,d.document_id);
+});
+
+for(const fault of ['wrong-subject','premium','service-scope','region','foreign-tenant','historical','superseded','cancelled','draft','summary-only','no-admission','ambiguous','invented-name','partial-word'])test('Task1A complete handler preserves independent source and subject guards: '+fault,async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const d=sample.selected_documents[0];d.title='Harbor Care';d.evidence[0].content='Harbor Care includes inspection and collection.';d.summary.content=d.evidence[0].content;sample.citations[0].label=d.title;
+ let question='Could you explain Harbor Care?',name='Harbor Care';const delta={intent:'other',requested_facts:['included service scope']};
+ if(fault==='wrong-subject')name='Atlas Cover',question='Could you explain Atlas Cover?';
+ if(fault==='premium')name='Harbor Care Premium',question='Could you explain Harbor Care Premium?';
+ if(fault==='service-scope')name='Harbor Care Dental',question='Could you explain Harbor Care Dental?';
+ if(fault==='region'){question='Could you explain Harbor Care in Singapore?';d.evidence[0].content='Harbor Care includes inspection and collection in Hong Kong only.';}
+ if(fault==='foreign-tenant')d.authority={tenant_id:'99',publication_state:'published',currentness:'current'};
+ if(['historical','superseded','cancelled'].includes(fault))d.authority={tenant_id:'34',publication_state:'published',currentness:fault};
+ if(fault==='draft')d.authority={tenant_id:'34',publication_state:'draft',currentness:'current'};
+ if(fault==='summary-only')d.evidence=[];
+ if(fault==='ambiguous')delta.ambiguity={is_ambiguous:true,reasons:['two possible services'],clarification_question:'Which service do you mean?'};
+ if(fault==='invented-name')name='Made Up Service';
+ if(fault==='partial-word')question='Could you explain Harbor CarePlus?';
+ delta.entities=[{name,kind:'service',confidence:0.98}];
+ const f=fixture(question,{originalPreview:true,fullChain:true,originalRagResponse:sample,answer:'Harbor Care includes inspection and collection.',semantic:providerWire(delta,'ASK_FACT')});
+ if(fault==='no-admission')f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION='';
+ // The fixture initializes the explicit original authority on first run; the
+ // absent-admission case revokes the otherwise matching server-side binding.
+ if(fault==='no-admission')f.env.KB_SINGAPORE_TENANT_API_KEYS_JSON='{}';
+ await f.run();
+ assert(!f.commits.some(c=>c.content==='Harbor Care includes inspection and collection.'),JSON.stringify({fault,commits:f.commits}));
+ assert(!f.commits.some(c=>c.metadata.citation_lineage?.selected_document_id),JSON.stringify({fault,commits:f.commits}));
+});
+
+test('Task1A full request verifier rejects clipped semantic scope without adding a retry',async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));const d=sample.selected_documents[0];d.title='Harbor Care';d.evidence[0].content='Harbor Care includes inspection and collection.';d.summary.content=d.evidence[0].content;sample.citations[0].label=d.title;
+ const f=fixture('Could you explain Harbor Care Premium?',{originalPreview:true,fullChain:true,originalRagResponse:sample,answer:d.evidence[0].content,verifierResolution:'unsupported',semantic:providerWire({intent:'other',requested_facts:['included service scope'],entities:[{name:'Harbor Care',kind:'service',confidence:0.98}]},'ASK_FACT')});await f.run();
+ assert.notEqual(f.commits[0]?.content,d.evidence[0].content);assert.equal(f.commits[0]?.metadata.source_error_code,'LLM_GROUNDING_REJECTED');
+ const verifier=f.requests.find(r=>r.body?.generationConfig?.responseSchema?.properties?.grounded);assert(verifier);assert(JSON.stringify(verifier.body).includes('Harbor Care Premium'));assert(JSON.stringify(verifier.body).includes('COMPLETE current request'));
+ assert.equal(f.requests.filter(r=>r.url.includes('context-search')).length,1);assert.equal(f.requests.filter(r=>r.url.endsWith(':generateContent')&&!r.body.generationConfig.responseSchema).length,1);
+});
+
+for(const [question,body,answer,resolution] of [
+ ['可否介紹一下 Harbor Care 提供甚麼？','Harbor Care includes inspection and collection.','Harbor Care 提供檢查及收集。','supported'],
+ ['Could you explain Harbor Care and its price?','Harbor Care includes inspection and collection.','Harbor Care includes inspection and collection. The source does not state its price.','partial'],
+ ['I would appreciate an overview of Harbor Care.','Harbor Care includes inspection and collection.','Harbor Care includes inspection and collection.','supported'],
+ ['Tell me about Harbor Care; what does Harbor Care include?','Harbor Care includes inspection and collection.','Harbor Care includes inspection and collection.','supported'],
+])test('Task1A source-bound semantic subject is independent of request grammar and answer language: '+question,async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8')),d=sample.selected_documents[0];d.title='Harbor Care';d.evidence[0].content=body;d.summary.content=body;sample.citations[0].label=d.title;
+ const f=fixture(question,{originalPreview:true,fullChain:true,originalRagResponse:sample,answer,verifierResolution:resolution,semantic:providerWire({intent:'other',requested_facts:['included service scope',...(resolution==='partial'?['price']:[])],entities:[{name:'Harbor Care',kind:'service',confidence:0.98}]},'ASK_FACT')});await f.run();
+ assert.equal(f.commits[0]?.content,answer,JSON.stringify(f.commits));assert.equal(f.commits[0]?.metadata.reference_authority?.provenance.currentness,'unknown');assert.equal(f.requests.filter(r=>r.url.includes('context-search')).length,1);
+ const dispatches=()=>f.requests.filter(r=>r.url.includes('context-search')||r.url.includes('aiplatform')).length;const before=dispatches();await f.run();assert.equal(f.commits.length,1);assert.equal(dispatches(),before,'replay must not dispatch again');
+});
+
+test('Task1A natural first answer, factual correction and new follow-up requery the latest source-bound subject',async()=>{
+ const response=(subject,body)=>{const r=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));r.selected_documents[0].title=subject;r.selected_documents[0].evidence[0].content=body;r.selected_documents[0].summary.content=body;r.citations[0].label=subject;return r;};
+ const proposal=subject=>providerWire({intent:'other',requested_facts:['included service scope'],entities:[{name:subject,kind:'service',confidence:0.98}]},'ASK_FACT');
+ const a=response('Harbor Care','Harbor Care includes inspection and collection.'),b=response('Atlas Cover','Atlas Cover includes device repair.');
+ const first=fixture('Could you explain Harbor Care?',{originalPreview:true,fullChain:true,originalRagResponse:a,answer:a.selected_documents[0].evidence[0].content,semantic:proposal('Harbor Care')});await first.run();
+ const correction=fixture('Actually I meant Atlas Cover, not Harbor Care.',{originalPreview:true,fullChain:true,previous:first.tables,history:[...first.tables.messages].reverse(),source:uuid(920),originalRagResponse:b,answer:b.selected_documents[0].evidence[0].content,semantic:proposal('Atlas Cover')});await correction.run();
+ assert.equal(correction.commits[0]?.content,b.selected_documents[0].evidence[0].content,JSON.stringify({commits:correction.commits,events:correction.events}));assert(JSON.stringify(correction.requests.find(r=>r.url.includes('context-search')).body).includes('Atlas Cover'));
+ const next=fixture('What does it include?',{originalPreview:true,fullChain:true,previous:correction.tables,history:[correction.commits[0],correction.tables.messages.find(m=>m.id===uuid(920)),...first.tables.messages.slice().reverse()],source:uuid(921),originalRagResponse:b,answer:b.selected_documents[0].evidence[0].content,semantic:providerWire({intent:'other',requested_facts:['included service scope']},'ASK_FACT')});await next.run();
+ assert.equal(next.commits[0]?.content,b.selected_documents[0].evidence[0].content,JSON.stringify(next.commits));assert(JSON.stringify(next.requests.find(r=>r.url.includes('context-search')).body).includes('Atlas Cover'));assert.equal(next.requests.filter(r=>r.url.includes('context-search')).length,1);
+});
+
+test('Task1A pure lookup preserves existing canonical customer requirements and revision',async()=>{
+ const seed=fixture('I need three Archive Service boxes.',{originalPreview:true,fullChain:true,semantic:providerWire({intent:'customer_context_update',entities:[{name:'Archive Service',kind:'service',quantity:3,unit:'boxes',confidence:0.98}]},'ADD_ITEM')});await seed.run();
+ assert(seed.tables.conversation_commerce_state.length===1);const before=structuredClone(seed.tables.conversation_commerce_state);
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8')),d=sample.selected_documents[0];d.title='Harbor Care';d.evidence[0].content='Harbor Care includes inspection and collection.';d.summary.content=d.evidence[0].content;sample.citations[0].label=d.title;
+ const f=fixture('Could you explain Harbor Care?',{originalPreview:true,fullChain:true,source:uuid(930),previous:seed.tables,history:seed.tables.messages.slice().reverse(),originalRagResponse:sample,answer:d.evidence[0].content,semantic:providerWire({intent:'other',requested_facts:['service scope'],entities:[{name:'Harbor Care',kind:'service',confidence:0.98}]},'ASK_FACT')});await f.run();
+ assert.equal(f.commits[0]?.content,d.evidence[0].content,JSON.stringify(f.commits));assert.deepEqual(f.tables.conversation_commerce_state,before);assert.equal(f.commits[0].metadata.b2_expected_revision,before[0].revision);assert(f.tables.conversation_memory_state.length===1,'Memory still follows original pipeline');
+});
+
+for(const guard of ['human-control','new-source','stale-revision'])test('Task1A pure lookup still respects original final commit boundary: '+guard,async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8')),d=sample.selected_documents[0];d.title='Harbor Care';d.evidence[0].content='Harbor Care includes inspection and collection.';d.summary.content=d.evidence[0].content;sample.citations[0].label=d.title;
+ const f=fixture('Could you explain Harbor Care?',{originalPreview:true,fullChain:true,originalRagResponse:sample,answers:[d.evidence[0].content],humanAfterFirstDraft:guard==='human-control',newSourceAfterFirstDraft:guard==='new-source',...(guard==='stale-revision'?{rpcResult:'stale_authorized_revision'}:{}),semantic:providerWire({intent:'other',requested_facts:['service scope'],entities:[{name:'Harbor Care',kind:'service',confidence:0.98}]},'ASK_FACT')});await f.run();
+ assert.equal(f.commits.length,0,JSON.stringify(f.commits));assert.equal(f.requests.filter(r=>r.url.includes('context-search')).length,1);assert.equal(f.requests.filter(r=>r.url.endsWith(':generateContent')&&!r.body.generationConfig.responseSchema).length,1);
+});
+
+for(const question of ['Please simplify that.','Translate that into Cantonese.','Rephrase that.'])test('Task1A transforming a prior grounded natural answer does not retrieve again: '+question,async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8')),d=sample.selected_documents[0];d.title='Harbor Care';d.evidence[0].content='Harbor Care includes inspection and collection.';d.summary.content=d.evidence[0].content;sample.citations[0].label=d.title;
+ const first=fixture('Could you explain Harbor Care?',{originalPreview:true,fullChain:true,originalRagResponse:sample,answer:d.evidence[0].content,semantic:providerWire({intent:'other',requested_facts:['service scope'],entities:[{name:'Harbor Care',kind:'service',confidence:0.98}]},'ASK_FACT')});await first.run();
+ const resolved=first.load(path.join(root,'supabase/functions/_shared/prior-grounded-transform.ts')).resolvePriorGroundedTransform(question,first.tables.messages.slice().reverse());assert(resolved,JSON.stringify(first.tables.messages));
+ for(const field of ['reference_authority','factual_request_subject','b2_source_message_id','b2_gate_contract']){const rows=structuredClone(first.tables.messages).reverse();delete rows.find(row=>row.role==='assistant').metadata[field];assert.equal(first.load(path.join(root,'supabase/functions/_shared/prior-grounded-transform.ts')).resolvePriorGroundedTransform(question,rows),null,'low-rank reuse requires '+field);}
+
+ const f=fixture(question,{originalPreview:true,fullChain:true,source:uuid(940),previous:first.tables,history:first.tables.messages.slice().reverse(),originalRagResponse:sample,answer:d.evidence[0].content,semantic:providerWire({intent:'other',requested_facts:[]},'NO_STATE_CHANGE')});await f.run();
+ assert.equal(f.commits[0]?.content,d.evidence[0].content,JSON.stringify(f.commits));assert.equal(f.requests.filter(r=>r.url.includes('context-search')).length,0);assert.equal(f.commits.length,1);
+ assert.equal(f.commits[0].metadata.citations[0].relevance,'low');assert.equal(f.commits[0].metadata.citation_lineage.evidence_state,'unknown');
+ const again=fixture('Rephrase that.',{originalPreview:true,fullChain:true,source:uuid(941),previous:f.tables,history:[f.commits[0],f.tables.messages.find(m=>m.id===uuid(940)),...first.tables.messages.slice().reverse()],originalRagResponse:sample,answer:d.evidence[0].content,semantic:providerWire({intent:'other',requested_facts:[]},'NO_STATE_CHANGE')});await again.run();assert.equal(again.commits[0]?.content,d.evidence[0].content,JSON.stringify(again.commits));assert.equal(again.requests.filter(r=>r.url.includes('context-search')).length,0);
+
+});
+
 for(const options of [{verifierResolution:'unsupported'},{omitQuestionResolution:true},{verifierIds:['C1']}])test('truthful claims alone do not prove current factual question resolution: '+JSON.stringify(options),async()=>{
  const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
  const draft='資料列出空調機、洗衣機及電腦。';const f=fixture('四電一腦係點運作？',{...options,originalPreview:true,fullChain:true,originalRagResponse:sample,answer:draft,semantic:providerWire({intent:'other',requested_facts:['how it works']},'ASK_FACT')});await f.run();
