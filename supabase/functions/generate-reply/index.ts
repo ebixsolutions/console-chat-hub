@@ -5967,17 +5967,6 @@ async function orchestrationGenerateReply(
 
     const isHighRisk = _pr5LocalRisk?.level === "high";
     const minScore = isHighRisk ? 0.78 : 0.45;
-    const _semanticEntityIds = (_a3SemanticFrame?.entities ?? [])
-      .flatMap((entity) => [
-        entity.entity_ref,
-        entity.name,
-        entity.sku,
-        entity.model,
-        entity.category_hint,
-      ])
-      .filter((value): value is string =>
-        typeof value === "string" && value.trim().length > 0
-      );
     const _semanticTopicIds = [
       _a3SemanticFrame?.topic,
       ...(_a3SemanticFrame?.requested_facts ?? []),
@@ -5989,8 +5978,10 @@ async function orchestrationGenerateReply(
       _a3SemanticFrame?.customer_correction === true;
     _c1CurrentTarget = deriveCurrentGroundingTarget(
       _productFactualRequest,
-      userQuery,
-      _productKbContract?.entity_ids ?? _semanticEntityIds,
+      _productFactualRequest,
+      // Free Semantic names/category hints are not source-owned entity IDs.
+      // Explicit customer models/transaction IDs are still derived above.
+      _productKbContract?.entity_ids ?? [],
       // Only the server product contract supplies canonical topic IDs. Model
       // topic/requested_facts are free-form multilingual descriptions/facets.
       _productKbContract?.topic_ids ?? [],

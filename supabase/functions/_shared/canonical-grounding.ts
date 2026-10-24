@@ -25,6 +25,10 @@ export interface CanonicalGroundingOptions {
   expectedTopicIds?: string[];
   /** Free-form model descriptions are answer facets, NEVER source taxonomy IDs. */
   semanticFactDescriptions?: string[];
+  /** Server caller resolved a factual request, without source taxonomy IDs. */
+  requireSubjectSupport?: boolean;
+  /** Inbox performs its existing bounded relevance adjudication after authority. */
+  deferRelevanceToCaller?: boolean;
   expectedRegion?: string | null;
   requiresCurrentKb?: boolean;
   targetChanged?: boolean;
@@ -378,7 +382,7 @@ function serviceTopicMatch(request:string,document:KBDocumentCandidate):boolean 
  * legitimate alias of a longer customer description only when that exact name
  * occurs in the customer subject too. No generated translation grants authority.
  */
-function fullContentSubjectMatch(subject: string, document: KBDocumentCandidate): boolean {
+function fullContentSubjectMatch(subject: string, document: KBDocumentCandidate, explicitSubject = true): boolean {
   const norm = (s: string) => s.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
   const q = norm(subject);
   const contains = (text: string, name: string) => {
@@ -392,8 +396,23 @@ function fullContentSubjectMatch(subject: string, document: KBDocumentCandidate)
     if (contains(e.content, q)) return true;
     // Quotes are source-owned aliases; title-only/summary-only matches fail.
     const names = [...e.content.matchAll(/[「『“"]([^」』”"\n]{2,160})[」』”"]/gu)].map(m => m[1]);
-    return names.some(name => norm(name).length >= 4 &&
-      !/^(?:計劃|计划|服務|服务|方案|資料|资料|policy|service|scheme|programme|program|details)$/iu.test(norm(name)) && contains(q, name));
+    return names.some(name => {
+      const key=norm(name);
+      if(key.length<4 || /^(?:計劃|计划|服務|服务|方案|資料|资料|policy|service|scheme|programme|program|details)$/iu.test(key) || !contains(q,name))return false;
+      if(!explicitSubject)return true;
+      let remainder=q.replace(key," ");
+      if(jurisdictions(e.content).includes("hong_kong"))remainder=remainder.replace(/香港|全港|hong\s*kong|\bhk\b/giu," ");
+      remainder=remainder.replace(/(?:嘅|的)|\b(?:the|service|scheme|programme|program|plan)\b/giu," ").trim();
+      // A base-name quote cannot authorize an unsupported tier, industry or
+      // qualifier. Chinese residual words must be actual contiguous phrases
+      // in the full evidence, not isolated characters or translated guesses.
+      const body=norm(e.content);
+      return (remainder.match(/[\p{Script=Han}]+|[a-z0-9][a-z0-9_-]*/gu)??[]).every(token=>{
+        if(!/\p{Script=Han}/u.test(token))return contains(body,token);
+        const seen=new Set([0]);for(let start=0;start<token.length;start++)if(seen.has(start))for(let end=start+2;end<=token.length;end++)if(body.includes(token.slice(start,end)))seen.add(end);
+        return seen.has(token.length);
+      });
+    });
   });
 }
 
@@ -461,16 +480,17 @@ export function selectCanonicalGrounding(
   const target = deriveCurrentGroundingTarget(
     currentTurnText,
     requestText,
-    options.expectedEntityIds ?? modelTokens(requestText),
+    options.expectedEntityIds ?? modelTokens(currentTurnText),
     options.expectedTopicIds ?? [],
     options.targetChanged === true,
   );
   const expectedEntityIds = target.entity_ids;
-  const freeFactRequest = (options.semanticFactDescriptions?.length ?? 0) > 0;
+  const freeFactRequest = options.requireSubjectSupport === true || (options.semanticFactDescriptions?.length ?? 0) > 0;
   const expectedTopicIds = freeFactRequest ? unique(options.expectedTopicIds ?? []) : target.topic_ids;
-  const subject = options.expectedSubject ?? factualSubject(currentTurnText) ??
+  const explicitSubject = options.expectedSubject ?? factualSubject(currentTurnText);
+  const subject = explicitSubject ??
     (freeFactRequest ? currentTurnText.slice(0, 500) : null);
-  const region = options.expectedRegion ?? target.region ?? detectExplicitJurisdiction(requestText);
+  const region = options.expectedRegion ?? target.region ?? detectExplicitJurisdiction(currentTurnText);
   const expectedRegion = region ? canonicalRegion(region) : null;
   const eligible: Array<{
     document: KBDocumentCandidate;
@@ -504,7 +524,7 @@ export function selectCanonicalGrounding(
     // A low relevance tag is retained, never equated to a supported answer.
     // Exact contextual evidence and the unchanged generation verifier are still
     // required; unrelated low hits cannot reach Knowledge/Policy as grounding.
-    if(service?.relevance?.toLowerCase()==="low" && !serviceTopic)continue;
+    if(service?.relevance?.toLowerCase()==="low" && !serviceTopic && !options.deferRelevanceToCaller)continue;
     const policyEligible=document.source_type.toLowerCase().includes("policy") || !!service && /(?:政策|條款|条款|須知|须知|守則|退貨|退货|退款|保養|保修|\bpolicy\b|\bterms\b|\brefund\b|\breturns\b)/iu.test(candidateText(document));
     const effectiveMinScore =
       strongLexicalEvidenceMatch(currentTargetRequest, document) || serviceTopic
@@ -544,18 +564,15 @@ export function selectCanonicalGrounding(
     // surviving chunk, even within the same authenticated document.
     const subjectSupported = !!subject && fullContentSubjectMatch(subject, {
       ...document, llm_context: {...document.llm_context, full_content_evidence: evidence},
-    });
+    },Boolean(explicitSubject));
     if (options.expectedSubject && !subjectSupported) continue;
 
     const applicability = assessApplicability(document, currentTargetRequest);
     const metadata = document.authority;
     const declaredCurrentness = metadata?.currentness ?? "unknown";
-    const effectiveCurrentness = declaredCurrentness === "unknown" && !service
-      // The authenticated Singapore endpoint is explicitly the published/live
-      // read path. Missing optional currentness metadata is bound to that
-      // server-side contract, never to a client assertion.
-      ? "current"
-      : declaredCurrentness;
+    // Missing metadata never becomes a currentness assertion. Only the separate
+    // authenticated service proof permits PUBLISHED_KB_SERVICE with UNKNOWN.
+    const effectiveCurrentness = declaredCurrentness;
     eligible.push({
       document,
       chunks,

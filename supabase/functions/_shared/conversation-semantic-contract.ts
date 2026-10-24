@@ -301,17 +301,19 @@ export interface FactualFollowupContext {
 }
 
 export function factualSubject(question: string): string | null {
-  const text = clean(question).replace(/[？?。.!！]+$/u, "").trim();
+  const text = clean(question).split(/[？?]/u, 1)[0].replace(/[。.!！]+$/u, "").trim()
+    .replace(/^(?:(?:請問|请问|請|请|可唔可以講下|可以講下)\s*|please\s+)/iu, "");
   const match = /^(?:什麼|什么|甚麼)是\s*(.+)$/u.exec(text) ??
     /^(?:何謂|何谓|請解釋|请解释|解釋|解释)(?:一下)?\s*(.+)$/u.exec(text) ??
     /^(.+?)(?:係|是)(?:講|讲|指)?(?:咩|乜|甚麼|什麼|什么)(?:呢|呀|啊)?$/u.exec(text) ??
-    /^(.+?)(?:係點|是如何|怎樣|怎样|如何)(?:運作|运作|操作|使用)$/u.exec(text) ??
+    /^(.+?)(?:(?:係)?點(?:樣)?|是如何|怎樣|怎样|如何)(?:運作|运作|操作|使用)(?:呢|呀|啊)?$/u.exec(text) ??
     /^(.+?)(?:包括|包含|涵蓋|涵盖)(?:啲乜|甚麼|什麼|什么|哪些|邊啲|邊幾類.*)$/u.exec(text) ??
-    /^how (?:does|do)\s+(?:the\s+)?(.+?)\s+work$/iu.exec(text) ??
-    /^what (?:does|do)\s+(?:the\s+)?(.+?)\s+include$/iu.exec(text) ??
+    /^how (?:does|do)\s+(?:the\s+)?(.+?)\s+(?:work|operate)$/iu.exec(text) ??
+    /^what (?:does|do)\s+(?:the\s+)?(.+?)\s+(?:include|cover)$/iu.exec(text) ??
     /^(?:what (?:is|are)|explain|describe|definition of|meaning of)\s+(?:the\s+)?(.+)$/iu.exec(text) ??
     /^(?:actually[, ]+i meant|i meant|correction[:：]|改成|改返|其實係|其实是)\s*(.+)$/iu.exec(text);
-  const subject = match?.[1]?.replace(/^[「『“"']|[」』”"']$/gu, "").trim();
+  const subject = match?.[1]?.replace(/(?:[,，;；]\s*)(?:唔係|不是|並非|并非|not)\s*.+$/iu, "")
+    .replace(/^[「『“"']|[」』”"']$/gu, "").trim();
   return subject && subject.length >= 2 && subject.length <= 160 &&
       !/^(?:this|that|it|its|the same|嗰個|呢個|這個|那个|佢)(?:\s|$)/iu.test(subject)
     ? subject : null;
@@ -330,11 +332,12 @@ export function resolveFactualFollowup(
       /(?:嗰兩個|那兩個|那两个|which of|which one|邊個|哪個|哪个)/iu.test(question)) return null;
   let anchor: GroundedAnswerAnchor | null = null;
   let anchorLabel = "";
+  let skippedCurrent = false;
   for (const [index, row] of history.entries()) {
     const text = clean(row.content);
     const role = String(row.role ?? "").toLowerCase();
     if (!text || text === "__THINKING__") continue;
-    if (CUSTOMER.has(role) && text === clean(question)) continue;
+    if (!anchor && !skippedCurrent && CUSTOMER.has(role) && text === clean(question)) { skippedCurrent = true; continue; }
     if (ASSISTANT.has(role)) {
       if (anchor) continue;
       anchor = findPriorGroundedAnswer([row]);
@@ -348,7 +351,7 @@ export function resolveFactualFollowup(
       // customer's descriptive wording only when the customer actually used
       // that name. It is a retrieval referent, never reused current authority.
       const quoted = [...anchorLabel.matchAll(/[「『“"]([^」』”"]{2,160})[」』”"]/gu)]
-        .map(m => m[1]).filter(name => text.normalize("NFKC").toLowerCase().includes(name.normalize("NFKC").toLowerCase()));
+        .map(m => m[1]).filter(name => (originalSubject ?? "").normalize("NFKC").toLowerCase().includes(name.normalize("NFKC").toLowerCase()));
       const subject = originalSubject && quoted.length === 1 ? quoted[0] : originalSubject;
       if (!subject || !anchor?.source_message_id || row.id !== anchor.source_message_id) return null;
       return {subject, prior_question:text, prior_answer:anchor.content.slice(0,1200), source_message_id:anchor.source_message_id};

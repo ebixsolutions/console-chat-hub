@@ -461,7 +461,9 @@ function mapDocumentCandidate(
           authorityCurrentness === "superseded" ||
           authorityCurrentness === "cancelled"
       ? authorityCurrentness
-      : "published";
+      : authorityStatus === "published" || authorityStatus === "live"
+      ? "published"
+      : "unknown";
   return {
     document_id: candidate.document_id,
     title: candidate.title,

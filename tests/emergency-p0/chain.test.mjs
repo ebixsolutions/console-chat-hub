@@ -47,7 +47,7 @@ function fixture(text,options={}) {
    if(options.fullChain && !body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.')) {
     const verifier=body.generationConfig.responseSchema?.properties?.grounded;
     const isRepair=body.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered');
-    const text=verifier?JSON.stringify({grounded:true,unsupported_claims:[],evidence_chunk_ids:['E1']}):isRepair&&options.repairAnswer?options.repairAnswer:options.answers?.[generationIndex++]??options.answer??'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
+    const text=verifier?JSON.stringify({grounded:true,unsupported_claims:[],evidence_chunk_ids:options.verifierIds??['E1'],...(options.omitQuestionResolution?{}:{question_resolution:options.verifierResolution??'supported'})}):isRepair&&options.repairAnswer?options.repairAnswer:options.answers?.[generationIndex++]??options.answer??'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
     if(!verifier && options.humanAfterFirstDraft && generationIndex===1)conversation.status='human_control';
     if(!verifier && options.newSourceAfterFirstDraft && generationIndex===1)tables.messages.unshift({...visitor,id:uuid(999),content:'A newer customer question',created_at:'2026-10-14T01:00:01.000Z'});
     return Response.json({candidates:[{content:{parts:[{text}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}});
@@ -822,6 +822,33 @@ test('v244 first factual answer cannot deny available subject evidence even with
  const f=fixture('香港四電一腦回收計劃係點運作？',{originalPreview:true,fullChain:true,originalRagResponse:sample,answer:bad,semantic:providerWire({intent:'other',requested_facts:['abstract English operation label']},'ASK_FACT')});await f.run();
  assert.notEqual(f.commits[0]?.content,bad);assert.equal(f.commits[0]?.metadata.source_error_code,'LLM_GROUNDING_REJECTED',JSON.stringify({commits:f.commits,events:f.events}));
  assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')&&!x.body.generationConfig.responseSchema).length,1);
+});
+
+for(const [subject,question,body] of [
+ ['雲端備份服務','請問雲端備份服務點樣運作？','雲端備份服務會先驗證帳戶，然後備份已選取的檔案。'],
+ ['設備保養服務','設備保養服務如何運作？','設備保養服務會先檢查設備，再提供保養安排。'],
+ ['Harbor Care','How does Harbor Care operate?','Harbor Care starts with inspection and then arranges collection.'],
+])test('full chain binds unquoted literal subject while free Semantic entity names remain hints: '+subject,async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));const d=sample.selected_documents[0];d.title=subject;d.evidence[0].content=body;d.summary.content=body;sample.citations[0].label=subject;
+ const seed=fixture(question,{originalPreview:true,fullChain:true,originalRagResponse:sample,answer:body,semantic:providerWire({intent:'other',topic:'price and warranty policy abstract English operational description',requested_facts:['how the service works'],entities:[{name:subject,kind:'service',confidence:0.98}]},'ASK_FACT')});await seed.run();
+ assert.equal(seed.commits[0]?.content,body,JSON.stringify({reply:seed.commits,events:seed.events.slice(-5)}));
+ const next=fixture('What does it include?',{originalPreview:true,fullChain:true,previous:seed.tables,history:[...seed.tables.messages].reverse(),source:uuid(892),originalRagResponse:sample,answer:body,semantic:providerWire({intent:'other',requested_facts:['included service scope']},'ASK_FACT')});await next.run();
+ assert.equal(next.commits[0]?.content,body,JSON.stringify(next.commits));assert(JSON.stringify(next.requests.find(x=>x.url.includes('context-search'))?.body).includes(subject));
+});
+
+for(const options of [{verifierResolution:'unsupported'},{omitQuestionResolution:true},{verifierIds:['C1']}])test('truthful claims alone do not prove current factual question resolution: '+JSON.stringify(options),async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const draft='資料列出空調機、洗衣機及電腦。';const f=fixture('四電一腦係點運作？',{...options,originalPreview:true,fullChain:true,originalRagResponse:sample,answer:draft,semantic:providerWire({intent:'other',requested_facts:['how it works']},'ASK_FACT')});await f.run();
+ assert.notEqual(f.commits[0]?.content,draft);assert.equal(f.commits[0]?.metadata.source_error_code,'LLM_GROUNDING_REJECTED');assert.equal(f.requests.filter(x=>x.body?.generationConfig?.responseSchema?.properties?.grounded).length,1);
+});
+
+test('source-bound correction and identical earlier follow-up preserve the nearest subject',()=>{
+ const f=fixture('unused'),m=f.load(path.join(root,'supabase/functions/_shared/conversation-semantic-contract.ts'));
+ const prior=(question,id,label)=>[{role:'assistant',content:'Source-backed answer',metadata:{source_message_id:id,citations:[{document_id:'doc',label}],citation_lineage:{selected_document_id:'doc',evidence_chunk_ids:['chunk']}}},{id,role:'visitor',content:question}];
+ assert.equal(m.resolveFactualFollowup('What does it cover?',prior('Actually I meant Harbor Care, not Atlas Cover','correction','"Atlas Cover" document'))?.subject,'Harbor Care');
+ const old=prior('What is Harbor Care?','first','Harbor Care'),q='What does it include?';
+ assert.equal(m.resolveFactualFollowup(q,[...prior(q,'previous-followup','Harbor Care'),...old])?.subject,'Harbor Care');
+ assert.equal(m.resolveFactualFollowup(q,[{id:'cancel',role:'visitor',content:'Cancel Harbor Care.'},...old]),null);
 });
 
 for(const kind of ['summary-only','invalid-document'])test('legacy KB response does not manufacture authority or human control: '+kind,async()=>{

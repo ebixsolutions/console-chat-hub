@@ -18,6 +18,7 @@ import {
 import { supabaseCorsHeaders } from "../_shared/supabase-cors.ts";
 import { callModel, parseJsonObject } from "../_shared/llm-router.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
+import { factualSubject, resolveFactualFollowup } from "../_shared/conversation-semantic-contract.ts";
 import { buildCanonicalAssistRetrievalQuery } from "../_shared/conversation-runtime-state.ts";
 import { buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";
 import { parsePersistedC2Handoff } from "../_shared/transaction-closure-handoff.ts";
@@ -153,7 +154,7 @@ async function loadAssistConversationHistory(
   conversationId: string,
 ) {
   const { data, error } = await supabaseAdmin.from("messages").select(
-    "role, content, metadata, created_at",
+    "id, role, content, metadata, created_at",
   ).eq("conversation_id", conversationId).eq("is_recalled", false).neq(
     "content",
     "__THINKING__",
@@ -422,6 +423,7 @@ Deno.serve(async (req) => {
       }
       const knowledge = selectCanonicalGrounding(kb.documents, {
         requestText: query,
+        expectedTenantId: tenant.scope.singaporeTenantId,
         requirePublished: true,
       });
       if (!knowledge.ok) {
@@ -453,6 +455,7 @@ Deno.serve(async (req) => {
       const policy = selectCanonicalGrounding(policyKb.documents, {
         policyOnly: true,
         requestText: policyQuery,
+        expectedTenantId: tenant.scope.singaporeTenantId,
         requirePublished: true,
       });
       if (!policy.ok) {
@@ -797,21 +800,20 @@ Deno.serve(async (req) => {
       ? "manual"
       : "conversation";
     let retrievalQuery = content.slice(0, 500);
-    if (contextMode === "conversation") {
-      const history = await loadAssistConversationHistory(
-        supabaseAdmin,
-        conversationId,
+    const history = await loadAssistConversationHistory(
+      supabaseAdmin,
+      conversationId,
+    );
+    if (history === null) {
+      return jsonRes(
+        {success:false,error:`${kbPrefix}_conversation_context_unavailable`},
+        500,
+        req,
       );
-      if (history === null) {
-        return jsonRes(
-          {
-            success: false,
-            error: `${kbPrefix}_conversation_context_unavailable`,
-          },
-          500,
-          req,
-        );
-      }
+    }
+    const followup = resolveFactualFollowup(content, history);
+    if (followup) retrievalQuery = `${followup.subject} ${content}`.slice(0, 500);
+    else if (contextMode === "conversation") {
       retrievalQuery = (servicePlan?.kb_query ||
         buildCanonicalAssistRetrievalQuery(
           [content, c3Memory?.current_goal, c3Memory?.current_topic].filter(
@@ -835,6 +837,10 @@ Deno.serve(async (req) => {
     }
     const groundingSelection = selectCanonicalGrounding(kb.documents, {
       requestText: retrievalQuery,
+      currentTurnText: followup ? `${followup.subject} ${content}` : content,
+      expectedSubject: followup?.subject,
+      requireSubjectSupport: !!followup || Boolean(factualSubject(content)),
+      expectedTenantId: tenant.scope.singaporeTenantId,
       requirePublished: true,
     });
     if (!groundingSelection.ok) {
@@ -982,6 +988,9 @@ Deno.serve(async (req) => {
     const policySelection = selectCanonicalGrounding(kb.documents, {
       policyOnly: true,
       requestText: retrievalQuery,
+      currentTurnText: followup ? `${followup.subject} ${content}` : content,
+      expectedSubject: followup?.subject,
+      expectedTenantId: tenant.scope.singaporeTenantId,
       requirePublished: true,
     });
     if (!policySelection.ok) {

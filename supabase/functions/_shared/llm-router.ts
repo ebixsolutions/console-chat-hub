@@ -383,6 +383,7 @@ interface ParsedGroundingBlock {
 }
 
 interface GroundingVerifierDecision {
+  question_resolution?: "supported" | "partial" | "unsupported";
   grounded: boolean;
   unsupported_claims: string[];
   evidence_chunk_ids: string[];
@@ -549,8 +550,11 @@ export function parseGroundingVerifierDecision(
   if (ids.some((id) => !allowed.has(id))) return null;
   if (parsed.grounded && unsupported.length > 0) return null;
   if (!parsed.grounded && unsupported.length === 0) return null;
+  const resolution = parsed.question_resolution;
+  if (resolution !== undefined && (typeof resolution !== "string" || !["supported", "partial", "unsupported"].includes(resolution))) return null;
 
   return {
+    ...(resolution !== undefined ? { question_resolution: resolution as "supported" | "partial" | "unsupported" } : {}),
     grounded: parsed.grounded,
     unsupported_claims: unsupported,
     evidence_chunk_ids: [...new Set(ids)],
@@ -622,7 +626,9 @@ async function verifyGroundedGeneration(
     "Politeness, conversational transitions, questions, and non-factual wording do not need evidence.",
     "Any unsupported external factual claim makes grounded=false. A faithful restatement of customer-provided/conversation facts is allowed when supported by C1.",
     "evidence_chunk_ids may contain supplied E* aliases and C1 when they materially support the answer. This field is audit metadata; grounded must still reflect the rules above.",
-    "Return JSON only with grounded, unsupported_claims, evidence_chunk_ids.",
+    call.factualEvidenceAvailable
+      ? "Also assess question_resolution separately from claim truth: supported means the answer addresses the requested subject and facet; partial means it gives useful applicable E* facts first and names only genuinely missing details; unsupported means irrelevant facts, an unhelpful no-data response, or failure to address the request. Never equate grounded claims with a resolved question. Return JSON with grounded, unsupported_claims, evidence_chunk_ids, question_resolution."
+      : "Return JSON only with grounded, unsupported_claims, evidence_chunk_ids.",
   ].join("\n");
   const verifierUser = [
     "Current request and resolved conversational referent (reference only, never external authority):",
@@ -660,8 +666,9 @@ async function verifyGroundedGeneration(
           grounded: { type: "BOOLEAN" },
           unsupported_claims: { type: "ARRAY", items: { type: "STRING" } },
           evidence_chunk_ids: { type: "ARRAY", items: { type: "STRING" } },
+          ...(call.factualEvidenceAvailable ? {question_resolution:{type:"STRING",enum:["supported","partial","unsupported"]}} : {}),
         },
-        required: ["grounded", "unsupported_claims", "evidence_chunk_ids"],
+        required: ["grounded", "unsupported_claims", "evidence_chunk_ids", ...(call.factualEvidenceAvailable ? ["question_resolution"] : [])],
       },
       (await trustedDispatchScope(serviceClient(),call.companyId,call.conversationId,call.legacyAuthority)) === "uat" ? UAT_THINKING : undefined,
     );
@@ -786,15 +793,19 @@ async function verifyGroundedGeneration(
         return { ok: false, reason: "verifier_invalid_output",failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"decode",request_id:call.operationId,http_status:res.status}) };
       }
 
+      const unresolvedQuestion = call.factualEvidenceAvailable &&
+        (!decision.question_resolution || decision.question_resolution === "unsupported" ||
+          !decision.evidence_chunk_ids.some(id => verifierEvidence.allowed_ids.includes(id)));
       await recordUsage(
         verifierCall,
         verifierAdapter.id,
         verifierAdapter.model,
-        decision.grounded ? "success" : "failed",
+        decision.grounded && !unresolvedQuestion ? "success" : "failed",
         res.status,
         verifierUsage,
-        decision.grounded ? undefined : "GROUNDING_UNSUPPORTED_CLAIMS",
+        unresolvedQuestion ? "GROUNDING_QUESTION_UNRESOLVED" : decision.grounded ? undefined : "GROUNDING_UNSUPPORTED_CLAIMS",
       );
+      if (unresolvedQuestion) return {ok:false,reason:"question_not_resolved_by_applicable_evidence"};
       if (!decision.grounded) {
         log(call.tag, {
           event: "grounding_semantic_rejected",

@@ -651,7 +651,7 @@ async function originalAggregationFixture(fault='none',inbox=false,responseFixtu
  const up=async(url,init)=>{
   if(String(url)===f.url && vertex){
    const request=JSON.parse(init.body);
-   if(request.systemInstruction?.parts?.some(p=>p.text?.includes('multilingual relevance judge'))){assert(request.contents.some(c=>c.parts.some(p=>p.text?.includes('四電一腦'))));return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({relevant:true,confidence:0.96})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});}
+   if(request.systemInstruction?.parts?.some(p=>p.text?.includes('multilingual relevance judge'))){assert(request.contents.some(c=>c.parts.some(p=>p.text?.includes('四電一腦'))));if(fault==='rerank-provider-error')return Response.json({error:{message:'isolated provider failure'}},{status:400});return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({relevant:true,confidence:0.96})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});}
    return vertex(url,init);
   }
   assert.equal(String(url),x.endpoint);assert.equal(init.method,'POST');assert.equal(new Headers(init.headers).get('x-api-key'),x.secret);assert(!new Headers(init.headers).has('authorization'));
@@ -683,8 +683,8 @@ async function originalAggregationFixture(fault='none',inbox=false,responseFixtu
   globalThis.fetch=up;const scope=await resolveTenantScope(x.c.id,undefined,x.c.company_id);
   return fetchKBRag({query,top_k:3},scope.scope,resolveKBEndpoint(),{uatContext:{conversationId:x.c.id,operationId:crypto.randomUUID()}});
  };
- const send=async(kind)=>{
-  const body=kind==='knowledge'?{query:'什麼是四電一腦？',top_k:3,conversation_id:x.c.id}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT: 四電一腦免費除舊服務須知':'CONVERSATION: 四電一腦免費除舊服務須知',context_mode:kind==='draft'?'draft':'conversation'};
+ const send=async(kind,query='什麼是四電一腦？')=>{
+  const body=kind==='knowledge'?{query,top_k:3,conversation_id:x.c.id}:['helper','manual-policy'].includes(kind)?{tool_type:kind==='helper'?'knowledge_helper':'check_policy',conversation_id:x.c.id,content:query,context_mode:'manual'}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT: 四電一腦免費除舊服務須知':'CONVERSATION: 四電一腦免費除舊服務須知',context_mode:kind==='draft'?'draft':'conversation'};
   const r=await(kind==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};
  };
  return {...x,binding,up,search,send,posts:()=>posts,queries};
@@ -738,6 +738,18 @@ test('subject in a discarded chunk cannot authorize the unrelated surviving gene
   d.llm_context.full_content_evidence.push(other);d.chunks.push({...c,...other,chunk_type:'full_content',status:'unknown'});
   const g=selectCanonicalGrounding(r.documents,{requestText:'香港四電一腦回收計劃係點運作？',semanticFactDescriptions:['how it works'],expectedTenantId:'34',minScore:0.45});
   assert.equal(g.document,null,JSON.stringify(g));
+ }finally{globalThis.fetch=realFetch;}
+});
+
+test('source quote is not an alias for an unsupported subject qualifier',async()=>{
+ const sample=JSON.parse(JSON.stringify(directorOriginalRag).replaceAll('四電一腦','Harbor Care'));sample.selected_documents[0].evidence[0].content='"Harbor Care" provides inspection and collection.';
+ const x=await originalAggregationFixture('none',false,sample);try{const r=await x.search();assert.equal(selectCanonicalGrounding(r.documents,{requestText:'How does Harbor Care Premium work?',semanticFactDescriptions:['how it works'],expectedTenantId:'34'}).document,null);assert(selectCanonicalGrounding(r.documents,{requestText:'How does Harbor Care work?',semanticFactDescriptions:['how it works'],expectedTenantId:'34'}).document);}finally{globalThis.fetch=realFetch;}
+});
+
+test('unknown metadata without authenticated service proof cannot be promoted to current',async()=>{
+ const x=await originalAggregationFixture();try{const r=await x.search(),forged=structuredClone(r.documents);forged[0].authority.publication_state='published';forged[0].authority.currentness='unknown';for(const c of forged[0].chunks)c.status='published';
+  const selected=selectCanonicalGrounding(forged,{requestText:'什麼是四電一腦？',expectedTenantId:'34'});assert.equal(selected.document,null,JSON.stringify(selected));
+  const genuine=selectCanonicalGrounding(r.documents,{requestText:'什麼是四電一腦？',expectedTenantId:'34'});assert(genuine.document);assert.equal(genuine.authority_decision.provenance.currentness,'unknown');
  }finally{globalThis.fetch=realFetch;}
 });
 for(const fault of ['none','no-match','401','403','timeout','invalid-json','foreign-response','foreign-document','foreign-chunk','draft','active-document','staging-chunk','foreign-meta','superseded','version-conflict','content-hash-conflict','citation-conflict','chunk-conflict','revoke','grant-absent','old-risk','human-control','foreign-actor'])test('original unmodified aggregation complete adapter: '+fault,async()=>{
@@ -827,6 +839,30 @@ function withSummaryOnlyCandidate(sample=directorOriginalRag) {
 }
 test('authenticated legacy response with summary-only candidate preserves other full-content evidence',async()=>{
  const data=withSummaryOnlyCandidate(),x=await originalAggregationFixture('none',false,data);try{const r=await x.search();assert(r.success,JSON.stringify(r));assert.equal(r.documents.length,2);assert.equal(r.documents[0].llm_context.full_content_evidence.length,0);const g=selectCanonicalGrounding(r.documents,{requestText:'什麼是四電一腦？',expectedTenantId:'34',requiresCurrentKb:true});assert.equal(g.document?.document_id,directorOriginalRag.selected_documents[0].document_id);assert.equal(g.authority_decision.provenance.currentness,'unknown');assert.equal(x.posts(),1);}finally{globalThis.fetch=realFetch;}
+});
+
+test('complete Inbox search never displays a summary-only candidate as answer evidence',async()=>{
+ const sample=structuredClone(directorOriginalRag);sample.selected_documents[0].evidence=[];
+ const x=await originalAggregationFixture('none',true,sample);try{const r=await x.send('knowledge');assert.equal(r.status,200);assert.equal(r.data.results.length,0);assert.equal(r.data.selected_document_id,null);}finally{globalThis.fetch=realFetch;}
+});
+test('complete Inbox mixed candidates retain only full-content document/chunk lineage',async()=>{
+ const x=await originalAggregationFixture('none',true,withSummaryOnlyCandidate());try{
+  const r=await x.send('knowledge');assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.selected_document_id,directorOriginalRag.selected_documents[0].document_id);
+  assert(r.data.results.length);for(const c of r.data.results){assert.equal(c.chunk_type,'full_content');assert.equal(c.chunk_id,'2ff14f99973c4f2eb1caa5454310f8ee');assert.equal(c.document_id,r.data.selected_document_id);assert(c.score>=0.75);}
+ }finally{globalThis.fetch=realFetch;}
+});
+test('complete Inbox rerank technical failure remains a real failure through the frontend decoder',async()=>{
+ const x=await originalAggregationFixture('rerank-provider-error',true);try{
+  const r=await x.send('knowledge','How can I arrange a removal service?');assert.equal(r.status,502,JSON.stringify(r));assert.equal(r.data.failure.code,'LLM_NON_2XX');assert.equal(r.data.diagnostic_code,'rerank_llm_non_2xx');
+  assert.equal(await knowledgeFailureState(null,{context:Response.json(r.data,{status:r.status})}),'service_failure');assert(!r.data.results);
+ }finally{globalThis.fetch=realFetch;}
+});
+test('actual Agent Assist policy handler resolves manual pronoun using source-bound message IDs and fresh KB',async()=>{
+ const x=await originalAggregationFixture('none',true);try{
+  const id=crypto.randomUUID();f.rows.messages=[{id:crypto.randomUUID(),conversation_id:x.c.id,role:'assistant',content:'「四電一腦」包括受管制電器。',metadata:{source_message_id:id,citations:[{document_id:directorOriginalRag.selected_documents[0].document_id,label:'「四電一腦」生產者責任計劃'}],citation_lineage:{selected_document_id:directorOriginalRag.selected_documents[0].document_id,evidence_chunk_ids:['2ff14f99973c4f2eb1caa5454310f8ee']}}},{id,conversation_id:x.c.id,role:'visitor',content:'四電一腦係咩？'}];
+  for(const row of f.rows.messages)row.is_recalled=false;
+  const r=await x.send('manual-policy','咁佢包括邊幾類電器？');assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.selected_document_id,directorOriginalRag.selected_documents[0].document_id,JSON.stringify(r));assert(x.queries.some(q=>q.includes('四電一腦')));
+ }finally{globalThis.fetch=realFetch;}
 });
 
 for(const [name,mutate,valid] of [

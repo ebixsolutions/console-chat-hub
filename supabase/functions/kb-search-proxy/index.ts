@@ -1,4 +1,6 @@
-import { safeExecutionCode, executionFailure } from "../_shared/execution-failure.ts";
+import { safeExecutionCode, executionFailure, type ExecutionFailure } from "../_shared/execution-failure.ts";
+import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
+import { factualSubject } from "../_shared/conversation-semantic-contract.ts";
 import { kbErrorFamily } from "../_shared/kb-error-contract.ts";
 import { authenticatedInboxAuthority, legacyPreactivationAuthority } from "../_shared/uat-execution-contract.ts";
 import { uatMap } from "../_shared/uat-execution-contract.ts";
@@ -103,6 +105,7 @@ function lexicalSupport(query: string, evidence: string): number {
 type MembershipRow = { company_id: string; role: string };
 type VisitorTurn = { content: string; created_at: string | null };
 type RankedDocument = {
+  failure?: ExecutionFailure;
   document: KBDocumentCandidate;
   results: Array<Record<string, unknown>>;
   method: string;
@@ -305,7 +308,8 @@ async function rerankForDisplay(params: {
   citations: Array<Record<string, unknown>>;
   scope: KBResolvedScope;
   conversationId: string | null;
-}): Promise<{ results: Array<Record<string, unknown>>; method: string; confidence: number | null }> {
+  fullEvidence: string;
+}): Promise<{ results: Array<Record<string, unknown>>; method: string; confidence: number | null; failure?:ExecutionFailure }> {
   const { currentRequest, retrievalQuery, citations, scope, conversationId } = params;
   if (citations.length === 0) return { results: [], method: "no_hit", confidence: null };
 
@@ -313,10 +317,7 @@ async function rerankForDisplay(params: {
     ...citations.map((c) => Number(c.score ?? 0)).filter(Number.isFinite),
     0,
   );
-  const evidence = citations
-    .map((c) => `${String(c.display_label ?? "")}\n${String(c.content ?? "")}`)
-    .join("\n---\n")
-    .slice(0, 5000);
+  const evidence = params.fullEvidence.slice(0, 5000);
   const lexical = lexicalSupport(currentRequest, evidence);
 
   if (lexical >= DIRECT_LEXICAL_FLOOR) {
@@ -363,18 +364,19 @@ async function rerankForDisplay(params: {
       results: [],
       method: classifyRerankFailure(llm.code, llm.usage.output_tokens),
       confidence: null,
+      failure: llm.failure ?? executionFailure(llm.code),
     };
   }
 
   const parsed = parseJsonObject(llm.text);
   if (!parsed || typeof parsed.relevant !== "boolean") {
-    return { results: [], method: "rerank_schema_invalid", confidence: null };
+    return { results: [], method: "rerank_schema_invalid", confidence: null, failure:executionFailure("LLM_INVALID_OUTPUT") };
   }
   const confidence = typeof parsed.confidence === "number"
     ? parsed.confidence
     : Number.NaN;
   if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
-    return { results: [], method: "rerank_schema_invalid", confidence: null };
+    return { results: [], method: "rerank_schema_invalid", confidence: null, failure:executionFailure("LLM_INVALID_OUTPUT") };
   }
   if (parsed.relevant !== true || confidence < LLM_RELEVANCE_FLOOR) {
     return { results: [], method: "llm_rejected", confidence };
@@ -405,10 +407,29 @@ async function rankDocumentCandidates(params: {
     if (document.citations.some((c) => c.document_id !== document.document_id)) {
       throw new Error("KB_DOCUMENT_EVIDENCE_MISMATCH");
     }
+    // Orientation summaries remain candidates, never displayed answer authority.
+    // Relevance is still adjudicated by the existing bounded ranker and 0.75 UI
+    // threshold; authority/currentness and full-content lineage come first.
+    const selected = selectCanonicalGrounding([document], {
+      requestText: params.currentRequest,
+      currentTurnText: params.currentRequest,
+      expectedTenantId: params.scope.singaporeTenantId,
+      minScore: 0,
+      requireSubjectSupport: Boolean(factualSubject(params.currentRequest)),
+      deferRelevanceToCaller: true,
+    });
+    if (!selected.ok) throw new Error("KB_DOCUMENT_EVIDENCE_MISMATCH");
+    if (!selected.document || !selected.evidence.length) {
+      evaluated.push({document,results:[],method:"no_full_content_authority",confidence:null,displayScore:0,retrievalScore:document.document_score});
+      continue;
+    }
+    const chunkIds = new Set(selected.evidence.map(e => e.chunk_id));
+    const citations = document.citations.filter(c => c.chunk_type === "full_content" && typeof c.chunk_id === "string" && c.chunk_id.length > 0 && chunkIds.has(c.chunk_id));
     const ranked = await rerankForDisplay({
       currentRequest: params.currentRequest,
       retrievalQuery: params.retrievalQuery,
-      citations: document.citations as unknown as Array<Record<string, unknown>>,
+      citations: citations as unknown as Array<Record<string, unknown>>,
+      fullEvidence: selected.evidence.map(e => e.content).join("\n\n"),
       scope: params.scope,
       conversationId: params.conversationId,
     });
@@ -425,6 +446,7 @@ async function rankDocumentCandidates(params: {
       results: ranked.results,
       method: ranked.method,
       confidence: ranked.confidence,
+      ...(ranked.failure ? {failure:ranked.failure} : {}),
       displayScore,
       retrievalScore,
     });
@@ -603,6 +625,12 @@ Deno.serve(async (req) => {
       conversationId,
     });
     const winner = ranked.winner;
+    const failed = ranked.evaluated.find(r => r.failure);
+    if (!winner && failed?.failure) {
+      const body={success:false,error:"kb_rerank_failed",failure:failed.failure,diagnostic_code:failed.method};
+      const family=kbErrorFamily(body);
+      return jsonResponse(body,family==="denied" ? 403 : family==="not_configured" ? 503 : 502,req);
+    }
     const winnerDocumentId = winner?.document.document_id ?? null;
 
     const policyEvidence = winner
