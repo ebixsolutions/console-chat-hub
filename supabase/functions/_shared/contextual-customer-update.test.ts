@@ -955,6 +955,9 @@ Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB an
   const kbContent = "工作表：商品設定_20260813 162932 ID: 7944 狀態: 開啟 商品型號: CW-SUL70BA 商品圖片: 39 成本: 3750 銷售價: 5680 特價: 4038 匹數 (多聯分體式): 29 品牌: PANASONIC 樂聲牌 附加項目: 否 新增日期: 46247 標籤: 32 描述: PANASONIC 樂聲 CW-SUL70BA 3/4匹Inverter LITE變頻式淨冷窗口機，採用香港專利左出風設計、R32製冷劑及四合一抗菌過濾網，製冷能力7,400BTU/h，設左右自動送風、睡眠模式及獨立抽濕，獲香港1級能源標籤，提供3年全機及5年壓縮機保用。 功能: 變頻 淨冷 匹數: 3/4匹 氣體: 36 風數: 42";
   const kbDoc: KBDocumentCandidate = {
     document_id: "fixture-cw", title: "PANASONIC 樂聲牌 CW-SUL70BA", source_type: "Product", document_score: 0.99,
+    // This positive fixture represents an explicitly current tenant-owned
+    // source. Published chunk status alone does not establish currentness.
+    authority: { tenant_id: "34", publication_state: "published", currentness: "current", entity_ids: [], regions: ["hong_kong"], language: "zh-TW", version: null, version_rank: null, updated_at: null, source_priority: null, claims: [] },
     chunks: [{ document_id: "fixture-cw", chunk_id: "fixture-chunk", title: "CW-SUL70BA", content: kbContent, score: 0.99, chunk_type: "full_content", source_type: "Product", status: "published" }],
     citations: [], meta: { document_score: 0.99, highest_chunk_score: 0.99, second_highest_chunk_score: 0, returned_summary_count: 0, returned_full_content_count: 1, dropped_without_document_id: 0, dropped_without_content: 0 },
     llm_context: { selected_document_id: "fixture-cw", orientation_summary: null, full_content_evidence: [{ document_id: "fixture-cw", chunk_id: "fixture-chunk", content: kbContent, score: 0.99, source_type: "Product" }] },
@@ -967,6 +970,14 @@ Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB an
     return resolveCanonicalKbDirectAnswer({ request, selection, language });
   };
   assert(t9Result.kind === "resolved", "T9 referent missing");
+  for (const [name, authority] of [
+    ["missing_authority", undefined],
+    ["unknown_currentness", { ...kbDoc.authority!, currentness: "unknown" as const }],
+    ["historical", { ...kbDoc.authority!, currentness: "historical" as const }],
+    ["wrong_tenant", { ...kbDoc.authority!, tenant_id: "other-tenant" }],
+  ] as const) {
+    assert(factualAnswer(t9Result.grounded_question, t9Result.intent, t9Result.resolved_topic, "zh-TW", [{ ...kbDoc, authority }]) === null, `T9_${name}_must_not_grant_current_authority`);
+  }
   const t9Answer = factualAnswer(t9Result.grounded_question, t9Result.intent, t9Result.resolved_topic, "zh-TW", [kbDoc]);
   assert(t9Answer?.reply.includes("CW-SUL70BA") && t9Answer.reply.includes("3/4匹"), JSON.stringify(t9Answer));
   const t13 = "如果用返之前每部 HK$5,680 嗰個歷史價，兩部再加 HK$1,490，合共幾多？";

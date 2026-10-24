@@ -1173,7 +1173,8 @@
     "supabase/functions/_shared/kb-error-contract.ts": "034d6ef79f9b2eb0cd910481f0951b95365ed02397ffb6899b9a93c3d87bc67e",
     "supabase/functions/_shared/service-semantic-routing.ts": "4d3dc9cffcda7f09c751511d9d851c96f6d8388bc162eaa676e096f38be26724",
     "tests/edge/singapore-aggregation-producer-contract.py": "d75a470e9bb531476f6c1a36c602fdfcaf97d1e7ad5b4e878aed366a9ced1e61",
-    "tests/edge/task2-2-output-grounding-router.test.ts": "50313a0707e25a0a798a3ee98756c353798dce54ac1abc4644968fa8a8ec4819"
+    "tests/edge/task2-2-output-grounding-router.test.ts": "50313a0707e25a0a798a3ee98756c353798dce54ac1abc4644968fa8a8ec4819",
+    "supabase/functions/_shared/contextual-customer-update.test.ts": "bff57ce93a79ab810fb98da994dffa81ff195172cd6acb6197d79ec6fe618306"
   },
   "live_execution_deployment_authorized": false,
   "authorized_widget_hosted_build_sha256": {
