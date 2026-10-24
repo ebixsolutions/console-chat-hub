@@ -57,6 +57,8 @@ export function AgentToolPanel({
   onClearSelection,
   onUseDraft,
   autoLoadHandoffContext,
+  toolScopeKey = "",
+  contextRevisionKey = "",
 }: {
   conversationId: string;
   convStatus: string;
@@ -65,6 +67,8 @@ export function AgentToolPanel({
   onClearSelection: () => void;
   onUseDraft: (t: string) => void;
   autoLoadHandoffContext?: boolean;
+  toolScopeKey?: string;
+  contextRevisionKey?: string;
 }) {
   const lang = useConsoleLang();
   const tc = (k: TCK) => TOOL_COPY[k]?.[lang] ?? TOOL_COPY[k]?.en ?? k;
@@ -76,12 +80,18 @@ export function AgentToolPanel({
   const [handoffContext, setHandoffContext] = useState<Record<string, any> | null>(null);
   const [handoffLoading, setHandoffLoading] = useState(false);
   const toolReqIdRef = useRef(0);
+  const toolPending=useRef(false);
+  const handoffReqIdRef = useRef(0);
+  const handoffPendingRef = useRef(false);
+  const handoffSnapshot=useRef<{key:string;draft:string}|null>(null);
 
   // Conversation changes must invalidate every visible/pending tool result.
   // This prevents a slow response from conversation A being rendered after
   // the operator has already switched to conversation B.
   useEffect(() => {
     toolReqIdRef.current += 1;
+    handoffReqIdRef.current += 1;
+    handoffPendingRef.current = false;
     setCs("custom");
     setCi("");
     setTr(null);
@@ -93,7 +103,7 @@ export function AgentToolPanel({
   // onClearSelection is intentionally excluded: conversationId is the
   // authoritative context boundary and parent callback identity may change.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId]);
+  }, [conversationId,toolScopeKey]);
 
   // AUTO-HEIGHT: textarea ref + resize logic
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -110,16 +120,28 @@ export function AgentToolPanel({
     if (cs === "custom") adjustHeight();
   }, [ci, cs, adjustHeight]);
 
-  useEffect(() => {
-    if (!autoLoadHandoffContext || convStatus === "resolved") return;
-    let cancelled = false;
+  async function prepareHandoffContext() {
+    if (!autoLoadHandoffContext || convStatus === "resolved" || handoffPendingRef.current) return;
+    const key=JSON.stringify([latestInputs.current.scope,latestInputs.current.revision]);
+    handoffSnapshot.current={key,draft:draftText};
+    const valid=()=>handoffReqIdRef.current===reqId && handoffSnapshot.current?.key===JSON.stringify([latestInputs.current.scope,latestInputs.current.revision]);
+    const reqId = ++handoffReqIdRef.current;
+    handoffPendingRef.current = true;
     setHandoffLoading(true);
-    void supabase.functions.invoke("agent-assist", { body: { tool_type: "handoff_context", conversation_id: conversationId, content: "handoff" } }).then(({ data, error }) => {
-      if (cancelled) return;
+    setTe("");
+    try {
+      const { data, error } = await supabase.functions.invoke("agent-assist", {
+        body: { tool_type: "handoff_context", conversation_id: conversationId, content: "handoff" },
+      });
+      if (!valid()) return;
       if (!error && data?.success) setHandoffContext(data as Record<string, any>);
-    }).finally(() => { if (!cancelled) setHandoffLoading(false); });
-    return () => { cancelled = true; };
-  }, [autoLoadHandoffContext, conversationId, convStatus]);
+      else setTe(lang === "zh" ? "未能準備交接內容，請重試。" : "Could not prepare handoff context. Please retry.");
+    } catch {
+      if (valid()) setTe(lang === "zh" ? "未能準備交接內容，請重試。" : "Could not prepare handoff context. Please retry.");
+    } finally {
+      if (valid()) { handoffPendingRef.current = false; setHandoffLoading(false); }
+    }
+  }
 
   const gc = (): string => {
     if (cs === "draft") return draftText.trim();
@@ -129,19 +151,36 @@ export function AgentToolPanel({
   const ac = gc();
   const hc = ac.length > 0 && ac.length <= AGENT_ASSIST_MAX_CONTENT;
   const tooLong = ac.length > AGENT_ASSIST_MAX_CONTENT;
+  const latestInputs = useRef({scope:[] as unknown[],language:lang,mode:cs,content:ac,selectedId:selectedMessage?.id,revision:contextRevisionKey,draft:draftText});
+  latestInputs.current={scope:[conversationId,convStatus,toolScopeKey],language:lang,mode:cs,content:ac,selectedId:cs==="selected"?selectedMessage?.id:undefined,revision:contextRevisionKey,draft:draftText};
+  const resultSnapshot=useRef<{key:string;type:string;draft:string}|null>(null);
+  const keyFor=(type:string,v=latestInputs.current)=>{return JSON.stringify([v.scope,type,type==="translate"?v.language:null,v.mode,v.content,v.selectedId,["suggest_reply","knowledge_helper","check_policy"].includes(type)?v.revision:null]);};
+  const renderedInputs=latestInputs.current;
+  const displayedResultSnapshot=resultSnapshot.current;
+  const validResult=()=>!!resultSnapshot.current && resultSnapshot.current.key===keyFor(resultSnapshot.current.type);
+  const useResult=(content:string)=>{if(resultSnapshot.current===displayedResultSnapshot && validResult() && resultSnapshot.current?.draft===latestInputs.current.draft && convStatus!=="resolved")onUseDraft(content);};
+  useEffect(()=>{
+    if(resultSnapshot.current && !validResult()){toolReqIdRef.current++;resultSnapshot.current=null;toolPending.current=false;setTr(null);setTl(false);setTe("");}
+  },[conversationId,convStatus,toolScopeKey,lang,cs,ac,selectedMessage?.id,contextRevisionKey]);
+
+  useEffect(()=>{handoffReqIdRef.current++;handoffPendingRef.current=false;handoffSnapshot.current=null;setHandoffContext(null);setHandoffLoading(false);},[toolScopeKey,convStatus,contextRevisionKey]);
+  useEffect(()=>()=>{toolReqIdRef.current++;handoffReqIdRef.current++;toolPending.current=false;handoffPendingRef.current=false;resultSnapshot.current=null;handoffSnapshot.current=null;},[]);
   const isResolved = convStatus === "resolved";
 
   async function runTool(tt: string, extra?: Record<string, unknown>) {
-    if (!hc || isResolved) return;
+    if (!hc || isResolved || toolPending.current || keyFor(tt,renderedInputs)!==keyFor(tt)) return;
+    toolPending.current=true;
+    const key=keyFor(tt);resultSnapshot.current={key,type:tt,draft:draftText};
+    const valid=()=>toolReqIdRef.current===reqId && key===keyFor(tt);
     const reqId = ++toolReqIdRef.current;
     setTl(true);
     setTe("");
     setTr(null);
     try {
       const { data, error } = await supabase.functions.invoke("agent-assist", {
-        body: { tool_type: tt, conversation_id: conversationId, content: ac, ...((["suggest_reply", "knowledge_helper", "check_policy"].includes(tt)) ? { context_mode: cs === "custom" ? "manual" : "conversation" } : {}), ...extra },
+        body: { tool_type: tt, conversation_id: conversationId, content: ac, ...((["suggest_reply", "knowledge_helper", "check_policy"].includes(tt)) ? { context_mode: cs === "custom" ? "manual" : cs === "draft" ? "draft" : "conversation" } : {}), ...extra },
       });
-      if (toolReqIdRef.current !== reqId) return;
+      if (!valid()) return;
       if (error || !data?.success) {
         if (data?.result?.status === "insufficient_evidence") {
           setTr({ type: tt, data: data.result });
@@ -158,10 +197,10 @@ export function AgentToolPanel({
         setTr({ type: tt, data: data.result });
       }
     } catch {
-      if (toolReqIdRef.current !== reqId) return;
+      if (!valid()) return;
       setTe(tc("netError"));
     }
-    if (toolReqIdRef.current === reqId) setTl(false);
+    if (valid()) {toolPending.current=false;setTl(false); }
   }
 
   const dis = tl || !hc || isResolved;
@@ -178,6 +217,7 @@ export function AgentToolPanel({
     { k: "check_policy", l: tc("policyCheck"), i: "🛡️", a: () => runTool("check_policy") },
   ];
 
+  const visibleResult=validResult()?tr:null;
   return (
     <div
       style={{
@@ -345,6 +385,9 @@ export function AgentToolPanel({
         </>
       )}
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px", fontSize: 11 }}>
+        {autoLoadHandoffContext && <button type="button" disabled={handoffLoading || convStatus === "resolved"} onClick={() => void prepareHandoffContext()}>
+          {lang === "zh" ? "AI 準備交接內容" : "Prepare handoff context with AI"}
+        </button>}
         {autoLoadHandoffContext && (handoffLoading || handoffContext) && (
           <div style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, marginBottom: 10, background: "#fafafa" }}>
             <div style={{ fontWeight: 700, marginBottom: 6 }}>Warm Handoff Context / 真人接手摘要</div>
@@ -362,12 +405,12 @@ export function AgentToolPanel({
             <div style={{ marginTop: 8, fontWeight: 600 }}>Relevant Policy</div>
             {(handoffContext?.policy?.evidence || []).length ? ((handoffContext?.policy?.evidence ?? []) as any[]).map((x: any, i: number) => <div key={`hp-${i}`} style={{ marginTop: 4, padding: 6, background: "#fff", borderRadius: 5 }}>{x.content}</div>) : <div style={{ color: "#888" }}>No matching verified policy evidence.</div>}
             <div style={{ marginTop: 8, fontWeight: 600 }}>Suggested Replies</div>
-            {(handoffContext?.suggested_replies || []).length ? ((handoffContext?.suggested_replies ?? []) as any[]).map((x: any, i: number) => <div key={`hs-${i}`} style={{ marginTop: 5, padding: 6, background: "#fff", borderRadius: 5 }}><div>{x.content}</div><button onClick={() => onUseDraft(String(x.content))} style={{ marginTop: 4, fontSize: 10, padding: "3px 7px" }}>Use in Draft</button></div>) : <div style={{ color: "#888" }}>No grounded draft available.</div>}
+            {(handoffContext?.suggested_replies || []).length ? ((handoffContext?.suggested_replies ?? []) as any[]).map((x: any, i: number) => <div key={`hs-${i}`} style={{ marginTop: 5, padding: 6, background: "#fff", borderRadius: 5 }}><div>{x.content}</div><button onClick={() => {if(handoffSnapshot.current?.key===JSON.stringify([latestInputs.current.scope,latestInputs.current.revision]) && handoffSnapshot.current?.draft===latestInputs.current.draft && convStatus!=="resolved")onUseDraft(String(x.content));}} style={{ marginTop: 4, fontSize: 10, padding: "3px 7px" }}>Use in Draft</button></div>) : <div style={{ color: "#888" }}>No grounded draft available.</div>}
           </div>
         )}
         {tl && <div style={{ textAlign: "center", color: "#888", padding: 14 }}>{tc("processing")}</div>}
         {te && <div style={{ color: "#ef4444", padding: "4px 0" }}>{te}</div>}
-        {tr?.type === "translate" && (
+        {visibleResult?.type === "translate" && (
           <div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: "#2563eb", marginBottom: 4 }}>
               {tc("transResult")}
@@ -381,10 +424,10 @@ export function AgentToolPanel({
                 lineHeight: 1.5,
               }}
             >
-              {String(tr.data.translated_text)}
+              {String(visibleResult.data.translated_text)}
             </div>
             <button
-              onClick={() => onUseDraft(String(tr.data.translated_text))}
+              onClick={() => useResult(String(visibleResult.data.translated_text))}
               style={{
                 marginTop: 4,
                 fontSize: 10.5,
@@ -401,7 +444,7 @@ export function AgentToolPanel({
             </button>
           </div>
         )}
-        {tr?.type === "grammar" && (
+        {visibleResult?.type === "grammar" && (
           <div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: "#16a34a", marginBottom: 4 }}>{tc("gramResult")}</div>
             <div
@@ -413,13 +456,13 @@ export function AgentToolPanel({
                 lineHeight: 1.5,
               }}
             >
-              {String(tr.data.corrected_text)}
+              {String(visibleResult.data.corrected_text)}
             </div>
             <div style={{ fontSize: 10, color: "#888", marginTop: 3 }}>
-              {String(tr.data.summary)} · {String(tr.data.tone_assessment)}
+              {String(visibleResult.data.summary)} · {String(visibleResult.data.tone_assessment)}
             </div>
             <button
-              onClick={() => onUseDraft(String(tr.data.corrected_text))}
+              onClick={() => useResult(String(visibleResult.data.corrected_text))}
               style={{
                 marginTop: 4,
                 fontSize: 10.5,
@@ -436,42 +479,42 @@ export function AgentToolPanel({
             </button>
           </div>
         )}
-        {tr?.type === "suggest_reply" && (
+        {visibleResult?.type === "suggest_reply" && (
           <div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: "#7c3aed", marginBottom: 4 }}>{tc("suggestResult")}</div>
-            {Array.isArray(tr.data.suggestions) && (tr.data.suggestions as Array<{ content: string; tone_label: string }>).map((s, i) => (
+            {Array.isArray(visibleResult.data.suggestions) && (visibleResult.data.suggestions as Array<{ content: string; tone_label: string }>).map((s, i) => (
               <div key={i} style={{ background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: 5, padding: 6, marginBottom: 5 }}>
                 <div style={{ fontSize: 9.5, fontWeight: 700, color: "#7c3aed", marginBottom: 3 }}>{s.tone_label}</div>
                 <div style={{ fontSize: 10.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{s.content}</div>
-                <button onClick={() => onUseDraft(s.content)} style={{ marginTop: 4, fontSize: 10.5, padding: "3px 9px", borderRadius: 4, border: "1px solid #7c3aed", background: "#faf5ff", color: "#7c3aed", cursor: "pointer", fontWeight: 600 }}>{tc("useInDraft")}</button>
+                <button onClick={() => useResult(s.content)} style={{ marginTop: 4, fontSize: 10.5, padding: "3px 9px", borderRadius: 4, border: "1px solid #7c3aed", background: "#faf5ff", color: "#7c3aed", cursor: "pointer", fontWeight: 600 }}>{tc("useInDraft")}</button>
               </div>
             ))}
           </div>
         )}
-        {tr?.type === "knowledge_helper" && (
+        {visibleResult?.type === "knowledge_helper" && (
           <div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: "#7c3aed", marginBottom: 4 }}>{tc("knowledgeResult")}</div>
-            {String(tr.data.orientation_summary ?? "") && (
+            {String(visibleResult.data.orientation_summary ?? "") && (
               <div style={{ background: "#faf5ff", border: "1px solid #e9d5ff", borderRadius: 5, padding: 6, marginBottom: 5, lineHeight: 1.5 }}>
-                {String(tr.data.orientation_summary)}
+                {String(visibleResult.data.orientation_summary)}
               </div>
             )}
-            {Array.isArray(tr.data.evidence) && (tr.data.evidence as Array<{ label: string; source_type: string; chunk_type: string; content: string }>).map((e, i) => (
+            {Array.isArray(visibleResult.data.evidence) && (visibleResult.data.evidence as Array<{ label: string; source_type: string; chunk_type: string; content: string }>).map((e, i) => (
               <div key={i} style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 5, padding: 6, marginBottom: 4 }}>
                 <div style={{ fontSize: 9.5, fontWeight: 700, color: "#64748b", marginBottom: 3 }}>{e.label} · {e.source_type} · {e.chunk_type}</div>
                 <div style={{ fontSize: 10.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{e.content}</div>
               </div>
             ))}
-            {String(tr.data.status ?? "") === "insufficient_evidence" && <div style={{ color: "#92400e" }}>{tc("kbInsufficientEvidence")}</div>}
+            {String(visibleResult.data.status ?? "") === "insufficient_evidence" && <div style={{ color: "#92400e" }}>{tc("kbInsufficientEvidence")}</div>}
           </div>
         )}
-        {tr?.type === "check_policy" && (
+        {visibleResult?.type === "check_policy" && (
           <div>
             <div style={{ fontSize: 10.5, fontWeight: 600, color: "#0f766e", marginBottom: 4 }}>{tc("policyResult")}</div>
             <div style={{ background: "#f0fdfa", border: "1px solid #99f6e4", borderRadius: 5, padding: 6, lineHeight: 1.5 }}>
-              <strong>{String(tr.data.status ?? "unknown")}</strong> — {String(tr.data.summary ?? "")}
+              <strong>{String(visibleResult.data.status ?? "unknown")}</strong> — {String(visibleResult.data.summary ?? "")}
             </div>
-            {Array.isArray(tr.data.issues) && (tr.data.issues as Array<{ excerpt: string; policy_label: string; severity: string }>).map((i, n) => (
+            {Array.isArray(visibleResult.data.issues) && (visibleResult.data.issues as Array<{ excerpt: string; policy_label: string; severity: string }>).map((i, n) => (
               <div key={n} style={{ marginTop: 4, background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 5, padding: 6 }}>
                 <div style={{ fontSize: 9.5, fontWeight: 700 }}>{i.severity} · {i.policy_label}</div>
                 <div style={{ fontSize: 10.5, marginTop: 2 }}>{i.excerpt}</div>

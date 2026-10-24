@@ -67,6 +67,18 @@ export interface AggregationAuthorityMetadata {
   claims: Array<{ key: string; value: string }>;
 }
 
+/** Runtime constructor shared by all KB adapters so authority metadata cannot drift by transport. */
+export function createAggregationAuthorityMetadata(
+  value: AggregationAuthorityMetadata,
+): AggregationAuthorityMetadata {
+  return {
+    ...value,
+    entity_ids: [...value.entity_ids],
+    regions: [...value.regions],
+    claims: value.claims.map((claim) => ({ ...claim })),
+  };
+}
+
 export interface AggregationDocumentCandidate {
   document_id: string;
   title: string;

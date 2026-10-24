@@ -1,0 +1,43 @@
+{
+  "mock_tests": {
+    "command": "node --test ops/b12-worker-once/executor.test.mjs",
+    "exit_code": 0,
+    "tests": 17,
+    "pass": 17,
+    "fail": 0,
+    "production_egress": "DENIED_BY_GLOBAL_FETCH_AND_INJECTED_MOCK_ONLY",
+    "real_credentials": false
+  },
+  "deno_check": {
+    "command": "npx --yes deno@2.5.0 check --no-lock --config b12-ops-validation/deno.json b12-ops-validation/index.mjs",
+    "exit_code": 0,
+    "same_runtime_file_bytes_verified": true,
+    "postgres_version": "3.4.5",
+    "local_resolution": "manual node_modules installed by npm in isolated directory; deployment none config remains unverified on platform"
+  },
+  "node_syntax_checks": {
+    "exit_code": 0
+  },
+  "prior_resolved_failures": [
+    "Deno initially used root app node_modules; corrected with explicit operations config.",
+    "Unsupported --check-js flag replaced with compilerOptions.checkJs.",
+    "Deno direct npm registry fetch connection refused; isolated npm install of SAME pinned version used for final check.",
+    "Five JS input inference diagnostics corrected with explicit JSDoc input type; final source check exit0."
+  ],
+  "live_readonly_snapshot": "PASS_ACTUAL_COMPLETE_CANONICAL_ROW_HASHES; no Worker HTTP",
+  "activation_objects_exist": false,
+  "protected_runtime_connectivity_permissions_dashboard_management_caller": "UNVERIFIED; activation dry-run required",
+  "authentication_metadata_writes_this_round": 0,
+  "worker_posts_this_round": 0,
+  "production_changes_this_round": 0,
+  "source_base_head": "42eee3e7b4f7e2960b90b9c71fe2e584cdf7f737",
+  "source_base_tree": "72a816d00ae908fdb76976c6e1196e701bc8ca1a",
+  "application_workflow_changes": [],
+  "commit_push": "NOT_RUN; push triggers branch-wide frozen CI; source-only artifacts delivered",
+  "original_checkpoint_library_id": "libfile_48c4fb77a19881919f2feee0aecd1207",
+  "docs": [
+    "https://supabase.com/docs/guides/functions/secrets",
+    "https://supabase.com/docs/guides/functions/connect-to-postgres",
+    "https://supabase.com/docs/guides/functions/quickstart-dashboard"
+  ]
+}

@@ -114,6 +114,7 @@ const COPY = {
   filter_completed: { en: "Completed", zh: "已完成" },
   error: { en: "Failed to load customer context", zh: "無法載入客戶上下文" },
   errorSub: { en: "Please try again later", zh: "請稍後再試" },
+  retry: { en: "Retry", zh: "重試" },
   loading: { en: "Loading...", zh: "載入中..." },
   liveDataFooter: { en: "Live data ·", zh: "即時資料 ·" },
   visitorProfiles: { en: "visitor profiles", zh: "位訪客檔案" },
@@ -311,6 +312,8 @@ function Customer360Content() {
   const t = (key: CopyKey) => COPY[key]?.[lang] ?? COPY[key]?.en ?? key;
 
   const [listStatus, setListStatus] = useState<"loading" | "success" | "error">("loading");
+  const [listRevision, setListRevision] = useState(0);
+  const [detailRevision, setDetailRevision] = useState(0);
   const [visitors, setVisitors] = useState<VisitorListRow[]>([]);
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -319,12 +322,13 @@ function Customer360Content() {
   const [followupFilter, setFollowupFilter] = useState<"all" | "pending" | "completed">("all");
 
   // ONE canonical local Customer context loader — shared with CRMPanel.
-  const ctx = useCustomerContext(selectedId);
+  const ctx = useCustomerContext(selectedId, detailRevision);
 
   // Tenant-scoped directory. Ownership is proved server-side from
   // conversations.company_id before any visitor_session row is returned.
   useEffect(() => {
     let cancelled = false;
+    setListStatus("loading");
     void (async () => {
       try {
         const { data, error } = await supabase.functions.invoke(
@@ -332,7 +336,7 @@ function Customer360Content() {
           { body: { mode: "directory" } },
         );
         if (cancelled) return;
-        if (error || !data?.success) {
+        if (error || !data?.success || !Array.isArray(data.visitors) || !data.visitors.every((v: VisitorListRow) => v && typeof v.id === "string")) {
           setListStatus("error");
           return;
         }
@@ -371,7 +375,7 @@ function Customer360Content() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [listRevision]);
 
   useEffect(() => {
     setActiveTab("profile");
@@ -454,6 +458,7 @@ function Customer360Content() {
         <AlertCircle size={32} style={{ color: "#ef4444" }} />
         <div style={{ fontSize: 15, fontWeight: 600, color: "#374151" }}>{t("error")}</div>
         <div style={{ fontSize: 12, color: "#9ca3af" }}>{t("errorSub")}</div>
+        <button className="rounded-md border bg-white px-3 py-2 text-sm" type="button" onClick={() => setListRevision(v => v + 1)}>{t("retry")}</button>
       </div>
     );
   }
@@ -773,7 +778,10 @@ function Customer360Content() {
                     <Loader2 size={20} className="animate-spin" style={{ color: "#94a3b8" }} />
                   </div>
                 ) : ctx.status === "error" ? (
-                  <div style={{ textAlign: "center", padding: 40, color: "#ef4444", fontSize: 13 }}>{t("error")}</div>
+                  <div style={{ textAlign: "center", padding: 40, color: "#ef4444", fontSize: 13 }}>
+                    {t("error")}
+                    <button className="ml-3 rounded-md border bg-white px-3 py-2 text-sm" type="button" onClick={() => setDetailRevision(v => v + 1)}>{t("retry")}</button>
+                  </div>
                 ) : ctx.status === "empty" ? (
                   <EmptyState text={t("noData")} />
                 ) : !data ? null : (

@@ -1,3 +1,5 @@
+import { previewActorClient } from "../_shared/widget-preview-authority.ts";
+import { ORDINARY_PREVIEW_CONTRACT } from "../_shared/widget-preview-control.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
@@ -28,6 +30,16 @@ Deno.serve(async (req) => {
 
     const originCheck = validateWidgetOrigin(req, channel.allowed_origins);
     if (!originCheck.ok) return json({ success: false, error: originCheck.error }, 403);
+
+    if (body.console_preview !== undefined) {
+      if (body.console_preview !== ORDINARY_PREVIEW_CONTRACT || typeof body.preview_request_id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.preview_request_id)) return json({success:false,error:"preview_contract_mismatch"},409);
+      const actor=await previewActorClient(req,createClient,Deno.env.get("SUPABASE_URL")!,Deno.env.get("SUPABASE_ANON_KEY")!);
+      if (!actor) return json({success:false,error:"preview_auth_required"},401);
+      const {data,error}=await actor.client.rpc("widget_control_preview_bootstrap",{p_channel_id:channel_id,p_request_id:body.preview_request_id});
+      if(error?.code==="42501") return json({success:false,error:"preview_actor_channel_origin_denied"},403);
+      if(error || data?.preview_contract!==ORDINARY_PREVIEW_CONTRACT) return json({success:false,error:"preview_safety_schema_or_bootstrap_unverified"},503);
+      return json({success:true,data});
+    }
 
     const sessionToken = crypto.randomUUID() + "." + crypto.randomUUID().replace(/-/g, "");
     const metadata = {

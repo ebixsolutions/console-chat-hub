@@ -2,6 +2,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { supabase } from "@/integrations/supabase/client";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { authorizeChannelConfigScope } from "@/integrations/supabase/channel-config-scope";
+import { withConfigSession } from "@/integrations/supabase/config-session-transport";
 import type { TablesUpdate } from "@/integrations/supabase/types";
 
 export interface LiveChannelConfigRow {
@@ -86,16 +88,10 @@ async function resolveCompanyScope(context: {
   if (companyErr) return { ok: false, error: "company_lookup_failed" };
   if (!company || company.is_active !== true) return { ok: false, error: "company_inactive" };
 
-  const valid = new Set<AppRole>(ROLE_PRECEDENCE);
-  const roles: AppRole[] = [
-    ...new Set<AppRole>(
-      (memberships ?? [])
-        .map((m: any) => String(m.role) as AppRole)
-        .filter((r: AppRole) => valid.has(r)),
-    ),
-  ];
-
-  return { ok: true, data: { companyId, roles } };
+  const authorization = authorizeChannelConfigScope(memberships ?? [], company, ROLE_PRECEDENCE);
+  return authorization.ok
+    ? { ok: true, data: { companyId: authorization.companyId, roles: authorization.roles } }
+    : { ok: false, error: authorization.error };
 }
 
 function requireRole(
@@ -594,20 +590,20 @@ export const updateFeedbackConfigFn = createServerFn({ method: "POST" })
 
 
 export const configService = {
-  listChannelConfigs: () => listChannelConfigsFn(),
+  listChannelConfigs: () => withConfigSession(supabase.auth, (headers) => listChannelConfigsFn({ headers })),
   bindChannelToCurrentCompany: (channelId: string) =>
-    bindChannelToCurrentCompanyFn({ data: { channel_id: channelId } }),
+    withConfigSession(supabase.auth, (headers) => bindChannelToCurrentCompanyFn({ data: { channel_id: channelId }, headers })),
   updateChannelConfig: (params: z.infer<typeof updateChannelInput>) =>
-    updateChannelConfigFn({ data: params }),
+    withConfigSession(supabase.auth, (headers) => updateChannelConfigFn({ data: params, headers })),
   getWidgetConfig: (channelId: string) =>
-    getWidgetConfigFn({ data: { channel_id: channelId } }),
+    withConfigSession(supabase.auth, (headers) => getWidgetConfigFn({ data: { channel_id: channelId }, headers })),
   updateWidgetConfig: (params: z.infer<typeof updateWidgetInput>) =>
-    updateWidgetConfigFn({ data: params }),
+    withConfigSession(supabase.auth, (headers) => updateWidgetConfigFn({ data: params, headers })),
   updateAgentProfile: (params: z.infer<typeof updateSelfProfileInput>) =>
-    updateAgentProfileFn({ data: params }),
-  getFeedbackConfig: () => getFeedbackConfigFn(),
+    withConfigSession(supabase.auth, (headers) => updateAgentProfileFn({ data: params, headers })),
+  getFeedbackConfig: () => withConfigSession(supabase.auth, (headers) => getFeedbackConfigFn({ headers })),
   updateFeedbackConfig: (params: z.infer<typeof updateFeedbackInput>) =>
-    updateFeedbackConfigFn({ data: params }),
+    withConfigSession(supabase.auth, (headers) => updateFeedbackConfigFn({ data: params, headers })),
 };
 
 const PREVIEW_ADMIN_EMAILS = new Set([
@@ -674,52 +670,58 @@ async function resolvePreviewAcceptanceRole(): Promise<AppRole | null> {
   return PREVIEW_ADMIN_EMAILS.has(email) ? "admin" : null;
 }
 
-async function getCurrentCompanyRoles(): Promise<AppRole[]> {
-  const { data: sessionData } = await supabase.auth.getSession();
+async function getCurrentCompanyRoles(): Promise<{ roles: AppRole[]; canonical: boolean }> {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) throw new Error("session_lookup_failed");
   const userId = sessionData.session?.user?.id;
-  if (!userId) return [];
+  if (!userId) return { roles: [], canonical: false };
 
+  // Read all own memberships so inactive or ambiguous canonical identity never
+  // falls through to the legacy frontend acceptance bridge.
   const { data: memberships, error } = await supabase
     .from("company_membership")
-    .select("company_id, role")
-    .eq("user_id", userId)
-    .eq("is_active", true);
-  if (error || !memberships?.length) return [];
+    .select("company_id, role, is_active")
+    .eq("user_id", userId);
+  if (error) throw new Error("company_membership_lookup_failed");
+  if (!memberships?.length) return { roles: [], canonical: false };
 
-  const companyIds = [...new Set(memberships.map((m) => String(m.company_id)))];
-  if (companyIds.length !== 1) return [];
+  const denied = { roles: [] as AppRole[], canonical: true };
+  const activeMemberships = memberships.filter((m) => m.is_active === true);
+  const companyIds = [...new Set(activeMemberships.map((m) => String(m.company_id)))];
+  if (companyIds.length !== 1) return denied;
 
   const { data: company, error: companyErr } = await supabase
     .from("company")
     .select("id, is_active")
     .eq("id", companyIds[0])
     .maybeSingle();
-  if (companyErr || !company || company.is_active !== true) return [];
+  if (companyErr) throw new Error("company_lookup_failed");
+  if (!company || company.is_active !== true) return denied;
 
   const valid = new Set<AppRole>(ROLE_PRECEDENCE);
-  return [
-    ...new Set(
-      memberships
-        .map((m) => String(m.role) as AppRole)
-        .filter((r): r is AppRole => valid.has(r)),
-    ),
-  ];
+  return {
+    canonical: true,
+    roles: [...new Set(activeMemberships.map((m) => String(m.role) as AppRole))]
+      .filter((r): r is AppRole => valid.has(r)),
+  };
 }
 
 export const authService = {
   getCurrentUserRole: async (): Promise<AppRole | null> => {
-    const roles = await getCurrentCompanyRoles();
+    const { roles, canonical } = await getCurrentCompanyRoles();
     for (const candidate of ROLE_PRECEDENCE) {
       if (roles.includes(candidate)) return candidate;
     }
+
+    if (canonical) return null;
 
     // Frontend acceptance bridge only. Never use this result for server writes,
     // RLS, tenant resolution, or production authorization.
     return await resolvePreviewAcceptanceRole();
   },
   getCurrentUserRoles: async (): Promise<AppRole[]> => {
-    const roles = await getCurrentCompanyRoles();
-    if (roles.length > 0) return roles;
+    const { roles, canonical } = await getCurrentCompanyRoles();
+    if (canonical) return roles;
     const previewRole = await resolvePreviewAcceptanceRole();
     return previewRole ? [previewRole] : [];
   },

@@ -1,3 +1,4 @@
+import { originalPreviewRequest } from "../_shared/original-widget-preview.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
@@ -23,9 +24,11 @@ Deno.serve(async (req) => {
     const originCheck = validateWidgetOrigin(req, channel.allowed_origins);
     if (!originCheck.ok) return json({ success: false, error: originCheck.error }, 403);
     const { data: conv, error: convError } = await supabase.from("conversations")
-      .select("id, status, visitor_session_id, assigned_agent_id").eq("id", conversation_id).maybeSingle();
+      .select("id, company_id, channel_config_id, metadata_source, status, visitor_session_id, assigned_agent_id").eq("id", conversation_id).maybeSingle();
     if (convError) return json({ success: false, error: "conversation_lookup_failed" }, 500);
     if (!conv || conv.visitor_session_id !== session.id) return json({ success: false, error: "Conversation not found" }, 404);
+    if(conv.metadata_source?.execution_class === "authenticated_admin_preview" && !await originalPreviewRequest(req,createClient,supabase,conv,false))
+      return json({success:false,error:"original_preview_actor_or_authority_denied"},403);
     const { data: thinking, error: thinkingError } = await supabase.from("messages").select("id")
       .eq("conversation_id", conversation_id).eq("content", "__THINKING__").eq("is_recalled", false).limit(1);
     if (thinkingError) return json({ success: false, error: "thinking_lookup_failed" }, 500);
@@ -69,6 +72,10 @@ Deno.serve(async (req) => {
           customers_ahead: queueSnapshot.customers_ahead ?? null,
           estimated_wait_minutes: queueSnapshot.estimated_wait_minutes ?? null,
           estimate_confidence: queueSnapshot.estimate_confidence ?? "unavailable",
+          estimate_generated_at: queueSnapshot.estimate_generated_at ?? null,
+          estimate_deadline: queueSnapshot.estimate_deadline ?? null,
+          estimate_basis: queueSnapshot.estimate_basis ?? null,
+          server_now: queueSnapshot.server_now ?? null,
         },
       },
     });

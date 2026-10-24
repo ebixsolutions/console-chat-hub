@@ -4,6 +4,8 @@ import type {
   KBLLMContextEvidence,
 } from "./kb-client.ts";
 import { detectExplicitJurisdiction } from "./conversation-runtime-state.ts";
+import { factualSubject } from "./conversation-semantic-contract.ts";
+import { ragServiceDocument } from "./preview-kb-query-embedding.ts";
 import {
   type ReferenceAuthorityDecision,
   type ReferenceEvidenceCandidate,
@@ -11,6 +13,8 @@ import {
 } from "./commerce-state-authority.ts";
 
 export interface CanonicalGroundingOptions {
+  /** Server-resolved same-ticket subject, independently required in fresh evidence. */
+  expectedSubject?: string;
   minScore?: number;
   policyOnly?: boolean;
   requirePublished?: boolean;
@@ -19,6 +23,12 @@ export interface CanonicalGroundingOptions {
   expectedTenantId?: string | null;
   expectedEntityIds?: string[];
   expectedTopicIds?: string[];
+  /** Free-form model descriptions are answer facets, NEVER source taxonomy IDs. */
+  semanticFactDescriptions?: string[];
+  /** Server caller resolved a factual request, without source taxonomy IDs. */
+  requireSubjectSupport?: boolean;
+  /** Inbox performs its existing bounded relevance adjudication after authority. */
+  deferRelevanceToCaller?: boolean;
   expectedRegion?: string | null;
   requiresCurrentKb?: boolean;
   targetChanged?: boolean;
@@ -90,7 +100,7 @@ function namedTargetTokens(text: string): string[] {
   // earlier product answer to be reused for this newly named object.
   for (
     const match of text.matchAll(
-      /\b(order|transaction|invoice|shipment|booking|subscription|account|case|ticket|claim)\s*(?:number|no\.?|id|#|[:\uFF1A-])?\s*((?!(?:is|was|not|has|status|state|confirmed|paid|pending|cancelled|canceled|the|my|a)\b)[a-z0-9][a-z0-9._/-]{1,80})\b/gi,
+      /\b(order|transaction|invoice|shipment|booking|subscription|account|case|ticket|claim)[ \t]*(?:number|no\.?|id|#|[:\uFF1A-])?[ \t]*((?!(?:is|was|not|has|status|state|confirmed|paid|pending|cancelled|canceled|the|my|a)\b)[a-z0-9][a-z0-9._/-]{1,80})\b/gi,
     )
   ) {
     const kind = match[1].toLowerCase();
@@ -100,7 +110,7 @@ function namedTargetTokens(text: string): string[] {
   }
   for (
     const match of text.matchAll(
-      /(?:\u8A02\u55AE|\u8BA2\u5355|\u4EA4\u6613|\u767C\u7968|\u53D1\u7968|\u904B\u55AE|\u8FD0\u5355|\u9810\u8A02|\u9884\u8BA2|\u8A02\u95B1|\u8BA2\u9605|\u5E33\u6236|\u8D26\u6237|\u500B\u6848|\u4E2A\u6848|\u5DE5\u55AE|\u5DE5\u5355|\u7D22\u511F|\u7D22\u8D54)\s*(?:\u7DE8\u865F|\u7F16\u53F7|id|#|[:\uFF1A-])?\s*([a-z0-9][a-z0-9._/-]{1,80})/gi,
+      /(?:\u8A02\u55AE|\u8BA2\u5355|\u4EA4\u6613|\u767C\u7968|\u53D1\u7968|\u904B\u55AE|\u8FD0\u5355|\u9810\u8A02|\u9884\u8BA2|\u8A02\u95B1|\u8BA2\u9605|\u5E33\u6236|\u8D26\u6237|\u500B\u6848|\u4E2A\u6848|\u5DE5\u55AE|\u5DE5\u5355|\u7D22\u511F|\u7D22\u8D54)[ \t]*(?:\u7DE8\u865F|\u7F16\u53F7|id|#|[:\uFF1A-])?[ \t]*([a-z0-9][a-z0-9._/-]{1,80})/gi,
     )
   ) {
     targets.push(match[0].toLowerCase().replace(/\s+/g, " ").trim());
@@ -114,6 +124,7 @@ function namedTargetTokens(text: string): string[] {
 function topicTokens(text: string): string[] {
   const topics: string[] = [];
   const rules: Array<[string, RegExp]> = [
+    ["policy", /(?:billing|booking|cancellation|return|warranty)\s+policy|付款政策|預約政策|预约政策|取消政策|退貨政策|退货政策|保養政策|保修政策/i],
     ["warranty", /(?:warranty|保養|保修)/i],
     ["delivery", /(?:delivery|shipping|送貨|送货|物流|派送)/i],
     ["returns", /(?:refund|return|退款|退貨|退货|換貨|换货)/i],
@@ -135,7 +146,7 @@ function topicTokens(text: string): string[] {
     ],
     [
       "specification",
-      /(?:spec(?:ification)?s?|規格|规格|噪音|noise|\bdb\b|dimension|尺寸)/i,
+      /(?:\bspec(?:ification)?s?\b|規格|规格|噪音|noise|\bdb\b|dimension|尺寸)/i,
     ],
     ["payment", /(?:payment|付款|支付)/i],
     [
@@ -158,11 +169,21 @@ export function deriveCurrentGroundingTarget(
   const explicitEntities = namedTargetTokens(currentTurnText);
   const explicitTopics = topicTokens(currentTurnText);
   const retrievalTopics = topicTokens(retrievalText);
+  // A resolved exact-model fact request uses the product evidence family.
+  // Customer wording such as "features" is an answer facet, not a requirement
+  // that the published product description literally repeat that label.
+  // Control/transaction topics retain their explicit target precedence.
+  const exactProductFactFamily = fallbackTopicIds.length === 1 &&
+    fallbackTopicIds[0] === "product_facts" && fallbackEntityIds.length === 1 &&
+    modelTokens(fallbackEntityIds[0].toUpperCase()).length === 1 &&
+    explicitTopics.every((topic) => ["price", "features", "specification", "warranty"].includes(topic));
   return {
     entity_ids: explicitEntities.length
       ? explicitEntities
       : unique(fallbackEntityIds),
-    topic_ids: explicitTopics.length
+    topic_ids: exactProductFactFamily
+      ? ["product_facts"]
+      : explicitTopics.length
       ? explicitTopics
       : unique([...fallbackTopicIds, ...retrievalTopics]),
     region: detectExplicitJurisdiction(currentTurnText) ?? null,
@@ -184,7 +205,7 @@ function candidateText(document: KBDocumentCandidate): string {
 function jurisdictions(text: string): string[] {
   const found: string[] = [];
   if (/(mars|火星)/i.test(text)) found.push("mars");
-  if (/(香港|hong\s*kong|\bhk\b)/i.test(text)) found.push("hong_kong");
+  if (/(香港|全港|hong\s*kong|\bhk\b)/i.test(text)) found.push("hong_kong");
   if (/(澳門|澳门|macau|macao)/i.test(text)) found.push("macau");
   if (/(新加坡|singapore)/i.test(text)) found.push("singapore");
   if (/(台灣|台湾|taiwan)/i.test(text)) found.push("taiwan");
@@ -192,6 +213,11 @@ function jurisdictions(text: string): string[] {
     found.push("mainland_china");
   }
   return found;
+}
+function canonicalRegion(value: string): string {
+  const normalized = value.normalize("NFKC").trim().toLowerCase().replace(/[_-]+/g, " ");
+  const aliases = jurisdictions(normalized);
+  return aliases.length === 1 ? aliases[0] : value.trim().toLowerCase();
 }
 function assessApplicability(
   document: KBDocumentCandidate,
@@ -341,6 +367,86 @@ function lexicalRelevance(
   return score;
 }
 
+function serviceTopicMatch(request:string,document:KBDocumentCandidate):boolean {
+  const q=request.normalize("NFKC").toLowerCase(),text=candidateText(document).normalize("NFKC").toLowerCase();
+  const tokens=q.match(/[a-z0-9][a-z0-9_-]{3,}|[\p{Script=Han}]{4,}/gu)??[];
+  for(const token of tokens){
+    if(/^[\p{Script=Han}]+$/u.test(token)){for(let i=0;i<=token.length-4;i++)if(text.includes(token.slice(i,i+4)))return true;}
+    else if(!["what","which","please","policy","information","details","about","current","customer","context","canonical","published","request","retrieval"].includes(token) && text.includes(token))return true;
+  }
+  return false;
+}
+
+/** Bind the customer's subject to actual full content, not translated model
+ * labels, retrieval rank, titles or summaries. A source-quoted name can be a
+ * legitimate alias of a longer customer description only when that exact name
+ * occurs in the customer subject too. No generated translation grants authority.
+ */
+function fullContentSubjectMatch(subject: string, document: KBDocumentCandidate, explicitSubject = true): boolean {
+  const norm = (s: string) => s.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+  const q = norm(subject);
+  const contains = (text: string, name: string) => {
+    const key = norm(name);
+    if (key.length < 2) return false;
+    if (/\p{Script=Han}/u.test(key)) return norm(text).includes(key);
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:^|[^a-z0-9_-])${escaped}(?=$|[^a-z0-9_-])`, "u").test(norm(text));
+  };
+  return !!q && document.llm_context.full_content_evidence.some(e => {
+    if (contains(e.content, q)) return true;
+    // Quotes are source-owned aliases; title-only/summary-only matches fail.
+    const names = [...e.content.matchAll(/[「『“"]([^」』”"\n]{2,160})[」』”"]/gu)].map(m => m[1]);
+    return names.some(name => {
+      const key=norm(name);
+      if(key.length<4 || /^(?:計劃|计划|服務|服务|方案|資料|资料|policy|service|scheme|programme|program|details)$/iu.test(key) || !contains(q,name))return false;
+      if(!explicitSubject)return true;
+      let remainder=q.replace(key," ");
+      if(jurisdictions(e.content).includes("hong_kong"))remainder=remainder.replace(/香港|全港|hong\s*kong|\bhk\b/giu," ");
+      remainder=remainder.replace(/(?:嘅|的)|\b(?:the|service|scheme|programme|program|plan)\b/giu," ").trim();
+      // A base-name quote cannot authorize an unsupported tier, industry or
+      // qualifier. Chinese residual words must be actual contiguous phrases
+      // in the full evidence, not isolated characters or translated guesses.
+      const body=norm(e.content);
+      return (remainder.match(/[\p{Script=Han}]+|[a-z0-9][a-z0-9_-]*/gu)??[]).every(token=>{
+        if(!/\p{Script=Han}/u.test(token))return contains(body,token);
+        const seen=new Set([0]);for(let start=0;start<token.length;start++)if(seen.has(start))for(let end=start+2;end<=token.length;end++)if(body.includes(token.slice(start,end)))seen.add(end);
+        return seen.has(token.length);
+      });
+    });
+  });
+}
+
+/** Semantic requested_facts are descriptions, not source-owned taxonomy IDs.
+ * Resolve a bounded question/answer facet to its literal subject only when
+ * that whole subject occurs in BOTH the current request and returned full
+ * evidence. A retrieval score, title, translated guess, or shared single word
+ * cannot establish this binding. This does not grant source authority.
+ */
+function serviceFactTopicMatch(topic: string, request: string, document: KBDocumentCandidate): boolean {
+  const normalize = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+  const label = normalize(topic);
+  const subject = label
+    .replace(/^(?:(?:the )?(?:definition|meaning|explanation|description) of|what (?:is|are))\s+/u, "")
+    .replace(/\s+(?:definition|meaning|explanation|description)$/u, "")
+    .replace(/^(?:什麼是|什么是|何謂|何谓|解釋|解释)\s*/u, "")
+    .replace(/(?:的)?(?:定義|定义|意思|含義|含义)$/u, "")
+    .replace(/^[\s「」『』“”"'？?]+|[\s「」『』“”"'？?]+$/gu, "").trim();
+  if (!subject || subject === label || subject.length > 200) return false;
+  // Empty/generic facets are never topics; do not permit substring matches
+  // inside another Latin word, SKU, or a longer Chinese subject.
+  if (!/[\p{Script=Han}]{2,}|[a-z0-9][a-z0-9 _-]{3,}/u.test(subject) ||
+    /^(?:current information|information|details|policy|資料|资料|定義|定义)$/u.test(subject)) return false;
+  const containsSubject = (value: string) => {
+    const text = normalize(value);
+    const escaped = subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Han subjects need no spaces; exact whole subject, never n-gram overlap.
+    return /[\p{Script=Han}]/u.test(subject)
+      ? text.includes(subject)
+      : new RegExp(`(?:^|[^a-z0-9_-])${escaped}(?=$|[^a-z0-9_-])`, "u").test(text);
+  };
+  return containsSubject(request) && document.llm_context.full_content_evidence.some(e => containsSubject(e.content));
+}
+
 function extractStructuredClaims(
   evidence: KBLLMContextEvidence[],
 ): Array<{ key: string; value: string }> {
@@ -374,14 +480,18 @@ export function selectCanonicalGrounding(
   const target = deriveCurrentGroundingTarget(
     currentTurnText,
     requestText,
-    options.expectedEntityIds ?? modelTokens(requestText),
+    options.expectedEntityIds ?? modelTokens(currentTurnText),
     options.expectedTopicIds ?? [],
     options.targetChanged === true,
   );
   const expectedEntityIds = target.entity_ids;
-  const expectedTopicIds = target.topic_ids;
-  const expectedRegion = options.expectedRegion ?? target.region ??
-    detectExplicitJurisdiction(requestText);
+  const freeFactRequest = options.requireSubjectSupport === true || (options.semanticFactDescriptions?.length ?? 0) > 0;
+  const expectedTopicIds = freeFactRequest ? unique(options.expectedTopicIds ?? []) : target.topic_ids;
+  const explicitSubject = options.expectedSubject ?? factualSubject(currentTurnText);
+  const subject = explicitSubject ??
+    (freeFactRequest ? currentTurnText.slice(0, 500) : null);
+  const region = options.expectedRegion ?? target.region ?? detectExplicitJurisdiction(currentTurnText);
+  const expectedRegion = region ? canonicalRegion(region) : null;
   const eligible: Array<{
     document: KBDocumentCandidate;
     chunks: KBFullChunk[];
@@ -393,6 +503,7 @@ export function selectCanonicalGrounding(
   }> = [];
 
   for (const document of documents ?? []) {
+    const service=ragServiceDocument(document);
     if (document.llm_context.selected_document_id !== document.document_id) {
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
@@ -409,8 +520,14 @@ export function selectCanonicalGrounding(
 
     const currentTargetRequest = currentTurnText || requestText;
     const lexicalScore = lexicalRelevance(currentTargetRequest, document);
+    const serviceTopic=!!service && serviceTopicMatch(currentTargetRequest,document);
+    // A low relevance tag is retained, never equated to a supported answer.
+    // Exact contextual evidence and the unchanged generation verifier are still
+    // required; unrelated low hits cannot reach Knowledge/Policy as grounding.
+    if(service?.relevance?.toLowerCase()==="low" && !serviceTopic && !options.deferRelevanceToCaller)continue;
+    const policyEligible=document.source_type.toLowerCase().includes("policy") || !!service && /(?:政策|條款|条款|須知|须知|守則|退貨|退货|退款|保養|保修|\bpolicy\b|\bterms\b|\brefund\b|\breturns\b)/iu.test(candidateText(document));
     const effectiveMinScore =
-      strongLexicalEvidenceMatch(currentTargetRequest, document)
+      strongLexicalEvidenceMatch(currentTargetRequest, document) || serviceTopic
         ? Math.min(minScore, STRONG_LEXICAL_SCORE_FLOOR)
         : minScore;
     const chunks = document.chunks.filter(
@@ -418,8 +535,8 @@ export function selectCanonicalGrounding(
         c.content.trim() &&
         Number.isFinite(c.score) &&
         c.score >= effectiveMinScore &&
-        (!requirePublished || c.status === "published") &&
-        (!policyOnly || c.source_type.toLowerCase().includes("policy")),
+        (!requirePublished || c.status === "published" || c.status === "unknown" && !!service) &&
+        (!policyOnly || policyEligible),
     );
     const fullContentIds = new Set(
       chunks.filter((c) => c.chunk_type === "full_content").map((c) =>
@@ -431,27 +548,31 @@ export function selectCanonicalGrounding(
         e.content.trim() &&
         Number.isFinite(e.score) &&
         e.score >= effectiveMinScore &&
-        (!policyOnly || e.source_type.toLowerCase().includes("policy")) &&
+        (!policyOnly || policyEligible) &&
         fullContentIds.has(e.chunk_id ?? e.content),
     );
 
     if (
       requirePublished && evidence.length > 0 &&
-      chunks.every((c) => c.status !== "published")
+      chunks.every((c) => c.status !== "published") && !service
     ) {
       return { ok: false, error: "KB_EVIDENCE_NOT_PUBLISHED" };
     }
     if (!evidence.length) continue;
+    // Bind against the evidence that will actually reach generation. A subject
+    // present only in a discarded/low-score chunk must not authorize another
+    // surviving chunk, even within the same authenticated document.
+    const subjectSupported = !!subject && fullContentSubjectMatch(subject, {
+      ...document, llm_context: {...document.llm_context, full_content_evidence: evidence},
+    },Boolean(explicitSubject));
+    if (options.expectedSubject && !subjectSupported) continue;
 
     const applicability = assessApplicability(document, currentTargetRequest);
     const metadata = document.authority;
     const declaredCurrentness = metadata?.currentness ?? "unknown";
-    const effectiveCurrentness = declaredCurrentness === "unknown"
-      // The authenticated Singapore endpoint is explicitly the published/live
-      // read path. Missing optional currentness metadata is bound to that
-      // server-side contract, never to a client assertion.
-      ? "current"
-      : declaredCurrentness;
+    // Missing metadata never becomes a currentness assertion. Only the separate
+    // authenticated service proof permits PUBLISHED_KB_SERVICE with UNKNOWN.
+    const effectiveCurrentness = declaredCurrentness;
     eligible.push({
       document,
       chunks,
@@ -460,25 +581,38 @@ export function selectCanonicalGrounding(
       evidenceScore: Math.max(...evidence.map((e) => e.score), 0),
       lexicalScore,
       authorityCandidate: {
+        request_subject_supported: subjectSupported,
         source_id: document.document_id,
         source_type: document.source_type,
-        authority_class: effectiveCurrentness === "current"
+        authority_class: service && effectiveCurrentness==="unknown" ? "PUBLISHED_KB_SERVICE" : effectiveCurrentness === "current"
           ? "CURRENT_KB"
           : "HISTORICAL",
-        tenant_id: metadata?.tenant_id ?? options.expectedTenantId ?? null,
-        publication_state: metadata?.publication_state ?? "published",
+        tenant_id: metadata?.tenant_id ?? service?.tenant ?? options.expectedTenantId ?? null,
+        publication_state: metadata?.publication_state ?? (service ? null : "published"),
         currentness: effectiveCurrentness,
         entity_ids: unique([
           ...(metadata?.entity_ids ?? []),
           ...namedTargetTokens(candidateText(document)),
         ]),
         topic_ids: unique([
+          // "included features" is an answer facet, not a requirement that
+          // a source literally use that taxonomy word. Subject support still
+          // needs actual request/evidence overlap and all authority checks.
+          ...(serviceTopic && expectedTopicIds.includes("features") ? ["features"] : []),
+          // Free semantic fact labels are not a fixed taxonomy. Accept one as
+          // a document topic only when the actual returned evidence contains
+          // that label; never infer it merely from the customer's request.
+          ...(service ? expectedTopicIds.filter(topic=>{
+            const key=topic.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"");
+            return key.length>=3 && candidateText(document).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"").includes(key) || serviceFactTopicMatch(topic,currentTargetRequest,document);
+          }) : []),
+          ...(document.source_type.toLowerCase() === "product" ? ["product_facts"] : []),
           ...(metadata?.claims ?? []).map((claim) => claim.key),
           ...topicTokens(candidateText(document)),
           ...namedTargetTokens(candidateText(document)),
         ]),
         regions: metadata?.regions?.length
-          ? metadata.regions
+          ? unique(metadata.regions.map(canonicalRegion))
           : applicability.document_jurisdictions.length
           ? applicability.document_jurisdictions
           : !applicability.accepted && applicability.request_jurisdiction
@@ -506,6 +640,7 @@ export function selectCanonicalGrounding(
     expected_tenant_id: options.expectedTenantId ?? null,
     expected_entity_ids: expectedEntityIds,
     expected_topic_ids: expectedTopicIds,
+    require_request_subject_match: freeFactRequest,
     expected_region: expectedRegion,
     requires_current_kb: options.requiresCurrentKb !== false,
     require_explicit_target_match: target.target_changed ||

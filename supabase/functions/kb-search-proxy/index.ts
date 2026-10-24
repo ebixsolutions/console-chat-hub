@@ -1,3 +1,9 @@
+import { safeExecutionCode, executionFailure, type ExecutionFailure } from "../_shared/execution-failure.ts";
+import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
+import { factualSubject } from "../_shared/conversation-semantic-contract.ts";
+import { kbErrorFamily } from "../_shared/kb-error-contract.ts";
+import { authenticatedInboxAuthority, legacyPreactivationAuthority } from "../_shared/uat-execution-contract.ts";
+import { uatMap } from "../_shared/uat-execution-contract.ts";
 import {
   resolveKBEndpoint,
   resolveTenantScope,
@@ -60,7 +66,9 @@ function getCorsHeaders(req: Request): Record<string, string> {
   );
 }
 function jsonResponse(body: unknown, status: number, req: Request): Response {
-  return new Response(JSON.stringify(body), {
+  const result = status >= 400 && body && typeof body === "object"
+    ? {...body,knowledge_state:kbErrorFamily(body,status)} : body;
+  return new Response(JSON.stringify(result), {
     status,
     headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
   });
@@ -97,6 +105,7 @@ function lexicalSupport(query: string, evidence: string): number {
 type MembershipRow = { company_id: string; role: string };
 type VisitorTurn = { content: string; created_at: string | null };
 type RankedDocument = {
+  failure?: ExecutionFailure;
   document: KBDocumentCandidate;
   results: Array<Record<string, unknown>>;
   method: string;
@@ -220,7 +229,7 @@ async function resolveStandaloneScope(
   if (!tenant) return { ok: false, status: 503, error: "kb_preactivation_config_missing" };
   return {
     ok: true,
-    scope: { mode: "pre_activation", aiCompanyId: null, singaporeTenantId: tenant },
+    scope: { mode: "pre_activation", aiCompanyId: null, singaporeTenantId: tenant, legacyAuthority: await legacyPreactivationAuthority(admin, userId, tenant, null) },
   };
 }
 
@@ -237,6 +246,7 @@ async function deriveRetrievalExpansions(params: {
     maxTokens: RETRIEVAL_EXPANSION_MAX_TOKENS,
     operationId: crypto.randomUUID(),
     companyId: params.scope.aiCompanyId,
+    legacyAuthority: params.scope.legacyAuthority,
     conversationId: params.conversationId,
     tag: "kb-query-expansion",
     responseFormat: "json",
@@ -298,7 +308,8 @@ async function rerankForDisplay(params: {
   citations: Array<Record<string, unknown>>;
   scope: KBResolvedScope;
   conversationId: string | null;
-}): Promise<{ results: Array<Record<string, unknown>>; method: string; confidence: number | null }> {
+  fullEvidence: string;
+}): Promise<{ results: Array<Record<string, unknown>>; method: string; confidence: number | null; failure?:ExecutionFailure }> {
   const { currentRequest, retrievalQuery, citations, scope, conversationId } = params;
   if (citations.length === 0) return { results: [], method: "no_hit", confidence: null };
 
@@ -306,10 +317,7 @@ async function rerankForDisplay(params: {
     ...citations.map((c) => Number(c.score ?? 0)).filter(Number.isFinite),
     0,
   );
-  const evidence = citations
-    .map((c) => `${String(c.display_label ?? "")}\n${String(c.content ?? "")}`)
-    .join("\n---\n")
-    .slice(0, 5000);
+  const evidence = params.fullEvidence.slice(0, 5000);
   const lexical = lexicalSupport(currentRequest, evidence);
 
   if (lexical >= DIRECT_LEXICAL_FLOOR) {
@@ -344,6 +352,7 @@ async function rerankForDisplay(params: {
     maxTokens: RERANK_MAX_TOKENS,
     operationId: crypto.randomUUID(),
     companyId: scope.aiCompanyId,
+    legacyAuthority: scope.legacyAuthority,
     conversationId,
     tag: "kb-relevance-rerank",
     responseFormat: "json",
@@ -355,18 +364,19 @@ async function rerankForDisplay(params: {
       results: [],
       method: classifyRerankFailure(llm.code, llm.usage.output_tokens),
       confidence: null,
+      failure: llm.failure ?? executionFailure(llm.code),
     };
   }
 
   const parsed = parseJsonObject(llm.text);
   if (!parsed || typeof parsed.relevant !== "boolean") {
-    return { results: [], method: "rerank_schema_invalid", confidence: null };
+    return { results: [], method: "rerank_schema_invalid", confidence: null, failure:executionFailure("LLM_INVALID_OUTPUT") };
   }
   const confidence = typeof parsed.confidence === "number"
     ? parsed.confidence
     : Number.NaN;
   if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
-    return { results: [], method: "rerank_schema_invalid", confidence: null };
+    return { results: [], method: "rerank_schema_invalid", confidence: null, failure:executionFailure("LLM_INVALID_OUTPUT") };
   }
   if (parsed.relevant !== true || confidence < LLM_RELEVANCE_FLOOR) {
     return { results: [], method: "llm_rejected", confidence };
@@ -397,10 +407,29 @@ async function rankDocumentCandidates(params: {
     if (document.citations.some((c) => c.document_id !== document.document_id)) {
       throw new Error("KB_DOCUMENT_EVIDENCE_MISMATCH");
     }
+    // Orientation summaries remain candidates, never displayed answer authority.
+    // Relevance is still adjudicated by the existing bounded ranker and 0.75 UI
+    // threshold; authority/currentness and full-content lineage come first.
+    const selected = selectCanonicalGrounding([document], {
+      requestText: params.currentRequest,
+      currentTurnText: params.currentRequest,
+      expectedTenantId: params.scope.singaporeTenantId,
+      minScore: 0,
+      requireSubjectSupport: Boolean(factualSubject(params.currentRequest)),
+      deferRelevanceToCaller: true,
+    });
+    if (!selected.ok) throw new Error("KB_DOCUMENT_EVIDENCE_MISMATCH");
+    if (!selected.document || !selected.evidence.length) {
+      evaluated.push({document,results:[],method:"no_full_content_authority",confidence:null,displayScore:0,retrievalScore:document.document_score});
+      continue;
+    }
+    const chunkIds = new Set(selected.evidence.map(e => e.chunk_id));
+    const citations = document.citations.filter(c => c.chunk_type === "full_content" && typeof c.chunk_id === "string" && c.chunk_id.length > 0 && chunkIds.has(c.chunk_id));
     const ranked = await rerankForDisplay({
       currentRequest: params.currentRequest,
       retrievalQuery: params.retrievalQuery,
-      citations: document.citations as unknown as Array<Record<string, unknown>>,
+      citations: citations as unknown as Array<Record<string, unknown>>,
+      fullEvidence: selected.evidence.map(e => e.content).join("\n\n"),
       scope: params.scope,
       conversationId: params.conversationId,
     });
@@ -417,6 +446,7 @@ async function rankDocumentCandidates(params: {
       results: ranked.results,
       method: ranked.method,
       confidence: ranked.confidence,
+      ...(ranked.failure ? {failure:ranked.failure} : {}),
       displayScore,
       retrievalScore,
     });
@@ -542,21 +572,30 @@ Deno.serve(async (req) => {
       scope = standalone.scope;
     }
 
+    if(scope.aiCompanyId && !conversationId)throw Object.assign(new Error("INBOX_CONVERSATION_REQUIRED"),{code:"INBOX_CONVERSATION_REQUIRED"});
+    if(scope.aiCompanyId && conversationId) {
+      scope={...scope,legacyAuthority:await authenticatedInboxAuthority(admin,user.id,scope.aiCompanyId,conversationId,"knowledge")};
+    }
+
     const queryMode = body?.query_mode === "auto_context" ? "auto_context" : "manual";
     const derived = buildTrustedRetrievalQuery(query, recentTurns, queryMode === "auto_context");
     const endpoint = resolveKBEndpoint();
     if (!endpoint) return jsonResponse({ error: "kb_config_missing" }, 500, req);
 
-    const result = await fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint);
+    const result = await fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint, {uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${crypto.randomUUID()}`}});
     if (!result.success) {
       if (result.error_code === "KB_TIMEOUT") {
-        return jsonResponse({ error: "kb_api_timeout" }, 504, req);
+        return jsonResponse({ error: "kb_api_timeout", failure:result.failure }, 504, req);
       }
       console.error("[kb-search-proxy] KB API error", {
         code: result.error_code,
         scope_mode: scope.mode,
+        stage: result.failure?.stage,
+        diagnostic_code: result.diagnostic_code,
       });
-      return jsonResponse({ error: "kb_api_error", detail: result.error_code }, 502, req);
+      const body = {error:"kb_api_error",detail:result.error_code,failure:result.failure,diagnostic_code:result.diagnostic_code};
+      const family=kbErrorFamily(body);
+      return jsonResponse(body,family==="denied" ? 403 : family==="not_configured" ? 503 : 502,req);
     }
 
     const expansions = await deriveRetrievalExpansions({
@@ -565,9 +604,9 @@ Deno.serve(async (req) => {
       scope,
       conversationId,
     });
-    const expandedResults = await Promise.all(
-      expansions.map((expandedQuery) =>
-        fetchKBRag({ query: expandedQuery, top_k: topK }, scope, endpoint)
+    const expandedResults = await uatMap(scope.aiCompanyId,
+      expansions.map((expandedQuery) => () =>
+        fetchKBRag({ query: expandedQuery, top_k: topK }, scope, endpoint, {uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${crypto.randomUUID()}`}})
       ),
     );
     const successfulExpanded = expandedResults.filter((r) => r.success);
@@ -586,6 +625,12 @@ Deno.serve(async (req) => {
       conversationId,
     });
     const winner = ranked.winner;
+    const failed = ranked.evaluated.find(r => r.failure);
+    if (!winner && failed?.failure) {
+      const body={success:false,error:"kb_rerank_failed",failure:failed.failure,diagnostic_code:failed.method};
+      const family=kbErrorFamily(body);
+      return jsonResponse(body,family==="denied" ? 403 : family==="not_configured" ? 503 : 502,req);
+    }
     const winnerDocumentId = winner?.document.document_id ?? null;
 
     const policyEvidence = winner
@@ -639,6 +684,8 @@ Deno.serve(async (req) => {
       policy_evidence: policyEvidence,
     }, 200, req);
   } catch (e) {
+    const code=e && typeof e==="object" && "code" in e ? safeExecutionCode(e.code) : null;
+    if(code)return jsonResponse({success:false,error:"execution_denied",failure:executionFailure(code)},403,req);
     const name = (e as Error).message === "KB_DOCUMENT_EVIDENCE_MISMATCH"
       ? "KB_DOCUMENT_EVIDENCE_MISMATCH"
       : (e as Error).name;

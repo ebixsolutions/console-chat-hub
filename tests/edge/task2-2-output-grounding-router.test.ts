@@ -39,7 +39,7 @@ Deno.test("unsupported numeric fact fails closed", () => {
     "Returns are accepted within 7 days.",
   );
   assert(!result.ok, "unsupported duration must fail");
-  assert(result.unsupported_tokens.includes("30days"), "unsupported duration must be identified");
+  assert(result.reason === "unsupported_exact_fact" && result.unsupported_tokens.includes("30d"), "unsupported duration must be identified in canonical units");
 });
 
 Deno.test("unsupported model identifier fails closed", () => {
@@ -91,6 +91,16 @@ Deno.test("negative verifier decision must name unsupported claim", () => {
     ["E1"],
   );
   assert(validNegative?.grounded === false, "well-formed negative decision must parse");
+});
+
+Deno.test("question resolution is separate from grounded claims and rejects invalid labels", () => {
+  const base = {grounded:true,unsupported_claims:[],evidence_chunk_ids:["E1"]};
+  for (const value of ["supported", "partial", "unsupported"]) {
+    const parsed = parseGroundingVerifierDecision(JSON.stringify({...base,question_resolution:value}),["E1"]);
+    assert(parsed?.question_resolution === value, "resolution must be retained for the caller's factual-answer gate");
+  }
+  assert(parseGroundingVerifierDecision(JSON.stringify({...base,question_resolution:"guess"}),["E1"]) === null,"unrecognized resolution must fail closed");
+  for (const value of [["supported"],null,true,{}]) assert(parseGroundingVerifierDecision(JSON.stringify({...base,question_resolution:value}),["E1"]) === null,"resolution is a scalar enum, never a coerced value");
 });
 
 Deno.test("semantic verifier uses safe aliases instead of raw UUID chunk ids", () => {

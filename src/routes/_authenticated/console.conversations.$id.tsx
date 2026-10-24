@@ -1,3 +1,6 @@
+import { ConversationList } from "@/components/console/ConversationList";
+import { SavedResponses } from "@/components/console/SavedResponses";
+import { useTicketReply } from "@/hooks/useTicketReply";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,6 +16,7 @@ import { feedbackService } from "@/lib/api/feedback.service";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
+import { TicketHandoffSummary } from "@/components/console/TicketHandoffSummary";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
 import { CRMPanel, RIGHT_COPY, buildBoundedContext, computeContextRevisionKey } from "@/components/console/CRMPanel";
 import { MessageAttachment, isAttachmentMessage, type AttachmentMeta } from "@/components/console/MessageAttachment";
@@ -37,6 +41,7 @@ function ConversationDetailGuard() {
 type Msg = {
   id: string;
   role: string;
+  sender_id?: string | null;
   content: string;
   content_type: string | null;
   status: string | null;
@@ -48,6 +53,7 @@ type Msg = {
 
 type Conversation = {
   id: string;
+  company_id?: string;
   status: string;
   assigned_agent_id: string | null;
   channel_config: { name: string } | null;
@@ -66,20 +72,38 @@ function ConversationDetailContent() {
   const lang = useConsoleLang();
   const [conv, setConv] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [messagesTicketId, setMessagesTicketId] = useState<string | null>(null);
+  const [messagesError, setMessagesError] = useState(false);
+  const [conversationError, setConversationError] = useState(false);
+  const detailScopeRef = useRef(id);
+  detailScopeRef.current = id;
+  const messageReadRef = useRef(0);
+  const conversationReadRef = useRef(0);
+  const scopedMessages = messagesTicketId === id ? messages : [];
+
   const [agents, setAgents] = useState<AgentLite[]>([]);
   const [myAgent, setMyAgent] = useState<AgentLite | null>(null);
-  const [reply, setReply] = useState("");
-  const [sending, setSending] = useState(false);
+  const replyDraft = useTicketReply(user?.id, id, myAgent?.id, scopedMessages);
+  const { reply, setReply, sending } = replyDraft;
+
   const [loading, setLoading] = useState(true);
   const [sendGuardOpen, setSendGuardOpen] = useState(false);
   const [resolvedWarningOpen, setResolvedWarningOpen] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<{ id: string; role: string; content: string } | null>(null);
+  const currentSelectedMessage=selectedMessage ? scopedMessages.find(m=>m.id===selectedMessage.id && !m.is_recalled) ?? null : null;
   const [useConfirmOpen, setUseConfirmOpen] = useState(false);
   const [pendingUseText, setPendingUseText] = useState("");
 
   // ── RIGHT-CRM-KB-CONTEXT-1: bounded context scoped to this conversation ──
-  const boundedContext = useMemo(() => buildBoundedContext(messages), [messages]);
-  const contextRevisionKey = useMemo(() => computeContextRevisionKey(id, messages), [id, messages]);
+  const boundedContext = useMemo(() => buildBoundedContext(scopedMessages), [messages, messagesTicketId, id]);
+  const contextRevisionKey = useMemo(() => computeContextRevisionKey(id, scopedMessages), [id, messages, messagesTicketId]);
+
+  const toolScopeKey=JSON.stringify([user?.id,currentRole,conv?.company_id,conv?.assigned_agent_id]);
+  const draftActionKey=JSON.stringify([id,toolScopeKey,conv?.status,contextRevisionKey,currentSelectedMessage?.id,currentSelectedMessage?.content,reply]);
+  const liveDraftActionKey=useRef(draftActionKey);liveDraftActionKey.current=draftActionKey;
+  const pendingDraftActionKey=useRef<string|null>(null);
+  useEffect(()=>{liveDraftActionKey.current=draftActionKey;return()=>{liveDraftActionKey.current="";pendingDraftActionKey.current=null;};},[]);
+  useEffect(()=>{setUseConfirmOpen(false);setPendingUseText("");pendingDraftActionKey.current=null;},[draftActionKey]);
 
   // ── J1: Realtime infrastructure ──
   const realtimeConnectedRef = useRef(true);
@@ -113,28 +137,41 @@ function ConversationDetailContent() {
   }
 
   const loadConv = useCallback(async () => {
-    const { data } = await supabase
-      .from("conversations")
-      .select(
-        `
-        id, status, assigned_agent_id,
-        channel_config:channel_config_id(name),
-        visitor_session:visitor_session_id(id)
-      `,
-      )
-      .eq("id", id)
-      .single();
-    setConv(data as Conversation | null);
+    const read = ++conversationReadRef.current;
+    const stale = () => read !== conversationReadRef.current || detailScopeRef.current !== id;
+    try {
+      const { data, error } = await supabase
+        .from("conversations")
+        .select(`id,company_id,status,assigned_agent_id,channel_config:channel_config_id(name),visitor_session:visitor_session_id(id)`)
+        .eq("id", id)
+        .single();
+      if (stale()) return;
+      if (error) { setConversationError(true); return; }
+      setConv(data as Conversation | null);
+      setConversationError(false);
+    } catch {
+      if (!stale()) setConversationError(true);
+    }
   }, [id]);
 
   const loadMessages = useCallback(async () => {
-    const { data } = await supabase
-      .from("messages")
-      .select("id, role, content, content_type, status, is_recalled, metadata, created_at")
-      .eq("conversation_id", id)
-      .neq("content", "__THINKING__")
-      .order("created_at", { ascending: true });
-    setMessages((data as Msg[]) ?? []);
+    const read = ++messageReadRef.current;
+    const stale = () => read !== messageReadRef.current || detailScopeRef.current !== id;
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id,role,sender_id,content,content_type,status,is_recalled,metadata,created_at")
+        .eq("conversation_id", id)
+        .neq("content", "__THINKING__")
+        .order("created_at", { ascending: true });
+      if (stale()) return;
+      if (error) { setMessagesError(true); return; }
+      setMessages((data as Msg[]) ?? []);
+      setMessagesTicketId(id);
+      setMessagesError(false);
+    } catch {
+      if (!stale()) setMessagesError(true);
+    }
   }, [id]);
 
   const loadAgents = useCallback(async () => {
@@ -146,9 +183,14 @@ function ConversationDetailContent() {
   }, []);
 
   useEffect(() => {
+    setLoading(true);
+    setConv(null);
+    setMessagesTicketId(null);
+    setMessagesError(false);
+    setConversationError(false);
     (async () => {
       await Promise.all([loadConv(), loadMessages(), loadAgents()]);
-      setLoading(false);
+      if (detailScopeRef.current === id) setLoading(false);
     })();
 
     const convChannel = supabase
@@ -217,32 +259,26 @@ function ConversationDetailContent() {
   }, [loadConv, loadMessages]);
 
   async function callEF(name: string, body: Record<string, unknown>) {
-    const { data, error } = await supabase.functions.invoke(name, { body });
-    if (error) {
-      toast.error(error.message);
+    try {
+      const { data, error } = await supabase.functions.invoke(name, { body });
+      if (error || data?.success !== true) {
+        toast.error("Operation not confirmed. Refresh the ticket before further action.");
+        return false;
+      }
+      return true;
+    } catch {
+      toast.error("Operation outcome unconfirmed. Check the ticket before further action.");
       return false;
     }
-    if (data && (data as { error?: string }).error) {
-      toast.error((data as { error: string }).error);
-      return false;
-    }
-    return true;
   }
-
   async function sendReply() {
-    const content = reply.trim();
-    if (!content) return;
-    setSending(true);
-    const ok = await callEF("agent-send-reply", { conversation_id: id, content });
-    setSending(false);
-    if (ok) {
-      setReply("");
-      toast.success("Reply sent");
-      loadMessages();
+    const ticketId = id;
+    if (!ticketId) return;
+    if (await replyDraft.send()) {
+      toast.success("Reply saved");
+      void loadMessages();
     }
   }
-
-  // ── Dev22-F2: Send Guard — aligned with index route ───────────────
   function handleSendClick() {
     if (!reply.trim()) return;
     if (!conv) return;
@@ -262,34 +298,14 @@ function ConversationDetailContent() {
   }
 
   async function handleTakeOverAndSend() {
-    const content = reply.trim();
-    if (!content) {
-      setSendGuardOpen(false);
-      return;
-    }
-    setSending(true);
-    const takeOverOk = await callEF("take-over-conversation", { conversation_id: id });
-    if (!takeOverOk) {
-      setSending(false);
-      setSendGuardOpen(false);
-      toast.error("Take over failed. Message not sent.");
-      return;
-    }
-    const sendOk = await callEF("agent-send-reply", { conversation_id: id, content });
-    setSending(false);
+    const ticketId = id;
+    if (!ticketId) return;
+    const ok = await replyDraft.send(ticket => callEF("take-over-conversation", { conversation_id: ticket }));
     setSendGuardOpen(false);
-    if (sendOk) {
-      setReply("");
-      toast.success("Took over and sent reply");
-      loadConv();
-      loadMessages();
-    } else {
-      toast.info("Conversation taken over, but message was not sent. Please re-send.");
-      loadConv();
-    }
+    if (ok) toast.success("Take over confirmed and reply saved");
+    void loadConv();
+    void loadMessages();
   }
-  // ── End Dev22-F2 ──────────────────────────────────────────────────
-
   async function handleResolve() {
     if (await callEF("resolve-conversation", { conversation_id: id })) {
       toast.success("Marked resolved");
@@ -343,18 +359,26 @@ function ConversationDetailContent() {
       </div>
     );
   }
+  if (conversationError) {
+    return <div role="alert">Conversation unavailable.<button type="button" onClick={() => void loadConv()}>Retry conversation</button></div>;
+  }
+  if (conv && conv.id !== id) return <div>Loading conversation…</div>;
   if (!conv) {
     return <div className="text-sm text-muted-foreground">Conversation not found.</div>;
   }
 
-  const assignedName = agents.find((a) => a.id === conv.assigned_agent_id)?.display_name || "Unassigned";
+  // Assignment is authoritative on the ticket. A name hidden by RBAC, a
+  // failed profile read or an inactive profile must not imply no owner.
+  const assignedName = conv.assigned_agent_id
+    ? agents.find((a) => a.id === conv.assigned_agent_id)?.display_name?.trim() || "Assigned agent (name unavailable)"
+    : "Unassigned";
   const isElevated = myAgent ? ELEVATED.has(myAgent.role) : false;
   const transferableAgents = agents.filter((a) => a.id !== myAgent?.id);
   const visitorShortId = `Visitor #${(conv.visitor_session?.id || id).slice(0, 8)}`;
 
   return (
     <div style={{ display: "flex", height: "100%", overflow: "hidden", background: "#f5f4f0" }}>
-      {/* LEFT: Static context panel — no new queries, uses existing conv state */}
+      {/* LEFT: Current ticket context and RLS-scoped conversation navigation */}
       <div
         style={{
           width: 260,
@@ -425,18 +449,7 @@ function ConversationDetailContent() {
               ))}
             </div>
           </div>
-          <div
-            style={{
-              background: "#f5f4f0",
-              borderRadius: 8,
-              padding: "10px 12px",
-              fontSize: 10,
-              color: "#888",
-              lineHeight: 1.5,
-            }}
-          >
-            📋 Full conversation list coming in Phase-2B
-          </div>
+          <ConversationList actorId={user?.id ?? ""} currentId={id} />
         </div>
       </div>
 
@@ -468,8 +481,9 @@ function ConversationDetailContent() {
               style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}
             >
               <div className="max-h-[60vh] space-y-2 overflow-y-auto" style={{ flex: 1 }}>
-                {messages.length === 0 && <div className="text-sm text-muted-foreground">No messages.</div>}
-                {messages.map((m) => {
+                {messagesError && <div role="alert">Messages unavailable.<button type="button" onClick={() => void loadMessages()}>Retry messages</button></div>}
+                {!messagesError && messagesTicketId === id && scopedMessages.length === 0 && <div className="text-sm text-muted-foreground">No messages.</div>}
+                {scopedMessages.map((m) => {
                   const isVisitor = m.role === "visitor";
                   const isAgent = m.role === "agent";
                   const isAssistant = m.role === "assistant";
@@ -542,7 +556,11 @@ function ConversationDetailContent() {
               </div>
 
               <div className="space-y-2">
-                <Textarea
+                <SavedResponses key={`${user?.id}:${id}`} conversationId={id}
+            variables={{customer_name:null,agent_name:myAgent?.display_name,channel_name:conv?.channel_config?.name}}
+            onInsert={text=>{if(liveDraftActionKey.current!==draftActionKey || conv.status==="resolved")return;pendingDraftActionKey.current=draftActionKey;if(reply.trim()&&reply.trim()!==text.trim()){setPendingUseText(text);setUseConfirmOpen(true);}else setReply(text);}} />
+              {replyDraft.notice && <div role="alert">{replyDraft.notice}<button type="button" onClick={async () => { await loadMessages(); replyDraft.checked(); }}>Check reply status</button></div>}
+          <Textarea
                   ref={replyRef}
                   value={reply}
                   onChange={(e) => setReply(e.target.value)}
@@ -564,7 +582,7 @@ function ConversationDetailContent() {
                   />
                   <AttachmentButtons conversationId={id} onSent={() => loadMessages()} />
                 </div>
-                <Button onClick={handleSendClick} disabled={sending || !reply.trim()} className="w-full">
+                <Button onClick={handleSendClick} disabled={replyDraft.blocked || !reply.trim()} className="w-full">
                   {sending ? "Sending…" : "Send reply"}
                 </Button>
               </div>
@@ -643,7 +661,10 @@ function ConversationDetailContent() {
             contextRevisionKey={contextRevisionKey}
             draftText={reply}
             currentRole={currentRole}
+            toolScopeKey={toolScopeKey}
             onInsertDraft={(text) => {
+              if(liveDraftActionKey.current!==draftActionKey || conv.status==="resolved")return;
+              pendingDraftActionKey.current=draftActionKey;
               if (reply.trim() && reply.trim() !== text.trim()) {
                 setPendingUseText(text);
                 setUseConfirmOpen(true);
@@ -654,14 +675,20 @@ function ConversationDetailContent() {
             }}
           />
         </div>
-        <div style={{ flex: 1, overflow: "hidden" }}>
-          <AgentToolPanel
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          <>
+            <TicketHandoffSummary conversationId={id} />
+            <AgentToolPanel
             conversationId={id}
             convStatus={conv.status}
+            toolScopeKey={toolScopeKey}
+            contextRevisionKey={contextRevisionKey}
             draftText={reply}
-            selectedMessage={selectedMessage}
+            selectedMessage={currentSelectedMessage}
             onClearSelection={() => setSelectedMessage(null)}
             onUseDraft={(text) => {
+              if(liveDraftActionKey.current!==draftActionKey || conv.status==="resolved")return;
+              pendingDraftActionKey.current=draftActionKey;
               if (reply.trim() && reply.trim() !== text.trim()) {
                 setPendingUseText(text);
                 setUseConfirmOpen(true);
@@ -671,6 +698,7 @@ function ConversationDetailContent() {
             }}
             autoLoadHandoffContext={conv.status === "pending" || Boolean(conv.assigned_agent_id)}
           />
+          </>
         </div>
       </div>
 
@@ -734,6 +762,7 @@ function ConversationDetailContent() {
             <Button
               size="sm"
               onClick={() => {
+                if(pendingDraftActionKey.current!==liveDraftActionKey.current)return;
                 setReply(pendingUseText);
                 setUseConfirmOpen(false);
                 setPendingUseText("");

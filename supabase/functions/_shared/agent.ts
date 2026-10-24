@@ -76,7 +76,7 @@ export async function resolveAgentCompanyScope(
     return json({ error: "Company scope lookup failed" }, 500);
   }
 
-  const rows = memberships ?? [];
+  const rows = (memberships ?? []) as { company_id: string; role: string }[];
   const companyIds = [...new Set(rows.map((row) => String(row.company_id)))];
 
   if (companyIds.length === 0) {
