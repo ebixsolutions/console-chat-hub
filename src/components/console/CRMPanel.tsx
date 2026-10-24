@@ -70,6 +70,7 @@ export const RIGHT_COPY = {
   kbNoConv: { en: "Select a conversation to see recommendations", zh: "選取對話以查看推薦" },
   kbScore: { en: "Relevance", zh: "相關度" },
   polCheckConv: { en: "Check Conversation", zh: "檢查對話" },
+  polTooLong: { en: "Content exceeds 2,000 characters", zh: "內容超過 2,000 字元" },
   polCheckDraft: { en: "Check Draft", zh: "檢查草稿" },
   polLoading: { en: "Checking policy...", zh: "檢查政策中..." },
   polError: { en: "Policy check failed", zh: "政策檢查失敗" },
@@ -279,6 +280,7 @@ export function CRMPanel({
   contextRevisionKey,
   draftText,
   currentRole,
+  toolScopeKey = "",
   onInsertDraft,
 }: {
   conv: CRMConv | null;
@@ -288,6 +290,7 @@ export function CRMPanel({
   contextRevisionKey: string;
   draftText: string;
   currentRole: string | null;
+  toolScopeKey?: string;
   onInsertDraft: (t: string) => void;
 }) {
   const lang = useConsoleLang();
@@ -298,6 +301,8 @@ export function CRMPanel({
   const [kbError, setKbError] = useState("");
   const [kbQuery, setKbQuery] = useState("");
   const kbReqIdRef = useRef(0);
+  const kbPending=useRef(false);
+  const policyPending=useRef(false);
   const [polResult, setPolResult] = useState<PolicyResult | null>(null);
   const [polLoading, setPolLoading] = useState(false);
   const [polError, setPolError] = useState("");
@@ -306,10 +311,38 @@ export function CRMPanel({
 
   const canAccessKb = currentRole === "admin" || currentRole === "supervisor";
   const custCtx = useCustomerContext(conv?.visitor_session_id ?? null);
+  const latestInputs = useRef({});
+  latestInputs.current = {scope:[conv?.id,conv?.status,currentRole,toolScopeKey],kbQuery,boundedContext,contextRevisionKey,draftText};
+  const kbSnapshot = useRef<{key:string;mode:"manual"|"auto_context";draft:string;contextKey:string;contextual:boolean}|null>(null);
+  const policySnapshot = useRef<{key:string;mode:"conv"|"draft"}|null>(null);
+  const kbKey = (mode:"manual"|"auto_context") => {
+    const v=latestInputs.current as {scope:unknown[];kbQuery:string;boundedContext:string;contextRevisionKey:string};
+    return JSON.stringify([v.scope,mode,mode==="manual"?v.kbQuery.trim().slice(0,500):[v.boundedContext,v.contextRevisionKey]]);
+  };
+  const policyKey = (mode:"conv"|"draft") => {
+    const v=latestInputs.current as {scope:unknown[];boundedContext:string;contextRevisionKey:string;draftText:string};
+    return JSON.stringify([v.scope,mode,mode==="draft"?[v.draftText.trim(),v.contextRevisionKey]:[v.boundedContext,v.contextRevisionKey]]);
+  };
+  const renderedScopeKey=JSON.stringify((latestInputs.current as {scope:unknown[]}).scope);
+  const renderedKbContextKey=kbKey("auto_context");
+  const renderedPolicyConvKey=policyKey("conv"),renderedPolicyDraftKey=policyKey("draft");
+  const displayedKbSnapshot=kbSnapshot.current;
+  const displayedPolicySnapshot=policySnapshot.current;
+  const validKb = () => !!kbSnapshot.current && kbSnapshot.current.key===kbKey(kbSnapshot.current.mode) && (!kbSnapshot.current.contextual || kbSnapshot.current.contextKey===kbKey("auto_context"));
+  useEffect(()=>{
+    if(kbSnapshot.current && !validKb()){kbReqIdRef.current++;kbSnapshot.current=null;kbPending.current=false;setKbResults([]);setKbConnState("idle");setKbError("");}
+    if(policySnapshot.current && policySnapshot.current.key!==policyKey(policySnapshot.current.mode)){polReqIdRef.current++;policySnapshot.current=null;policyPending.current=false;setPolResult(null);setPolLoading(false);setPolError("");}
+  },[conv?.id,conv?.status,currentRole,toolScopeKey,lang,kbQuery,boundedContext,contextRevisionKey,draftText]);
+
+
+  useEffect(()=>()=>{kbReqIdRef.current++;polReqIdRef.current++;kbSnapshot.current=null;policySnapshot.current=null;kbPending.current=false;policyPending.current=false;},[]);
 
   const runKbSearch = useCallback(
-    async (query: string, reqId: number, queryMode: "manual" | "auto_context" = "manual") => {
-      if (!query.trim()) return;
+    async (query: string, _requestId: number, queryMode: "manual" | "auto_context" = "manual") => {
+      if (!query.trim() || !canAccessKb || conv?.status==="resolved" || kbPending.current || renderedScopeKey!==JSON.stringify((latestInputs.current as {scope:unknown[]}).scope) || (queryMode==="auto_context" && renderedKbContextKey!==kbKey("auto_context")) || (queryMode==="manual" && query.trim().slice(0,500)!==(latestInputs.current as {kbQuery:string}).kbQuery.trim().slice(0,500))) return;
+      const reqId=++kbReqIdRef.current;kbPending.current=true;
+      const key=kbKey(queryMode),contextKey=kbKey("auto_context");kbSnapshot.current={key,mode:queryMode,draft:draftText,contextKey,contextual:true};
+      const valid=()=>kbReqIdRef.current===reqId && key===kbKey(queryMode);
       setKbConnState("loading");
       setKbError("");
       setKbResults([]);
@@ -317,15 +350,21 @@ export function CRMPanel({
         const { data, error } = await supabase.functions.invoke("kb-search-proxy", {
           body: { query: query.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id, query_mode: queryMode },
         });
-        if (kbReqIdRef.current !== reqId) return;
+        if (!valid()) return;
         const failure = await knowledgeFailureState(data,error);
-        if (kbReqIdRef.current !== reqId) return;
+        if (!valid()) return;
         if (failure) {
           setKbConnState(failure);
           const copy:Record<KBErrorFamily,RCK>={denied:"kbDenied",not_configured:"kbNotConfigured",service_failure:"kbServiceFailure",validation_failure:"kbValidationFailure"};
           setKbError(rc(copy[failure]));
           return;
         }
+        if(data.query_mode==="auto_context"){
+          if(contextKey!==kbKey("auto_context")){kbReqIdRef.current++;kbSnapshot.current=null;kbPending.current=false;setKbConnState("idle");return;}
+          if(kbSnapshot.current)kbSnapshot.current.contextual=true;
+        }
+        // The server may infer contextual retrieval. Only its manual receipt releases the pending context dependency.
+        if(data.query_mode==="manual" && queryMode==="manual" && kbSnapshot.current)kbSnapshot.current.contextual=false;
         const normalized = normalizeKBResults(data.results);
         if (normalized === null || (Array.isArray(data.results) && data.results.length > 0 && normalized.length === 0)) {
           setKbConnState("validation_failure");
@@ -339,12 +378,12 @@ export function CRMPanel({
         setKbResults(relevant);
         setKbConnState(relevant.length > 0 ? "connected" : "empty");
       } catch {
-        if (kbReqIdRef.current !== reqId) return;
+        if (!valid()) return;
         setKbConnState("service_failure");
         setKbError(rc("kbServiceFailure"));
-      }
+      } finally { if(valid())kbPending.current=false; }
     },
-    [conv?.id, rc],
+    [conv?.id, conv?.status, rc, canAccessKb, kbConnState, draftText,renderedScopeKey,renderedKbContextKey],
   );
 
   useEffect(() => {
@@ -359,19 +398,16 @@ export function CRMPanel({
     setPolMode("conv");
     kbReqIdRef.current++;
     polReqIdRef.current++;
-  }, [conv?.id]);
+  }, [conv?.id,toolScopeKey]);
 
-  useEffect(() => {
-    // Viewing or changing context only invalidates evidence. Retrieval is an
-    // explicit Search/Refresh action; it can dispatch upstream models.
-    kbReqIdRef.current++;
-    setKbResults([]);
-    setKbConnState("idle");
-    setKbError("");
-  }, [boundedContext, contextRevisionKey]);
-
-  const runPolicyCheck = async (content: string, reqId: number) => {
-    if (!content.trim() || !canAccessKb) return;
+  const runPolicyCheck = async (content: string, _requestId: number, mode:"conv"|"draft") => {
+    if (!content.trim() || !canAccessKb || conv?.status==="resolved" || policyPending.current) return;
+    if(content.trim().length>2000){polReqIdRef.current++;policySnapshot.current=null;setPolResult(null);setPolError(rc("polTooLong"));setPolLoading(false);return;}
+    const reqId=++polReqIdRef.current;policyPending.current=true;
+    const key=mode==="draft"?renderedPolicyDraftKey:renderedPolicyConvKey;
+    if(key!==policyKey(mode)){policyPending.current=false;return;}
+    policySnapshot.current={key,mode};
+    const valid=()=>polReqIdRef.current===reqId && key===policyKey(mode);
     setPolLoading(true);
     setPolError("");
     setPolResult(null);
@@ -380,11 +416,11 @@ export function CRMPanel({
         body: {
           tool_type: "check_policy",
           conversation_id: conv?.id ?? "",
-          content: content.trim().slice(0, 2000),
-          context_mode: "conversation",
+          content: content.trim(),
+          context_mode: mode==="draft"?"draft":"conversation",
         },
       });
-      if (polReqIdRef.current !== reqId) return;
+      if (!valid()) return;
       if (error || !data?.success) {
         setPolError(
           data?.error === "policy_kb_tenant_unresolved"
@@ -399,12 +435,13 @@ export function CRMPanel({
         else setPolResult(normalized);
       }
     } catch {
-      if (polReqIdRef.current === reqId) setPolError(rc("polError"));
+      if (valid()) setPolError(rc("polError"));
     } finally {
-      if (polReqIdRef.current === reqId) setPolLoading(false);
+      if (valid()) {policyPending.current=false;setPolLoading(false);}
     }
   };
 
+  const activePolResult=policySnapshot.current && policySnapshot.current.mode===polMode && policySnapshot.current.key===policyKey(policySnapshot.current.mode)?polResult:null;
   const handleCopy = (text: string) => {
     navigator.clipboard
       .writeText(text)
@@ -549,20 +586,20 @@ export function CRMPanel({
                   value={kbQuery}
                   onChange={(e) => setKbQuery(e.target.value)}
                   placeholder={rc("kbSearch")}
-                  onKeyDown={(e) => e.key === "Enter" && kbConnState !== "loading" && kbQuery.trim() && void runKbSearch(kbQuery, ++kbReqIdRef.current)}
+                  onKeyDown={(e) => e.key === "Enter" && kbConnState !== "loading" && kbQuery.trim() && void runKbSearch(kbQuery, 0)}
                   style={{ flex: 1, fontSize: 11.5, padding: "5px 8px", borderRadius: 6, border: "0.5px solid #e8e6e0" }}
                 />
-                <button disabled={kbConnState === "loading" || !kbQuery.trim()} onClick={() => void runKbSearch(kbQuery, ++kbReqIdRef.current)} style={btnSm}>{rc("kbSearchBtn")}</button>
-                <button aria-label={lang === "zh" ? "查詢對話相關知識" : "Search conversation knowledge"} disabled={kbConnState === "loading"} onClick={() => {
+                <button disabled={conv?.status==="resolved" || kbConnState === "loading" || !kbQuery.trim()} onClick={() => void runKbSearch(kbQuery, 0)} style={btnSm}>{rc("kbSearchBtn")}</button>
+                <button aria-label={lang === "zh" ? "查詢對話相關知識" : "Search conversation knowledge"} disabled={conv?.status==="resolved" || kbConnState === "loading"} onClick={() => {
                   const q = kbQuery.trim() || deriveAutoSearchQuery(boundedContext);
-                  if (q) void runKbSearch(q, ++kbReqIdRef.current, kbQuery.trim() ? "manual" : "auto_context");
+                  if (q) void runKbSearch(q, 0, kbQuery.trim() ? "manual" : "auto_context");
                 }} style={btnSm}>↻</button>
               </div>
               {kbConnState === "loading" && <div style={{ textAlign: "center", color: "#888", padding: 16 }}>{rc("kbLoading")}</div>}
               {kbError && <div style={{ color: "#ef4444", padding: "6px 0" }}>{kbError}</div>}
               {kbConnState === "empty" && !kbError && <div style={{ padding: 20, textAlign: "center" }}>{rc("kbEmpty")}</div>}
 
-              {kbResults.map((r, i) => (
+              {(validKb()?kbResults:[]).map((r, i) => (
                 <div key={`${r.document_id ?? "doc"}-${r.chunk_id ?? i}`} data-document-id={r.document_id} data-chunk-id={r.chunk_id} style={cardStyle}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
                     <div style={{ fontWeight: 600, fontSize: 11 }}>{r.display_label}</div>
@@ -576,9 +613,9 @@ export function CRMPanel({
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: 9.5, color: "#888" }}>{rc("kbScore")}: {(r.score * 100).toFixed(0)}%</span>
                     <div style={{ display: "flex", gap: 3 }}>
-                      <button onClick={() => handleCopy(r.content)} style={btnSm}>{rc("kbCopy")}</button>
+                      <button onClick={() => {if(kbSnapshot.current===displayedKbSnapshot && validKb()) handleCopy(r.content);}} style={btnSm}>{rc("kbCopy")}</button>
                       {r.chunk_type === "full_content" ? (
-                        <button onClick={() => onInsertDraft(r.content)} style={{ ...btnSm, color: "#2563eb", borderColor: "#2563eb" }}>{rc("kbInsert")}</button>
+                        <button onClick={() => {if(kbSnapshot.current===displayedKbSnapshot && validKb() && kbSnapshot.current?.draft===(latestInputs.current as {draftText:string}).draftText && conv?.status!=="resolved") onInsertDraft(r.content);}} style={{ ...btnSm, color: "#2563eb", borderColor: "#2563eb" }}>{rc("kbInsert")}</button>
                       ) : r.chunk_type === "rag_summary" ? (
                         <span style={{ fontSize: 9.5, color: "#9ca3af", fontStyle: "italic" }}>{rc("kbSummaryOnly")}</span>
                       ) : null}
@@ -600,21 +637,21 @@ export function CRMPanel({
               <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
                 <button
                   style={{ ...btnSm, background: polMode === "conv" ? "#faf5ff" : "#fff" }}
-                  disabled={polLoading || !boundedContext.trim()}
+                  disabled={conv?.status==="resolved" || polLoading || !boundedContext.trim()}
                   onClick={() => {
                     setPolMode("conv");
-                    if (boundedContext.trim()) void runPolicyCheck(boundedContext, ++polReqIdRef.current);
+                    if (boundedContext.trim()) void runPolicyCheck(boundedContext, 0,"conv");
                   }}
                 >
                   {rc("polCheckConv")}
                 </button>
                 <button
                   style={{ ...btnSm, background: polMode === "draft" ? "#faf5ff" : "#fff" }}
-                  disabled={polLoading}
+                  disabled={conv?.status==="resolved" || polLoading}
                   onClick={() => {
                     setPolMode("draft");
-                    if (!draftText.trim()) setPolError(rc("polDraftEmpty"));
-                    else void runPolicyCheck(draftText, ++polReqIdRef.current);
+                    if (!draftText.trim()) {polReqIdRef.current++;policySnapshot.current=null;setPolResult(null);setPolLoading(false);setPolError(rc("polDraftEmpty"));}
+                    else void runPolicyCheck(draftText, 0,"draft");
                   }}
                 >
                   {rc("polCheckDraft")}
@@ -622,19 +659,19 @@ export function CRMPanel({
               </div>
               {polLoading && <div style={{ textAlign: "center", color: "#888", padding: 16 }}>{rc("polLoading")}</div>}
               {polError && <div style={{ color: "#ef4444", padding: "6px 0" }}>{polError}</div>}
-              {!polLoading && !polError && !polResult && <div style={{ padding: 20, textAlign: "center" }}>{rc("polNoContent")}</div>}
-              {polResult && (
+              {!polLoading && !polError && !activePolResult && <div style={{ padding: 20, textAlign: "center" }}>{rc("polNoContent")}</div>}
+              {activePolResult && (
                 <div>
-                  <div style={{ ...cardStyle, background: polResult.status === "compliant" ? "#f0fdf4" : polResult.status === "insufficient_evidence" ? "#f9fafb" : "#fef3c7" }}>
-                    <div style={{ fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>{polResult.status}</div>
-                    <div style={{ fontSize: 11, lineHeight: 1.5 }}>{polResult.summary}</div>
+                  <div style={{ ...cardStyle, background: activePolResult.status === "compliant" ? "#f0fdf4" : activePolResult.status === "insufficient_evidence" ? "#f9fafb" : "#fef3c7" }}>
+                    <div style={{ fontWeight: 600, fontSize: 11, textTransform: "uppercase" }}>{activePolResult.status}</div>
+                    <div style={{ fontSize: 11, lineHeight: 1.5 }}>{activePolResult.summary}</div>
                   </div>
-                  {polResult.issues.map((iss, i) => (
+                  {activePolResult.issues.map((iss, i) => (
                     <div key={i} style={{ marginBottom: 3, fontSize: 10.5, padding: "3px 6px", background: iss.severity === "violation" ? "#fef2f2" : "#fffbeb", borderRadius: 4 }}>
                       <span style={{ fontWeight: 600 }}>{iss.severity}:</span> {iss.excerpt} <span style={{ color: "#888" }}>({iss.policy_label})</span>
                     </div>
                   ))}
-                  <button onClick={() => handleCopy(polResult.summary)} style={{ ...btnSm, marginTop: 4 }}>{rc("polCopySummary")}</button>
+                  <button onClick={() => {if(policySnapshot.current && policySnapshot.current===displayedPolicySnapshot && policySnapshot.current.key===policyKey(policySnapshot.current.mode)) handleCopy(activePolResult.summary);}} style={{ ...btnSm, marginTop: 4 }}>{rc("polCopySummary")}</button>
                 </div>
               )}
             </>

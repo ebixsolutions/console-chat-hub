@@ -53,6 +53,7 @@ type Msg = {
 
 type Conversation = {
   id: string;
+  company_id?: string;
   status: string;
   assigned_agent_id: string | null;
   channel_config: { name: string } | null;
@@ -89,12 +90,20 @@ function ConversationDetailContent() {
   const [sendGuardOpen, setSendGuardOpen] = useState(false);
   const [resolvedWarningOpen, setResolvedWarningOpen] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<{ id: string; role: string; content: string } | null>(null);
+  const currentSelectedMessage=selectedMessage ? scopedMessages.find(m=>m.id===selectedMessage.id && !m.is_recalled) ?? null : null;
   const [useConfirmOpen, setUseConfirmOpen] = useState(false);
   const [pendingUseText, setPendingUseText] = useState("");
 
   // ── RIGHT-CRM-KB-CONTEXT-1: bounded context scoped to this conversation ──
   const boundedContext = useMemo(() => buildBoundedContext(scopedMessages), [messages, messagesTicketId, id]);
   const contextRevisionKey = useMemo(() => computeContextRevisionKey(id, scopedMessages), [id, messages, messagesTicketId]);
+
+  const toolScopeKey=JSON.stringify([user?.id,currentRole,conv?.company_id,conv?.assigned_agent_id]);
+  const draftActionKey=JSON.stringify([id,toolScopeKey,conv?.status,contextRevisionKey,currentSelectedMessage?.id,currentSelectedMessage?.content,reply]);
+  const liveDraftActionKey=useRef(draftActionKey);liveDraftActionKey.current=draftActionKey;
+  const pendingDraftActionKey=useRef<string|null>(null);
+  useEffect(()=>{liveDraftActionKey.current=draftActionKey;return()=>{liveDraftActionKey.current="";pendingDraftActionKey.current=null;};},[]);
+  useEffect(()=>{setUseConfirmOpen(false);setPendingUseText("");pendingDraftActionKey.current=null;},[draftActionKey]);
 
   // ── J1: Realtime infrastructure ──
   const realtimeConnectedRef = useRef(true);
@@ -133,7 +142,7 @@ function ConversationDetailContent() {
     try {
       const { data, error } = await supabase
         .from("conversations")
-        .select(`id,status,assigned_agent_id,channel_config:channel_config_id(name),visitor_session:visitor_session_id(id)`)
+        .select(`id,company_id,status,assigned_agent_id,channel_config:channel_config_id(name),visitor_session:visitor_session_id(id)`)
         .eq("id", id)
         .single();
       if (stale()) return;
@@ -549,7 +558,7 @@ function ConversationDetailContent() {
               <div className="space-y-2">
                 <SavedResponses key={`${user?.id}:${id}`} conversationId={id}
             variables={{customer_name:null,agent_name:myAgent?.display_name,channel_name:conv?.channel_config?.name}}
-            onInsert={text=>{if(reply.trim()&&reply.trim()!==text.trim()){setPendingUseText(text);setUseConfirmOpen(true);}else setReply(text);}} />
+            onInsert={text=>{if(liveDraftActionKey.current!==draftActionKey || conv.status==="resolved")return;pendingDraftActionKey.current=draftActionKey;if(reply.trim()&&reply.trim()!==text.trim()){setPendingUseText(text);setUseConfirmOpen(true);}else setReply(text);}} />
               {replyDraft.notice && <div role="alert">{replyDraft.notice}<button type="button" onClick={async () => { await loadMessages(); replyDraft.checked(); }}>Check reply status</button></div>}
           <Textarea
                   ref={replyRef}
@@ -652,7 +661,10 @@ function ConversationDetailContent() {
             contextRevisionKey={contextRevisionKey}
             draftText={reply}
             currentRole={currentRole}
+            toolScopeKey={toolScopeKey}
             onInsertDraft={(text) => {
+              if(liveDraftActionKey.current!==draftActionKey || conv.status==="resolved")return;
+              pendingDraftActionKey.current=draftActionKey;
               if (reply.trim() && reply.trim() !== text.trim()) {
                 setPendingUseText(text);
                 setUseConfirmOpen(true);
@@ -669,10 +681,14 @@ function ConversationDetailContent() {
             <AgentToolPanel
             conversationId={id}
             convStatus={conv.status}
+            toolScopeKey={toolScopeKey}
+            contextRevisionKey={contextRevisionKey}
             draftText={reply}
-            selectedMessage={selectedMessage}
+            selectedMessage={currentSelectedMessage}
             onClearSelection={() => setSelectedMessage(null)}
             onUseDraft={(text) => {
+              if(liveDraftActionKey.current!==draftActionKey || conv.status==="resolved")return;
+              pendingDraftActionKey.current=draftActionKey;
               if (reply.trim() && reply.trim() !== text.trim()) {
                 setPendingUseText(text);
                 setUseConfirmOpen(true);
@@ -746,6 +762,7 @@ function ConversationDetailContent() {
             <Button
               size="sm"
               onClick={() => {
+                if(pendingDraftActionKey.current!==liveDraftActionKey.current)return;
                 setReply(pendingUseText);
                 setUseConfirmOpen(false);
                 setPendingUseText("");

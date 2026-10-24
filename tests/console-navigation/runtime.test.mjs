@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -24,6 +25,7 @@ const fixtureModule = 'const f=globalThis.__c3Console;';
 for (const [name, entry] of entries) {
   const result = await build({ entryPoints: [entry], bundle: true, write: false, platform: 'node', format: 'esm', jsx: 'automatic',
     plugins: [{ name: 'isolated-transport-and-session', setup(b) {
+      if(process.env.C3_TASK1B_BASELINE)b.onLoad({filter:/(?:AgentToolPanel|CRMPanel)\.tsx$/},a=>({contents:execFileSync('git',['show','5ec705f7:'+path.relative(process.cwd(),a.path)],{encoding:'utf8'}),loader:'tsx'}));
       b.onResolve({ filter: /^react(?:\/.*)?$/ }, a => ({ path: require.resolve(a.path), external: true }));
       b.onResolve({ filter: /^(lucide-react|sonner|@tanstack\/react-router)$/ }, a => ({ path: a.path, namespace: 'fixture' }));
       b.onResolve({ filter: /^@\/(integrations\/supabase\/client|hooks\/useEffectiveRole|hooks\/useCurrentRole|lib\/i18n\/consoleLang|lib\/api\/ce.functions|lib\/customer360\/useCustomerContext|components\/console\/ce\/CeDetailPanel)$/ }, a => ({ path: a.path, namespace: 'fixture' }));
@@ -138,3 +140,70 @@ test('Analytics detail does not turn malformed successful HTTP data into complet
   assert.ok(text(root.toJSON()).includes('invalid_response'));assert.equal(root.root.findAllByType('table').length,0);await act(async()=>root.unmount());
 });
 test.after(()=>fs.rmSync(temporary,{recursive:true,force:true}));
+
+test('Task1B Policy ignores late result after same-ticket context correction and recovers button',async()=>{
+ reset();let finish;fixture.invoke=(name,options)=>{calls.push({name,body:options.body});return new Promise(resolve=>finish=resolve);};
+ const root=await mount(components.crm.CRMPanel,crmProps);await click(root,'Policy');await click(root,'Check Conversation');
+ await act(async()=>root.update(React.createElement(components.crm.CRMPanel,{...crmProps,boundedContext:'Corrected policy question',contextRevisionKey:'r2'})));
+ assert.equal(button(root,'Check Conversation').props.disabled,false);
+ await act(async()=>finish(response({success:true,result:{status:'compliant',summary:'STALE_POLICY_RESULT',issues:[]}})));
+ assert(!text(root.toJSON()).includes('STALE_POLICY_RESULT'));assert.equal(calls.length,1);await act(async()=>root.unmount());
+});
+test('Task1B Assist draft edit invalidates in-flight result without automatic dispatch',async()=>{
+ reset();let finish;fixture.invoke=(name,options)=>{calls.push({name,body:options.body});return new Promise(resolve=>finish=resolve);};
+ const props={...agentProps,draftText:'First draft'};const root=await mount(components.agent.AgentToolPanel,props);await click(root,'Use draft');await act(async()=>{root.root.findAllByType('button').find(n=>text({children:n.children}).endsWith('Suggest Reply')).props.onClick();});
+ await act(async()=>root.update(React.createElement(components.agent.AgentToolPanel,{...props,draftText:'Edited draft'})));
+ assert.equal(root.root.findAllByType('button').find(n=>text({children:n.children}).endsWith('Suggest Reply')).props.disabled,false);
+ await act(async()=>finish(response({success:true,result:{suggestions:[{content:'STALE_ASSIST_RESULT'}]}})));
+ assert(!text(root.toJSON()).includes('STALE_ASSIST_RESULT'));assert.equal(calls.length,1);await act(async()=>root.unmount());
+});
+
+const toolButton=(root,label)=>root.root.findAllByType('button').find(n=>text({children:n.children}).endsWith(label));
+for(const delta of [{toolScopeKey:'actor-two'},{convStatus:'resolved'},{selectedMessage:{id:idB,role:'visitor',content:'Changed selected text'}}])test('Task1B Assist selected input scope invalidates pending success: '+JSON.stringify(delta),async()=>{
+ reset();let finish;fixture.invoke=(name,options)=>{calls.push({name,body:options.body});return new Promise(resolve=>finish=resolve);};
+ const props={...agentProps,selectedMessage:{id:idA,role:'visitor',content:'Original selected text'}};const root=await mount(components.agent.AgentToolPanel,props);await click(root,'Selected msg');await act(async()=>{toolButton(root,'Grammar').props.onClick();});
+ await act(async()=>root.update(React.createElement(components.agent.AgentToolPanel,{...props,...delta})));
+ await act(async()=>finish(response({success:true,result:{corrected_text:'STALE-GRAMMAR',summary:'old',tone_assessment:'neutral'}})));assert(!text(root.toJSON()).includes('STALE-GRAMMAR'));assert.equal(calls.length,1);await act(async()=>root.unmount());
+});
+for(const kind of ['resolve','reject'])test('Task1B old Assist completion cannot finish a newer operation: '+kind,async()=>{
+ reset();const pending=[];fixture.invoke=(name,options)=>{calls.push({name,body:options.body});return new Promise((resolve,reject)=>pending.push({resolve,reject}));};
+ const root=await mount(components.agent.AgentToolPanel,agentProps);const input=()=>root.root.findByType('textarea');await act(async()=>input().props.onChange({target:{value:'First manual request'}}));await act(async()=>{toolButton(root,'Grammar').props.onClick();toolButton(root,'Grammar').props.onClick();});assert.equal(calls.length,1);
+ await act(async()=>input().props.onChange({target:{value:'Second manual request'}}));await act(async()=>{toolButton(root,'Grammar').props.onClick();});assert.equal(calls.length,2);
+ await act(async()=>kind==='resolve'?pending[0].resolve(response({success:true,result:{corrected_text:'OLD'}})):pending[0].reject(new Error('old network failure')));assert.equal(toolButton(root,'Grammar').props.disabled,true);assert(!text(root.toJSON()).includes('Network error'));
+ await act(async()=>pending[1].resolve(response({success:true,result:{corrected_text:'CURRENT',summary:'new',tone_assessment:'neutral'}})));assert(text(root.toJSON()).includes('CURRENT'));assert.equal(toolButton(root,'Grammar').props.disabled,false);await act(async()=>root.unmount());
+});
+test('Task1B custom translation remains visible on unrelated draft edit but cannot replace that edited draft',async()=>{
+ reset();const used=[];fixture.invoke=async()=>response({success:true,result:{translated_text:'Translated current input'}});const props={...agentProps,onUseDraft:t=>used.push(t)};const root=await mount(components.agent.AgentToolPanel,props);await act(async()=>root.root.findByType('textarea').props.onChange({target:{value:'Translate this'}}));await act(async()=>{toolButton(root,'Translate').props.onClick();});
+ const use=root.root.findAllByType('button').find(n=>text({children:n.children})==='Use in Draft');assert(use);
+ await act(async()=>root.update(React.createElement(components.agent.AgentToolPanel,{...props,draftText:'Later human edit'})));assert(text(root.toJSON()).includes('Translated current input'));await act(async()=>use.props.onClick());assert.deepEqual(used,[]);await act(async()=>root.unmount());
+});
+
+test('Task1B overlong draft is not silently checked as a compliant prefix',async()=>{
+ reset();const root=await mount(components.crm.CRMPanel,{...crmProps,draftText:'x'.repeat(2001)});await click(root,'Policy');await click(root,'Check Draft');assert.equal(calls.length,0);assert(text(root.toJSON()).includes('2,000'));await act(async()=>root.unmount());
+});
+
+for(const oldOutcome of ['resolve','reject'])test('Task1B Policy draft binds conversation revision and ignores old finally: '+oldOutcome,async()=>{
+ reset();const pending=[];fixture.invoke=(name,options)=>{calls.push({name,body:options.body});return new Promise((resolve,reject)=>pending.push({resolve,reject}));};const props={...crmProps,draftText:'Current draft'};const root=await mount(components.crm.CRMPanel,props);await click(root,'Policy');await click(root,'Check Draft');
+ await act(async()=>root.update(React.createElement(components.crm.CRMPanel,{...props,contextRevisionKey:'r2'})));await click(root,'Check Draft');assert.equal(calls.length,2);
+ await act(async()=>oldOutcome==='resolve'?pending[0].resolve(response({success:true,result:{status:'compliant',summary:'OLD_POLICY',issues:[]}})):pending[0].reject(Error('old network')));assert.equal(button(root,'Check Draft').props.disabled,true);assert(!text(root.toJSON()).includes('OLD_POLICY'));
+ await act(async()=>pending[1].resolve(response({success:true,result:{status:'warning',summary:'CURRENT_POLICY',issues:[]}})));assert(text(root.toJSON()).includes('CURRENT_POLICY'));assert.equal(button(root,'Check Draft').props.disabled,false);await act(async()=>root.unmount());
+});
+test('Task1B same-input new Assist result cannot reuse an older Use callback',async()=>{
+ reset();let n=0;const used=[];fixture.invoke=async()=>response({success:true,result:{corrected_text:'Revision '+(++n),summary:'checked',tone_assessment:'neutral'}});const root=await mount(components.agent.AgentToolPanel,{...agentProps,onUseDraft:t=>used.push(t)});await act(async()=>root.root.findByType('textarea').props.onChange({target:{value:'Manual text'}}));await act(async()=>{toolButton(root,'Grammar').props.onClick();});const oldUse=button(root,'Use in Draft').props.onClick;
+ await act(async()=>{toolButton(root,'Grammar').props.onClick();});await act(async()=>oldUse());assert.deepEqual(used,[]);await click(root,'Use in Draft');assert.deepEqual(used,['Revision 2']);await act(async()=>root.unmount());
+});
+test('Task1B manual Knowledge preserves unrelated context, guards draft edits and binds Copy to result revision',async()=>{
+ reset();let n=0;const used=[],copied=[];Object.defineProperty(globalThis,'navigator',{configurable:true,value:{clipboard:{writeText:async t=>copied.push(t)}}});fixture.invoke=async()=>response({success:true,query_mode:'manual',results:[{display_label:'Source',content:'FULL_SOURCE_'+(++n),score:0.9,source_type:'knowledge',document_id:idA,chunk_id:idB,chunk_type:'full_content'}]});const props={...crmProps,onInsertDraft:t=>used.push(t)};const root=await mount(components.crm.CRMPanel,props);await click(root,'Knowledge');await act(async()=>root.root.findByType('input').props.onChange({target:{value:'Explicit manual search'}}));await click(root,'Search');const copyOld=button(root,'Copy').props.onClick,insertOld=button(root,'Insert into Draft').props.onClick;
+ await act(async()=>root.update(React.createElement(components.crm.CRMPanel,{...props,boundedContext:'Unrelated conversation edit',contextRevisionKey:'r2',draftText:'Later human edit'})));assert(text(root.toJSON()).includes('FULL_SOURCE_1'));await act(async()=>insertOld());assert.deepEqual(used,[]);await act(async()=>copyOld());assert.deepEqual(copied,['FULL_SOURCE_1']);await click(root,'Search');await act(async()=>copyOld());assert.deepEqual(copied,['FULL_SOURCE_1']);await click(root,'Copy');assert.deepEqual(copied,['FULL_SOURCE_1','FULL_SOURCE_2']);await act(async()=>root.unmount());
+});
+
+test('Task1B changing input mode invalidates pending Assist even for identical text',async()=>{
+ reset();let finish;fixture.invoke=(name,options)=>{calls.push({name,body:options.body});return new Promise(resolve=>finish=resolve);};const root=await mount(components.agent.AgentToolPanel,{...agentProps,selectedMessage:{id:idA,role:'visitor',content:'Same text'}});await act(async()=>root.root.findByType('textarea').props.onChange({target:{value:'Same text'}}));await act(async()=>{toolButton(root,'Suggest Reply').props.onClick();});await click(root,'Selected msg');assert.equal(toolButton(root,'Suggest Reply').props.disabled,false);await act(async()=>finish(response({success:true,result:{suggestions:[{content:'OLD MODE',tone_label:'Neutral'}]}})));assert(!text(root.toJSON()).includes('OLD MODE'));assert.equal(calls.length,1);await act(async()=>root.unmount());
+});
+
+test('Task1B pending Knowledge inferred-context response cannot block a fresh manual Search',async()=>{
+ reset();let finish;fixture.invoke=(name,options)=>{calls.push({name,body:options.body});return new Promise(resolve=>finish=resolve);};const root=await mount(components.crm.CRMPanel,crmProps);await click(root,'Knowledge');await act(async()=>root.root.findByType('input').props.onChange({target:{value:'Customer asks about delivery'}}));await click(root,'Search');await act(async()=>root.update(React.createElement(components.crm.CRMPanel,{...crmProps,boundedContext:'Latest corrected question',contextRevisionKey:'r2'})));assert.equal(button(root,'Search').props.disabled,false);await act(async()=>finish(response({success:true,query_mode:'auto_context',results:[]})));await click(root,'Search');assert.equal(calls.length,2);await act(async()=>finish(response({success:true,query_mode:'manual',results:[]})));assert.equal(button(root,'Search').props.disabled,false);await act(async()=>root.unmount());
+});
+test('Task1B Policy Copy binds current content and same-input result revision',async()=>{
+ reset();let n=0;const copied=[];Object.defineProperty(globalThis,'navigator',{configurable:true,value:{clipboard:{writeText:async t=>copied.push(t)}}});fixture.invoke=async()=>response({success:true,result:{status:'warning',summary:'POLICY_'+(++n),issues:[]}});const root=await mount(components.crm.CRMPanel,crmProps);await click(root,'Policy');await click(root,'Check Conversation');const oldCopy=button(root,'Copy Summary').props.onClick;await click(root,'Check Conversation');await act(async()=>oldCopy());assert.deepEqual(copied,[]);await click(root,'Copy Summary');assert.deepEqual(copied,['POLICY_2']);const currentCopy=button(root,'Copy Summary').props.onClick;await act(async()=>root.update(React.createElement(components.crm.CRMPanel,{...crmProps,contextRevisionKey:'r2'})));await act(async()=>currentCopy());assert.deepEqual(copied,['POLICY_2']);await act(async()=>root.unmount());
+});

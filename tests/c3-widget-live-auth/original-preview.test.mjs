@@ -299,7 +299,8 @@ async function setupInbox(fault='none'){
  globalThis.fetch=async(url,init)=>{
   if(String(url)===x.endpoint){if(fault==='tool-failure')return new Response(null,{status:503});if(fault==='revoke-on-return')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;return await x.upstream(url,init);}
   assert.equal(String(url),f.url,'no unrelated provider or accounting endpoint');model++;const b=JSON.parse(init.body);const text=b.contents.map(c=>c.parts.map(p=>p.text??'').join('')).join('');prompts.push(text);
-  let answer={queries:[]};if(text.includes('Text to check:'))answer=fault==='invalid-policy'?{status:'violation',summary:'invalid fixture',issues:[]}:{status:'warning',summary:'Isolated policy assessment',issues:[{excerpt:'fixture',policy_label:'Evidence 1',severity:'warning'}]};
+  if(text.includes('proposed_claims'))return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({grounded:fault!=='unsupported-policy',unsupported_claims:fault==='unsupported-policy'?['unsupported full refund']:[],evidence_ids:['E1'],resolution:fault==='unsupported-policy'?'unsupported':'supported'})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
+  let answer={queries:[]};if(text.includes('Text to check:'))answer=fault==='unsupported-policy'?{status:'compliant',summary:'Every cancellation receives an unconditional full refund.',issues:[]}:fault==='invalid-policy'?{status:'violation',summary:'invalid fixture',issues:[]}:{status:'warning',summary:'Isolated policy assessment',issues:[{excerpt:'fixture',policy_label:'Evidence 1',severity:'warning'}]};
   return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(answer)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
  };
  const request=async(slug,content='Please assess my subscription cancellation draft.')=>{
@@ -478,7 +479,7 @@ async function dynamicInboxFixture(fault='none'){
  globalThis.fetch=async(url,init)=>{
   if(String(url)!==f.url)return await x.up(url,init);
   models++;const b=JSON.parse(init.body);const prompt=b.contents.flatMap(c=>c.parts.map(p=>p.text??'')).join('');prompts.push(prompt);
-  const answer=prompt.includes('Text to check:')?{status:'warning',summary:'Isolated grounded assessment',issues:[{excerpt:'subscription',policy_label:'Evidence 1',severity:'warning'}]}:{queries:[]};
+  const answer=prompt.includes('proposed_claims')?{grounded:!f.rejectAssistClaims,unsupported_claims:f.rejectAssistClaims?['unsupported fixture claim']:[],evidence_ids:['E1'],resolution:f.rejectAssistClaims?'unsupported':'supported'}:prompt.includes('Customer message:')?{suggestions:[{content:directorOriginalRag.selected_documents[0].evidence[0].content,tone_label:'Informative'}]}:prompt.includes('Text to check:')?{status:'warning',summary:'Isolated grounded assessment',issues:[{excerpt:'subscription',policy_label:'Evidence 1',severity:'warning'}]}:{queries:[]};
   return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(answer)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
  };
  const send=async(kind)=>{
@@ -584,7 +585,7 @@ async function ragApiInboxFixture(fault='none'){
  if(fault==='inbox-grant-absent')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;
  if(fault==='role-revoked')f.rows.agent_profile[0].status='inactive';
  const from=f.db.from;f.db.from=function(table){const q=from.call(this,table);q.in=()=>q;q.not=()=>q;return q;};f.db.auth={getUser:async()=>({data:{user:f.user},error:null})};globalThis.__c3InboxClient=()=>f.db;
- let models=0;const prompts=[];globalThis.fetch=async(url,init)=>{if(String(url)!==f.url)return x.up(url,init);models++;const prompt=JSON.parse(init.body).contents.flatMap(c=>c.parts.map(p=>p.text??'')).join('');prompts.push(prompt);return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(prompt.includes('Text to check:')?{status:'warning',summary:'Source-backed policy review',issues:[{excerpt:'subscription',policy_label:'Evidence 1',severity:'warning'}]}:{queries:[]})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});};
+ let models=0;const prompts=[];globalThis.fetch=async(url,init)=>{if(String(url)!==f.url)return x.up(url,init);models++;const prompt=JSON.parse(init.body).contents.flatMap(c=>c.parts.map(p=>p.text??'')).join('');prompts.push(prompt);return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(prompt.includes('proposed_claims')?{grounded:!f.rejectAssistClaims,unsupported_claims:f.rejectAssistClaims?['unsupported fixture claim']:[],evidence_ids:['E1'],resolution:f.rejectAssistClaims?'unsupported':'supported'}:prompt.includes('Customer message:')?{suggestions:[{content:directorOriginalRag.selected_documents[0].evidence[0].content,tone_label:'Informative'}]}:prompt.includes('Text to check:')?{status:'warning',summary:'Source-backed policy review',issues:[{excerpt:'subscription',policy_label:'Evidence 1',severity:'warning'}]}:{queries:[]})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});};
  const send=async(kind)=>{const body=kind==='knowledge'?{query:'published service policy',top_k:3,conversation_id:x.c.id}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT: pause subscription':'CONVERSATION: pause subscription',context_mode:kind==='draft'?'draft':'conversation'};const r=await(kind==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};};return {...x,send,models:()=>models,prompts};
 }
 for(const kind of ['knowledge','conversation','draft'])for(const fault of ['none','no-match','original-unversioned-response','http-denied','tampered-content','inbox-grant-absent'])test('complete Inbox native RAG '+kind+': '+fault,async()=>{
@@ -684,7 +685,7 @@ async function originalAggregationFixture(fault='none',inbox=false,responseFixtu
   return fetchKBRag({query,top_k:3},scope.scope,resolveKBEndpoint(),{uatContext:{conversationId:x.c.id,operationId:crypto.randomUUID()}});
  };
  const send=async(kind,query='什麼是四電一腦？')=>{
-  const body=kind==='knowledge'?{query,top_k:3,conversation_id:x.c.id}:['helper','manual-policy'].includes(kind)?{tool_type:kind==='helper'?'knowledge_helper':'check_policy',conversation_id:x.c.id,content:query,context_mode:'manual'}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT: 四電一腦免費除舊服務須知':'CONVERSATION: 四電一腦免費除舊服務須知',context_mode:kind==='draft'?'draft':'conversation'};
+  const body=kind==='knowledge'?{query,top_k:3,conversation_id:x.c.id}:['helper','manual-policy','manual-suggest'].includes(kind)?{tool_type:kind==='helper'?'knowledge_helper':kind==='manual-suggest'?'suggest_reply':'check_policy',conversation_id:x.c.id,content:query,context_mode:'manual'}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT: 四電一腦免費除舊服務須知':'CONVERSATION: 四電一腦免費除舊服務須知',context_mode:kind==='draft'?'draft':'conversation'};
   const r=await(kind==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};
  };
  return {...x,binding,up,search,send,posts:()=>posts,queries};
@@ -886,4 +887,21 @@ for(const [fault,code] of [['oversized','KB_RESPONSE_TOO_LARGE'],['empty-body','
 test('actual repository Python aggregation producer interoperates with authenticated binding and canonical grounding',async()=>{
  const data=JSON.parse(execFileSync('python3',['tests/edge/singapore-aggregation-producer-contract.py'],{encoding:'utf8'}));
  const x=await originalAggregationFixture('none',false,data);try{const r=await x.search('What is Harbor Care?');assert(r.success,JSON.stringify(r));const g=selectCanonicalGrounding(r.documents,{requestText:'What is Harbor Care?',expectedTenantId:'34'});assert.equal(g.document?.document_id,'2'.repeat(32));assert.equal(g.authority_decision.provenance.currentness,'unknown');assert.equal(g.authority_decision.provenance.version,null);assert.equal(x.posts(),1);}finally{globalThis.fetch=realFetch;}
+});
+
+test('Task1B Policy cannot mark unsupported model claims as grounded compliant',async()=>{
+ const x=await setupInbox('unsupported-policy');const r=await x.send('policy','DRAFT DISTINCT: Please check this text.');
+ assert.notEqual(r.data.result?.status,'compliant',JSON.stringify(r));assert.notEqual(r.data.knowledge_grounded,true);
+});
+
+for(const query of ['What is 四電一腦?','Could you explain 四電一腦?','I would like to know what 四電一腦 includes.','四電一腦 有啲咩服務？'])test('Task1B actual Knowledge natural query preserves usable full evidence: '+query,async()=>{
+ const x=await originalAggregationFixture('none',true);try{const r=await x.send('knowledge',query);assert.equal(r.status,200,JSON.stringify(r));assert(r.data.results.length>0,JSON.stringify(r));}finally{globalThis.fetch=realFetch;}
+});
+
+for(const rejected of [false,true])test('Task1B Suggest Reply full handler verifies claims and remains an unsent draft: '+rejected,async()=>{
+ const x=await originalAggregationFixture('none',true);f.rejectAssistClaims=rejected;try{const before=f.rows.messages.length,r=await x.send('manual-suggest','什麼是四電一腦？');if(rejected){assert(r.status>=400,JSON.stringify(r));assert.notEqual(r.data.knowledge_grounded,true);}else{assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.draft_only,true);assert.equal(r.data.knowledge_grounded,true);assert(r.data.citation_lineage.evidence_chunk_ids.length);assert(r.data.result.suggestions.length);}assert.equal(f.rows.messages.length,before);}finally{delete f.rejectAssistClaims;globalThis.fetch=realFetch;}
+});
+
+for(const denied of [false,true])test('Task1B Knowledge Helper uses existing knowledge grant without borrowing policy scope: '+denied,async()=>{
+ const x=await originalAggregationFixture('none',true);try{if(denied){const g=JSON.parse(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION);g.bindings[0].operations=['policy'];f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify(g);}const r=await x.send('helper','什麼是四電一腦？');if(denied){assert(r.status>=400,JSON.stringify(r));assert.equal(x.posts(),0);}else{assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.result.status,'available');assert(r.data.result.evidence.every(e=>e.document_id===r.data.selected_document_id && e.chunk_id));assert.equal(r.data.reference_authority.provenance.currentness,'unknown');}}finally{globalThis.fetch=realFetch;}
 });
