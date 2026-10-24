@@ -6,6 +6,24 @@ import {classifyCanonicalConversationTurn} from '../../supabase/functions/_share
 import {terminalRecoveryReply} from '../../supabase/functions/_shared/generation-terminal-guard.ts';
 function assert(v:unknown,m='assertion'):asserts v {if(!v)throw Error(m)}
 function throws(f:()=>unknown){let failed=false;try{f()}catch{failed=true}assert(failed,'invalid request accepted')}
+Deno.test('Hosted 95fd1e95 specification comparison criteria are guidance, actual specifications retain grounding',()=>{
+ const frame={intent:'customer_guidance',confidence:0.97,requested_facts:['comparison criteria'],ambiguity:{is_ambiguous:false}};
+ for(const q of [
+  '我想選一部適合屋企日常使用的電腦，主要上網、文書同視像通話。應該先比較哪些規格？暫時不用查店舖庫存或售價。',
+  '家用電腦應該優先考慮哪些規格？',
+  'Which specifications should I compare for everyday home use?',
+  'What specs should I consider for video calls?',
+ ])assert(isCustomerGuidanceRequest(q,frame),q);
+ for(const q of [
+  '應該先比較哪些規格？另外請查你們最新價錢。',
+  '應該先比較哪些規格，以及ABC型號的實際規格係乜？',
+  'Which specifications should I compare, and what specifications does model ABC have?',
+  'What specs should I consider? Please check current stock.',
+  'What specs should I consider, and what specs does model ABC have?',
+  '請比較ABC及XYZ的規格。',
+  '你們電腦的規格係乜？',
+ ])assert(!isCustomerGuidanceRequest(q,frame),q);
+});
 Deno.test('Hosted 21745026 native JSON avoids the second-document escape boundary; malformed legacy output remains rejected',()=>{
  const malformed={operation:'UPDATE_ITEM',confidence:0.97,delta_json:'{"customer_correction":true,"customer_facts":[{"key":"budget","value":{"amount":5000,"unit":"HKD"}}'};
  const reasons:string[]=[];assert(decodeCommerceSemanticWire(malformed,r=>reasons.push(r))===null);assert(reasons[0]==='wire_delta_json');

@@ -23,6 +23,15 @@ function typedContextNodes(value,at=[]) {
   ...((kind==='object'||kind==='array')?Object.entries(value).flatMap(([k,v])=>typedContextNodes(v,[...at,k])):[])];
 }
 const providerWire=(delta,operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:0.98,nodes:typedContextNodes(delta)});
+for(const text of [
+ '我想選一部適合屋企日常使用的電腦，主要上網、文書同視像通話。應該先比較哪些規格？暫時不用查店舖庫存或售價。',
+ 'Which specifications should I compare for everyday home use?',
+])test('Hosted 95fd1e95 general specification criteria reach guidance without KB: '+text,async()=>{
+ const answer='可先比較日常多工所需的記憶體、儲存空間、螢幕與視像通話設備，再按預算及攜帶需要取捨。具體型號的規格仍需核實。';
+ const f=fixture(text,{fullChain:true,originalPreview:true,answer,semantic:providerWire({intent:'customer_guidance',requested_facts:['specification comparison criteria']},'ASK_FACT')});
+ const r=await f.run();assert.equal(r.status,200);assert.equal(f.commits[0]?.content,answer);assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));assert.equal(f.commits.length,1);
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+});
 function fixture(text,options={}) {
  const company=options.company ?? (options.originalPreview?'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493':uuid(1)),source=options.source??uuid(3);
  const requests=[],logs=[],commits=[],events=[]; let handler,mode=options.mode || 'ok',foreign=false;
