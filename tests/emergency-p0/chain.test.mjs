@@ -969,4 +969,3 @@ test('Task1A a transform with customer-owned facts retains the commerce and Memo
  const f=fixture('Rephrase that. There are eight people working here.',{originalPreview:true,fullChain:true,source:uuid(945),previous:first.tables,history:first.tables.messages.slice().reverse(),originalRagResponse:sample,answer:d.evidence[0].content,semantic:providerWire({intent:'customer_context_update',customer_facts:[{key:'staff_count',value:8}],requested_facts:[]},'UPDATE_ITEM')});await f.run();
  assert.equal(f.tables.conversation_memory_state[0]?.memory.current_customer_facts.find(f=>f.key==='staff_count')?.value,8,JSON.stringify(f.tables.conversation_memory_state));assert.equal(f.tables.conversation_commerce_state.length,1);
 });
-
