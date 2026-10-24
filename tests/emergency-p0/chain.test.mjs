@@ -800,6 +800,30 @@ test('v243 natural query: valid summary-only candidate cannot poison full eviden
  for(const f of [first,next]){const calls=()=>f.requests.filter(x=>x.url.includes('context-search')||x.url.includes('aiplatform')).length;const before=calls();await f.run();assert.equal(f.commits.length,1);assert.equal(calls(),before);}
 });
 
+test('v244 operation facet uses actual full evidence in final prompt and persists a partial grounded answer, then resolves pronoun',async()=>{
+ // Retained fixture, NOT the missing five-document v244 remote response.
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const answer='資料列出可安排回收商移走相同種類及數量的舊電器，需預留最少三個工作天。這份資料未證明整個政府計劃的全部運作或最新版本。';
+ const first=fixture('香港四電一腦回收計劃係點運作？',{originalPreview:true,fullChain:true,originalRagResponse:sample,answer,semantic:providerWire({intent:'other',topic:'policy.hong kong waste electrical and electronic equipment recycling programme.how it works',requested_facts:['how it works']},'ASK_FACT')});await first.run();
+ assert.equal(first.commits[0]?.content,answer,JSON.stringify(first.commits));
+ const generation=first.requests.find(x=>x.url.endsWith(':generateContent')&&!x.body.generationConfig.responseSchema);
+ assert(generation,'final generation must actually run');assert(JSON.stringify(generation.body).includes('最少 3 個工作天'));
+ assert.equal(first.commits[0].metadata.citation_lineage.selected_document_id,sample.selected_documents[0].document_id);
+ assert.equal(first.commits[0].metadata.reference_authority.provenance.currentness,'unknown');
+ const next=fixture('咁佢包括邊幾類電器？',{originalPreview:true,fullChain:true,previous:first.tables,history:[...first.tables.messages].reverse(),source:uuid(891),originalRagResponse:sample,answer:'資料列出空調機、洗衣機、雪櫃、電視機、電腦、列印機、掃描器及顯示器。',semantic:providerWire({intent:'other',requested_facts:['categories of regulated equipment']},'ASK_FACT')});await next.run();
+ assert.equal(next.commits[0]?.metadata.citation_lineage?.selected_document_id,sample.selected_documents[0].document_id,JSON.stringify(next.commits));
+ assert(JSON.stringify(next.requests.find(x=>x.url.includes('context-search'))?.body).includes('四電一腦'));
+ for(const f of [first,next]){const paid=()=>f.requests.filter(x=>x.url.includes('context-search')||x.url.includes('aiplatform')).length;const count=paid();await f.run();assert.equal(f.commits.length,1);assert.equal(paid(),count);}
+});
+
+test('v244 first factual answer cannot deny available subject evidence even with a positive verifier',async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
+ const bad='我而家搵唔到足夠嘅現行資料，所以暫時未能確認。舊資料唔會當成現況，我亦唔會估。';
+ const f=fixture('香港四電一腦回收計劃係點運作？',{originalPreview:true,fullChain:true,originalRagResponse:sample,answer:bad,semantic:providerWire({intent:'other',requested_facts:['abstract English operation label']},'ASK_FACT')});await f.run();
+ assert.notEqual(f.commits[0]?.content,bad);assert.equal(f.commits[0]?.metadata.source_error_code,'LLM_GROUNDING_REJECTED',JSON.stringify({commits:f.commits,events:f.events}));
+ assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')&&!x.body.generationConfig.responseSchema).length,1);
+});
+
 for(const kind of ['summary-only','invalid-document'])test('legacy KB response does not manufacture authority or human control: '+kind,async()=>{
  const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));sample.selected_documents[0].evidence=[];if(kind==='invalid-document')sample.selected_documents[0].summary=null;
  const f=fixture('香港四電一腦回收計劃係講乜？',{originalPreview:true,fullChain:true,env:{ESC_ENABLE_S0:'false'},originalRagResponse:sample,semantic:providerWire({intent:'other',requested_facts:['definition of 四電一腦']},'ASK_FACT')});await f.run();

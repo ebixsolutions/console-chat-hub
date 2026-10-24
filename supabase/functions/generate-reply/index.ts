@@ -5991,7 +5991,9 @@ async function orchestrationGenerateReply(
       _productFactualRequest,
       userQuery,
       _productKbContract?.entity_ids ?? _semanticEntityIds,
-      _productKbContract?.topic_ids ?? _semanticTopicIds,
+      // Only the server product contract supplies canonical topic IDs. Model
+      // topic/requested_facts are free-form multilingual descriptions/facets.
+      _productKbContract?.topic_ids ?? [],
       _c1TargetChanged,
     );
     const _groundingSelection = selectCanonicalGrounding(
@@ -6008,6 +6010,7 @@ async function orchestrationGenerateReply(
         expectedTenantId: _kbTenantResult.scope.singaporeTenantId,
         expectedEntityIds: _c1CurrentTarget.entity_ids,
         expectedTopicIds: _c1CurrentTarget.topic_ids,
+        semanticFactDescriptions: _productKbContract ? [] : _semanticTopicIds,
         expectedRegion: _c1CurrentTarget.region,
         requiresCurrentKb: true,
         targetChanged: _c1CurrentTarget.target_changed,
@@ -6694,6 +6697,7 @@ async function orchestrationGenerateReply(
       buildMaskedContextBlock(customerContext, opaqueCustomerRef),
       buildRagBlock(ragResult),
       _factualFollowupPrompt,
+      "[FACT_ANSWER_SCOPE] Treat model topic/requested-fact labels as descriptions, not authoritative taxonomy or evidence. Answer the customer's requested facet using the selected full-content E* evidence. If it supports only part of the question, give that useful supported part and identify only the specific missing detail. Do not claim no information exists when applicable facts are present. Missing version/currentness remains unknown; never infer whole-program or government-wide coverage from a limited service document. [/FACT_ANSWER_SCOPE]",
     ].filter((s) => s && s.length > 0).join("\n\n");
   const { data: newestMessages } = await supabaseAdmin
     .from("messages")
@@ -6753,6 +6757,7 @@ async function orchestrationGenerateReply(
         buildMaskedContextBlock(customerContext, opaqueCustomerRef),
         buildRagBlock(ragResult),
         _factualFollowupPrompt,
+        "[FACT_ANSWER_SCOPE] Model fact labels are descriptions, not authoritative taxonomy. Answer supported parts of the requested facet from full-content E* evidence first, and identify only specific unsupported details. Never turn partial evidence into a blanket no-information claim or infer currentness, version or whole-program coverage. [/FACT_ANSWER_SCOPE]",
       ],
       memory_part: _c3MemoryContext,
       continuity_part: _conversationContinuityBlock,
@@ -6767,6 +6772,7 @@ async function orchestrationGenerateReply(
     system: finalSystemPrompt,
     user: _generationUserInput,
     factualFollowup: _factualFollowup ?? undefined,
+    factualEvidenceAvailable: _c1AuthorityDecision?.decision === "USE_CURRENT_KB" && Boolean(ragResult?.chunks?.some(c => c.chunk_type === "full_content")),
     maxTokens: resolveGenerationMaxTokens(),
     operationId:
       `generate-reply:orchestration:${conversation_id}:${source_message_id}`,
@@ -6807,7 +6813,7 @@ async function orchestrationGenerateReply(
       return new Response(JSON.stringify({success:false,error:"AI service error",failure,retryable:false}),{status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
     }
     if (llm.code === "LLM_GROUNDING_REJECTED") {
-      const recoveryReply = _factualFollowup
+      const recoveryReply = _factualFollowup || _c1AuthorityDecision?.decision === "USE_CURRENT_KB"
         ? (_visitorLang === "en" ? "I found relevant source material, but could not reliably validate this answer. This does not mean the information is unavailable." : "我搵到相關資料，但今次未能可靠核實回答；呢個唔代表資料不存在。")
         : GROUNDING_RECOVERY_WORDING[_visitorLang] ?? GROUNDING_RECOVERY_WORDING.en;
       const committed = await commitAiReplyWithControlGate(

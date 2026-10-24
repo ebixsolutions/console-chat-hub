@@ -75,6 +75,8 @@ export interface ReferenceFactClaim {
 }
 
 export interface ReferenceEvidenceCandidate {
+  /** Local full-content/customer-subject binding, separate from source taxonomy. */
+  request_subject_supported?: boolean;
   source_id: string;
   source_type: string;
   authority_class: ReferenceAuthorityClass;
@@ -94,6 +96,7 @@ export interface ReferenceEvidenceCandidate {
 }
 
 export interface ResolveReferenceAuthorityInput {
+  require_request_subject_match?: boolean;
   candidates: ReferenceEvidenceCandidate[];
   expected_tenant_id?: string | null;
   expected_entity_ids?: string[];
@@ -808,6 +811,10 @@ export function resolveReferenceAuthority(
       continue;
     }
     const topics = boundedStrings(candidate.topic_ids);
+    if (input.require_request_subject_match && candidate.request_subject_supported !== true) {
+      rejected.push({ source_id: sourceId, reason: "wrong_topic" });
+      continue;
+    }
     if (expectedTopics.length > 0 && ((requireExplicitTargetMatch && topics.length === 0) || !overlaps(expectedTopics, topics))) {
       rejected.push({ source_id: sourceId, reason: "wrong_topic" });
       continue;

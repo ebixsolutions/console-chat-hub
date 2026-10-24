@@ -300,11 +300,15 @@ export interface FactualFollowupContext {
   source_message_id: string;
 }
 
-function factualSubject(question: string): string | null {
+export function factualSubject(question: string): string | null {
   const text = clean(question).replace(/[？?。.!！]+$/u, "").trim();
   const match = /^(?:什麼|什么|甚麼)是\s*(.+)$/u.exec(text) ??
     /^(?:何謂|何谓|請解釋|请解释|解釋|解释)(?:一下)?\s*(.+)$/u.exec(text) ??
     /^(.+?)(?:係|是)(?:講|讲|指)?(?:咩|乜|甚麼|什麼|什么)(?:呢|呀|啊)?$/u.exec(text) ??
+    /^(.+?)(?:係點|是如何|怎樣|怎样|如何)(?:運作|运作|操作|使用)$/u.exec(text) ??
+    /^(.+?)(?:包括|包含|涵蓋|涵盖)(?:啲乜|甚麼|什麼|什么|哪些|邊啲|邊幾類.*)$/u.exec(text) ??
+    /^how (?:does|do)\s+(?:the\s+)?(.+?)\s+work$/iu.exec(text) ??
+    /^what (?:does|do)\s+(?:the\s+)?(.+?)\s+include$/iu.exec(text) ??
     /^(?:what (?:is|are)|explain|describe|definition of|meaning of)\s+(?:the\s+)?(.+)$/iu.exec(text) ??
     /^(?:actually[, ]+i meant|i meant|correction[:：]|改成|改返|其實係|其实是)\s*(.+)$/iu.exec(text);
   const subject = match?.[1]?.replace(/^[「『“"']|[」』”"']$/gu, "").trim();
@@ -366,7 +370,7 @@ export function buildFactualFollowupPrompt(context: FactualFollowupContext | nul
 export function contradictsAvailableFollowupEvidence(answer: string): boolean {
   const text = answer.trim();
   return text.length <= 300 &&
-    /(?:我(?:目前|現在|现在)?(?:並|并)?(?:沒有|没有|冇)|(?:目前|現在|现在)(?:沒有|没有)|i (?:currently )?(?:do not|don't) have|(?:no|not enough) information)/iu.test(text) &&
+    /(?:我(?:目前|現在|现在|而家)?(?:並|并)?(?:沒有|没有|冇|搵唔到)|(?:目前|現在|现在)(?:沒有|没有)|i (?:currently )?(?:do not|don't) have|(?:no|not enough) information)/iu.test(text) &&
     /(?:資料|资料|資訊|信息|information|details)/iu.test(text) &&
-    !/(?:包括|包含|列出|涵蓋|涵盖|根據.{0,40}(?:列|有)|\bincludes?\b|\bcovers?\b|\blists?\b)/iu.test(text);
+    !/(?:包括|包含|列出|涵蓋|涵盖|(?:資料|资料|來源|来源)(?:指出|說明|说明|記載|记载)|根據.{0,40}(?:列|有)|\bincludes?\b|\bcovers?\b|\blists?\b)/iu.test(text);
 }

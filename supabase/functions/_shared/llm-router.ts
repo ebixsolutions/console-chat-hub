@@ -67,6 +67,8 @@ export type ModelPurpose = "evaluation" | "assist" | "generation";
 export interface LlmCall {
   /** Supplied only by the source-bound handler after canonical KB selection. */
   factualFollowup?: FactualFollowupContext;
+  /** Set only after fresh full-content subject/authority selection, not HTTP200. */
+  factualEvidenceAvailable?: boolean;
   purpose: ModelPurpose;
   system: string;
   user: string;
@@ -567,7 +569,7 @@ async function verifyGroundedGeneration(
   // customer/conversation itself supplied (preferences, quantities, reference
   // ids, prior requests, recap state). It MUST NOT authorize product/company/
   // policy facts that remain KB/prior-grounded-only.
-  if (call.factualFollowup && contradictsAvailableFollowupEvidence(answer)) {
+  if ((call.factualFollowup || call.factualEvidenceAvailable) && contradictsAvailableFollowupEvidence(answer)) {
     return {ok:false, reason:"followup_denies_available_evidence"};
   }
   const conversationEvidence = extractCustomerConversationEvidence(call.user);

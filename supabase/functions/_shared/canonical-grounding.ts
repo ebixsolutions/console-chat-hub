@@ -4,6 +4,7 @@ import type {
   KBLLMContextEvidence,
 } from "./kb-client.ts";
 import { detectExplicitJurisdiction } from "./conversation-runtime-state.ts";
+import { factualSubject } from "./conversation-semantic-contract.ts";
 import { ragServiceDocument } from "./preview-kb-query-embedding.ts";
 import {
   type ReferenceAuthorityDecision,
@@ -22,6 +23,8 @@ export interface CanonicalGroundingOptions {
   expectedTenantId?: string | null;
   expectedEntityIds?: string[];
   expectedTopicIds?: string[];
+  /** Free-form model descriptions are answer facets, NEVER source taxonomy IDs. */
+  semanticFactDescriptions?: string[];
   expectedRegion?: string | null;
   requiresCurrentKb?: boolean;
   targetChanged?: boolean;
@@ -207,6 +210,11 @@ function jurisdictions(text: string): string[] {
   }
   return found;
 }
+function canonicalRegion(value: string): string {
+  const normalized = value.normalize("NFKC").trim().toLowerCase().replace(/[_-]+/g, " ");
+  const aliases = jurisdictions(normalized);
+  return aliases.length === 1 ? aliases[0] : value.trim().toLowerCase();
+}
 function assessApplicability(
   document: KBDocumentCandidate,
   requestText: string,
@@ -365,6 +373,30 @@ function serviceTopicMatch(request:string,document:KBDocumentCandidate):boolean 
   return false;
 }
 
+/** Bind the customer's subject to actual full content, not translated model
+ * labels, retrieval rank, titles or summaries. A source-quoted name can be a
+ * legitimate alias of a longer customer description only when that exact name
+ * occurs in the customer subject too. No generated translation grants authority.
+ */
+function fullContentSubjectMatch(subject: string, document: KBDocumentCandidate): boolean {
+  const norm = (s: string) => s.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+  const q = norm(subject);
+  const contains = (text: string, name: string) => {
+    const key = norm(name);
+    if (key.length < 2) return false;
+    if (/\p{Script=Han}/u.test(key)) return norm(text).includes(key);
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:^|[^a-z0-9_-])${escaped}(?=$|[^a-z0-9_-])`, "u").test(norm(text));
+  };
+  return !!q && document.llm_context.full_content_evidence.some(e => {
+    if (contains(e.content, q)) return true;
+    // Quotes are source-owned aliases; title-only/summary-only matches fail.
+    const names = [...e.content.matchAll(/[「『“"]([^」』”"\n]{2,160})[」』”"]/gu)].map(m => m[1]);
+    return names.some(name => norm(name).length >= 4 &&
+      !/^(?:計劃|计划|服務|服务|方案|資料|资料|policy|service|scheme|programme|program|details)$/iu.test(norm(name)) && contains(q, name));
+  });
+}
+
 /** Semantic requested_facts are descriptions, not source-owned taxonomy IDs.
  * Resolve a bounded question/answer facet to its literal subject only when
  * that whole subject occurs in BOTH the current request and returned full
@@ -434,9 +466,12 @@ export function selectCanonicalGrounding(
     options.targetChanged === true,
   );
   const expectedEntityIds = target.entity_ids;
-  const expectedTopicIds = target.topic_ids;
-  const expectedRegion = options.expectedRegion ?? target.region ??
-    detectExplicitJurisdiction(requestText);
+  const freeFactRequest = (options.semanticFactDescriptions?.length ?? 0) > 0;
+  const expectedTopicIds = freeFactRequest ? unique(options.expectedTopicIds ?? []) : target.topic_ids;
+  const subject = options.expectedSubject ?? factualSubject(currentTurnText) ??
+    (freeFactRequest ? currentTurnText.slice(0, 500) : null);
+  const region = options.expectedRegion ?? target.region ?? detectExplicitJurisdiction(requestText);
+  const expectedRegion = region ? canonicalRegion(region) : null;
   const eligible: Array<{
     document: KBDocumentCandidate;
     chunks: KBFullChunk[];
@@ -449,8 +484,6 @@ export function selectCanonicalGrounding(
 
   for (const document of documents ?? []) {
     const service=ragServiceDocument(document);
-    if (options.expectedSubject && !document.llm_context.full_content_evidence.some(e =>
-      e.content.normalize("NFKC").toLowerCase().includes(options.expectedSubject!.normalize("NFKC").toLowerCase()))) continue;
     if (document.llm_context.selected_document_id !== document.document_id) {
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
@@ -466,6 +499,8 @@ export function selectCanonicalGrounding(
     }
 
     const currentTargetRequest = currentTurnText || requestText;
+    const subjectSupported = !!subject && fullContentSubjectMatch(subject, document);
+    if (options.expectedSubject && !subjectSupported) continue;
     const lexicalScore = lexicalRelevance(currentTargetRequest, document);
     const serviceTopic=!!service && serviceTopicMatch(currentTargetRequest,document);
     // A low relevance tag is retained, never equated to a supported answer.
@@ -524,6 +559,7 @@ export function selectCanonicalGrounding(
       evidenceScore: Math.max(...evidence.map((e) => e.score), 0),
       lexicalScore,
       authorityCandidate: {
+        request_subject_supported: subjectSupported,
         source_id: document.document_id,
         source_type: document.source_type,
         authority_class: service && effectiveCurrentness==="unknown" ? "PUBLISHED_KB_SERVICE" : effectiveCurrentness === "current"
@@ -554,7 +590,7 @@ export function selectCanonicalGrounding(
           ...namedTargetTokens(candidateText(document)),
         ]),
         regions: metadata?.regions?.length
-          ? metadata.regions
+          ? unique(metadata.regions.map(canonicalRegion))
           : applicability.document_jurisdictions.length
           ? applicability.document_jurisdictions
           : !applicability.accepted && applicability.request_jurisdiction
@@ -582,6 +618,7 @@ export function selectCanonicalGrounding(
     expected_tenant_id: options.expectedTenantId ?? null,
     expected_entity_ids: expectedEntityIds,
     expected_topic_ids: expectedTopicIds,
+    require_request_subject_match: freeFactRequest,
     expected_region: expectedRegion,
     requires_current_kb: options.requiresCurrentKb !== false,
     require_explicit_target_match: target.target_changed ||

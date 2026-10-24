@@ -695,6 +695,40 @@ test('Director original sample is retained unchanged including missing fields an
  for(const k of ['authority_contract','company_id'])assert(!Object.hasOwn(directorOriginalRag,k));
  assert(!Object.hasOwn(directorOriginalRag.selected_documents[0],'authority'));
 });
+
+for(const [question,label] of [
+ ['香港四電一腦回收計劃係點運作？','policy.hong kong waste electrical and electronic equipment recycling programme.how it works'],
+ ['四電一腦係咩？','regulated equipment definition'],
+ ['四電一腦包括邊幾類電器？','equipment categories'],
+])test('v244 free English facet is not a Chinese evidence taxonomy: '+question,async()=>{
+ const x=await originalAggregationFixture();try{
+  const r=await x.search(question);assert(r.success);
+  const options={requestText:question,currentTurnText:question,semanticFactDescriptions:[label],expectedTenantId:'34',expectedRegion:'hong_kong',minScore:0.45};
+  const g=selectCanonicalGrounding(r.documents,options);
+  assert.equal(g.document?.document_id,directorOriginalRag.selected_documents[0].document_id,JSON.stringify(g));
+  assert.equal(g.authority_decision.provenance.currentness,'unknown');
+  assert.equal(selectCanonicalGrounding(r.documents,{...options,expectedTopicIds:['unrelated_canonical_topic']}).document,null,'free descriptions never override a canonical topic requirement');
+  r.documents[0].authority.regions=['HK'];assert(selectCanonicalGrounding(r.documents,options).document);
+  r.documents[0].authority.regions=['Singapore'];assert.equal(selectCanonicalGrounding(r.documents,options).document,null);
+  r.documents[0].authority.regions=[];
+  const d=r.documents[0];d.llm_context.full_content_evidence.forEach(e=>e.content='香港軟件月租服務，與本次查詢沒有同一主題。');
+  assert.equal(selectCanonicalGrounding(r.documents,options).document,null,'title and summary cannot establish the subject');
+ }finally{globalThis.fetch=realFetch;}
+});
+
+for(const [subject,question] of [
+ ['循環器材','循環器材係點運作？'],['醫療運送','醫療運送包括邊啲？'],['cloud tenancy','How does cloud tenancy work?'],
+])test('generic subject binding across free semantic facets: '+subject,async()=>{
+ const sample=JSON.parse(JSON.stringify(directorOriginalRag).replaceAll('四電一腦',subject));
+ const x=await originalAggregationFixture('none',false,sample);try{
+  const r=await x.search(question);const opts={requestText:question,semanticFactDescriptions:['abstract English operation label'],expectedTenantId:'34'};
+  assert(selectCanonicalGrounding(r.documents,opts).document);
+  assert.equal(selectCanonicalGrounding(r.documents,{...opts,expectedTenantId:'35'}).document,null);
+  assert.equal(selectCanonicalGrounding(r.documents,{...opts,expectedRegion:'singapore'}).document,null);
+  // Canonical IDs supplied by a server contract retain exact authority checks.
+  assert.equal(selectCanonicalGrounding(r.documents,{...opts,requestText:'Unrelated named subject?',semanticFactDescriptions:[],expectedTopicIds:['unrelated_canonical_topic']}).document,null);
+ }finally{globalThis.fetch=realFetch;}
+});
 for(const fault of ['none','no-match','401','403','timeout','invalid-json','foreign-response','foreign-document','foreign-chunk','draft','active-document','staging-chunk','foreign-meta','superseded','version-conflict','content-hash-conflict','citation-conflict','chunk-conflict','revoke','grant-absent','old-risk','human-control','foreign-actor'])test('original unmodified aggregation complete adapter: '+fault,async()=>{
  const x=await originalAggregationFixture(fault);try{
   const r=await x.search();
