@@ -499,8 +499,6 @@ export function selectCanonicalGrounding(
     }
 
     const currentTargetRequest = currentTurnText || requestText;
-    const subjectSupported = !!subject && fullContentSubjectMatch(subject, document);
-    if (options.expectedSubject && !subjectSupported) continue;
     const lexicalScore = lexicalRelevance(currentTargetRequest, document);
     const serviceTopic=!!service && serviceTopicMatch(currentTargetRequest,document);
     // A low relevance tag is retained, never equated to a supported answer.
@@ -541,6 +539,13 @@ export function selectCanonicalGrounding(
       return { ok: false, error: "KB_EVIDENCE_NOT_PUBLISHED" };
     }
     if (!evidence.length) continue;
+    // Bind against the evidence that will actually reach generation. A subject
+    // present only in a discarded/low-score chunk must not authorize another
+    // surviving chunk, even within the same authenticated document.
+    const subjectSupported = !!subject && fullContentSubjectMatch(subject, {
+      ...document, llm_context: {...document.llm_context, full_content_evidence: evidence},
+    });
+    if (options.expectedSubject && !subjectSupported) continue;
 
     const applicability = assessApplicability(document, currentTargetRequest);
     const metadata = document.authority;

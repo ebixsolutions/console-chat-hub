@@ -729,6 +729,17 @@ for(const [subject,question] of [
   assert.equal(selectCanonicalGrounding(r.documents,{...opts,requestText:'Unrelated named subject?',semanticFactDescriptions:[],expectedTopicIds:['unrelated_canonical_topic']}).document,null);
  }finally{globalThis.fetch=realFetch;}
 });
+
+test('subject in a discarded chunk cannot authorize the unrelated surviving generation evidence',async()=>{
+ const x=await originalAggregationFixture();try{
+  const r=await x.search(),d=r.documents[0],e=d.llm_context.full_content_evidence[0],c=d.chunks.find(c=>c.chunk_type==='full_content');
+  e.score=c.score=0.001;
+  const other={...e,chunk_id:'separate-unrelated-chunk',content:'香港軟件月租收費資料。',score:0.99};
+  d.llm_context.full_content_evidence.push(other);d.chunks.push({...c,...other,chunk_type:'full_content',status:'unknown'});
+  const g=selectCanonicalGrounding(r.documents,{requestText:'香港四電一腦回收計劃係點運作？',semanticFactDescriptions:['how it works'],expectedTenantId:'34',minScore:0.45});
+  assert.equal(g.document,null,JSON.stringify(g));
+ }finally{globalThis.fetch=realFetch;}
+});
 for(const fault of ['none','no-match','401','403','timeout','invalid-json','foreign-response','foreign-document','foreign-chunk','draft','active-document','staging-chunk','foreign-meta','superseded','version-conflict','content-hash-conflict','citation-conflict','chunk-conflict','revoke','grant-absent','old-risk','human-control','foreign-actor'])test('original unmodified aggregation complete adapter: '+fault,async()=>{
  const x=await originalAggregationFixture(fault);try{
   const r=await x.search();
