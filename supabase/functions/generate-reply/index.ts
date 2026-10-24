@@ -4568,8 +4568,14 @@ async function orchestrationGenerateReply(
     _a3SemanticFrame.entities.every(entity=>entity.quantity===null && entity.unit===null &&
       !Object.keys(entity.attributes).length && !Object.keys(entity.constraints).length &&
       Object.values(entity.capabilities).every(value=>value===false)));
+  const _purePriorGroundedTransform = Boolean(_priorGroundedTransform && _a3SemanticFrame &&
+    _a3SemanticFrame.operation === "NO_STATE_CHANGE" && _a3SemanticFrame.confidence >= 0.72 &&
+    !_a3SemanticFrame.ambiguity.is_ambiguous && !_a3SemanticFrame.additive &&
+    !_a3SemanticFrame.customer_facts?.length && !_a3SemanticFrame.entities.length &&
+    !_a3SemanticFrame.requested_facts.length &&
+    [_a3SemanticFrame.transaction_state,_a3SemanticFrame.payment_state,_a3SemanticFrame.booking_state,_a3SemanticFrame.fulfillment_state].every(s=>s==="none"||s==="unknown"));
   if (
-    _criticalE2ExpectedTenantId && !_pureFactualSubjectRead && !_priorGroundedTransform &&
+    _criticalE2ExpectedTenantId && !_pureFactualSubjectRead && !_purePriorGroundedTransform &&
     (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) || _customerOwnedDelta || Boolean(_a3SemanticFrame) ||
       (_productFollowUpArbitration.kind === "resolved" &&
         _productFollowUpArbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" &&
@@ -5032,7 +5038,7 @@ async function orchestrationGenerateReply(
     Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
   const _c3CustomerOnlyReply = _c3IsGroundedReadOnlyRecap && _c3CommerceSnapshot?.state.entities.length === 0
     ? renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang) : null;
-  const _c3PlannedReply = _customerGuidance || _priorGroundedTransform ? null : _c3IsGroundedReadOnlyRecap
+  const _c3PlannedReply = _customerGuidance || _purePriorGroundedTransform ? null : _c3IsGroundedReadOnlyRecap
     ? _c3CustomerOnlyReply ?? _c3Recall.reply
     : _c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")
     ? null

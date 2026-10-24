@@ -962,3 +962,11 @@ for(const kind of ['summary-only','invalid-document'])test('legacy KB response d
  if(kind==='summary-only')assert.equal(f.commits[0].metadata.response_route,'kb_no_current_evidence');else{const traces=f.events.flat().map(x=>{try{return JSON.parse(x)}catch{return null}}).filter(Boolean);const reject=traces.find(x=>x.authority_reason==='KB_RAG_RESPONSE_INVALID');assert.equal(reject?.validation_rule,'document_shape');assert.equal(reject.http_status,200);}
  const paid=()=>f.requests.filter(x=>x.url.includes('context-search')||x.url.includes('aiplatform')).length;const before=paid();await f.run();assert.equal(f.commits.length,1);assert.equal(paid(),before);
 });
+
+test('Task1A a transform with customer-owned facts retains the commerce and Memory writer',async()=>{
+ const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8')),d=sample.selected_documents[0];d.title='Harbor Care';d.evidence[0].content='Harbor Care includes inspection and collection.';d.summary.content=d.evidence[0].content;sample.citations[0].label=d.title;
+ const first=fixture('Could you explain Harbor Care?',{originalPreview:true,fullChain:true,originalRagResponse:sample,answer:d.evidence[0].content,semantic:providerWire({intent:'other',requested_facts:['service scope'],entities:[{name:'Harbor Care',kind:'service',confidence:0.98}]},'ASK_FACT')});await first.run();
+ const f=fixture('Rephrase that. There are eight people working here.',{originalPreview:true,fullChain:true,source:uuid(945),previous:first.tables,history:first.tables.messages.slice().reverse(),originalRagResponse:sample,answer:d.evidence[0].content,semantic:providerWire({intent:'customer_context_update',customer_facts:[{key:'staff_count',value:8}],requested_facts:[]},'UPDATE_ITEM')});await f.run();
+ assert.equal(f.tables.conversation_memory_state[0]?.memory.current_customer_facts.find(f=>f.key==='staff_count')?.value,8,JSON.stringify(f.tables.conversation_memory_state));assert.equal(f.tables.conversation_commerce_state.length,1);
+});
+
