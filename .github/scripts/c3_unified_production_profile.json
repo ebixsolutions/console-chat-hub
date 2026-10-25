@@ -569,6 +569,8 @@
     "tests/section15/handoff-service.test.ts",
     "tests/section15/human-service-routing.test.mjs",
     "tests/sql/saved-responses-postgres.py",
+    "tests/task1-director/local-deno-shim.mjs",
+    "tests/task1-director/source-chain.test.mjs",
     "tests/uat-runtime/ce-live-baseline.sql",
     "tests/uat-runtime/contract.test.ts",
     "tests/uat-runtime/dual-tenant.py",
@@ -1185,5 +1187,15 @@
   "authorized_widget_hosted_build_sha256": {
     "vite.config.ts": "02fe0076b202d6e80e2cc89477c49dde6a2d1e54102ecedc5d58fa99c5c0c9db",
     "src/types/c3-widget-preview-source.d.ts": "2d023d7d7d8ccfba73030186c3d104f489aba4068a64c2996c6e128b678aeb68"
-  }
+  },
+  "authorized_task1_director_repair_sha256": {
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "2354ecab8e33c04b79df0d8f12d8085ed1d1a32de33229dc686196043fbe61ad",
+    "supabase/functions/_shared/commerce-state-authority.ts": "601ea0277d414ad6259c2e03733a295c7958d2c46458d044074aeea28ea3dbd1",
+    "supabase/functions/_shared/commerce-semantic-adapter.ts": "7c27834ce9368851303859f678965b189ae1a04ff09be70462120834566e8b2c",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "7f7fbff05db1c804e2a8f114a53ecf1c01b8bb103b9921b298eb592976e6a0f0",
+    "tests/task1-director/source-chain.test.mjs": "288ea3eaa6651ff9c036776da03f14c1bdbcdc427a2f7b0b78b8c83e23d0961e",
+    "tests/task1-director/local-deno-shim.mjs": "4b23a5736015f2fb5e2119ea2694e471e734f6f84c87e73431d08b50a3daef2e",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "c063042b34687d6251bdd24ddfd4da3db33272e638ebf7a2db7140b1a3b5f29d"
+  },
+  "task1_director_repair_deployment_authorized": false
 }

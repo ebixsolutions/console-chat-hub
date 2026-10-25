@@ -431,7 +431,14 @@ function guidanceSpeechAct(question: string, semantic: {
   if (MERCHANT_FACT_REQUEST.test(text)) return false;
   // Selection is a speech act across products, services and rentals, not an
   // appliance keyword or an old answer. Merchant evidence still wins above.
-  const selectionQuestion = specificationCriteria || /(?:點(?:樣)?|怎(?:樣|么)|如何).{0,6}(?:揀|選|选|比較|比较|考慮|考虑|取捨|取舍|準備|准备)|(?:從|从|按|依).{0,8}(?:哪些|甚麼|什么|咩).{0,8}(?:方面|因素|條件|条件).{0,8}(?:比較|比较|選|选)|\b(?:how|what).{0,32}(?:choose|select|compare|pick|prioriti[sz]e|balance|weigh|evaluate|assess|prepare|measure)\b/iu.test(text);
+  // An imperative request to compare *decision criteria* need not contain a
+  // question word ("how" / "點樣"). This covers ordinary multilingual guidance
+  // speech acts, not any particular industry or item. The merchant-evidence
+  // exclusion above still wins, including on compound turns.
+  const imperativeComparison = /(?:請|请|幫我|帮我|麻煩|麻烦|按(?:照)?|依(?:照)?|根據|根据).{0,96}?(?:比較|比较|取捨|取舍|衡量|評估|评估|分析|排序|compare|prioriti[sz]e|evaluate|weigh)/iu.test(text) ||
+    /\b(?:please|can you|could you|help me|based on|according to)\b.{0,96}\b(?:compare|prioriti[sz]e|evaluate|weigh|balance)\b/iu.test(text);
+  const deferrableDecision = /(?:哪些|哪啲|邊啲|边啲|甚麼|什么|咩).{0,36}?(?:可(?:以)?|應該|应该|值得)?.{0,16}?(?:暫緩|暂缓|延後|延后|稍後|稍后|唔使|不用|不必|先不)|\b(?:which|what).{0,48}?(?:can|could|should).{0,20}?(?:wait|defer|postpone|skip)\b/iu.test(text);
+  const selectionQuestion = specificationCriteria || imperativeComparison || deferrableDecision || /(?:點(?:樣)?|怎(?:樣|么)|如何).{0,6}(?:揀|選|选|比較|比较|考慮|考虑|取捨|取舍|準備|准备)|(?:從|从|按|依).{0,8}(?:哪些|甚麼|什么|咩).{0,8}(?:方面|因素|條件|条件).{0,8}(?:比較|比较|選|选)|\b(?:how|what).{0,32}(?:choose|select|compare|pick|prioriti[sz]e|balance|weigh|evaluate|assess|prepare|measure)\b/iu.test(text);
   if (!selectionQuestion && !/(?:取捨|取舍|選購|选购|選機|选机|應(?:該)?(?:準備|補充|考虑|考慮)|應該考慮|应该考虑|先問|先问)|(?:現場|现场|量度|量測|量测|測量|测量).{0,24}(?:應|应|要|先).{0,8}(?:記低|记低|記錄|记录|留意|注意|準備|准备|量度|量測|量测)|\b(?:trade[ -]?offs?|selection criteria|what.*(?:ask|prepare|measure)|how.*(?:choose|select))\b/i.test(text)) return false;
   // Requested targets and free labels describe a model interpretation, not
   // merchant authority. The bounded customer speech act above owns this

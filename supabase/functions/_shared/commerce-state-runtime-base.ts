@@ -61,6 +61,7 @@ import {
   mergeCommerceEntityHints,
   semanticFrameToEntityHints,
   semanticFrameToStateEvents,
+  sourceBoundMixedCustomerFactEvents,
 } from "./commerce-semantic-adapter.ts";
 import { industryEntityLabel, resolveIndustryContextualCandidate, resolveIndustryCustomerJourney, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
 import { contextualUpdateEvents, resolveContextualCustomerUpdate } from "./contextual-customer-update.ts";
@@ -2260,6 +2261,15 @@ function reduceTurnOperations(
 export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[]): ConversationCommerceState {
   if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
   let state = reduceTurnOperations(previous,input,hints);
+  // An explicit customer-owned declaration can accompany ASK_FACT/general
+  // guidance. Commit only literal-source-backed changed leaves via the original
+  // deterministic reducer and source-message CAS, never a merchant claim or
+  // the model's proposed transaction/booking/payment state.
+  if (resolveEntityLifecyclePlan(input.text, previous).kind !== "ambiguous") {
+    const customerEvents = sourceBoundMixedCustomerFactEvents(input.semantic_frame,
+      state, input.text, input.source_message_id, input.occurred_at ?? null);
+    if (customerEvents.length) state = reduceCommerceState(state, customerEvents);
+  }
   if (detectQuantityCorrectionSignal(input.text)) {
     for (const entity of state.entities.filter(e=>e.entity_id.startsWith("generic:"))) {
       const old=previous.entities.find(e=>e.entity_id===entity.entity_id);

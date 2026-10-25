@@ -10,7 +10,7 @@ import type {
   CommerceSemanticEntity,
   CommerceSemanticFrame,
 } from "./commerce-semantic-frame.ts";
-import { mergeDecisionContext } from "./bounded-decision-context.ts";
+import { mergeDecisionContext, type DecisionValue } from "./bounded-decision-context.ts";
 
 function clean(value: unknown, max = 200): string {
   return typeof value === "string"
@@ -205,6 +205,91 @@ function resolveHintId(
   return direct;
 }
 
+/** Customer-owned fact values have a bounded, language-neutral shape. */
+function plainDecisionObject(value: unknown): value is Record<string, DecisionValue> {
+  return value !== null && typeof value === "object" && !Array.isArray(value) &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+}
+
+/** Return only leaf facts actually stated in a non-question customer clause.
+ * A model's ASK_FACT proposal cannot by itself mutate canonical Commerce.
+ * The user's literal assertion, the typed frame, and the existing CAS writer
+ * must all agree. Unobserved or ambiguous leaves are deliberately omitted. */
+export function sourceBoundMixedCustomerFactEvents(
+  frame: CommerceSemanticFrame | null | undefined,
+  previous: ConversationCommerceState,
+  sourceText: string,
+  sourceMessageId: string,
+  occurredAt?: string | null,
+): CommerceStateEvent[] {
+  if (!frame || frame.operation !== "ASK_FACT" || frame.confidence < 0.72 ||
+    frame.ambiguity.is_ambiguous || !frame.customer_facts?.length || frame.additive) return [];
+  // Restrict extraction to declarations, never merchant factual questions,
+  // hypotheticals, order/payment claims, or a model-only inferred preference.
+  const statements = sourceText.normalize("NFKC").split(/[，,。;；!?！？\n]/u)
+    .map(part => part.trim()).filter(part => part &&
+      !/(?:嗎|吗|係咪|系咪|是否|有冇|有没有|有沒有|幾多|几多|多少|是不是|what|how many|do i|do we|is it|are there)\s*$/iu.test(part) &&
+      /(?:仍然|依然|仲係|而家|目前|現在|现在|只(?:係|是|會|会|要|有)|其實|其实|更正|改(?:成|為|为)|預算|预算|想|需要|唔|不(?:需要|會|玩)|\b(?:i|we)\s+(?:have|need|want|prefer)|\b(?:still|currently|now|actually|only|budget|instead)\b)/iu.test(part));
+  if (!statements.length) return [];
+  const assertion = statements.join(" ").toLowerCase();
+  const chineseDigits: Record<string, number> = {
+    "零":0,"〇":0,"一":1,"二":2,"兩":2,"两":2,"三":3,"四":4,
+    "五":5,"六":6,"七":7,"八":8,"九":9,"十":10,
+  };
+  const numericMentions = [...assertion.matchAll(/(?<![0-9])\d+(?:\.\d+)?(?![0-9])|[零〇一二兩两三四五六七八九十]+/gu)]
+    .map(match => {
+      if (/^\d/.test(match[0])) return Number(match[0]);
+      const token = match[0];
+      if (token === "十") return 10;
+      if (token.includes("十")) {
+        const [tens, ones] = token.split("十");
+        return (tens ? chineseDigits[tens] ?? NaN : 1) * 10 +
+          (ones ? chineseDigits[ones] ?? NaN : 0);
+      }
+      return token.length === 1 ? chineseDigits[token] ?? NaN : NaN;
+    }).filter(Number.isFinite);
+  const distinctNumerics = [...new Set(numericMentions)];
+  const supported = (value: DecisionValue, priorValue: unknown): DecisionValue | undefined => {
+    // No replay or provenance change for unchanged values.
+    if (JSON.stringify(value) === JSON.stringify(priorValue)) return undefined;
+    // When an ASK_FACT declaration mentions several different quantities,
+    // the same number could refer to a different entity/field. Require a
+    // single unambiguous number; explicit multi-field updates already use the
+    // original UPDATE_ITEM reducer instead of this fallback.
+    if (typeof value === "number") return distinctNumerics.length === 1 &&
+      distinctNumerics[0] === value ? value : undefined;
+    if (typeof value === "string") return value.length > 1 &&
+      assertion.includes(value.normalize("NFKC").toLowerCase()) ? value : undefined;
+    // Negative statements and true/false are often about *different* items.
+    // Without field-specific literal identity a boolean/null remains read-only.
+    if (!plainDecisionObject(value)) return undefined;
+    const old = plainDecisionObject(priorValue) ? priorValue : {};
+    const delta: Record<string, DecisionValue> = {};
+    for (const [key, child] of Object.entries(value)) {
+      if (["__proto__", "prototype", "constructor"].includes(key)) continue;
+      const result = supported(child, old[key]);
+      if (result !== undefined) delta[key] = result;
+    }
+    return Object.keys(delta).length ? delta : undefined;
+  };
+  const oldFacts = plainDecisionObject(previous.customer_constraints.customer_reported_facts)
+    ? previous.customer_constraints.customer_reported_facts : {};
+  const safeFacts: CommerceSemanticFrame["customer_facts"] = [];
+  for (const fact of frame.customer_facts.slice(0, 12)) {
+    if (!/^[a-z][a-z0-9_]{0,79}$/i.test(fact.key) ||
+      ["__proto__", "prototype", "constructor"].includes(fact.key)) continue;
+    const old = (oldFacts as Record<string, unknown>)[fact.key];
+    const prior = plainDecisionObject(old) ? old.value : undefined;
+    const value = supported(fact.value, prior);
+    if (value !== undefined) safeFacts.push({ key: fact.key, value });
+  }
+  if (!safeFacts.length) return [];
+  return semanticFrameToStateEvents({ ...frame, operation: "UPDATE_ITEM", customer_facts: safeFacts,
+    entities: [], additive: false, customer_correction: false },
+    previous, [], sourceMessageId, occurredAt)
+    .filter(event => event.type === "SET_CUSTOMER_CONSTRAINT" && event.key === "customer_reported_facts");
+}
+
 export function semanticFrameToStateEvents(
   frame: CommerceSemanticFrame | null | undefined,
   previous: ConversationCommerceState,
@@ -228,7 +313,17 @@ export function semanticFrameToStateEvents(
   if(frame.operation!=="NO_STATE_CHANGE" && customerFacts.length) {
     const old=previous.customer_constraints.customer_reported_facts;
     const facts:Record<string,unknown>=old && typeof old==="object" && !Array.isArray(old) ? {...old as Record<string,unknown>} : {};
-    for(const fact of customerFacts)if(!["__proto__","prototype","constructor"].includes(fact.key))facts[fact.key]={value:fact.value,provenance:p};
+    for (const fact of customerFacts) {
+      if (["__proto__", "prototype", "constructor"].includes(fact.key)) continue;
+      const previousFact = facts[fact.key];
+      const previousValue = previousFact && typeof previousFact === "object" && !Array.isArray(previousFact)
+        ? (previousFact as Record<string, unknown>).value : undefined;
+      // A partial correction to a nested customer preference must not erase
+      // unrelated previously asserted fields (including explicit false/zero).
+      const value = plainDecisionObject(previousValue) && plainDecisionObject(fact.value)
+        ? mergeDecisionContext(previousValue, fact.value) : fact.value;
+      facts[fact.key] = { value, provenance: p };
+    }
     events.push({type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:facts});
   }
 

@@ -300,6 +300,13 @@ jobs:
           node --test tests/c3-widget-live-auth/legacy-history.test.mjs
           node --test tests/c3-widget-live-auth/ordinary-receive.test.mjs tests/c3-widget-live-auth/original-preview.test.mjs tests/c3-widget-live-auth/original-preview-ingress.test.mjs
           node --test src/lib/widget-message-merge.test.mjs
+          # Same Task 1 native Source-chain repair; no paid calls or Hosted substitutions.
+          node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/source-chain.test.mjs
+          node --disable-warning=ExperimentalWarning --experimental-transform-types tests/task1-director/local-deno-shim.mjs \
+            supabase/functions/_shared/conversation-long-memory.test.ts \
+            supabase/functions/_shared/conversation-recall.test.ts \
+            supabase/functions/_shared/pre-send-conversion-supervisor.test.ts \
+            supabase/functions/_shared/conversation-service-planner.test.ts
           C3_OFFLINE
           cat "$RUNNER_TEMP/c3-rev14-offline/profile.log"
       - name: Native PostgreSQL 17 captured trigger and concurrency safety tests
@@ -2076,7 +2083,15 @@ jobs:
           ln -s "$RUNNER_TEMP/c3-playwright/node_modules/playwright" node_modules/playwright
           timeout 300s "$RUNNER_TEMP/c3-playwright/node_modules/.bin/playwright" install chromium --with-deps
       - name: Execute one mandatory source and isolated runtime final gate
-        run: node .github/scripts/c3_director_generic_core_final_gate.mjs
+        run: |
+          set -euo pipefail
+          node .github/scripts/c3_director_generic_core_final_gate.mjs
+          node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/source-chain.test.mjs
+          node --disable-warning=ExperimentalWarning --experimental-transform-types tests/task1-director/local-deno-shim.mjs \
+            supabase/functions/_shared/conversation-long-memory.test.ts \
+            supabase/functions/_shared/conversation-recall.test.ts \
+            supabase/functions/_shared/pre-send-conversion-supervisor.test.ts \
+            supabase/functions/_shared/conversation-service-planner.test.ts
       - name: Shared model accounting native PostgreSQL concurrency and security
         run: |
           set -euo pipefail
