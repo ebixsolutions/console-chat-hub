@@ -449,7 +449,7 @@ type RequestHistory = {id?:string|null;role:string;content:string;metadata?:unkn
  * authority, payment admission, transaction completion or state-write rights. */
 export function resolveCustomerRequestDecision(question:string, semantic: {
   intent:string;confidence:number;requested_facts:string[];ambiguity:{is_ambiguous:boolean};
-  operation?:string;additive?:boolean;entities?:Array<{model?:string|null}>;
+  operation?:string;additive?:boolean;entities?:Array<{model?:string|null}>;customer_facts?:unknown[];
 } | null, history:RequestHistory[]=[]):CustomerRequestDecision {
   const text=clean(question);
   const empty:CustomerRequestDecision={kind:"other",continuation:false,general_request:null,merchant_request:null,latest_requirements:text};
@@ -461,7 +461,12 @@ export function resolveCustomerRequestDecision(question:string, semantic: {
   const priorGuidance=metadata?.response_route==="customer_guidance" || Boolean(priorCustomer && guidanceSpeechAct(priorCustomer.content,semantic));
   const clarification=Boolean(lastAssistant && /[?？]/.test(lastAssistant.content) && priorGuidance);
   const transactional=["RESERVE","REQUEST_QUOTE","CONFIRM","CANCEL_ITEM","REMOVE_ITEM","DEFER"].includes(semantic.operation ?? "") || semantic.additive===true;
-  const continuation=clarification && !transactional && /(?:答|剛才|刚才|頭先|头先|更正|改為|改为)|\b(?:answer|correction|actually|instead|as requested)\b/i.test(text);
+  // A direct answer need not repeat "answer" or "correction". The existing
+  // guidance question plus a validated customer-owned update provides context;
+  // actual merchant speech acts are still independently scoped below.
+  const contextAnswer=!semantic.ambiguity.is_ambiguous && semantic.requested_facts.length===0 &&
+    (semantic.intent==="customer_guidance" || Boolean(semantic.customer_facts?.length));
+  const continuation=clarification && !transactional && (contextAnswer || /(?:答|剛才|刚才|頭先|头先|更正|改為|改为)|\b(?:answer|correction|actually|instead|as requested)\b/i.test(text));
   const clauses=withoutExcludedLookups(text).split(/[;；。!?！？]|\b(?:and|but)\b|(?:同埋|並且|并且)/i).map(s=>s.trim()).filter(Boolean);
   const general=clauses.filter(clause=>guidanceSpeechAct(clause,semantic));
   const wholeGeneral=guidanceSpeechAct(text,semantic);
