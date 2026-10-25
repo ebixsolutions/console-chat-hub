@@ -599,6 +599,7 @@ test('KB diagnostics redact untrusted labels and never consume bodies or alter f
   console.log=()=>{throw Error('logger unavailable');};
   const marker={same:true};assert.equal(await d.run('auth',async()=>marker),marker);
   const error=new Error('original failure');await assert.rejects(()=>d.run('auth',async()=>{throw error;}),e=>e===error);
+  const hostile={get code(){throw Error('unsafe diagnostic property');}};await assert.rejects(()=>d.run('auth',async()=>{throw hostile;}),e=>e===hostile);
  }finally{console.log=saved;}
 });
 // Reproduce ambiguous 504s through the complete original handler, without a

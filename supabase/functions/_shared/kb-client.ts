@@ -46,6 +46,14 @@ export type KBStage = "auth" | "membership" | "tenant_scope" | "inbox_admission"
   "rag_transport" | "response_binding" | "response_binding_http" | "response_decode" |
   "authority_validation" | "expansion" | "rerank" | "retrieval_execution";
 type KBStageDetail = { duration_ms?: number; http_status?: number; call?: number; timeout_ms?: number; code?: string };
+// Diagnostics project closed labels only; they do not create another typed
+// business-failure boundary or turn an unknown provider error into a decision.
+function kbDiagnosticCode(error: unknown): string | undefined {
+  try {
+    if (error instanceof Error && error.name === "AbortError") return "LLM_TIMEOUT";
+    return error && typeof error === "object" && "code" in error ? safeExecutionCode(error.code) ?? undefined : undefined;
+  } catch { return undefined; }
+}
 /** Observational only: no body, query, URL, credential, provider error or client-selected scope. */
 export function createKBStageDiagnostics(operationId?: string) {
   const idPattern = "[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}";
@@ -68,7 +76,7 @@ export function createKBStageDiagnostics(operationId?: string) {
     try {
       const result = await action(); event(stage, "complete", { duration_ms: Date.now() - start,
         ...(result instanceof Response ? { http_status: result.status } : {}) }); return result;
-    } catch (error) { event(stage, error instanceof Error && error.name === "AbortError" ? "abort" : "error", { duration_ms: Date.now() - start, code: failureFromError(error).code }); throw error; }
+    } catch (error) { event(stage, error instanceof Error && error.name === "AbortError" ? "abort" : "error", { duration_ms: Date.now() - start, code: kbDiagnosticCode(error) }); throw error; }
   } };
 }
 export type KBScopeMode = "canonical" | "pre_activation" | "demo";
@@ -617,7 +625,7 @@ export async function fetchKBRag(
       diagnostic.event(networkStage, "complete", { duration_ms: Date.now() - start, http_status: result.status, call: networkCalls });
       if (rag) { phase = "response_binding"; bindingStarted = Date.now(); diagnostic.event(phase, "start"); }
       return result;
-    } catch (error) { diagnostic.event(networkStage, "error", { duration_ms: Date.now() - start, code: failureFromError(error).code }); throw error; }
+    } catch (error) { diagnostic.event(networkStage, "error", { duration_ms: Date.now() - start, code: kbDiagnosticCode(error) }); throw error; }
   };
   try {
     const init: RequestInit = {
