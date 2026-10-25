@@ -1071,7 +1071,7 @@
     "src/routes/_authenticated/console.visitor-analytics.tsx": "bd8ddd502d58b72b06b4890d9e101bea044eefce86b5d467506d323e7c5d674c",
     "src/routes/_authenticated/console.widget-preview.tsx": "149db878445bb89357c41d71609ecdf12bc4b22cb874708d5356e76f31f9ba27",
     "src/start.ts": "30474eb76daf45109e57af25064639f1bfdd0a00447602a0c4464b27ee8aff55",
-    "supabase/functions/_shared/bounded-decision-context.ts": "ffbe80dea5845b3d26c1cb29c4cca1ee90c385c51c2caa341865d9797beeab5d",
+    "supabase/functions/_shared/bounded-decision-context.ts": "740b6313f0cbe07acd34d8e361ccf32fd9fc894378e6df9e3c6a3f1d91c488fb",
     "supabase/functions/_shared/canonical-grounding.ts": "70a164e1e44c521a86e0146e0183fc1bfac854f25358764acb72cef974a258f6",
     "supabase/functions/_shared/citation-lineage.ts": "2cb5cd7760a84bb4940f84114be401f51514c5966e605284661322b3f532f3d5",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "f9be5396f1b1e4ba54372a785b771cb1888ef8c12062a976bdb6152cc56bad07",

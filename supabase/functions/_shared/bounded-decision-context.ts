@@ -37,7 +37,8 @@ export function normalizeDecisionContext(value: unknown): Record<string, Decisio
         if (/\bBearer\s+\S+|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/i.test(text)) return undefined;
         return text;
       }
-      return v;
+      // Keep the validated primitive result narrow with or without strictNullChecks.
+      return typeof v === "boolean" || typeof v === "number" ? v : null;
     }
     if (!v || typeof v !== "object") return undefined;
     if (ancestors.has(v)) fail("cycle", 1, 0);
