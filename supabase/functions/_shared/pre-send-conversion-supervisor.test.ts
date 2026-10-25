@@ -380,6 +380,27 @@ Deno.test("B2 allows only a source-bound read-only historical calculation", asyn
     assert(!blocked.committed && callbackCount === 0, `${label} reached persistence: ${blocked.decision.code}`);
   }
 });
+Deno.test("Task1C sourced corrections do not make general guidance a known-context re-ask", () => {
+  const state = createEmptyConversationCommerceState();
+  state.customer_constraints = {customer_reported_facts: {
+    usage_scenario: {value: {browser_tabs_open_simultaneously: 8}, provenance: {source_type:"customer", source_message_id:SOURCE_ID}},
+    budget_preference: {value:"節省", provenance: {source_type:"customer", source_message_id:SOURCE_ID}},
+  }};
+  const suggestion = "按目前八個分頁與節省預算的需求，可先暫緩高階處理器和額外儲存升級，先確認現有配置是否足夠。";
+  const guided=(draft:string,s=state)=>evaluateB2BeforeCommit({
+    proposed_response:draft,persistence_kind:"ai_reply",snapshot:snapshot(s),
+    metadata:{response_route:"customer_guidance"},
+  });
+  assertEquals(guided(suggestion).code, "B2_ALLOW", "known preference in a preceding clause is not the answer's question");
+  assertEquals(guided("請再次確認之前已提供的節省預算要求？").code,
+    "KNOWN_CONTEXT_RECONFIRMATION", "an actual repeated question about a supplied preference remains blocked");
+  assertEquals(decision("請再問一次收貨地址？", (()=>{const s=createEmptyConversationCommerceState();s.delivery.address="1 Queen's Road Central";return s;})()).code,
+    "KNOWN_CONTEXT_RECONFIRMATION", "explicit previously supplied delivery field is still protected");
+  const noDelivery = createEmptyConversationCommerceState();
+  assertEquals(guided("按客戶用途先確認現有設備是否足夠。", noDelivery).code, "B2_ALLOW",
+    "default false delivery.confirmed is not an actual confirmed delivery fact");
+});
+
 Deno.test("B2 blocks asking for a known delivery address", () => {
   assertEquals(
     decision("What is your delivery address?").code,

@@ -33,7 +33,8 @@ export type RecallFact =
   | "entity_status";
 export type RecallAuthority =
   | "CANONICAL_COMMERCE_STATE"
-  | "CURRENT_CUSTOMER_MEMORY";
+  | "CURRENT_CUSTOMER_MEMORY"
+  | "HISTORICAL_CUSTOMER_MEMORY";
 export interface RecallScope {
   conversation_id: string;
   company_id: string;
@@ -52,7 +53,7 @@ export interface RecallEvidence {
   entity_label?: string | null;
   region: string | null;
   evidence_source_message_id: string | null;
-  temporal_scope: "current" | "excluded";
+  temporal_scope: "current" | "excluded" | "historical";
   source_kind: string;
 }
 export interface RecallProvenance extends RecallScope {
@@ -1133,11 +1134,11 @@ function memoryCandidates(
       fact_type: f,
       value,
       state_path: path,
-      authority: "CURRENT_CUSTOMER_MEMORY",
+      authority: path.startsWith("cancelled_or_superseded.") ? "HISTORICAL_CUSTOMER_MEMORY" : "CURRENT_CUSTOMER_MEMORY",
       entity_id: entity,
       region,
       evidence_source_message_id: source,
-      temporal_scope: "current",
+      temporal_scope: path.startsWith("cancelled_or_superseded.") ? "historical" : "current",
       source_kind: sourceKind,
       rank,
     });
@@ -1249,10 +1250,13 @@ function memoryCandidates(
   if (f === "correction") {
     add("latest_corrections.0", m.latest_corrections[0], 1);
   }
-  if (f === "entity_status") {
+  if (f === "entity_status" && asksInactiveEntityStatus(input.question)) {
     for (let i = 0; i < m.cancelled_or_superseded.length; i++) {
       const fact = m.cancelled_or_superseded[i];
       if (fact.authority !== "customer" && fact.authority !== "canonical_commerce") continue;
+      // Requirement snapshots are not entity lifecycle records. Never render an
+      // opaque superseded requirement object as a current item status.
+      if (!fact.entity_id && !(fact.key === "cancelled item" && typeof fact.value === "string" && fact.source_message_id)) continue;
       add(`cancelled_or_superseded.${i}`, fact.entity_id ?? fact.value, 1, null, fact.region ?? null, fact.source_message_id ?? null);
     }
   }
@@ -1692,6 +1696,7 @@ export function renderConversationRecall(
         retainedNumberWords[e.value]
       ? retainedNumberWords[e.value][l]
       : display(e.value);
+    if (e.temporal_scope === "historical") v = ["歷史記錄：", "历史记录：", "Historical record: "][l] + v;
     if (e.fact_type.endsWith("_status") && typeof e.value === "string") {
       v = STATUS_TEXT[e.value]?.[l] ?? v;
     }

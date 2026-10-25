@@ -113,3 +113,18 @@ for(const [question,expected] of [
  const frame=canonical(wire({intent:'customer_guidance',requested_facts:[]},'ASK_FACT'));
  assert.equal(resolveCustomerRequestDecision(question,frame).kind,expected);
 });
+
+for (const [question,key,value] of [
+ ['其實只會開八個分頁，預算要節省，仍然是桌上型和不打機。請按這個更正調整建議，哪些升級可以暫緩？','usage_scenario',{browser_tabs_open_simultaneously:8}],
+ ['Actually we have six seats now. Which upgrades can wait?','seats',6],
+ ['改為十二件，按新數量調整建議。','quantity',12],
+ ['Only four participants now; revise the recommendation.','participants',4],
+ ['Our required capacity is now 50 units; revise the procurement advice.','capacity',50],
+]) test('declarative prior guidance continues with validated customer update: '+key,()=>{
+ const history=[{role:'assistant',content:'Here are the general trade-offs.',metadata:{response_route:'customer_guidance'}}];
+ const semantic={operation:'UPDATE_ITEM',intent:'customer_guidance',confidence:0.98,requested_facts:[],ambiguity:{is_ambiguous:false},customer_facts:[{key,value}]};
+ const decision=resolveCustomerRequestDecision(question,semantic,history);
+ assert.equal(decision.kind,'guidance');assert.equal(decision.continuation,true);
+ assert.equal(resolveCustomerRequestDecision(question,{...semantic,operation:'CANCEL_ITEM'},history).continuation,false);
+ assert.equal(resolveCustomerRequestDecision(question,{...semantic,ambiguity:{is_ambiguous:true}},history).continuation,false);
+});

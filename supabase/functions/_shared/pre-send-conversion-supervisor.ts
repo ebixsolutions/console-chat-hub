@@ -825,14 +825,23 @@ function evaluateTransactionReality(
   return null;
 }
 
-function evaluateKnownContext(text: string, state: ConversationCommerceState, readOnlyProjection: boolean = false): B2Decision | null {
+function evaluateKnownContext(text: string, state: ConversationCommerceState, readOnlyProjection: boolean = false, sourceBoundGuidance: boolean = false): B2Decision | null {
   if (!QUESTION.test(text)) return null;
+  // Preserve the original Frozen B2 clause scope. Only an actual, freshly
+  // source-bound customer-guidance reply receives finer punctuation scope:
+  // already-known preferences in a preceding statement do not constitute a
+  // repeated question. All ordinary known-field re-asks still remain blocked.
   const questionClauses = text
-    .split(/(?<=[?？.!！。])|\n+/)
+    .split(sourceBoundGuidance ? /(?<=[?？.!！。])|[，,；;]|\n+/ : /(?<=[?？.!！。])|\n+/)
     .map(lower)
     .filter((clause) => QUESTION.test(clause));
   for (const clause of questionClauses) {
     for (const fact of collectKnownCommerceFacts(state)) {
+      // A default false delivery flag is not a customer assertion and its
+      // generic "confirm" alias must not reject unrelated guidance. Keep the
+      // original default fact/guard for all non-guidance B2 paths.
+      if (sourceBoundGuidance && fact.path === "delivery.confirmed" &&
+        state.delivery.confirmed !== true && !state.delivery.provenance?.source_message_id) continue;
       // A missing-slot identifier is a planning descriptor, not a provided value.
       if (readOnlyProjection && /\.attributes\.customer_goal\.missing\.\d+$/.test(fact.path)) continue;
       if (fact.aliases.some((alias) => clause.includes(alias))) {
@@ -1312,7 +1321,9 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
     (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection || trustedLifecycle || trustedReadOnlyRecap || trustedCustomerCalculation
       ? null
-      : evaluateKnownContext(draft, state, input.metadata?.commerce_state_persistence_classification !== "COMMITTED" && !input.trusted_journey_progress)) ?? {
+      : evaluateKnownContext(draft, state, input.metadata?.commerce_state_persistence_classification !== "COMMITTED" && !input.trusted_journey_progress,
+          input.persistence_kind === "ai_reply" && input.metadata?.response_route === "customer_guidance" &&
+          input.snapshot.commerce_state_source_message_id === input.snapshot.source_message_id)) ?? {
       decision: "allow",
       code: kbPriceDecision?.code ?? (trustedReadOnlyRecap
         ? "B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP"

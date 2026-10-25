@@ -64,7 +64,7 @@ function fixture(text,options={}) {
  const requests=[],logs=[],commits=[],events=[]; let handler,mode=options.mode || 'ok',foreign=false;
  const conversation={id:ticket,company_id:company,status:options.human?'human_control':'open',assigned_agent_id:null,metadata_source:{}};
  const visitor={id:source,conversation_id:ticket,role:'visitor',content:text,is_recalled:false,created_at:'2026-10-14T01:00:00.000Z',metadata:{}};
- const tables={conversation_commerce_state_event:[],company:[{id:company,is_active:true}],conversations:[conversation],messages:[visitor],conversation_commerce_state:[],conversation_memory_state:[],conversation_memory_state_event:[],c3_memory_reply_lifecycle_receipt:[]};
+ const tables={ce_evaluation_state:[],handoff_event:[],conversation_commerce_state_event:[],company:[{id:company,is_active:true}],conversations:[conversation],messages:[visitor],conversation_commerce_state:[],conversation_memory_state:[],conversation_memory_state_event:[],c3_memory_reply_lifecycle_receipt:[]};
  let generationIndex=0, previewInitialization;
  const claimReaders=[];
  if(options.previous)for(const name of ['conversation_commerce_state','conversation_memory_state','conversation_commerce_state_event','conversation_memory_state_event'])tables[name]=structuredClone(options.previous[name]);
@@ -1055,4 +1055,19 @@ for(const [initial,question,short,key,value,intent] of [['How should we compare 
  const first=fixture(initial,{originalPreview:true,fullChain:true,answer:'Compare the requirements with flexibility. '+question,semantic:{operation:'ASK_FACT',confidence:.97,intent:'customer_guidance',requested_facts:[]}});await first.run();
  const answer='Compare the latest needs with the flexibility and ease of use you require. Verify any specific merchant facts before choosing.';
  const f=fixture(short,{source:uuid(430),originalPreview:true,fullChain:true,previous:first.tables,history:first.tables.messages,answer,semantic:{operation:'UPDATE_ITEM',confidence:.97,intent,customer_facts:[{key,value}],requested_facts:[]}});await f.run();assert.equal(f.commits[0]?.content,answer,JSON.stringify(f.commits));assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));assert.deepEqual(f.tables.conversation_memory_state[0].memory.current_customer_facts.find(x=>x.key===key)?.value,value);const generated=f.requests.find(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('[EFFECTIVE_CUSTOMER_REQUIREMENTS]'));assert(generated);assert(JSON.stringify(generated.body).includes(initial),'prompt must retain the purpose answered by this clarification');assert(JSON.stringify(generated.body).includes(short),'prompt must include the latest answer');
+});
+
+test('Director current guidance correction after declarative advice persists latest facts without superseded recall',async()=>{
+ const first=fixture('沿用桌上型電腦需求：二十多個瀏覽器分頁、文書和視像通話，不打機。請給一般選購建議。',{originalPreview:true,fullChain:true,answer:'先按多工負載比較記憶體，再按用途比較處理器與儲存空間。',semantic:providerWire({intent:'customer_guidance',requested_facts:[],customer_facts:[{key:'usage_scenario',value:{browser_tabs_open_simultaneously:20}}]})});await first.run();
+ const value={browser_tabs_open_simultaneously:8};
+ const f=fixture('其實只會開八個分頁，預算要節省，仍然是桌上型和不打機。請按這個更正調整建議，哪些升級可以暫緩？',{source:uuid(990),originalPreview:true,fullChain:true,previous:first.tables,history:first.tables.messages,answer:'按目前八個分頁與節省預算的需求，可先暫緩高階處理器和額外儲存升級，先確認現有配置是否足夠。',semantic:providerWire({intent:'customer_guidance',requested_facts:[],customer_facts:[{key:'usage_scenario',value},{key:'budget_preference',value:'節省'}]})});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));
+ assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance',JSON.stringify({events:f.events,meta:f.commits[0]?.metadata}));
+ assert(!f.commits[0]?.content.includes('項目記錄'));assert(!f.commits[0]?.content.includes('20'));
+ const memory=f.tables.conversation_memory_state[0].memory;
+ assert.deepEqual(memory.current_customer_facts.find(x=>x.key==='usage_scenario')?.value,value);
+ assert(memory.active_constraints.every(x=>!x.includes('browser_tabs_open_simultaneously\\\":20')),'old active constraint must not override the new request');
+ assert(memory.cancelled_or_superseded.some(x=>JSON.stringify(x.value).includes('browser_tabs_open_simultaneously')&&JSON.stringify(x.value).includes('20')),'superseded customer fact remains historical only');
+ const commerce=f.tables.conversation_commerce_state[0].state;
+ assert.deepEqual(commerce.customer_constraints.customer_reported_facts.usage_scenario.value,value);
 });

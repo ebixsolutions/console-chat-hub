@@ -471,7 +471,9 @@ export function resolveCustomerRequestDecision(question:string, semantic: {
   // actual merchant speech acts are still independently scoped below.
   const contextAnswer=!semantic.ambiguity.is_ambiguous && semantic.requested_facts.length===0 &&
     (semantic.intent==="customer_guidance" || Boolean(semantic.customer_facts?.length));
-  const continuation=clarification && !transactional && (contextAnswer || /(?:答|剛才|刚才|頭先|头先|更正|改為|改为)|\b(?:answer|correction|actually|instead|as requested)\b/i.test(text));
+  const customerUpdateContinuation=priorGuidance && semantic.operation==="UPDATE_ITEM" &&
+    semantic.intent==="customer_guidance" && Boolean(semantic.customer_facts?.length) && contextAnswer;
+  const continuation=(clarification || customerUpdateContinuation) && !transactional && (contextAnswer || /(?:答|剛才|刚才|頭先|头先|更正|改為|改为)|\b(?:answer|correction|actually|instead|as requested)\b/i.test(text));
   const clauses=withoutExcludedLookups(text).split(/[;；。!?！？]|\b(?:and|but)\b|(?:同埋|並且|并且)/i).map(s=>s.trim()).filter(Boolean);
   const general=clauses.filter(clause=>guidanceSpeechAct(clause,semantic));
   const wholeGeneral=guidanceSpeechAct(text,semantic);

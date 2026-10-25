@@ -590,14 +590,14 @@ async function ragApiInboxFixture(fault='none'){
 }
 // Full original Inbox handler with only external Auth/DB/RAG/Vertex isolated.
 // These are deterministic transport fixtures, not paid or Hosted observations.
-async function policyOutputFixture({status='warning',assessment,verifier,finish='STOP'}={}){
+async function policyOutputFixture({status='warning',assessment,verifier,rawAssessment,finish='STOP'}={}){
  const x=await ragApiInboxFixture(),up=globalThis.fetch,requests=[];
  globalThis.fetch=async(url,init)=>{
   if(String(url)!==f.url)return up(url,init);
   const request=JSON.parse(init.body);requests.push(request);const prompt=request.contents.flatMap(c=>c.parts.map(p=>p.text??'')).join('');
   const verifying=prompt.includes('proposed_claims'),policy=prompt.includes('Text to check:');
   const value=verifying?(verifier??{grounded:true,unsupported_claims:[],evidence_ids:['E1'],resolution:'supported'}):policy?(assessment??{status,summary:'Pause eligibility requires review under the supplied policy.',issues:['warning','violation'].includes(status)?[{excerpt:'pause subscription',policy_label:'Evidence 1',severity:status}]:[]}):prompt.includes('Customer message:')?{suggestions:[{content:'You may request a pause; eligibility requires review.',tone_label:'Informative'}]}:{queries:[]};
-  return Response.json({candidates:[{finishReason:policy?finish:'STOP',content:{parts:[{text:policy&&finish==='MAX_TOKENS'?'{"status":"warning","summary":"incomplete':JSON.stringify(value)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:policy&&finish==='MAX_TOKENS'?785:120}});
+  return Response.json({candidates:[{finishReason:policy?finish:'STOP',content:{parts:[{text:policy&&finish==='MAX_TOKENS'?'{"status":"warning","summary":"incomplete':policy&&rawAssessment!==undefined?rawAssessment:JSON.stringify(value)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:policy&&finish==='MAX_TOKENS'?785:120}});
  };
  const send=async(tool='check_policy')=>{
   const response=await policyHandler(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify({tool_type:tool,conversation_id:x.c.id,content:'pause subscription',context_mode:'manual'})}));
@@ -1022,4 +1022,21 @@ test('Task1C full handler admission and RAG have independent bounds and produce 
  f.db.from=function(table){const q=from.call(this,table),then=q.then;q.then=function(resolve,reject){return (async()=>{if(inAdmission&&!delayed){delayed=true;await new Promise(r=>setTimeout(r,9000));}return await {then:then.bind(q)};})().then(resolve,reject);};return q;};
  globalThis.fetch=async(url,init)=>{if(String(url)===x.endpoint){posts++;assert.equal(init.signal.aborted,false);await new Promise((resolve,reject)=>{const done=()=>{init.signal.removeEventListener('abort',abort);resolve();};const timer=setTimeout(done,4000);const abort=()=>{clearTimeout(timer);reject(new DOMException('fixture cancelled','AbortError'));};init.signal.addEventListener('abort',abort,{once:true});});}return up(url,init);};
  try{const r=await x.send('knowledge');assert.equal(r.status,200,JSON.stringify(r));assert(r.data.results.length>0);assert.equal(posts,1);assert(Date.now()-started>=13000);assert(Date.now()-started<36000);}finally{console.log=log;globalThis.fetch=realFetch;}
+});
+
+// Exact full-handler post-generation branches; no claim about the unavailable
+// historical Vertex JSON. External provider fixtures remain isolated.
+for(const [label,options,stage,attempts] of [
+ ['json',{rawAssessment:'{"status":'},'policy_json',1],
+ ['schema',{assessment:{status:'compliant',summary:42,issues:[]}},'policy_schema',1],
+ ['severity',{assessment:{status:'warning',summary:'Requires review',issues:[{excerpt:'pause',policy_label:'E1',severity:'violation'}]}},'policy_severity_consistency',1],
+ ['mixed-severity',{assessment:{status:'warning',summary:'Requires review',issues:[{excerpt:'pause',policy_label:'E1',severity:'warning'},{excerpt:'pause',policy_label:'E1',severity:'violation'}]}},'policy_severity_consistency',1],
+ ['local-grounding',{assessment:{status:'compliant',summary:'The fee is HK$500.',issues:[]}},'local_grounding',1],
+ ['verifier-rejection',{status:'compliant',verifier:{grounded:false,unsupported_claims:['unsupported'],evidence_ids:['E1'],resolution:'unsupported'}},'independent_verifier',2],
+ ['verifier-schema',{status:'compliant',verifier:{grounded:true,unsupported_claims:[],evidence_ids:['E1'],resolution:'supported',extra:true}},'verifier_schema',2],
+])test('Director full Policy rejection classification: '+label,async()=>{
+ const x=await policyOutputFixture(options);try{const r=await x.send();assert.equal(r.status,502,JSON.stringify(r));assert.equal(r.data.rejection_stage,stage,JSON.stringify(r));assert.equal(x.requests.length,attempts);assert(!r.data.result);assert(!JSON.stringify(r.data).includes('HK$500'));}finally{globalThis.fetch=realFetch;}
+});
+for(const fault of ['foreign-ticket','foreign-response','inactive-membership','no-match'])test('Director Policy authority boundary: '+fault,async()=>{
+ const x=await setupInbox(fault);try{const r=await x.send('policy');if(fault==='no-match'){assert.equal(r.status,200);assert.equal(r.data.result.status,'insufficient_evidence');assert.equal(x.model(),0);}else{assert(r.status>=400);assert.notEqual(r.data.result?.status,'compliant');}}finally{globalThis.fetch=realFetch;}
 });

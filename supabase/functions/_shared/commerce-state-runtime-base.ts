@@ -939,6 +939,8 @@ export function isReadOnlyCommerceQuestion(
   text: string,
   semanticFrame?: CommerceSemanticFrame | null,
 ): boolean {
+  if (semanticFrame && semanticFrame.confidence >= 0.72 && !semanticFrame.ambiguity.is_ambiguous &&
+      semanticFrame.operation === "UPDATE_ITEM" && semanticFrame.customer_facts?.length) return false;
   const semanticRead = semanticFrame?.operation === "ASK_FACT" ||
     semanticFrame?.operation === "ASK_CALCULATION" ||
     semanticFrame?.operation === "NO_STATE_CHANGE";
@@ -2192,6 +2194,22 @@ function reduceTurnOperations(
       semantic_frame: null,
     }, hints);
   }
+  // A multi-clause customer correction retains one server-validated semantic
+  // customer-fact delta. Individual clause reducers deliberately cannot inherit
+  // the whole-turn entity mutation plan, but must not drop an explicitly
+  // validated customer-owned correction (or retain a superseded requirement).
+  // Apply only the canonical customer-fact event; never infer an entity,
+  // merchant fact, policy or lifecycle mutation from this projection.
+  if (input.semantic_frame && input.semantic_frame.confidence >= 0.72 &&
+      !input.semantic_frame.ambiguity.is_ambiguous &&
+      ["UPDATE_ITEM", "ADD_ITEM"].includes(input.semantic_frame.operation) &&
+      input.semantic_frame.customer_facts?.length &&
+      !isHistoricalOrConditionalCustomerCalculationRequest(input.text)) {
+    const customerEvents=semanticFrameToStateEvents(
+      input.semantic_frame,state,[],input.source_message_id,input.occurred_at ?? null,
+    ).filter(event=>event.type==="SET_CUSTOMER_CONSTRAINT" && event.key==="customer_reported_facts");
+    if (customerEvents.length) state=reduceCommerceState(state,customerEvents);
+  }
   // A schema-constrained semantic frame may describe a customer preference
   // while its factual question is routed to KB. Bind only customer constraints
   // to one existing, named entity; never copy a proposed merchant fact.
@@ -3035,7 +3053,12 @@ export async function runCommerceStateRuntime(
   // committed snapshot. Do not call the state RPC: even an identical payload
   // would create a semantic event/revision and could rebind fact provenance to
   // this question rather than the customer turn that supplied the fact.
+  const validatedCustomerFactUpdate = Boolean(input.semantic_frame &&
+    input.semantic_frame.confidence >= 0.72 && !input.semantic_frame.ambiguity.is_ambiguous &&
+    ["UPDATE_ITEM", "ADD_ITEM"].includes(input.semantic_frame.operation) &&
+    input.semantic_frame.customer_facts?.length);
   if (
+    !validatedCustomerFactUpdate &&
     isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame) &&
     !input.trusted_product_topic_focus &&
     !/(?:講返|说回|講回|返去|回到|back to|return to|about that)/i.test(text) &&

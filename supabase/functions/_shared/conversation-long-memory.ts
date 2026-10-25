@@ -768,6 +768,8 @@ export function buildCanonicalConversationMemory(args: {
     question_lifecycle: lifecycle,
     active_entities: commerce.active_entities,
     latest_corrections: uniqueStrings([
+      ...((args.customer_fact_delta ?? []).some(f => (prior?.current_customer_facts ?? []).some(old => old.key === f.key && !sameCanonicalJson(old.value,f.value)))
+        ? [businessMessageText(args.newest_first.find(row => row.id === args.source_message_id)?.content ?? "")] : []),
       ...runtime.latest_corrections,
       ...(args.commerce_state?.latest_corrections ?? []),
       ...(prior?.latest_corrections ?? []),
@@ -796,7 +798,7 @@ export function buildCanonicalConversationMemory(args: {
     active_constraints: uniqueStrings([
       ...runtime.active_constraints,
       ...Object.entries(args.commerce_state?.customer_constraints ?? {}).map(([key, value]) => `${key}:${JSON.stringify(value)}`),
-      ...(prior?.active_constraints ?? []),
+      ...(prior?.active_constraints ?? []).filter(value => !value.startsWith("customer_reported_facts:")),
     ].map(businessMessageText), MAX_CONSTRAINTS),
     current_regions: currentRegions.length ? currentRegions : (prior?.current_regions ?? []).slice(0, MAX_REGIONS),
     transaction_summary: commerce.transaction_summary,
