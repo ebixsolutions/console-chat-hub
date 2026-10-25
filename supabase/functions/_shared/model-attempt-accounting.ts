@@ -1,5 +1,5 @@
 import { buildVertexEndpoint } from "./vertex-generation-config.ts";
-import { uatFetch, UatDenied, trustedDispatchScope, authenticatedInboxIdentity } from "./uat-execution-contract.ts";
+import { uatFetch, UatDenied, trustedDispatchScope, authenticatedInboxIdentity, type InboxIdentity } from "./uat-execution-contract.ts";
 import { ORIGINAL_PREVIEW_ACCOUNTS } from "./original-widget-preview.ts";
 import { originalPreviewRagConfiguration } from "./original-preview-kb-config.ts";
 import { FRANKIE_KB_SCOPE, queryEmbeddingEvidence, verifiedQueryEmbeddingAttestation, bindQueryEmbeddingResponse,
@@ -129,8 +129,8 @@ export function consumeOriginalPreviewKBPermit(permit:object|undefined):boolean 
 
 /** Separately approved manual Inbox scope, never inferred from B-O or ticket
  * ownership. Evidence is verified by the same remote guard before any RAG I/O. */
-async function inboxBinding(db:AccountingRpc,meta:ModelAttempt):Promise<any> {
-  const a=await authenticatedInboxIdentity(db,meta.legacyAuthority,meta.companyId,meta.conversationId);
+async function inboxBinding(db:AccountingRpc,meta:ModelAttempt,checked?:InboxIdentity):Promise<any> {
+  const a=checked ?? await authenticatedInboxIdentity(db,meta.legacyAuthority,meta.companyId,meta.conversationId);
   let g:any,map:any;try {g=JSON.parse(Deno.env.get("AUTHENTICATED_INBOX_KB_AUTHORIZATION")??"null");map=JSON.parse(Deno.env.get("KB_SINGAPORE_TENANT_MAP_JSON")??"null");}catch{throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");}
   if(![1,2,3].includes(g?.version) || Object.keys(g).some(k=>!["version","bindings"].includes(k)) || !Array.isArray(g.bindings) || g.bindings.length>20)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
   const matches=g.bindings.filter((b:any)=>b?.actor_id===a.actor && b.company_id===a.company && b.channel_id===a.channel && b.tenant_id===String(map?.[a.company]) && b.endpoint===endpoint &&
@@ -140,8 +140,8 @@ async function inboxBinding(db:AccountingRpc,meta:ModelAttempt):Promise<any> {
   if(matches.length!==1)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
   return {...matches[0],_grant_version:g.version,_live:matches[0].remote_mode===LIVE_METADATA_MODE,_api:matches[0].remote_mode===RAG_API_MODE};
 }
-async function authorizeInboxKB(db:AccountingRpc,meta:ModelAttempt,url:string,init:RequestInit):Promise<OriginalPreviewKBPermit> {
-  const b=await inboxBinding(db,meta);if((b._live || b._api) && (!validLiveRagCredential(init,b.tenant_id) || Object.keys(b).some(k=>!["_grant_version","_live","_api","actor_id","company_id","channel_id","tenant_id","endpoint","provider","purpose","operations","allow_assist","remote_mode","allow_remote_embedding",...(b._api?["rag_api_contract","accepted_remote_risk"]:["evidence_reference"])].includes(k))))throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");let r:any;try{r=JSON.parse(meta.request);}catch{throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");}
+async function authorizeInboxKB(db:AccountingRpc,meta:ModelAttempt,url:string,init:RequestInit,b:any):Promise<OriginalPreviewKBPermit> {
+  if((b._live || b._api) && (!validLiveRagCredential(init,b.tenant_id) || Object.keys(b).some(k=>!["_grant_version","_live","_api","actor_id","company_id","channel_id","tenant_id","endpoint","provider","purpose","operations","allow_assist","remote_mode","allow_remote_embedding",...(b._api?["rag_api_contract","accepted_remote_risk"]:["evidence_reference"])].includes(k))))throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");let r:any;try{r=JSON.parse(meta.request);}catch{throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");}
   if(meta.provider!=="singapore-kb" || meta.purpose!=="kb_embedding" || meta.slot!=="context-search" || meta.attempt!==1 || url!==endpoint || init.method!=="POST" || String(init.body)!==meta.request || new TextEncoder().encode(meta.request).length>8192 || typeof r.query!=="string" || !r.query.trim() || new TextEncoder().encode(r.query).length>2048 || String(r.company_id)!==b.tenant_id || !Number.isSafeInteger(r.company_id) || Object.keys(r).some(k=>!["query","company_id","candidate_top_k","max_documents","max_summary_chunks","max_full_content_chunks","score_threshold"].includes(k)) || !Number.isInteger(r.candidate_top_k) || r.candidate_top_k<1 || r.candidate_top_k>50 || r.max_documents!==5 || r.max_summary_chunks!==1 || r.max_full_content_chunks!==3 || r.score_threshold!==0.05)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
   const token={};permits.set(token,{company:meta.companyId!,actor:b.actor_id,channel:b.channel_id,tenant:b.tenant_id,endpoint,request:meta.request,runtime:b._api?RAG_API_MODE:b._live?LIVE_METADATA_MODE:b.remote_runtime_sha256,authorization:Deno.env.get("AUTHENTICATED_INBOX_KB_AUTHORIZATION")!,authorizationKey:"AUTHENTICATED_INBOX_KB_AUTHORIZATION",expires:Date.now()+60000,verified:false,used:false,...(b._api?{apiPolicy:ragApiPolicy(b)!,ragKeys:Deno.env.get("KB_SINGAPORE_TENANT_API_KEYS_JSON")}:b._live?{livePolicy:liveMetadataPolicy(b)!,ragKeys:Deno.env.get("KB_SINGAPORE_TENANT_API_KEYS_JSON")}:{evidence:queryEmbeddingEvidence(b)!})});return token;
 }
@@ -154,9 +154,11 @@ export async function accountedModelFetch(
   onDispatch?: () => void,
   prepare?: (mode: "legacy" | "uat" | "authenticated_preview" | "authenticated_inbox", permit?:OriginalPreviewKBPermit) => Promise<Record<string,string>>,
 ): Promise<Response> {
+  init.signal?.throwIfAborted();
+  let checkedInbox:InboxIdentity|undefined;
   let mode: "legacy" | "uat" | "authenticated_preview" | "authenticated_inbox";
   try {
-    mode = await trustedDispatchScope(db, meta.companyId, meta.conversationId, meta.legacyAuthority);
+    mode = await trustedDispatchScope(db, meta.companyId, meta.conversationId, meta.legacyAuthority, identity=>{checkedInbox=identity;});
   } catch (e) {
     if (e instanceof UatDenied) throw new ModelAccountingError(e.code);
     // A failed provider transport is not an admission denial. Unknown outcomes
@@ -165,8 +167,8 @@ export async function accountedModelFetch(
   }
   let kbPermit:OriginalPreviewKBPermit|undefined;
   if(mode==="authenticated_inbox") {
-    const b=await inboxBinding(db,meta);
-    if(meta.provider==="singapore-kb") {if(!prepare)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");kbPermit=await authorizeInboxKB(db,meta,url,init);}
+    const b=await inboxBinding(db,meta,checkedInbox);
+    if(meta.provider==="singapore-kb") {if(!prepare)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");kbPermit=await authorizeInboxKB(db,meta,url,init,b);}
     else if(!b.allow_assist || !meta.legacyAuthority || inboxGrounded.get(meta.legacyAuthority)?.authorization!==Deno.env.get("AUTHENTICATED_INBOX_KB_AUTHORIZATION") || (inboxGrounded.get(meta.legacyAuthority)?.expires ?? 0)<=Date.now() || meta.provider!=="vertex" || meta.purpose!=="assist")throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
   }
   if(mode==="authenticated_preview" && meta.provider==="singapore-kb") {
@@ -198,10 +200,12 @@ export async function accountedModelFetch(
   if(mode==="uat") {
     // The synthetic durable quota/bound admission still precedes preparation
     // and remote I/O. A denied reservation must not call the preparation hook.
-    const transport:typeof fetch=prepare ? async(input,options)=>await upstream(input,await prepareInit(options ?? {})) : upstream;
+    const transport:typeof fetch=prepare ? async(input,options)=>{const prepared=await prepareInit(options ?? {});prepared.signal?.throwIfAborted();return await upstream(input,prepared);} : upstream;
+    init.signal?.throwIfAborted();
     try {return await uatFetch(db,{...meta,operationId:`${meta.slot}:${meta.operationId}`},url,init,transport,onDispatch);}
     catch(error){if(error instanceof UatDenied)throw new ModelAccountingError(error.code);throw error;}
   }
+  init.signal?.throwIfAborted();
   const preparedInit=await prepareInit(init);
   if(kbPermit && (preparedInit.method!=="POST" || String(preparedInit.body)!==meta.request))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
   // Established authenticated Production path: preserve exact provider request/response.
@@ -214,6 +218,9 @@ export async function accountedModelFetch(
     if(used.has(identity))throw new ModelAccountingError("INBOX_REPLAY_DENIED");
     used.add(identity);inboxDispatched.set(meta.legacyAuthority!,used);
   }
+  // Cancellation is checked after the last asynchronous permission recheck.
+  // An expired admission must never consume a permit or reach any provider.
+  preparedInit.signal?.throwIfAborted();
   // No asynchronous work may separate the final evidence consumption from I/O.
   if(kbPermit){const s=permits.get(kbPermit)!;if((s.apiPolicy || s.livePolicy) && !validLiveRagCredential(preparedInit,s.tenant))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");}
   if(kbPermit && !consumeOriginalPreviewKBPermit(kbPermit))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");

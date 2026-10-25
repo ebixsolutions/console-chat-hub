@@ -65,6 +65,9 @@ export type LlmResult =
 export type ModelPurpose = "evaluation" | "assist" | "generation";
 
 export interface LlmCall {
+  /** Source-derived mixed request. Never merchant authority or provider admission. */
+  generalDecisionSupport?: boolean;
+  factualEvidenceAbsent?: boolean;
   /** Supplied only by the source-bound handler after canonical KB selection. */
   factualFollowup?: FactualFollowupContext;
   /** Set only after fresh full-content subject/authority selection, not HTTP200. */
@@ -624,6 +627,7 @@ async function verifyGroundedGeneration(
     "Do not use outside knowledge or assumptions.",
     "Claims that information does not exist or is unavailable are factual claims, not politeness. Reject a blanket no-data answer when applicable E* evidence answers the current request. Answer supported parts before acknowledging specific missing details.",
     "Politeness, conversational transitions, questions, and non-factual wording do not need evidence.",
+    call.generalDecisionSupport ? "Conditional general decision criteria may be proposed separately. They cannot certify any named merchant/product/policy claim, legal entitlement, numeric specification, price, stock or suitability guarantee. Those assertions still require supplied E* evidence. An absence of E* supports only a specific cannot-verify acknowledgement, never a claim that the fact does not exist." : "",
     "Any unsupported external factual claim makes grounded=false. A faithful restatement of customer-provided/conversation facts is allowed when supported by C1.",
     "evidence_chunk_ids may contain supplied E* aliases and C1 when they materially support the answer. This field is audit metadata; grounded must still reflect the rules above.",
     call.factualEvidenceAvailable
@@ -1141,7 +1145,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
 
       const grounding =
         call.purpose === "generation" && call.responseFormat !== "json"
-          ? extractGroundingBlock(call.system)
+          ? extractGroundingBlock(call.system) ?? (call.factualEvidenceAbsent ? {authority:"CURRENT_KB" as const,evidence_text:"",chunk_ids:[],transform_operations:[]} : null)
           : null;
       if (grounding) {
         let groundingDecision: Awaited<ReturnType<typeof verifyGroundedGeneration>>;

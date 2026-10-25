@@ -304,7 +304,7 @@ export interface FactualFollowupContext {
   source_message_id: string;
 }
 
-export function factualSubject(question: string): string | null {
+export function factualSubject(question: string, allowCorrection = true): string | null {
   const text = clean(question).split(/[？?]/u, 1)[0].replace(/[。.!！]+$/u, "").trim()
     .replace(/^(?:(?:請問|请问|請|请|可唔可以講下|可以講下)\s*|please\s+)/iu, "");
   const match = /^(?:什麼|什么|甚麼)是\s*(.+)$/u.exec(text) ??
@@ -315,7 +315,7 @@ export function factualSubject(question: string): string | null {
     /^how (?:does|do)\s+(?:the\s+)?(.+?)\s+(?:work|operate)$/iu.exec(text) ??
     /^what (?:does|do)\s+(?:the\s+)?(.+?)\s+(?:include|cover)$/iu.exec(text) ??
     /^(?:what (?:is|are)|explain|describe|definition of|meaning of)\s+(?:the\s+)?(.+)$/iu.exec(text) ??
-    /^(?:actually[, ]+i meant|i meant|correction[:：]|改成|改返|其實係|其实是)\s*(.+)$/iu.exec(text);
+    (allowCorrection ? /^(?:actually[, ]+i meant|i meant|correction[:：]|改成|改返|其實係|其实是)\s*(.+)$/iu.exec(text) : null);
   const subject = match?.[1]?.replace(/(?:[,，;；]\s*)(?:唔係|不是|並非|并非|not)\s*.+$/iu, "")
     .replace(/^[「『“"']|[」』”"']$/gu, "").trim();
   return subject && subject.length >= 2 && subject.length <= 160 &&

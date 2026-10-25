@@ -1,3 +1,4 @@
+import type { CustomerRequestDecision } from "./commerce-state-authority.ts";
 import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import { resolveConversationRecall, renderConversationRecall } from "./conversation-recall.ts";
 import { isConversationCommerceState, type ConversationCommerceState } from "./commerce-state-contract.ts";
@@ -575,6 +576,7 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
     const stockUnknown = meta.response_route === "canonical_kb_direct_answer" && (meta.answer_kind === "stock_unknown" ||
       Array.isArray(meta.unresolved_fact_fields) && meta.unresolved_fact_fields.includes("stock"));
     const missingCustomerDecision = meta.response_route === "product_guidance" && /[?？]$/.test(content);
+    const missingMerchantEvidence=meta.merchant_evidence_unavailable===true || meta.grounding_state==="no_current_evidence";
     if (!item && (clarification || site || stockUnknown || missingCustomerDecision)) {
       const source=rows.find(row=>row.id===meta.source_message_id && CUSTOMER_ROLES.has(String(row.role)));
       if (!source || classifySocialTurn(clean(source.content)) || isCurrentRequirementsRecap(clean(source.content))) continue;
@@ -584,9 +586,9 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
       items.set(item.source_message_id,item);
     }
     if (!item) continue;
-    item.status = clarification || site || stockUnknown || missingCustomerDecision || meta.degraded === true ? "pending" : "resolved";
+    item.status = clarification || site || stockUnknown || missingCustomerDecision || missingMerchantEvidence || meta.degraded === true ? "pending" : "resolved";
     item.resolution_source_message_id = row.id ?? null;
-    item.resolution = stockUnknown ? "merchant stock confirmation pending" : site ? "professional/site confirmation pending" : clarification || missingCustomerDecision ? "customer information required" : String(meta.response_route ?? "delivered_answer");
+    item.resolution = missingMerchantEvidence ? "merchant information requires current evidence" : stockUnknown ? "merchant stock confirmation pending" : site ? "professional/site confirmation pending" : clarification || missingCustomerDecision ? "customer information required" : String(meta.response_route ?? "delivered_answer");
     if (site) {
       const target=entities.filter(entity=>entity.model && content.includes(entity.model));
       if(target.length===1) item.entity_id=target[0].entity_id;
@@ -629,6 +631,7 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
  */
 
 export function buildCanonicalConversationMemory(args: {
+  request_decision?: CustomerRequestDecision;
   customer_fact_delta?: ConversationMemoryFact[];
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
   previous?: CanonicalConversationMemory | null;
@@ -667,11 +670,11 @@ export function buildCanonicalConversationMemory(args: {
     return `${entity.model?entity.model+" ":""}${label}: ${customerRequestedQuantity(entity) === null ? "quantity not yet confirmed" : `${entity.quantity} units`}${requirements?", "+requirements:""}${width}${record(entity.attributes.room_sunlight) ? ", afternoon sun: " + Object.entries(record(entity.attributes.room_sunlight)!).map(([room,value])=>room.replace(/_/g," ")+": "+(value==="none"?"no afternoon sun":value==="strong_afternoon_sun"?"strong afternoon sun":"not confirmed")).join(", ") : entity.attributes.sunlight === "strong_afternoon_sun" ? ", afternoon sun (scope unspecified)" : entity.attributes.sunlight === "none" ? ", no afternoon sun (customer reported)" : ""}${entity.attributes.installation_type === "window_unit" ? ", window units" : ""}${["deferred","cancelled"].includes(entity.status)?` (${entity.status})`:""}`;
   }).join("; "):null;
   const fallbackGoal=businessMessageText(prior?.current_goal) || businessMessageText(args.commerce_state?.current_intent) || runtime.first_customer_turn || null;
-  const goalFacts = stableFacts([...(prior?.current_customer_facts ?? []), ...(args.customer_fact_delta ?? []), ...(prior?.current_customer_facts ?? []).filter(f => Object.hasOwn(runtime.current_requirements,f.key)), ...requirements.current.map(f => ({...f,authority:"customer" as const}))],MAX_FACTS);
+  const goalFacts = stableFacts([...(prior?.current_customer_facts ?? []), ...(args.customer_fact_delta ?? []), ...requirements.current.map(f => ({...f,authority:"customer" as const}))],MAX_FACTS);
   const factLabels: Record<string,string> = {product_count:"商品數量",staff_count:"人手",app_interest:"需要 App",current_market:"目前市場",preferred_interface:"使用介面",desired_features:"需要功能",future_markets:"未來市場"};
   const factValue = (value:unknown):string => value===false?"否":value===true?"是":value===null?"未確認":Array.isArray(value)?value.map(factValue).join("、"):typeof value==="object"?JSON.stringify(value):String(value)==="hong_kong"?"香港":String(value)==="web"?"網頁版":String(value);
   const requirementGoal = goalFacts.length ? goalFacts.map(fact => `${factLabels[fact.key] ?? fact.key.replaceAll("_"," ")}: ${factValue(fact.value)}`).join("; ") : null;
-  const businessGoal = genericGoal || entityGoal || requirementGoal || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
+  const businessGoal = genericGoal || entityGoal || requirementGoal || (args.request_decision?.continuation ? clean(args.request_decision.latest_requirements,1600) : null) || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
   const runtimeRegions = [
     ...(runtime.current_requirements.current_market
       ? [{ region: runtime.current_requirements.current_market, temporal_scope: "current" as const }]
@@ -938,6 +941,7 @@ export function composeBoundedGenerationEnvelope(args: {
 }
 
 export async function refreshConversationLongMemory(client: LongMemoryDbClient, args: {
+  request_decision?: CustomerRequestDecision;
   customer_fact_delta?: ConversationMemoryFact[];
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
   conversation_id: string;

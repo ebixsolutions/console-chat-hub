@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { useCustomerContext } from "@/lib/customer360/useCustomerContext";
 import { deriveContextualKbAutoQuery } from "@/lib/console/contextualKbQuery";
-import { knowledgeFailureState, type KBErrorFamily } from "../../../supabase/functions/_shared/kb-error-contract";
+import { knowledgeFailureState, KB_PROXY_CLIENT_TIMEOUT_MS, type KBErrorFamily } from "../../../supabase/functions/_shared/kb-error-contract";
 
 export type CRMConv = {
   id: string;
@@ -348,6 +348,7 @@ export function CRMPanel({
       setKbResults([]);
       try {
         const { data, error } = await supabase.functions.invoke("kb-search-proxy", {
+          timeout: KB_PROXY_CLIENT_TIMEOUT_MS,
           body: { query: query.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id, query_mode: queryMode },
         });
         if (!valid()) return;

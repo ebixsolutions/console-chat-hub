@@ -207,3 +207,10 @@ test('Task1B pending Knowledge inferred-context response cannot block a fresh ma
 test('Task1B Policy Copy binds current content and same-input result revision',async()=>{
  reset();let n=0;const copied=[];Object.defineProperty(globalThis,'navigator',{configurable:true,value:{clipboard:{writeText:async t=>copied.push(t)}}});fixture.invoke=async()=>response({success:true,result:{status:'warning',summary:'POLICY_'+(++n),issues:[]}});const root=await mount(components.crm.CRMPanel,crmProps);await click(root,'Policy');await click(root,'Check Conversation');const oldCopy=button(root,'Copy Summary').props.onClick;await click(root,'Check Conversation');await act(async()=>oldCopy());assert.deepEqual(copied,[]);await click(root,'Copy Summary');assert.deepEqual(copied,['POLICY_2']);const currentCopy=button(root,'Copy Summary').props.onClick;await act(async()=>root.update(React.createElement(components.crm.CRMPanel,{...crmProps,contextRevisionKey:'r2'})));await act(async()=>currentCopy());assert.deepEqual(copied,['POLICY_2']);await act(async()=>root.unmount());
 });
+
+test('Task1C Inbox UI supplies finite deadline, displays service failure and never auto-retries',async()=>{
+ reset();let timeout;
+ fixture.invoke=async(name,options)=>{calls.push({name,body:options.body});timeout=options.timeout;return response({error:'kb_api_timeout',failure:{code:'LLM_TIMEOUT',stage:'timeout'}},504);};
+ const root=await mount(components.crm.CRMPanel,crmProps);await click(root,'Knowledge');await click(root,'Search conversation knowledge');
+ assert.equal(timeout,38000);assert.equal(calls.length,1);assert.match(text(root.toJSON()),/could not complete|service/i);await act(async()=>root.update(React.createElement(components.crm.CRMPanel,{...crmProps,contextRevisionKey:'r2'})));assert.equal(calls.length,1);await act(async()=>root.unmount());
+});

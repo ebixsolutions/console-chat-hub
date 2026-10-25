@@ -1,7 +1,7 @@
 import { safeExecutionCode, executionFailure, type ExecutionFailure } from "../_shared/execution-failure.ts";
 import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
 import { factualSubject } from "../_shared/conversation-semantic-contract.ts";
-import { kbErrorFamily } from "../_shared/kb-error-contract.ts";
+import { kbErrorFamily, createKBRequestBudget, KB_PROXY_EXECUTION_BUDGET_MS } from "../_shared/kb-error-contract.ts";
 import { authenticatedInboxAuthority, legacyPreactivationAuthority } from "../_shared/uat-execution-contract.ts";
 import { uatMap } from "../_shared/uat-execution-contract.ts";
 import {
@@ -239,9 +239,11 @@ async function deriveRetrievalExpansions(params: {
   retrievalQuery: string;
   scope: KBResolvedScope;
   conversationId: string | null;
+  signal?: AbortSignal;
 }): Promise<string[]> {
   const llm = await callModel({
     purpose: "assist",
+    signal: params.signal,
     system: "You expand a customer-service knowledge-base search query. Return JSON only. Produce up to two short alternative search queries that preserve exactly the same customer intent, use likely knowledge-base terminology, and may use another relevant language. Do not answer the customer. Do not add unrelated topics, products, promises, or policies.",
     user: `ORIGINAL SEARCH QUERY:\n${params.retrievalQuery.slice(0, 1200)}\n\nCURRENT REQUEST:\n${params.currentRequest.slice(0, 800)}`,
     maxTokens: RETRIEVAL_EXPANSION_MAX_TOKENS,
@@ -310,6 +312,7 @@ async function rerankForDisplay(params: {
   scope: KBResolvedScope;
   conversationId: string | null;
   fullEvidence: string;
+  signal?: AbortSignal;
 }): Promise<{ results: Array<Record<string, unknown>>; method: string; confidence: number | null; failure?:ExecutionFailure }> {
   const { currentRequest, retrievalQuery, citations, scope, conversationId } = params;
   if (citations.length === 0) return { results: [], method: "no_hit", confidence: null };
@@ -348,6 +351,7 @@ async function rerankForDisplay(params: {
 
   const llm = await callModel({
     purpose: "assist",
+    signal: params.signal,
     system: "You are a multilingual relevance judge for a customer-service knowledge base. Decide only whether the retrieved evidence directly helps answer the CURRENT customer request. Use semantic meaning across languages, not exact wording. Reject same-domain but unrelated documents. Return exactly one JSON object matching the supplied schema. Confidence must be between 0 and 1.",
     user: `CURRENT REQUEST:\n${currentRequest.slice(0, 1000)}\n\nRETRIEVAL CONTEXT:\n${retrievalQuery.slice(0, 1200)}\n\nCANDIDATE KNOWLEDGE:\n${evidence}`,
     maxTokens: RERANK_MAX_TOKENS,
@@ -402,6 +406,7 @@ async function rankDocumentCandidates(params: {
   documents: KBDocumentCandidate[];
   scope: KBResolvedScope;
   conversationId: string | null;
+  signal?: AbortSignal;
 }): Promise<{ winner: RankedDocument | null; evaluated: RankedDocument[] }> {
   const evaluated: RankedDocument[] = [];
   for (const document of params.documents) {
@@ -431,6 +436,7 @@ async function rankDocumentCandidates(params: {
       retrievalQuery: params.retrievalQuery,
       citations: citations as unknown as Array<Record<string, unknown>>,
       fullEvidence: selected.evidence.map(e => e.content).join("\n\n"),
+      signal: params.signal,
       scope: params.scope,
       conversationId: params.conversationId,
     });
@@ -480,7 +486,9 @@ Deno.serve(async (req) => {
   }
 
   const diagnosticId = crypto.randomUUID();
+  const budget = createKBRequestBudget(KB_PROXY_EXECUTION_BUDGET_MS,req.signal);
   const diagnostic = createKBStageDiagnostics(diagnosticId);
+  const execute = async ():Promise<Response> => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
@@ -497,12 +505,14 @@ Deno.serve(async (req) => {
     if (authErr || !user) return jsonResponse({ error: "unauthorized" }, 401, req);
 
     const admin = createClient(supabaseUrl, adminKey);
-    const roles = await diagnostic.run("membership", () => loadGlobalRoles(admin, user.id));
+    const [roles,membershipResult] = await Promise.all([
+      diagnostic.run("membership", () => loadGlobalRoles(admin, user.id)),
+      diagnostic.run("membership", () => loadEligibleMemberships(admin, user.id)),
+    ]);
     if (!roles) return jsonResponse({ error: "role_lookup_failed" }, 500, req);
     if (!roles.some((r) => ALLOWED_ROLES.has(r))) {
       return jsonResponse({ error: "forbidden" }, 403, req);
     }
-    const membershipResult = await diagnostic.run("membership", () => loadEligibleMemberships(admin, user.id));
     if (!membershipResult.ok) {
       return jsonResponse({ error: "tenant_authorization_failed" }, 500, req);
     }
@@ -575,6 +585,7 @@ Deno.serve(async (req) => {
       scope = standalone.scope;
     }
 
+    budget.check();
     if(scope.aiCompanyId && !conversationId)throw Object.assign(new Error("INBOX_CONVERSATION_REQUIRED"),{code:"INBOX_CONVERSATION_REQUIRED"});
     if(scope.aiCompanyId && conversationId) {
       const companyId = scope.aiCompanyId;
@@ -586,7 +597,7 @@ Deno.serve(async (req) => {
     const endpoint = resolveKBEndpoint();
     if (!endpoint) return jsonResponse({ error: "kb_config_missing" }, 500, req);
 
-    const result = await diagnostic.run("retrieval_execution", () => fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint, {uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${diagnosticId}`}}));
+    const result = await diagnostic.run("retrieval_execution", () => fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint, {signal:budget.signal,uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${diagnosticId}`}}));
     if (!result.success) {
       if (result.error_code === "KB_TIMEOUT") {
         return jsonResponse({ error: "kb_api_timeout", failure:result.failure }, 504, req);
@@ -602,15 +613,18 @@ Deno.serve(async (req) => {
       return jsonResponse(body,family==="denied" ? 403 : family==="not_configured" ? 503 : 502,req);
     }
 
+    budget.check();
     const expansions = await diagnostic.run("expansion", () => deriveRetrievalExpansions({
+      signal:budget.signal,
       currentRequest: derived.currentRequest,
       retrievalQuery: derived.query,
       scope,
       conversationId,
     }));
+    budget.check();
     const expandedResults = await uatMap(scope.aiCompanyId,
       expansions.map((expandedQuery) => () =>
-        fetchKBRag({ query: expandedQuery, top_k: topK }, scope, endpoint, {uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${crypto.randomUUID()}`}})
+        fetchKBRag({ query: expandedQuery, top_k: topK }, scope, endpoint, {signal:budget.signal,uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${crypto.randomUUID()}`}})
       ),
     );
     const successfulExpanded = expandedResults.filter((r) => r.success);
@@ -621,7 +635,9 @@ Deno.serve(async (req) => {
     const rawResultCount = result.citations.length +
       successfulExpanded.reduce((total, r) => total + r.citations.length, 0);
 
+    budget.check();
     const ranked = await diagnostic.run("rerank", () => rankDocumentCandidates({
+      signal:budget.signal,
       currentRequest: derived.currentRequest,
       retrievalQuery: derived.query,
       documents: mergedDocuments,
@@ -688,6 +704,7 @@ Deno.serve(async (req) => {
       policy_evidence: policyEvidence,
     }, 200, req);
   } catch (e) {
+    if(budget.signal.aborted)return jsonResponse({error:"kb_api_timeout",failure:executionFailure("LLM_TIMEOUT",{stage:"timeout"})},504,req);
     const code=e && typeof e==="object" && "code" in e ? safeExecutionCode(e.code) : null;
     if(code)return jsonResponse({success:false,error:"execution_denied",failure:executionFailure(code)},403,req);
     const name = (e as Error).message === "KB_DOCUMENT_EVIDENCE_MISMATCH"
@@ -700,4 +717,9 @@ Deno.serve(async (req) => {
       req,
     );
   }
+  };
+  try { return await budget.run(execute); }
+  catch(error) { if(!budget.signal.aborted)throw error; return jsonResponse({error:"kb_api_timeout",failure:executionFailure("LLM_TIMEOUT",{stage:"timeout"})},504,req); }
+  finally { budget.dispose(); }
+
 });

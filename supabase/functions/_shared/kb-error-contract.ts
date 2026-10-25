@@ -24,3 +24,38 @@ export async function knowledgeFailureState(data: unknown, error: unknown): Prom
   if (!error && body && typeof body === "object" && (body as any).success === true) return null;
   return kbErrorFamily(body, status);
 }
+
+// Preserve the existing 12s RAG allowance. Admission has its own equal ceiling;
+// Inbox has three such finite phase allowances including preliminary scope and
+// optional ranking. The client adds only a 2s response-delivery margin.
+export const KB_ADMISSION_TIMEOUT_MS = 12000;
+export const KB_PROXY_EXECUTION_BUDGET_MS = 3 * KB_ADMISSION_TIMEOUT_MS;
+export const KB_PROXY_CLIENT_TIMEOUT_MS = KB_PROXY_EXECUTION_BUDGET_MS + 2000;
+
+/** Request-local cancellation only; no retries, dispatch, logging or authority. */
+export function createKBRequestBudget(milliseconds: number, parent?: AbortSignal) {
+  const controller = new AbortController();
+  let deadline = Date.now() + milliseconds;
+  let timer: ReturnType<typeof setTimeout>;
+  const abort = () => controller.abort(new DOMException("KB execution deadline", "AbortError"));
+  const fromParent = () => controller.abort(parent?.reason);
+  const reset = (ms: number) => {
+    clearTimeout(timer); deadline = Date.now() + ms;
+    timer = setTimeout(abort, ms);
+  };
+  reset(milliseconds);
+  if (parent?.aborted) fromParent(); else parent?.addEventListener("abort", fromParent, {once:true});
+  const check = () => { if (Date.now() >= deadline) abort(); controller.signal.throwIfAborted(); };
+  return { signal: controller.signal, reset, check,
+    async run<T>(action: ()=>PromiseLike<T>): Promise<T> {
+      check();
+      return await new Promise<T>((resolve,reject)=>{
+        const onAbort = () => { cleanup(); reject(controller.signal.reason ?? new DOMException("KB cancelled","AbortError")); };
+        const cleanup = () => controller.signal.removeEventListener("abort",onAbort);
+        controller.signal.addEventListener("abort",onAbort,{once:true});
+        Promise.resolve().then(()=>{check();return action();}).then(value=>{cleanup();try{check();resolve(value);}catch(error){reject(error);}},error=>{cleanup();reject(error);});
+      });
+    },
+    dispose() { clearTimeout(timer); parent?.removeEventListener("abort",fromParent); },
+  };
+}

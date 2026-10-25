@@ -44,10 +44,12 @@ export async function verifyOriginalPreview(db:any,c:any,read:Env=env,requireEna
     !ORIGINAL_PREVIEW_ACCOUNTS.some(a=>a.email===r.email && a.company===r.company && a.channel===r.channel) ||
     typeof r.signature!=="string" || !/^[a-f0-9]{64}$/.test(r.signature))return false;
   if(!await crypto.subtle.verify("HMAC",await key(),new Uint8Array(r.signature.match(/../g)!.map(v=>parseInt(v,16))),encoder.encode(encoded(r))))return false;
-  const member=await db.from("company_membership").select("company_id,role,is_active").eq("user_id",r.actor).eq("company_id",r.company).eq("is_active",true).maybeSingle();
-  const company=await db.from("company").select("id,is_active").eq("id",r.company).maybeSingle();
-  const channel=await db.from("channel_config").select("id,company_id,is_active,channel_type").eq("id",r.channel).eq("company_id",r.company).maybeSingle();
-  const session=await db.from("visitor_session").select("id,channel_config_id,visitor_fingerprint,visitor_metadata").eq("id",r.session).eq("channel_config_id",r.channel).maybeSingle();
+  const [member,company,channel,session]=await Promise.all([
+    db.from("company_membership").select("company_id,role,is_active").eq("user_id",r.actor).eq("company_id",r.company).eq("is_active",true).maybeSingle(),
+    db.from("company").select("id,is_active").eq("id",r.company).maybeSingle(),
+    db.from("channel_config").select("id,company_id,is_active,channel_type").eq("id",r.channel).eq("company_id",r.company).maybeSingle(),
+    db.from("visitor_session").select("id,channel_config_id,visitor_fingerprint,visitor_metadata").eq("id",r.session).eq("channel_config_id",r.channel).maybeSingle(),
+  ]);
   const s=session.data,sm=s?.visitor_metadata;
   return !member.error && member.data?.role==="admin" && member.data?.is_active===true && member.data?.company_id===r.company &&
     !company.error && company.data?.id===r.company && company.data?.is_active===true &&

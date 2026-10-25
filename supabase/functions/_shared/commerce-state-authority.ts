@@ -1,4 +1,6 @@
+import { factualSubject } from "./conversation-semantic-contract.ts";
 import { classifyHandoffIntent, splitHandoffClauses } from "./handoff-intent.ts";
+import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 
 /** A superseded numeric requirement is not an item cancellation. Only this
@@ -388,7 +390,13 @@ export function isCurrentRequirementsRecap(question: string): boolean {
  * A validated frame is required, but its free-form intent label is not lookup
  * authority. The customer's speech act must independently request general
  * guidance and must not ask for current merchant facts. */
-export function isCustomerGuidanceRequest(question: string, semantic: {
+const MERCHANT_FACT_REQUEST = /\b(?:price|cost|stock|warranty|policy|specifications?|specs|availability|recommend.*(?:products?|options?))\b|售價|售价|報價|报价|價錢|价钱|幾錢|几钱|庫存|库存|保養|保养|政策|規格|规格|推薦|推荐|現貨|现货|你[哋們们]?有|你[哋們们]?嘅/i;
+function customerPriorityOnly(clause:string):boolean {
+  const ranking = /(?:比|多過|多于|多於).{0,36}(?:更|較|较)?(?:重要|優先|优先)|\b(?:matters? more than|more important than|prioriti[sz]e.{0,36}over|prefer.{0,36}over)\b/i.test(clause);
+  const merchantRequest = /(?:請|请|查|幾錢|几钱|多少|最新|現時|现时|目前|你[哋們们]?|店[舖铺家])|\b(?:check|query|look up|recommend|what|how much|current|latest|your|merchant|store)\b/i.test(clause);
+  return ranking && !merchantRequest;
+}
+function guidanceSpeechAct(question: string, semantic: {
   intent: string; confidence: number; requested_facts: string[];
   ambiguity: { is_ambiguous: boolean };
 } | null): boolean {
@@ -399,14 +407,15 @@ export function isCustomerGuidanceRequest(question: string, semantic: {
   // share a clause with that ranking. This is speech-act scope, not an item or
   // industry phrase allowlist, and never supplies KB or provider authority.
   let text = lookupText.split(/[.!！;；，,。?？\n]|\bbut\b|但(?:係|是)?/i).filter(clause => {
-    const ranking = /(?:比|多過|多于|多於).{0,36}(?:更|較|较)?(?:重要|優先|优先)|\b(?:matters? more than|more important than|prioriti[sz]e.{0,36}over|prefer.{0,36}over)\b/i.test(clause);
-    const merchantRequest = /(?:請|请|查|幾錢|几钱|多少|最新|現時|现时|目前|你[哋們们]?|店[舖铺家])|\b(?:check|query|look up|recommend|what|how much|current|latest|your|merchant|store)\b/i.test(clause);
-    return !ranking || merchantRequest;
+    return !customerPriorityOnly(clause);
   }).join("; ");
   // Asking which specifications to compare requests decision criteria, not
   // values from a merchant catalogue. Mask only that bounded speech act;
   // additional specification/price/stock requests still require evidence.
+  // A criterion is an object of comparison/advice, not a requested catalogue
+  // value. Scope this grammar to the criterion phrase, never an entire turn.
   let specificationCriteria = false;
+  text = text.replace(/(?:一般|通用)(?:的|嘅)?(?:規格|规格)(?:比較|比较|取捨|取舍|建議|建议)|\b(?:general|generic)\s+(?:specification|spec)\s+(?:comparison|criteria|guidance)\b/giu, () => { specificationCriteria=true; return "selection criteria"; });
   text = text.replace(
     /(?:比較|比较|考慮|考虑|留意)(?:哪些|甚麼|什么|邊啲|边啲|咩)(?:規格|规格)|\b(?:which|what)\s+(?:specifications?|specs)\s+(?:should|could|do)\s+(?:I|we)\s+(?:compare|consider|prioriti[sz]e|evaluate)\b/giu,
     match => {
@@ -414,7 +423,7 @@ export function isCustomerGuidanceRequest(question: string, semantic: {
       return match.replace(/規格|规格|\b(?:specifications?|specs)\b/giu, "selection criteria");
     },
   );
-  if (/\b(?:price|cost|stock|warranty|policy|specifications?|specs|availability|recommend.*(?:products?|options?))\b|售價|售价|報價|报价|價錢|价钱|幾錢|几钱|庫存|库存|保養|保养|政策|規格|规格|推薦|推荐|現貨|现货|你[哋們们]?有|你[哋們们]?嘅/i.test(text)) return false;
+  if (MERCHANT_FACT_REQUEST.test(text)) return false;
   // Selection is a speech act across products, services and rentals, not an
   // appliance keyword or an old answer. Merchant evidence still wins above.
   const selectionQuestion = specificationCriteria || /(?:點(?:樣)?|怎(?:樣|么)|如何).{0,6}(?:揀|選|选|比較|比较|考慮|考虑|取捨|取舍|準備|准备)|(?:從|从|按|依).{0,8}(?:哪些|甚麼|什么|咩).{0,8}(?:方面|因素|條件|条件).{0,8}(?:比較|比较|選|选)|\b(?:how|what).{0,32}(?:choose|select|compare|pick|prioriti[sz]e|balance|weigh|evaluate|assess|prepare|measure)\b/iu.test(text);
@@ -424,6 +433,66 @@ export function isCustomerGuidanceRequest(question: string, semantic: {
   // decision. Ambiguity constrains state binding and recommendations, not the
   // ability to explain general trade-offs or ask for a genuinely missing fact.
   return true;
+}
+
+export type CustomerRequestDecision = {
+  kind: "guidance" | "merchant_facts" | "mixed" | "other";
+  continuation: boolean;
+  general_request: string | null;
+  merchant_request: string | null;
+  latest_requirements: string;
+};
+type RequestHistory = {id?:string|null;role:string;content:string;metadata?:unknown;created_at?:string|null};
+/** One source-bound decision for the writer, planner, query and generation.
+ * The model proposes meaning; actual current speech and bounded clarification
+ * context decide whether any external claims are requested. No part grants KB
+ * authority, payment admission, transaction completion or state-write rights. */
+export function resolveCustomerRequestDecision(question:string, semantic: {
+  intent:string;confidence:number;requested_facts:string[];ambiguity:{is_ambiguous:boolean};
+  operation?:string;additive?:boolean;entities?:Array<{model?:string|null}>;
+} | null, history:RequestHistory[]=[]):CustomerRequestDecision {
+  const text=clean(question);
+  const empty:CustomerRequestDecision={kind:"other",continuation:false,general_request:null,merchant_request:null,latest_requirements:text};
+  if(!semantic || semantic.confidence<0.62)return empty;
+  const bounded=history.slice(0,12);
+  const lastAssistant=bounded.find(row=>row.role==="assistant");
+  const priorCustomer=bounded.find(row=>["visitor","user","customer"].includes(row.role) && clean(row.content)!==text);
+  const metadata=lastAssistant?.metadata as Record<string,unknown>|undefined;
+  const priorGuidance=metadata?.response_route==="customer_guidance" || Boolean(priorCustomer && guidanceSpeechAct(priorCustomer.content,semantic));
+  const clarification=Boolean(lastAssistant && /[?？]/.test(lastAssistant.content) && priorGuidance);
+  const transactional=["RESERVE","REQUEST_QUOTE","CONFIRM","CANCEL_ITEM","REMOVE_ITEM","DEFER"].includes(semantic.operation ?? "") || semantic.additive===true;
+  const continuation=clarification && !transactional && /(?:答|剛才|刚才|頭先|头先|更正|改為|改为)|\b(?:answer|correction|actually|instead|as requested)\b/i.test(text);
+  const clauses=withoutExcludedLookups(text).split(/[;；。!?！？]|\b(?:and|but)\b|(?:同埋|並且|并且)/i).map(s=>s.trim()).filter(Boolean);
+  const general=clauses.filter(clause=>guidanceSpeechAct(clause,semantic));
+  const wholeGeneral=guidanceSpeechAct(text,semantic);
+  // The old bounded grammar distinguishes a criteria phrase from merchant
+  // claims. A free-form requested_facts label alone is never a merchant claim.
+  const merchant=clauses.filter(clause=>{
+    if(customerPriorityOnly(clause))return false;
+    const generalClause=guidanceSpeechAct(clause,semantic);
+    // A declarative correction may locate a prior subject elsewhere, but does
+    // not itself ask for a merchant fact. Require an actual factual speech act.
+    const scopedFact=semantic.requested_facts.length>0 && (
+      semantic.entities?.some(e=>e.model && clause.includes(e.model)) ||
+      /\b(?:your|this plan|that plan|this model|that model)\b|你[哋們们]|貴公司|贵公司/i.test(clause) ||
+      !generalClause && Boolean(factualSubject(clause,false)));
+    return scopedFact || !generalClause && MERCHANT_FACT_REQUEST.test(clause);
+  });
+  const hasGeneral=wholeGeneral || general.length>0 || continuation && !merchant.length && !semantic.requested_facts.length;
+  const kind=hasGeneral ? merchant.length ? "mixed" : "guidance" : merchant.length ? "merchant_facts" : "other";
+  return {kind,continuation,general_request:hasGeneral ? (general.length?general.join("; "):text) : null,
+    merchant_request:merchant.length?merchant.join("; "):null,latest_requirements:text};
+}
+export function isCustomerGuidanceRequest(question:string,semantic:{intent:string;confidence:number;requested_facts:string[];ambiguity:{is_ambiguous:boolean}}|null):boolean {
+  return resolveCustomerRequestDecision(question,semantic).kind==="guidance";
+}
+/** Reconcile only interpretation of a clarification, never erase a real delta.
+ * Empty ADD_ITEM is not a new transaction. Resolved existing references retain
+ * UPDATE_ITEM; genuinely additive/new entities and all lifecycle writers stay. */
+export function applyCustomerRequestDecision(frame:CommerceSemanticFrame,decision:CustomerRequestDecision):CommerceSemanticFrame {
+  if(decision.kind!=="guidance")return frame;
+  return {...frame,intent:"customer_guidance",requested_facts:[],
+    ...(decision.continuation && frame.operation==="ADD_ITEM" && !frame.entities.length && !frame.customer_facts?.length && !frame.additive ? {operation:"NO_STATE_CHANGE" as const} : {})};
 }
 
 /**

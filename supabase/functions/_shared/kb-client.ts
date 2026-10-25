@@ -1,3 +1,4 @@
+import { createKBRequestBudget, KB_ADMISSION_TIMEOUT_MS } from "./kb-error-contract.ts";
 import { executionFailure, failureFromError, safeExecutionCode, type ExecutionFailure } from "./execution-failure.ts";
 import { legacyPreactivationAuthority } from "./uat-execution-contract.ts";
 import { accountedModelFetch } from "./model-attempt-accounting.ts";
@@ -555,14 +556,19 @@ export async function fetchKBRag(
     };
   }
 
-  const credential = endpointCfg.localProjectAuth
+  const admissionBudget = createKBRequestBudget(KB_ADMISSION_TIMEOUT_MS, opts?.signal);
+  let credential;
+  try { credential = await admissionBudget.run(async () => endpointCfg.localProjectAuth
     ? {
       ok: true as const,
       kind: "bearer" as const,
       value: getSupabaseAdminKey(),
     }
-    : await diagnostic.run("credential", () => resolveSingaporeCredential(scope, endpointCfg));
+    : await diagnostic.run("credential", () => resolveSingaporeCredential(scope, endpointCfg))); }
+  catch (error) { admissionBudget.dispose(); if (!admissionBudget.signal.aborted) throw error; return {success:false,chunks:[],citations:[],documents:[],error_code:"KB_TIMEOUT",failure:executionFailure("LLM_TIMEOUT",{stage:"timeout"})}; }
+
   if (!credential.ok) {
+    admissionBudget.dispose();
     diagnostic.event("credential", "error", { code: "KB_TOOL_FAILURE" });
     return {
       success: false,
@@ -583,17 +589,10 @@ export async function fetchKBRag(
     max_full_content_chunks: 3,
     score_threshold: 0.05,
   });
-  const controller = new AbortController();
-  const abortFromRequest = () => { diagnostic.event(phase, "abort"); controller.abort(opts?.signal?.reason); };
-  if (opts?.signal?.aborted) abortFromRequest();
-  else {opts?.signal?.addEventListener("abort", abortFromRequest, {
-      once: true,
-    });}
-  const timeout = setTimeout(
-    () => { diagnostic.event(phase, "abort", { timeout_ms: opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS }); controller.abort(); },
-    opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS,
-  );
+  const controller = {signal:admissionBudget.signal};
   const started=Date.now();
+  let dispatched = false;
+  const operation = async (): Promise<KBRagResponse> => {
   const uuid=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
   const trace=(stage:"kb_scope_resolved"|"kb_admission_or_transport_result",failure?:ExecutionFailure,status?:number,reason?:unknown,rule?:string)=>{
     if(!uuid.test(opts?.uatContext?.sourceMessageId ?? "") || !uuid.test(opts?.uatContext?.conversationId ?? ""))return;
@@ -628,6 +627,7 @@ export async function fetchKBRag(
     } catch (error) { diagnostic.event(networkStage, "error", { duration_ms: Date.now() - start, code: kbDiagnosticCode(error) }); throw error; }
   };
   try {
+    admissionBudget.check();
     const init: RequestInit = {
       redirect: "error",
       method: "POST",
@@ -639,8 +639,13 @@ export async function fetchKBRag(
       signal: controller.signal,
     };
     response = await accountedModelFetch(createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey()), {companyId:scope.aiCompanyId, legacyAuthority:scope.legacyAuthority, conversationId:opts?.uatContext?.conversationId ?? null, operationId:opts?.uatContext?.operationId ?? "", provider:"singapore-kb",purpose:"kb_embedding",slot:"context-search",attempt:1,request:requestBody},endpointCfg.ragUrl,init,observedFetch,()=>{
+      admissionBudget.check();
       finishAdmission();
       phase="rag_transport";
+      // Only now, after final valid permission and permit checks, does the
+      // actual transport receive its unchanged allowance.
+      dispatched = true;
+      admissionBudget.reset(opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS);
     },async function accountingHeaders(admittedMode,originalPermit){
       finishAdmission();
       phase="remote_preparation";
@@ -661,8 +666,7 @@ export async function fetchKBRag(
     const observedStatus = error && typeof error === "object" && "remote_http_status" in error && typeof error.remote_http_status === "number" && error.remote_http_status >= 200 && error.remote_http_status < 300 ? error.remote_http_status : undefined;
     if (reason) diagnostic.event(reason.startsWith("KB_RESPONSE_") ? "response_decode" : "authority_validation", "error", { code: failure.code, http_status: observedStatus });
     trace("kb_admission_or_transport_result",failure,observedStatus,error && typeof error==="object" && "reason" in error ? error.reason : undefined,ragValidationRule(error));
-    clearTimeout(timeout);
-    opts?.signal?.removeEventListener("abort", abortFromRequest);
+
     return {
       success:false,chunks:[],citations:[],documents:[],
       // Preserve transport labels; propagate actual closed admission failures
@@ -675,8 +679,7 @@ export async function fetchKBRag(
   }
 
   trace("kb_admission_or_transport_result",undefined,response.status);
-  clearTimeout(timeout);
-  opts?.signal?.removeEventListener("abort", abortFromRequest);
+
   if (!response.ok) {
     return {
       success: false,
@@ -767,4 +770,12 @@ export async function fetchKBRag(
     dropped_without_document_id: 0,
     dropped_without_content: 0,
   };
+  };
+  try { return await admissionBudget.run(operation); }
+  catch (error) {
+    if (!admissionBudget.signal.aborted) throw error;
+    diagnostic.event(phase, "abort", {timeout_ms:dispatched ? opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS : KB_ADMISSION_TIMEOUT_MS});
+    return {success:false,chunks:[],citations:[],documents:[],error_code:"KB_TIMEOUT",failure:executionFailure("LLM_TIMEOUT",{stage:"timeout"})};
+  } finally { admissionBudget.dispose(); }
+
 }

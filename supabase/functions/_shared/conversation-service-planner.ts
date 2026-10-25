@@ -14,7 +14,7 @@ import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { activeCustomerGoal, customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { requiresSemanticKnowledge, scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
-import { isPersonalOrderStatusRequest, isCustomerGuidanceRequest } from "./commerce-state-authority.ts";
+import { isPersonalOrderStatusRequest, isCustomerGuidanceRequest, resolveCustomerRequestDecision, type CustomerRequestDecision } from "./commerce-state-authority.ts";
 import { classifyCanonicalConversationTurn, isFactualExplanationQuestion } from "./conversation-semantic-contract.ts";
 import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state.ts";
 import { DecisionContextLimitError } from "./bounded-decision-context.ts";
@@ -129,6 +129,7 @@ export interface ServiceCalculationTerm {
 }
 
 export interface ServicePlanInput {
+  request_decision?: CustomerRequestDecision;
   question: string;
   semantic_frame?: CommerceSemanticFrame | null;
   committed_source_message_id?: string;
@@ -565,7 +566,8 @@ export function planConversationService(
     human_service_process_question: serviceDiscussion.process_question,
     handoff_requested: false,
   };
-  const semanticMerchantRead = requiresSemanticKnowledge(input.semantic_frame);
+  const requestDecision=input.request_decision ?? resolveCustomerRequestDecision(question,input.semantic_frame ?? null,input.recent_messages ?? []);
+  const semanticMerchantRead = requestDecision.kind!=="guidance" && requiresSemanticKnowledge(input.semantic_frame);
   // A memory slot miss says nothing about external factual authority. The
   // provider may legitimately propose NO_STATE_CHANGE for a read; do not let
   // that erase the already classified current factual speech act.
@@ -579,7 +581,7 @@ export function planConversationService(
       isFactualExplanationQuestion(question) && ["NEW_FACTUAL_QUERY","PRONOUN_OR_ELLIPSIS"].includes(canonicalTurn.operation)) &&
     !isCustomerGuidanceRequest(question, input.semantic_frame) &&
     !isProductSupportProblem(question);
-  const merchantReadRequired = serviceDiscussion.kind === "merchant_evidence" || input.recall.reason === "CURRENT_KB_REQUIRED" || semanticMerchantRead || canonicalFactualRead;
+  const merchantReadRequired = requestDecision.kind!=="guidance" && ( serviceDiscussion.kind === "merchant_evidence" || input.recall.reason === "CURRENT_KB_REQUIRED" || semanticMerchantRead || canonicalFactualRead);
   if (
     !semanticMerchantRead &&
     input.calculation_status &&

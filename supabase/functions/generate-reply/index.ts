@@ -123,7 +123,7 @@ import {
   selectCanonicalGrounding,
 } from "../_shared/canonical-grounding.ts";
 import type { ReferenceAuthorityDecision } from "../_shared/commerce-state-authority.ts";
-import { customerBusinessText, isCurrentRequirementsRecap, isCustomerGuidanceRequest } from "../_shared/commerce-state-authority.ts";
+import { customerBusinessText, isCurrentRequirementsRecap, isCustomerGuidanceRequest, resolveCustomerRequestDecision, applyCustomerRequestDecision } from "../_shared/commerce-state-authority.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import {
   type CanonicalKbDirectAnswer,
@@ -4539,6 +4539,12 @@ async function orchestrationGenerateReply(
     return new Response(JSON.stringify({success:false,error:"semantic_interpretation_failed",code:_semanticFailure,failure:_semanticDiagnostic,retryable:_semanticDiagnostic?.retryable === true}),
       {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
+  const _customerRequestDecision = resolveCustomerRequestDecision(_h1LastMsg,_a3SemanticFrame,_pr5HistoryRows ?? []);
+  // Resolve once before writer, Memory, planner and KB. No new authority.
+  if (classifyLocalTopicRisk(_h1LastMsg)?.level === "high") _customerRequestDecision.kind="other";
+  if (_a3SemanticFrame) _a3SemanticFrame=applyCustomerRequestDecision(_a3SemanticFrame,_customerRequestDecision);
+  const _mixedRequest=_customerRequestDecision.kind==="mixed";
+  if(_mixedRequest && _customerRequestDecision.merchant_request) _productFactualRequest=_customerRequestDecision.merchant_request;
   // ===== TASK A3: persistent commerce state runtime =====
   // Runs AFTER the critical E2 safety branch and BEFORE CUSTOMER_CONTEXT_UPDATE,
   // generic clarification, conversation-memory shortcut and KB retrieval.
@@ -4727,6 +4733,7 @@ async function orchestrationGenerateReply(
               ? null
               : Number(commerceRow.revision),
             commerce_state: commerceState,
+            request_decision: _customerRequestDecision,
             customer_fact_delta: (_a3SemanticFrame?.customer_facts ?? []).map(f=>({...f,authority:"customer" as const,source_message_id:_h1SourceMessageId})),
             pending_lifecycle_reply: _a3Commerce?.trusted_lifecycle_commit ?? null,
             newest_first: memoryHistory,
@@ -4777,6 +4784,7 @@ async function orchestrationGenerateReply(
     _productFactualRequest = _productFollowUpArbitration.kind === "resolved"
       ? _productFollowUpArbitration.grounded_question : _h1LastMsg;
   }
+  if(_mixedRequest && _customerRequestDecision.merchant_request) _productFactualRequest=_customerRequestDecision.merchant_request;
   // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
   // If Commerce and Memory already committed this exact source on a prior
   // attempt, reuse their bounded server-derived receipt. Never run a second
@@ -4871,6 +4879,7 @@ async function orchestrationGenerateReply(
   const _c3ServicePlan: ServiceDialoguePlan = planConversationService(
     applyServiceRuntimeDerivation({
       question: _productFactualRequest,
+      request_decision: _customerRequestDecision,
       semantic_frame: _a3SemanticFrame,
       committed_source_message_id: _c3CommerceSnapshot?.source_message_id === _h1SourceMessageId ? _h1SourceMessageId : undefined,
       language: _visitorLang,
@@ -4932,7 +4941,7 @@ async function orchestrationGenerateReply(
     outcome: _a3Commerce,
     authoritative_address_correction: Boolean(_c3ResolvedAddressCorrection),
   });
-  const _customerGuidance = isCustomerGuidanceRequest(_h1LastMsg, _a3SemanticFrame) &&
+  const _customerGuidance = _customerRequestDecision.kind === "guidance" &&
     classifyLocalTopicRisk(_h1LastMsg)?.level !== "high";
   // A product clarification may coexist with customer-owned changes. Commit
   // those changes and refresh bounded context before emitting an AI reply.
@@ -5029,6 +5038,17 @@ async function orchestrationGenerateReply(
   const _customerGuidanceInstruction = _customerGuidance
     ? "General customer decision support: answer the actual question first with useful trade-offs in 3-5 short points, without a lengthy introduction or repeating the question. Use the latest customer-authored Memory and corrections for exact needs and measurements; Preserve false and zero; null remains unknown, never a confirmed value. Do not ask again for a supplied product type, purpose, quantity, area, budget or priority. A request for a measurement checklist calls for declarative instructions about unmeasured site dimensions, not a questionnaire reconfirming known requirements. If an unprovided fact is essential to the actual decision, ask one narrowly scoped question about that missing fact after answering the supported part. Do not assert merchant model recommendations, specifications, prices, stock, policy, suitability guarantees or completed actions. Do not invent numerical thresholds. Distinguish general advice from facts needing verification."
     : "";
+  const _effectiveRequirementsBlock = `[EFFECTIVE_CUSTOMER_REQUIREMENTS]
+${JSON.stringify({
+    decision:_customerRequestDecision.kind,continuation:_customerRequestDecision.continuation,
+    current_goal:_c3Memory?.current_goal ?? null,current_topic:_c3Memory?.current_topic ?? null,
+    latest_corrections:_c3Memory?.latest_corrections ?? [],customer_facts:_c3Memory?.current_customer_facts ?? [],
+    active_constraints:_c3Memory?.active_constraints ?? [],latest_customer_turn:_h1LastMsg,
+  })}
+Latest applicable corrections replace old values; an answered clarification is not a new transaction. Inactive entities stay inactive. Customer requirements never authorize merchant claims.
+[/EFFECTIVE_CUSTOMER_REQUIREMENTS]`;
+  const _mixedGuidanceInstruction = _mixedRequest
+    ? "[MIXED_REQUEST] Give useful conditional general decision criteria separately from merchant facts. Only the merchant facet was queried. Current E* full content alone supports named merchant/model/policy facts; never let general guidance imply those claims are verified. When no eligible evidence was returned, answer the general facet and state only that the specific merchant facts remain unverified. A failed transport/admission is not no-match. [/MIXED_REQUEST]" : "";
   const _naturalGuidanceReply: string | null = null;
 
   const _c3IsGroundedReadOnlyRecap = _a3Commerce?.reason ===
@@ -5038,7 +5058,7 @@ async function orchestrationGenerateReply(
     Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
   const _c3CustomerOnlyReply = _c3IsGroundedReadOnlyRecap && _c3CommerceSnapshot?.state.entities.length === 0
     ? renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang) : null;
-  const _c3PlannedReply = _customerGuidance || _purePriorGroundedTransform ? null : _c3IsGroundedReadOnlyRecap
+  const _c3PlannedReply = _customerGuidance || _mixedRequest || _purePriorGroundedTransform ? null : _c3IsGroundedReadOnlyRecap
     ? _c3CustomerOnlyReply ?? _c3Recall.reply
     : _c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")
     ? null
@@ -5202,7 +5222,7 @@ async function orchestrationGenerateReply(
     (_a3Commerce?.reason === "explicit_address_correction_applied"
       ? null
       : _a3Commerce?.reply ?? null);
-  if (_c3CommerceReply && !_explicitHandoffRequested &&
+  if (_c3CommerceReply && (!_customerGuidance && !_mixedRequest || Boolean(_c3VerifiedCorrectionReceipt || _c3LifecycleReceipt)) && !_explicitHandoffRequested &&
     _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)) {
     const commerceReply = _a3Commerce?.reason ===
@@ -5306,7 +5326,7 @@ async function orchestrationGenerateReply(
   }
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
   if (
-    !_w5ShortTopicHint &&
+    !_customerGuidance && !_mixedRequest && !_w5ShortTopicHint &&
     _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
     _turnClassification.should_clarify_before_kb &&
@@ -5612,7 +5632,7 @@ async function orchestrationGenerateReply(
     );
   }
   const _conversationMemoryReply =
-    _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
+    !_customerGuidance && !_mixedRequest && _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
       !_c3Recall.decision.handled &&
       _c3Recall.decision.reason === "NOT_A_RECALL_QUERY" &&
@@ -5811,7 +5831,8 @@ async function orchestrationGenerateReply(
     },
   );
 
-  if (flags.ENABLE_KB && !_g1SkipKB) {
+  let _mixedEvidenceUnavailable=false;
+  kbRetrieval: if (flags.ENABLE_KB && !_g1SkipKB) {
     const _kbTenantResult = await resolveTenantScope(
       conversation_id,
       _widgetLiveTestActor,
@@ -5949,6 +5970,11 @@ async function orchestrationGenerateReply(
         if (r1Response) return r1Response;
       }
       if (_canPersistBoundedNoCurrentEvidence) {
+        if(_mixedRequest) {
+          _mixedEvidenceUnavailable=true; _kbDone=true;
+          ragResult={...ragResult,chunks:[],documents:[],llm_context:undefined,no_answer:true};
+          break kbRetrieval;
+        }
         return await persistBoundedNoCurrentEvidence(
           supabaseAdmin,
           conversation_id,
@@ -6028,7 +6054,7 @@ async function orchestrationGenerateReply(
         minScore,
         requirePublished: true,
         requestText: userQuery,
-        currentTurnText: _factualFollowup
+        currentTurnText: _mixedRequest ? _productFactualRequest : _factualFollowup
           ? `${_factualFollowup.subject} ${_h1LastMsg}`
           : _canonicalTurn.operation === "PRONOUN_OR_ELLIPSIS" && _semanticRetrieval.mode === "contextual"
           ? _semanticRetrieval.query : _h1LastMsg,
@@ -6130,6 +6156,11 @@ async function orchestrationGenerateReply(
         if (r1Response) return r1Response;
       }
       if (boundedNoEvidenceWithoutConflict) {
+        if(_mixedRequest) {
+          _mixedEvidenceUnavailable=true; _kbDone=true;
+          ragResult={...ragResult,chunks:[],documents:[],llm_context:undefined,no_answer:true};
+          break kbRetrieval;
+        }
         return await persistBoundedNoCurrentEvidence(
           supabaseAdmin,
           conversation_id,
@@ -6287,6 +6318,11 @@ async function orchestrationGenerateReply(
         if (r1Response) return r1Response;
       }
       if (_canPersistBoundedNoCurrentEvidence) {
+        if(_mixedRequest) {
+          _mixedEvidenceUnavailable=true; _kbDone=true;
+          ragResult={...ragResult,chunks:[],documents:[],llm_context:undefined,no_answer:true};
+          break kbRetrieval;
+        }
         return await persistBoundedNoCurrentEvidence(
           supabaseAdmin,
           conversation_id,
@@ -6490,6 +6526,7 @@ async function orchestrationGenerateReply(
   const _pr5RequiredLiveResponse = await evaluateAndPersistRequiredRulesLive(
     supabaseAdmin,
     {
+      suppress_r2_for_bounded_no_current_evidence: _mixedEvidenceUnavailable && _canPersistBoundedNoCurrentEvidence,
       conversation_id,
       source_message_id,
       latest_message_content: _h1LastMsg,
@@ -6527,7 +6564,7 @@ async function orchestrationGenerateReply(
   }
 
   if (
-    _canonicalKbDirectAnswer && _c1AuthorityDecision && _c1CurrentTarget &&
+    !_mixedRequest && _canonicalKbDirectAnswer && _c1AuthorityDecision && _c1CurrentTarget &&
     !_priorGroundedTransform
   ) {
     const citation = buildCitationMetadata(
@@ -6719,6 +6756,8 @@ async function orchestrationGenerateReply(
       returnToAiGuard,
       _customerAdvisoryBlock,
       _customerGuidanceInstruction,
+      _effectiveRequirementsBlock,
+      _mixedGuidanceInstruction,
       _emotionReplyStrategyBlock,
       buildMaskedContextBlock(customerContext, opaqueCustomerRef),
       buildRagBlock(ragResult),
@@ -6779,6 +6818,8 @@ async function orchestrationGenerateReply(
         returnToAiGuard,
         _customerAdvisoryBlock,
         _customerGuidanceInstruction,
+      _effectiveRequirementsBlock,
+      _mixedGuidanceInstruction,
         _emotionReplyStrategyBlock,
         buildMaskedContextBlock(customerContext, opaqueCustomerRef),
         buildRagBlock(ragResult),
@@ -6797,6 +6838,8 @@ async function orchestrationGenerateReply(
     purpose: "generation",
     system: finalSystemPrompt,
     user: _generationUserInput,
+    generalDecisionSupport:_mixedRequest,
+    factualEvidenceAbsent:_mixedEvidenceUnavailable,
     factualFollowup: _factualFollowup ?? undefined,
     factualEvidenceAvailable: _c1AuthorityDecision?.decision === "USE_CURRENT_KB" && Boolean(ragResult?.chunks?.some(c => c.chunk_type === "full_content")),
     maxTokens: resolveGenerationMaxTokens(),
@@ -6965,7 +7008,7 @@ async function orchestrationGenerateReply(
     conversation_id,
     source_message_id,
     aiReplyContent,
-    _customerGuidance ? { ...citationMeta, response_route: "customer_guidance", factual_grounding_required: false } : citationMeta,
+    _customerGuidance ? { ...citationMeta, response_route: "customer_guidance", factual_grounding_required: false } : _mixedRequest ? {...citationMeta,response_route:"mixed_customer_guidance",factual_grounding_required:true,merchant_evidence_unavailable:_mixedEvidenceUnavailable} : citationMeta,
   );
   // Only a definite, non-committed B2 known-context rejection may repair a
   // draft. This is not delivery replay, a B2 exemption or synthetic admission.

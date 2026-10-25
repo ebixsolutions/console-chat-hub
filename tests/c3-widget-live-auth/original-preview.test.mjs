@@ -946,3 +946,31 @@ for(const rejected of [false,true])test('Task1B Suggest Reply full handler verif
 for(const denied of [false,true])test('Task1B Knowledge Helper uses existing knowledge grant without borrowing policy scope: '+denied,async()=>{
  const x=await originalAggregationFixture('none',true);try{if(denied){const g=JSON.parse(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION);g.bindings[0].operations=['policy'];f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify(g);}const r=await x.send('helper','什麼是四電一腦？');if(denied){assert(r.status>=400,JSON.stringify(r));assert.equal(x.posts(),0);}else{assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.result.status,'available');assert(r.data.result.evidence.every(e=>e.document_id===r.data.selected_document_id && e.chunk_id));assert.equal(r.data.reference_authority.provenance.currentness,'unknown');}}finally{globalThis.fetch=realFetch;}
 });
+
+test('Task1C complete Inbox bounded slow DB admission still returns useful full evidence with unchanged RAG allowance',async()=>{
+ const x=await ragApiInboxFixture(),from=f.db.from,fetcher=globalThis.fetch;let reads=0,rag=0,aborted=false;const started=Date.now();
+ f.db.from=function(table){const q=from.call(this,table),then=q.then;q.then=function(resolve,reject){reads++;return new Promise(done=>setTimeout(done,250)).then(()=>({then:then.bind(q)})).then(resolve,reject);};return q;};
+ globalThis.fetch=async(url,init)=>{if(String(url)===x.endpoint){rag++;aborted=init.signal.aborted;}return fetcher(url,init);};
+ try{const r=await x.send('knowledge');assert.equal(r.status,200,JSON.stringify(r));assert(r.data.results.length>0);assert.equal(aborted,false);assert.equal(rag,1);assert(Date.now()-started<12000,'useful full handler should fit former shared deadline after read de-duplication');assert(reads>0);}finally{globalThis.fetch=realFetch;}
+});
+test('Task1C expired accounting admission fails before dispatch even when its DB read later resolves',async()=>{
+ const x=await ragApiInboxFixture(),from=f.db.from,savedLog=console.log;let admission=false,delayed=false,rag=0;const events=[];
+ console.log=value=>{try{const e=JSON.parse(value);events.push(e);if(e.endpoint==='kb-stage'&&e.stage==='accounting_admission'&&e.outcome==='start')admission=true;}catch{}};
+ f.db.from=function(table){const q=from.call(this,table),then=q.then;q.then=function(resolve,reject){return (async()=>{if(admission&&!delayed){delayed=true;await new Promise(r=>setTimeout(r,12500));}return await {then:then.bind(q)};})().then(resolve,reject);};return q;};
+ globalThis.fetch=async()=>{rag++;throw Error('No provider dispatch after expired admission');};
+ try{const r=await x.send('knowledge');assert.equal(r.status,504);assert.equal(r.data.error,'kb_api_timeout');await new Promise(r=>setTimeout(r,600));assert.equal(rag,0);assert.equal(x.models(),0);assert(events.some(e=>e.stage==='accounting_admission'&&e.outcome==='abort'));}finally{console.log=savedLog;globalThis.fetch=realFetch;}
+});
+for(const revoked of ['membership','grant','channel'])test('Task1C final permission recheck survives de-duplication after remote preparation: '+revoked,async()=>{
+ const x=await ragApiInboxFixture(),savedLog=console.log,up=globalThis.fetch;let rag=0,changed=false;
+ console.log=(...args)=>{for(const a of args){try{const e=JSON.parse(a);if(!changed&&e.endpoint==='kb-stage'&&e.stage==='remote_preparation'&&e.outcome==='complete'){changed=true;if(revoked==='membership')f.rows.company_membership[0].is_active=false;if(revoked==='grant')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;if(revoked==='channel')f.rows.channel_config[0].is_active=false;}}catch{}}};
+ globalThis.fetch=async(url,init)=>{if(String(url)===x.endpoint)rag++;return up(url,init);};
+ try{const r=await x.send('knowledge');assert(changed);assert.equal(r.status,403,JSON.stringify(r));assert.equal(rag,0);assert.equal(x.models(),0);}finally{console.log=savedLog;globalThis.fetch=realFetch;}
+});
+
+test('Task1C full handler admission and RAG have independent bounds and produce useful evidence beyond old shared deadline',async()=>{
+ const x=await ragApiInboxFixture(),from=f.db.from,up=globalThis.fetch,log=console.log;let inAdmission=false,delayed=false,posts=0;const started=Date.now();
+ console.log=value=>{try{const e=JSON.parse(value);if(e.endpoint==='kb-stage'&&e.stage==='accounting_admission'&&e.outcome==='start')inAdmission=true;}catch{}};
+ f.db.from=function(table){const q=from.call(this,table),then=q.then;q.then=function(resolve,reject){return (async()=>{if(inAdmission&&!delayed){delayed=true;await new Promise(r=>setTimeout(r,9000));}return await {then:then.bind(q)};})().then(resolve,reject);};return q;};
+ globalThis.fetch=async(url,init)=>{if(String(url)===x.endpoint){posts++;assert.equal(init.signal.aborted,false);await new Promise((resolve,reject)=>{const done=()=>{init.signal.removeEventListener('abort',abort);resolve();};const timer=setTimeout(done,4000);const abort=()=>{clearTimeout(timer);reject(new DOMException('fixture cancelled','AbortError'));};init.signal.addEventListener('abort',abort,{once:true});});}return up(url,init);};
+ try{const r=await x.send('knowledge');assert.equal(r.status,200,JSON.stringify(r));assert(r.data.results.length>0);assert.equal(posts,1);assert(Date.now()-started>=13000);assert(Date.now()-started<36000);}finally{console.log=log;globalThis.fetch=realFetch;}
+});
