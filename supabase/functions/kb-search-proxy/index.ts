@@ -8,6 +8,7 @@ import {
   resolveKBEndpoint,
   resolveTenantScope,
   fetchKBRag,
+  createKBStageDiagnostics,
   type KBDocumentCandidate,
   type KBResolvedScope,
 } from "../_shared/kb-client.ts";
@@ -478,6 +479,8 @@ Deno.serve(async (req) => {
     });
   }
 
+  const diagnosticId = crypto.randomUUID();
+  const diagnostic = createKBStageDiagnostics(diagnosticId);
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
@@ -490,16 +493,16 @@ Deno.serve(async (req) => {
     const auth = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
     });
-    const { data: { user }, error: authErr } = await auth.auth.getUser();
+    const { data: { user }, error: authErr } = await diagnostic.run("auth", () => auth.auth.getUser());
     if (authErr || !user) return jsonResponse({ error: "unauthorized" }, 401, req);
 
     const admin = createClient(supabaseUrl, adminKey);
-    const roles = await loadGlobalRoles(admin, user.id);
+    const roles = await diagnostic.run("membership", () => loadGlobalRoles(admin, user.id));
     if (!roles) return jsonResponse({ error: "role_lookup_failed" }, 500, req);
     if (!roles.some((r) => ALLOWED_ROLES.has(r))) {
       return jsonResponse({ error: "forbidden" }, 403, req);
     }
-    const membershipResult = await loadEligibleMemberships(admin, user.id);
+    const membershipResult = await diagnostic.run("membership", () => loadEligibleMemberships(admin, user.id));
     if (!membershipResult.ok) {
       return jsonResponse({ error: "tenant_authorization_failed" }, 500, req);
     }
@@ -535,15 +538,15 @@ Deno.serve(async (req) => {
         return jsonResponse({ error: "invalid_request", detail: "invalid conversation_id" }, 400, req);
       }
       conversationId = rawConversationId;
-      const { data: conversation, error: convErr } = await admin.from("conversations")
-        .select("id").eq("id", conversationId).maybeSingle();
+      const { data: conversation, error: convErr } = await diagnostic.run("tenant_scope", async () => await admin.from("conversations")
+        .select("id").eq("id", conversationId).maybeSingle());
       if (convErr) return jsonResponse({ error: "conversation_lookup_failed" }, 500, req);
       if (!conversation) return jsonResponse({ error: "conversation_not_found" }, 404, req);
 
-      const resolved = await resolveTenantScope(conversationId, {
+      const resolved = await diagnostic.run("tenant_scope", () => resolveTenantScope(conversationId!, {
         userId: user.id,
         allowPreActivation: true,
-      });
+      }));
       if (!resolved.resolved) {
         return jsonResponse({ error: "kb_tenant_unresolved", detail: resolved.reason }, 503, req);
       }
@@ -555,17 +558,17 @@ Deno.serve(async (req) => {
         if (!membershipResult.rows.some((r) => r.company_id === scope.aiCompanyId)) {
           return jsonResponse({ error: "forbidden_tenant_role" }, 403, req);
         }
-        const active = await requireActiveCompany(admin, scope.aiCompanyId);
+        const active = await diagnostic.run("tenant_scope", () => requireActiveCompany(admin, scope.aiCompanyId!));
         if (active === null) return jsonResponse({ error: "tenant_authorization_failed" }, 500, req);
         if (!active) return jsonResponse({ error: "forbidden_tenant" }, 403, req);
       }
-      const loaded = await loadRecentVisitorTurns(admin, conversationId);
+      const loaded = await diagnostic.run("tenant_scope", () => loadRecentVisitorTurns(admin, conversationId!));
       if (loaded === null) {
         return jsonResponse({ error: "conversation_context_lookup_failed" }, 500, req);
       }
       recentTurns = loaded;
     } else {
-      const standalone = await resolveStandaloneScope(admin, user.id, membershipResult.rows);
+      const standalone = await diagnostic.run("tenant_scope", () => resolveStandaloneScope(admin, user.id, membershipResult.rows));
       if (!standalone.ok) {
         return jsonResponse({ error: standalone.error }, standalone.status, req);
       }
@@ -574,7 +577,8 @@ Deno.serve(async (req) => {
 
     if(scope.aiCompanyId && !conversationId)throw Object.assign(new Error("INBOX_CONVERSATION_REQUIRED"),{code:"INBOX_CONVERSATION_REQUIRED"});
     if(scope.aiCompanyId && conversationId) {
-      scope={...scope,legacyAuthority:await authenticatedInboxAuthority(admin,user.id,scope.aiCompanyId,conversationId,"knowledge")};
+      const companyId = scope.aiCompanyId;
+      scope={...scope,legacyAuthority:await diagnostic.run("inbox_admission", () => authenticatedInboxAuthority(admin,user.id,companyId,conversationId!,"knowledge"))};
     }
 
     const queryMode = body?.query_mode === "auto_context" ? "auto_context" : "manual";
@@ -582,7 +586,7 @@ Deno.serve(async (req) => {
     const endpoint = resolveKBEndpoint();
     if (!endpoint) return jsonResponse({ error: "kb_config_missing" }, 500, req);
 
-    const result = await fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint, {uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${crypto.randomUUID()}`}});
+    const result = await diagnostic.run("retrieval_execution", () => fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint, {uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${diagnosticId}`}}));
     if (!result.success) {
       if (result.error_code === "KB_TIMEOUT") {
         return jsonResponse({ error: "kb_api_timeout", failure:result.failure }, 504, req);
@@ -598,12 +602,12 @@ Deno.serve(async (req) => {
       return jsonResponse(body,family==="denied" ? 403 : family==="not_configured" ? 503 : 502,req);
     }
 
-    const expansions = await deriveRetrievalExpansions({
+    const expansions = await diagnostic.run("expansion", () => deriveRetrievalExpansions({
       currentRequest: derived.currentRequest,
       retrievalQuery: derived.query,
       scope,
       conversationId,
-    });
+    }));
     const expandedResults = await uatMap(scope.aiCompanyId,
       expansions.map((expandedQuery) => () =>
         fetchKBRag({ query: expandedQuery, top_k: topK }, scope, endpoint, {uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${crypto.randomUUID()}`}})
@@ -617,13 +621,13 @@ Deno.serve(async (req) => {
     const rawResultCount = result.citations.length +
       successfulExpanded.reduce((total, r) => total + r.citations.length, 0);
 
-    const ranked = await rankDocumentCandidates({
+    const ranked = await diagnostic.run("rerank", () => rankDocumentCandidates({
       currentRequest: derived.currentRequest,
       retrievalQuery: derived.query,
       documents: mergedDocuments,
       scope,
       conversationId,
-    });
+    }));
     const winner = ranked.winner;
     const failed = ranked.evaluated.find(r => r.failure);
     if (!winner && failed?.failure) {

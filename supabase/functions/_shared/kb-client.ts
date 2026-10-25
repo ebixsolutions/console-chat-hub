@@ -1,4 +1,4 @@
-import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
+import { executionFailure, failureFromError, safeExecutionCode, type ExecutionFailure } from "./execution-failure.ts";
 import { legacyPreactivationAuthority } from "./uat-execution-contract.ts";
 import { accountedModelFetch } from "./model-attempt-accounting.ts";
 import { bindRagServiceDocument, ragServiceDocument, ragValidationRule } from "./preview-kb-query-embedding.ts";
@@ -34,6 +34,42 @@ import { isC3NonproductionProject } from "./nonproduction-secret.ts";
 export interface KBQueryInput {
   query: string;
   top_k: number;
+}
+const KB_DIAGNOSTIC_STAGES = new Set([
+  "auth", "membership", "tenant_scope", "inbox_admission", "credential",
+  "accounting_admission", "remote_preparation", "remote_preparation_http",
+  "rag_transport", "response_binding", "response_binding_http", "response_decode",
+  "authority_validation", "expansion", "rerank", "retrieval_execution",
+]);
+export type KBStage = "auth" | "membership" | "tenant_scope" | "inbox_admission" |
+  "credential" | "accounting_admission" | "remote_preparation" | "remote_preparation_http" |
+  "rag_transport" | "response_binding" | "response_binding_http" | "response_decode" |
+  "authority_validation" | "expansion" | "rerank" | "retrieval_execution";
+type KBStageDetail = { duration_ms?: number; http_status?: number; call?: number; timeout_ms?: number; code?: string };
+/** Observational only: no body, query, URL, credential, provider error or client-selected scope. */
+export function createKBStageDiagnostics(operationId?: string) {
+  const idPattern = "[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}";
+  const requestId = typeof operationId === "string" && new RegExp(`^(?:kb:(?:kb-search-proxy|agent-assist|generate-reply):)?${idPattern}(?::${idPattern})?$`, "i").test(operationId)
+    ? operationId : crypto.randomUUID();
+  const started = Date.now();
+  const event = (stage: KBStage, outcome: "start" | "complete" | "error" | "abort", detail: KBStageDetail = {}) => {
+    if (!KB_DIAGNOSTIC_STAGES.has(stage)) return;
+    const numeric: Record<string, number> = {};
+    for (const key of ["duration_ms", "http_status", "call", "timeout_ms"] as const) {
+      const n = detail[key];
+      if (typeof n === "number" && Number.isSafeInteger(n) && n >= 0 && n <= 86400000) numeric[key] = n;
+    }
+    // Logging failure must not change admission, dispatch or an unknown outcome.
+    try { console.log(JSON.stringify({ endpoint: "kb-stage", request_id: requestId, stage, outcome,
+      elapsed_ms: Date.now() - started, ...numeric, ...(safeExecutionCode(detail.code) ? { code: detail.code } : {}) })); } catch { /* no operational side effect */ }
+  };
+  return { event, async run<T>(stage: KBStage, action: () => Promise<T>): Promise<T> {
+    const start = Date.now(); event(stage, "start");
+    try {
+      const result = await action(); event(stage, "complete", { duration_ms: Date.now() - start,
+        ...(result instanceof Response ? { http_status: result.status } : {}) }); return result;
+    } catch (error) { event(stage, error instanceof Error && error.name === "AbortError" ? "abort" : "error", { duration_ms: Date.now() - start, code: failureFromError(error).code }); throw error; }
+  } };
 }
 export type KBScopeMode = "canonical" | "pre_activation" | "demo";
 export interface KBResolvedScope {
@@ -493,6 +529,8 @@ export async function fetchKBRag(
   endpointCfg: KBEndpointConfig,
   opts?: { timeoutMs?: number; signal?: AbortSignal; uatContext?: {conversationId: string; operationId: string; sourceMessageId?: string} },
 ): Promise<KBRagResponse> {
+  const diagnostic = createKBStageDiagnostics(opts?.uatContext?.operationId);
+  let phase: KBStage = "credential";
   const query = queryInput.query.trim();
   if (!query) {
     return { success: true, chunks: [], citations: [], documents: [], failure:executionFailure("KB_NO_MATCH") };
@@ -515,8 +553,9 @@ export async function fetchKBRag(
       kind: "bearer" as const,
       value: getSupabaseAdminKey(),
     }
-    : await resolveSingaporeCredential(scope, endpointCfg);
+    : await diagnostic.run("credential", () => resolveSingaporeCredential(scope, endpointCfg));
   if (!credential.ok) {
+    diagnostic.event("credential", "error", { code: "KB_TOOL_FAILURE" });
     return {
       success: false,
       chunks: [],
@@ -537,13 +576,13 @@ export async function fetchKBRag(
     score_threshold: 0.05,
   });
   const controller = new AbortController();
-  const abortFromRequest = () => controller.abort(opts?.signal?.reason);
+  const abortFromRequest = () => { diagnostic.event(phase, "abort"); controller.abort(opts?.signal?.reason); };
   if (opts?.signal?.aborted) abortFromRequest();
   else {opts?.signal?.addEventListener("abort", abortFromRequest, {
       once: true,
     });}
   const timeout = setTimeout(
-    () => controller.abort(),
+    () => { diagnostic.event(phase, "abort", { timeout_ms: opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS }); controller.abort(); },
     opts?.timeoutMs ?? KB_DEFAULT_TIMEOUT_MS,
   );
   const started=Date.now();
@@ -559,6 +598,27 @@ export async function fetchKBRag(
   };
   trace("kb_scope_resolved");
   let response: Response;
+  let networkCalls = 0, admissionStarted = Date.now(), bindingStarted = 0, admissionOpen = true;
+  const finishAdmission = () => {
+    if (admissionOpen) diagnostic.event("accounting_admission", "complete", { duration_ms: Date.now() - admissionStarted });
+    admissionOpen = false;
+  };
+  phase = "accounting_admission";
+  diagnostic.event(phase, "start");
+  const observedFetch: typeof fetch = async (input, init) => {
+    const target = input instanceof Request ? input.url : String(input);
+    const rag = target === endpointCfg.ragUrl;
+    if (rag) { finishAdmission(); phase="rag_transport"; }
+    const networkStage = rag ? "rag_transport" : phase === "response_binding" ? "response_binding_http" : "remote_preparation_http";
+    diagnostic.event(networkStage, "start", { call: ++networkCalls });
+    const start = Date.now();
+    try {
+      const result = await fetch(input, init);
+      diagnostic.event(networkStage, "complete", { duration_ms: Date.now() - start, http_status: result.status, call: networkCalls });
+      if (rag) { phase = "response_binding"; bindingStarted = Date.now(); diagnostic.event(phase, "start"); }
+      return result;
+    } catch (error) { diagnostic.event(networkStage, "error", { duration_ms: Date.now() - start, code: failureFromError(error).code }); throw error; }
+  };
   try {
     const init: RequestInit = {
       redirect: "error",
@@ -570,16 +630,28 @@ export async function fetchKBRag(
       body: requestBody,
       signal: controller.signal,
     };
-    response = await accountedModelFetch(createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey()), {companyId:scope.aiCompanyId, legacyAuthority:scope.legacyAuthority, conversationId:opts?.uatContext?.conversationId ?? null, operationId:opts?.uatContext?.operationId ?? "", provider:"singapore-kb",purpose:"kb_embedding",slot:"context-search",attempt:1,request:requestBody},endpointCfg.ragUrl,init,fetch,undefined,async function accountingHeaders(admittedMode,originalPermit){return await prepareRemoteRetrieval(
-      scope.aiCompanyId,scope.singaporeTenantId,remoteAccountingSecret(credential,endpointCfg),
-      endpointCfg.ragUrl,fetch,controller.signal,"kb",requestBody,admittedMode,originalPermit,
-    );});
+    response = await accountedModelFetch(createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey()), {companyId:scope.aiCompanyId, legacyAuthority:scope.legacyAuthority, conversationId:opts?.uatContext?.conversationId ?? null, operationId:opts?.uatContext?.operationId ?? "", provider:"singapore-kb",purpose:"kb_embedding",slot:"context-search",attempt:1,request:requestBody},endpointCfg.ragUrl,init,observedFetch,()=>{
+      finishAdmission();
+      phase="rag_transport";
+    },async function accountingHeaders(admittedMode,originalPermit){
+      finishAdmission();
+      phase="remote_preparation";
+      const headers = await diagnostic.run("remote_preparation", () => prepareRemoteRetrieval(
+        scope.aiCompanyId,scope.singaporeTenantId,remoteAccountingSecret(credential,endpointCfg),
+        endpointCfg.ragUrl,observedFetch,controller.signal,"kb",requestBody,admittedMode,originalPermit,
+      ));
+      phase="accounting_admission"; admissionStarted=Date.now(); admissionOpen=true; diagnostic.event(phase,"start");
+      return headers;
+    });
+    if (bindingStarted) diagnostic.event("response_binding", "complete", { duration_ms: Date.now() - bindingStarted });
 
   } catch (error) {
     const reason=error && typeof error==="object" && "reason" in error && typeof error.reason==="string" &&
       ["KB_RESPONSE_EMPTY","KB_RESPONSE_TOO_LARGE","KB_RESPONSE_INVALID_JSON","KB_RAG_RESPONSE_INVALID","KB_RAG_AUTHORITY_MISSING","KB_RAG_TENANT_CONFLICT","KB_RAG_AUTHORITY_CONFLICT","KB_RAG_CHUNK_INVALID","KB_RAG_CONTENT_MISMATCH"].includes(error.reason) ? error.reason : undefined;
     const failure=failureFromError(error,reason ? {stage:reason.startsWith("KB_RESPONSE_") ? "decode" : "canonical_validation"} : {});
+    diagnostic.event(phase, "error", { code: failure.code });
     const observedStatus = error && typeof error === "object" && "remote_http_status" in error && typeof error.remote_http_status === "number" && error.remote_http_status >= 200 && error.remote_http_status < 300 ? error.remote_http_status : undefined;
+    if (reason) diagnostic.event(reason.startsWith("KB_RESPONSE_") ? "response_decode" : "authority_validation", "error", { code: failure.code, http_status: observedStatus });
     trace("kb_admission_or_transport_result",failure,observedStatus,error && typeof error==="object" && "reason" in error ? error.reason : undefined,ragValidationRule(error));
     clearTimeout(timeout);
     opts?.signal?.removeEventListener("abort", abortFromRequest);
@@ -610,7 +682,7 @@ export async function fetchKBRag(
 
   let data: unknown;
   try {
-    data = await response.json();
+    data = await diagnostic.run("response_decode", () => response.json());
   } catch {
     return {
       success: false,
@@ -622,8 +694,10 @@ export async function fetchKBRag(
     };
   }
 
+  diagnostic.event("authority_validation", "start");
   const parsed = parseAggregationResponse(data);
   if (!parsed.ok) {
+    diagnostic.event("authority_validation", "error", { code: "KB_TOOL_FAILURE" });
     return {
       success: false,
       chunks: [],
@@ -634,6 +708,7 @@ export async function fetchKBRag(
     };
   }
   if (!parsed.contextFound) {
+    diagnostic.event("authority_validation", "complete", { code: "KB_NO_MATCH" });
     return { success: true, chunks: [], citations: [], documents: [], failure:executionFailure("KB_NO_MATCH") };
   }
 
@@ -667,6 +742,7 @@ export async function fetchKBRag(
     }
     return document;
   });
+  diagnostic.event("authority_validation", "complete");
   const single = documents.length === 1 ? documents[0] : undefined;
   return {
     success: true,
