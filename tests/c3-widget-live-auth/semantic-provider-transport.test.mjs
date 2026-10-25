@@ -1,19 +1,54 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
-const compiled=await build({stdin:{contents:"export * from './supabase/functions/_shared/commerce-semantic-frame.ts'; export * from './supabase/functions/_shared/vertex-generation-config.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
-const {COMMERCE_SEMANTIC_PROVIDER_SCHEMA,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const compiled=await build({stdin:{contents:"export * from './supabase/functions/_shared/commerce-semantic-frame.ts'; export * from './supabase/functions/_shared/vertex-generation-config.ts'; export {resolveCustomerRequestDecision} from './supabase/functions/_shared/commerce-state-authority.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
+const {resolveCustomerRequestDecision,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 function nodes(value,path=[]){const kind=value===null?'null':Array.isArray(value)?'array':typeof value;return [{path,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},...(['object','array'].includes(kind)?Object.entries(value).flatMap(([k,v])=>nodes(v,[...path,k])):[])];}
 const wire=(delta={},operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:0.98,nodes:nodes(delta)});
 const canonical=v=>normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(v));
+// Independent check of the documented provider schema subset. This reproduces
+// a source-contract mismatch, NOT the unavailable historical malformed node.
+function providerAccepts(s,v){
+ const type=s.type?.toLowerCase();
+ if(s.anyOf)return s.anyOf.some(b=>providerAccepts(b,v));
+ if(s.enum&&!s.enum.includes(v))return false;
+ if(type==='object')return !!v&&typeof v==='object'&&!Array.isArray(v)&&(s.required??[]).every(k=>Object.hasOwn(v,k))&&Object.entries(s.properties??{}).every(([k,b])=>!Object.hasOwn(v,k)||providerAccepts(b,v[k]));
+ if(type==='array')return Array.isArray(v)&&(!s.maxItems||v.length<=Number(s.maxItems))&&v.every(x=>providerAccepts(s.items,x));
+ return typeof v===type;
+}
+test('provider-shaped fixtures establish required scalar pairing without loosening the decoder',()=>{
+ const current=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash').responseSchema.properties.nodes.items;
+ const historical={type:'object',required:['path','kind'],properties:{path:{type:'array',items:{type:'string'},maxItems:6},kind:{type:'string',enum:['object','array','string','number','boolean','null']},text:{type:'string'},number:{type:'number'},boolean:{type:'boolean'}}};
+ for(const [kind,field,value] of [['string','text','eight'],['number','number',0],['boolean','boolean',false]]){
+  const malformed={path:['customer_facts','0','value'],kind};assert(providerAccepts(historical,malformed));assert(!providerAccepts(current,malformed));
+  assert(providerAccepts(current,{...malformed,[field]:value}));
+  const w=wire({customer_facts:[{key:'requirement',value}]});assert(w.nodes.every(n=>providerAccepts(current,n)));assert(canonical(w));
+ }
+ // Provider schemas cannot replace strict graph, canonical, or closed-field
+ // validation. Unsupported extra fields remain rejected, never stripped.
+ const w=wire();w.nodes.push({path:['intent'],kind:'string',text:'other',boolean:false});assert.equal(canonical(w),null);
+});
+for(const [stage,mutate] of [
+ ['scalar_value',w=>w.nodes.push({path:['intent'],kind:'string'})],
+ ['node_fields',w=>w.nodes.push({path:['PRIVATE-CUSTOMER'],kind:'null',text:'PRIVATE-SECRET'})],
+ ['duplicate_path',w=>w.nodes.push({path:[],kind:'object'})],
+ ['parent',w=>w.nodes.push({path:['PRIVATE-CUSTOMER','child'],kind:'null'})],
+ ['canonical_vocabulary',w=>w.nodes=nodes({requested_facts:[17]})],
+])test('wire rejection stage is bounded and redacted: '+stage,()=>{
+ const w=wire();mutate(w);let diagnostic;assert.equal(decodeCommerceSemanticWire(w,(code,d)=>{assert.equal(code,'wire_context_nodes');diagnostic=d;}),null);
+ assert.equal(diagnostic.stage,stage);assert.equal(diagnostic.container,'wire_nodes');assert(diagnostic.node_count>0&&diagnostic.node_count<=32769);
+ assert(Object.keys(diagnostic).every(k=>['stage','container','node_index','node_count'].includes(k)));assert(!JSON.stringify(diagnostic).includes('PRIVATE-'));
+});
 test('v239 failure repair: real Vertex request builder receives only one shallow typed-tree grammar, never the expanded Commerce schema',()=>{
  const config=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash');
  assert.deepEqual(config.responseSchema.required,['context_encoding','operation','confidence','nodes']);
  assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_paths_v2']);
  assert(!('entities' in config.responseSchema.properties));assert(!('customer_facts' in config.responseSchema.properties));
- const d=vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_SCHEMA);assert.equal(d.objects,2);assert.equal(d.arrays,2);assert(d.schema_bytes<1100);assert.equal(d.transport,'semantic_paths_v2');
+ const d=vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_SCHEMA);assert.equal(d.objects,7);assert.equal(d.arrays,7);assert(d.schema_bytes<2000);assert.equal(d.transport,'semantic_paths_v2');
  // Structural regression budget, not a claim of live provider acceptance.
- assert(!/delta_json|value_json|additionalProperties|anyOf/.test(JSON.stringify(config.responseSchema)));
+ assert(!/delta_json|value_json|additionalProperties/.test(JSON.stringify(config.responseSchema)));
+ const alternatives=config.responseSchema.properties.nodes.items.anyOf;assert.equal(alternatives.length,6);
+ for(const branch of alternatives){assert.deepEqual(branch.required,Object.keys(branch.properties));assert.equal(branch.properties.path.maxItems,'6');}
  assert.equal(config.thinkingConfig.thinkingBudget,0);
 });
 for(const [business,delta] of [
@@ -63,3 +98,18 @@ for(const delta of [
  {entities:[{name:'rental',kind:'rental',confidence:0.9,attributes:{list:Array(13).fill(false)}}]},
  {entities:Array.from({length:13},()=>({name:'service',kind:'service',confidence:0.98}))},
 ])test('new transport still rejects original canonical bounds without truncation: '+Object.keys(delta)[0],()=>{assert.equal(canonical(wire(delta)),null);});
+
+for(const [question,expected] of [
+ ['How should I compare subscription arrangements? I do not need your current prices.','guidance'],
+ ['How should I compare booking options? No need for policy details.','guidance'],
+ ['How should we compare equipment? We do not need your stock information.','guidance'],
+ ['請講解應比較的規格和取捨，不需要店舖售價或庫存。','guidance'],
+ ['How should I compare options? I do not need prices, but what is your Singapore warranty?','mixed'],
+ ['No need for policy details and check your stock.','merchant_facts'],
+ ['不需要店舖售價，請查你們現時庫存。','merchant_facts'],
+ ['What does your cancellation policy say about customers who do not need the service?','merchant_facts'],
+ ['What are your current model X specifications?','merchant_facts'],
+])test('shared decision preserves scoped factual refusal versus affirmative authority: '+question,()=>{
+ const frame=canonical(wire({intent:'customer_guidance',requested_facts:[]},'ASK_FACT'));
+ assert.equal(resolveCustomerRequestDecision(question,frame).kind,expected);
+});

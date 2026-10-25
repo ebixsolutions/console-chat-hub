@@ -561,7 +561,22 @@ export const COMMERCE_SEMANTIC_PROVIDER_SCHEMA: Record<string, unknown> = {
     context_encoding: {type:"string", enum:["semantic_paths_v2"]},
     operation: {type:"string", enum:[...OPERATIONS]},
     confidence: {type:"number"},
-    nodes: typedNodesSchema(6),
+    // The old independent optional scalar slots admitted {kind:number} with
+    // no number, or a string carrying a boolean. Encode the same strict node
+    // alternatives the decoder accepts; never fill/strip invalid scalar slots.
+    // Keep the older typed_paths_v1 schema unchanged for existing consumers.
+    nodes: { type: "array", items: { anyOf: [
+      ...["object", "array", "null"].map(kind => ({
+        type: "object", required: ["path", "kind"],
+        properties: { path: {type:"array",items:{type:"string"},maxItems:6}, kind:{type:"string",enum:[kind]} },
+        propertyOrdering: ["path", "kind"],
+      })),
+      ...[["string", "text"], ["number", "number"], ["boolean", "boolean"]].map(([kind, field]) => ({
+        type: "object", required: ["path", "kind", field],
+        properties: { path:{type:"array",items:{type:"string"},maxItems:6}, kind:{type:"string",enum:[kind]}, [field]:{type:kind} },
+        propertyOrdering: ["path", "kind", field],
+      })),
+    ] } },
   },
 };
 export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V2 =
@@ -580,48 +595,62 @@ export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V2 =
   "Canonical validation independently rejects invalid proposals. The following is semantic vocabulary for reconstruction, NOT the provider response schema: " +
   JSON.stringify(COMMERCE_SEMANTIC_DELTA_SCHEMA);
 
+type SemanticWireStage = "envelope" | "node_path" | "node_kind" | "node_fields" | "scalar_value" |
+  "duplicate_path" | "root" | "parent" | "array_index" | "object_key" | "sparse_array" |
+  "delta_fields" | "entity_fields" | "capability_fields" | "fact_fields" | "referent_fields" |
+  "ambiguity_fields" | "canonical_vocabulary" | "canonical_range";
+class SemanticWireError extends Error {
+  constructor(readonly diagnostic: {container:"wire_nodes";stage:SemanticWireStage;node_index?:number;node_count:number}) {
+    super("wire_context_nodes");
+  }
+}
 function decodeProviderSemanticTree(value: Record<string, unknown>): Record<string, unknown> {
-  const fail = (): never => {throw new Error("wire_context_nodes");};
+  let index: number | undefined;
+  const fail = (stage:SemanticWireStage): never => {throw new SemanticWireError({container:"wire_nodes",stage,
+    ...(index===undefined?{}:{node_index:index}),node_count:Array.isArray(value.nodes)?Math.min(value.nodes.length,32769):0});};
   if (Object.keys(value).some(k=>!["context_encoding","operation","confidence","nodes"].includes(k)) ||
       value.context_encoding!=="semantic_paths_v2" || !Array.isArray(value.nodes) ||
-      !value.nodes.length || value.nodes.length>32768) return fail();
+      !value.nodes.length || value.nodes.length>32768) return fail("envelope");
   const nodes=new Map<string,{path:string[];kind:string;value:unknown}>();
-  for(const raw of value.nodes) {
-    if(!isRecord(raw) || !Array.isArray(raw.path) || raw.path.length>6 || raw.path.some(k=>typeof k!=="string" || !k || k.length>80 || ["__proto__","prototype","constructor"].includes(k)))return fail();
-    if(typeof raw.kind!=="string")return fail();
+  for(const [i,raw] of value.nodes.entries()) {
+    index=i;
+    if(!isRecord(raw) || !Array.isArray(raw.path) || raw.path.length>6 || raw.path.some(k=>typeof k!=="string" || !k || k.length>80 || ["__proto__","prototype","constructor"].includes(k)))return fail("node_path");
+    if(typeof raw.kind!=="string")return fail("node_kind");
     const kind=raw.kind,field=kind==="string"?"text":kind==="number"?"number":kind==="boolean"?"boolean":null;
-    if(!["object","array","string","number","boolean","null"].includes(kind) || Object.keys(raw).some(k=>!["path","kind",...(field?[field]:[])].includes(k)) ||
-      field && (typeof raw[field]!==kind || kind==="number"&&!Number.isFinite(raw[field])))return fail();
-    const key=JSON.stringify(raw.path);if(nodes.has(key))return fail();
+    if(!["object","array","string","number","boolean","null"].includes(kind))return fail("node_kind");
+    if(Object.keys(raw).some(k=>!["path","kind",...(field?[field]:[])].includes(k)))return fail("node_fields");
+    if(field && (typeof raw[field]!==kind || kind==="number"&&!Number.isFinite(raw[field])))return fail("scalar_value");
+    const key=JSON.stringify(raw.path);if(nodes.has(key))return fail("duplicate_path");
     nodes.set(key,{path:raw.path as string[],kind,value:kind==="object"?Object.create(null):kind==="array"?[]:kind==="null"?null:raw[field!]});
   }
-  const root=nodes.get("[]");if(root?.kind!=="object")return fail();
+  index=undefined;
+  const root=nodes.get("[]");if(root?.kind!=="object")return fail("root");
   for(const node of [...nodes.values()].sort((a,b)=>a.path.length-b.path.length)) {
     if(!node.path.length)continue;
     const parent=nodes.get(JSON.stringify(node.path.slice(0,-1))),key=node.path.at(-1)!;
-    if(!parent || !["object","array"].includes(parent.kind))return fail();
+    if(!parent || !["object","array"].includes(parent.kind))return fail("parent");
     if(parent.kind==="array") {
       // No sparse/unbounded allocations. Original per-field array limits are
       // checked by the unchanged canonical validator after reconstruction.
-      if(!/^(0|[1-9][0-9]*)$/.test(key)||Number(key)>=20)return fail();
+      if(!/^(0|[1-9][0-9]*)$/.test(key)||Number(key)>=20)return fail("array_index");
       (parent.value as unknown[])[Number(key)]=node.value;
     } else {
       const clean=(s:string)=>s.normalize("NFKC").replace(/\s+/g," ").trim();
-      if(!clean(key)||["__proto__","prototype","constructor"].includes(clean(key))||Object.keys(parent.value as object).some(k=>clean(k)===clean(key)))return fail();
+      if(!clean(key)||["__proto__","prototype","constructor"].includes(clean(key))||Object.keys(parent.value as object).some(k=>clean(k)===clean(key)))return fail("object_key");
       (parent.value as Record<string,unknown>)[key]=node.value;
     }
   }
-  for(const n of nodes.values())if(n.kind==="array"&&Object.keys(n.value as object).length!==(n.value as unknown[]).length)return fail();
+  for(const n of nodes.values())if(n.kind==="array"&&Object.keys(n.value as object).length!==(n.value as unknown[]).length)return fail("sparse_array");
   const delta=root.value as Record<string,unknown>;
-  if(Object.keys(delta).some(k=>!Object.hasOwn(COMMERCE_SEMANTIC_DELTA_SCHEMA.properties,k)))return fail();
+  if(Object.keys(delta).some(k=>!Object.hasOwn(COMMERCE_SEMANTIC_DELTA_SCHEMA.properties,k)))return fail("delta_fields");
   const closed=(v:unknown,keys:string[])=>isRecord(v)&&Object.keys(v).every(k=>keys.includes(k));
   if(Array.isArray(delta.entities))for(const entity of delta.entities) {
-    if(!closed(entity,Object.keys(compactEntity.properties)))return fail();
-    if(isRecord(entity)&&entity.capabilities!==undefined&&!closed(entity.capabilities,Object.keys(typedProperties.entities.items.properties.capabilities.properties)))return fail();
+    if(!closed(entity,Object.keys(compactEntity.properties)))return fail("entity_fields");
+    if(isRecord(entity)&&entity.capabilities!==undefined&&!closed(entity.capabilities,Object.keys(typedProperties.entities.items.properties.capabilities.properties)))return fail("capability_fields");
   }
-  if(Array.isArray(delta.customer_facts)&&delta.customer_facts.some(f=>!closed(f,["key","value"])))return fail();
-  if(Array.isArray(delta.referents)&&delta.referents.some(r=>!closed(r,["ref","source","confidence"])))return fail();
-  if(delta.ambiguity!==undefined&&!closed(delta.ambiguity,["is_ambiguous","reasons","clarification_question"]))return fail();
+  if(Array.isArray(delta.customer_facts)&&delta.customer_facts.some(f=>!closed(f,["key","value"])))return fail("fact_fields");
+  if(Array.isArray(delta.referents)&&delta.referents.some(r=>!closed(r,["ref","source","confidence"])))return fail("referent_fields");
+  if(delta.ambiguity!==undefined&&!closed(delta.ambiguity,["is_ambiguous","reasons","clarification_question"]))return fail("ambiguity_fields");
   // The small provider grammar types nodes, not Commerce fields. Reapply the
   // native vocabulary's types/required fields/enums BEFORE normalization can
   // coerce a malformed quantity or turn a string context into an empty object.
@@ -643,10 +672,10 @@ function decodeProviderSemanticTree(value: Record<string, unknown>): Record<stri
     }
     return true;
   };
-  if(!matches(delta,COMMERCE_SEMANTIC_DELTA_SCHEMA))return fail();
+  if(!matches(delta,COMMERCE_SEMANTIC_DELTA_SCHEMA))return fail("canonical_vocabulary");
   for(const entry of [...(Array.isArray(delta.entities)?delta.entities:[]),...(Array.isArray(delta.referents)?delta.referents:[])]) {
     if(isRecord(entry)&&(typeof entry.confidence!=="number"||entry.confidence<0||entry.confidence>1 ||
-      entry.quantity!==undefined&&entry.quantity!==null&&(typeof entry.quantity!=="number"||entry.quantity<0)))return fail();
+      entry.quantity!==undefined&&entry.quantity!==null&&(typeof entry.quantity!=="number"||entry.quantity<0)))return fail("canonical_range");
   }
   return {...delta,operation:value.operation,confidence:value.confidence};
 }
@@ -714,7 +743,7 @@ export type SemanticContractRejection =
   | "canonical_confidence" | "canonical_array_bounds" | "canonical_fact"
   | "canonical_fact_bounds" | "canonical_entity" | "canonical_entity_kind"
   | "canonical_entity_name" | "canonical_entity_bounds";
-export type SemanticContractDiagnostic = {
+export type SemanticContractDiagnostic = SemanticWireError["diagnostic"] | {
   container: "attributes" | "constraints" | "customer_fact";
   entity_index?: number;
   violation: DecisionContextLimitDiagnostic;
@@ -722,10 +751,14 @@ export type SemanticContractDiagnostic = {
 type RejectSemantic = (reason: SemanticContractRejection, diagnostic?: SemanticContractDiagnostic) => void;
 
 export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSemantic): unknown {
-  const reject = (reason: SemanticContractRejection): null => { onReject?.(reason); return null; };
+  const reject = (reason: SemanticContractRejection, diagnostic?:SemanticContractDiagnostic): null => { onReject?.(reason,diagnostic); return null; };
   if (!isRecord(value)) return reject("wire_object");
   if (Object.hasOwn(value, "context_encoding")) {
-    try { value = value.context_encoding==="semantic_paths_v2" ? decodeProviderSemanticTree(value) : decodeTypedContextFrame(value); } catch { return reject("wire_context_nodes"); }
+    try { value = value.context_encoding==="semantic_paths_v2" ? decodeProviderSemanticTree(value) : decodeTypedContextFrame(value); } catch (error) {
+      // Only fixed stage enums and bounded counts: never keys, paths, values,
+      // model payloads or Error.message (which could contain customer data).
+      return reject("wire_context_nodes",error instanceof SemanticWireError?error.diagnostic:undefined);
+    }
   }
   if (!isRecord(value)) return reject("wire_object");
   if (Object.hasOwn(value, "delta_json")) {

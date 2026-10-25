@@ -588,6 +588,55 @@ async function ragApiInboxFixture(fault='none'){
  let models=0;const prompts=[];globalThis.fetch=async(url,init)=>{if(String(url)!==f.url)return x.up(url,init);models++;const prompt=JSON.parse(init.body).contents.flatMap(c=>c.parts.map(p=>p.text??'')).join('');prompts.push(prompt);return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(prompt.includes('proposed_claims')?{grounded:!f.rejectAssistClaims,unsupported_claims:f.rejectAssistClaims?['unsupported fixture claim']:[],evidence_ids:['E1'],resolution:f.rejectAssistClaims?'unsupported':'supported'}:prompt.includes('Customer message:')?{suggestions:[{content:directorOriginalRag.selected_documents[0].evidence[0].content,tone_label:'Informative'}]}:prompt.includes('Text to check:')?{status:'warning',summary:'Source-backed policy review',issues:[{excerpt:'subscription',policy_label:'Evidence 1',severity:'warning'}]}:{queries:[]})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});};
  const send=async(kind)=>{const body=kind==='knowledge'?{query:'published service policy',top_k:3,conversation_id:x.c.id}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT: pause subscription':'CONVERSATION: pause subscription',context_mode:kind==='draft'?'draft':'conversation'};const r=await(kind==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};};return {...x,send,models:()=>models,prompts};
 }
+// Full original Inbox handler with only external Auth/DB/RAG/Vertex isolated.
+// These are deterministic transport fixtures, not paid or Hosted observations.
+async function policyOutputFixture({status='warning',assessment,verifier,finish='STOP'}={}){
+ const x=await ragApiInboxFixture(),up=globalThis.fetch,requests=[];
+ globalThis.fetch=async(url,init)=>{
+  if(String(url)!==f.url)return up(url,init);
+  const request=JSON.parse(init.body);requests.push(request);const prompt=request.contents.flatMap(c=>c.parts.map(p=>p.text??'')).join('');
+  const verifying=prompt.includes('proposed_claims'),policy=prompt.includes('Text to check:');
+  const value=verifying?(verifier??{grounded:true,unsupported_claims:[],evidence_ids:['E1'],resolution:'supported'}):policy?(assessment??{status,summary:'Pause eligibility requires review under the supplied policy.',issues:['warning','violation'].includes(status)?[{excerpt:'pause subscription',policy_label:'Evidence 1',severity:status}]:[]}):prompt.includes('Customer message:')?{suggestions:[{content:'You may request a pause; eligibility requires review.',tone_label:'Informative'}]}:{queries:[]};
+  return Response.json({candidates:[{finishReason:policy?finish:'STOP',content:{parts:[{text:policy&&finish==='MAX_TOKENS'?'{"status":"warning","summary":"incomplete':JSON.stringify(value)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:policy&&finish==='MAX_TOKENS'?785:120}});
+ };
+ const send=async(tool='check_policy')=>{
+  const response=await policyHandler(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify({tool_type:tool,conversation_id:x.c.id,content:'pause subscription',context_mode:'manual'})}));
+  return {status:response.status,data:await response.json()};
+ };
+ return {...x,send,requests};
+}
+for(const status of ['compliant','warning','violation','insufficient_evidence'])test('Policy structured output complete handler: '+status,async()=>{
+ const x=await policyOutputFixture({status});try{
+  const r=await x.send();assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.result.status,status);assert(r.data.citation_lineage.evidence_chunk_ids.length);assert(r.data.reference_authority);
+  const assessment=x.requests.find(r=>r.generationConfig.responseSchema?.properties?.status);assert(assessment);const cfg=assessment.generationConfig;
+  assert.equal(cfg.maxOutputTokens,3072);assert.equal(cfg.thinkingConfig.thinkingBudget,0);assert.deepEqual(cfg.responseSchema.required,['status','summary','issues']);assert.equal(cfg.responseSchema.properties.issues.maxItems,'3');
+  assert(JSON.stringify(assessment.contents).includes('Published service subscription: you may request a pause; eligibility requires review.'),'full policy content preserved');
+  const verifier=x.requests.find(r=>r.generationConfig.responseSchema?.properties?.grounded);
+  if(status==='insufficient_evidence'){assert(!verifier);assert.equal(r.data.knowledge_grounded,false);}else{assert(verifier);assert.equal(verifier.generationConfig.maxOutputTokens,1536);assert.equal(verifier.generationConfig.thinkingConfig.thinkingBudget,0);assert(JSON.stringify(verifier.contents).includes('full_content'));}
+ }finally{globalThis.fetch=realFetch;}
+});
+test('Policy MAX_TOKENS remains a distinct failed attempt with no repair/retry or compliant fallback',async()=>{
+ const x=await policyOutputFixture({finish:'MAX_TOKENS'});try{const r=await x.send();assert.equal(r.status,502);assert.equal(r.data.success,false);assert.equal(x.requests.length,1);assert(!r.data.result);assert(r.data.failure);}finally{globalThis.fetch=realFetch;}
+});
+for(const [label,assessment] of [
+ ['oversize-summary',{status:'compliant',summary:'x'.repeat(161),issues:[]}],
+ ['extra-field',{status:'compliant',summary:'Supported',issues:[],authority:true}],
+ ['coerced-severity',{status:'warning',summary:'Requires review',issues:[{excerpt:'pause',policy_label:'E1',severity:['warning']}]}],
+ ['dropped-issue',{status:'compliant',summary:'Supported',issues:[null]}],
+ ['wrong-severity',{status:'violation',summary:'Requires review',issues:[{excerpt:'pause',policy_label:'E1',severity:'warning'}]}],
+])test('Policy malformed assessment cannot be truncated into compliant: '+label,async()=>{
+ const x=await policyOutputFixture({assessment});try{const r=await x.send();assert.equal(r.status,502);assert.equal(r.data.error,'policy_parse_failed');assert.equal(x.requests.length,1);}finally{globalThis.fetch=realFetch;}
+});
+for(const verifier of [
+ {grounded:false,unsupported_claims:['Unsupported unconditional pause'],evidence_ids:['E1'],resolution:'unsupported'},
+ {grounded:true,unsupported_claims:[],evidence_ids:['E99'],resolution:'supported'},
+ {grounded:true,unsupported_claims:[],evidence_ids:['E1'],resolution:'partial'},
+])test('Policy independent verifier rejects unsupported compliant result: '+JSON.stringify(verifier),async()=>{
+ const x=await policyOutputFixture({status:'compliant',verifier});try{const r=await x.send();assert.equal(r.status,502);assert.equal(r.data.failure.code,'LLM_GROUNDING_REJECTED');assert.equal(x.requests.length,2);}finally{globalThis.fetch=realFetch;}
+});
+for(const tool of ['knowledge_helper','suggest_reply'])test('Policy output configuration leaves '+tool+' under original evidence/human-control contract',async()=>{
+ const x=await policyOutputFixture();try{const r=await x.send(tool);assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.tool_type,tool);assert.equal(f.rows.messages.filter(m=>m.role==='agent').length,0);for(const request of x.requests){assert.equal(request.generationConfig.maxOutputTokens,800);assert(!request.generationConfig.responseSchema?.properties?.status);assert(!request.generationConfig.thinkingConfig);}}finally{globalThis.fetch=realFetch;}
+});
 test('KB diagnostics redact untrusted labels and never consume bodies or alter failures',async()=>{
  const saved=console.log,events=[];
  try{

@@ -1,0 +1,94 @@
+{
+  "provenance": {
+    "source_zip_sha256": "a15a6a32e1ffc442013c555c97603a0e44470475a4be3221459fecfb9c2326bd",
+    "conversation_id": "01218c49-aa04-50d4-abeb-9b34b0b93fa2",
+    "visitor_id": "cd602ad2-e70f-4a7a-8042-90a6ce5108d8",
+    "assistant_id": "b7f02e7f-92af-4b21-a6c4-11109973d758",
+    "provider_payload_retained": false,
+    "note": "Exact persisted Visitor, prior Memory and Commerce. Test provider nodes/answers are deterministic fixtures, not recovered historical outputs or Hosted PASS."
+  },
+  "visitor": "我補充一下：仍然要桌上型，平時會同時開二十多個瀏覽器分頁、做文書及視像通話，不打機。請按這些用途講解應比較的規格和取捨，不需要店舖售價或庫存。",
+  "memory": {
+    "version": "conversation-memory-1.0.0",
+    "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    "updated_at": "2026-10-25T03:52:30.360675+00:00",
+    "current_goal": "我想選一部適合屋企日常使用的電腦，主要上網、文書同視像通話。應該先比較哪些規格？暫時不用查店舖庫存或售價。",
+    "prior_topics": [
+      "我想選一部適合屋企日常使用的電腦 主要上網、文書同視像通話 應該先比較哪些規格 暫時不用查店舖庫存或售價"
+    ],
+    "current_topic": "答你剛才的澄清：我要桌上型電腦 更正一下 主要會同時開好多瀏覽器分頁 但不打機；之前提到的上網、文書及視像通話仍然需要 請按最新用途給一般規格比較建議 不用查任何店舖型號、庫存或售價",
+    "open_questions": [],
+    "active_entities": [],
+    "conversation_id": "01218c49-aa04-50d4-abeb-9b34b0b93fa2",
+    "current_regions": [],
+    "memory_revision": 3,
+    "pending_actions": [],
+    "historical_facts": [],
+    "source_message_id": "1d71e28d-8d78-4255-addd-f7744856bea9",
+    "updated_from_turn": 2,
+    "active_constraints": [],
+    "latest_corrections": [
+      "答你剛才的澄清:我要桌上型電腦。更正一下,主要會同時開好多瀏覽器分頁,但不打機;之前提到的上網、文書及視像通話仍然需要。請按最新用途給一般規格比較建議,不用查任何店舖型號、庫存或售價。"
+    ],
+    "question_lifecycle": [
+      {
+        "text": "我想選一部適合屋企日常使用的電腦,主要上網、文書同視像通話。應該先比較哪些規格?暫時不用查店舖庫存或售價。",
+        "status": "resolved",
+        "entity_id": null,
+        "resolution": "customer_guidance",
+        "source_message_id": "e86e6352-c554-403c-aebc-35f26530e70d",
+        "resolution_source_message_id": "3d5581ea-bd01-45fd-aa06-c479100011a9"
+      }
+    ],
+    "transaction_summary": {
+      "order": "none",
+      "payment": "none",
+      "delivery": "not_confirmed",
+      "quotation": "none",
+      "installation": "unknown"
+    },
+    "customer_preferences": [],
+    "current_customer_facts": [],
+    "handoff_relevant_state": {
+      "current_goal": "我想選一部適合屋企日常使用的電腦，主要上網、文書同視像通話。應該先比較哪些規格？暫時不用查店舖庫存或售價。",
+      "open_questions": [],
+      "pending_actions": [],
+      "active_entity_ids": []
+    },
+    "cancelled_or_superseded": [],
+    "commerce_state_revision": 1,
+    "grounded_reference_lineage": []
+  },
+  "commerce": {
+    "quotes": [],
+    "version": "commerce-state-1.0.0",
+    "delivery": {
+      "confirmed": false
+    },
+    "entities": [],
+    "language": "zh-TW",
+    "metadata": {},
+    "conversion": {
+      "funnel_stage": "discovery",
+      "order_status": "none",
+      "payment_status": "none",
+      "next_best_action": null,
+      "quotation_status": "none",
+      "cancelled_entity_ids": [],
+      "confirmed_entity_ids": [],
+      "tentative_entity_ids": []
+    },
+    "installation": {
+      "items": [],
+      "pending_checks": [],
+      "site_conditions": {}
+    },
+    "current_topic": null,
+    "current_intent": null,
+    "current_industry": null,
+    "unresolved_items": [],
+    "latest_corrections": [],
+    "customer_constraints": {}
+  },
+  "commerce_revision": 1
+}

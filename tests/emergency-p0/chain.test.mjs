@@ -23,6 +23,33 @@ function typedContextNodes(value,at=[]) {
   ...((kind==='object'||kind==='array')?Object.entries(value).flatMap(([k,v])=>typedContextNodes(v,[...at,k])):[])];
 }
 const providerWire=(delta,operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:0.98,nodes:typedContextNodes(delta)});
+const recoveredSemanticCase=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/task1c-semantic-recovery.json'),'utf8'));
+for(const malformed of [false,true])test('Task1C cd602ad2 persisted context through real semantic decoder and B2: '+(malformed?'reject malformed fixture':'valid provider-shaped continuation'),async()=>{
+ const semantic=providerWire({intent:'other',customer_correction:true,customer_facts:[{key:'browser_tabs',value:{minimum_exclusive:20}},{key:'gaming',value:false}],requested_facts:[]});
+ if(malformed)delete semantic.nodes.find(n=>n.kind==='number').number;
+ const memory={...structuredClone(recoveredSemanticCase.memory),conversation_id:ticket};
+ const previous={conversation_commerce_state:[{conversation_id:ticket,company_id:memory.company_id,revision:recoveredSemanticCase.commerce_revision,state:recoveredSemanticCase.commerce}],conversation_memory_state:[],conversation_commerce_state_event:[],conversation_memory_state_event:[]};
+ const answer='你仍然要桌上型，重點是多分頁、文書及視像通話。可先比較多工時的記憶體餘量、儲存速度、螢幕與通話設備；不打機時可按實際工作量分配預算。店舖型號及售價仍需另行核實。';
+ // The real ticket has earlier Visitor turns as well as Memory. Include those
+ // retained utterances; an empty message history would not replay this input.
+ const history=[{id:'e86e6352-c554-403c-aebc-35f26530e70d',role:'visitor',content:memory.current_goal,created_at:'2026-10-14T00:00:00.000Z'},
+  {id:memory.source_message_id,role:'visitor',content:'答你剛才的澄清：我要桌上型電腦。更正一下，主要會同時開好多瀏覽器分頁，但不打機；之前提到的上網、文書及視像通話仍然需要。請按最新用途給一般規格比較建議，不用查任何店舖型號、庫存或售價。',created_at:'2026-10-14T00:01:00.000Z'}].map(m=>({...m,conversation_id:ticket,is_recalled:false,metadata:{}}));
+ const f=fixture(recoveredSemanticCase.visitor,{source:recoveredSemanticCase.provenance.visitor_id,originalPreview:true,fullChain:true,previous,history,memory,semantic,answer,enforceSmallTransport:true,enforceSchemaBranchBudget:true});const result=await f.run();
+ assert.equal(result.status,200,JSON.stringify(result));assert.equal(f.commits.length,1);assert(!f.requests.some(r=>r.url.includes('context-search')));
+ if(malformed){assert.equal(f.commits[0].metadata.source_error_code,'LLM_INVALID_OUTPUT');assert.equal(f.tables.conversation_memory_state[0].revision,3);assert(JSON.stringify(f.events).includes('scalar_value'));assert(!JSON.stringify(f.events).includes('browser_tabs'));}
+ else{assert.equal(f.commits[0].content,answer);assert.equal(f.commits[0].metadata.response_route,'customer_guidance');const m=f.tables.conversation_memory_state[0];assert.equal(m.revision,4);assert.equal(m.memory.current_customer_facts.find(v=>v.key==='gaming').value,false);const prompt=f.requests.find(r=>r.body?.systemInstruction?.parts?.[0]?.text?.includes('[EFFECTIVE_CUSTOMER_REQUIREMENTS]'));assert(prompt);assert(JSON.stringify(prompt.body).includes('二十多個瀏覽器分頁'));}
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+});
+for(const [industry,initial,clarification,latest,key,value,answer] of [
+ ['retail','How should I compare a chair for home working?','How much space do you have?','One square metre; half the day I stand.','available_area',{amount:1,unit:'square metre'},'With one square metre and time spent standing, compare adjustability, seated comfort and the space needed to move between positions.'],
+ ['saas','How should we choose collaboration software?','How many people need access?','Eight, and we do not want automatic renewal.','auto_renew',false,'For eight people, compare permission management, onboarding and renewal control. Verify any particular plan terms separately.'],
+ ['booking','How should I compare service booking options?','What access and timing do you need?','Morning visits, with no stairs.','stairs',false,'Compare morning availability, accessible entry and rescheduling flexibility; actual provider availability needs confirmation.'],
+ ['b2b','How should we compare packaging equipment?','What floor space is available?','Zero for an additional unit.','extra_floor_space',0,'With no extra floor space, compare options that fit the existing footprint and workflow, then verify vendor dimensions and capacity.'],
+])test('Task1C provider wire clarification and latest effective state: '+industry,async()=>{
+ const first=fixture(initial,{fullChain:true,originalPreview:true,semantic:providerWire({intent:'customer_guidance'},'ASK_FACT'),answer:clarification});await first.run();
+ const next=fixture(latest,{source:uuid(440),fullChain:true,originalPreview:true,previous:first.tables,history:first.tables.messages,semantic:providerWire({intent:'other',customer_facts:[{key,value}]}),answer});const r=await next.run();assert.equal(r.status,200);assert.equal(next.commits[0]?.content,answer);assert.equal(next.commits[0].metadata.response_route,'customer_guidance');assert.deepEqual(next.tables.conversation_memory_state[0].memory.current_customer_facts.find(x=>x.key===key)?.value,value);assert(!next.requests.some(r=>r.url.includes('context-search')));
+ const prompt=next.requests.find(r=>r.body?.systemInstruction?.parts?.[0]?.text?.includes('[EFFECTIVE_CUSTOMER_REQUIREMENTS]'));assert(prompt);for(const part of [initial,latest])assert(JSON.stringify(prompt.body).includes(part));assert.equal(next.commits[0].metadata.b2_commit_source,'commit_ai_reply_tx');
+});
 for(const text of [
  '我想選一部適合屋企日常使用的電腦，主要上網、文書同視像通話。應該先比較哪些規格？暫時不用查店舖庫存或售價。',
  'Which specifications should I compare for everyday home use?',
@@ -63,16 +90,16 @@ function fixture(text,options={}) {
    }
    assert.equal(body.generationConfig.responseMimeType,'application/json');
    assert.deepEqual(body.generationConfig.responseSchema.properties.context_encoding.enum,['semantic_paths_v2']);
-   assert.equal(body.generationConfig.responseSchema.properties.nodes.items.properties.path.maxItems,'6');
+   assert.equal(body.generationConfig.responseSchema.properties.nodes.items.anyOf.every(b=>b.properties.path.maxItems==='6'),true);
    assert(body.systemInstruction.parts[0].text.includes('Follow the supplied response schema'));assert(!body.systemInstruction.parts[0].text.includes('array of {key,value}'));assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_paths_v2'));assert(body.systemInstruction.parts[0].text.includes('in constraints'));
    assert(body.systemInstruction.parts[0].text.includes('Canonical validation independently rejects invalid proposals'));
    if(options.enforceSmallTransport){
-    assert(Buffer.byteLength(JSON.stringify(body.generationConfig.responseSchema))<1100);
+    assert(Buffer.byteLength(JSON.stringify(body.generationConfig.responseSchema))<2000);
     assert.deepEqual(Object.keys(body.generationConfig.responseSchema.properties),['context_encoding','operation','confidence','nodes']);
     assert(!body.systemInstruction.parts[0].text.includes('supply required neutral transport defaults'));
    }
    if(options.enforceSchemaBranchBudget){
-    const inspect=s=>{if(s.properties){const optional=Object.keys(s.properties).filter(k=>!s.required?.includes(k));if(optional.length>3)throw Error('isolated-provider-schema-branch-budget');Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);};
+    const inspect=s=>{if(s.properties){const optional=Object.keys(s.properties).filter(k=>!s.required?.includes(k));if(optional.length>3)throw Error('isolated-provider-schema-branch-budget');Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);if(s.anyOf){assert.equal(s.anyOf.length,6);s.anyOf.forEach(inspect);}};
     inspect(body.generationConfig.responseSchema);
    }
    if(mode==='400')return Response.json({error:{status:'INVALID_ARGUMENT',message:'response schema too complex; PRIVATE-SECRET user@example.invalid',details:[{fieldViolations:[{field:'generation_config.response_schema',description:'PRIVATE-SECRET'}]}]}},{status:400});
@@ -619,7 +646,7 @@ for(const [business,latest,values] of [
  const requests=f.requests.filter(x=>x.url.endsWith(':generateContent')&&x.body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.'));
  assert.equal(requests.length,1);const config=requests[0].body.generationConfig;
  assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_paths_v2']);
- assert.equal(config.responseSchema.properties.nodes.items.properties.path.maxItems,'6');
+ assert(config.responseSchema.properties.nodes.items.anyOf.every(b=>b.properties.path.maxItems==='6'));
  assert(!JSON.stringify(f.events).includes('canonical_entity_bounds'));assert(!f.requests.some(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered')));
  const memory=f.tables.conversation_memory_state.at(-1)?.memory;assert(memory,JSON.stringify({r,events:f.events.slice(-8)}));
  for(const [key,value] of Object.entries(values)){const fact=memory.current_customer_facts.find(x=>x.key===key);assert(fact,JSON.stringify(memory));assert.deepEqual(fact.value,value);assert.equal(fact.source_message_id,source);}

@@ -341,13 +341,18 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
 // one grammar for clause removal and routing so ordinary wording variants do
 // not disagree. This never grants provider/KB admission.
 const EXCLUDED_LOOKUP = /(?:唔查|唔使查|唔需要查|不要查|不查|不用查|不需要查|不需查|無需查|无需查|毋須查|毋须查|do not (?:look up|check|query)|don't (?:look up|check|query)|without (?:looking up|checking|querying)|no (?:lookup|lookups))/i;
+// A declined factual deliverable need not repeat the lookup verb. Restrict
+// this to a clause-leading refusal and the existing factual vocabulary; this
+// projection never removes the original customer turn from the state writer.
+const DECLINED_FACT_DETAILS = /^\s*(?:不需要|無需|无需|不用|毋須|毋须|(?:I|we)\s+(?:do not|don't)\s+need|no need for)\s*/i;
 
 /** A question asking for the currently retained requirements supplies no new fact. */
 export function withoutExcludedLookups(question: string): string {
   // Only discard an explicit instruction NOT to perform a lookup. A negative
   // customer fact and an actual question about a negative condition remain data.
   return question.split(/[，,。?？;；\n]|\bbut\b|但(?:係|是)?|\band(?=\s+(?:check|query|look up)\b)|同埋(?=查)/i).filter(clause => {
-    const excluded = EXCLUDED_LOOKUP.exec(clause);
+    const excluded = EXCLUDED_LOOKUP.exec(clause) ??
+      (MERCHANT_FACT_REQUEST.test(clause) ? DECLINED_FACT_DETAILS.exec(clause) : null);
     if (!excluded) return true;
     // Never erase an affirmative request that shares the negative clause.
     // E.g. "do not check models and check stock" still needs merchant evidence.
@@ -417,7 +422,7 @@ function guidanceSpeechAct(question: string, semantic: {
   let specificationCriteria = false;
   text = text.replace(/(?:一般|通用)(?:的|嘅)?(?:規格|规格)(?:比較|比较|取捨|取舍|建議|建议)|\b(?:general|generic)\s+(?:specification|spec)\s+(?:comparison|criteria|guidance)\b/giu, () => { specificationCriteria=true; return "selection criteria"; });
   text = text.replace(
-    /(?:比較|比较|考慮|考虑|留意)(?:哪些|甚麼|什么|邊啲|边啲|咩)(?:規格|规格)|\b(?:which|what)\s+(?:specifications?|specs)\s+(?:should|could|do)\s+(?:I|we)\s+(?:compare|consider|prioriti[sz]e|evaluate)\b/giu,
+    /(?:比較|比较|考慮|考虑|留意)(?:哪些|甚麼|什么|邊啲|边啲|咩)(?:規格|规格)|(?:應|应|該|该|要)(?:先)?(?:比較|比较|考慮|考虑)(?:的|嘅)?(?:規格|规格)|\b(?:which|what)\s+(?:specifications?|specs)\s+(?:should|could|do)\s+(?:I|we)\s+(?:compare|consider|prioriti[sz]e|evaluate)\b/giu,
     match => {
       specificationCriteria = true;
       return match.replace(/規格|规格|\b(?:specifications?|specs)\b/giu, "selection criteria");
