@@ -825,7 +825,9 @@ export function buildCanonicalConversationMemory(args: {
     prior_topics: uniqueStrings([...runtime.prior_topics.slice().reverse(), ...(prior?.prior_topics ?? [])], MAX_TOPICS).reverse(),
     current_topic: !businessMessageText(args.newest_first.find(row=>row.id===args.source_message_id)?.content)
       ? businessMessageText(prior?.current_topic) || businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || null
-      : businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || businessMessageText(prior?.current_topic) || null,
+      : sourceBoundGuidanceGoal
+        ? businessMessageText(runtime.current_topic) || null
+        : businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || businessMessageText(prior?.current_topic) || null,
     grounded_reference_lineage: lineage(args.newest_first).length ? lineage(args.newest_first) : (prior?.grounded_reference_lineage ?? []).slice(0, MAX_LINEAGE),
     handoff_relevant_state: {
       current_goal: businessGoal,

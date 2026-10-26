@@ -72,6 +72,8 @@ test('latest cross-topic guidance overrides stale AC goal in Memory and handoff 
  assert(memory.current_goal?.includes('RAM') && memory.current_goal?.includes('8'));
  assert(!memory.current_goal?.startsWith('air conditioner:'));
  assert.equal(memory.handoff_relevant_state.current_goal,memory.current_goal);
+ assert(memory.current_topic?.includes('RAM'));
+ assert.notEqual(memory.current_topic,'air_conditioner');
  assert.equal(current.entities.length,1);
  assert.equal(current.entities[0].provenance.source_message_id,oldSource);
 });
