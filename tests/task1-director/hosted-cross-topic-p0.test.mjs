@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
 import {reduceTurn,buildCommerceEntityHints} from '../../supabase/functions/_shared/commerce-state-runtime-base.ts';
 import {resolveIndustryCustomerJourney} from '../../supabase/functions/_shared/industry-runtime-adapter.ts';
+import {buildCanonicalConversationMemory} from '../../supabase/functions/_shared/conversation-long-memory.ts';
 
 const oldSource='00000000-0000-4000-8000-000000000111';
 const newSource='00000000-0000-4000-8000-000000000222';
@@ -54,4 +55,23 @@ test('legitimate explicit return to AC remains permitted without duplicating ent
  assert.equal(next.entities.length,1);
  assert.equal(next.entities[0].category,'air_conditioner');
  assert.equal(resolveIndustryCustomerJourney({text,state:state(),language:'zh-TW',semantic_frame:frame('air_conditioner')})?.category,'air_conditioner');
+});
+
+test('latest cross-topic guidance overrides stale AC goal in Memory and handoff projection',()=>{
+ const current=reduce(guidance);
+ const decision={kind:'guidance',continuation:false,general_request:'請直接比較 RAM、CPU 同 SSD 嘅取捨',merchant_request:null,latest_requirements:guidance};
+ const memory=buildCanonicalConversationMemory({
+  conversation_id:'00000000-0000-4000-8000-000000000001',
+  company_id:'00000000-0000-4000-8000-000000000002',
+  source_message_id:newSource,
+  source_created_at:'2026-10-26T00:15:35Z',
+  commerce_state_revision:3,commerce_state:current,
+  newest_first:[{id:newSource,role:'visitor',content:guidance,created_at:'2026-10-26T00:15:35Z'}],
+  visitor_turn_count:3,next_memory_revision:9,request_decision:decision,
+ });
+ assert(memory.current_goal?.includes('RAM') && memory.current_goal?.includes('8'));
+ assert(!memory.current_goal?.startsWith('air conditioner:'));
+ assert.equal(memory.handoff_relevant_state.current_goal,memory.current_goal);
+ assert.equal(current.entities.length,1);
+ assert.equal(current.entities[0].provenance.source_message_id,oldSource);
 });

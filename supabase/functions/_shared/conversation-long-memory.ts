@@ -674,7 +674,16 @@ export function buildCanonicalConversationMemory(args: {
   const factLabels: Record<string,string> = {product_count:"商品數量",staff_count:"人手",app_interest:"需要 App",current_market:"目前市場",preferred_interface:"使用介面",desired_features:"需要功能",future_markets:"未來市場"};
   const factValue = (value:unknown):string => value===false?"否":value===true?"是":value===null?"未確認":Array.isArray(value)?value.map(factValue).join("、"):typeof value==="object"?JSON.stringify(value):String(value)==="hong_kong"?"香港":String(value)==="web"?"網頁版":String(value);
   const requirementGoal = goalFacts.length ? goalFacts.map(fact => `${factLabels[fact.key] ?? fact.key.replaceAll("_"," ")}: ${factValue(fact.value)}`).join("; ") : null;
-  const businessGoal = genericGoal || entityGoal || requirementGoal || (args.request_decision?.continuation ? clean(args.request_decision.latest_requirements,1600) : null) || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
+  // A live customer-guidance goal is about the current request, not a
+  // historical product portfolio. Preserve old entities for a later explicit
+  // return, but do not promote their descriptions to this turn's current goal
+  // or the same-ticket human handoff summary.
+  const sourceBoundGuidanceGoal =
+    (args.request_decision?.kind === "guidance" || args.request_decision?.kind === "mixed") &&
+      args.request_decision.general_request
+      ? businessMessageText(args.request_decision.latest_requirements).slice(0,1600)
+      : null;
+  const businessGoal = sourceBoundGuidanceGoal || genericGoal || entityGoal || requirementGoal || (args.request_decision?.continuation ? clean(args.request_decision.latest_requirements,1600) : null) || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
   const runtimeRegions = [
     ...(runtime.current_requirements.current_market
       ? [{ region: runtime.current_requirements.current_market, temporal_scope: "current" as const }]
