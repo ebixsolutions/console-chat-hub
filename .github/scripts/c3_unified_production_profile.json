@@ -1232,8 +1232,8 @@
     "src/components/console/AgentToolPanel.tsx": "c1c4cf3fa5690e4918375b6f388f9812032d9d5ae888e05240c115de08d588da",
     "supabase/functions/_shared/conversation-long-memory.test.ts": "db1ef366a2b60fca288d27f5f7af97de1bfe6b47b3959319fdd7774a695a1430",
     "tests/task1-director/source-chain.test.mjs": "784754892e1d4e0b1bc0d8558d477ea41a0e6b0f6a0004d3530397fc32931601",
-    "src/routes/_authenticated/console.conversations.index.tsx": "cb76ece7753a7674993eae54df2ba9b0d96f8bfe194dbaca1dfcb8b5331366c9",
-    "tests/console-navigation/inbox-history-search.test.mjs": "8f6b57b5036bd900a4619f95f3b5e5bad972fa84ca38e588b75abdc6c9bb69de"
+    "src/routes/_authenticated/console.conversations.index.tsx": "503aaf13eb6ee4c8b9bfda9871847ac3e80d2cfa3ad93e45b34e4244cbaf3a38",
+    "tests/console-navigation/inbox-history-search.test.mjs": "a7ba0a23c56eecd087e1afcfc5b071106f6b3b891a8a6957c4801bb125f1bc99"
   },
   "task1_c4_recovery_deployment_authorized": false
 }
