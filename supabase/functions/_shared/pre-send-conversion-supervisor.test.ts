@@ -1510,3 +1510,25 @@ Deno.test("Task1 safe B2 recovery deletes unverified price, never invents a repl
   assertEquals(stripUnverifiedCurrentQuoteClauses("The current price is HKD 6,000."),null,"no non-price advice");
   assertEquals(stripUnverifiedCurrentQuoteClauses("For office work 16GB RAM and SSD can help."),null,"no rejection");
 });
+
+Deno.test("Task1 B2 preserves historical/current-price verification disclaimers across locales", () => {
+  const state = createEmptyConversationCommerceState();
+  for (const [language, reply] of [
+    ["zh-TW", "未必。你之前見過嘅報價只可以作參考，唔代表而家仍然係同一個價。最新價格、適用費用同相關條件需要重新確認後先作準。"],
+    ["zh-CN", "未必。你之前看到的报价只可作为参考，并不代表目前仍是同一价格。最新价格、适用费用及相关条件需要重新确认后才作准。"],
+    ["en", "Not necessarily. A previous quote is only a reference and does not guarantee the current price. The latest price, applicable fees and relevant conditions need to be confirmed again before they are final."],
+  ] as const) {
+    const checked = decision(reply, state);
+    assertEquals(checked.decision, "allow", language + ": historically bounded disclaimer");
+    assertEquals(stripUnverifiedCurrentQuoteClauses(reply), null, language + ": safe disclaimer cannot be removed");
+  }
+  const denied: Array<[string,string]> = [
+    ["現時售價合理而且已確認。", "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT"],
+    ["最新價格已確認，其他費用需要重新確認後才作準。", "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT"],
+    ["The current price is final, but additional fees need to be confirmed again.", "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT"],
+    ["The current price is HKD 5,000, but needs reconfirmation.", "CURRENT_QUOTE_NOT_PROVEN"],
+  ];
+  for (const [draft, expected] of denied) {
+    assertEquals(decision(draft, state).code, expected, "affirmative price still fails closed: " + draft);
+  }
+});
