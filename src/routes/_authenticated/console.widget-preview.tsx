@@ -183,6 +183,33 @@ const COPY = {
   },
 } as const;
 
+// Customer content remains React text nodes: no HTML injection and no rewriting persisted messages.
+function renderWidgetInlineBold(content: string) {
+  return content.split(/(\*\*[^*\n]+\*\*)/g).filter(Boolean).map((part, index) =>
+    part.startsWith("**") && part.endsWith("**")
+      ? <strong key={index} className="font-semibold">{part.slice(2, -2)}</strong>
+      : part
+  );
+}
+
+function SafeWidgetMessageContent({ content }: { content: string }) {
+  return (
+    <div className="break-words" data-widget-format="safe-markdown">
+      {content.split(/\r?\n/).map((line, index) => {
+        const bullet = /^\s*[-*]\s+(.+)$/.exec(line);
+        if (bullet) return (
+          <div key={index} className="flex items-start gap-2">
+            <span aria-hidden="true" className="shrink-0">•</span>
+            <span>{renderWidgetInlineBold(bullet[1])}</span>
+          </div>
+        );
+        if (line === "") return <div key={index} className="h-2" aria-hidden="true" />;
+        return <div key={index} className="whitespace-pre-wrap">{renderWidgetInlineBold(line)}</div>;
+      })}
+    </div>
+  );
+}
+
 type LiveAiMessage = {
   id: string;
   role: "visitor" | "assistant" | "agent" | "system";
@@ -1430,8 +1457,8 @@ function PreviewWidget({
           <button
             type="button"
             onClick={() => {
+              if (!historyOpen && mode === "live") void loadLiveHistory();
               setHistoryOpen((value) => !value);
-              if (mode === "live") void loadLiveHistory();
             }}
             className="rounded p-2 opacity-70 hover:bg-black/5 hover:opacity-100"
             aria-label="Conversation History"
@@ -1528,9 +1555,11 @@ function PreviewWidget({
                 : undefined
             }
           >
-            <div className="whitespace-pre-wrap">
-              {message.content}
-            </div>
+            {message.role === "visitor" || message.role === "system" ? (
+              <div className="whitespace-pre-wrap break-words">{message.content}</div>
+            ) : (
+              <SafeWidgetMessageContent content={message.content} />
+            )}
             {message.meta && (
               <div
                 className={
@@ -1637,6 +1666,9 @@ function PreviewWidget({
                     setHistoryOpen(false);
                     void loadLiveConversation(session.conversation_id, true);
                   }}
+                  data-conversation-id={session.conversation_id}
+                  aria-label={`${session.read_only ? "Preview archive" : "Live Test"} ${session.conversation_id}`}
+                  title={session.conversation_id}
                   className={
                     session.conversation_id === testConversationId
                       ? "mb-1 block w-full rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-xs"
@@ -1644,7 +1676,7 @@ function PreviewWidget({
                   }
                 >
                   <div className="font-medium">
-                    {session.read_only ? "Preview archive" : "Live Test"} {history.length - index} · {session.message_count} messages{session.read_only ? " · Read-only" : ""}
+                    {session.read_only ? "Preview archive" : "Live Test"} · {session.conversation_id.slice(0, 8)} · {session.message_count} messages{session.read_only ? " · Read-only" : ""}
                   </div>
                   <div className="mt-1 truncate text-[10px] text-slate-500">
                     {session.latest_preview}

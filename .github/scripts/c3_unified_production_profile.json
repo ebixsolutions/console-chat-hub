@@ -1215,5 +1215,10 @@
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "7f66b4d924e57b8f857ff4e859d081330ea2a48a651e32743f82c8024635bba8",
     "supabase/functions/_shared/conversation-long-memory.ts": "336e753a000f7db433305edf6b297b4353d2d5e8e5f1578ae27dd4b02d4718c7"
   },
-  "task1_cross_topic_deployment_authorized": false
+  "task1_cross_topic_deployment_authorized": false,
+  "authorized_task1_widget_ux_scope_sha256": {
+    "src/routes/_authenticated/console.widget-preview.tsx": "b4f88846019369562b6017da0d51ab9cda51a81ba180922bed9feae5e7d596e0",
+    "tests/console-navigation/widget-input-dom.test.mjs": "79c6a617e3139743085df778d90e19e9ed35ec1ad5b86338d2a25c4a3a74785f"
+  },
+  "task1_widget_ux_publish_authorized": false
 }

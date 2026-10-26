@@ -54,12 +54,12 @@ function reset(){
  document.body.innerHTML='';window.localStorage.clear();intervals=new Map();calls=[];network=0;
  globalThis.setInterval=fn=>{const id={};intervals.set(id,fn);return id;};globalThis.clearInterval=id=>intervals.delete(id);
  Object.assign(f,{actor:{id:'actor'},ready:true,wrongTenant:false,status:'open',human:false,readOnly:false});
- f.readinessResponse=null;f.historyResponse=null;
+ f.readinessResponse=null;f.historyResponse=null;f.loadMessages=null;
  f.invoke=async(name,{body})=>{calls.push(body);assert.equal(name,'widget-live-ai-test');
   if(body.action==='readiness' && f.readinessResponse)return f.readinessResponse;
   if(body.action==='history' && f.historyResponse)return f.historyResponse;
   if(body.action==='history'||body.action==='readiness')return {error:null,data:{success:true,admission_action:"readiness",runtime_contract:"c3-widget-control-v2",actor_id:"actor",isolation_ready:f.ready,execution_ready:false,remote_ready:false,company_id:f.wrongTenant?'foreign':company,channel_id:channel,history:[]}};
-  if(body.action==='load')return {error:null,data:{success:true,conversation_id:body.test_conversation_id,conversation_status:f.status,human_control:f.human,read_only:f.readOnly,messages:[]}};
+  if(body.action==='load')return {error:null,data:{success:true,conversation_id:body.test_conversation_id,conversation_status:f.status,human_control:f.human,read_only:f.readOnly,messages:f.loadMessages??[]}};
   return {error:new Error('Unexpected dispatch trapped by local fixture'),data:null};
  };
 }
@@ -253,4 +253,45 @@ test('a lazy history timeout leaves independently verified Send authority and th
  f.invoke=(name,args)=>args.body.action==='history'?(calls.push(args.body),Promise.reject(new DOMException('History timed out','TimeoutError'))):invoke(name,args);
  const r=await mount(t);await edit(r,'Keep this draft while loading history');await click(r,button(r,'Conversation History'));
  assert.match(r.host.textContent,/History could not be loaded/);assert.match(r.host.textContent,/scopeReady=true · runtimeReady=true/);assert.equal(field(r).value,'Keep this draft while loading history');assert.equal(button(r,'Send').disabled,false);noDispatch();
+});
+
+test('real Widget safely formats assistant Markdown without HTML execution or changing Visitor text', async t=>{
+ reset();window.localStorage.setItem(key,conversation);
+ f.loadMessages=[
+  {id:'visitor-raw',role:'visitor',content:'I typed **literal** and <script>alert(1)</script>'},
+  {id:'assistant-rich',role:'assistant',content:'Summary:\n\n*   **SSD** comes first\n*   **RAM** is optional\nLiteral <img src=x onerror=alert(1)> stays plain text'}
+ ];
+ const r=await mount(t);
+ const raw=r.host.querySelector('[data-message-id="visitor-raw"]');
+ const rich=r.host.querySelector('[data-message-id="assistant-rich"]');
+ assert(raw&&rich,'both messages must render');
+ assert.match(raw.textContent,/\*\*literal\*\*/,'visitor content is unformatted');
+ assert.equal(rich.querySelectorAll('strong').length,2,'assistant bold runs are semantic strong nodes');
+ assert.equal(rich.querySelectorAll('span[aria-hidden="true"]').length,2,'bullet markers rendered');
+ assert.doesNotMatch(rich.textContent,/\*\*SSD\*\*|\*\s+\*\*RAM\*\*/,'no raw Markdown markers');
+ assert.match(rich.textContent,/<img src=x onerror=alert\(1\)>/,'untrusted HTML visible as literal text');
+ assert.equal(r.host.querySelectorAll('script,img').length,0,'no HTML injection');
+ noDispatch();
+});
+
+test('history uses immutable ticket suffix instead of unstable list ordinal and does not refetch on close',async t=>{
+ reset();
+ const first='11111111-1111-4111-8111-111111111111',second='22222222-2222-4222-8222-222222222222';
+ const item=id=>({conversation_id:id,message_count:2,latest_preview:'Independent customer question',read_only:false});
+ const response=history=>({error:null,data:{success:true,admission_action:'history',runtime_contract:'c3-widget-control-v2',actor_id:'actor',isolation_ready:true,execution_ready:false,remote_ready:false,company_id:company,channel_id:channel,history}});
+ f.historyResponse=response([item(first),item(second)]);
+ const r=await mount(t);
+ await click(r,button(r,'Conversation History'));
+ let list=[...r.host.querySelectorAll('button[data-conversation-id]')];
+ assert.deepEqual(list.map(b=>b.getAttribute('data-conversation-id')),[first,second]);
+ assert(list[0].textContent.includes('Live Test · 11111111')&&list[1].textContent.includes('Live Test · 22222222'));
+ assert.equal(list[0].getAttribute('title'),first);
+ await click(r,button(r,'Conversation History'));
+ assert.equal(calls.filter(x=>x.action==='history').length,1,'closing history does not repeat expensive backend request');
+ f.historyResponse=response([item(second),item(first)]);
+ await click(r,button(r,'Conversation History'));
+ list=[...r.host.querySelectorAll('button[data-conversation-id]')];
+ assert.deepEqual(list.map(b=>b.getAttribute('data-conversation-id')),[second,first]);
+ assert(list[0].textContent.includes('Live Test · 22222222')&&list[1].textContent.includes('Live Test · 11111111'),'labels stable after reorder');
+ noDispatch();
 });
