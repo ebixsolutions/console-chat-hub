@@ -76,6 +76,8 @@ export interface LlmCall {
   system: string;
   user: string;
   maxTokens: number;
+  /** Downward-only optional retry limit; 1 means no second provider attempt. */
+  maxProviderAttempts?: 1;
   /** Correlation id shared by every call in one logical operation. */
   operationId: string;
   /** Written to upstream_call_log so spend is attributable to a tenant. */
@@ -1007,7 +1009,8 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
   let providerDiagnostic: Record<string, unknown> | undefined;
   let invalidOutputReason: "response_json" | "response_schema" | "empty" | "truncated" | undefined;
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  const allowedAttempts = call.maxProviderAttempts === 1 ? 1 : MAX_ATTEMPTS;
+  for (let attempt = 1; attempt <= allowedAttempts; attempt++) {
     if (call.signal?.aborted) {
       lastCode = "LLM_TIMEOUT";
       break;
@@ -1046,7 +1049,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           code: lastCode,
           ms: Date.now() - attemptStart,
         });
-        if (!call.signal?.aborted && attempt < MAX_ATTEMPTS) {
+        if (!call.signal?.aborted && attempt < allowedAttempts) {
           await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
           continue;
         }
@@ -1064,7 +1067,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           attempt,
           status: res.status,
         });
-        if (!call.signal?.aborted && attempt < MAX_ATTEMPTS) {
+        if (!call.signal?.aborted && attempt < allowedAttempts) {
           await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
           continue;
         }

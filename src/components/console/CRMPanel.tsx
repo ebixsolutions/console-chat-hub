@@ -300,6 +300,7 @@ export function CRMPanel({
   const [kbConnState, setKbConnState] = useState<KBConnState>("idle");
   const [kbError, setKbError] = useState("");
   const [kbQuery, setKbQuery] = useState("");
+  const [boundedKbSearch, setBoundedKbSearch] = useState(false);
   const kbReqIdRef = useRef(0);
   const kbPending=useRef(false);
   const policyPending=useRef(false);
@@ -312,12 +313,12 @@ export function CRMPanel({
   const canAccessKb = currentRole === "admin" || currentRole === "supervisor";
   const custCtx = useCustomerContext(conv?.visitor_session_id ?? null);
   const latestInputs = useRef({});
-  latestInputs.current = {scope:[conv?.id,conv?.status,currentRole,toolScopeKey],kbQuery,boundedContext,contextRevisionKey,draftText};
+  latestInputs.current = {scope:[conv?.id,conv?.status,currentRole,toolScopeKey],kbQuery,boundedKbSearch,boundedContext,contextRevisionKey,draftText};
   const kbSnapshot = useRef<{key:string;mode:"manual"|"auto_context";draft:string;contextKey:string;contextual:boolean}|null>(null);
   const policySnapshot = useRef<{key:string;mode:"conv"|"draft"}|null>(null);
   const kbKey = (mode:"manual"|"auto_context") => {
-    const v=latestInputs.current as {scope:unknown[];kbQuery:string;boundedContext:string;contextRevisionKey:string};
-    return JSON.stringify([v.scope,mode,mode==="manual"?v.kbQuery.trim().slice(0,500):[v.boundedContext,v.contextRevisionKey]]);
+    const v=latestInputs.current as {scope:unknown[];kbQuery:string;boundedKbSearch:boolean;boundedContext:string;contextRevisionKey:string};
+    return JSON.stringify([v.scope,mode,v.boundedKbSearch,mode==="manual"?v.kbQuery.trim().slice(0,500):[v.boundedContext,v.contextRevisionKey]]);
   };
   const policyKey = (mode:"conv"|"draft") => {
     const v=latestInputs.current as {scope:unknown[];boundedContext:string;contextRevisionKey:string;draftText:string};
@@ -349,7 +350,7 @@ export function CRMPanel({
       try {
         const { data, error } = await supabase.functions.invoke("kb-search-proxy", {
           timeout: KB_PROXY_CLIENT_TIMEOUT_MS,
-          body: { query: query.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id, query_mode: queryMode },
+          body: { query: query.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id, query_mode: queryMode, bounded_single_pass:boundedKbSearch },
         });
         if (!valid()) return;
         const failure = await knowledgeFailureState(data,error);
@@ -596,6 +597,11 @@ export function CRMPanel({
                   if (q) void runKbSearch(q, 0, kbQuery.trim() ? "manual" : "auto_context");
                 }} style={btnSm}>↻</button>
               </div>
+              <label className="mb-2 flex items-center gap-2 text-[11px]">
+                <input type="checkbox" checked={boundedKbSearch} disabled={kbConnState === "loading"}
+                  onChange={e => setBoundedKbSearch(e.target.checked)} aria-label="Single verified KB lookup" />
+                {lang === "zh" ? "單次有據檢索（不擴展查詢，證據不足不顯示結果）" : "Single verified KB lookup (no query expansions; insufficient evidence is not a match)"}
+              </label>
               {kbConnState === "loading" && <div style={{ textAlign: "center", color: "#888", padding: 16 }}>{rc("kbLoading")}</div>}
               {kbError && <div style={{ color: "#ef4444", padding: "6px 0" }}>{kbError}</div>}
               {kbConnState === "empty" && !kbError && <div style={{ padding: 20, textAlign: "center" }}>{rc("kbEmpty")}</div>}

@@ -312,6 +312,7 @@ async function rerankForDisplay(params: {
   scope: KBResolvedScope;
   conversationId: string | null;
   fullEvidence: string;
+  deterministicOnly?: boolean;
   signal?: AbortSignal;
 }): Promise<{ results: Array<Record<string, unknown>>; method: string; confidence: number | null; failure?:ExecutionFailure }> {
   const { currentRequest, retrievalQuery, citations, scope, conversationId } = params;
@@ -349,6 +350,8 @@ async function rerankForDisplay(params: {
     };
   }
 
+  // No model attempt is started if direct source/subject evidence is too weak.
+  if (params.deterministicOnly) return {results:[],method:"bounded_relevance_not_verified",confidence:null};
   const llm = await callModel({
     purpose: "assist",
     signal: params.signal,
@@ -401,6 +404,7 @@ async function rerankForDisplay(params: {
 }
 
 async function rankDocumentCandidates(params: {
+  deterministicOnly?: boolean;
   currentRequest: string;
   retrievalQuery: string;
   documents: KBDocumentCandidate[];
@@ -436,6 +440,7 @@ async function rankDocumentCandidates(params: {
       retrievalQuery: params.retrievalQuery,
       citations: citations as unknown as Array<Record<string, unknown>>,
       fullEvidence: selected.evidence.map(e => e.content).join("\n\n"),
+      deterministicOnly: params.deterministicOnly,
       signal: params.signal,
       scope: params.scope,
       conversationId: params.conversationId,
@@ -518,6 +523,9 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => ({}));
+    if(body?.bounded_single_pass !== undefined && typeof body.bounded_single_pass !== "boolean")
+      return jsonResponse({error:"invalid_request",detail:"bounded_single_pass must be boolean"},400,req);
+    const boundedSinglePass = body?.bounded_single_pass === true;
     for (const forbidden of ["company_id", "industry", "language", "tenant_id", "workspace_id"]) {
       if (body?.[forbidden] !== undefined) {
         return jsonResponse({
@@ -614,7 +622,7 @@ Deno.serve(async (req) => {
     }
 
     budget.check();
-    const expansions = await diagnostic.run("expansion", () => deriveRetrievalExpansions({
+    const expansions = boundedSinglePass ? [] : await diagnostic.run("expansion", () => deriveRetrievalExpansions({
       signal:budget.signal,
       currentRequest: derived.currentRequest,
       retrievalQuery: derived.query,
@@ -643,6 +651,7 @@ Deno.serve(async (req) => {
       documents: mergedDocuments,
       scope,
       conversationId,
+      deterministicOnly: boundedSinglePass,
     }));
     const winner = ranked.winner;
     const failed = ranked.evaluated.find(r => r.failure);
@@ -685,6 +694,7 @@ Deno.serve(async (req) => {
         accepted_result_count: winner?.results.length ?? 0,
         candidate_document_count: mergedDocuments.length,
         retrieval_query_count: 1 + expansions.length,
+        bounded_single_pass: boundedSinglePass,
         expanded_retrieval_used: expansions.length > 0,
         evaluated_document_count: ranked.evaluated.length,
         accepted_document_count: ranked.evaluated.filter((r) => r.results.length > 0).length,

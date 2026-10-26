@@ -634,6 +634,7 @@ export function buildCanonicalConversationMemory(args: {
   request_decision?: CustomerRequestDecision;
   customer_fact_delta?: ConversationMemoryFact[];
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
+  source_factual_turn?: boolean;
   previous?: CanonicalConversationMemory | null;
   conversation_id: string;
   company_id: string;
@@ -683,7 +684,16 @@ export function buildCanonicalConversationMemory(args: {
       args.request_decision.general_request
       ? businessMessageText(args.request_decision.latest_requirements).slice(0,1600)
       : null;
-  const businessGoal = sourceBoundGuidanceGoal || genericGoal || entityGoal || requirementGoal || (args.request_decision?.continuation ? clean(args.request_decision.latest_requirements,1600) : null) || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
+  // Trusted current ASK_FACT takes precedence over a historical Commerce topic,
+  // but never creates a product, quotation, entitlement or KB authority.
+  const currentFactualRow = args.source_factual_turn
+    ? args.newest_first.find(row => row.id === args.source_message_id && CUSTOMER_ROLES.has(String(row.role ?? "")))
+    : null;
+  const factualText = currentFactualRow && !classifySocialTurn(clean(currentFactualRow.content,1600)) &&
+      !classifyHandoffIntent(clean(currentFactualRow.content,1600)).explicit_request &&
+      !isCurrentRequirementsRecap(clean(currentFactualRow.content,1600))
+    ? businessMessageText(currentFactualRow.content).slice(0,1600) : null;
+  const businessGoal = sourceBoundGuidanceGoal || factualText || genericGoal || entityGoal || requirementGoal || (args.request_decision?.continuation ? clean(args.request_decision.latest_requirements,1600) : null) || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
   const runtimeRegions = [
     ...(runtime.current_requirements.current_market
       ? [{ region: runtime.current_requirements.current_market, temporal_scope: "current" as const }]
@@ -823,11 +833,11 @@ export function buildCanonicalConversationMemory(args: {
     open_questions: open,
     pending_actions: uniqueStrings([...commerce.pending_actions,...lifecycle.filter(item=>item.status === "pending" && item.resolution?.includes("professional")).map(item=>item.text)],MAX_ACTIONS),
     prior_topics: uniqueStrings([...runtime.prior_topics.slice().reverse(), ...(prior?.prior_topics ?? [])], MAX_TOPICS).reverse(),
-    current_topic: !businessMessageText(args.newest_first.find(row=>row.id===args.source_message_id)?.content)
+    current_topic: factualText || (!businessMessageText(args.newest_first.find(row=>row.id===args.source_message_id)?.content)
       ? businessMessageText(prior?.current_topic) || businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || null
       : sourceBoundGuidanceGoal
         ? businessMessageText(runtime.current_topic) || null
-        : businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || businessMessageText(prior?.current_topic) || null,
+        : businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || businessMessageText(prior?.current_topic) || null),
     grounded_reference_lineage: lineage(args.newest_first).length ? lineage(args.newest_first) : (prior?.grounded_reference_lineage ?? []).slice(0, MAX_LINEAGE),
     handoff_relevant_state: {
       current_goal: businessGoal,
@@ -954,6 +964,7 @@ export function composeBoundedGenerationEnvelope(args: {
 }
 
 export async function refreshConversationLongMemory(client: LongMemoryDbClient, args: {
+  source_factual_turn?: boolean;
   request_decision?: CustomerRequestDecision;
   customer_fact_delta?: ConversationMemoryFact[];
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;

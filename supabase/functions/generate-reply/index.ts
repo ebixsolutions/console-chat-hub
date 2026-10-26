@@ -4735,6 +4735,7 @@ async function orchestrationGenerateReply(
               : Number(commerceRow.revision),
             commerce_state: commerceState,
             request_decision: _customerRequestDecision,
+            source_factual_turn: _a3SemanticFrame?.operation === "ASK_FACT" && (_a3SemanticFrame?.requested_facts.length ?? 0) > 0,
             customer_fact_delta: (_a3SemanticFrame?.customer_facts ?? []).map(f=>({...f,authority:"customer" as const,source_message_id:_h1SourceMessageId})),
             pending_lifecycle_reply: _a3Commerce?.trusted_lifecycle_commit ?? null,
             newest_first: memoryHistory,

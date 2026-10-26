@@ -406,6 +406,7 @@
     "supabase/functions/_shared/complete-scoped-read.ts",
     "supabase/functions/_shared/contextual-customer-update.test.ts",
     "supabase/functions/_shared/conversation-intelligence.ts",
+    "supabase/functions/_shared/conversation-long-memory.test.ts",
     "supabase/functions/_shared/conversation-long-memory.ts",
     "supabase/functions/_shared/conversation-recall.test.ts",
     "supabase/functions/_shared/conversation-recall.ts",
@@ -1220,5 +1221,17 @@
     "src/routes/_authenticated/console.widget-preview.tsx": "b4f88846019369562b6017da0d51ab9cda51a81ba180922bed9feae5e7d596e0",
     "tests/console-navigation/widget-input-dom.test.mjs": "79c6a617e3139743085df778d90e19e9ed35ec1ad5b86338d2a25c4a3a74785f"
   },
-  "task1_widget_ux_publish_authorized": false
+  "task1_widget_ux_publish_authorized": false,
+  "authorized_task1_c4_recovery_sha256": {
+    "supabase/functions/_shared/conversation-long-memory.ts": "243983de4e04fc421bb1842dc709db53d50e0fd57c7f949609bf4d43dedc765f",
+    "supabase/functions/generate-reply/index.ts": "74756cb6dc706738fab59e1471b0c132230c9d28126333e0e8618edcf5fa5875",
+    "supabase/functions/kb-search-proxy/index.ts": "9570b9d785e12729abae85a89901cce5d0611298c74328f46e9251de1eede88e",
+    "supabase/functions/_shared/llm-router.ts": "f4e2c6c997ce3e82205ea08088d680af47af66901876e25c176271597fd6f0e1",
+    "supabase/functions/agent-assist/index.ts": "23751a4262845cbca77a69687bd3c1cf4b9f1d648b43acac3acc3dafa7bb972c",
+    "src/components/console/CRMPanel.tsx": "647114e5768d3341940a7efddc6dcf1390d1ec7d410e4fc6a7d19feec6c3f656",
+    "src/components/console/AgentToolPanel.tsx": "7242909d2a992b5401b3e1e004e6aec90d994ea65984612d93c7956b5b1389c2",
+    "supabase/functions/_shared/conversation-long-memory.test.ts": "500637694b3a42acf6d5a33ce017a05ac3e60bdac46f7c978c10367370625913",
+    "tests/task1-director/source-chain.test.mjs": "da75a86418fb76875c7184329fe4dac1901bacec4a19128705b873e867a66d2d"
+  },
+  "task1_c4_recovery_deployment_authorized": false
 }

@@ -76,6 +76,7 @@ export function AgentToolPanel({
   const [ci, setCi] = useState("");
   const [tr, setTr] = useState<{ type: string; data: Record<string, unknown> } | null>(null);
   const [tl, setTl] = useState(false);
+  const [boundedToolMode, setBoundedToolMode] = useState(false);
   const [te, setTe] = useState("");
   const [handoffContext, setHandoffContext] = useState<Record<string, any> | null>(null);
   const [handoffLoading, setHandoffLoading] = useState(false);
@@ -93,6 +94,7 @@ export function AgentToolPanel({
     handoffReqIdRef.current += 1;
     handoffPendingRef.current = false;
     setCs("custom");
+    setBoundedToolMode(false);
     setCi("");
     setTr(null);
     setTl(false);
@@ -151,10 +153,10 @@ export function AgentToolPanel({
   const ac = gc();
   const hc = ac.length > 0 && ac.length <= AGENT_ASSIST_MAX_CONTENT;
   const tooLong = ac.length > AGENT_ASSIST_MAX_CONTENT;
-  const latestInputs = useRef({scope:[] as unknown[],language:lang,mode:cs,content:ac,selectedId:selectedMessage?.id,revision:contextRevisionKey,draft:draftText});
-  latestInputs.current={scope:[conversationId,convStatus,toolScopeKey],language:lang,mode:cs,content:ac,selectedId:cs==="selected"?selectedMessage?.id:undefined,revision:contextRevisionKey,draft:draftText};
+  const latestInputs = useRef({scope:[] as unknown[],language:lang,mode:cs,content:ac,selectedId:selectedMessage?.id,revision:contextRevisionKey,draft:draftText,boundedToolMode});
+  latestInputs.current={scope:[conversationId,convStatus,toolScopeKey],language:lang,mode:cs,content:ac,selectedId:cs==="selected"?selectedMessage?.id:undefined,revision:contextRevisionKey,draft:draftText,boundedToolMode};
   const resultSnapshot=useRef<{key:string;type:string;draft:string}|null>(null);
-  const keyFor=(type:string,v=latestInputs.current)=>{return JSON.stringify([v.scope,type,type==="translate"?v.language:null,v.mode,v.content,v.selectedId,["suggest_reply","knowledge_helper","check_policy"].includes(type)?v.revision:null]);};
+  const keyFor=(type:string,v=latestInputs.current)=>{return JSON.stringify([v.scope,type,type==="translate"?v.language:null,v.mode,v.content,v.selectedId,["suggest_reply","knowledge_helper","check_policy"].includes(type)?v.revision:null,["suggest_reply","knowledge_helper","check_policy"].includes(type)?v.boundedToolMode:null]);};
   const renderedInputs=latestInputs.current;
   const displayedResultSnapshot=resultSnapshot.current;
   const validResult=()=>!!resultSnapshot.current && resultSnapshot.current.key===keyFor(resultSnapshot.current.type);
@@ -178,7 +180,7 @@ export function AgentToolPanel({
     setTr(null);
     try {
       const { data, error } = await supabase.functions.invoke("agent-assist", {
-        body: { tool_type: tt, conversation_id: conversationId, content: ac, ...((["suggest_reply", "knowledge_helper", "check_policy"].includes(tt)) ? { context_mode: cs === "custom" ? "manual" : cs === "draft" ? "draft" : "conversation" } : {}), ...extra },
+        body: { tool_type: tt, conversation_id: conversationId, content: ac, ...((["suggest_reply", "knowledge_helper", "check_policy"].includes(tt)) ? { context_mode: cs === "custom" ? "manual" : cs === "draft" ? "draft" : "conversation", bounded_mode:boundedToolMode } : {}), ...extra },
       });
       if (!valid()) return;
       if (error || !data?.success) {
@@ -243,6 +245,11 @@ export function AgentToolPanel({
       >
         {tc("panelTitle")}
       </div>
+      <label className="flex items-center gap-2 px-3 py-2 text-[11px]">
+        <input type="checkbox" checked={boundedToolMode} disabled={tl}
+          onChange={e => setBoundedToolMode(e.target.checked)} aria-label="One provider attempt per C4 tool call" />
+        {lang === "zh" ? "每個模型呼叫只嘗試一次（不能視為遠端帳單封頂）" : "One provider attempt per model call (not a remote billing hard cap)"}
+      </label>
       {isResolved ? (
         <div style={{ padding: "20px 10px", textAlign: "center", color: "#9ca3af", fontSize: 11.5 }}>
           {tc("resolved")}

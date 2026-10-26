@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {readFileSync as task1SourceRead} from 'node:fs';
 import assert from 'node:assert/strict';
 import {resolveCustomerRequestDecision} from '../../supabase/functions/_shared/commerce-state-authority.ts';
 import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
@@ -125,4 +126,21 @@ test('no merchant price, stock or warranty is created by source-bound customer u
   assert.equal(row.customer_constraints.customer_reported_facts.merchant_price,undefined);
   assert.equal(row.quotes.length,0);
   assert.equal(row.conversion.order_status,'none');
+});
+
+test("Task 1 bounded C4 caller and provider retry source contracts",()=>{
+ const kb=task1SourceRead("supabase/functions/kb-search-proxy/index.ts","utf8");
+ const assist=task1SourceRead("supabase/functions/agent-assist/index.ts","utf8");
+ const router=task1SourceRead("supabase/functions/_shared/llm-router.ts","utf8");
+ const crm=task1SourceRead("src/components/console/CRMPanel.tsx","utf8");
+ const panel=task1SourceRead("src/components/console/AgentToolPanel.tsx","utf8");
+ assert.match(kb,/const boundedSinglePass = body\?\.bounded_single_pass === true/);
+ assert.match(kb,/const expansions = boundedSinglePass \? \[\] : await diagnostic\.run/);
+ assert.match(kb,/deterministicOnly: boundedSinglePass/);
+ assert.match(kb,/bounded_relevance_not_verified/);
+ assert.match(assist,/maxProviderAttempts:boundedModelAttempts/);
+ assert.match(router,/attempt <= allowedAttempts/);
+ assert.doesNotMatch(router,/attempt < MAX_ATTEMPTS/);
+ assert.match(crm,/bounded_single_pass:boundedKbSearch/);
+ assert.match(panel,/bounded_mode:boundedToolMode/);
 });
