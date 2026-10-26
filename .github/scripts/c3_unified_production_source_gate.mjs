@@ -108,7 +108,7 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
  for(const [p,s] of Object.entries(TASK1_CURRENT_QUOTE_RECOVERY))must(fs.existsSync(path.join(root,p))&&sha(fs.readFileSync(path.join(root,p)))===s,'task1_current_quote_hash_drift:'+p);
  must(profile.task1_cross_topic_deployment_authorized===false,'task1_cross_topic_deployment_not_authorized');
  must(JSON.stringify(profile.authorized_task1_cross_topic_sha256)===JSON.stringify(TASK1_CROSS_TOPIC_REPAIR),'task1_cross_topic_scope_drift');
- for(const [f,h] of Object.entries(TASK1_CROSS_TOPIC_REPAIR))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task1_cross_topic_hash_drift:'+f);
+ for(const [f,h] of Object.entries(TASK1_CROSS_TOPIC_REPAIR))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===(TASK1_CURRENT_QUOTE_RECOVERY[f]??h),'task1_cross_topic_hash_drift:'+f);
  must(profile.task1_director_repair_deployment_authorized===false,'task1_deployment_not_authorized');
  must(JSON.stringify(profile.authorized_task1_director_repair_sha256)===JSON.stringify(TASK1_DIRECTOR_REPAIR),'task1_director_scope_drift');
  for(const [f,h] of Object.entries(TASK1_DIRECTOR_REPAIR))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===(TASK1_CURRENT_QUOTE_RECOVERY[f]??TASK1_CROSS_TOPIC_REPAIR[f]??h),'task1_director_hash_drift:'+f);
