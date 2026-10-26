@@ -329,6 +329,9 @@ Deno.test("Task 1 factual current source outranks old Commerce topic without cha
  equal(current.commerce_state_revision,1,"commerce revision changed");
  const unverified=build({state,rows});
  assert(unverified.current_topic!==current.current_topic,"unverified frame changed current topic");
- const mismatch=build({state,rows:[{...rows[0],id:"not-source"}],sourceFactualTurn:true});
- assert(!(mismatch.current_goal??"").includes("四電一腦"),"unbound source fabricated goal");
+ const unboundRows=[{...rows[0],id:"not-source"}];
+ const baseline=build({state,rows:unboundRows});
+ const mismatch=build({state,rows:unboundRows,sourceFactualTurn:true});
+ equal(mismatch.current_goal,baseline.current_goal,"unbound ASK_FACT changed original goal projection");
+ equal(mismatch.current_topic,baseline.current_topic,"unbound ASK_FACT changed original topic projection");
 });

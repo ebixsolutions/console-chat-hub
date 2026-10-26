@@ -1230,7 +1230,7 @@
     "supabase/functions/agent-assist/index.ts": "23751a4262845cbca77a69687bd3c1cf4b9f1d648b43acac3acc3dafa7bb972c",
     "src/components/console/CRMPanel.tsx": "647114e5768d3341940a7efddc6dcf1390d1ec7d410e4fc6a7d19feec6c3f656",
     "src/components/console/AgentToolPanel.tsx": "7242909d2a992b5401b3e1e004e6aec90d994ea65984612d93c7956b5b1389c2",
-    "supabase/functions/_shared/conversation-long-memory.test.ts": "500637694b3a42acf6d5a33ce017a05ac3e60bdac46f7c978c10367370625913",
+    "supabase/functions/_shared/conversation-long-memory.test.ts": "e43fa0c3c93f15e254effe86a628a616a970036e915c5dac1f1bd1dae0c5b1c6",
     "tests/task1-director/source-chain.test.mjs": "da75a86418fb76875c7184329fe4dac1901bacec4a19128705b873e867a66d2d"
   },
   "task1_c4_recovery_deployment_authorized": false
