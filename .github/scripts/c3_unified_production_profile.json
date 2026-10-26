@@ -1225,13 +1225,15 @@
   "authorized_task1_c4_recovery_sha256": {
     "supabase/functions/_shared/conversation-long-memory.ts": "243983de4e04fc421bb1842dc709db53d50e0fd57c7f949609bf4d43dedc765f",
     "supabase/functions/generate-reply/index.ts": "74756cb6dc706738fab59e1471b0c132230c9d28126333e0e8618edcf5fa5875",
-    "supabase/functions/kb-search-proxy/index.ts": "9570b9d785e12729abae85a89901cce5d0611298c74328f46e9251de1eede88e",
+    "supabase/functions/kb-search-proxy/index.ts": "c29cc12a5c5da33ad3c1b90a318c3882b364ed530439a2e20d4184f69c9e97e4",
     "supabase/functions/_shared/llm-router.ts": "f4e2c6c997ce3e82205ea08088d680af47af66901876e25c176271597fd6f0e1",
     "supabase/functions/agent-assist/index.ts": "23751a4262845cbca77a69687bd3c1cf4b9f1d648b43acac3acc3dafa7bb972c",
     "src/components/console/CRMPanel.tsx": "579fff6f33775ce9d8aa1465c3e88f54dcf0c727e29c07c65cb6151724e40a6e",
     "src/components/console/AgentToolPanel.tsx": "cecaedbf23c708558f9ed6cf50b0d7b2a91a6ac6659a117a22d9f60aac708632",
     "supabase/functions/_shared/conversation-long-memory.test.ts": "db1ef366a2b60fca288d27f5f7af97de1bfe6b47b3959319fdd7774a695a1430",
-    "tests/task1-director/source-chain.test.mjs": "da75a86418fb76875c7184329fe4dac1901bacec4a19128705b873e867a66d2d"
+    "tests/task1-director/source-chain.test.mjs": "8784e2596ab9d433126ccdaf13ca865ca2cf3bc62029fc0c29981d00653ed215",
+    "src/routes/_authenticated/console.conversations.index.tsx": "d964ac45b3cf44713045c3af3459e1d71690c56e501ef7cdbe58acb1df56d913",
+    "tests/console-navigation/inbox-history-search.test.mjs": "36245c1ff74ea8ee7df8482892c1a75ee1eafc5cf6db958a2b558a036f8f3efd"
   },
   "task1_c4_recovery_deployment_authorized": false
 }

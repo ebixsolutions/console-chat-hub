@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {transformSync as task1Transpile} from 'esbuild';
 import {readFileSync as task1SourceRead} from 'node:fs';
 import assert from 'node:assert/strict';
 import {resolveCustomerRequestDecision} from '../../supabase/functions/_shared/commerce-state-authority.ts';
@@ -143,4 +144,21 @@ test("Task 1 bounded C4 caller and provider retry source contracts",()=>{
  assert.doesNotMatch(router,/attempt < MAX_ATTEMPTS/);
  assert.match(crm,/bounded_single_pass:boundedKbSearch/);
  assert.match(panel,/bounded_mode:boundedToolMode/);
+});
+
+test('Task1 C4: original bounded full-content relevance accepts supported Chinese enumeration, never unrelated refund facts', async () => {
+ const source = task1SourceRead('supabase/functions/kb-search-proxy/index.ts','utf8');
+ const begin = source.indexOf('function normalizeComparable(');
+ const end = source.indexOf('type MembershipRow',begin);
+ assert(begin >= 0 && end > begin,'actual KB runtime scorer must be found');
+ const transpiled = task1Transpile(source.slice(begin,end)+'\nexport {lexicalSupport};',{loader:'ts',format:'esm'}).code;
+ const {lexicalSupport} = await import('data:text/javascript;base64,'+Buffer.from(transpiled).toString('base64'));
+ const evidence='「四電一腦」生產者責任計劃 受管制電器之免費除舊服務須知。適用貨品：空調機、洗衣機、雪櫃、電視機、電腦、列印機、掃描器及顯示器。';
+ assert(lexicalSupport('「四電一腦」包括哪些電器及電腦類別？',evidence)>=0.6,'genuine full-content category match');
+ for(const unsupported of [
+   '「四電一腦」包括哪些退款安排？',
+   '「四電一腦」包括哪些退款及取消政策？',
+   '「四電一腦」包括哪些貨物保養年期？',
+ ]) assert(lexicalSupport(unsupported,evidence)<0.6,'unrelated merchant claims remain excluded: '+unsupported);
+ assert.equal(lexicalSupport('「其他計劃」包括哪些退款安排？',evidence)<0.6,true);
 });

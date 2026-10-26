@@ -95,12 +95,26 @@ function lexicalSupport(query: string, evidence: string): number {
   const e = normalizeComparable(evidence);
   if (!q || !e) return 0;
   if (e.includes(q)) return 1;
-  const qTokens = lexicalTokens(q);
-  if (qTokens.size === 0) return 0;
-  const eTokens = lexicalTokens(e);
-  let matched = 0;
-  for (const token of qTokens) if (eTokens.has(token)) matched++;
-  return matched / qTokens.size;
+  const overlap = (value: string): number => {
+    const tokens = lexicalTokens(value);
+    if (tokens.size === 0) return 0;
+    const evidenceTokens = lexicalTokens(e);
+    let matched = 0;
+    for (const token of tokens) if (evidenceTokens.has(token)) matched++;
+    return matched / tokens.size;
+  };
+  const raw = overlap(q);
+  // Interrogatives are not merchant facts. For a bounded, single-call Chinese
+  // enumeration, exclude only question-function words before judging the SAME
+  // authorized full-content evidence. Do not lower the 0.60/0.75 floors or
+  // relax tenant, publication, subject, chunk, and canonical source checks.
+  if (!/(?:包括|包含|涵蓋|涵盖)(?:哪些|哪啲|邊啲|哪幾|什麼|甚麼|什么)|(?:列出|列舉|列举).*(?:類別|类别|種類|种类)/u.test(q))
+    return raw;
+  const essential = q.replace(
+    /(?:包括|包含|涵蓋|涵盖)(?:哪些|哪啲|邊啲|哪幾(?:類)?|什麼|甚麼|什么)?|(?:哪些|哪啲|邊啲|類別|类别|種類|种类)/gu,
+    " ",
+  );
+  return Math.max(raw, overlap(essential));
 }
 
 type MembershipRow = { company_id: string; role: string };

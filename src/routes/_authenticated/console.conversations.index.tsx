@@ -378,61 +378,98 @@ function SinglePageInbox() {
   async function loadConversations() {
     const loadId = ++conversationLoadRef.current;
     const stale = () => loadId !== conversationLoadRef.current;
-    const { data: convs, error: cErr } = await readInboxConversations((from, to) => supabase
+    // Keep the existing authenticated client and RLS as the sole ticket authority.
+    // Optional relational metadata and previews must not hide an authorized Inbox.
+    let { data: convs, error: cErr } = await readInboxConversations((from, to) => supabase
       .from("conversations")
       .select(
-        `id,status,priority,updated_at,created_at,assigned_agent_id,channel_config:channel_config_id(name),visitor_session:visitor_session_id(id,visitor_metadata)`,
+        "id,status,priority,updated_at,created_at,assigned_agent_id,channel_config:channel_config_id(name),visitor_session:visitor_session_id(id,visitor_metadata)",
         { count: "exact" },
       )
       .order("updated_at", { ascending: false })
       .order("id", { ascending: false })
       .range(from, to));
     if (stale()) return;
+    let relationUnavailable = false;
     if (cErr) {
-      setError(cErr.message);
-      return;
-    }
-    const list = convs ?? [];
-    const agentIds = [...new Set(list.filter((c) => c.assigned_agent_id).map((c) => c.assigned_agent_id as string))];
-    const agentMap: Record<string, string> = {};
-    if (agentIds.length > 0) {
-      const { data: ags, error: agentError } = await supabase.from("agent_profile").select("id,display_name").in("id", agentIds);
-      if (stale()) return;
-      if (agentError) { setError(agentError.message); return; }
-      ags?.forEach((a) => {
-        agentMap[a.id] = a.display_name;
-      });
-    }
-    const previewResult = await readInboxPreviews(list.map(c => c.id), (ids, from, to) => supabase
-        .from("messages")
-        .select("conversation_id,content,created_at,is_recalled")
-        .in("conversation_id", ids)
-        .neq("content", "__THINKING__")
-        .order("created_at", { ascending: false })
+      // A failed optional relationship projection is not an empty ticket result.
+      // Retry ONLY the same RLS-scoped conversations table and scalar columns.
+      const flat = await readInboxConversations((from, to) => supabase
+        .from("conversations")
+        .select("id,status,priority,updated_at,created_at,assigned_agent_id", { count: "exact" })
+        .order("updated_at", { ascending: false })
         .order("id", { ascending: false })
         .range(from, to));
+      if (stale()) return;
+      if (flat.error) { setError(flat.error.message); return; }
+      relationUnavailable = true;
+      convs = (flat.data ?? []).map(c => ({ ...c, channel_config: null, visitor_session: null }));
+    }
+    const list = convs ?? [];
+    const assignedLabel = (c: typeof list[number], agentMap: Record<string, string>): string =>
+      c.assigned_agent_id
+        ? agentMap[c.assigned_agent_id]?.trim() || "Assigned agent (name unavailable)"
+        : c.status === "pending" ||
+            c.status === "unresolved" ||
+            c.status === "human_needed" ||
+            c.status === "escalation_risk"
+          ? "Needs assignment"
+          : c.status === "open" || c.status === "ai_handling"
+            ? "AI Chatbot"
+            : c.status === "resolved"
+              ? "—"
+              : "Unassigned";
+
+    const base = list.map(c => ({
+      ...c,
+      assigned_agent_name: assignedLabel(c, {}),
+      latest_preview: "(preview loading…)",
+    })) as Conv[];
+    // The full counted ticket list can now render independently of later reads.
+    setConversations(base);
+    let warning: string | null = relationUnavailable
+      ? "Ticket details unavailable; showing your authorized tickets without optional names."
+      : null;
+    setError(warning);
+
+    const agentIds = [...new Set(list.filter(c => c.assigned_agent_id).map(c => c.assigned_agent_id as string))];
+    const agentMap: Record<string, string> = {};
+    if (agentIds.length > 0) {
+      const { data: ags, error: agentError } = await supabase.from("agent_profile")
+        .select("id,display_name").in("id", agentIds);
+      if (stale()) return;
+      if (agentError) {
+        warning = "Assigned-agent names unavailable; tickets remain accessible.";
+      } else {
+        ags?.forEach(a => { agentMap[a.id] = a.display_name; });
+      }
+    }
+    const previewResult = await readInboxPreviews(list.map(c => c.id), (ids, from, to) => supabase
+      .from("messages")
+      .select("conversation_id,content,created_at,is_recalled")
+      .in("conversation_id", ids)
+      .neq("content", "__THINKING__")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to));
     if (stale()) return;
-    if (previewResult.error) { setError(previewResult.error.message); return; }
-    const previews = previewResult.data;
-    setConversations(
-      list.map((c) => ({
+    if (previewResult.error) {
+      // Report incomplete previews; never turn the full ticket list into zero.
+      setConversations(base.map(c => ({
         ...c,
-        assigned_agent_name: c.assigned_agent_id
-          ? agentMap[c.assigned_agent_id]?.trim() || "Assigned agent (name unavailable)"
-          : c.status === "pending" ||
-              c.status === "unresolved" ||
-              c.status === "human_needed" ||
-              c.status === "escalation_risk"
-            ? "Needs assignment"
-            : c.status === "open" || c.status === "ai_handling"
-              ? "AI Chatbot"
-              : c.status === "resolved"
-                ? "—"
-                : "Unassigned",
-        latest_preview: previews[c.id] || "(no messages yet)",
-      })) as Conv[],
-    );
-    setError(null);
+        assigned_agent_name: assignedLabel(c, agentMap),
+        latest_preview: "(preview unavailable)",
+      })));
+      setError("Ticket previews unavailable: " + previewResult.error.message + "; ticket list remains accessible.");
+      return;
+    }
+    const previews = previewResult.data;
+    setConversations(list.map(c => ({
+      ...c,
+      assigned_agent_name: assignedLabel(c, agentMap),
+      latest_preview: previews[c.id] || "(no messages yet)",
+    })) as Conv[]);
+    setError(warning);
   }
 
   const loadMessages = useCallback(async (convId: string, showLoading = false, scrollToBottom = false) => {
