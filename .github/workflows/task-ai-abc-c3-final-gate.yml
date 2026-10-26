@@ -2082,7 +2082,8 @@ jobs:
           timeout 180s npm install --prefix "$RUNNER_TEMP/c3-playwright" --no-save --package-lock=false playwright@1.55.0
           test ! -e node_modules/playwright
           ln -s "$RUNNER_TEMP/c3-playwright/node_modules/playwright" node_modules/playwright
-          timeout 300s "$RUNNER_TEMP/c3-playwright/node_modules/.bin/playwright" install chromium --with-deps
+          # Runner image already includes shared libraries; browser launch remains mandatory in the isolated final gate.
+          timeout 300s "$RUNNER_TEMP/c3-playwright/node_modules/.bin/playwright" install chromium
       - name: Execute one mandatory source and isolated runtime final gate
         run: |
           set -euo pipefail
