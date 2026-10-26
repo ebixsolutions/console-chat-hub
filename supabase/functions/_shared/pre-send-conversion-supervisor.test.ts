@@ -1526,6 +1526,8 @@ Deno.test("Task1 B2 preserves historical/current-price verification disclaimers 
     ["現時售價合理而且已確認。", "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT"],
     ["最新價格已確認，其他費用需要重新確認後才作準。", "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT"],
     ["The current price is final, but additional fees need to be confirmed again.", "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT"],
+    ["The current price is competitive, but additional fees need to be confirmed again.", "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT"],
+    ["最新價格很優惠，但其他費用需要重新確認後才作準。", "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT"],
     ["The current price is HKD 5,000, but needs reconfirmation.", "CURRENT_QUOTE_NOT_PROVEN"],
   ];
   for (const [draft, expected] of denied) {
