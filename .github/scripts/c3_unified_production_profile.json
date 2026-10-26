@@ -1212,7 +1212,7 @@
     "supabase/functions/_shared/industry-runtime-adapter.ts": "3c0b2c8b738569de687e2a442fe532b24974760796798c69062ceb5ac0ac9ef3",
     "supabase/functions/_shared/commerce-state-runtime-base.ts": "aa4f3d8fcb77df4c62495e0cf98cf0479db714643743b217728e59ee5737e332",
     "tests/task1-director/hosted-cross-topic-p0.test.mjs": "de77a3d1366b579ae8671a2aa1da824f11b6815af4cec6efe4a592387008f7bb",
-    ".github/workflows/task-ai-abc-c3-final-gate.yml": "c74eb8a90affef297d273fb8b29f5c395e69d51c06de14bc0c72946019f429e2",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "fb594470e858268ea999a0eb05b1bbc738bf80d03ea519df3d38c2f324eef286",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "7f66b4d924e57b8f857ff4e859d081330ea2a48a651e32743f82c8024635bba8",
     "supabase/functions/_shared/conversation-long-memory.ts": "336e753a000f7db433305edf6b297b4353d2d5e8e5f1578ae27dd4b02d4718c7"
   },
