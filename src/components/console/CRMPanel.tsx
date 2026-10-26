@@ -597,11 +597,13 @@ export function CRMPanel({
                   if (q) void runKbSearch(q, 0, kbQuery.trim() ? "manual" : "auto_context");
                 }} style={btnSm}>↻</button>
               </div>
-              <label className="mb-2 flex items-center gap-2 text-[11px]">
-                <input type="checkbox" checked={boundedKbSearch} disabled={kbConnState === "loading"}
-                  onChange={e => setBoundedKbSearch(e.target.checked)} aria-label="Single verified KB lookup" />
+              <button type="button" role="switch" aria-checked={boundedKbSearch}
+                disabled={kbConnState === "loading"} aria-label="Single verified KB lookup"
+                onClick={() => setBoundedKbSearch(value => !value)}
+                className="mb-2 flex items-center gap-2 text-left text-[11px] disabled:opacity-60">
+                <span aria-hidden="true">{boundedKbSearch ? "☑" : "□"}</span>
                 {lang === "zh" ? "單次有據檢索（不擴展查詢，證據不足不顯示結果）" : "Single verified KB lookup (no query expansions; insufficient evidence is not a match)"}
-              </label>
+              </button>
               {kbConnState === "loading" && <div style={{ textAlign: "center", color: "#888", padding: 16 }}>{rc("kbLoading")}</div>}
               {kbError && <div style={{ color: "#ef4444", padding: "6px 0" }}>{kbError}</div>}
               {kbConnState === "empty" && !kbError && <div style={{ padding: 20, textAlign: "center" }}>{rc("kbEmpty")}</div>}

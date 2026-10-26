@@ -245,11 +245,13 @@ export function AgentToolPanel({
       >
         {tc("panelTitle")}
       </div>
-      <label className="flex items-center gap-2 px-3 py-2 text-[11px]">
-        <input type="checkbox" checked={boundedToolMode} disabled={tl}
-          onChange={e => setBoundedToolMode(e.target.checked)} aria-label="One provider attempt per C4 tool call" />
+      <button type="button" role="switch" aria-checked={boundedToolMode}
+        disabled={tl} aria-label="One provider attempt per C4 tool call"
+        onClick={() => setBoundedToolMode(value => !value)}
+        className="flex items-center gap-2 px-3 py-2 text-left text-[11px] disabled:opacity-60">
+        <span aria-hidden="true">{boundedToolMode ? "☑" : "□"}</span>
         {lang === "zh" ? "每個模型呼叫只嘗試一次（不能視為遠端帳單封頂）" : "One provider attempt per model call (not a remote billing hard cap)"}
-      </label>
+      </button>
       {isResolved ? (
         <div style={{ padding: "20px 10px", textAlign: "center", color: "#9ca3af", fontSize: 11.5 }}>
           {tc("resolved")}
