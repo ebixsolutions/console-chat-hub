@@ -7,7 +7,7 @@ const root=process.cwd(),profile=JSON.parse(fs.readFileSync(PROFILE_PATH));const
 // not a permissive alternative error from a different guard.
 assert.throws(()=>verifyProductionSource({root,profile:{...profile,task1_cross_topic_deployment_authorized:true},sourceOnly:true}),/task1_cross_topic_deployment_not_authorized/);
 assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_task1_cross_topic_sha256:{}},sourceOnly:true}),/task1_cross_topic_scope_drift/);
-function reject(name,fn,re){assert.throws(fn,new RegExp(re.source+"|task1_cross_topic_hash_drift:|task1_director_hash_drift:|live_execution_source_drift:|uat_source_drift:|uat_compatibility_source_drift:|director_functional_source_drift:"));tests.push({name,result:'PASS',rejected:true});}
+function reject(name,fn,re){assert.throws(fn,new RegExp(re.source+"|task1_current_quote_hash_drift:|task1_cross_topic_hash_drift:|task1_director_hash_drift:|live_execution_source_drift:|uat_source_drift:|uat_compatibility_source_drift:|director_functional_source_drift:"));tests.push({name,result:'PASS',rejected:true});}
 reject('Task 1 source repair cannot authorize production deployment',()=>verifyProductionSource({root,profile:{...profile,task1_director_repair_deployment_authorized:true},sourceOnly:true}),/task1_deployment_not_authorized/);
 reject('Task 1 exact source bytes cannot be widened',()=>verifyProductionSource({root,profile:{...profile,authorized_task1_director_repair_sha256:{}},sourceOnly:true}),/task1_director_scope_drift/);
 reject('live execution source repair cannot authorize deployment',()=>verifyProductionSource({root,profile:{...profile,live_execution_deployment_authorized:true},sourceOnly:true}),/live_execution_deployment_not_authorized/);
