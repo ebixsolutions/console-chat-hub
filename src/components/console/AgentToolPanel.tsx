@@ -508,9 +508,10 @@ export function AgentToolPanel({
                 {String(visibleResult.data.orientation_summary)}
               </div>
             )}
-            {Array.isArray(visibleResult.data.evidence) && (visibleResult.data.evidence as Array<{ label: string; source_type: string; chunk_type: string; content: string }>).map((e, i) => (
-              <div key={i} style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 5, padding: 6, marginBottom: 4 }}>
+            {Array.isArray(visibleResult.data.evidence) && (visibleResult.data.evidence as Array<{ label: string; source_type: string; chunk_type: string; content: string; document_id?: string | null; chunk_id?: string | null }>).map((e, i) => (
+              <div key={i} data-document-id={e.document_id ?? undefined} data-chunk-id={e.chunk_id ?? undefined} style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 5, padding: 6, marginBottom: 4 }}>
                 <div style={{ fontSize: 9.5, fontWeight: 700, color: "#64748b", marginBottom: 3 }}>{e.label} · {e.source_type} · {e.chunk_type}</div>
+                <div role="status" style={{ fontSize: 9, overflowWrap: "anywhere", color: "#475569", marginBottom: 3 }}>{e.document_id && e.chunk_id ? `Document: ${e.document_id} · Chunk: ${e.chunk_id}` : "Source identifiers unavailable — verify citation lineage before use."}</div>
                 <div style={{ fontSize: 10.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{e.content}</div>
               </div>
             ))}

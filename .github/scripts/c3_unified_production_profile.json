@@ -1229,10 +1229,10 @@
     "supabase/functions/_shared/llm-router.ts": "f4e2c6c997ce3e82205ea08088d680af47af66901876e25c176271597fd6f0e1",
     "supabase/functions/agent-assist/index.ts": "23751a4262845cbca77a69687bd3c1cf4b9f1d648b43acac3acc3dafa7bb972c",
     "src/components/console/CRMPanel.tsx": "579fff6f33775ce9d8aa1465c3e88f54dcf0c727e29c07c65cb6151724e40a6e",
-    "src/components/console/AgentToolPanel.tsx": "cecaedbf23c708558f9ed6cf50b0d7b2a91a6ac6659a117a22d9f60aac708632",
+    "src/components/console/AgentToolPanel.tsx": "c1c4cf3fa5690e4918375b6f388f9812032d9d5ae888e05240c115de08d588da",
     "supabase/functions/_shared/conversation-long-memory.test.ts": "db1ef366a2b60fca288d27f5f7af97de1bfe6b47b3959319fdd7774a695a1430",
-    "tests/task1-director/source-chain.test.mjs": "8784e2596ab9d433126ccdaf13ca865ca2cf3bc62029fc0c29981d00653ed215",
-    "src/routes/_authenticated/console.conversations.index.tsx": "f80ab3bf64accba39c24ab53c2c03af387ac1d55e968d63c06f99d0e91c164b3",
+    "tests/task1-director/source-chain.test.mjs": "784754892e1d4e0b1bc0d8558d477ea41a0e6b0f6a0004d3530397fc32931601",
+    "src/routes/_authenticated/console.conversations.index.tsx": "cb76ece7753a7674993eae54df2ba9b0d96f8bfe194dbaca1dfcb8b5331366c9",
     "tests/console-navigation/inbox-history-search.test.mjs": "8f6b57b5036bd900a4619f95f3b5e5bad972fa84ca38e588b75abdc6c9bb69de"
   },
   "task1_c4_recovery_deployment_authorized": false

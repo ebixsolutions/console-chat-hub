@@ -406,7 +406,7 @@ function SinglePageInbox() {
       convs = (flat.data ?? []).map(c => ({ ...c, channel_config: null, visitor_session: null }));
     }
     const list = convs ?? [];
-    const assignedLabel = (c: typeof list[number], agentMap: Record<string, string>): string =>
+    const assignedLabel = (c: Pick<Conv, "status" | "assigned_agent_id">, agentMap: Record<string, string>): string =>
       c.assigned_agent_id
         ? agentMap[c.assigned_agent_id]?.trim() || "Assigned agent (name unavailable)"
         : c.status === "pending" ||

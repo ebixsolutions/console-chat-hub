@@ -162,3 +162,13 @@ test('Task1 C4: original bounded full-content relevance accepts supported Chines
  ]) assert(lexicalSupport(unsupported,evidence)<0.6,'unrelated merchant claims remain excluded: '+unsupported);
  assert.equal(lexicalSupport('「其他計劃」包括哪些退款安排？',evidence)<0.6,true);
 });
+
+test('Task1 C4 Helper traceability preserves source IDs for every displayed full-content excerpt', () => {
+  const backend=task1SourceRead('supabase/functions/agent-assist/index.ts','utf8');
+  const panel=task1SourceRead('src/components/console/AgentToolPanel.tsx','utf8');
+  assert.match(backend,/document_id:i\.document_id/);
+  assert.match(backend,/chunk_id:i\.chunk_id/);
+  assert.match(panel,/data-document-id=\{e\.document_id \?\? undefined\}/);
+  assert.match(panel,/data-chunk-id=\{e\.chunk_id \?\? undefined\}/);
+  assert.match(panel,/Source identifiers unavailable — verify citation lineage before use/);
+});
