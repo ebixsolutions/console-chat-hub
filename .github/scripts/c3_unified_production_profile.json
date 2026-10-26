@@ -1205,7 +1205,7 @@
     "supabase/functions/_shared/commerce-state-runtime-base.ts": "aa4f3d8fcb77df4c62495e0cf98cf0479db714643743b217728e59ee5737e332",
     "tests/task1-director/hosted-cross-topic-p0.test.mjs": "373316624d5b81ecbc23afe944e191309204036dc9ea43e0960e34e067a1b62b",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "c74eb8a90affef297d273fb8b29f5c395e69d51c06de14bc0c72946019f429e2",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "92bd49d883c872229809568cdd3eda82d6fe3471e31ce82541ef26f6b0181ae0"
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "7a683675e884fd26c5a192a620cbc3f861caeddd75fcf128b170cc550e6aae49"
   },
   "task1_cross_topic_deployment_authorized": false
 }
