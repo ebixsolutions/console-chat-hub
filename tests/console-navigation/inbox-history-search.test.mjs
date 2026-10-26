@@ -12,11 +12,11 @@ const result=await build({entryPoints:['src/routes/_authenticated/console.conver
  if(a.path.includes('useEffectiveRole'))return {contents:'export const useConsoleLang=()=>"en";'};
  if(a.path.includes('/integrations/'))return {contents:s+'export const supabase={from:table=>f.from(table),functions:{invoke(){throw Error("unexpected dispatch")}},channel:()=>({on(){return this;},subscribe(){return this;}}),removeChannel(){}};'};
  if(a.path.includes('reply-request'))return {contents:'export class ReplyRequest{}'};
- if(a.path.includes('CRMPanel'))return {contents:'export const CRMPanel=()=>null,RIGHT_COPY={},buildBoundedContext=()=>"",computeContextRevisionKey=()=>"";'};
+ if(a.path.includes('CRMPanel'))return {contents:'export const CRMPanel=()=>null,RIGHT_COPY={},buildBoundedContext=()=>"",computeContextRevisionKey=(id,msgs)=>id+":"+msgs.filter(m=>m.role==="visitor"&&!m.is_recalled).map(m=>m.id).join(",");'};
  if(a.path.includes('ComposerTools'))return {contents:'export const AttachmentButtons=()=>null,EmojiPickerButton=()=>null,insertAtCaret=()=>({value:"",caret:0});'};
  if(a.path.includes('MessageAttachment'))return {contents:'export const MessageAttachment=()=>null,isAttachmentMessage=()=>false;'};
  if(a.path.includes('feedback.service'))return {contents:'export const feedbackService={};'};
- const name=a.path.split('/').at(-1);if(a.path.includes('/ui/'))return {contents:'export const Button="button",Textarea="textarea",Badge="span",Select="select",SelectContent="div",SelectItem="option",SelectTrigger="div",SelectValue="span",Dialog=({open,children})=>open?children:null,DialogContent="div",DialogHeader="div",DialogTitle="h2",DialogDescription="p";'};
+ const name=a.path.split('/').at(-1);if(name==='AgentToolPanel')return {contents:s+'export const AgentToolPanel=(p)=>{f.toolProps=p;return null;};'};if(a.path.includes('/ui/'))return {contents:'export const Button="button",Textarea="textarea",Badge="span",Select="select",SelectContent="div",SelectItem="option",SelectTrigger="div",SelectValue="span",Dialog=({open,children})=>open?children:null,DialogContent="div",DialogHeader="div",DialogTitle="h2",DialogDescription="p";'};
  if(name==='PageStates')return {contents:'export const LoadingState=()=>null,PermissionDenied=()=>null;'};
  return {contents:`export const ${name}=()=>null;`};
  });}}]});
@@ -60,5 +60,33 @@ test('Task1 C1: a failed optional preview read leaves RLS-scoped tickets visible
  assert.match(rendered, /Target visitor/, 'base Inbox ticket must remain visible');
  assert.match(rendered, /Ticket previews unavailable/, 'preview failure must be visible');
  assert.doesNotMatch(rendered, /No conversations found/, 'preview failure is not an empty Inbox');
+ await act(async()=>r.unmount());
+});
+
+test('Task1 C4 Inbox keeps Agent Tools bound to current visitor revision, role and ticket',async()=>{
+ reset();f.toolProps=null;
+ f.tables.messages=[
+  {id:'visitor-target-v1',conversation_id:'target',role:'visitor',content:'兩部冷氣安裝資料',created_at:'2026-10-25T10:00:00Z',status:'delivered',is_recalled:false},
+  {id:'visitor-other-v1',conversation_id:'other',role:'visitor',content:'配送和退貨政策',created_at:'2026-10-25T10:01:00Z',status:'delivered',is_recalled:false}
+ ];
+ const r=await mount();
+ await pickTicket(r,'Target visitor');
+ assert.equal(f.toolProps?.conversationId,'target');
+ assert.equal(f.toolProps?.toolScopeKey,'admin');
+ assert.match(f.toolProps?.contextRevisionKey??'',/visitor-target-v1/);
+ const oldKey=f.toolProps.contextRevisionKey;
+ await pickTicket(r,'Other Visitor');
+ assert.equal(f.toolProps?.conversationId,'other');
+ assert.match(f.toolProps?.contextRevisionKey??'',/visitor-other-v1/);
+ assert.notEqual(f.toolProps.contextRevisionKey,oldKey);
+ const otherKey=f.toolProps.contextRevisionKey;
+ f.tables.messages.push({id:'visitor-other-v2',conversation_id:'other',role:'visitor',content:'更正，我問退款政策',created_at:'2026-10-25T10:02:00Z',status:'delivered',is_recalled:false});
+ await pickTicket(r,'Target visitor');
+ await pickTicket(r,'Other Visitor');
+ assert.match(f.toolProps?.contextRevisionKey??'',/visitor-other-v2/);
+ assert.notEqual(f.toolProps.contextRevisionKey,otherKey,'new customer correction must invalidate C4 drafts and citations');
+ f.role='agent';
+ await pickTicket(r,'Target visitor');
+ assert.equal(f.toolProps?.toolScopeKey,'agent','role changes must invalidate privileged tool results');
  await act(async()=>r.unmount());
 });

@@ -922,6 +922,13 @@ function SinglePageInbox() {
     [messages, messagesConversationId, selectedId],
   );
 
+  // An unconfirmed Use-in-Draft action belongs to one ticket, customer context
+  // and operator role; never carry the pending text into a newer revision.
+  useEffect(() => {
+    setUseConfirmOpen(false);
+    setPendingUseText("");
+  }, [selectedId, contextRevisionKey, currentRole]);
+
   return (
     <div
       style={{
@@ -1571,6 +1578,8 @@ function SinglePageInbox() {
             <AgentToolPanel
               conversationId={selectedId}
               convStatus={selectedConv.status}
+              toolScopeKey={currentRole ?? ""}
+              contextRevisionKey={contextRevisionKey}
               draftText={reply}
               selectedMessage={selectedMessage}
               onClearSelection={() => setSelectedMessage(null)}
