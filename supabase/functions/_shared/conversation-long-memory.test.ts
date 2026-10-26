@@ -324,7 +324,7 @@ Deno.test("Task 1 factual current source outranks old Commerce topic without cha
  const state=commerce();state.current_topic="air_conditioner";
  const rows:MemoryHistoryRow[]=[{id:MID,role:"visitor",content:"請按香港現行資料解釋四電一腦包含哪些電器類別？"}];
  const current=build({state,rows,sourceFactualTurn:true});
- assert(current.current_goal.includes("四電一腦"),"factual goal stale");
+ assert((current.current_goal??"").includes("四電一腦"),"factual goal stale");
  assert((current.current_topic??"").includes("四電一腦"),"factual current topic stale");
  equal(current.commerce_state_revision,1,"commerce revision changed");
  const unverified=build({state,rows});
