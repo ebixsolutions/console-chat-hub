@@ -569,6 +569,7 @@
     "tests/section15/handoff-service.test.ts",
     "tests/section15/human-service-routing.test.mjs",
     "tests/sql/saved-responses-postgres.py",
+    "tests/task1-director/hosted-cross-topic-p0.test.mjs",
     "tests/task1-director/local-deno-shim.mjs",
     "tests/task1-director/source-chain.test.mjs",
     "tests/uat-runtime/ce-live-baseline.sql",
@@ -1197,5 +1198,14 @@
     "tests/task1-director/local-deno-shim.mjs": "4b23a5736015f2fb5e2119ea2694e471e734f6f84c87e73431d08b50a3daef2e",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "c063042b34687d6251bdd24ddfd4da3db33272e638ebf7a2db7140b1a3b5f29d"
   },
-  "task1_director_repair_deployment_authorized": false
+  "task1_director_repair_deployment_authorized": false,
+  "authorized_task1_cross_topic_sha256": {
+    "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts": "705aa054a2e3667243e27487fefd98621408bfd6dc049eb89e0386d8d2d1465a",
+    "supabase/functions/_shared/industry-runtime-adapter.ts": "3c0b2c8b738569de687e2a442fe532b24974760796798c69062ceb5ac0ac9ef3",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "aa4f3d8fcb77df4c62495e0cf98cf0479db714643743b217728e59ee5737e332",
+    "tests/task1-director/hosted-cross-topic-p0.test.mjs": "373316624d5b81ecbc23afe944e191309204036dc9ea43e0960e34e067a1b62b",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "c74eb8a90affef297d273fb8b29f5c395e69d51c06de14bc0c72946019f429e2",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "92bd49d883c872229809568cdd3eda82d6fe3471e31ce82541ef26f6b0181ae0"
+  },
+  "task1_cross_topic_deployment_authorized": false
 }

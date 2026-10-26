@@ -36,11 +36,31 @@ export function resolveIndustryContextualCandidate(input: {
     : candidate;
 }
 
+/** A historical industry is not a licence to mutate that industry's state on
+ * a later topic. Use the validated current-turn frame before restoring any
+ * implicit industry journey. Current-turn explicit product references remain
+ * authoritative; absent or low-confidence frames retain the existing safe
+ * scoped-observation contract in the industry profile. */
 export function resolveIndustryCustomerJourney(input: {
   text: string;
   state: ConversationCommerceState;
   language: IndustryLanguage;
+  semantic_frame?: CommerceSemanticFrame | null;
 }): CustomerJourneySignal | null {
+  const current = input.semantic_frame;
+  if (current && current.confidence >= 0.72 &&
+      current.ambiguity.is_ambiguous === false &&
+      typeof current.topic === "string" && current.topic.trim()) {
+    const newTopic = clean(current.topic).toLowerCase();
+    const historical = clean(input.state.current_topic).toLowerCase();
+    const explicitAppliance = HOME_APPLIANCE_CATEGORIES.some(category =>
+      category.aliases.some(alias => matchesReferenceLabel(input.text, alias)));
+    const semanticAppliance = HOME_APPLIANCE_CATEGORIES.some(category =>
+      category.key === newTopic || category.aliases.some(alias =>
+        matchesReferenceLabel(newTopic, alias)));
+    if (historical && newTopic !== historical && !semanticAppliance &&
+        !explicitAppliance) return null;
+  }
   const profile = resolveIndustryRuntime({
     texts: [input.text],
     industry_identifier: input.state.current_industry,

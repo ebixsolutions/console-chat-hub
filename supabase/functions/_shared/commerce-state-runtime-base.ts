@@ -1848,7 +1848,16 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
     reduced = reduceCommerceState(reduced, [{ type: "UPDATE_ENTITY", entity_id: named[0].entity_id, patch: { model: modelHints[0].model }, provenance }]);
   }
   const ac = active.filter((entity) => entity.category === "air_conditioner");
-  if (ac.length === 1 && (categories.length === 1 && categories[0].key === "air_conditioner" || !categories.length && reduced.current_topic === "air_conditioner")) {
+  const frameTopic = typeof input.semantic_frame?.topic === "string"
+    ? input.semantic_frame.topic.normalize("NFKC").trim().toLowerCase() : "";
+  const unrelatedCurrentSemanticTopic = Boolean(frameTopic &&
+    input.semantic_frame && input.semantic_frame.confidence >= 0.72 &&
+    !input.semantic_frame.ambiguity.is_ambiguous &&
+    frameTopic !== "air_conditioner" && frameTopic !== "air conditioner" &&
+    frameTopic !== "ac" && !categories.some(category => category.key === "air_conditioner"));
+  if (ac.length === 1 && !unrelatedCurrentSemanticTopic &&
+      (categories.length === 1 && categories[0].key === "air_conditioner" ||
+       !categories.length && reduced.current_topic === "air_conditioner")) {
     const facts: CommerceStateEvent[] = [];
     if (/窗口(?:冷氣|機|机)|window\s+(?:unit|air)/iu.test(input.text)) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"installation_type",value:"window_unit",provenance});
     const sunlight = { ...(ac[0].attributes.room_sunlight as Record<string, string> ?? {}) };
@@ -1881,7 +1890,28 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
     if (roomAllocation && !looksInterrogative(input.text)) facts.push(
       {type:"SET_ENTITY_QUANTITY",entity_id:ac[0].entity_id,quantity:Object.keys(roomAllocation).length,provenance},
       {type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"room_allocation",value:roomAllocation,provenance});
-    if (requestedQuantity !== null && ac[0].attributes.quantity_basis === "system_default" && !looksInterrogative(input.text) && !/純粹|以前|歷史|historical|previous|唔好.{0,30}講/iu.test(input.text)) {
+    // "8 個分頁", "4 位同事" and similar counted customer facts are
+    // not quantities of the previously discussed appliance. Never promote
+    // an old system-default quantity to customer_explicit without a number
+    // bound to a machine/product unit in this very customer statement.
+    const machineCountLiteral = /(?:\d{1,4}|[一二兩两三四五六七八九十])\s*(?:部|台|units?|machines?)/iu.test(input.text);
+    // An unqualified "2 units" can refer to the old appliance only if the
+    // authoritative semantic frame has not resolved a different new topic.
+    // An explicit AC mention is still enough regardless of topic-history.
+    const semanticOtherTopic = Boolean(input.semantic_frame &&
+      input.semantic_frame.confidence >= 0.72 &&
+      !input.semantic_frame.ambiguity.is_ambiguous &&
+      typeof input.semantic_frame.topic === "string" &&
+      input.semantic_frame.topic.trim().length > 1 &&
+      !["air_conditioner", "air conditioner", "ac"].includes(input.semantic_frame.topic.trim().toLowerCase()));
+    const boundedApplianceQuantity = Boolean(roomAllocation) ||
+      (machineCountLiteral && categories.length <= 1 &&
+        (categories.length === 1 && categories[0].key === "air_conditioner" ||
+          categories.length === 0 && !semanticOtherTopic));
+    if (boundedApplianceQuantity && requestedQuantity !== null &&
+        ac[0].attributes.quantity_basis === "system_default" &&
+        !looksInterrogative(input.text) &&
+        !/純粹|以前|歷史|historical|previous|唔好.{0,30}講/iu.test(input.text)) {
       facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"quantity_basis",value:"customer_explicit",provenance});
     }
     if (facts.length) reduced = reduceCommerceState(reduced,facts);
@@ -2334,6 +2364,7 @@ function resolveCustomerJourneyTurn(
 ): CustomerJourneyPlan {
   const signal = resolveIndustryCustomerJourney({
     text: input.text, state, language: input.language,
+    semantic_frame: input.semantic_frame,
   });
   return planCustomerJourney({
     signal, state, source_message_id: input.source_message_id,

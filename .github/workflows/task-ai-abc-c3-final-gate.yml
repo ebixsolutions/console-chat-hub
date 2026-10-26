@@ -302,6 +302,7 @@ jobs:
           node --test src/lib/widget-message-merge.test.mjs
           # Same Task 1 native Source-chain repair; no paid calls or Hosted substitutions.
           node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/source-chain.test.mjs
+          node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/hosted-cross-topic-p0.test.mjs
           node --disable-warning=ExperimentalWarning --experimental-transform-types tests/task1-director/local-deno-shim.mjs \
             supabase/functions/_shared/conversation-long-memory.test.ts \
             supabase/functions/_shared/conversation-recall.test.ts \
@@ -2087,6 +2088,7 @@ jobs:
           set -euo pipefail
           node .github/scripts/c3_director_generic_core_final_gate.mjs
           node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/source-chain.test.mjs
+          node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/hosted-cross-topic-p0.test.mjs
           node --disable-warning=ExperimentalWarning --experimental-transform-types tests/task1-director/local-deno-shim.mjs \
             supabase/functions/_shared/conversation-long-memory.test.ts \
             supabase/functions/_shared/conversation-recall.test.ts \

@@ -202,7 +202,10 @@ function journeyObservations(text: string): string[] {
   if (/(?:窗口位|窗口機|窗口机|分體位|分体位|分體機|分体机|window\s*(?:opening|unit|air)|split[- ]?unit|installation\s*type)/iu.test(text)) values.push("installation_type");
   if (customerSunExposure(text) !== null) values.push("sunlight");
   if (/(?:闊|宽|高|深|width|height|depth).{0,12}\d{2,4}\s*(?:mm|毫米)/iu.test(text)) values.push("dimensions");
-  if (/(?:容量|公升|升|litres?|liters?|\d+\s*l\b|幾多人|几个人|people)/iu.test(text)) values.push("capacity");
+  // "升級" / "升级" is a decision about upgrades, not an appliance
+  // capacity observation. Only an explicit capacity word or a bounded
+  // measurement qualifies; the prior active goal is not enough on its own.
+  if (/(?:容量|公升|(?:\d+(?:\.\d+)?\s*(?:升|l\b|litres?|liters?))|(?:幾多|几多|多少)\s*升|幾多人|几个人|people)/iu.test(text)) values.push("capacity");
   return [...new Set(values)];
 }
 
@@ -242,6 +245,15 @@ export function homeApplianceCustomerJourneySignal(input: {
   const windowScope=HOME_APPLIANCE_ROOMS.find(r=>r.aliases.some(alias=>matchesReferenceLabel(text,alias)))?.key;
   const pending=current?.attributes.window_opening_observation as Record<string,unknown>|undefined;
   if(pending?.scope===null && windowScope)observed.push("window_scope");
+  // A previously active appliance is *not* authority to classify an unrelated
+  // new topic as that appliance. Implicit continuations require a fresh,
+  // category-compatible observation (room/site/sunlight or legitimate capacity)
+  // rather than a generic "compare / upgrade / want" expression. Explicit
+  // category mentions continue to work exactly as before.
+  if (!explicit.length && !observed.some(value =>
+    policy.required.includes(value) ||
+    category === "air_conditioner" && ["space_plan", "window_dimensions", "window_scope"].includes(value)
+  )) return null;
   const fridge = input.state.entities.filter((entity) => entity.category === "refrigerator" && !["cancelled", "deferred"].includes(entity.status));
   const dimensionValues: Record<string, number> = {};
   if (category === "refrigerator") {

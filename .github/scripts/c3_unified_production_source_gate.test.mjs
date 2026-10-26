@@ -3,6 +3,10 @@ import {verifyProductionSource,verifyIdentity,verifyChildEvidence,runChild,impor
 import {resolveAuthoritativeSupabaseBinding} from '../../src/integrations/supabase/runtime-authority.mjs';
 import {verifyDeterministicClosure} from './c3_deterministic_runtime_closure.mjs';
 const root=process.cwd(),profile=JSON.parse(fs.readFileSync(PROFILE_PATH));const tests=[];
+// New Task 1C / same Closure Contract. These negatives must be exact,
+// not a permissive alternative error from a different guard.
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,task1_cross_topic_deployment_authorized:true},sourceOnly:true}),/task1_cross_topic_deployment_not_authorized/);
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_task1_cross_topic_sha256:{}},sourceOnly:true}),/task1_cross_topic_scope_drift/);
 function reject(name,fn,re){assert.throws(fn,new RegExp(re.source+"|task1_director_hash_drift:|live_execution_source_drift:|uat_source_drift:|uat_compatibility_source_drift:|director_functional_source_drift:"));tests.push({name,result:'PASS',rejected:true});}
 reject('Task 1 source repair cannot authorize production deployment',()=>verifyProductionSource({root,profile:{...profile,task1_director_repair_deployment_authorized:true},sourceOnly:true}),/task1_deployment_not_authorized/);
 reject('Task 1 exact source bytes cannot be widened',()=>verifyProductionSource({root,profile:{...profile,authorized_task1_director_repair_sha256:{}},sourceOnly:true}),/task1_director_scope_drift/);
