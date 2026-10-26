@@ -209,6 +209,7 @@ import {
   classifyCommerceStatePersistenceResult,
   collectKnownCommerceFacts,
   executeB2PersistenceGate,
+  stripUnverifiedCurrentQuoteClauses,
 } from "../_shared/pre-send-conversion-supervisor.ts";
 import type { B2TrustedCorrectionCommit, B2TrustedJourneyProgress, B2TrustedLifecycleCommit } from "../_shared/b2-journey-progress-contract.ts";
 import { resolveCanonicalCommerceResolution, shouldRefreshCanonicalMemory } from "../_shared/conversation-resolution-contract.ts";
@@ -7003,13 +7004,35 @@ Latest applicable corrections replace old values; an answered clarification is n
       },
     );
   }
+  const finalReplyMetadata = _customerGuidance
+    ? { ...citationMeta, response_route: "customer_guidance", factual_grounding_required: false }
+    : _mixedRequest ? { ...citationMeta, response_route:"mixed_customer_guidance",
+        factual_grounding_required:true, merchant_evidence_unavailable:_mixedEvidenceUnavailable }
+    : citationMeta;
   let committed = await commitAiReplyWithControlGate(
-    supabaseAdmin,
-    conversation_id,
-    source_message_id,
-    aiReplyContent,
-    _customerGuidance ? { ...citationMeta, response_route: "customer_guidance", factual_grounding_required: false } : _mixedRequest ? {...citationMeta,response_route:"mixed_customer_guidance",factual_grounding_required:true,merchant_evidence_unavailable:_mixedEvidenceUnavailable} : citationMeta,
+    supabaseAdmin,conversation_id,source_message_id,aiReplyContent,finalReplyMetadata,
   );
+  // Only a definitely non-committed current-quote B2 block can be salvaged.
+  // Delete unsafe clauses; no second model call, new price or B2 bypass.
+  if (!committed.ok && committed.result === "b2_block" &&
+      (committed.b2_code === "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT" ||
+        committed.b2_code === "CURRENT_QUOTE_NOT_PROVEN") &&
+      (_customerGuidance || _mixedRequest)) {
+    const safeGuidance = stripUnverifiedCurrentQuoteClauses(aiReplyContent);
+    if (safeGuidance) {
+      const salvage = await commitAiReplyWithControlGate(
+        supabaseAdmin,conversation_id,source_message_id,safeGuidance,
+        { ...finalReplyMetadata, b2_quote_clause_removed:true,
+          b2_original_rejection:committed.b2_code },
+      );
+      if (salvage.ok) {
+        aiReplyContent = safeGuidance;
+        committed = salvage;
+        console.log(JSON.stringify({endpoint:"generate-reply",stage:"b2_quote_guidance_salvage",
+          conversation_id,source_message_id,result:"persisted_after_b2_cas"}));
+      }
+    }
+  }
   // Only a definite, non-committed B2 known-context rejection may repair a
   // draft. This is not delivery replay, a B2 exemption or synthetic admission.
   // The existing router revalidates the sealed original Preview/provider scope.

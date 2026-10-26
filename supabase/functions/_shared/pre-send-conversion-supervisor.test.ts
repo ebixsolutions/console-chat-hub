@@ -13,6 +13,7 @@ import {
   collectKnownCommerceFacts,
   evaluateB2BeforeCommit,
   executeB2PersistenceGate,
+  stripUnverifiedCurrentQuoteClauses,
 } from "./pre-send-conversion-supervisor.ts";
 import {
   type ConversationCommerceState,
@@ -1489,4 +1490,23 @@ Deno.test('Hosted same-ticket summary renders typed customer budget without inte
  assert(result.reply?.includes('HK$5,000') && result.reply.includes('150平方呎'),result.reply??'no summary');
  assert(!/[{}]|entity:|priority:/.test(result.reply!),result.reply!);
  assert(JSON.stringify(input)===before,'summary formatting must remain read-only');
+});
+
+Deno.test("Task1 B2: no-price guidance is not a current-quote claim", () => {
+  for (const answer of [
+    "我而家唔想查現價，建議先揀16GB RAM和512GB SSD。",
+    "我不能確認現時售價；可以先比較記憶體、處理器和儲存空間的需要。",
+    "The latest price is unavailable. For eight browser tabs, 16 GB RAM and an SSD are useful.",
+    "I won't quote today's price without verification. Choose capacity for the workload instead.",
+  ]) assertEquals(decision(answer).decision,"allow","no-price guidance");
+  assertEquals(decision("現時售價合理而且已確認。").code,"CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT","no amount");
+  assertEquals(decision("目前售價 HK$6,000，建議先了解用途。").code,"CURRENT_QUOTE_NOT_PROVEN","unverified price");
+  assertEquals(decision("The current price for the bedroom unit is USD 5,000.").code,"CURRENT_QUOTE_NOT_PROVEN","currency");
+  assertEquals(decision("The current price for the bedroom unit is HKD 5,000.").decision,"allow","verified scoped quote");
+});
+Deno.test("Task1 safe B2 recovery deletes unverified price, never invents a replacement", () => {
+  assertEquals(stripUnverifiedCurrentQuoteClauses("For office use, 16GB RAM is a sensible starting point; The current price is HKD 6,000."),
+    "For office use。16GB RAM is a sensible starting point","safe guidance retained");
+  assertEquals(stripUnverifiedCurrentQuoteClauses("The current price is HKD 6,000."),null,"no non-price advice");
+  assertEquals(stripUnverifiedCurrentQuoteClauses("For office work 16GB RAM and SSD can help."),null,"no rejection");
 });

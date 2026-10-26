@@ -1199,6 +1199,12 @@
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "c063042b34687d6251bdd24ddfd4da3db33272e638ebf7a2db7140b1a3b5f29d"
   },
   "task1_director_repair_deployment_authorized": false,
+  "authorized_task1_current_quote_recovery_sha256": {
+    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "94212c13e96d56def7b865eee825041ef95cc191a2352061f9a62618cad014ab",
+    "supabase/functions/generate-reply/index.ts": "29cc101ac07a580842d54439c5f5340c6cdef688e37ec0b3ab9bb381e22fc017",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "6f8c79ddf74e206b2aa566299669a2d6f6317f15fe2a00b161a405580c782641"
+  },
+  "task1_current_quote_recovery_deployment_authorized": false,
   "authorized_task1_cross_topic_sha256": {
     "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts": "705aa054a2e3667243e27487fefd98621408bfd6dc049eb89e0386d8d2d1465a",
     "supabase/functions/_shared/industry-runtime-adapter.ts": "3c0b2c8b738569de687e2a442fe532b24974760796798c69062ceb5ac0ac9ef3",

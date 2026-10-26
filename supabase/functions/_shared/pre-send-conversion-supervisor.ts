@@ -747,29 +747,41 @@ function evaluateCurrentKbSellingPrice(input: B2EvaluationInput, draft: string):
   return { decision: "allow", code: "B2_ALLOW_CURRENT_KB_SELLING_PRICE" };
 }
 
+// Task1 B2: only affirmative *current* quote clauses require quote authority.
+// Refusals, unknown prices and no-price advice must not be mistaken for quotes.
+const STATED_CURRENT_PRICE = /(?:現時售價|现时售价|現行售價|现行售价|現價|现价|即時售價|即时售价|(?:current|latest|today(?:'s)?|now)\s+(?:selling\s+)?(?:price|quote|quotation)|(?:selling\s+)?price\s*(?:is|=|:)\s*(?:(?:HKD|USD|TWD|HK\$|US\$|NT\$|\$)\s*)?\d|(?:售價|售价|價格|价格)\s*(?:是|為|为|:|：)\s*(?:(?:HKD|USD|TWD|HK\$|US\$|NT\$|\$)\s*)?\d)/i;
+function quoteClauseParts(text: string): string[] {
+  return text.split(/(?:[。！？!?；;\n]|，|(?<!\d),(?!\d)|\.(?!\d))/u)
+    .map((part) => part.trim()).filter(Boolean);
+}
+function isExplicitNoCurrentQuote(clause: string): boolean {
+  if (extractMoneyMentions(clause).length) return false;
+  return /(?:不|唔|未|冇|無|无|沒有|没有|毋須|不用|不需|唔使|唔想|不想|不會|不会|不能|無法|无法|暫時未|暂时未|尚未|拒絕|拒绝).{0,26}(?:查|報|报|估|提供|確認|确认|核實|核实|售價|售价|現價|现价|價格|价格|報價|报价|price|quote|quotation)|(?:售價|售价|現價|现价|價格|价格|報價|报价|current\s+price|latest\s+price|current\s+quote).{0,28}(?:未知|不詳|不详|未查|未核實|未核实|未確認|未确认|不確定|不确定|無法|无法|唔知|需要核實|需要核实|待查|待確認|待确认|unknown|unavailable|unverified|not\s+verified|not\s+confirmed|cannot\s+confirm)|(?:do\s+not|don't|won't|cannot|can't|not\s+able\s+to|not\s+checking|not\s+quoting|without|refuse|decline).{0,36}(?:check|verify|confirm|provide|give|quote|price|pricing)|(?:price|quote|quotation).{0,30}(?:unknown|unavailable|not\s+verified|not\s+confirmed|requires?\s+verification|need(?:s)?\s+verification|cannot\s+confirm|can't\s+confirm)/i.test(clause);
+}
+function affirmativeCurrentQuoteClauses(text: string): string[] {
+  return quoteClauseParts(text).filter((part) =>
+    (CURRENT_PRICE_CLAIM.test(part) || STATED_CURRENT_PRICE.test(part)) && !isExplicitNoCurrentQuote(part));
+}
+export function stripUnverifiedCurrentQuoteClauses(draft: string): string | null {
+  const clauses = quoteClauseParts(draft);
+  if (!clauses.some((part) => affirmativeCurrentQuoteClauses(part).length)) return null;
+  const retained = clauses.filter((part) => !affirmativeCurrentQuoteClauses(part).length).join("。").trim();
+  if (retained.length < 24 || /^(?:抱歉|對不起|对不起|不好意思|sorry|apologies|暫時|暂时|我(?:暫時|暂时)?(?:未能|不能|無法|无法)).{0,60}$/i.test(retained)) return null;
+  return affirmativeCurrentQuoteClauses(retained).length ? null : retained;
+}
 function evaluateQuoteReality(text: string, state: ConversationCommerceState, input: B2EvaluationInput): B2Decision | null {
-  if (input.metadata?.response_route === "canonical_kb_direct_answer" &&
-    input.metadata.answer_kind === "price" || input.trusted_kb_price_proof) {
+  if ((input.metadata?.response_route === "canonical_kb_direct_answer" &&
+    input.metadata.answer_kind === "price") || input.trusted_kb_price_proof) {
     const result = evaluateCurrentKbSellingPrice(input, text);
     return result.decision === "allow" ? null : result;
   }
-  if (!CURRENT_PRICE_CLAIM.test(text)) return null;
-  if (/(?:checklist|清單|清单)|(?:核實|核对|核對|verify|confirm).{0,24}(?:price|quote|quotation|價|价|報價|报价)/i.test(text)) return null;
-  if (/(?:(?:報價|报价|quotation)\s*(?:階段|阶段|stage)).{0,30}(?:唔係|不是|not).{0,12}(?:已確認|已确认|confirmed)?\s*(?:訂單|订单|order)/i.test(text)) return null;
-  if (/(?:does not guarantee|not (?:a )?(?:current|confirmed|final) price|need(?:s)? to be confirmed|未必|不代表.{0,20}(?:現價|现价|同一個價|同一个价)|(?:最新價格|最新价格|current price).{0,30}(?:要|需|must|need).{0,20}(?:確認|确认|confirm))/i.test(text)) return null;
-  const money = extractMoneyMentions(text);
-  if (money.length === 0) {
-    return { decision: "block", code: "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT" };
-  }
-  const mentioned = mentionedEntityIds(text, state);
-  for (const item of money) {
-    if (!state.quotes.some((quote) => quoteMatchesClaim(quote, item, mentioned))) {
-      return {
-        decision: "block",
-        code: "CURRENT_QUOTE_NOT_PROVEN",
-        detail: `${item.currency ?? "currency_unknown"}:${item.amount}`,
-      };
-    }
+  for (const clause of affirmativeCurrentQuoteClauses(text)) {
+    const money = extractMoneyMentions(clause);
+    if (!money.length) return {decision:"block",code:"CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT"};
+    const mentioned = mentionedEntityIds(clause,state);
+    for (const item of money)
+      if (!state.quotes.some((quote) => quoteMatchesClaim(quote,item,mentioned)))
+        return {decision:"block",code:"CURRENT_QUOTE_NOT_PROVEN",detail:String(item.currency ?? "currency_unknown")+":"+String(item.amount)};
   }
   return null;
 }
