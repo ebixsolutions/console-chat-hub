@@ -106,7 +106,7 @@ export function verifyIdentity(root,profile,expected){
 export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs.readFileSync(path.join(root,PROFILE_PATH))),expectedIdentity,sourceOnly=false}={}){
  must(profile.task1_widget_ux_publish_authorized===false,'task1_widget_ux_publish_not_authorized');
  must(JSON.stringify(profile.authorized_task1_widget_ux_scope_sha256)===JSON.stringify(TASK1_WIDGET_UX_SCOPE),'task1_widget_ux_scope_drift');
- for(const [f,h] of Object.entries(TASK1_WIDGET_UX_SCOPE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task1_widget_ux_hash_drift:'+f);
+
  must(profile.task1_current_quote_recovery_deployment_authorized===false,'task1_current_quote_deployment_not_authorized');
  must(JSON.stringify(profile.authorized_task1_current_quote_recovery_sha256)===JSON.stringify(TASK1_CURRENT_QUOTE_RECOVERY),'task1_current_quote_scope_drift');
  for(const [p,s] of Object.entries(TASK1_CURRENT_QUOTE_RECOVERY))must(fs.existsSync(path.join(root,p))&&sha(fs.readFileSync(path.join(root,p)))===s,'task1_current_quote_hash_drift:'+p);
@@ -194,6 +194,7 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
  const identity=sourceOnly?null:verifyIdentity(root,profile,expectedIdentity);
  must(JSON.stringify(profile.authorized_widget_hosted_build_sha256)===JSON.stringify(HOSTED_WIDGET_BUILD_SOURCE),'widget_hosted_build_scope_drift');
  for(const [f,h] of Object.entries(HOSTED_WIDGET_BUILD_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'widget_hosted_build_source_drift:'+f);
+ for(const [f,h] of Object.entries(TASK1_WIDGET_UX_SCOPE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task1_widget_ux_hash_drift:'+f);
  return {status:'SOURCE_VALIDATED',mode:profile.mode,contract:profile.contract,authorization:profile.authorization,backend:profile.backend,identity,files,closure_sha256:sha(JSON.stringify(files)),hosted_runtime:'NOT_TESTED',uat_start_allowed:false};
 }
 export function verifyChildEvidence(rows){
