@@ -756,9 +756,9 @@ function quoteClauseParts(text: string): string[] {
 }
 // A negated price-validity explanation may span language-specific commas.
 // Do not turn an explicitly confirmed present-day quote into an unverified one.
-const AFFIRMATIVE_CONFIRMED_CURRENT_PRICE = /(?:現時|现时|現行|现行|目前|最新|現在|现在|而家).{0,12}(?:售價|售价|價格|价格|現價|现价|報價|报价).{0,22}(?:已確認|已确认|已核實|已核实|已確定|已确定)|(?:current|latest|today(?:'s)?).{0,12}(?:price|quote|quotation)\\s+(?:is|has\\s+been)\\s+(?:already\\s+)?(?:confirmed|verified|final|valid)/i;
-const HISTORICAL_QUOTE_NOT_CURRENT = /(?:唔|不|並不|并不).{0,12}(?:代表|等於|等于).{0,36}(?:而家|目前|現在|现在|當前|当前|current|latest).{0,24}(?:價|价|price)|(?:does|do)\\s+not\\s+(?:guarantee|establish|confirm).{0,48}(?:current|latest).{0,12}price/i;
-const CURRENT_PRICE_AWAITING_VERIFICATION = /(?:現時|现时|現行|现行|目前|最新|現在|现在|今日|今天).{0,12}(?:售價|售价|價格|价格|現價|现价|報價|报价).{0,88}(?:需要|仍需|仍須|仍须|還需|还需|尚待|待|須要|需要先|必須|必须).{0,8}(?:重新|再次|再)?(?:確認|确认|核實|核实|查證|查证|驗證|验证)|(?:current|latest|today(?:'s)?).{0,12}(?:price|quote|quotation).{0,120}(?:need(?:s)?|have)\\s+to\\s+be\\s+(?:re-?)?(?:confirmed|verified|checked)(?:\\s+again)?/i;
+const AFFIRMATIVE_CONFIRMED_CURRENT_PRICE = /(?:現時|现时|現行|现行|目前|最新|現在|现在|而家).{0,12}(?:售價|售价|價格|价格|現價|现价|報價|报价).{0,22}(?:已確認|已确认|已核實|已核实|已確定|已确定)|(?:current|latest|today(?:'s)?).{0,12}(?:price|quote|quotation)\s+(?:is|has\s+been)\s+(?:already\s+)?(?:confirmed|verified|final|valid)/i;
+const HISTORICAL_QUOTE_NOT_CURRENT = /(?:唔|不|並不|并不).{0,12}(?:代表|等於|等于).{0,36}(?:而家|目前|現在|现在|當前|当前|current|latest).{0,24}(?:價|价|price)|(?:does|do)\s+not\s+(?:guarantee|establish|confirm).{0,48}(?:current|latest).{0,12}price/i;
+const CURRENT_PRICE_AWAITING_VERIFICATION = /(?:現時|现时|現行|现行|目前|最新|現在|现在|今日|今天).{0,12}(?:售價|售价|價格|价格|現價|现价|報價|报价).{0,88}(?:需要|仍需|仍須|仍须|還需|还需|尚待|待|須要|需要先|必須|必须).{0,8}(?:重新|再次|再)?(?:確認|确认|核實|核实|查證|查证|驗證|验证)|(?:current|latest|today(?:'s)?).{0,12}(?:price|quote|quotation).{0,120}(?:need(?:s)?|have)\s+to\s+be\s+(?:re-?)?(?:confirmed|verified|checked)(?:\s+again)?/i;
 function isExplicitNoCurrentQuote(clause: string): boolean {
   if (extractMoneyMentions(clause).length || AFFIRMATIVE_CONFIRMED_CURRENT_PRICE.test(clause)) return false;
   if (HISTORICAL_QUOTE_NOT_CURRENT.test(clause) || CURRENT_PRICE_AWAITING_VERIFICATION.test(clause)) return true;
@@ -768,7 +768,7 @@ function affirmativeCurrentQuoteClauses(text: string): string[] {
   // Classify a whole sentence before optional comma-level salvage. The
   // verification caveat may follow a comma: "latest price, fees ... need
   // to be confirmed". Semicolons and full stops remain hard boundaries.
-  const sentences = text.split(/(?:[。！？!?；;\\n]|\\.(?!\\d))/u)
+  const sentences = text.split(/(?:[。！？!?；;\n]|\.(?!\d))/u)
     .map((part) => part.trim()).filter(Boolean);
   return sentences.flatMap((sentence) => isExplicitNoCurrentQuote(sentence)
     ? []

@@ -1200,7 +1200,7 @@
   },
   "task1_director_repair_deployment_authorized": false,
   "authorized_task1_current_quote_recovery_sha256": {
-    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "b705b8caa7526fc2d1b5b91246e1627f4e818b26ba86ef462764afe87dee36dd",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "141dffbd664ab361823d0fbd917aa38505de12f81792807b979bfaa312de0985",
     "supabase/functions/generate-reply/index.ts": "29cc101ac07a580842d54439c5f5340c6cdef688e37ec0b3ab9bb381e22fc017",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "09d8c235768b07d37e2ee7f8d687edcbc89f090cb8614a5200b2b0c06823fe71",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "4fc5b4891dd96ebc20a17793f6be7561d9689057d2207aacb2cca5e60b1e2db0"
