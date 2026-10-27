@@ -395,7 +395,7 @@ export function isCurrentRequirementsRecap(question: string): boolean {
  * A validated frame is required, but its free-form intent label is not lookup
  * authority. The customer's speech act must independently request general
  * guidance and must not ask for current merchant facts. */
-const MERCHANT_FACT_REQUEST = /\b(?:price|cost|stock|warranty|policy|specifications?|specs|availability|recommend.*(?:products?|options?))\b|售價|售价|報價|报价|價錢|价钱|幾錢|几钱|庫存|库存|保養|保养|政策|規格|规格|推薦|推荐|現貨|现货|你[哋們们]?有|你[哋們们]?嘅/i;
+const MERCHANT_FACT_REQUEST = /\b(?:prices?|pricing|cost|stock|warranty|policy|specifications?|specs|availability|recommend.*(?:products?|options?))\b|售價|售价|報價|报价|價錢|价钱|幾錢|几钱|庫存|库存|保養|保养|政策|規格|规格|推薦|推荐|現貨|现货|你[哋們们]?有|你[哋們们]?嘅/i;
 function customerPriorityOnly(clause:string):boolean {
   const ranking = /(?:比|多過|多于|多於).{0,36}(?:更|較|较)?(?:重要|優先|优先)|\b(?:matters? more than|more important than|prioriti[sz]e.{0,36}over|prefer.{0,36}over)\b/i.test(clause);
   const merchantRequest = /(?:請|请|查|幾錢|几钱|多少|最新|現時|现时|目前|你[哋們们]?|店[舖铺家])|\b(?:check|query|look up|recommend|what|how much|current|latest|your|merchant|store)\b/i.test(clause);
