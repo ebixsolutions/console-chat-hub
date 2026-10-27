@@ -55,6 +55,49 @@ for(const [intent,question,expected] of [
   assert.equal(resolveCustomerRequestDecision(question,semantic()).kind,expected);
 });
 
+// Hosted C3-6-TABS-CROSS-TOPIC-REGRESSION: general advisory versus current merchant facts.
+// Root scope is the speech act, never a computer/SKU phrase, a hard-coded
+// recommendation, or provider intent labels. Keep original merchant negatives.
+for (const [name,text,expected] of [
+  ['hosted six-tabs priority','我再補充一下，依家通常只會開大概 6 個網頁分頁，主要仍然係文書、視像會議，唔打機，而且想慳啲。咁 RAM、CPU 同 SSD 應該邊樣優先？邊樣可以暫時唔升級？','guidance'],
+  ['service priority','現有三種上門服務安排，按我時間限制，邊樣應該優先，邊樣可以暫時唔做？','guidance'],
+  ['rental priority','租用工具係短期用途，哪一項升級最重要，哪一項可以延後？','guidance'],
+  ['SaaS priority','我哋預算有限，邊個加購功能優先，邊樣可以暫緩？','guidance'],
+  ['English priority','For a small team, which feature should we prioritize first and which can wait?','guidance'],
+  ['TW priority','目前以基本文書為主，哪一項應先升級，哪一項可以延後？','guidance'],
+  ['must verify current merchant stock','按我的用途邊樣優先？但請查你哋目前實際庫存。','mixed'],
+  ['must verify merchant price','Which upgrade can wait? Please check your current prices.','mixed'],
+  ['must verify exact service policy','按我哋需求邊樣優先？另請查你哋目前退款政策。','mixed'],
+  ['pure actual merchant facts','你哋目前邊款型號有現貨？','merchant_facts'],
+  ['pure merchant policy','請查你哋目前取消服務的政策。','merchant_facts'],
+]) test('hosted C3 generic priority speech act '+name,()=>{
+  const frame=semantic({operation:'ASK_FACT',intent:'customer_guidance',
+    requested_facts:['selection_priorities','upgrade_tradeoffs'],customer_facts:[],confidence:.96});
+  const history=[
+    {role:'assistant',content:'冷氣機窗口尺寸仍需核實',metadata:{response_route:'canonical_memory_clarification'}},
+    {role:'visitor',content:'CW-SUL70BA 功能？'},
+    {role:'assistant',content:'之前按8個分頁比較升級取捨',metadata:{response_route:'customer_guidance'}},
+    {role:'visitor',content:'更正，依家開8個網頁分頁，想慳錢，邊啲升級可以暫緩？'},
+  ];
+  const result=resolveCustomerRequestDecision(text,frame,history);
+  assert.equal(result.kind,expected,JSON.stringify({name,result}));
+  if(expected==='guidance') {
+    assert.equal(result.merchant_request,null,'no paid KB authority for general priorities');
+    assert.notEqual(result.general_request,null,'retain useful general customer question');
+  }
+  if(expected==='mixed') {
+    assert.notEqual(result.merchant_request,null,'explicit merchant facet must stay grounded');
+    assert.notEqual(result.general_request,null,'retain general facet rather than terminal fallback');
+  }
+});
+test('hosted C3 routing preserves guidance through actual generator and planner to bounded no-KB answer',()=>{
+  const generate=task1SourceRead('supabase/functions/generate-reply/index.ts','utf8');
+  const planner=task1SourceRead('supabase/functions/_shared/conversation-service-planner.ts','utf8');
+  assert.match(generate,/_customerGuidance = _customerRequestDecision.kind === "guidance"/);
+  assert.match(generate,/_g1SkipKB = _pr5GreetingOrTrivial \|\| Boolean\(_priorGroundedTransform\) \|\| _customerGuidance/);
+  assert.match(planner,/requestDecision.kind!=="guidance" && requiresSemanticKnowledge/);
+});
+
 test('source-bound mixed ASK_FACT commits only current customer numeric and string fields via Commerce reducer',()=>{
   assert.equal(isReadOnlyCommerceQuestion(q,frame),true,'factual question must not authorize buying items');
   const events=sourceBoundMixedCustomerFactEvents(frame,state(),q,SRC);
