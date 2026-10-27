@@ -586,8 +586,22 @@ async function ragApiInboxFixture(fault='none'){
  if(fault==='role-revoked')f.rows.agent_profile[0].status='inactive';
  const from=f.db.from;f.db.from=function(table){const q=from.call(this,table);q.in=()=>q;q.not=()=>q;return q;};f.db.auth={getUser:async()=>({data:{user:f.user},error:null})};globalThis.__c3InboxClient=()=>f.db;
  let models=0;const prompts=[];globalThis.fetch=async(url,init)=>{if(String(url)!==f.url)return x.up(url,init);models++;const prompt=JSON.parse(init.body).contents.flatMap(c=>c.parts.map(p=>p.text??'')).join('');prompts.push(prompt);return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(prompt.includes('proposed_claims')?{grounded:!f.rejectAssistClaims,unsupported_claims:f.rejectAssistClaims?['unsupported fixture claim']:[],evidence_ids:['E1'],resolution:f.rejectAssistClaims?'unsupported':'supported'}:prompt.includes('Customer message:')?{suggestions:[{content:directorOriginalRag.selected_documents[0].evidence[0].content,tone_label:'Informative'}]}:prompt.includes('Text to check:')?{status:'warning',summary:'Source-backed policy review',issues:[{excerpt:'subscription',policy_label:'Evidence 1',severity:'warning'}]}:{queries:[]})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});};
- const send=async(kind)=>{const body=kind==='knowledge'?{query:'published service policy',top_k:3,conversation_id:x.c.id}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT: pause subscription':'CONVERSATION: pause subscription',context_mode:kind==='draft'?'draft':'conversation'};const r=await(kind==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};};return {...x,send,models:()=>models,prompts};
+ // Historical isolated expanded-mode fixture: opt in explicitly, never loosen the Production default.
+ const send=async(kind)=>{const body=kind==='knowledge'?{query:'published service policy',top_k:3,conversation_id:x.c.id,bounded_single_pass:false,extended_search_confirmed:true}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT: pause subscription':'CONVERSATION: pause subscription',context_mode:kind==='draft'?'draft':'conversation'};const r=await(kind==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};};return {...x,send,models:()=>models,prompts};
 }
+test('Mac UA legacy false mode is bounded in complete authenticated Inbox handler',async()=>{
+ const x=await ragApiInboxFixture(),before=x.models();
+ try {
+  const response=await knowledgeHandler(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify({query:'published service policy',top_k:3,conversation_id:x.c.id,bounded_single_pass:false})}));
+  const data=await response.json();
+  assert.equal(response.status,200,JSON.stringify(data));
+  assert.equal(data.meta.bounded_single_pass,true);
+  assert.equal(data.meta.expanded_retrieval_used,false);
+  assert.equal(data.meta.retrieval_query_count,1);
+  assert.equal(x.posts(),1);
+  assert.equal(x.models(),before,'legacy client cannot trigger query expansion or LLM rerank');
+ }finally{globalThis.fetch=realFetch;}
+});
 // Full original Inbox handler with only external Auth/DB/RAG/Vertex isolated.
 // These are deterministic transport fixtures, not paid or Hosted observations.
 async function policyOutputFixture({status='warning',assessment,verifier,rawAssessment,finish='STOP'}={}){
@@ -775,7 +789,7 @@ async function originalAggregationFixture(fault='none',inbox=false,responseFixtu
   return fetchKBRag({query,top_k:3},scope.scope,resolveKBEndpoint(),{uatContext:{conversationId:x.c.id,operationId:crypto.randomUUID()}});
  };
  const send=async(kind,query='什麼是四電一腦？')=>{
-  const body=kind==='knowledge'?{query,top_k:3,conversation_id:x.c.id}:['helper','manual-policy','manual-suggest'].includes(kind)?{tool_type:kind==='helper'?'knowledge_helper':kind==='manual-suggest'?'suggest_reply':'check_policy',conversation_id:x.c.id,content:query,context_mode:'manual'}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT: 四電一腦免費除舊服務須知':'CONVERSATION: 四電一腦免費除舊服務須知',context_mode:kind==='draft'?'draft':'conversation'};
+  const body=kind==='knowledge'?{query,top_k:3,conversation_id:x.c.id,bounded_single_pass:false,extended_search_confirmed:true}:['helper','manual-policy','manual-suggest'].includes(kind)?{tool_type:kind==='helper'?'knowledge_helper':kind==='manual-suggest'?'suggest_reply':'check_policy',conversation_id:x.c.id,content:query,context_mode:'manual'}:{tool_type:'check_policy',conversation_id:x.c.id,content:kind==='draft'?'DRAFT: 四電一腦免費除舊服務須知':'CONVERSATION: 四電一腦免費除舊服務須知',context_mode:kind==='draft'?'draft':'conversation'};
   const r=await(kind==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};
  };
  return {...x,binding,up,search,send,posts:()=>posts,queries};
