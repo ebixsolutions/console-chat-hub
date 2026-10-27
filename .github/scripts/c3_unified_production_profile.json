@@ -468,8 +468,8 @@
     "supabase/migrations/20261006120000_c3_uat_learning_isolation.sql",
     "supabase/migrations/20261006120001_c3_uat_feedback_isolation.sql",
     "supabase/migrations/20261011002343_c3_shared_model_attempt_accounting.sql",
-    "supabase/migrations/20261027180000_task1_feedback_config_staff_select_rls.sql",
-    "supabase/migrations/rollback/20261027180000_task1_feedback_config_staff_select_rls.rollback.sql",
+    "supabase/migrations/20261027110810_task1_feedback_config_staff_select_rls_20261027.sql",
+    "supabase/migrations/rollback/20261027110810_task1_feedback_config_staff_select_rls_20261027.rollback.sql",
     "tests/c3-b12-registry/build-payloads.py",
     "tests/c3-b12-registry/captured-company-helper.json",
     "tests/c3-b12-registry/captured-functions.json",
@@ -1243,8 +1243,8 @@
   },
   "task1_c4_recovery_deployment_authorized": false,
   "authorized_task1_feedback_security_sha256": {
-    "supabase/migrations/20261027180000_task1_feedback_config_staff_select_rls.sql": "d326ff23a7d4d0da006ad30c51dfb6079e46560edf284b4ef3abf5037e2a7046",
-    "supabase/migrations/rollback/20261027180000_task1_feedback_config_staff_select_rls.rollback.sql": "abd5bf1dc12344952d6c20820c5f89d6603d724b6cb9bfacef9aa3aad443fcab",
-    "tests/task1-director/feedback-config-security.test.mjs": "ab03272a542f1213c2246fced1ac4d83027416c019bc2f3feebb542c5459460c"
+    "supabase/migrations/20261027110810_task1_feedback_config_staff_select_rls_20261027.sql": "d326ff23a7d4d0da006ad30c51dfb6079e46560edf284b4ef3abf5037e2a7046",
+    "supabase/migrations/rollback/20261027110810_task1_feedback_config_staff_select_rls_20261027.rollback.sql": "abd5bf1dc12344952d6c20820c5f89d6603d724b6cb9bfacef9aa3aad443fcab",
+    "tests/task1-director/feedback-config-security.test.mjs": "d1fcd8504c5c4eee0cd3acfc6cb81191aa5baaa7a9e272f2e89e63c54ee5f40e"
   }
 }

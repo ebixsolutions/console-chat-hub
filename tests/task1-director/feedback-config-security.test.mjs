@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-const migration=readFileSync('supabase/migrations/20261027180000_task1_feedback_config_staff_select_rls.sql','utf8');
-const rollback=readFileSync('supabase/migrations/rollback/20261027180000_task1_feedback_config_staff_select_rls.rollback.sql','utf8');
+const migration=readFileSync('supabase/migrations/20261027110810_task1_feedback_config_staff_select_rls_20261027.sql','utf8');
+const rollback=readFileSync('supabase/migrations/rollback/20261027110810_task1_feedback_config_staff_select_rls_20261027.rollback.sql','utf8');
 const feedback=readFileSync('src/lib/api/feedback.service.ts','utf8');
 test('Task1 security source: authenticated nonmembers and anon cannot read global feedback configuration',()=>{
  assert.match(migration,/ALTER POLICY feedback_automation_config_read ON public\.feedback_automation_config/);
