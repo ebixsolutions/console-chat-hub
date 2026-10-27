@@ -470,7 +470,12 @@ export function resolveCustomerRequestDecision(question:string, semantic: {
   const lastAssistant=bounded.find(row=>row.role==="assistant");
   const priorCustomer=bounded.find(row=>["visitor","user","customer"].includes(row.role) && clean(row.content)!==text);
   const metadata=lastAssistant?.metadata as Record<string,unknown>|undefined;
-  const priorGuidance=metadata?.response_route==="customer_guidance" || Boolean(priorCustomer && guidanceSpeechAct(priorCustomer.content,semantic));
+  // A brief factual correction may follow an unrelated KB/product response.
+  // Search the bounded customer-owned history rather than trusting only the
+  // very last Assistant or the first earlier Visitor as the conversation topic.
+  const priorGuidance=metadata?.response_route==="customer_guidance" ||
+    bounded.some(row => ["visitor","user","customer"].includes(row.role) &&
+      clean(row.content)!==text && guidanceSpeechAct(row.content,semantic));
   const clarification=Boolean(lastAssistant && /[?？]/.test(lastAssistant.content) && priorGuidance);
   const transactional=["RESERVE","REQUEST_QUOTE","CONFIRM","CANCEL_ITEM","REMOVE_ITEM","DEFER"].includes(semantic.operation ?? "") || semantic.additive===true;
   // A direct answer need not repeat "answer" or "correction". The existing
@@ -480,7 +485,18 @@ export function resolveCustomerRequestDecision(question:string, semantic: {
     (semantic.intent==="customer_guidance" || Boolean(semantic.customer_facts?.length));
   const customerUpdateContinuation=priorGuidance && semantic.operation==="UPDATE_ITEM" &&
     semantic.intent==="customer_guidance" && Boolean(semantic.customer_facts?.length) && contextAnswer;
-  const continuation=(clarification || customerUpdateContinuation) && !transactional && (contextAnswer || /(?:答|剛才|刚才|頭先|头先|更正|改為|改为)|\b(?:answer|correction|actually|instead|as requested)\b/i.test(text));
+  // A validated UPDATE_ITEM can change customer-owned usage/preferences without
+  // naming any product and without a new question. Do not let an unrelated
+  // historical entity or the model's free-form intent label erase this scope.
+  // Explicit merchant claims/transaction intents still take precedence below.
+  const factualCorrectionContinuation=priorGuidance && !transactional &&
+    !semantic.ambiguity.is_ambiguous && semantic.operation==="UPDATE_ITEM" &&
+    Boolean(semantic.customer_facts?.length) &&
+    /(?:更正|再改|改為|改为|其實|其实|而家|現在|现在|actually|correction|instead|change(?:d)?\s+to)/i.test(text) &&
+    !semantic.entities?.some(e => e.model && text.includes(e.model)) &&
+    !MERCHANT_FACT_REQUEST.test(withoutExcludedLookups(text));
+  const continuation=(clarification || customerUpdateContinuation || factualCorrectionContinuation) && !transactional &&
+    (contextAnswer || /(?:答|剛才|刚才|頭先|头先|更正|改為|改为)|\b(?:answer|correction|actually|instead|as requested)\b/i.test(text));
   const clauses=withoutExcludedLookups(text).split(/[;；。!?！？]|\b(?:and|but)\b|(?:同埋|並且|并且)/i).map(s=>s.trim()).filter(Boolean);
   const general=clauses.filter(clause=>guidanceSpeechAct(clause,semantic));
   const wholeGeneral=guidanceSpeechAct(text,semantic);
@@ -497,7 +513,8 @@ export function resolveCustomerRequestDecision(question:string, semantic: {
       !generalClause && Boolean(factualSubject(clause,false)));
     return scopedFact || !generalClause && MERCHANT_FACT_REQUEST.test(clause);
   });
-  const hasGeneral=wholeGeneral || general.length>0 || continuation && !merchant.length && !semantic.requested_facts.length;
+  const hasGeneral=wholeGeneral || general.length>0 ||
+    (continuation && !merchant.length && !semantic.requested_facts.length);
   const kind=hasGeneral ? merchant.length ? "mixed" : "guidance" : merchant.length ? "merchant_facts" : "other";
   return {kind,continuation,general_request:hasGeneral ? (general.length?general.join("; "):text) : null,
     merchant_request:merchant.length?merchant.join("; "):null,latest_requirements:text};

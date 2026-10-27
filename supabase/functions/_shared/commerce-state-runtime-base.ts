@@ -2071,7 +2071,40 @@ function reduceSingleTurn(
     ? [{ type: "SET_CONTEXT", language: input.language, industry: input.industry_identifier }]
     : [];
   const machineQuantity = parseSpaceScopedCommerceQuantity(input.text) ?? parseCount(input.text);
+  // A customer count belongs to the source's subject, not automatically to a
+  // previously active product. An UPDATE_ITEM can carry typed customer facts
+  // ("six tabs", "three people", "four bookings") while the provider also
+  // echoes a stale entity. Reject that unrelated entity mutation unless this
+  // very turn identifies the same commerce entity. Keep typed customer facts.
+  const scopedProductReferences = new Set(hintsMentionedInTurn(input.text, hints).map(h => h.entity_id));
+  const explicitProductCategories = new Set(detectCategories(input.text).map(category => category.key));
+  const sourceNumbers = new Set<number>();
+  const collectSourceNumbers = (value: unknown, depth = 0): void => {
+    if (depth > 4 || sourceNumbers.size > 24) return;
+    if (typeof value === "number" && Number.isFinite(value)) { sourceNumbers.add(value); return; }
+    if (Array.isArray(value)) { for (const item of value.slice(0, 12)) collectSourceNumbers(item, depth + 1); return; }
+    if (value && typeof value === "object") {
+      for (const item of Object.values(value).slice(0, 12)) collectSourceNumbers(item, depth + 1);
+    }
+  };
+  if (input.semantic_frame?.operation === "UPDATE_ITEM" &&
+      input.semantic_frame.customer_facts?.length &&
+      !input.semantic_frame.ambiguity.is_ambiguous) {
+    for (const fact of input.semantic_frame.customer_facts.slice(0, 12))
+      collectSourceNumbers(fact.value);
+  }
+  const isSourceBoundEntity = (id: string): boolean => {
+    const entity = previous.entities.find(e => e.entity_id === id);
+    return scopedProductReferences.has(id) || Boolean(entity && explicitProductCategories.has(entity.category));
+  };
   const quantityEvents = [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents].filter(event => {
+    if (event.type === "SET_ENTITY_QUANTITY" &&
+        sourceNumbers.has(event.quantity) && !isSourceBoundEntity(event.entity_id)) return false;
+    // A provider may echo stale entity metadata with a customer-only update;
+    // an unmentioned product may not be revised by such a preference change.
+    if (sourceNumbers.size > 0 && (event.type === "SET_ENTITY_ATTRIBUTE" ||
+        event.type === "SET_ENTITY_CONSTRAINT" || event.type === "REMOVE_ENTITY_CONSTRAINT") &&
+        !isSourceBoundEntity(event.entity_id)) return false;
     // A room count describes spatial scope, never machine count. The frozen
     // generic reducer still supports room-based products in their own domain.
     if (event.type !== "SET_ENTITY_QUANTITY" || machineQuantity !== null) return true;

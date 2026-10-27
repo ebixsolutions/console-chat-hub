@@ -684,6 +684,18 @@ export function buildCanonicalConversationMemory(args: {
       args.request_decision.general_request
       ? businessMessageText(args.request_decision.latest_requirements).slice(0,1600)
       : null;
+  // The existing typed customer-fact CAS/provenance is a stronger signal of
+  // the current conversational goal than an unrelated older commerce entity.
+  // Use only a fact already committed for this exact Visitor source message,
+  // never a proposal from the semantic model by itself.
+  const currentSourceText=businessMessageText(args.newest_first.find(row =>
+    row.id === args.source_message_id && CUSTOMER_ROLES.has(String(row.role ?? "")))?.content).slice(0,1600);
+  const sourceHasCommittedCustomerFact=Object.values(
+    record(args.commerce_state?.customer_constraints?.customer_reported_facts) ?? {},
+  ).some(value => record(record(value)?.provenance)?.source_message_id === args.source_message_id);
+  const sourceBoundCustomerFactGoal =
+    currentSourceText && sourceHasCommittedCustomerFact && !args.request_decision?.merchant_request
+      ? currentSourceText : null;
   // Trusted current ASK_FACT takes precedence over a historical Commerce topic,
   // but never creates a product, quotation, entitlement or KB authority.
   const currentFactualRow = args.source_factual_turn
@@ -693,7 +705,7 @@ export function buildCanonicalConversationMemory(args: {
       !classifyHandoffIntent(clean(currentFactualRow.content,1600)).explicit_request &&
       !isCurrentRequirementsRecap(clean(currentFactualRow.content,1600))
     ? businessMessageText(currentFactualRow.content).slice(0,1600) : null;
-  const businessGoal = sourceBoundGuidanceGoal || factualText || genericGoal || entityGoal || requirementGoal || (args.request_decision?.continuation ? clean(args.request_decision.latest_requirements,1600) : null) || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
+  const businessGoal = sourceBoundGuidanceGoal || factualText || sourceBoundCustomerFactGoal || genericGoal || entityGoal || requirementGoal || (args.request_decision?.continuation ? clean(args.request_decision.latest_requirements,1600) : null) || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
   const runtimeRegions = [
     ...(runtime.current_requirements.current_market
       ? [{ region: runtime.current_requirements.current_market, temporal_scope: "current" as const }]
@@ -816,8 +828,12 @@ export function buildCanonicalConversationMemory(args: {
     ], MAX_FACTS),
     active_constraints: uniqueStrings([
       ...runtime.active_constraints,
-      ...Object.entries(args.commerce_state?.customer_constraints ?? {}).map(([key, value]) => `${key}:${JSON.stringify(value)}`),
-      ...(prior?.active_constraints ?? []).filter(value => !value.startsWith("customer_reported_facts:")),
+      ...Object.entries(args.commerce_state?.customer_constraints ?? {})
+        .filter(([key, value]) => key !== "customer_reported_facts" &&
+          (typeof value === "string" || typeof value === "number" || typeof value === "boolean"))
+        .map(([key, value]) => `${key}:${String(value)}`),
+      ...(prior?.active_constraints ?? []).filter(value =>
+        !value.startsWith("customer_reported_facts:") && !/[:：]\s*[\{\[]/.test(value)),
     ].map(businessMessageText), MAX_CONSTRAINTS),
     current_regions: currentRegions.length ? currentRegions : (prior?.current_regions ?? []).slice(0, MAX_REGIONS),
     transaction_summary: commerce.transaction_summary,
@@ -833,11 +849,9 @@ export function buildCanonicalConversationMemory(args: {
     open_questions: open,
     pending_actions: uniqueStrings([...commerce.pending_actions,...lifecycle.filter(item=>item.status === "pending" && item.resolution?.includes("professional")).map(item=>item.text)],MAX_ACTIONS),
     prior_topics: uniqueStrings([...runtime.prior_topics.slice().reverse(), ...(prior?.prior_topics ?? [])], MAX_TOPICS).reverse(),
-    current_topic: factualText || (!businessMessageText(args.newest_first.find(row=>row.id===args.source_message_id)?.content)
+    current_topic: factualText || sourceBoundGuidanceGoal || sourceBoundCustomerFactGoal || (!currentSourceText
       ? businessMessageText(prior?.current_topic) || businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || null
-      : sourceBoundGuidanceGoal
-        ? businessMessageText(runtime.current_topic) || null
-        : businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || businessMessageText(prior?.current_topic) || null),
+      : businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || businessMessageText(prior?.current_topic) || null),
     grounded_reference_lineage: lineage(args.newest_first).length ? lineage(args.newest_first) : (prior?.grounded_reference_lineage ?? []).slice(0, MAX_LINEAGE),
     handoff_relevant_state: {
       current_goal: businessGoal,

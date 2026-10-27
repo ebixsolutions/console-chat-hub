@@ -94,10 +94,10 @@ test('new canonical Commerce facts feed the same Memory and active constraints w
     visitor_turn_count:3,source_created_at:'2026-10-25T00:00:00Z',next_memory_revision:9,
     customer_fact_delta:frame.customer_facts.map(f=>({...f,authority:'customer',source_message_id:SRC}))});
   assert.equal(m.current_customer_facts.find(f=>f.key==='usage_scenario')?.value?.browser_tabs_open_simultaneously,8);
-  const active=m.active_constraints.find(x=>x.startsWith('customer_reported_facts:'));
-  assert(active);
-  assert.equal(JSON.parse(active.slice('customer_reported_facts:'.length)).usage_scenario.value.browser_tabs_open_simultaneously,8);
-  assert(!active.includes('"browser_tabs_open_simultaneously":20'));
+  assert(!m.active_constraints.some(x=>x.startsWith('customer_reported_facts:')),
+    'typed customer facts must not be JSON-serialized into customer-visible service constraints');
+  assert(m.current_customer_facts.some(f=>f.key==='usage_scenario' && f.value.browser_tabs_open_simultaneously===8));
+  assert(!buildBoundedConversationContext(m,[{id:SRC,role:'visitor',content:q}]).block.includes('customer_reported_facts:{'));
   assert(buildBoundedConversationContext(m,[{id:SRC,role:'visitor',content:q}]).block.includes('8'));
 });
 
@@ -171,4 +171,67 @@ test('Task1 C4 Helper traceability preserves source IDs for every displayed full
   assert.match(panel,/data-document-id=\{e\.document_id \?\? undefined\}/);
   assert.match(panel,/data-chunk-id=\{e\.chunk_id \?\? undefined\}/);
   assert.match(panel,/Source identifiers unavailable — verify citation lineage before use/);
+});
+
+test('C3 cross-topic numeric correction: user-owned tab count must not mutate an unrelated active product or leak typed JSON',()=>{
+ const turn='再更正，依家只會開6個分頁，其他文書、視像會議同慳錢要求不變。';
+ const old=createEmptyConversationCommerceState();
+ old.current_topic='air_conditioner';old.current_intent='select_product';
+ old.entities=[{entity_id:'air_conditioner:unscoped',category:'air_conditioner',brand:null,model:'CW-SUL70BA',quantity:1,status:'tentative',
+  attributes:{product_name:'CW-SUL70BA',quantity_basis:'system_default',installation_type:'window_unit'},
+  constraints:{},provenance:{source_type:'customer',source_message_id:'prior-ac'}}];
+ old.customer_constraints.customer_reported_facts={
+  open_web_pages:{value:8,provenance:{source_type:'customer',source_message_id:'old-computer'}},
+  budget_constraint:{value:'想慳啲',provenance:{source_type:'customer',source_message_id:'old-computer'}}
+ };
+ const ambiguousProviderEntity={
+   entity_ref:'air_conditioner:unscoped',name:'CW-SUL70BA',kind:'physical_product',
+   category_hint:'air_conditioner',sku:null,model:'CW-SUL70BA',quantity:6,unit:'部',
+   attributes:{},constraints:{},capabilities:{},confidence:.96
+ };
+ const update=semantic({operation:'UPDATE_ITEM',intent:'other',requested_facts:[],
+  customer_correction:true,entities:[ambiguousProviderEntity],
+  customer_facts:[{key:'open_web_pages',value:6}]});
+ const priorHistory=[
+  {role:'assistant',content:'CW-SUL70BA 有待確認適用資料。',metadata:{response_route:'canonical_kb_direct_answer'}},
+  {role:'visitor',content:'CW-SUL70BA 功能？'},
+  {role:'assistant',content:'以8個分頁比較 RAM、CPU、SSD',metadata:{response_route:'customer_guidance'}},
+  {role:'visitor',content:'更正，實際只係8個分頁，請比較 RAM、CPU、SSD 升級優先次序，邊啲可以暫緩？'},
+ ];
+ const decision=resolveCustomerRequestDecision(turn,update,priorHistory);
+ assert.equal(decision.kind,'guidance','the most recent unrelated product answer must not steal a customer-fact correction');
+ assert.equal(decision.continuation,true);
+ assert.equal(decision.merchant_request,null);
+ const hints=[{entity_id:'air_conditioner:unscoped',category:'air_conditioner',model:'CW-SUL70BA',
+  aliases:['CW-SUL70BA'],attributes:{product_name:'CW-SUL70BA'},constraints:{}}];
+ const reduced=reduceTurn(old,{text:turn,semantic_frame:update,source_message_id:SRC,
+   conversation_id:CID,company_id:TID,language:'zh-TW'},hints);
+ assert.equal(reduced.entities[0].quantity,1,'browser tabs cannot become air conditioner quantity');
+ assert.equal(reduced.entities[0].attributes.quantity_basis,'system_default');
+ assert.equal(reduced.customer_constraints.customer_reported_facts.open_web_pages.value,6);
+ assert.equal(reduced.customer_constraints.customer_reported_facts.open_web_pages.provenance.source_message_id,SRC);
+ const memory=buildCanonicalConversationMemory({conversation_id:CID,company_id:TID,source_message_id:SRC,
+   commerce_state_revision:3,commerce_state:reduced,
+   request_decision:decision,customer_fact_delta:update.customer_facts.map(f=>({...f,authority:'customer',source_message_id:SRC})),
+   newest_first:[{id:SRC,role:'visitor',content:turn,created_at:'2026-10-27T03:41:17Z'},
+      ...priorHistory.map((h,i)=>({id:'prior-'+i,...h}))],
+   visitor_turn_count:13,source_created_at:'2026-10-27T03:41:17Z',next_memory_revision:17});
+ assert.match(memory.current_goal??'',/6個分頁/,'current goal must be source-bound current computer context');
+ assert.doesNotMatch(memory.current_goal??'',/CW-SUL70BA|air conditioner/i);
+ assert.notEqual(memory.current_topic,'air_conditioner','current topic cannot be an unrelated old entity');
+ assert(!memory.active_constraints.some(x=>x.includes('customer_reported_facts')||x.includes('"provenance"')));
+ assert.equal(memory.current_customer_facts.find(f=>f.key==='open_web_pages')?.value,6);
+});
+test('C4 Knowledge Helper action is grounded and human reviewed rather than auto-sent',()=>{
+ const panel=task1SourceRead('src/components/console/AgentToolPanel.tsx','utf8');
+ const inbox=task1SourceRead('src/routes/_authenticated/console.conversations.index.tsx','utf8');
+ assert.match(panel,/helperEvidenceDraft && \(/);
+ assert.match(panel,/visibleResult\.data\.status === "available"/);
+ assert.match(panel,/e\.chunk_type === "full_content"/);
+ assert.match(panel,/e\.document_id/);
+ assert.match(panel,/e\.chunk_id/);
+ assert.match(panel,/onClick=\{\(\) => useResult\(helperEvidenceDraft\)\}/);
+ assert.match(panel,/resultSnapshot\.current\?\.draft===latestInputs\.current\.draft/);
+ assert.match(inbox,/setUseConfirmOpen\(true\)/);
+ assert.match(inbox,/setPendingUseText\(text\)/);
 });

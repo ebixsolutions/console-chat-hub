@@ -220,6 +220,24 @@ export function AgentToolPanel({
   ];
 
   const visibleResult=validResult()?tr:null;
+  // Only verified, tenant-scoped full-content evidence can be copied into a
+  // human-reviewed draft. The source IDs travel with the excerpt; no automatic
+  // customer send, model call, or claim that historical content is current.
+  const helperEvidence = visibleResult?.type === "knowledge_helper" &&
+    visibleResult.data.status === "available" && Array.isArray(visibleResult.data.evidence)
+      ? (visibleResult.data.evidence as Array<{label?:unknown;source_type?:unknown;chunk_type?:unknown;content?:unknown;document_id?:unknown;chunk_id?:unknown}>)
+          .find(e => e.chunk_type === "full_content" &&
+            typeof e.document_id === "string" && e.document_id.length > 0 &&
+            typeof e.chunk_id === "string" && e.chunk_id.length > 0 &&
+            typeof e.content === "string" && e.content.trim().length > 0)
+      : undefined;
+  const helperEvidenceDraft = helperEvidence
+    ? (lang === "zh" ? "【知識庫資料草稿 — 發送前請由真人核實】\n" : "[Knowledge evidence draft — human review required before sending]\n") +
+      (helperEvidence.content as string).trim().slice(0, 1200) +
+      (lang === "zh" ? "\n\n資料來源：" : "\n\nSource: ") +
+      String(helperEvidence.label ?? "Knowledge Base").slice(0, 100) +
+      " (Document: " + helperEvidence.document_id + " · Chunk: " + helperEvidence.chunk_id + ")"
+    : null;
   return (
     <div
       style={{
@@ -516,6 +534,14 @@ export function AgentToolPanel({
               </div>
             ))}
             {String(visibleResult.data.status ?? "") === "insufficient_evidence" && <div style={{ color: "#92400e" }}>{tc("kbInsufficientEvidence")}</div>}
+            {helperEvidenceDraft && (
+              <button type="button" disabled={isResolved} onClick={() => useResult(helperEvidenceDraft)}
+                style={{ marginTop: 6, fontSize: 10.5, padding: "4px 9px", borderRadius: 4,
+                  border: "1px solid #7c3aed", background: "#faf5ff",
+                  color: "#7c3aed", cursor: "pointer", fontWeight: 600 }}>
+                {tc("useInDraft")}
+              </button>
+            )}
           </div>
         )}
         {visibleResult?.type === "check_policy" && (
