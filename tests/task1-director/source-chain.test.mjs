@@ -143,6 +143,12 @@ test("Task 1 bounded C4 caller and provider retry source contracts",()=>{
  assert.match(router,/attempt <= allowedAttempts/);
  assert.doesNotMatch(router,/attempt < MAX_ATTEMPTS/);
  assert.match(crm,/bounded_single_pass:boundedKbSearch/);
+ assert.match(crm,/const \[boundedKbSearch, setBoundedKbSearch\] = useState\(true\)/,'KB default must not trigger paid expansion');
+ assert.match(crm,/setShowExtendedKbNotice\(true\)/,'expanded search requires explicit operator confirmation');
+ assert.match(crm,/setBoundedKbSearch\(false\);setShowExtendedKbNotice\(false\)/);
+ assert.match(crm,/setBoundedKbSearch\(true\);/,'ticket changes must restore bounded default');
+ assert.match(crm,/draftText,boundedKbSearch\]\);/,'mode change invalidates stale KB results');
+
  assert.match(panel,/bounded_mode:boundedToolMode/);
 });
 

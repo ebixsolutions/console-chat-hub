@@ -300,7 +300,8 @@ export function CRMPanel({
   const [kbConnState, setKbConnState] = useState<KBConnState>("idle");
   const [kbError, setKbError] = useState("");
   const [kbQuery, setKbQuery] = useState("");
-  const [boundedKbSearch, setBoundedKbSearch] = useState(false);
+  const [boundedKbSearch, setBoundedKbSearch] = useState(true);
+  const [showExtendedKbNotice, setShowExtendedKbNotice] = useState(false);
   const kbReqIdRef = useRef(0);
   const kbPending=useRef(false);
   const policyPending=useRef(false);
@@ -333,7 +334,7 @@ export function CRMPanel({
   useEffect(()=>{
     if(kbSnapshot.current && !validKb()){kbReqIdRef.current++;kbSnapshot.current=null;kbPending.current=false;setKbResults([]);setKbConnState("idle");setKbError("");}
     if(policySnapshot.current && policySnapshot.current.key!==policyKey(policySnapshot.current.mode)){polReqIdRef.current++;policySnapshot.current=null;policyPending.current=false;setPolResult(null);setPolLoading(false);setPolError("");}
-  },[conv?.id,conv?.status,currentRole,toolScopeKey,lang,kbQuery,boundedContext,contextRevisionKey,draftText]);
+  },[conv?.id,conv?.status,currentRole,toolScopeKey,lang,kbQuery,boundedContext,contextRevisionKey,draftText,boundedKbSearch]);
 
 
   useEffect(()=>()=>{kbReqIdRef.current++;polReqIdRef.current++;kbSnapshot.current=null;policySnapshot.current=null;kbPending.current=false;policyPending.current=false;},[]);
@@ -394,6 +395,8 @@ export function CRMPanel({
     setKbConnState("idle");
     setKbError("");
     setKbQuery("");
+    setBoundedKbSearch(true);
+    setShowExtendedKbNotice(false);
     setPolResult(null);
     setPolLoading(false);
     setPolError("");
@@ -599,11 +602,24 @@ export function CRMPanel({
               </div>
               <button type="button" role="switch" aria-checked={boundedKbSearch}
                 disabled={kbConnState === "loading"} aria-label="Single verified KB lookup"
-                onClick={() => setBoundedKbSearch(value => !value)}
+                onClick={() => { if (!boundedKbSearch) setBoundedKbSearch(true); else setShowExtendedKbNotice(true); }}
                 className="mb-2 flex items-center gap-2 text-left text-[11px] disabled:opacity-60">
                 <span aria-hidden="true">{boundedKbSearch ? "☑" : "□"}</span>
                 {lang === "zh" ? "單次有據檢索（不擴展查詢，證據不足不顯示結果）" : "Single verified KB lookup (no query expansions; insufficient evidence is not a match)"}
               </button>
+              {showExtendedKbNotice && (
+                <div role="alert" className="mb-2 rounded border border-amber-400 p-2 text-[11px]">
+                  {lang === "zh"
+                    ? "擴展檢索可產生額外付費 KB 與 LLM 查詢。使用前須確認已獲批准；目前沒有遠端帳單硬上限。"
+                    : "Extended retrieval may incur multiple paid KB and model requests. Only use within approved scope; no verified remote billing hard cap."}
+                  <div className="mt-1 flex gap-2">
+                    <button type="button" onClick={() => setShowExtendedKbNotice(false)}>{lang === "zh" ? "取消" : "Cancel"}</button>
+                    <button type="button" onClick={() => {setBoundedKbSearch(false);setShowExtendedKbNotice(false);}}>
+                      {lang === "zh" ? "確認啟用擴展檢索" : "Confirm extended search"}
+                    </button>
+                  </div>
+                </div>
+              )}
               {kbConnState === "loading" && <div style={{ textAlign: "center", color: "#888", padding: 16 }}>{rc("kbLoading")}</div>}
               {kbError && <div style={{ color: "#ef4444", padding: "6px 0" }}>{kbError}</div>}
               {kbConnState === "empty" && !kbError && <div style={{ padding: 20, textAlign: "center" }}>{rc("kbEmpty")}</div>}
