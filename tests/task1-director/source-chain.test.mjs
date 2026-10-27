@@ -98,7 +98,7 @@ test('new canonical Commerce facts feed the same Memory and active constraints w
     'typed customer facts must not be JSON-serialized into customer-visible service constraints');
   assert(m.current_customer_facts.some(f=>f.key==='usage_scenario' && f.value.browser_tabs_open_simultaneously===8));
   assert(!buildBoundedConversationContext(m,[{id:SRC,role:'visitor',content:q}]).block.includes('customer_reported_facts:{'));
-  assert(buildBoundedConversationContext(m,[{id:SRC,role:'visitor',content:q}]).block.includes('8'));
+  assert(buildBoundedConversationContext(m,[{id:SRC,role:'visitor',content:q}]).block.includes('八個分頁'), 'customer source wording must remain visible without serialized internal typed facts');
 });
 
 for(const [name,text,patch] of [
