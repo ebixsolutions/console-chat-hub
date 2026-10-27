@@ -351,7 +351,7 @@ export function CRMPanel({
       try {
         const { data, error } = await supabase.functions.invoke("kb-search-proxy", {
           timeout: KB_PROXY_CLIENT_TIMEOUT_MS,
-          body: { query: query.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id, query_mode: queryMode, bounded_single_pass:boundedKbSearch },
+          body: { query: query.trim().slice(0, 500), top_k: 3, conversation_id: conv?.id, query_mode: queryMode, bounded_single_pass:boundedKbSearch, extended_search_confirmed:!boundedKbSearch },
         });
         if (!valid()) return;
         const failure = await knowledgeFailureState(data,error);

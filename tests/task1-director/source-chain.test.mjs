@@ -135,7 +135,8 @@ test("Task 1 bounded C4 caller and provider retry source contracts",()=>{
  const router=task1SourceRead("supabase/functions/_shared/llm-router.ts","utf8");
  const crm=task1SourceRead("src/components/console/CRMPanel.tsx","utf8");
  const panel=task1SourceRead("src/components/console/AgentToolPanel.tsx","utf8");
- assert.match(kb,/const boundedSinglePass = body\?\.bounded_single_pass === true/);
+ assert.match(kb,/const boundedSinglePass = isBoundedKBRequest\(body\)/);
+ assert.match(crm,/extended_search_confirmed:!boundedKbSearch/,'extension requires UI confirmed opt-in');
  assert.match(kb,/const expansions = boundedSinglePass \? \[\] : await diagnostic\.run/);
  assert.match(kb,/deterministicOnly: boundedSinglePass/);
  assert.match(kb,/bounded_relevance_not_verified/);
@@ -150,6 +151,23 @@ test("Task 1 bounded C4 caller and provider retry source contracts",()=>{
  assert.match(crm,/draftText,boundedKbSearch\]\);/,'mode change invalidates stale KB results');
 
  assert.match(panel,/bounded_mode:boundedToolMode/);
+});
+
+test('Task1 Mac UA: legacy and absent confirmation requests remain one verified KB lookup', async () => {
+ const source = task1SourceRead('supabase/functions/kb-search-proxy/index.ts','utf8');
+ const begin=source.indexOf('export function isBoundedKBRequest(');
+ const end=source.indexOf('function isUuid(',begin);
+ assert(begin>=0 && end>begin,'source-backed proxy budget helper must be present');
+ const built=task1Transpile(source.slice(begin,end),{loader:'ts',format:'esm'}).code;
+ const {isBoundedKBRequest}=await import('data:text/javascript;base64,'+Buffer.from(built).toString('base64'));
+ for(const [name,input,expected] of [
+  ['legacy false without confirmation',{bounded_single_pass:false},true],
+  ['old unspecified client',{},true],
+  ['null body',null,true],
+  ['bounded true',{bounded_single_pass:true},true],
+  ['spurious flag without explicit off',{extended_search_confirmed:true},true],
+  ['operator confirms explicit expanded mode',{bounded_single_pass:false,extended_search_confirmed:true},false],
+ ]) assert.equal(isBoundedKBRequest(input),expected,name);
 });
 
 test('Task1 C4: original bounded full-content relevance accepts supported Chinese enumeration, never unrelated refund facts', async () => {

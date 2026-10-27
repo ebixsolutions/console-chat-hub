@@ -74,6 +74,12 @@ function jsonResponse(body: unknown, status: number, req: Request): Response {
     headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
   });
 }
+/** Cost-safe backward-compatible default. Unconfirmed/legacy callers may not fan out. */
+export function isBoundedKBRequest(body: unknown): boolean {
+  if (!body || typeof body !== "object") return true;
+  const request = body as { bounded_single_pass?: unknown; extended_search_confirmed?: unknown };
+  return request.bounded_single_pass !== false || request.extended_search_confirmed !== true;
+}
 function isUuid(v: unknown): v is string {
   return typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
@@ -539,7 +545,9 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     if(body?.bounded_single_pass !== undefined && typeof body.bounded_single_pass !== "boolean")
       return jsonResponse({error:"invalid_request",detail:"bounded_single_pass must be boolean"},400,req);
-    const boundedSinglePass = body?.bounded_single_pass === true;
+    if(body?.extended_search_confirmed !== undefined && typeof body.extended_search_confirmed !== "boolean")
+      return jsonResponse({error:"invalid_request",detail:"extended_search_confirmed must be boolean"},400,req);
+    const boundedSinglePass = isBoundedKBRequest(body);
     for (const forbidden of ["company_id", "industry", "language", "tenant_id", "workspace_id"]) {
       if (body?.[forbidden] !== undefined) {
         return jsonResponse({
