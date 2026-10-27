@@ -891,15 +891,45 @@ export function isCanonicalConversationMemory(value: unknown): value is Canonica
   return Boolean(record(row.transaction_summary) && record(row.handoff_relevant_state)) && JSON.stringify(value).length <= C3_MEMORY_JSON_CHAR_BUDGET;
 }
 
+/** Render customer-owned, typed facts without exposing JSON, provenance or
+ * internal schema fields. Numbers/false/zero remain directly recoverable by
+ * the service planner after removal of the unsafe customer_reported_facts dump.
+ * This is a bounded read-only projection, not a state mutation or KB authority. */
+function displayCurrentCustomerFact(value: unknown, depth = 0): string {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  if (typeof value === "string") {
+    const cleaned = clean(value, 140);
+    return /customer_reported_facts\s*:|["']provenance["']\s*:/i.test(cleaned) ? "" : cleaned;
+  }
+  if (depth >= 2 || !value || typeof value !== "object") return "";
+  if (Array.isArray(value)) return value.slice(0, 4)
+    .map(item => displayCurrentCustomerFact(item, depth + 1)).filter(Boolean).join(" / ").slice(0, 240);
+  return Object.entries(value as Record<string, unknown>)
+    .filter(([key]) => !/(?:^|_)(?:provenance|metadata|source_message_id|recorded_at|document_id|chunk_id|tenant_id|state_hash)(?:$|_)/i.test(key))
+    .slice(0, 8).map(([key, item]) => {
+      const rendered = displayCurrentCustomerFact(item, depth + 1);
+      return rendered ? `${clean(key.replace(/[_-]/g, " "), 60)}: ${rendered}` : "";
+    }).filter(Boolean).join("; ").slice(0, 300);
+}
+
 export function buildConversationMemoryMarkdown(memory: CanonicalConversationMemory): string {
   const entityLines = memory.active_entities.map((entity) =>
     `- ${entity.entity_id}: ${entity.quantity ?? "—"} (${entity.type})`
   );
   const tx = memory.transaction_summary;
+  const customerFacts = memory.current_customer_facts.filter(fact =>
+    !fact.key.startsWith("entity:") && !/(?:provenance|metadata|customer_reported_facts)/i.test(fact.key))
+    .slice(-12).map(fact => {
+      const value = displayCurrentCustomerFact(fact.value);
+      const label = clean(fact.key.replace(/[_-]/g, " "), 70);
+      return value && label ? `- ${label}: ${value}` : "";
+    }).filter(Boolean).slice(0, 10);
   return [
     "### Current Goal", memory.current_goal || "—", "",
     "### Active Entities", ...(entityLines.length ? entityLines : ["- —"]), "",
     "### Latest Corrections", ...(memory.latest_corrections.length ? memory.latest_corrections.map((x) => `- ${x}`) : ["- —"]), "",
+    "### Current Customer Facts", ...(customerFacts.length ? customerFacts : ["- —"]), "",
     "### Transaction State",
     `- Quotation: ${tx.quotation}`,
     `- Order: ${tx.order}`,
