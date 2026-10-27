@@ -615,6 +615,23 @@ function SinglePageInbox() {
     };
   }, [selectedId, loadMessages]);
 
+  // Realtime can silently miss a message while still subscribed.
+  // Reconcile only the selected RLS-scoped ticket in a visible tab.
+  // No writes, model calls or whole-Inbox polling.
+  useEffect(() => {
+    if (!selectedId) return;
+    const ticketId = selectedId;
+    let stopped = false;
+    let pending = false;
+    const checkLatest = () => {
+      if (stopped || pending || document.hidden || selectedIdRef.current !== ticketId) return;
+      pending = true;
+      void loadMessages(ticketId, false).finally(() => { pending = false; });
+    };
+    const timer = window.setInterval(checkLatest, 4000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [selectedId, loadMessages]);
+
   useEffect(() => {
     function handleVisibility() {
       if (!document.hidden) {
