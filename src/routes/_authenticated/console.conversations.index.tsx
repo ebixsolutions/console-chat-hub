@@ -619,7 +619,7 @@ function SinglePageInbox() {
   // Reconcile only the selected RLS-scoped ticket in a visible tab.
   // No writes, model calls or whole-Inbox polling.
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId || typeof window.setInterval !== "function" || typeof window.clearInterval !== "function") return;
     const ticketId = selectedId;
     let stopped = false;
     let pending = false;

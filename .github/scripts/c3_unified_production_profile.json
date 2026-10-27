@@ -1232,7 +1232,7 @@
     "src/components/console/AgentToolPanel.tsx": "c1c4cf3fa5690e4918375b6f388f9812032d9d5ae888e05240c115de08d588da",
     "supabase/functions/_shared/conversation-long-memory.test.ts": "db1ef366a2b60fca288d27f5f7af97de1bfe6b47b3959319fdd7774a695a1430",
     "tests/task1-director/source-chain.test.mjs": "784754892e1d4e0b1bc0d8558d477ea41a0e6b0f6a0004d3530397fc32931601",
-    "src/routes/_authenticated/console.conversations.index.tsx": "0bf7212b4481130d17fecd1672cf58193d2d25d7d6f03afd7961ae14ffd6abd2",
+    "src/routes/_authenticated/console.conversations.index.tsx": "fb11cf057acbf68785b2c7eb50d499533b6c827fdf763c8055ffe493deab9720",
     "tests/console-navigation/inbox-history-search.test.mjs": "d016fbb398b54b3d46e106c2fac28c8ba0770741374e43124fdb2f50c38780e5"
   },
   "task1_c4_recovery_deployment_authorized": false
