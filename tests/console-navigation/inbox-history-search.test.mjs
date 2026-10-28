@@ -10,7 +10,7 @@ const result=await build({entryPoints:['src/routes/_authenticated/console.conver
  if(a.path.includes('useAuth'))return {contents:'export const useAuth=()=>({user:{id:"owner"}});'};
  if(a.path.includes('useCurrentRole'))return {contents:'export const useCurrentRole=()=>({role:globalThis.__inboxSearch.role??"admin",loading:false});'};
  if(a.path.includes('useEffectiveRole'))return {contents:'export const useConsoleLang=()=>"en";'};
- if(a.path.includes('/integrations/'))return {contents:s+'export const supabase={from:table=>f.from(table),functions:{invoke(){throw Error("unexpected dispatch")}},channel:()=>({on(){return this;},subscribe(){return this;}}),removeChannel(){}};'};
+ if(a.path.includes('/integrations/'))return {contents:s+'export const supabase={from:table=>f.from(table),functions:{invoke(){throw Error("unexpected dispatch")}},channel:name=>({on(type,filter,cb){(f.realtime[name]??=[]).push({type,filter,cb});return this;},subscribe(){return this;}}),removeChannel(){}};'};
  if(a.path.includes('reply-request'))return {contents:'export class ReplyRequest{}'};
  if(a.path.includes('CRMPanel'))return {contents:'export const CRMPanel=()=>null,RIGHT_COPY={},buildBoundedContext=()=>"",computeContextRevisionKey=(id,msgs)=>id+":"+msgs.filter(m=>m.role==="visitor"&&!m.is_recalled).map(m=>m.id).join(",");'};
  if(a.path.includes('ComposerTools'))return {contents:'export const AttachmentButtons=()=>null,EmojiPickerButton=()=>null,insertAtCaret=()=>({value:"",caret:0});'};
@@ -23,7 +23,7 @@ const result=await build({entryPoints:['src/routes/_authenticated/console.conver
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'c3-inbox-search-'));const file=path.join(dir,'ui.mjs');fs.writeFileSync(file,result.outputFiles[0].text);const {Route}=await import(pathToFileURL(file));fs.rmSync(dir,{recursive:true});
 const txt=x=>typeof x==='string'?x:Array.isArray(x)?x.map(txt).join(''):x?.children?.map(txt).join('')??'';
 let timers=[];let intervals=[];
-function reset(){timers=[];intervals=[];f.role="admin";f.activityRead=null;f.reads=[];f.fail=false;f.previewFail=false;f.tables={conversations:[{id:'target',status:'open',assigned_agent_id:null,channel_config:{name:'Target channel'},visitor_session:{id:'visitor1',visitor_metadata:{name:'Target visitor'}}},{id:'other',status:'open',assigned_agent_id:null,channel_config:{name:'Other'},visitor_session:{id:'visitor2'}}],agent_profile:[],messages:[{id:'z1',conversation_id:'target',content:'Technical recovery',created_at:'2026-10-16',is_recalled:false},{id:'a1',conversation_id:'target',content:'有冇洗衣機訂閱服務資訊？請唔好憑空推套餐。',created_at:'2026-10-15',is_recalled:false},{id:'z2',conversation_id:'other',content:'Other message',created_at:'2026-10-16',is_recalled:false}]};
+function reset(){timers=[];intervals=[];f.realtime={};f.role="admin";f.activityRead=null;f.reads=[];f.fail=false;f.previewFail=false;f.tables={conversations:[{id:'target',status:'open',assigned_agent_id:null,channel_config:{name:'Target channel'},visitor_session:{id:'visitor1',visitor_metadata:{name:'Target visitor'}}},{id:'other',status:'open',assigned_agent_id:null,channel_config:{name:'Other'},visitor_session:{id:'visitor2'}}],agent_profile:[],messages:[{id:'z1',conversation_id:'target',content:'Technical recovery',created_at:'2026-10-16',is_recalled:false},{id:'a1',conversation_id:'target',content:'有冇洗衣機訂閱服務資訊？請唔好憑空推套餐。',created_at:'2026-10-15',is_recalled:false},{id:'z2',conversation_id:'other',content:'Other message',created_at:'2026-10-16',is_recalled:false}]};
  f.tables.conversation_status_log=[];f.tables.conversation_assignment=[];f.tables.handoff_event=[];
  f.from=table=>{let rows=[...f.tables[table]],needle=null,search=false;const q={select(){return q;},eq(k,v){rows=rows.filter(r=>r[k]===v);return q;},in(k,ids){rows=rows.filter(r=>ids.includes(r[k]));return q;},neq(k,v){rows=rows.filter(r=>r[k]!==v);return q;},or(){rows=rows.filter(r=>!r.is_recalled);return q;},ilike(k,v){search=true;needle=v.slice(1,-1).replace(/\\([\\%_])/g,'$1');rows=rows.filter(r=>String(r[k]).toLowerCase().includes(needle.toLowerCase()));return q;},order(k,{ascending}={}){rows.sort((a,b)=>String(a[k]).localeCompare(String(b[k]))*(ascending?1:-1));return q;},range(a,b){f.reads.push({table,search,needle});return Promise.resolve((search&&f.fail||(!search&&table==='messages'&&f.previewFail))?{data:null,error:{message:'read_failed'},count:null}:{data:rows.slice(a,b+1),error:null,count:rows.length});},maybeSingle:async()=>({data:rows[0]??null,error:null}),then(resolve,reject){return (f.activityRead&&["conversation_status_log","conversation_assignment","handoff_event"].includes(table)?f.activityRead(table,rows):Promise.resolve({data:rows,error:null,count:rows.length})).then(resolve,reject);}};return q;};
  globalThis.window={setTimeout:fn=>(timers.push(fn),fn),clearTimeout:fn=>{timers=timers.filter(x=>x!==fn);},setInterval:fn=>(intervals.push(fn),fn),clearInterval:fn=>{intervals=intervals.filter(x=>x!==fn);}};globalThis.document={addEventListener(){},removeEventListener(){}};
@@ -112,4 +112,23 @@ test('Task1 C4 missed Realtime: selected Inbox catches visitor correction and in
  assert.equal(f.toolProps.draftText,'Current human draft','stale tool may not replace the human draft');
  assert.equal(f.reads.filter(x=>x.table==='conversations').length,beforeListReads,'must not poll entire Inbox');
  await act(async()=>r.unmount());assert.equal(intervals.length,0,'timer must clean up');
+});
+
+test('Task1: Realtime INSERT/UPDATE updates Inbox without rescan of message previews',async()=>{
+ reset();const r=await mount();const reads=f.reads.filter(x=>x.table==='messages').length;
+ assert.equal(f.realtime['console-all-messages']?.length,1);
+ assert.equal(f.realtime['console-conversations']?.length,1);
+ await act(async()=>f.realtime['console-all-messages'][0].cb({eventType:'INSERT',
+   new:{conversation_id:'target',role:'visitor',content:'PUSHED CUSTOMER UPDATE',
+     created_at:'2026-10-28T12:00:00Z',is_recalled:false}}));
+ assert.match(txt(r.toJSON()),/PUSHED CUSTOMER UPDATE/);
+ assert.equal(f.reads.filter(x=>x.table==='messages').length,reads,'no full-list message rescan');
+ await act(async()=>f.realtime['console-conversations'][0].cb({eventType:'UPDATE',
+   new:{id:'target',status:'pending',updated_at:'2026-10-28T12:00:01Z'}}));
+ assert.equal(f.reads.filter(x=>x.table==='messages').length,reads,'no rescan after status update');
+ await act(async()=>f.realtime['console-all-messages'][0].cb({eventType:'INSERT',
+   new:{conversation_id:'foreign',content:'CROSS TENANT PRIVATE'}}));
+ assert.doesNotMatch(txt(r.toJSON()),/CROSS TENANT PRIVATE/);
+ assert.equal(f.reads.filter(x=>x.table==='messages').length,reads);
+ await act(async()=>r.unmount());
 });

@@ -38,6 +38,7 @@ import {
   type CommerceDimensionAttribute,
   inferCommerceDimensionAttribute,
   isCurrentRequirementsRecap,
+  isBareCommerceSubjectMention,
   customerSunExposure,
   customerDimensionPair,
   withoutExcludedLookups,
@@ -1959,6 +1960,9 @@ function reduceSingleTurn(
   if (isReadOnlyCurrentStateQuery(input.text, input.semantic_frame) && !durableResearchTurn && !input.trusted_product_topic_focus) {
     return previous;
   }
+  // Bare product/service names are references; do not commit an LLM's inferred
+  // quantity or new transaction without a customer-authored action.
+  if (isBareCommerceSubjectMention(input.text,input.semantic_frame)) return previous;
   const contextual = resolveContextualTurn(input, previous);
   if (contextual.route === "targeted_clarification") return previous;
   if (contextual.route === "contextual_scoped_update") {

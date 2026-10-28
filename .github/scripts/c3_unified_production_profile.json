@@ -1234,12 +1234,14 @@
     "src/components/console/CRMPanel.tsx": "df67cfc7ca0543428d236f41cdf218ed9aab0a8672c26f068b0da2eb43d9084e",
     "src/components/console/AgentToolPanel.tsx": "a8bc6b284977367f5d8ab5e7ffecf1e9b4ad2fde9210613e7be7d5c8324e5e4d",
     "supabase/functions/_shared/conversation-long-memory.test.ts": "db1ef366a2b60fca288d27f5f7af97de1bfe6b47b3959319fdd7774a695a1430",
-    "tests/task1-director/source-chain.test.mjs": "10ff92a6d3367b6141ae8c504d0870fed8340ad4029be9fb5e1526981ad61594",
-    "src/routes/_authenticated/console.conversations.index.tsx": "fb11cf057acbf68785b2c7eb50d499533b6c827fdf763c8055ffe493deab9720",
-    "tests/console-navigation/inbox-history-search.test.mjs": "d016fbb398b54b3d46e106c2fac28c8ba0770741374e43124fdb2f50c38780e5",
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "ae05540089178a3a47aa917afa3788230eb74c7f66d8af03b4844651cb19f38f",
-    "supabase/functions/_shared/commerce-state-authority.ts": "c3aef4a419717b95af5ade59239281c6f77592c03122b50c73973fc849488827",
-    "tests/c3-widget-live-auth/original-preview.test.mjs": "0036cdffc83836c2ec16bafcacec1ff027c0b5216576cb4a25f8b12de2202ad0"
+    "tests/task1-director/source-chain.test.mjs": "7d4e8674807e82509585d5cb96e834e59e3f1a66061ab367be4e37718ba2006a",
+    "src/routes/_authenticated/console.conversations.index.tsx": "c7feae0efccdd4f9acb80efa4c2acc106b270320e98f156e671b96c40793f6f5",
+    "tests/console-navigation/inbox-history-search.test.mjs": "ee368583eb94f5cd40b0f7494af7708ff46799b0198037cc179003ecf5433084",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "3fca3ca9e71065bed9ee6ebfa5321e582d9afd54949624b73f765ba7ba83b27d",
+    "supabase/functions/_shared/commerce-state-authority.ts": "a68c017c08fbd679adfe5c6d0645fc48cea330acfcb78b94a5a1ec894e2fbc69",
+    "tests/c3-widget-live-auth/original-preview.test.mjs": "0036cdffc83836c2ec16bafcacec1ff027c0b5216576cb4a25f8b12de2202ad0",
+    "supabase/functions/_shared/conversation-service-planner.ts": "3129df8d8f6820cb0c53d1ba8d673d1a1f866224c1da2dd7a0b53a01f6fda41d",
+    "supabase/functions/_shared/conversation-service-planner.test.ts": "4d80a8cda70c6f693c17f486b0850ee233693a630088579e00b8dfc8b52ad451"
   },
   "task1_c4_recovery_deployment_authorized": false,
   "authorized_task1_feedback_security_sha256": {

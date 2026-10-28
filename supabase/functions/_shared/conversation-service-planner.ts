@@ -14,7 +14,7 @@ import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { activeCustomerGoal, customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { requiresSemanticKnowledge, scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
-import { isPersonalOrderStatusRequest, isCustomerGuidanceRequest, resolveCustomerRequestDecision, type CustomerRequestDecision } from "./commerce-state-authority.ts";
+import { isBareCommerceSubjectMention, isPersonalOrderStatusRequest, isCustomerGuidanceRequest, resolveCustomerRequestDecision, type CustomerRequestDecision } from "./commerce-state-authority.ts";
 import { classifyCanonicalConversationTurn, isFactualExplanationQuestion } from "./conversation-semantic-contract.ts";
 import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state.ts";
 import { DecisionContextLimitError } from "./bounded-decision-context.ts";
@@ -554,6 +554,11 @@ export function planConversationService(
   // A personal order enquiry is not a product/policy KB lookup. No live order
   // connector is asserted here; the existing honest intake route owns it.
   if (isPersonalOrderStatusRequest(question)) return {...base, action:"customer_issue_next_step",issue_kind:"order_status_lookup",safe_assumptions:["no_live_account_or_order_state","no_completed_action_without_runtime_evidence"]};
+  // A bare item name alone is neither a quantity nor an order.
+  if (isBareCommerceSubjectMention(question,input.semantic_frame)) return {
+    ...base,action:"targeted_clarification",
+    missing_slots:["bare_item_intent"],clarification_target:"bare_item_intent",
+  };
   const serviceDiscussion = classifyHumanServiceDiscussion(question);
   // Raw, bounded service control precedes recall and historical Commerce slots.
   // It is read-only: this does not commit the optional semantic interpretation.
@@ -722,6 +727,11 @@ export function planConversationService(
 const formatMoney = (value: number) =>
   value.toLocaleString("en-US", { maximumFractionDigits: 2 });
 const labels: Record<string, [string, string, string]> = {
+  bare_item_intent: [
+    "你想了解呢件商品嘅售價、功能，定係想購買？只提供商品名稱未有建立訂單。",
+    "你想了解这件商品的售价、功能，还是想购买？仅提供商品名称并未建立订单。",
+    "Would you like its price, features, or ordering details? Naming it alone has not placed an order.",
+  ],
   specific_product_or_item: [
     "你指的是哪一件產品或哪個項目？",
     "你指的是哪一件产品或哪个项目？",

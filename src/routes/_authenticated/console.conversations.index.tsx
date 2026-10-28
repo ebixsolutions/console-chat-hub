@@ -368,6 +368,8 @@ function SinglePageInbox() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
   const conversationLoadRef = useRef(0);
+  const conversationsRef = useRef<Conv[]>([]);
+  conversationsRef.current = conversations ?? [];
 
   const lang = useConsoleLang();
   const { role: currentRole } = useCurrentRole();
@@ -565,15 +567,37 @@ function SinglePageInbox() {
     loadAgents();
     const convChannel = supabase
       .channel("console-conversations")
-      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, () => {
-        debouncedLoadConversations();
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, (payload) => {
+        const change = payload.new as Partial<Conv> | undefined;
+        if(payload.eventType!=="UPDATE" || !change?.id ||
+            !conversationsRef.current.some(c=>c.id===change.id)){
+          // New/revoked tickets need one fresh authenticated/RLS-scoped read.
+          debouncedLoadConversations();return;
+        }
+        // Existing ticket: Realtime event updates its visible row without
+        // rescanning every message in all 542+ ticket histories.
+        setConversations(current=>current?.map(c=>c.id!==change.id?c:{
+          ...c,
+          status:typeof change.status==="string"?change.status:c.status,
+          priority:change.priority===undefined?c.priority:change.priority,
+          updated_at:change.updated_at??c.updated_at,
+          assigned_agent_id:change.assigned_agent_id===undefined?c.assigned_agent_id:change.assigned_agent_id,
+          assigned_agent_name:change.assigned_agent_id===undefined||change.assigned_agent_id===c.assigned_agent_id
+            ? c.assigned_agent_name : change.assigned_agent_id?"Assigned agent (name unavailable)":"AI Chatbot",
+        }).sort((a,b)=>String(b.updated_at??"").localeCompare(String(a.updated_at??"")))??null);
       })
       .subscribe(handleSubscribeStatus);
     const allMsgChannel = supabase
       .channel("console-all-messages")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
-        if ((payload.new as { content?: string })?.content === "__THINKING__") return;
-        debouncedLoadConversations();
+        const row=payload.new as {conversation_id?:string;content?:string;created_at?:string;is_recalled?:boolean}|undefined;
+        if(!row?.conversation_id||typeof row.content!=="string"||row.content==="__THINKING__")return;
+        // Only update a ticket already returned under this actor's RLS.
+        if(!conversationsRef.current.some(c=>c.id===row.conversation_id))return;
+        setConversations(current=>current?.map(c=>c.id!==row.conversation_id?c:{
+          ...c,latest_preview:row.is_recalled===true?"[訊息已撤回]":row.content!.slice(0,80),
+          updated_at:row.created_at&&(!c.updated_at||row.created_at>c.updated_at)?row.created_at:c.updated_at,
+        }).sort((a,b)=>String(b.updated_at??"").localeCompare(String(a.updated_at??"")))??null);
       })
       .subscribe();
     return () => {
@@ -628,7 +652,9 @@ function SinglePageInbox() {
       pending = true;
       void loadMessages(ticketId, false).finally(() => { pending = false; });
     };
-    const timer = window.setInterval(checkLatest, 4000);
+    // Realtime handles normal delivery. Only an infrequent selected-ticket
+    // liveness checkpoint reconciles a silently missed WebSocket notification.
+    const timer = window.setInterval(checkLatest, 60000);
     return () => { stopped = true; window.clearInterval(timer); };
   }, [selectedId, loadMessages]);
 

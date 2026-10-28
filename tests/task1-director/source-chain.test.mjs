@@ -2,7 +2,7 @@ import test from 'node:test';
 import {transformSync as task1Transpile} from 'esbuild';
 import {readFileSync as task1SourceRead} from 'node:fs';
 import assert from 'node:assert/strict';
-import {resolveCustomerRequestDecision} from '../../supabase/functions/_shared/commerce-state-authority.ts';
+import {resolveCustomerRequestDecision,isBareCommerceSubjectMention} from '../../supabase/functions/_shared/commerce-state-authority.ts';
 import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
 import {reduceTurn, isReadOnlyCommerceQuestion} from '../../supabase/functions/_shared/commerce-state-runtime-base.ts';
 import {sourceBoundMixedCustomerFactEvents, semanticFrameToStateEvents} from '../../supabase/functions/_shared/commerce-semantic-adapter.ts';
@@ -301,4 +301,17 @@ test('C4 Knowledge Helper action is grounded and human reviewed rather than auto
  assert.match(panel,/resultSnapshot\.current\?\.draft===latestInputs\.current\.draft/);
  assert.match(inbox,/setUseConfirmOpen\(true\)/);
  assert.match(inbox,/setPendingUseText\(text\)/);
+});
+
+test('Task1: bare commerce subject is never ADD_ITEM with fabricated default quantity',()=>{
+  for(const name of ['轻量冲锋衣','轻量化户外冲锋衣','SaaS 訂閱方案','剪髮服務','CW-SUL70BA']){
+    const entity={entity_ref:name,name,kind:'physical_product',category_hint:null,sku:null,model:null,
+      quantity:1,unit:null,attributes:{},constraints:{},capabilities:{},confidence:0.97};
+    const proposal=semantic({operation:'ADD_ITEM',intent:'explore_options',requested_facts:[],entities:[entity]});
+    assert.equal(isBareCommerceSubjectMention(name,proposal),true,name);
+    const before=createEmptyConversationCommerceState();
+    assert.deepEqual(reducer(name,proposal,before),before,'no default item or quantity: '+name);
+    for(const realAction of ['我要買一件'+name,'请查'+name+'售价','取消'+name,'Buy '+name])
+      assert.equal(isBareCommerceSubjectMention(realAction,proposal),false,'keep legitimate action or fact request');
+  }
 });

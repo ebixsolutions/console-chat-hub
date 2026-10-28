@@ -406,3 +406,21 @@ Deno.test("Phase1 missing information follows its owner and does not re-ask supp
   const reply=renderServicePlanReply(refreshed,null)??"";
   assert(reply.includes("blue") && !/\?/.test(reply),"supplied variant remains known, stale missing is not re-asked");
 });
+
+Deno.test("Task1 standalone item name never acknowledges invented order or quantity",()=>{
+  for(const name of ["轻量冲锋衣","轻量化户外冲锋衣","剪髮服務","SaaS 訂閱方案","CW-SUL70BA"]){
+    const frame={
+      version:"commerce-semantic-1.0.0",language:"zh-CN",operation:"ADD_ITEM",intent:"explore_options",topic:name,
+      confidence:0.98,customer_correction:false,additive:false,customer_facts:[],referents:[],requested_facts:[],
+      explicit_negations:[],entities:[{entity_ref:name,name,kind:"physical_product",category_hint:null,
+        sku:null,model:null,quantity:1,unit:null,attributes:{},constraints:{},capabilities:{},confidence:0.98}],
+      transaction_state:"none",payment_state:"none",booking_state:"none",fulfillment_state:"none",
+      ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}
+    } as import("./commerce-semantic-frame.ts").CommerceSemanticFrame;
+    const plan=planConversationService({question:name,language:"zh-CN",recall:{handled:false,
+      reason:"NOT_A_RECALL_QUERY",detail:"CUSTOMER_STATEMENT_NOT_QUERY"},memory:null,commerce:null,semantic_frame:frame});
+    assert(plan.action==="targeted_clarification" && plan.clarification_target==="bare_item_intent",JSON.stringify(plan));
+    const reply=renderServicePlanReply(plan,null)??renderTargetedServiceQuestion(plan,"zh-CN");
+    assert(reply.includes("售价") && reply.includes("订单") && !reply.includes("1個") && !reply.includes("要求已記錄"),reply);
+  }
+});

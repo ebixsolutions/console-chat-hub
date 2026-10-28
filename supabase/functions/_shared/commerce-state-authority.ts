@@ -1136,3 +1136,19 @@ export function isPersonalOrderStatusRequest(text:string):boolean {
  const t=clean(text,1600);
  return /訂單|订单|\border\b/iu.test(t) && /狀況|状况|狀態|状态|進度|进度|去到邊|去到边|到哪|出貨|出货|送貨未|送货没|\b(?:status|track|tracking|where|shipped|progress)\b/iu.test(t) && !/政策|條款|条款|一般|通常|幾日|几天|privacy|policy|terms|usually|how long/iu.test(t);
 }
+
+/** A standalone commerce subject is not permission to invent an ADD_ITEM,
+ * default quantity, order, booking or reservation. This is a multilingual
+ * schema-backed negative guard, not a product/category vocabulary list. */
+export function isBareCommerceSubjectMention(text: string, frame: CommerceSemanticFrame | null | undefined): boolean {
+  if (!frame || !["ADD_ITEM","UPDATE_ITEM","NO_STATE_CHANGE","CONFIRM"].includes(frame.operation) ||
+      frame.customer_correction || frame.additive || (frame.customer_facts?.length ?? 0) > 0 ||
+      !Array.isArray(frame.entities) || !frame.entities.length) return false;
+  const raw=text.normalize("NFKC").trim();
+  if (raw.length<2 || raw.length>160 || /[?？]/u.test(raw) ||
+      /^(?:我(?:要|想|需)|請|请|買|买|訂購|订购|下單|下单|預約|预约|租用|購買|购买|加購|加购|更正|取消|暫緩|暂缓)/u.test(raw) ||
+      /^(?:please\s+)?(?:i\s+(?:want|need|would\s+like)|buy|purchase|order|book|reserve|add|cancel|change)\b/iu.test(raw)) return false;
+  const normalize=(s:string)=>s.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu,"");
+  const name=normalize(raw);
+  return name.length>=2 && frame.entities.some(e=>typeof e.name==="string" && normalize(e.name)===name);
+}
