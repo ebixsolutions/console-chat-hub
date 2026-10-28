@@ -278,6 +278,11 @@ function assessApplicability(
  */
 export function namedPriceProductLabel(request: string): string | null {
   const normalized = request.normalize("NFKC").trim().replace(/\s+/gu, " ");
+  // Price-reference relaxation applies ONLY to an explicit price request.
+  // Generic definitions / product recommendations may never masquerade as a
+  // named-price lookup merely because a terminal question mark was removed.
+  if (!/(?:售價|售价|價錢|价钱|價格|价格|標價|标价|幾錢|几钱|多少錢|多少钱|\b(?:selling\s+price|price|how\s+much)\b)/iu.test(normalized))
+    return null;
   if (modelTokens(normalized).length) return null;
   let value = normalized.replace(/^(?:(?:請問|请问|想問|想问|我想知道|我想知|幫我查|帮我查|請查|请查)\s*)+/u, "");
   value = value

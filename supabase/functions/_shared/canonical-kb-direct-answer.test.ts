@@ -1,4 +1,4 @@
-import { deriveCurrentGroundingTarget, selectCanonicalGrounding } from "./canonical-grounding.ts";
+import { deriveCurrentGroundingTarget, selectCanonicalGrounding, namedPriceProductLabel } from "./canonical-grounding.ts";
 import { currentKbSellingPrice, resolveCanonicalKbDirectAnswer } from "./canonical-kb-direct-answer.ts";
 import { buildCitationMetadata } from "./citation-lineage.ts";
 import type { KBDocumentCandidate } from "./deterministic-kb-client.ts";
@@ -411,4 +411,16 @@ Deno.test("Task1 cross-industry named product price is evidence-bound, with no i
     else assert(observed.resolved?.kind === "price_unknown" && !/HK\$1,299/.test(observed.resolved.reply),
       "foreign-currency amount silently promoted to HKD");
   }
+});
+
+Deno.test("Task1C named price lookup never captures normal knowledge queries", () => {
+  for (const question of [
+    "四電一腦係咩？", "香港四電一腦回收計劃係點運作？",
+    "What is circular economy?", "Please explain cloud tenancy.",
+    "請推薦兩款衝鋒衣", "循環器材的意思是甚麼？",
+  ]) {
+    assert(namedPriceProductLabel(question) === null, "nonprice captured as product:"+question);
+  }
+  assert(namedPriceProductLabel("轻量冲锋衣 几钱？") === "轻量冲锋衣", "named price query lost");
+  assert(namedPriceProductLabel("CW-SUL90BA 售價幾多？") === null, "model requests must retain exact-model flow");
 });
