@@ -184,7 +184,12 @@ export function resolveCanonicalKbDirectAnswer(input: {
   if (ids.length !== 1) return null;
   const model = ids[0];
   const chunks = selection.chunks.filter((chunk) =>
-    chunk.chunk_type === "full_content" && chunk.status === "published" &&
+    chunk.chunk_type === "full_content" &&
+    // Authenticated RAG service binds its own published/live selection even
+    // when its public payload omits a publication-status field. Never convert
+    // unknown currentness into a verified current price or allow a historical
+    // document. The out-of-band service authority is required above.
+    (chunk.status === "published" || publishedReferenceOnly && chunk.status === "unknown") &&
     chunk.document_id === selection.document!.document_id &&
     Boolean(chunk.chunk_id) && exactKbModelIds(chunk.content).includes(model) &&
     selection.evidence.some((e) =>

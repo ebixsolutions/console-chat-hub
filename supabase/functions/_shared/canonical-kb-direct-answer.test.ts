@@ -198,6 +198,25 @@ Deno.test("Task1: authenticated published unknown-currentness product price is a
       selected_authority_class: "PUBLISHED_KB_SERVICE" as const,
       provenance: { ...original.authority_decision.provenance, currentness: "unknown" as const } },
   };
+  const serviceWithUnknownChunkStatus = {
+    ...unknown,
+    document:{...unknown.document,
+      chunks:unknown.document.chunks.map(c=>({...c,status:"unknown" as const}))},
+    chunks:unknown.chunks.map(c=>({...c,status:"unknown" as const}))
+  };
+  const publishedServiceReply = resolveCanonicalKbDirectAnswer({
+    request:"CW-SUL90BA 售價幾多？",selection:serviceWithUnknownChunkStatus,language:"zh-TW"
+  });
+  assert(publishedServiceReply?.kind==="listed_price_unverified" &&
+    publishedServiceReply.reply.includes("HK$6,980") &&
+    !publishedServiceReply.price_fact,
+    "actual_service_unknown_status_must_be_a_qualified_record_only");
+  const noServiceAuthority = {...serviceWithUnknownChunkStatus,
+    authority_decision:{...serviceWithUnknownChunkStatus.authority_decision,
+      selected_authority_class:"HISTORICAL" as const}};
+  assert(resolveCanonicalKbDirectAnswer({request:"CW-SUL90BA 售價幾多？",
+    selection:noServiceAuthority,language:"zh-TW"})===null,
+    "status_unknown_without_authenticated_service_must_be_denied");
   const selected = resolveCanonicalKbDirectAnswer({
     request:"CW-SUL90BA 售價幾多？",selection:unknown,language:"zh-TW"
   });
