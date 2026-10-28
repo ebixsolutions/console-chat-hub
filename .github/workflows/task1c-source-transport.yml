@@ -1,0 +1,47 @@
+name: Task1C exact-source transport (not acceptance)
+on:
+  push:
+    branches: [director/ai-abc-c3-long-memory-final-cutover]
+    paths: [.github/workflows/task1c-source-transport.yml]
+permissions:
+  contents: read
+jobs:
+  capture:
+    if: github.repository == 'ebixsolutions/console-chat-hub'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: d29c68a7648d952bf429e73f27e886247db67ec0
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: denoland/setup-deno@v2
+        with: {deno-version: v2.x}
+      - name: Capture exact authoritative source and native dependencies only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = d29c68a7648d952bf429e73f27e886247db67ec0
+          mkdir -p "$RUNNER_TEMP/c3-source-transport"
+          git archive --format=tar.gz -o "$RUNNER_TEMP/c3-source-transport/source.tar.gz" HEAD
+          git bundle create "$RUNNER_TEMP/c3-source-transport/source.bundle" HEAD
+          npm ci
+          deno cache --no-lock --node-modules-dir=auto supabase/functions/_shared/canonical-kb-direct-answer.test.ts supabase/functions/widget-poll-messages/index.ts
+          tar -czf "$RUNNER_TEMP/c3-source-transport/node_modules.tar.gz" node_modules
+          cp "$(command -v deno)" "$RUNNER_TEMP/c3-source-transport/deno"
+          DENO_CACHE="$(deno info --json | node -e 'let d="";process.stdin.on("data",x=>d+=x);process.stdin.on("end",()=>console.log(JSON.parse(d).denoDir));')"
+          tar -C "$DENO_CACHE" -czf "$RUNNER_TEMP/c3-source-transport/deno-cache.tar.gz" .
+          git rev-parse HEAD > "$RUNNER_TEMP/c3-source-transport/HEAD.txt"
+          git rev-parse 'HEAD^{tree}' > "$RUNNER_TEMP/c3-source-transport/TREE.txt"
+          (cd "$RUNNER_TEMP/c3-source-transport" && sha256sum source.tar.gz source.bundle node_modules.tar.gz deno deno-cache.tar.gz > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: c3-task1c-d29c-exact-source
+          path: ${{ runner.temp }}/c3-source-transport
+          retention-days: 2
+          if-no-files-found: error
+          compression-level: 0
