@@ -1,10 +1,11 @@
 import { deriveCurrentGroundingTarget, selectCanonicalGrounding } from "./canonical-grounding.ts";
-import { resolveCanonicalKbDirectAnswer } from "./canonical-kb-direct-answer.ts";
+import { currentKbSellingPrice, resolveCanonicalKbDirectAnswer } from "./canonical-kb-direct-answer.ts";
 import { buildCitationMetadata } from "./citation-lineage.ts";
 import type { KBDocumentCandidate } from "./deterministic-kb-client.ts";
 import { renderBoundedNoCurrentEvidence } from "./current-fact-evidence.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
 import { evaluateB2BeforeCommit, type B2KbPriceProof } from "./pre-send-conversion-supervisor.ts";
+import { bindRagApiResponse, bindRagServiceDocument, ORIGINAL_RAG_ACTIVATION } from "./preview-kb-query-embedding.ts";
 
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
@@ -49,6 +50,20 @@ function answer(request: string, documents: KBDocumentCandidate[] = [doc], tenan
   return { selection, resolved, citation };
 }
 
+async function serviceReference(source: KBDocumentCandidate = doc) {
+  // Exercise the real aggregation validator and its out-of-band document AND
+  // chunk bindings. Merely changing an authority enum cannot mint provenance.
+  const document = {...source, authority:{...source.authority!,currentness:"unknown" as const},
+    chunks:source.chunks.map(c=>({...c,status:"unknown" as const}))};
+  const {response} = await bindRagApiResponse(Response.json({success:true,context_found:true,
+    selected_documents:[{document_id:document.document_id,title:document.title,source_type:document.source_type,
+      document_score:document.document_score,authority:document.authority,
+      evidence:document.chunks.map(({status:_status,...c})=>c)}],citations:[]}),ORIGINAL_RAG_ACTIVATION);
+  bindRagServiceDocument(response,document);
+  for (const c of document.chunks) bindRagServiceDocument(response,c);
+  return answer("CW-SUL90BA 售價幾多？",[document]);
+}
+
 Deno.test("A1 exact known product answers record existence, no stock and exact citation", () => {
   const { selection, resolved, citation } = answer("有沒有 PANASONIC 樂聲 CW-SUL90BA");
   assert(selection.ok && resolved?.kind === "price", "known_answer_dead_end");
@@ -62,6 +77,94 @@ Deno.test("A1 exact known product answers record existence, no stock and exact c
   assert(citation?.citation_lineage.selected_document_id === documentId &&
     citation.citation_lineage.evidence_chunk_ids[0] === chunkId, "citation_lineage_missing");
   console.log("A1 reply:", resolved.reply, "lineage:", JSON.stringify(citation?.citation_lineage));
+});
+
+Deno.test("Task1 price fields preserve complete amounts and reject foreign, ambiguous or conflicting values", () => {
+  for (const [source, expected] of [
+    ["銷售價: HK$129,980", 129980],
+    ["銷售價: 6,980.50 HKD", 6980.5],
+    ["銷售價: 99.50", 99.5],
+    ["銷售價: HK$0.50", 0.5],
+    ["銷售價: 6980 | selling price: HKD 6,980", 6980],
+    ["商品型號:CW-SUL90BA銷售價:6980售價:6980", 6980],
+    ["銷售價: 6980 SGD", null],
+    ["銷售價: 6980 新幣", null],
+    ["銷售價: USD 6980", null],
+    ["銷售價: 6980 USD", null],
+    ["銷售價: HK$6980 SGD", null],
+    ["銷售價: 129,98", null],
+    ["銷售價: 6980.999", null],
+    ["銷售價: 6980-7980", null],
+    ["銷售價: 6980 | 售價: 5680", null],
+    ["銷售價: 5680 | 售價: 6980", null],
+    ["銷售價: 6980 | 售價: 未提供", null],
+    ["銷售價: 6980 | 售價: 6980 SGD", null],
+    ["cost price: 4620 | special price: 4908", null],
+    ["商品型號: CW-SUL70BA 銷售價: 5680 | 商品型號: CW-SUL90BA 銷售價: 5680", null],
+  ] as const) {
+    assert(currentKbSellingPrice(source) === expected, JSON.stringify({source, expected, actual:currentKbSellingPrice(source)}));
+  }
+});
+
+Deno.test("Task1 price parsing stays source-bound through citation, B2 and unknown-currentness replies", async () => {
+  const request = "CW-SUL90BA 售價幾多？";
+  const snapshot = { conversation_id:"example", company_id:"3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    source_message_id:"example-source", commerce_state_revision:0,
+    commerce_state_source_message_id:null, state:createEmptyConversationCommerceState() };
+  for (const [fields, expected] of [
+    [["銷售價: HK$129,980"], 129980],
+    [["銷售價: 99.50 HKD"], 99.5],
+    [["銷售價: 6980 SGD"], null],
+    [["銷售價: 6980 | 售價: 5680"], null],
+    [["銷售價: 6980", "售價: 5680"], null],
+    [["銷售價: 6980", "售價: 6980 SGD"], null],
+    [["銷售價: 6980", "售價: 未提供"], null],
+    [["銷售價: 6980 | 商品型號: OTHER-123 銷售價: 6980"], null],
+  ] as const) {
+    const chunks = fields.map((field, i) => ({...chunk, chunk_id:`${chunkId}-${i}`, content:`商品型號: CW-SUL90BA | ${field}`}));
+    const fixture: KBDocumentCandidate = {...doc, chunks, llm_context:{...doc.llm_context,
+      full_content_evidence:chunks.map(c=>({document_id:c.document_id,chunk_id:c.chunk_id!,content:c.content,score:c.score,source_type:c.source_type}))}};
+    const {selection, resolved, citation} = answer(request,[fixture]);
+    if (selection.ok && selection.authority_decision.decision === "CONFLICT_UNRESOLVED") {
+      assert(expected === null && resolved === null && citation === null, "authority conflict bypassed");
+      continue;
+    }
+    assert(selection.ok && resolved && citation, "selected source missing:" + JSON.stringify({fields,selection,resolved,citation}));
+    assert(resolved.kind === (expected === null ? "price_unknown" : "price"), JSON.stringify({fields,resolved}));
+    assert((resolved.price_fact?.value ?? null) === expected, "wrong current-price proof");
+    if (expected !== null) {
+      const fact = resolved.price_fact!;
+      const proof: B2KbPriceProof = {field:"selling_price",value:fact.value,currency:"HKD",model:fact.model,
+        document_id:fact.document_id,chunk_id:fact.chunk_id,tenant_id:"34",company_id:snapshot.company_id,
+        currentness:"current",authority_decision:"USE_CURRENT_KB",request,full_content:fact.full_content};
+      const {request:_request,full_content:_content,company_id:_company,...publicProof} = proof;
+      const meta = {...citation,response_route:"canonical_kb_direct_answer",answer_kind:resolved.kind,
+        kb_fact_proof:publicProof,reference_authority:selection.authority_decision};
+      const verdict = evaluateB2BeforeCommit({proposed_response:resolved.reply,persistence_kind:"ai_reply",
+        snapshot,metadata:meta,trusted_kb_price_proof:proof});
+      assert(verdict.code === "B2_ALLOW_CURRENT_KB_SELLING_PRICE",JSON.stringify(verdict));
+      for (const badField of [`${expected} SGD`, `${expected} | 售價: ${expected + 1}`]) {
+        const forged = {...proof,full_content:`商品型號: CW-SUL90BA | 銷售價: ${badField}`};
+        const rejected = evaluateB2BeforeCommit({proposed_response:resolved.reply,persistence_kind:"ai_reply",
+          snapshot,metadata:meta,trusted_kb_price_proof:forged});
+        assert(rejected.decision === "block" && rejected.code === "CURRENT_KB_PRICE_FACT_MISMATCH",JSON.stringify(rejected));
+      }
+    } else assert(!/HK\$/.test(resolved.reply), "invalid monetary evidence rendered");
+    const {selection:referenceSelection,resolved:recorded,citation:recordedCitation} = await serviceReference(fixture);
+    assert(recorded?.kind === (expected === null ? "price_unknown" : "listed_price_unverified"),JSON.stringify({fields,recorded}));
+    assert(!recorded.price_fact, "unknown currentness promoted into current-price proof");
+    assert(recordedCitation?.citation_lineage.evidence_state === "unknown", "source citation missing or promoted to current");
+    assert(referenceSelection.ok,"service selection missing");
+    for (const language of ["zh-TW","zh-CN","en"] as const) {
+      const localized = resolveCanonicalKbDirectAnswer({request,selection:referenceSelection,language})!;
+      const verdict = evaluateB2BeforeCommit({proposed_response:localized.reply,persistence_kind:"ai_reply",snapshot,
+        metadata:{...recordedCitation,response_route:"canonical_kb_direct_answer",answer_kind:localized.kind,
+          reference_authority:referenceSelection.authority_decision}});
+      assert(verdict.decision === "allow",JSON.stringify({fields,language,verdict}));
+    }
+    if (expected !== null) assert(recorded.reply.includes(`HK$${expected.toLocaleString("en-US")}`) &&
+      recorded.reply.includes("未核實係現價"), "source-recorded amount or qualification lost");
+  }
 });
 
 Deno.test("field parser accepts label delimiters and safely adjacent fields", () => {
@@ -188,22 +291,10 @@ Deno.test("Phase1 generic labelled facts survive unknown stock with exact source
 });
 
 
-Deno.test("Task1: authenticated published unknown-currentness product price is a bounded source reference, never a current quote", () => {
-  const original = answer("CW-SUL90BA 售價幾多？").selection;
-  assert(original.ok && original.document !== null, "baseline_current_full_content_missing");
-  const unknown = {
-    ...original,
-    document: { ...original.document, authority: { ...original.document.authority!, currentness: "unknown" as const } },
-    authority_decision: { ...original.authority_decision,
-      selected_authority_class: "PUBLISHED_KB_SERVICE" as const,
-      provenance: { ...original.authority_decision.provenance, currentness: "unknown" as const } },
-  };
-  const serviceWithUnknownChunkStatus = {
-    ...unknown,
-    document:{...unknown.document,
-      chunks:unknown.document.chunks.map(c=>({...c,status:"unknown" as const}))},
-    chunks:unknown.chunks.map(c=>({...c,status:"unknown" as const}))
-  };
+Deno.test("Task1: authenticated published unknown-currentness product price is a bounded source reference, never a current quote", async () => {
+  const {selection:unknown} = await serviceReference();
+  assert(unknown.ok && unknown.document !== null && unknown.chunks.every(c=>c.status==="unknown"), "authenticated_reference_missing");
+  const serviceWithUnknownChunkStatus = unknown;
   const publishedServiceReply = resolveCanonicalKbDirectAnswer({
     request:"CW-SUL90BA 售價幾多？",selection:serviceWithUnknownChunkStatus,language:"zh-TW"
   });

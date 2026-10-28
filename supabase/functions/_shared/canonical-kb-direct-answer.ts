@@ -36,7 +36,7 @@ function separatedFieldStarts(text: string): boolean {
   return !embedded || embedded.index === 0;
 }
 
-function labelledValue(content: string, labels: RegExp, policy = false): string | null {
+function labelledValue(content: string, labels: RegExp, policy = false, money = false): string | null {
   const line = content.normalize("NFKC");
   let match = new RegExp(`(?:^|[\\s|;,])(?:${labels.source})\\s*[:=]\\s*`, "iu").exec(line);
   if (!match) {
@@ -56,7 +56,10 @@ function labelledValue(content: string, labels: RegExp, policy = false): string 
   if (separatedFieldStarts(line.slice(start))) return null;
   let end = Math.min(line.length, start + 500);
   for (let i = start; i < end; i++) {
-    if ((policy ? /[\n\r|]/u : /[\n\r|;,]/u).test(line[i])) { end = i; break; }
+    // A comma between digits belongs to the amount, including malformed
+    // grouping that the strict money parser must reject rather than truncate.
+    const numericComma = money && line[i] === "," && /\d/.test(line[i - 1] ?? "") && /\d/.test(line[i + 1] ?? "");
+    if (!numericComma && (policy ? /[\n\r|]/u : /[\n\r|;,]/u).test(line[i])) { end = i; break; }
     if (i > start && /\s/u.test(line[i - 1]) && separatedFieldStarts(line.slice(i))) {
       end = i - 1;
       break;
@@ -70,20 +73,42 @@ function labelledValue(content: string, labels: RegExp, policy = false): string 
   }
   const value = line.slice(start, end).trim();
   return value && !/^(?:unknown|n\/a|未提供|待定)$/i.test(value)
-    ? value.slice(0, policy ? 500 : 90)
+    ? money ? value : value.slice(0, policy ? 500 : 90)
     : null;
 }
 
+const SELLING_PRICE_LABEL = /銷售價|销售价|售價|售价|selling\s*price|list\s*price|price/i;
+
+function kbSellingPriceFields(content: string): { has_field: boolean; price: number | null } {
+  const line = content.normalize("NFKC");
+  const values: number[] = [];
+  let hasField = false;
+  // Consume qualified non-selling labels whole so their trailing "price"
+  // cannot masquerade as an ordinary price field.
+  const labels = new RegExp(`(?:cost\\s*price|special\\s*price|${SELLING_PRICE_LABEL.source})\\s*[:=]\\s*`, "giu");
+  for (const match of line.matchAll(labels)) {
+    if (/^(?:cost|special)\s*price/i.test(match[0])) continue;
+    const prefix = line.slice(0, match.index);
+    if (prefix && !/[\s|;,]$/u.test(prefix) &&
+      !new RegExp(`(?:^|[\\s|;,])(?:${ADJACENT_KB_LABELS.source})\\s*[:=]`, "iu").test(prefix)) continue;
+    hasField = true;
+    const raw = labelledValue(line.slice(match.index), SELLING_PRICE_LABEL, false, true);
+    // The entire field must be one HKD-compatible amount. Do not reinterpret
+    // a foreign suffix, range, malformed grouping or partial prefix as HKD.
+    const amount = raw?.match(/^(?:HK\$|HKD|\$)?\s*((?:[1-9]\d{0,2}(?:,\d{3})+|(?:0|[1-9]\d{0,7}))(?:\.\d{1,2})?)\s*(?:港元|元|HKD)?$/i);
+    if (!amount) return { has_field: true, price: null };
+    const value = Number(amount[1].replace(/,/g, ""));
+    if (!Number.isFinite(value) || value <= 0) return { has_field: true, price: null };
+    values.push(value);
+  }
+  // Never pick the first price in a conflicting field set or a multi-model
+  // chunk: there is no row-to-model price binding for either case.
+  const price = new Set(values).size === 1 && exactKbModelIds(line).length <= 1 ? values[0] : null;
+  return { has_field: hasField, price };
+}
+
 export function currentKbSellingPrice(content: string): number | null {
-  const raw = labelledValue(content, /銷售價|销售价|售價|售价|selling\s*price|list\s*price|price/i);
-  if (!raw) return null;
-  if (/^(?:USD|US\$|SGD|S\$|NT\$|TWD)/i.test(raw)) return null;
-  const amount = raw.match(/(?:HK\$|HKD\s*|\$)?\s*\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|(?:HK\$|HKD\s*|\$)?\s*\d{3,8}(?:\.\d{1,2})?/i);
-  if (!amount || !/^\s*(?:HK\$|HKD\s*|\$)?\s*\d/i.test(raw)) return null;
-  const remainder = raw.slice(amount[0].length).trim();
-  if (remainder && !/^(?:元|港元|新幣|SGD|HKD)$/i.test(remainder)) return null;
-  const value = Number(amount[0].replace(/[^\d.]/g, ""));
-  return Number.isFinite(value) && value > 0 ? value : null;
+  return kbSellingPriceFields(content).price;
 }
 
 function safeProductDescription(content: string, model: string): string | null {
@@ -152,7 +177,7 @@ function customerProductIdentity(brand: string | null, model: string, language: 
   return [latin, model].filter(Boolean).join(" ");
 }
 
-/** A bounded fact from selected, published, current Full Content Evidence only. */
+/** Source-bound Full Content; only verified currentness can produce price proof. */
 export function resolveCanonicalKbDirectAnswer(input: {
   request: string;
   selection: CanonicalGroundingResult;
@@ -234,11 +259,13 @@ export function resolveCanonicalKbDirectAnswer(input: {
         field, value: value!, model, document_id: chunk.document_id, chunk_id: chunk.chunk_id!,
       })) : [] };
   };
-  const priceCandidates = chunks.map((chunk) => ({ chunk, price: currentKbSellingPrice(chunk.content) }))
-    .filter((value): value is { chunk: KBFullChunk; price: number } => value.price !== null);
+  const priceFields = chunks.map((chunk) => ({ chunk, ...kbSellingPriceFields(chunk.content) }));
+  const priceCandidates = priceFields
+    .filter((value): value is { chunk: KBFullChunk; has_field: boolean; price: number } => value.price !== null);
   // Conflicting selling-price fields in one selected published document are
   // unresolved; rank/first-hit ordering is never a price authority.
-  const consistentPrice = new Set(priceCandidates.map(item => item.price)).size === 1;
+  const consistentPrice = !priceFields.some(item => item.has_field && item.price === null) &&
+    new Set(priceCandidates.map(item => item.price)).size === 1;
   const priceEvidence = consistentPrice ? priceCandidates[0] : undefined;
   const priceFact = currentVerified && priceEvidence &&
       selection.authority_decision.provenance.region === "hong_kong" && priceEvidence.chunk.chunk_id
@@ -257,17 +284,17 @@ export function resolveCanonicalKbDirectAnswer(input: {
     if (priceEvidence && selection.authority_decision.provenance.region === "hong_kong") {
       const recordedPrice = `HK$${priceEvidence.price.toLocaleString("en-US")}`;
       const reply = language === "en"
-        ? `The published product record for ${model} contains a selling-price field recording ${recordedPrice}. This is a source-recorded amount, not a verified current price or formal quotation; confirm the checkout price before buying.`
+        ? `The published product record for ${model} contains a selling-price field recording ${recordedPrice}. This source-recorded amount is not a formal quotation. The current price is unverified; the checkout price still needs merchant verification.`
         : language === "zh-CN"
-        ? `${model} 的已发布商品资料中，「销售价」栏位记录 ${recordedPrice}。这只是来源记录，尚未核实现价，并非正式报价；购买前请确认实际结算价。`
-        : `${model} 嘅已發布商品資料中，「銷售價」欄位記錄 ${recordedPrice}。呢個只係來源記錄，未核實係現價，並非正式報價；購買前請確認實際結帳價。`;
+        ? `${model} 的已发布商品资料中，「销售价」栏位记录 ${recordedPrice}。这只是来源记录，尚未核实现价，并非正式报价；实际结算价仍待商家核实。`
+        : `${model} 嘅已發布商品資料中，「銷售價」欄位記錄 ${recordedPrice}。呢個只係來源記錄，未核實係現價，並非正式報價；實際結帳價仍待商家核實。`;
       return evidence("listed_price_unverified", reply, priceEvidence.chunk);
     }
     return evidence("price_unknown", language === "en"
-      ? `I found a published product record for ${model}, but a reliable price/currency could not be established from its source fields. Please confirm the current selling price with the merchant before ordering.`
+      ? `I found a published product record for ${model}, but a reliable price/currency could not be established from its source fields. The current selling price is unknown pending merchant verification.`
       : language === "zh-CN"
-      ? `我找到 ${model} 的已发布商品记录，但价格、币别或来源记录有待核实；暂时不能当作现价，购买前请确认。`
-      : `我搵到 ${model} 嘅已發布商品記錄，但價格、幣別或來源紀錄未能可靠核實；暫時唔會當成現價，購買前要再確認。`, chunks[0]);
+      ? `我找到 ${model} 的已发布商品记录，但价格、币别或来源记录有待核实；暂时不能当作现价，实际结算价仍待商家核实。`
+      : `我搵到 ${model} 嘅已發布商品記錄，但價格、幣別或來源紀錄未能可靠核實；暫時唔會當成現價，實際結帳價仍待商家核實。`, chunks[0]);
   }
 
   if (stockRequested && !classifyProductFactualQuery(request)) {

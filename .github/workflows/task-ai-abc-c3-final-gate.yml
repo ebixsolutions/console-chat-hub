@@ -1551,6 +1551,8 @@ jobs:
             supabase/functions/_shared/pre-send-conversion-supervisor.test.ts \
             supabase/functions/_shared/contextual-customer-update.test.ts \
             supabase/functions/_shared/product-factual-query.test.ts \
+            supabase/functions/_shared/canonical-kb-direct-answer.test.ts \
+            supabase/functions/_shared/canonical-kb-b2-price.test.ts \
             supabase/functions/_shared/conversation-recall.integration.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --allow-env --node-modules-dir=auto supabase/functions/_shared/f13-runtime-recovery.test.ts supabase/functions/_shared/f13-f14-root-cause.test.ts supabase/functions/_shared/f13-llm-failure.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/model-attempt-accounting/index.ts supabase/functions/customer360-coach-sync/index.ts supabase/functions/ce-evaluation-worker/index.ts supabase/functions/ce-evaluation-control/index.ts supabase/functions/kb-search-proxy/index.ts supabase/functions/conversation-evaluate/index.ts)
