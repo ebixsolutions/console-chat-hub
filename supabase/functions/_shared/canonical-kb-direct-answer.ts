@@ -1,3 +1,4 @@
+import { parseKbProductRecord, kbProductRecordPrice } from "./kb-product-record.ts";
 import { type CanonicalGroundingResult, namedPriceProductLabel, exactNamedProductEvidence } from "./canonical-grounding.ts";
 import type { KBFullChunk } from "./deterministic-kb-client.ts";
 import { classifyProductFactualQuery } from "./natural-customer-response.ts";
@@ -264,6 +265,31 @@ export function resolveCanonicalKbDirectAnswer(input: {
         field, value: value!, model, document_id: chunk.document_id, chunk_id: chunk.chunk_id!,
       })) : [] };
   };
+  if (nameTarget) {
+    const values = chunks.map(chunk => ({chunk, value:kbProductRecordPrice(parseKbProductRecord(chunk.content))}));
+    const present = values.filter(row => row.value.has_field);
+    const usable = present.filter(row => row.value.reason === "ok" && row.value.amount !== null);
+    const consistent = usable.length > 0 && usable.length === present.length &&
+      new Set(usable.map(row=>`${row.value.amount}:${row.value.currency}`)).size === 1;
+    if (consistent) {
+      const chosen = usable[0], value = chosen.value;
+      const amount = value.amount!.toLocaleString("en-US", {maximumFractionDigits:2});
+      const display = value.currency === "HKD" ? `HK$${amount}` : amount;
+      const currencyNote = value.currency ? "" : language === "en" ? " (currency not specified by the source)"
+        : language === "zh-CN" ? "（来源未注明币别）" : "（來源未註明幣別）";
+      const reply = language === "en"
+        ? `The published product record for ${model} contains a selling-price field recording ${display}${currencyNote}. This source-recorded amount is not a formal quotation. The current price is unverified; the checkout price still needs merchant verification.`
+        : language === "zh-CN"
+        ? `${model} 的已发布商品资料中，价格栏位记录 ${display}${currencyNote}。这只是来源记录，尚未核实现价，并非正式报价；实际结算价仍待商家核实。`
+        : `${model} 嘅已發布商品資料中，價格欄位記錄 ${display}${currencyNote}。呢個只係來源記錄，未核實係現價，並非正式報價；實際結帳價仍待商家核實。`;
+      return evidence("listed_price_unverified", reply, chosen.chunk);
+    }
+    return evidence("price_unknown", language === "en"
+      ? `I found a published product record for ${model}, but its price/currency fields are missing, conflicting or unsupported. The current price remains unverified.`
+      : language === "zh-CN" ? `我找到 ${model} 的已发布商品记录，但价格或币别缺漏、冲突或未能核实；暂时不能当作现价。`
+      : `我搵到 ${model} 嘅已發布商品記錄，但價格或幣別缺漏、衝突或未能核實；暫時唔會當成現價。`, chunks[0]);
+  }
+
   const priceFields = chunks.map((chunk) => ({ chunk, ...kbSellingPriceFields(chunk.content) }));
   const priceCandidates = priceFields
     .filter((value): value is { chunk: KBFullChunk; has_field: boolean; price: number } => value.price !== null);

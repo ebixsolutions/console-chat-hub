@@ -83,6 +83,7 @@
     "supabase/functions/_shared/kb-auth.ts",
     "supabase/functions/_shared/kb-client.ts",
     "supabase/functions/_shared/kb-error-contract.ts",
+    "supabase/functions/_shared/kb-product-record.ts",
     "supabase/functions/_shared/llm-router.ts",
     "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
     "supabase/functions/_shared/model-attempt-accounting.ts",
@@ -394,6 +395,7 @@
     "supabase/functions/_shared/canonical-grounding.ts",
     "supabase/functions/_shared/canonical-kb-direct-answer.test.ts",
     "supabase/functions/_shared/canonical-kb-direct-answer.ts",
+    "supabase/functions/_shared/canonical-kb-product-record.test.ts",
     "supabase/functions/_shared/ce-automation-engine.ts",
     "supabase/functions/_shared/ce-evaluation-scope.ts",
     "supabase/functions/_shared/ce-grounding.ts",
@@ -430,6 +432,7 @@
     "supabase/functions/_shared/industry-runtime-adapter.ts",
     "supabase/functions/_shared/kb-client.ts",
     "supabase/functions/_shared/kb-error-contract.ts",
+    "supabase/functions/_shared/kb-product-record.ts",
     "supabase/functions/_shared/llm-router.ts",
     "supabase/functions/_shared/memory-reply-lifecycle-readback.ts",
     "supabase/functions/_shared/model-attempt-accounting.ts",
@@ -1261,9 +1264,9 @@
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "5fd372de1b7e391ce0aa893e2397102d36814d63eef60740eac247a498a22d30",
     "public/widget/chat.js": "ad5154033f8ab0df2e3efd05cdee6f7135e823eb3fe3de3e4008b1a794d1ad0f",
     "src/routes/_authenticated/console.conversations.$id.tsx": "f4ae206dc5afd085c39b13d3e32a9643a2fb6e7751852def6cafce9a4d9523c1",
-    "supabase/functions/_shared/canonical-grounding.ts": "816fdd40b56fe0f48ecde8e9995e07d3b028a3fc9f3b23b6515e82c651dfe7a4",
-    "supabase/functions/_shared/canonical-kb-direct-answer.test.ts": "cb6558d1ef7e6fa834ab8edf59e5a8effa7a1c0f407c6e041c30661fdd2b1dda",
-    "supabase/functions/_shared/canonical-kb-direct-answer.ts": "e5a1b42a3ba11eae8c6128b4e778b7344f21890363a5d726df5ae8985bad073a",
+    "supabase/functions/_shared/canonical-grounding.ts": "52980bc97223c1df1ede80a179ba3fda611f22fd7b70e382877116d0b0585a4f",
+    "supabase/functions/_shared/canonical-kb-direct-answer.test.ts": "421fe0a8197ad0dcddd1894d60eeb18aaf333efb4c5efe03e508d9427256f05c",
+    "supabase/functions/_shared/canonical-kb-direct-answer.ts": "f38dcbe3e827b6d31e1ffd0b2637851b77c28706d52a7f8cc967a2cc2ca058bd",
     "supabase/functions/widget-poll-messages/index.ts": "615eb9ad8d06867eacf5f8ababc4b8d9dda06feb3dbdf05c2dc24f7f47005022",
     "tests/task1-director/event-driven-widget.test.mjs": "c2cf604c1e1b4139182ac4f943446f69de11cae1550cf1aaf3496065e75f47a5",
     "tests/task1-director/source-chain.test.mjs": "42dfbb63ebf27f4a6e57f6deb6f1d9b2725ef13caac2687e82c725e16dc84389",
@@ -1275,7 +1278,9 @@
     "tests/console-navigation/ordinary-widget-dom.test.mjs": "9729b07525f4738b75efedcd0837cf975229f88c0114d35f205bf3ebeb61a10a",
     "tests/console-navigation/widget-input-dom.test.mjs": "c0857a665bf75ebafe2902fc1eab56785d711e670f39c7ef322cc5e9a84e911d",
     "tests/task1-director/widget-event-runtime.test.mjs": "fbac4f97268e0bd636077ee7f4ef4af0815ef24ea4e76b8fb26f2619644ad5ec",
-    "tests/console-navigation/widget-recovery.test.mjs": "670f4db66fe5ecd97a3dfb124511089002d25ea9282aa26e774823270e1c9e5b"
+    "tests/console-navigation/widget-recovery.test.mjs": "670f4db66fe5ecd97a3dfb124511089002d25ea9282aa26e774823270e1c9e5b",
+    "supabase/functions/_shared/kb-product-record.ts": "11a561fceb8de4de56fe5a344ec3028aa94aa74b3d9019ce1423483de122fd38",
+    "supabase/functions/_shared/canonical-kb-product-record.test.ts": "290cae85bdb961abb5c61e55a205ee442ca6c782b25767faeb54013ff0ed5317"
   },
   "task1c_event_price_deployment_authorized": false
 }

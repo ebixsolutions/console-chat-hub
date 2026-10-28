@@ -1,3 +1,4 @@
+import { parseKbProductRecord, kbProductRecordNames, kbProductFieldKey } from "./kb-product-record.ts";
 import type {
   KBDocumentCandidate,
   KBFullChunk,
@@ -313,17 +314,12 @@ export function exactNamedProductEvidence(
     chunk.document_id !== document.document_id) return false;
   const body = chunk.content.normalize("NFKC");
   const wanted = normalizedProductName(label);
-  const labels = /(?:^|[\s|;\n\r])(?:商品名稱|商品名称|產品名稱|产品名称|商品名|產品名|产品名|品名|product\s+name|product\s+title)\s*[:=]\s*/giu;
-  const names: string[] = [];
-  for (const m of body.matchAll(labels)) {
-    const raw = body.slice(m.index! + m[0].length).split(
-      /[\r\n|;；]|(?=\s+(?:銷售價|销售价|售價|售价|特價|特价|成本|price|selling\s+price|商品型號|商品型号|型號|型号|品牌|描述|description|庫存|库存)\s*[:=])/iu,
-    )[0].trim();
-    if (raw) names.push(normalizedProductName(raw));
-  }
+  const record = parseKbProductRecord(body);
+  if (record.ambiguous) return false;
+  const names = kbProductRecordNames(record);
   if (names.length) return names.length === 1 && names[0] === wanted;
-  // Some legitimate product records store their full canonical name as the
-  // document title only. The exact same name must still occur in Full Content.
+  // Legacy title-owned names remain usable only when the same full-content
+  // evidence contains the full name, not a search summary or partial match.
   return normalizedProductName(document.title) === wanted &&
     normalizedProductName(body).includes(wanted);
 }
@@ -583,7 +579,21 @@ export function selectCanonicalGrounding(
       document.chunks.some(chunk => exactNamedProductEvidence(namedPriceTarget, document, chunk));
     // An exact customer-named product without full-content identity proof
     // cannot inherit a similarly ranked but unrelated catalogue entry.
-    if (namedPriceTarget && !namedPriceEvidence) continue;
+    if (namedPriceTarget && !namedPriceEvidence) {
+      // No source text, prices, credentials or customer message in diagnostics.
+      // These finite field names/counts identify a failed protocol boundary.
+      const rows = document.chunks.filter(c => c.chunk_type === "full_content")
+        .map(c => parseKbProductRecord(c.content));
+      const knownKeys = new Set(["name", "title", "productname", "producttitle", "itemname", "model", "productmodel",
+        "商品名稱", "商品名称", "產品名稱", "产品名称", "名稱", "名称", "商品型號", "商品型号", "產品型號", "产品型号"]);
+      console.info(JSON.stringify({endpoint:"canonical-grounding",stage:"named_product_identity",
+        document_id: /^[a-z0-9-]{1,96}$/iu.test(document.document_id) ? document.document_id : null,
+        full_content_count:rows.length,format:rows.map(r=>r.format),
+        identity_fields:[...new Set(rows.flatMap(r=>r.fields.map(f=>kbProductFieldKey(f.key)).filter(k=>knownKeys.has(k))))],
+        reason:rows.some(r=>r.ambiguous)?"ambiguous_record":rows.some(r=>kbProductRecordNames(r).length)?"name_mismatch":"identity_field_absent",
+        service_bound:Boolean(service)}));
+      continue;
+    }
     const serviceTopic=!!service && (namedPriceEvidence || serviceTopicMatch(currentTargetRequest,document));
     // A low relevance tag is retained, never equated to a supported answer.
     // Exact contextual evidence and the unchanged generation verifier are still

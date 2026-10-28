@@ -430,3 +430,6 @@ Deno.test("Task1C named price lookup never captures normal knowledge queries", (
   assert(namedPriceProductLabel("轻量冲锋衣 几钱？") === "轻量冲锋衣", "named price query lost");
   assert(namedPriceProductLabel("CW-SUL90BA 售價幾多？") === null, "model requests must retain exact-model flow");
 });
+
+// SAME Task1C: imported row schema -> canonical selection -> direct answer -> B2.
+import "./canonical-kb-product-record.test.ts";
