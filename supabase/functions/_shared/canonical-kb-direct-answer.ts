@@ -3,7 +3,7 @@ import type { KBFullChunk } from "./deterministic-kb-client.ts";
 import { classifyProductFactualQuery } from "./natural-customer-response.ts";
 
 export interface CanonicalKbDirectAnswer {
-  kind: "product_record" | "stock_unknown" | "price" | "price_unknown" | "specification" | "policy";
+  kind: "product_record" | "stock_unknown" | "price" | "price_unknown" | "listed_price_unverified" | "specification" | "policy";
   reply: string;
   evidence_chunks: KBFullChunk[];
   structured_facts?: Array<{ field: string; value: string | number; model: string; document_id: string; chunk_id: string }>;
@@ -160,13 +160,25 @@ export function resolveCanonicalKbDirectAnswer(input: {
   customer_context?: { model: string; sunlight?: unknown };
 }): CanonicalKbDirectAnswer | null {
   const { selection, language } = input;
+  // The authenticated Singapore RAG service may return a published source with
+  // unknown price currentness. Keep the original current-price proof gate:
+  // an unknown source can only support an explicitly qualified *recorded*
+  // price reference, never a current selling-price or merchant quotation.
+  const decision = selection.ok ? selection.authority_decision : null;
+  const currentVerified = decision?.provenance.currentness === "current";
+  const publishedReferenceOnly = decision?.decision === "USE_CURRENT_KB" &&
+    decision.provenance.currentness === "unknown" &&
+    decision.selected_authority_class === "PUBLISHED_KB_SERVICE";
   if (!selection.ok || !selection.document ||
-    selection.authority_decision.decision !== "USE_CURRENT_KB" ||
-    selection.authority_decision.provenance.currentness !== "current" ||
-    selection.authority_decision.conflict_source_ids.length ||
-    selection.authority_decision.selected_source_id !== selection.document.document_id) return null;
+    decision?.decision !== "USE_CURRENT_KB" ||
+    (!currentVerified && !publishedReferenceOnly) ||
+    decision.conflict_source_ids.length ||
+    decision.selected_source_id !== selection.document.document_id) return null;
 
   const request = input.request.normalize("NFKC");
+  const requested = classifyProductFactualQuery(request);
+  if (publishedReferenceOnly && (!requested || requested.facts.length !== 1 ||
+    requested.facts[0] !== "price")) return null;
   const ids = exactKbModelIds(request);
   // Never infer which of several models the customer meant.
   if (ids.length !== 1) return null;
@@ -217,15 +229,41 @@ export function resolveCanonicalKbDirectAnswer(input: {
         field, value: value!, model, document_id: chunk.document_id, chunk_id: chunk.chunk_id!,
       })) : [] };
   };
-  const priceEvidence = chunks.map((chunk) => ({ chunk, price: currentKbSellingPrice(chunk.content) }))
-    .find(({ price }) => price !== null);
-  const priceFact = priceEvidence?.price !== null && priceEvidence?.price !== undefined &&
+  const priceCandidates = chunks.map((chunk) => ({ chunk, price: currentKbSellingPrice(chunk.content) }))
+    .filter((value): value is { chunk: KBFullChunk; price: number } => value.price !== null);
+  // Conflicting selling-price fields in one selected published document are
+  // unresolved; rank/first-hit ordering is never a price authority.
+  const consistentPrice = new Set(priceCandidates.map(item => item.price)).size === 1;
+  const priceEvidence = consistentPrice ? priceCandidates[0] : undefined;
+  const priceFact = currentVerified && priceEvidence &&
       selection.authority_decision.provenance.region === "hong_kong" && priceEvidence.chunk.chunk_id
     ? { model, value: priceEvidence.price, currency: "HKD" as const,
       document_id: priceEvidence.chunk.document_id, chunk_id: priceEvidence.chunk.chunk_id,
       full_content: priceEvidence.chunk.content }
     : null;
-  const displayPrice = priceFact ? `HK$${priceFact.value.toLocaleString("en-US")}` : null;
+  const displayPrice = priceFact ? `HK${priceFact.value.toLocaleString("en-US")}` : null;
+
+  // No new remote query or model dispatch: the chosen published Full Content
+  // already binds tenant, document, chunk, requested model and exact field.
+  // This branch neither creates B2 current-price proof nor asserts stock,
+  // checkout/quotation status, version, or present-day validity.
+  if (publishedReferenceOnly) {
+    if (!productRecord) return null;
+    if (priceEvidence && selection.authority_decision.provenance.region === "hong_kong") {
+      const recordedPrice = `HK${priceEvidence.price.toLocaleString("en-US")}`;
+      const reply = language === "en"
+        ? `The published product record for ${model} contains a selling-price field recording ${recordedPrice}. This is a source-recorded amount, not a verified current price or formal quotation; confirm the checkout price before buying.`
+        : language === "zh-CN"
+        ? `${model} 的已发布商品资料中，「销售价」栏位记录 ${recordedPrice}。这只是来源记录，尚未核实现价，并非正式报价；购买前请确认实际结算价。`
+        : `${model} 嘅已發布商品資料中，「銷售價」欄位記錄 ${recordedPrice}。呢個只係來源記錄，未核實係現價，並非正式報價；購買前請確認實際結帳價。`;
+      return evidence("listed_price_unverified", reply, priceEvidence.chunk);
+    }
+    return evidence("price_unknown", language === "en"
+      ? `I found a published product record for ${model}, but a reliable price/currency could not be established from its source fields. Please confirm the current selling price with the merchant before ordering.`
+      : language === "zh-CN"
+      ? `我找到 ${model} 的已发布商品记录，但价格、币别或来源记录有待核实；暂时不能当作现价，购买前请确认。`
+      : `我搵到 ${model} 嘅已發布商品記錄，但價格、幣別或來源紀錄未能可靠核實；暫時唔會當成現價，購買前要再確認。`, chunks[0]);
+  }
 
   if (stockRequested && !classifyProductFactualQuery(request)) {
     if (!productRecord) return null;

@@ -186,3 +186,57 @@ Deno.test("Phase1 generic labelled facts survive unknown stock with exact source
     assert(en?.reply.includes('weight') && !en.reply.includes('重量'),'internal localized field passed into English reply');
   }
 });
+
+
+Deno.test("Task1: authenticated published unknown-currentness product price is a bounded source reference, never a current quote", () => {
+  const original = answer("CW-SUL90BA 售價幾多？").selection;
+  assert(original.ok && original.document !== null, "baseline_current_full_content_missing");
+  const unknown = {
+    ...original,
+    document: { ...original.document, authority: { ...original.document.authority!, currentness: "unknown" as const } },
+    authority_decision: { ...original.authority_decision,
+      selected_authority_class: "PUBLISHED_KB_SERVICE" as const,
+      provenance: { ...original.authority_decision.provenance, currentness: "unknown" as const } },
+  };
+  const selected = resolveCanonicalKbDirectAnswer({
+    request:"CW-SUL90BA 售價幾多？",selection:unknown,language:"zh-TW"
+  });
+  assert(selected?.kind === "listed_price_unverified" && selected.reply.includes("HK$6,980"), "reference_price_missing");
+  assert(!selected.price_fact && selected.evidence_chunks.length === 1 &&
+    selected.evidence_chunks[0].document_id === documentId &&
+    selected.evidence_chunks[0].chunk_id === chunkId, "reference_promoted_to_current_or_lineage_missing");
+  assert(/未核實係現價/.test(selected.reply) && !/4620|4908/.test(selected.reply), "currentness_or_cost_leak");
+  const target = deriveCurrentGroundingTarget("CW-SUL90BA 售價幾多？");
+  const citation = buildCitationMetadata(selected.evidence_chunks,documentId,{
+    authorityDecision:unknown.authority_decision,currentTarget:target});
+  assert(citation?.citation_lineage.selected_document_id===documentId &&
+    citation.citation_lineage.evidence_chunk_ids[0]===chunkId, "reference_citation_missing");
+  const meta = { ...citation, reference_authority: unknown.authority_decision,
+    response_route:"canonical_kb_direct_answer",answer_kind:selected.kind };
+  const snapshot = { conversation_id:"example", company_id:"3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    source_message_id:"example-source",commerce_state_revision:0,
+    commerce_state_source_message_id:null,state:createEmptyConversationCommerceState() };
+  const b2 = evaluateB2BeforeCommit({ proposed_response:selected.reply,
+    persistence_kind:"ai_reply",snapshot,metadata:meta });
+  assert(b2.decision==="allow", "non-current_source_reference_B2:"+JSON.stringify(b2));
+  const forgedCurrent = evaluateB2BeforeCommit({ proposed_response:"CW-SUL90BA 現時售價 HK$6,980 已確認。",
+    persistence_kind:"ai_reply",snapshot,metadata:meta });
+  assert(forgedCurrent.decision==="block", "B2_must_still_block_unverified_current_price");
+
+  assert(resolveCanonicalKbDirectAnswer({request:"CW-SUL90BA 有冇現貨？",selection:unknown,language:"zh-TW"})===null,
+    "unknown_currentness_must_not_authorize_stock");
+  const historical={...unknown,authority_decision:{...unknown.authority_decision,
+    selected_authority_class:"HISTORICAL" as const,
+    provenance:{...unknown.authority_decision.provenance,currentness:"historical" as const}}};
+  assert(resolveCanonicalKbDirectAnswer({request:"CW-SUL90BA 售價幾多？",selection:historical,language:"zh-TW"})===null,
+    "historical_must_never_be_published_current_or_reference");
+  const noPrice = "商品型號: CW-SUL90BA | 描述: CW-SUL90BA 已發布產品";
+  const noPriceSelection = {...unknown,
+    document:{...unknown.document,chunks:[{...chunk,content:noPrice}],
+      llm_context:{...unknown.document.llm_context,full_content_evidence:[{...unknown.evidence[0],content:noPrice}]}},
+    chunks:[{...chunk,content:noPrice}], evidence:[{...unknown.evidence[0],content:noPrice}]};
+  const noQuote=resolveCanonicalKbDirectAnswer({request:"CW-SUL90BA 售價幾多？",
+    selection:noPriceSelection,language:"zh-TW"});
+  assert(noQuote?.kind==="price_unknown" && !/HK\$|\b6980\b/.test(noQuote.reply),
+    "missing_price_must_not_fabricate");
+});

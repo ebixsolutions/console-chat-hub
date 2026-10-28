@@ -315,3 +315,17 @@ test('Task1: bare commerce subject is never ADD_ITEM with fabricated default qua
       assert.equal(isBareCommerceSubjectMention(realAction,proposal),false,'keep legitimate action or fact request');
   }
 });
+
+test("Task1 source guards: published-reference price cannot become a verified current-price claim",()=>{
+ const source=task1SourceRead("supabase/functions/_shared/canonical-kb-direct-answer.ts","utf8");
+ assert.match(source,/publishedReferenceOnly/);
+ assert.match(source,/selected_authority_class === "PUBLISHED_KB_SERVICE"/);
+ assert.match(source,/priceCandidates/);
+ assert.match(source,/consistentPrice/);
+ assert.match(source,/return evidence\("listed_price_unverified"/);
+ assert.match(source,/if \(publishedReferenceOnly\) \{/);
+ assert.match(source,/const priceFact = currentVerified && priceEvidence/);
+ const b2=task1SourceRead("supabase/functions/_shared/pre-send-conversion-supervisor.ts","utf8");
+ assert.match(b2,/evaluateCurrentKbSellingPrice\(input, draft\)/);
+ assert.match(b2,/CURRENT_KB_PRICE_PROOF_MISSING/);
+});
