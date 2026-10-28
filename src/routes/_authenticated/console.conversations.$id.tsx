@@ -106,33 +106,17 @@ function ConversationDetailContent() {
   useEffect(()=>{setUseConfirmOpen(false);setPendingUseText("");pendingDraftActionKey.current=null;},[draftActionKey]);
 
   // ── J1: Realtime infrastructure ──
-  const realtimeConnectedRef = useRef(true);
   const replyRef = useRef<HTMLTextAreaElement>(null);
+  const detailReconnectPendingRef = useRef(false);
 
-  const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  function startDetailFallback() {
-    if (fallbackTimerRef.current) return;
-    fallbackTimerRef.current = setInterval(() => {
-      loadConv();
-      loadMessages();
-    }, 20000);
-  }
-  function stopDetailFallback() {
-    if (!fallbackTimerRef.current) return;
-    clearInterval(fallbackTimerRef.current);
-    fallbackTimerRef.current = null;
-    loadConv();
-    loadMessages();
-  }
   function handleDetailSubscribeStatus(status: string) {
-    if (status === "SUBSCRIBED") {
-      realtimeConnectedRef.current = true;
-      stopDetailFallback();
-    }
-    if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR") {
-      realtimeConnectedRef.current = false;
-      startDetailFallback();
+    if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR")
+      detailReconnectPendingRef.current = true;
+    if (status === "SUBSCRIBED" && detailReconnectPendingRef.current) {
+      detailReconnectPendingRef.current = false;
+      // One authenticated catch-up after reconnect, no periodic DB reads.
+      void loadConv();
+      void loadMessages();
     }
   }
 
@@ -225,12 +209,12 @@ function ConversationDetailContent() {
           loadMessages();
         },
       )
-      .subscribe();
+      .subscribe(handleDetailSubscribeStatus);
 
     return () => {
       supabase.removeChannel(convChannel);
       supabase.removeChannel(msgChannel);
-      if (fallbackTimerRef.current) clearInterval(fallbackTimerRef.current);
+      detailReconnectPendingRef.current = false;
     };
   }, [id, loadConv, loadMessages, loadAgents]);
 

@@ -574,6 +574,7 @@
     "tests/section15/handoff-service.test.ts",
     "tests/section15/human-service-routing.test.mjs",
     "tests/sql/saved-responses-postgres.py",
+    "tests/task1-director/event-driven-widget.test.mjs",
     "tests/task1-director/feedback-config-security.test.mjs",
     "tests/task1-director/hosted-cross-topic-p0.test.mjs",
     "tests/task1-director/local-deno-shim.mjs",
@@ -1254,5 +1255,16 @@
     "supabase/migrations/20261027110810_task1_feedback_config_staff_select_rls_20261027.sql": "d326ff23a7d4d0da006ad30c51dfb6079e46560edf284b4ef3abf5037e2a7046",
     "supabase/migrations/rollback/20261027110810_task1_feedback_config_staff_select_rls_20261027.rollback.sql": "abd5bf1dc12344952d6c20820c5f89d6603d724b6cb9bfacef9aa3aad443fcab",
     "tests/task1-director/feedback-config-security.test.mjs": "d1fcd8504c5c4eee0cd3acfc6cb81191aa5baaa7a9e272f2e89e63c54ee5f40e"
-  }
+  },
+  "authorized_task1c_event_price_sha256": {
+    "public/widget/chat.js": "927969dc7219f0c8bcfb5727e0bf94ce9740d1e362e3e6420ff91631a0f5df93",
+    "src/routes/_authenticated/console.conversations.$id.tsx": "f4ae206dc5afd085c39b13d3e32a9643a2fb6e7751852def6cafce9a4d9523c1",
+    "supabase/functions/_shared/canonical-grounding.ts": "3b296aa7da7a6dd25db8f6826e6dbd3cab2f4aa8bcacce69faffc6f52cc8cd85",
+    "supabase/functions/_shared/canonical-kb-direct-answer.test.ts": "5291a61a0cd76d707f24e64b5b0aaa15ce8a139bf991b9e5d528d75dbb57b734",
+    "supabase/functions/_shared/canonical-kb-direct-answer.ts": "e5a1b42a3ba11eae8c6128b4e778b7344f21890363a5d726df5ae8985bad073a",
+    "supabase/functions/widget-poll-messages/index.ts": "8f7462ae6e07d4291e00c133e0be7a9fc364b143917fd5a84352498f80ef3cc8",
+    "tests/task1-director/event-driven-widget.test.mjs": "1ede325b486d84d986d6dfb7027c07d7890804dd324b7eac39e4da067080a81c",
+    "tests/task1-director/source-chain.test.mjs": "b0861049ca1073bca48c5929ed364c44c9e42fa2008fd14778f27896c566b490"
+  },
+  "task1c_event_price_deployment_authorized": false
 }

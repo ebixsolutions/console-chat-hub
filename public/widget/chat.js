@@ -61,7 +61,6 @@
   var state = {
     sessionToken: null,
     conversationId: null,
-    pollInterval: null,
     thinkingStartTime: null,
     fallbackShownForConversation: false,
     handoffRequested: false,
@@ -70,10 +69,10 @@
     online: true,
   };
 
-  var POLL_STEPS = [2500, 5000, 10000, 20000, 30000];
-  var pollStep = 0;
-  var pollTimer = null;
   var pollActive = false;
+  var eventStreamAbort = null;
+  var eventReconnectTimer = null;
+  var eventReconnectFailures = 0;
   var pollGeneration = 0;
   var pollRequestSeq = 0;
   var catchUpPending = false;
@@ -907,7 +906,6 @@
             (res.body && res.body.error) || "attachment_upload_failed",
           );
         }
-        pollStep = 0;
         if (pollActive) executePoll();
         else startPolling();
       })
@@ -1031,7 +1029,6 @@
           });
           return;
         }
-        pollStep = 0;
         if (pollActive) executePoll();
         else startPolling();
       })
@@ -1518,47 +1515,96 @@
     });
   }
 
+
+  // Existing session-validated Edge Function delivers events, not periodic reads.
   function startPolling() {
     if (pollActive) return;
     pollActive = true;
     renderQueueEstimate();
-    pollStep = 0;
-    catchUpPending = false;
-    schedulePoll();
+    if (consolePreview) executePoll();
+    else openMessageEventStream();
   }
-
+  function endMessageEventStream() {
+    if (eventStreamAbort) {
+      var current = eventStreamAbort;
+      eventStreamAbort = null;
+      current.abort();
+    }
+    if (eventReconnectTimer) {
+      clearTimeout(eventReconnectTimer);
+      eventReconnectTimer = null;
+    }
+  }
   function stopPolling() {
     stopQueueEstimateTimer();
     pollActive = false;
-    if (pollTimer) {
-      clearTimeout(pollTimer);
-      pollTimer = null;
-    }
-    state.pollInterval = null;
+    endMessageEventStream();
   }
-
   function invalidatePollingContext() {
     stopPolling();
     queueEstimate = null;
     pollGeneration++;
     catchUpPending = false;
-    pollStep = 0;
   }
-
-  function schedulePoll() {
-    if (pollTimer) {
-      clearTimeout(pollTimer);
-      pollTimer = null;
-    }
-    if (!pollActive || document.hidden) return;
-    var ms = POLL_STEPS[Math.min(pollStep, POLL_STEPS.length - 1)];
-    pollTimer = setTimeout(executePoll, ms);
-    state.pollInterval = pollTimer;
+  function openMessageEventStream() {
+    if (consolePreview || !pollActive || document.hidden || eventStreamAbort ||
+        !state.conversationId || !state.sessionToken) return;
+    var conv = state.conversationId, generation = pollGeneration;
+    var controller = new AbortController();
+    eventStreamAbort = controller;
+    fetch(apiBase + "/widget-poll-messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+      body: JSON.stringify({ conversation_id:conv, session_token:state.sessionToken, subscribe_events:true }),
+      signal: controller.signal,
+    }).then(async function(response) {
+      if (response.status === 401 || response.status === 403) {
+        pollActive = false;
+        throw new Error("widget_event_unauthorized");
+      }
+      if (!response.ok || !response.body) throw new Error("widget_event_stream_failed");
+      var reader = response.body.getReader(), decoder = new TextDecoder(), buffer = "";
+      while (pollActive && generation === pollGeneration) {
+        var chunk = await reader.read();
+        if (chunk.done || controller.signal.aborted) break;
+        buffer += decoder.decode(chunk.value, { stream:true });
+        if (buffer.length > 16000) throw new Error("event_frame_overflow");
+        var frames = buffer.split(/\r?\n\r?\n/);
+        buffer = frames.pop() || "";
+        frames.forEach(function(frame) {
+          if (!pollActive || generation !== pollGeneration) return;
+          var match = /^data:\s*(ready|invalidate|close)\s*$/m.exec(frame);
+          if (!match) return;
+          if (match[1] === "ready") eventReconnectFailures = 0;
+          if (match[1] === "ready" || match[1] === "invalidate") executePoll();
+        });
+      }
+    }).catch(function(error) {
+      if (error?.message === "widget_event_unauthorized" && !controller.signal.aborted) {
+        appendMessageObj({id:"widget-event-authorization-denied",role:"system",
+          content:"Live updates are not authorized for this Widget session.",
+          created_at:new Date().toISOString()});
+      }
+    }).finally(function() {
+      if (eventStreamAbort !== controller) return;
+      eventStreamAbort = null;
+      if (!pollActive || generation !== pollGeneration || document.hidden) return;
+      if (++eventReconnectFailures > 5) {
+        pollActive = false;
+        appendMessageObj({id:"widget-event-reconnect-failed",role:"system",
+          content:"Live updates are unavailable. Reopen the chat to reconnect.",
+          created_at:new Date().toISOString()});
+        return;
+      }
+      var wait = Math.min(1000 * 2 ** (eventReconnectFailures - 1), 16000);
+      eventReconnectTimer = setTimeout(function() {
+        eventReconnectTimer = null;
+        openMessageEventStream(); // network recovery, not idle polling
+      }, wait);
+    });
   }
 
   function executePoll() {
-    pollTimer = null;
-    state.pollInterval = null;
     if (!pollActive || document.hidden) return;
 
     if (activePollRequest) {
@@ -1590,7 +1636,6 @@
         if (request.generation !== pollGeneration) return;
 
         if (!res.ok || !res.body || !res.body.success) {
-          if (pollStep < POLL_STEPS.length - 1) pollStep++;
           return;
         }
 
@@ -1638,8 +1683,7 @@
           if (message.role === "visitor") hideTags();
         });
 
-        if (hadNew) pollStep = 0;
-        else if (pollStep < POLL_STEPS.length - 1) pollStep++;
+        // No timer is scheduled after a successful canonical read.
 
         applyHumanSupportState(data.human_support);
         if (consolePreview) {
@@ -1676,7 +1720,6 @@
       })
       .catch(function () {
         if (request.generation !== pollGeneration) return;
-        if (pollStep < POLL_STEPS.length - 1) pollStep++;
       })
       .then(function () {
         var ownsActive = activePollRequest === request;
@@ -1691,7 +1734,6 @@
             state.sessionToken
           ) {
             catchUpPending = false;
-            pollStep = 0;
             executePoll();
           }
           return;
@@ -1699,10 +1741,7 @@
 
         if (catchUpPending && pollActive && !document.hidden) {
           catchUpPending = false;
-          pollStep = 0;
           executePoll();
-        } else if (pollActive) {
-          schedulePoll();
         }
       });
   }
@@ -2034,11 +2073,10 @@
         if (consolePreview) { restorePendingTextDraft(); syncPreviewSend(); }
         state.fallbackShownForConversation = false;
         state.thinkingStartTime = null;
-        pollStep = 0;
         if (!pollActive && state.conversationId) {
           startPolling();
         } else if (pollActive) {
-          schedulePoll();
+          executePoll();
         }
       });
   }
@@ -2051,23 +2089,15 @@
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) {
       stopQueueEstimateTimer();
-      if (pollTimer) {
-        clearTimeout(pollTimer);
-        pollTimer = null;
-        state.pollInterval = null;
-      }
+      endMessageEventStream();
     } else if (
       pollActive &&
       state.sessionToken &&
       state.conversationId
     ) {
       renderQueueEstimate();
-      pollStep = 0;
-      if (activePollRequest) {
-        catchUpPending = true;
-      } else {
-        executePoll();
-      }
+      if (consolePreview) executePoll();
+      else openMessageEventStream();
     }
   });
 

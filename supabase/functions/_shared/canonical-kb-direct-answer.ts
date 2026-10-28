@@ -1,4 +1,4 @@
-import type { CanonicalGroundingResult } from "./canonical-grounding.ts";
+import { type CanonicalGroundingResult, namedPriceProductLabel, exactNamedProductEvidence } from "./canonical-grounding.ts";
 import type { KBFullChunk } from "./deterministic-kb-client.ts";
 import { classifyProductFactualQuery } from "./natural-customer-response.ts";
 
@@ -202,12 +202,13 @@ export function resolveCanonicalKbDirectAnswer(input: {
 
   const request = input.request.normalize("NFKC");
   const requested = classifyProductFactualQuery(request);
-  if (publishedReferenceOnly && (!requested || requested.facts.length !== 1 ||
-    requested.facts[0] !== "price")) return null;
   const ids = exactKbModelIds(request);
-  // Never infer which of several models the customer meant.
-  if (ids.length !== 1) return null;
-  const model = ids[0];
+  const nameTarget = ids.length === 0 ? namedPriceProductLabel(request) : null;
+  if (publishedReferenceOnly && !nameTarget && (!requested || requested.facts.length !== 1 ||
+    requested.facts[0] !== "price")) return null;
+  // A model or an exact source-owned name, never multiple competing products.
+  if (ids.length !== 1 && !nameTarget) return null;
+  const model = nameTarget ?? ids[0];
   const chunks = selection.chunks.filter((chunk) =>
     chunk.chunk_type === "full_content" &&
     // Authenticated RAG service binds its own published/live selection even
@@ -216,7 +217,9 @@ export function resolveCanonicalKbDirectAnswer(input: {
     // document. The out-of-band service authority is required above.
     (chunk.status === "published" || publishedReferenceOnly && chunk.status === "unknown") &&
     chunk.document_id === selection.document!.document_id &&
-    Boolean(chunk.chunk_id) && exactKbModelIds(chunk.content).includes(model) &&
+    Boolean(chunk.chunk_id) &&
+    (nameTarget ? exactNamedProductEvidence(nameTarget, selection.document!, chunk) :
+      exactKbModelIds(chunk.content).includes(model)) &&
     selection.evidence.some((e) =>
       e.document_id === chunk.document_id && e.chunk_id === chunk.chunk_id &&
       e.content === chunk.content
@@ -225,7 +228,9 @@ export function resolveCanonicalKbDirectAnswer(input: {
   if (!chunks.length) return null;
   const productRecord = /product|商品|產品|产品/i.test(selection.document.source_type) ||
     chunks.some((chunk) => /(?:商品型號|商品型号|產品型號|产品型号|product\s*(?:name|model|entry))/i.test(chunk.content));
-  const identityVerified = exactKbModelIds(selection.document.title).includes(model) ||
+  const identityVerified = nameTarget ? chunks.some(chunk =>
+    exactNamedProductEvidence(nameTarget, selection.document!, chunk)) :
+    exactKbModelIds(selection.document.title).includes(model) ||
     chunks.some((chunk) => {
       const field = labelledValue(chunk.content,
         /商品型號|商品型号|產品型號|产品型号|product\s*(?:name|model)/i);
@@ -267,7 +272,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
   const consistentPrice = !priceFields.some(item => item.has_field && item.price === null) &&
     new Set(priceCandidates.map(item => item.price)).size === 1;
   const priceEvidence = consistentPrice ? priceCandidates[0] : undefined;
-  const priceFact = currentVerified && priceEvidence &&
+  const priceFact = currentVerified && !nameTarget && priceEvidence &&
       selection.authority_decision.provenance.region === "hong_kong" && priceEvidence.chunk.chunk_id
     ? { model, value: priceEvidence.price, currency: "HKD" as const,
       document_id: priceEvidence.chunk.document_id, chunk_id: priceEvidence.chunk.chunk_id,
@@ -279,7 +284,9 @@ export function resolveCanonicalKbDirectAnswer(input: {
   // already binds tenant, document, chunk, requested model and exact field.
   // This branch neither creates B2 current-price proof nor asserts stock,
   // checkout/quotation status, version, or present-day validity.
-  if (publishedReferenceOnly) {
+  if (publishedReferenceOnly || nameTarget) {
+    // A name-only match remains a source-recorded reference, even when the
+    // source says current. B2's exact-model current-price proof is not widened.
     if (!productRecord) return null;
     if (priceEvidence && selection.authority_decision.provenance.region === "hong_kong") {
       const recordedPrice = `HK$${priceEvidence.price.toLocaleString("en-US")}`;

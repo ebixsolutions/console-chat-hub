@@ -330,3 +330,6 @@ test("Task1 source guards: published-reference price cannot become a verified cu
  assert.match(b2,/evaluateCurrentKbSellingPrice\(input, draft\)/);
  assert.match(b2,/CURRENT_KB_PRICE_PROOF_MISSING/);
 });
+
+// Same Task1C native regression suite, executed by the existing isolated final gate.
+import './event-driven-widget.test.mjs';

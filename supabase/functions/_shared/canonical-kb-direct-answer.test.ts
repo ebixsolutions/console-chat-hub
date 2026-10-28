@@ -350,3 +350,65 @@ Deno.test("Task1: authenticated published unknown-currentness product price is a
   assert(noQuote?.kind==="price_unknown" && !/HK\$|\b6980\b/.test(noQuote.reply),
     "missing_price_must_not_fabricate");
 });
+
+
+Deno.test("Task1 cross-industry named product price is evidence-bound, with no invented model or B2 current quote", async () => {
+  const customerName = "轻量冲锋衣";
+  const fullContent = "商品名称: 轻量冲锋衣 | 销售价: HK$1,299 | 颜色: 海军蓝 | 备注: 来源记录";
+  const named: KBDocumentCandidate = {
+    ...doc, title: customerName, document_score: 0.03,
+    chunks: [{ ...chunk, content: fullContent, score: 0.03, status: "unknown" }],
+    llm_context: { ...doc.llm_context, full_content_evidence: [
+      { ...doc.llm_context.full_content_evidence[0], content: fullContent, score: 0.03 },
+    ] },
+    authority: { ...doc.authority!, currentness: "unknown", entity_ids: [] },
+  };
+  const { response } = await bindRagApiResponse(Response.json({
+    success: true, context_found: true,
+    selected_documents: [{ document_id: documentId, title: customerName,
+      source_type: "product", document_score: 0.03, authority: named.authority,
+      evidence: named.chunks.map(({ status: _status, ...row }) => row) }],
+    citations: [],
+  }), ORIGINAL_RAG_ACTIVATION);
+  bindRagServiceDocument(response, named);
+  for (const item of named.chunks) bindRagServiceDocument(response, item);
+  const request = "轻量冲锋衣 几钱？";
+  const answerNamed = answer(request, [named]);
+  assert(answerNamed.selection.ok && answerNamed.selection.document?.document_id === documentId &&
+    answerNamed.resolved?.kind === "listed_price_unverified" &&
+    answerNamed.resolved.reply.includes("HK$1,299") &&
+    answerNamed.resolved.reply.includes("未核實係現價") &&
+    !answerNamed.resolved.price_fact,
+    "exact source-recorded name price must be a qualified reference");
+  assert(answerNamed.citation?.citation_lineage.selected_document_id === documentId &&
+    answerNamed.citation?.citation_lineage.evidence_chunk_ids.includes(chunkId),
+    "named source citation lineage missing");
+  const snapshot = { conversation_id:"example", company_id:"3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    source_message_id:"example", commerce_state_revision:0,
+    commerce_state_source_message_id:null,state:createEmptyConversationCommerceState() };
+  const allowed = evaluateB2BeforeCommit({
+    proposed_response:answerNamed.resolved.reply,persistence_kind:"ai_reply",snapshot,
+    metadata: { ...answerNamed.citation, response_route:"canonical_kb_direct_answer",
+      answer_kind:"listed_price_unverified",reference_authority:answerNamed.selection.authority_decision },
+  });
+  assert(allowed.decision === "allow", "B2 rejected an explicitly noncurrent source record");
+  const forged = evaluateB2BeforeCommit({proposed_response:"轻量冲锋衣 現時售價 HK$1,299 已確認。",
+    persistence_kind:"ai_reply", snapshot,metadata:{ ...answerNamed.citation,answer_kind:"listed_price_unverified",
+      reference_authority:answerNamed.selection.authority_decision }});
+  assert(forged.decision === "block", "B2 accidentally allowed a name-only current price");
+  for (const [name, contentValue] of [
+    ["不同商品", fullContent], ["冲锋衣", fullContent],
+    [customerName, fullContent.replace(customerName,"輕量外套")],
+    [customerName, fullContent.replace("HK$1,299","USD 1,299")],
+  ]) {
+    const fixture = { ...named, title:name,
+      chunks:named.chunks.map(c=>({...c,content:contentValue})),
+      llm_context:{...named.llm_context,full_content_evidence:named.llm_context.full_content_evidence.map(e=>({...e,content:contentValue}))},
+    };
+    const observed = answer(request,[fixture]);
+    if (name !== customerName || !contentValue.includes(customerName))
+      assert(observed.resolved === null, "unrelated product identity accepted");
+    else assert(observed.resolved?.kind === "price_unknown" && !/HK\$1,299/.test(observed.resolved.reply),
+      "foreign-currency amount silently promoted to HKD");
+  }
+});

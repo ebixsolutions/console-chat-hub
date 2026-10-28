@@ -270,6 +270,59 @@ function assessApplicability(
   };
 }
 
+
+/**
+ * A merchant price question can identify a product by its source-recorded
+ * name rather than a Latin model number. Never interpret a broad category,
+ * a multi-product request or a generated translation as a unique identity.
+ */
+export function namedPriceProductLabel(request: string): string | null {
+  const normalized = request.normalize("NFKC").trim().replace(/\s+/gu, " ");
+  if (modelTokens(normalized).length) return null;
+  let value = normalized.replace(/^(?:(?:請問|请问|想問|想问|我想知道|我想知|幫我查|帮我查|請查|请查)\s*)+/u, "");
+  value = value
+    .replace(/^(?:how much (?:is|for|does) (?:the )?|what(?:'s| is) the (?:selling )?(?:price|cost) (?:of|for) (?:the )?|(?:selling )?price (?:of|for) (?:the )?)/iu, "")
+    .replace(/\s*(?:(?:嘅|的)?(?:售價|售价|價錢|价钱|價格|价格)(?:係幾多|是多少|几多|幾多|多少)?|幾錢|几钱|多少錢|多少钱|(?:selling )?price(?:\s+please)?)\s*[?？!！。.\s]*$/iu, "")
+    .replace(/[?？!！。.\s]+$/gu, "")
+    .trim();
+  if (!value || value === normalized || value.length > 90 ||
+    /[?？!！]|(?:\s+(?:and|or)\s+)|[、，,;；/]|\b(?:price|cost|how much)\b/iu.test(value) ||
+    /(?:幾錢|几钱|多少錢|多少钱|售價|售价|價錢|价钱|價格|价格)/u.test(value)) return null;
+  const han = (value.match(/\p{Script=Han}/gu) ?? []).length;
+  if (han < 4 && !/^[\p{Script=Latin}][\p{Script=Latin}\d \-]{5,}$/u.test(value)) return null;
+  return value;
+}
+
+function normalizedProductName(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+}
+
+/** Only a full-content product row can bind a customer name to one product. */
+export function exactNamedProductEvidence(
+  label: string,
+  document: KBDocumentCandidate,
+  chunk: KBFullChunk,
+): boolean {
+  if (!/product|商品|產品|产品/iu.test(document.source_type) ||
+    chunk.chunk_type !== "full_content" || !chunk.chunk_id ||
+    chunk.document_id !== document.document_id) return false;
+  const body = chunk.content.normalize("NFKC");
+  const wanted = normalizedProductName(label);
+  const labels = /(?:^|[\s|;\n\r])(?:商品名稱|商品名称|產品名稱|产品名称|商品名|產品名|产品名|品名|product\s+name|product\s+title)\s*[:=]\s*/giu;
+  const names: string[] = [];
+  for (const m of body.matchAll(labels)) {
+    const raw = body.slice(m.index! + m[0].length).split(
+      /[\r\n|;；]|(?=\s+(?:銷售價|销售价|售價|售价|特價|特价|成本|price|selling\s+price|商品型號|商品型号|型號|型号|品牌|描述|description|庫存|库存)\s*[:=])/iu,
+    )[0].trim();
+    if (raw) names.push(normalizedProductName(raw));
+  }
+  if (names.length) return names.length === 1 && names[0] === wanted;
+  // Some legitimate product records store their full canonical name as the
+  // document title only. The exact same name must still occur in Full Content.
+  return normalizedProductName(document.title) === wanted &&
+    normalizedProductName(body).includes(wanted);
+}
+
 const STRONG_LEXICAL_SCORE_FLOOR = 0.05;
 
 function strongLexicalEvidenceMatch(
@@ -484,11 +537,12 @@ export function selectCanonicalGrounding(
     options.expectedTopicIds ?? [],
     options.targetChanged === true,
   );
-  const expectedEntityIds = target.entity_ids;
+  const namedPriceTarget = namedPriceProductLabel(currentTurnText);
+  const expectedEntityIds = namedPriceTarget ? unique([...target.entity_ids, namedPriceTarget]) : target.entity_ids;
   const freeFactRequest = options.requireSubjectSupport === true || (options.semanticFactDescriptions?.length ?? 0) > 0;
   const expectedTopicIds = freeFactRequest ? unique(options.expectedTopicIds ?? []) : target.topic_ids;
   const explicitSubject = options.expectedSubject ?? factualSubject(currentTurnText);
-  const subject = explicitSubject ??
+  const subject = namedPriceTarget ?? explicitSubject ??
     (freeFactRequest ? currentTurnText.slice(0, 500) : null);
   const region = options.expectedRegion ?? target.region ?? detectExplicitJurisdiction(currentTurnText);
   const expectedRegion = region ? canonicalRegion(region) : null;
@@ -520,13 +574,18 @@ export function selectCanonicalGrounding(
 
     const currentTargetRequest = currentTurnText || requestText;
     const lexicalScore = lexicalRelevance(currentTargetRequest, document);
-    const serviceTopic=!!service && serviceTopicMatch(currentTargetRequest,document);
+    const namedPriceEvidence = namedPriceTarget !== null &&
+      document.chunks.some(chunk => exactNamedProductEvidence(namedPriceTarget, document, chunk));
+    // An exact customer-named product without full-content identity proof
+    // cannot inherit a similarly ranked but unrelated catalogue entry.
+    if (namedPriceTarget && !namedPriceEvidence) continue;
+    const serviceTopic=!!service && (namedPriceEvidence || serviceTopicMatch(currentTargetRequest,document));
     // A low relevance tag is retained, never equated to a supported answer.
     // Exact contextual evidence and the unchanged generation verifier are still
     // required; unrelated low hits cannot reach Knowledge/Policy as grounding.
     if(service?.relevance?.toLowerCase()==="low" && !serviceTopic && !options.deferRelevanceToCaller)continue;
     const policyEligible=document.source_type.toLowerCase().includes("policy") || !!service && /(?:政策|條款|条款|須知|须知|守則|退貨|退货|退款|保養|保修|\bpolicy\b|\bterms\b|\brefund\b|\breturns\b)/iu.test(candidateText(document));
-    const effectiveMinScore =
+    const effectiveMinScore = namedPriceEvidence && !!service ? 0 :
       strongLexicalEvidenceMatch(currentTargetRequest, document) || serviceTopic
         ? Math.min(minScore, STRONG_LEXICAL_SCORE_FLOOR)
         : minScore;
@@ -559,12 +618,18 @@ export function selectCanonicalGrounding(
       return { ok: false, error: "KB_EVIDENCE_NOT_PUBLISHED" };
     }
     if (!evidence.length) continue;
+    if (namedPriceTarget && !chunks.some(chunk =>
+      exactNamedProductEvidence(namedPriceTarget, document, chunk) &&
+      evidence.some(item => item.chunk_id === chunk.chunk_id && item.content === chunk.content))) continue;
     // Bind against the evidence that will actually reach generation. A subject
     // present only in a discarded/low-score chunk must not authorize another
     // surviving chunk, even within the same authenticated document.
-    const subjectSupported = !!subject && fullContentSubjectMatch(subject, {
-      ...document, llm_context: {...document.llm_context, full_content_evidence: evidence},
-    },Boolean(explicitSubject));
+    const subjectSupported = (namedPriceTarget !== null && chunks.some(chunk =>
+      exactNamedProductEvidence(namedPriceTarget, document, chunk) &&
+      evidence.some(item => item.chunk_id === chunk.chunk_id && item.content === chunk.content))) ||
+      (!!subject && fullContentSubjectMatch(subject, {
+        ...document, llm_context: {...document.llm_context, full_content_evidence: evidence},
+      },Boolean(explicitSubject)));
     if (options.expectedSubject && !subjectSupported) continue;
 
     const applicability = assessApplicability(document, currentTargetRequest);
@@ -592,6 +657,7 @@ export function selectCanonicalGrounding(
         currentness: effectiveCurrentness,
         entity_ids: unique([
           ...(metadata?.entity_ids ?? []),
+          ...(namedPriceEvidence ? [namedPriceTarget!] : []),
           ...namedTargetTokens(candidateText(document)),
         ]),
         topic_ids: unique([
@@ -606,6 +672,7 @@ export function selectCanonicalGrounding(
             const key=topic.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"");
             return key.length>=3 && candidateText(document).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"").includes(key) || serviceFactTopicMatch(topic,currentTargetRequest,document);
           }) : []),
+          ...(namedPriceEvidence ? ["price", "product_facts"] : []),
           ...(document.source_type.toLowerCase() === "product" ? ["product_facts"] : []),
           ...(metadata?.claims ?? []).map((claim) => claim.key),
           ...topicTokens(candidateText(document)),
@@ -644,7 +711,7 @@ export function selectCanonicalGrounding(
     expected_region: expectedRegion,
     requires_current_kb: options.requiresCurrentKb !== false,
     require_explicit_target_match: target.target_changed ||
-      target.explicit_entity || target.explicit_topic ||
+      target.explicit_entity || target.explicit_topic || Boolean(namedPriceTarget) ||
       Boolean(expectedRegion),
   });
   const winner = authorityDecision.selected_source_id

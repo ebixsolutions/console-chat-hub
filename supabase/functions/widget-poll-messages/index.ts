@@ -8,27 +8,86 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
   try {
-    const { conversation_id, session_token, after_message_id } = await req.json().catch(() => ({}));
+    const { conversation_id, session_token, after_message_id, subscribe_events } = await req.json().catch(() => ({}));
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (typeof conversation_id !== "string" || !uuid.test(conversation_id) || typeof session_token !== "string" || session_token.length < 32 || session_token.length > 256 || (after_message_id != null && (typeof after_message_id !== "string" || !uuid.test(after_message_id)))) {
       return json({ success: false, error: "invalid_request" }, 400);
     }
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey());
     const { data: session, error: sessionError } = await supabase.from("visitor_session")
-      .select("id, channel_config:channel_config_id(id, is_active, channel_type, allowed_origins)")
+      .select("id, channel_config:channel_config_id(id, company_id, is_active, channel_type, allowed_origins)")
       .eq("session_token", session_token).maybeSingle();
     if (sessionError) return json({ success: false, error: "session_scope_lookup_failed" }, 500);
     if (!session) return json({ success: false, error: "Invalid session" }, 401);
-    const channel = session.channel_config as { id?: string; is_active?: boolean; channel_type?: string; allowed_origins?: string[] | null } | null;
+    const channel = session.channel_config as { id?: string; company_id?: string; is_active?: boolean; channel_type?: string; allowed_origins?: string[] | null } | null;
     if (!channel || channel.is_active !== true || channel.channel_type !== "web_widget") return json({ success: false, error: "widget_channel_unavailable" }, 403);
     const originCheck = validateWidgetOrigin(req, channel.allowed_origins);
     if (!originCheck.ok) return json({ success: false, error: originCheck.error }, 403);
     const { data: conv, error: convError } = await supabase.from("conversations")
       .select("id, company_id, channel_config_id, metadata_source, status, visitor_session_id, assigned_agent_id").eq("id", conversation_id).maybeSingle();
     if (convError) return json({ success: false, error: "conversation_lookup_failed" }, 500);
-    if (!conv || conv.visitor_session_id !== session.id) return json({ success: false, error: "Conversation not found" }, 404);
+    if (!conv || conv.visitor_session_id !== session.id ||
+      conv.channel_config_id !== channel.id || conv.company_id !== channel.company_id)
+      return json({ success: false, error: "Conversation not found" }, 404);
     if(conv.metadata_source?.execution_class === "authenticated_admin_preview" && !await originalPreviewRequest(req,createClient,supabase,conv,false))
       return json({success:false,error:"original_preview_actor_or_authority_denied"},403);
+
+    if (subscribe_events === true) {
+      // The anonymous Widget cannot query staff-only Realtime rows. The
+      // existing server validates session/channel/tenant/origin (and original
+      // Preview ownership) before subscribing as server-side relay.
+      // Only content-free invalidation events cross this stream.
+      const encoder = new TextEncoder();
+      let teardown: () => void = () => {};
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          let closed = false;
+          let heartbeat: ReturnType<typeof setInterval> | null = null;
+          let lifetime: ReturnType<typeof setTimeout> | null = null;
+          const onAbort = () => teardown();
+          const notify = (event: string) => {
+            if (closed) return;
+            try { controller.enqueue(encoder.encode("data: " + event + "\n\n")); }
+            catch { teardown(); }
+          };
+          const channel = supabase.channel("widget-events-" + conversation_id + "-" + crypto.randomUUID())
+            .on("postgres_changes", { event: "*", schema: "public", table: "messages",
+              filter: "conversation_id=eq." + conversation_id }, () => notify("invalidate"))
+            .on("postgres_changes", { event: "UPDATE", schema: "public", table: "conversations",
+              filter: "id=eq." + conversation_id }, () => notify("invalidate"));
+          teardown = () => {
+            if (closed) return;
+            closed = true;
+            if (heartbeat !== null) clearInterval(heartbeat);
+            if (lifetime !== null) clearTimeout(lifetime);
+            req.signal.removeEventListener("abort", onAbort);
+            void supabase.removeChannel(channel);
+            try { controller.close(); } catch { /* browser closed stream */ }
+          };
+          req.signal.addEventListener("abort", onAbort, { once: true });
+          // Heartbeat is NOT a database read; timeout rechecks session
+          // authorizations after a bounded idle connection lifetime.
+          heartbeat = setInterval(() => {
+            if (!closed) {
+              try { controller.enqueue(encoder.encode(": keep-alive\n\n")); }
+              catch { teardown(); }
+            }
+          }, 25000);
+          lifetime = setTimeout(() => { notify("close"); teardown(); }, 120000);
+          channel.subscribe(status => {
+            if (closed) return;
+            if (status === "SUBSCRIBED") notify("ready");
+            if (status === "TIMED_OUT" || status === "CHANNEL_ERROR" || status === "CLOSED") teardown();
+          });
+        },
+        cancel() { teardown(); },
+      });
+      return new Response(stream, { headers: {
+        ...corsHeaders, "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no",
+      } });
+    }
+
     const { data: thinking, error: thinkingError } = await supabase.from("messages").select("id")
       .eq("conversation_id", conversation_id).eq("content", "__THINKING__").eq("is_recalled", false).limit(1);
     if (thinkingError) return json({ success: false, error: "thinking_lookup_failed" }, 500);
