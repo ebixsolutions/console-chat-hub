@@ -1265,7 +1265,7 @@
     "supabase/functions/_shared/canonical-kb-direct-answer.ts": "e5a1b42a3ba11eae8c6128b4e778b7344f21890363a5d726df5ae8985bad073a",
     "supabase/functions/widget-poll-messages/index.ts": "8f7462ae6e07d4291e00c133e0be7a9fc364b143917fd5a84352498f80ef3cc8",
     "tests/task1-director/event-driven-widget.test.mjs": "1ede325b486d84d986d6dfb7027c07d7890804dd324b7eac39e4da067080a81c",
-    "tests/task1-director/source-chain.test.mjs": "b0861049ca1073bca48c5929ed364c44c9e42fa2008fd14778f27896c566b490"
+    "tests/task1-director/source-chain.test.mjs": "67ba5225238c49a447c7fd737bc337ba84b1ff0ff128a27e9392d242c205327e"
   },
   "task1c_event_price_deployment_authorized": false
 }

@@ -323,8 +323,8 @@ test("Task1 source guards: published-reference price cannot become a verified cu
  assert.match(source,/priceCandidates/);
  assert.match(source,/consistentPrice/);
  assert.match(source,/return evidence\("listed_price_unverified"/);
- assert.match(source,/if \(publishedReferenceOnly\) \{/);
- assert.match(source,/const priceFact = currentVerified && priceEvidence/);
+ assert.match(source,/if \(publishedReferenceOnly \|\| nameTarget\) \{/);
+ assert.match(source,/const priceFact = currentVerified && !nameTarget && priceEvidence/);
  assert.match(source,/chunk.status === "published" \|\| publishedReferenceOnly && chunk.status === "unknown"/);
  const b2=task1SourceRead("supabase/functions/_shared/pre-send-conversion-supervisor.ts","utf8");
  assert.match(b2,/evaluateCurrentKbSellingPrice\(input, draft\)/);
