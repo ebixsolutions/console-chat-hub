@@ -1244,7 +1244,7 @@
     "tests/c3-widget-live-auth/original-preview.test.mjs": "0036cdffc83836c2ec16bafcacec1ff027c0b5216576cb4a25f8b12de2202ad0",
     "supabase/functions/_shared/conversation-service-planner.ts": "3129df8d8f6820cb0c53d1ba8d673d1a1f866224c1da2dd7a0b53a01f6fda41d",
     "supabase/functions/_shared/conversation-service-planner.test.ts": "7d6712dfb47e725a1bed16c7380e4a69dc2fc8173e3b20425e6970356df094d1",
-    "supabase/functions/_shared/canonical-kb-direct-answer.ts": "003bbaa03ef9cc3ac53463e46ea3030f345829bddc58b2e59b92f4d349579d23",
+    "supabase/functions/_shared/canonical-kb-direct-answer.ts": "7df14ca1548dfdbb82a4ae3418f7c97a9743127e29cc7b0a8caddda05165e0fc",
     "supabase/functions/_shared/canonical-kb-direct-answer.test.ts": "310d553eaa7f1271b4a90f4980e30ae49784c86a5bc23992f992d15d7d5672fd",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "ff034e7aec7379a8694e57961fb5df56ec02c9e3c5306681440115bf92fbb43c"
   },

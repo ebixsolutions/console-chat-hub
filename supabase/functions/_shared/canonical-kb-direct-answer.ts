@@ -246,7 +246,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
       document_id: priceEvidence.chunk.document_id, chunk_id: priceEvidence.chunk.chunk_id,
       full_content: priceEvidence.chunk.content }
     : null;
-  const displayPrice = priceFact ? `HK${priceFact.value.toLocaleString("en-US")}` : null;
+  const displayPrice = priceFact ? `HK$${priceFact.value.toLocaleString("en-US")}` : null;
 
   // No new remote query or model dispatch: the chosen published Full Content
   // already binds tenant, document, chunk, requested model and exact field.
@@ -255,7 +255,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
   if (publishedReferenceOnly) {
     if (!productRecord) return null;
     if (priceEvidence && selection.authority_decision.provenance.region === "hong_kong") {
-      const recordedPrice = `HK${priceEvidence.price.toLocaleString("en-US")}`;
+      const recordedPrice = `HK$${priceEvidence.price.toLocaleString("en-US")}`;
       const reply = language === "en"
         ? `The published product record for ${model} contains a selling-price field recording ${recordedPrice}. This is a source-recorded amount, not a verified current price or formal quotation; confirm the checkout price before buying.`
         : language === "zh-CN"
