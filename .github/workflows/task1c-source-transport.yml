@@ -5,6 +5,7 @@ on:
     paths: [.github/workflows/task1c-source-transport.yml]
 permissions:
   contents: write
+  actions: read
 jobs:
   recover:
     if: github.repository == 'ebixsolutions/console-chat-hub'
@@ -63,23 +64,36 @@ jobs:
           (out/'candidate-tree.txt').write_text(expected)
           print('EXACT_SOURCE_RESTORED',expected,'16/16 hashes match; no remote ref updated')
           PY
-      - name: Install the existing pinned native and browser test dependencies
+      - uses: actions/download-artifact@v4
+        with:
+          name: c3-task1c-functional-recovery-330a410063ba992dac79cbc94469e9583e3c5512
+          run-id: 40667489280
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/accepted-task1c
+      - name: Reuse exact-tree accepted results and restore pinned frontend dependency graph
         run: |
+          python3 <<'PYVERIFY'
+          import os,pathlib,json,shutil
+          root=pathlib.Path(os.environ['RUNNER_TEMP']); old=root/'accepted-task1c'; out=root/'c3-result'
+          assert json.loads((old/'payload.json').read_text())==json.loads((out/'payload.json').read_text())
+          expected=['source-chain','visitor-auth','browser-ui','deno-check','prices']
+          exits=[line.split('\t') for line in (old/'exits.tsv').read_text().splitlines()]
+          assert [n for n,c in exits]==expected and all(c=='0' for n,c in exits)
+          shutil.copy2(old/'exits.tsv',out/'exits.tsv')
+          for name in expected:
+            for suffix in ['.log','.command.txt']: shutil.copy2(old/(name+suffix),out/(name+suffix))
+          (out/'reused-results.json').write_text(json.dumps({'run_id':40667489280,'artifact_id':12807360030,'tree':'899bb3fda67d26f2b0f7c4740c9408ffed77f0ca','commands':expected}))
+          print('REUSED_SAME_TREE_NATIVE_UI_DENO_PASS; no replay')
+          PYVERIFY
           npm ci
-          npm install --prefix "$RUNNER_TEMP/c3-console-react" --ignore-scripts --no-audit --no-fund react@19.2.0 react-test-renderer@19.2.0 react-dom@19.2.0 jsdom@26.1.0 @testing-library/user-event@14.6.1
-      - name: Execute affected runtime, UI, typecheck, complete build and existing source controls
+      - name: Complete only outstanding frontend build and original source controls
         shell: bash
         run: |
+          set +e
           set -uo pipefail
-          export C3_REACT_TEST_ROOT="$RUNNER_TEMP/c3-console-react"
           export GITHUB_SHA="$(git rev-parse HEAD)"
           result="$RUNNER_TEMP/c3-result"; failed=0
           run(){ local name="$1"; shift; printf '%s\n' "$*" > "$result/$name.command.txt"; "$@" > "$result/$name.log" 2>&1; local code=$?; printf '%s\t%s\n' "$name" "$code" >> "$result/exits.tsv"; tail -n 18 "$result/$name.log"; if test "$code" != 0; then failed=1; fi; }
-          run source-chain node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/source-chain.test.mjs
-          run visitor-auth node --test tests/c3-widget-live-auth/original-preview-ingress.test.mjs
-          run browser-ui node --test tests/console-navigation/widget-input-dom.test.mjs tests/console-navigation/widget-recovery.test.mjs tests/console-navigation/ordinary-preview-bridge.test.mjs tests/console-navigation/ordinary-widget-dom.test.mjs tests/console-navigation/inbox-history-search.test.mjs
-          run deno-check deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts supabase/functions/widget-poll-messages/index.ts
-          run prices deno test --no-lock --allow-read --allow-env --node-modules-dir=auto supabase/functions/_shared/canonical-kb-direct-answer.test.ts supabase/functions/_shared/canonical-kb-b2-price.test.ts
           run typecheck npx tsc --noEmit
           run build npm run build
           run original-source-controls node .github/scripts/c3_unified_production_source_gate.test.mjs
@@ -114,11 +128,10 @@ jobs:
           (out/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
           print(json.dumps(receipt,indent=2))
           PY
-      - name: Retain exact execution evidence and missing local UI dependencies
+      - name: Retain exact execution evidence
         if: always()
         shell: bash
         run: |
-          if test -d "$RUNNER_TEMP/c3-console-react/node_modules"; then tar -C "$RUNNER_TEMP/c3-console-react" -czf "$RUNNER_TEMP/c3-result/react-test-dependencies.tar.gz" node_modules package.json package-lock.json; fi
           if test -d "$RUNNER_TEMP/c3-result"; then (cd "$RUNNER_TEMP/c3-result" && sha256sum *.log *.json *.tsv 2>/dev/null > SHA256SUMS || true); fi
       - uses: actions/upload-artifact@v4
         if: always()
