@@ -23,6 +23,9 @@ test("Task1C: stream never exposes messages or authorization across tenants", ()
   assert.match(endpoint, /validateWidgetOrigin\(req, channel\.allowed_origins\)/);
   assert.match(endpoint, /originalPreviewRequest\(req,createClient,supabase,conv,false\)/);
   assert.match(endpoint, /notify\("invalidate"\)/);
+  assert.match(endpoint, /const verifiedNotify = async/);
+  assert.match(endpoint, /current\.visitor_session_id !== liveSession\.id/);
+  assert.doesNotMatch(endpoint, /lifetime = setTimeout|setTimeout\(\(\) => \{ notify\("close"\)/);
   assert.match(endpoint, /supabase\.removeChannel\(channel\)/);
   assert.match(endpoint, /clearInterval\(heartbeat\)/);
   assert.match(endpoint, /"Cache-Control": "no-store, no-transform"/);

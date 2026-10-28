@@ -1263,8 +1263,8 @@
     "supabase/functions/_shared/canonical-grounding.ts": "816fdd40b56fe0f48ecde8e9995e07d3b028a3fc9f3b23b6515e82c651dfe7a4",
     "supabase/functions/_shared/canonical-kb-direct-answer.test.ts": "f7cf48dd65e89597e46c0d1a45a44e30932c88b1ab2d3a5758dea5b2cfdd4e64",
     "supabase/functions/_shared/canonical-kb-direct-answer.ts": "e5a1b42a3ba11eae8c6128b4e778b7344f21890363a5d726df5ae8985bad073a",
-    "supabase/functions/widget-poll-messages/index.ts": "8f7462ae6e07d4291e00c133e0be7a9fc364b143917fd5a84352498f80ef3cc8",
-    "tests/task1-director/event-driven-widget.test.mjs": "1ede325b486d84d986d6dfb7027c07d7890804dd324b7eac39e4da067080a81c",
+    "supabase/functions/widget-poll-messages/index.ts": "cd998933bf395aae9e589d5311791b2eb5aca77431d1ea970c68d551d2af63bf",
+    "tests/task1-director/event-driven-widget.test.mjs": "49c44a5b963c99b80faf4157379f9f87fe9abf5d6219bf27560f274b704654f2",
     "tests/task1-director/source-chain.test.mjs": "67ba5225238c49a447c7fd737bc337ba84b1ff0ff128a27e9392d242c205327e"
   },
   "task1c_event_price_deployment_authorized": false

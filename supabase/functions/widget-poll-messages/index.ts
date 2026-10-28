@@ -43,37 +43,60 @@ Deno.serve(async (req) => {
         start(controller) {
           let closed = false;
           let heartbeat: ReturnType<typeof setInterval> | null = null;
-          let lifetime: ReturnType<typeof setTimeout> | null = null;
           const onAbort = () => teardown();
           const notify = (event: string) => {
             if (closed) return;
             try { controller.enqueue(encoder.encode("data: " + event + "\n\n")); }
             catch { teardown(); }
           };
+          // Revalidate exact visitor ownership on each actual database
+          // change. No scheduled token refresh / DB read is necessary,
+          // and a revoked session may not observe later event activity.
+          const verifiedNotify = async () => {
+            if (closed) return;
+            const { data: liveSession, error: sessionError } = await supabase
+              .from("visitor_session")
+              .select("id, channel_config:channel_config_id(id,company_id,is_active,channel_type,allowed_origins)")
+              .eq("session_token", session_token).maybeSingle();
+            const liveChannel = liveSession?.channel_config as {
+              id?: string; company_id?: string; is_active?: boolean;
+              channel_type?: string; allowed_origins?: string[] | null;
+            } | null;
+            if (sessionError || liveSession?.id !== session.id || !liveChannel ||
+              liveChannel.id !== channel.id || liveChannel.company_id !== channel.company_id ||
+              liveChannel.is_active !== true || liveChannel.channel_type !== "web_widget" ||
+              !validateWidgetOrigin(req, liveChannel.allowed_origins).ok) { teardown(); return; }
+            const { data: current, error: convError } = await supabase
+              .from("conversations")
+              .select("id,company_id,channel_config_id,visitor_session_id")
+              .eq("id", conversation_id).maybeSingle();
+            if (convError || !current || current.company_id !== liveChannel.company_id ||
+              current.channel_config_id !== liveChannel.id ||
+              current.visitor_session_id !== liveSession?.id) { teardown(); return; }
+            if (!closed) notify("invalidate");
+          };
           const channel = supabase.channel("widget-events-" + conversation_id + "-" + crypto.randomUUID())
             .on("postgres_changes", { event: "*", schema: "public", table: "messages",
-              filter: "conversation_id=eq." + conversation_id }, () => notify("invalidate"))
+              filter: "conversation_id=eq." + conversation_id }, () => { void verifiedNotify(); })
             .on("postgres_changes", { event: "UPDATE", schema: "public", table: "conversations",
-              filter: "id=eq." + conversation_id }, () => notify("invalidate"));
+              filter: "id=eq." + conversation_id }, () => { void verifiedNotify(); });
           teardown = () => {
             if (closed) return;
             closed = true;
             if (heartbeat !== null) clearInterval(heartbeat);
-            if (lifetime !== null) clearTimeout(lifetime);
             req.signal.removeEventListener("abort", onAbort);
             void supabase.removeChannel(channel);
             try { controller.close(); } catch { /* browser closed stream */ }
           };
           req.signal.addEventListener("abort", onAbort, { once: true });
-          // Heartbeat is NOT a database read; timeout rechecks session
-          // authorizations after a bounded idle connection lifetime.
+          // Heartbeat is a comment-only keepalive and performs no database
+          // read. Session revocation is checked on actual change events.
           heartbeat = setInterval(() => {
             if (!closed) {
               try { controller.enqueue(encoder.encode(": keep-alive\n\n")); }
               catch { teardown(); }
             }
           }, 25000);
-          lifetime = setTimeout(() => { notify("close"); teardown(); }, 120000);
           channel.subscribe(status => {
             if (closed) return;
             if (status === "SUBSCRIBED") notify("ready");
