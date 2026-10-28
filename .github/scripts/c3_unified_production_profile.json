@@ -1257,6 +1257,7 @@
     "tests/task1-director/feedback-config-security.test.mjs": "d1fcd8504c5c4eee0cd3acfc6cb81191aa5baaa7a9e272f2e89e63c54ee5f40e"
   },
   "authorized_task1c_event_price_sha256": {
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "5fd372de1b7e391ce0aa893e2397102d36814d63eef60740eac247a498a22d30",
     "public/widget/chat.js": "927969dc7219f0c8bcfb5727e0bf94ce9740d1e362e3e6420ff91631a0f5df93",
     "src/routes/_authenticated/console.conversations.$id.tsx": "f4ae206dc5afd085c39b13d3e32a9643a2fb6e7751852def6cafce9a4d9523c1",
     "supabase/functions/_shared/canonical-grounding.ts": "3b296aa7da7a6dd25db8f6826e6dbd3cab2f4aa8bcacce69faffc6f52cc8cd85",
