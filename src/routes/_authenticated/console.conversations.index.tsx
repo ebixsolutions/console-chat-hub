@@ -514,8 +514,9 @@ function SinglePageInbox() {
   // ── J1: Realtime infrastructure ──
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedId;
-  const realtimeConnectedRef = useRef(true);
-  const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Subscriptions deliver events, never recurring database reads.
+  // A reconnect or tab-resume may reconcile once after missed notifications.
+  const reconnectPendingRef = useRef(false);
   const convDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function debouncedLoadConversations() {
@@ -524,31 +525,17 @@ function SinglePageInbox() {
       loadConversations();
     }, 1000);
   }
-  function startFallbackPolling() {
-    if (fallbackTimerRef.current) return;
-    fallbackTimerRef.current = setInterval(() => {
-      loadConversations();
-      const sid = selectedIdRef.current;
-      if (sid) loadMessages(sid, false);
-    }, 20000);
-  }
-  function stopFallbackPolling() {
-    if (!fallbackTimerRef.current) return;
-    clearInterval(fallbackTimerRef.current);
-    fallbackTimerRef.current = null;
-    loadConversations();
-    const sid = selectedIdRef.current;
-    if (sid) loadMessages(sid, false);
-  }
   function handleSubscribeStatus(status: string) {
-    if (status === "SUBSCRIBED") {
-      realtimeConnectedRef.current = true;
-      stopFallbackPolling();
+    if (status === "SUBSCRIBED" && reconnectPendingRef.current) {
+      reconnectPendingRef.current = false;
+      // One authenticated RLS read only when a previously broken stream
+      // actually reconnects. No X-second timer and no new backend.
+      loadConversations();
+      const sid=selectedIdRef.current;
+      if(sid) void loadMessages(sid,false);
     }
-    if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR") {
-      realtimeConnectedRef.current = false;
-      startFallbackPolling();
-    }
+    if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR")
+      reconnectPendingRef.current = true;
   }
 
   useEffect(() => {
@@ -599,11 +586,10 @@ function SinglePageInbox() {
           updated_at:row.created_at&&(!c.updated_at||row.created_at>c.updated_at)?row.created_at:c.updated_at,
         }).sort((a,b)=>String(b.updated_at??"").localeCompare(String(a.updated_at??"")))??null);
       })
-      .subscribe();
+      .subscribe(handleSubscribeStatus);
     return () => {
       supabase.removeChannel(convChannel);
       supabase.removeChannel(allMsgChannel);
-      if (fallbackTimerRef.current) clearInterval(fallbackTimerRef.current);
       if (convDebounceRef.current) clearTimeout(convDebounceRef.current);
     };
   }, [loadAgents]);
@@ -622,6 +608,7 @@ function SinglePageInbox() {
       return;
     }
     loadMessages(selectedId, true);
+    let selectedReconnectPending=false;
     const msgChannel = supabase
       .channel(`console-messages-${selectedId}`)
       .on(
@@ -633,29 +620,17 @@ function SinglePageInbox() {
           loadMessages(selectedId, false, payload.eventType === "INSERT");
         },
       )
-      .subscribe();
+      .subscribe(status => {
+        if (status === "SUBSCRIBED" && selectedReconnectPending) {
+          selectedReconnectPending = false;
+          if (selectedIdRef.current === selectedId) void loadMessages(selectedId,false);
+        }
+        if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR")
+          selectedReconnectPending = true;
+      });
     return () => {
       supabase.removeChannel(msgChannel);
     };
-  }, [selectedId, loadMessages]);
-
-  // Realtime can silently miss a message while still subscribed.
-  // Reconcile only the selected RLS-scoped ticket in a visible tab.
-  // No writes, model calls or whole-Inbox polling.
-  useEffect(() => {
-    if (!selectedId || typeof window.setInterval !== "function" || typeof window.clearInterval !== "function") return;
-    const ticketId = selectedId;
-    let stopped = false;
-    let pending = false;
-    const checkLatest = () => {
-      if (stopped || pending || document.hidden || selectedIdRef.current !== ticketId) return;
-      pending = true;
-      void loadMessages(ticketId, false).finally(() => { pending = false; });
-    };
-    // Realtime handles normal delivery. Only an infrequent selected-ticket
-    // liveness checkpoint reconciles a silently missed WebSocket notification.
-    const timer = window.setInterval(checkLatest, 60000);
-    return () => { stopped = true; window.clearInterval(timer); };
   }, [selectedId, loadMessages]);
 
   useEffect(() => {

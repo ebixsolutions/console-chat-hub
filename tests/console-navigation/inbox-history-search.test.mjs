@@ -91,12 +91,12 @@ test('Task1 C4 Inbox keeps Agent Tools bound to current visitor revision, role a
  await act(async()=>r.unmount());
 });
 
-test('Task1 C4 missed Realtime: selected Inbox catches visitor correction and invalidates pending draft',async()=>{
+test('Task1 C4 message push updates selected Inbox and invalidates pending draft without polling',async()=>{
  reset();f.toolProps=null;
  f.tables.messages=[{id:'visitor-v1',conversation_id:'target',role:'visitor',content:'我有20個分頁',created_at:'2026-10-27T01:01:00Z',status:'delivered',is_recalled:false}];
  const r=await mount();await pickTicket(r,'Target visitor');
  assert.match(f.toolProps.contextRevisionKey,/visitor-v1/);
- assert.equal(intervals.length,1,'only the selected ticket receives a liveness timer');
+ assert.equal(intervals.length,0,'no selected-ticket polling timer may be registered');
  await act(async()=>f.toolProps.onUseDraft('Current human draft'));
  assert.equal(f.toolProps.draftText,'Current human draft');
  await act(async()=>f.toolProps.onUseDraft('Old Helper suggestion'));
@@ -104,7 +104,7 @@ test('Task1 C4 missed Realtime: selected Inbox catches visitor correction and in
  const beforeListReads=f.reads.filter(x=>x.table==='conversations').length;
  // No Realtime notification: only the durable server row changes.
  f.tables.messages.push({id:'visitor-v2',conversation_id:'target',role:'visitor',content:'更正只係8個分頁',created_at:'2026-10-27T01:03:00Z',status:'delivered',is_recalled:false});
- await act(async()=>{intervals[0]();await Promise.resolve();await Promise.resolve();});
+ await act(async()=>{f.realtime['console-messages-target'][0].cb({eventType:'INSERT',new:{conversation_id:'target',role:'visitor',content:'更正只係8個分頁'}});await Promise.resolve();await Promise.resolve();});
  assert.equal(f.toolProps.conversationId,'target','must not switch tickets');
  assert.match(f.toolProps.contextRevisionKey,/visitor-v2/,'new Visitor revision must reach the still-open Inbox');
  assert.match(txt(r.toJSON()),/更正只係8個分頁/);
@@ -130,5 +130,17 @@ test('Task1: Realtime INSERT/UPDATE updates Inbox without rescan of message prev
    new:{conversation_id:'foreign',content:'CROSS TENANT PRIVATE'}}));
  assert.doesNotMatch(txt(r.toJSON()),/CROSS TENANT PRIVATE/);
  assert.equal(f.reads.filter(x=>x.table==='messages').length,reads);
+ await act(async()=>r.unmount());
+});
+
+test('Task1 Inbox has zero periodic message/whole-list polling and reconnects only on events',async()=>{
+ reset();const r=await mount();await pickTicket(r,'Target visitor');
+ assert.equal(intervals.length,0,'forbid every-X-seconds fetch even for selected ticket');
+ assert.equal(typeof f.realtime['console-messages-target']?.[0]?.cb,'function');
+ const prior=f.reads.filter(x=>x.table==='messages').length;
+ await act(async()=>{f.realtime['console-all-messages'][0].cb({eventType:'INSERT',
+   new:{conversation_id:'target',content:'NEW PUSH MESSAGE',created_at:'2026-10-28T12:01:00Z'}})});
+ assert.equal(f.reads.filter(x=>x.table==='messages').length,prior,'Inbox preview uses push payload with no RLS-wide refetch');
+ assert.equal(intervals.length,0);
  await act(async()=>r.unmount());
 });
