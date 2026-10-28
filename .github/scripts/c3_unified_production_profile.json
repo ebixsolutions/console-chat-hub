@@ -1242,7 +1242,7 @@
     "supabase/functions/_shared/commerce-state-authority.ts": "a68c017c08fbd679adfe5c6d0645fc48cea330acfcb78b94a5a1ec894e2fbc69",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "0036cdffc83836c2ec16bafcacec1ff027c0b5216576cb4a25f8b12de2202ad0",
     "supabase/functions/_shared/conversation-service-planner.ts": "3129df8d8f6820cb0c53d1ba8d673d1a1f866224c1da2dd7a0b53a01f6fda41d",
-    "supabase/functions/_shared/conversation-service-planner.test.ts": "4d80a8cda70c6f693c17f486b0850ee233693a630088579e00b8dfc8b52ad451"
+    "supabase/functions/_shared/conversation-service-planner.test.ts": "7d6712dfb47e725a1bed16c7380e4a69dc2fc8173e3b20425e6970356df094d1"
   },
   "task1_c4_recovery_deployment_authorized": false,
   "authorized_task1_feedback_security_sha256": {

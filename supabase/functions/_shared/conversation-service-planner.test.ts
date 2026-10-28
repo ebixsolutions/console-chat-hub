@@ -413,7 +413,7 @@ Deno.test("Task1 standalone item name never acknowledges invented order or quant
       version:"commerce-semantic-1.0.0",language:"zh-CN",operation:"ADD_ITEM",intent:"explore_options",topic:name,
       confidence:0.98,customer_correction:false,additive:false,customer_facts:[],referents:[],requested_facts:[],
       explicit_negations:[],entities:[{entity_ref:name,name,kind:"physical_product",category_hint:null,
-        sku:null,model:null,quantity:1,unit:null,attributes:{},constraints:{},capabilities:{},confidence:0.98}],
+        sku:null,model:null,quantity:1,unit:null,attributes:{},constraints:{},capabilities:{requires_delivery:false,supports_pickup:false,requires_installation:false,requires_booking:false,requires_quote:false,requires_site_check:false,digital_fulfilment:false,recurring_billing:false,rental_return:false,customization:false},confidence:0.98}],
       transaction_state:"none",payment_state:"none",booking_state:"none",fulfillment_state:"none",
       ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}
     } as import("./commerce-semantic-frame.ts").CommerceSemanticFrame;
