@@ -30,7 +30,7 @@ const compiled=await build({entryPoints:[entry],bundle:true,write:false,platform
   if(a.path==='lucide-react')return {contents:'export const AlertCircle=()=>null,Check=()=>null,Copy=()=>null,History=()=>null,Image=()=>null,Loader2=()=>null,MonitorDot=()=>null,Paperclip=()=>null,Plus=()=>null,Smile=()=>null,UserRound=()=>null,Video=()=>null;'};
   if(a.path==='@tanstack/react-router')return {contents:'export const createFileRoute=()=>x=>x;'};
   if(a.path.includes('runtime-authority'))return {contents:'export const resolveAuthoritativeSupabaseBinding=()=>({url:"https://unreachable.invalid"});'};
-  if(a.path.includes('/supabase/client'))return {contents:s+'export const supabase={auth:{getSession:async()=>({data:{session:f.actor?{access_token:"isolated-session"}:null},error:null})},functions:{invoke:(...args)=>f.invoke(...args)}};'};
+  if(a.path.includes('/supabase/client'))return {contents:s+'export const supabase={auth:{getSession:async()=>({data:{session:f.actor?{access_token:"isolated-session"}:null},error:null})},functions:{invoke:(...args)=>f.invoke(...args)},channel:name=>{const stream={name,callbacks:[],on(type,filter,cb){this.callbacks.push({type,filter,cb});return this;},subscribe(cb){this.status=cb;return this;}};f.streams.push(stream);return stream;},removeChannel:async stream=>{f.removed.push(stream);}};'};
   if(a.path.endsWith('useAuth'))return {contents:s+'export const useAuth=()=>({user:f.actor});'};
   if(a.path.endsWith('useCurrentRole'))return {contents:'export const useCurrentRole=()=>({role:"admin",loading:false});'};
   if(a.path.endsWith('useEffectiveRole'))return {contents:'export const useConsoleLang=()=>"en";'};
@@ -51,7 +51,7 @@ let intervals,calls,network;
 globalThis.fetch=async()=>{network++;throw Error('Remote network forbidden in local DOM test');};
 test.after(()=>{globalThis.setInterval=originalInterval;globalThis.clearInterval=originalClear;globalThis.fetch=originalFetch;dom.window.close();fs.rmSync(temp,{recursive:true,force:true});});
 function reset(){
- document.body.innerHTML='';window.localStorage.clear();intervals=new Map();calls=[];network=0;
+ document.body.innerHTML='';window.localStorage.clear();intervals=new Map();calls=[];network=0;f.streams=[];f.removed=[];
  globalThis.setInterval=fn=>{const id={};intervals.set(id,fn);return id;};globalThis.clearInterval=id=>intervals.delete(id);
  Object.assign(f,{actor:{id:'actor'},ready:true,wrongTenant:false,status:'open',human:false,readOnly:false});
  f.readinessResponse=null;f.historyResponse=null;f.loadMessages=null;
@@ -149,7 +149,7 @@ test('human control still permits local visitor composition without inventing a 
  reset();f.human=true;window.localStorage.setItem(key,conversation);const r=await mount(t);await edit(r,'給真人客服的草稿');assert.equal(field(r).value,'給真人客服的草稿');assert.equal(field(r).disabled,false);noDispatch();
 });
 test('local draft is separated by Channel and survives an unrelated server poll',async t=>{
- reset();window.localStorage.setItem(key,conversation);const r=await mount(t);await edit(r,'同一票草稿');await act(async()=>{for(const poll of intervals.values())await poll();});assert.equal(field(r).value,'同一票草稿');
+ reset();window.localStorage.setItem(key,conversation);const r=await mount(t);await edit(r,'同一票草稿');await act(async()=>{for(const stream of f.streams)stream.callbacks[0].cb({eventType:"INSERT"});await Promise.resolve();await Promise.resolve();});assert.equal(field(r).value,'同一票草稿');
  await act(async()=>r.root.render(React.createElement(PreviewWidget,{...props,scopeChannelId:'other-channel'})));assert.equal(field(r).value,'');assert.equal(button(r,'Send').disabled,true);noDispatch();
 });
 
@@ -294,4 +294,26 @@ test('history uses immutable ticket suffix instead of unstable list ordinal and 
  assert.deepEqual(list.map(b=>b.getAttribute('data-conversation-id')),[second,first]);
  assert(list[0].textContent.includes('Live Test · 22222222')&&list[1].textContent.includes('Live Test · 11111111'),'labels stable after reorder');
  noDispatch();
+});
+
+
+test('Task1C actual Live AI DOM: push delivers once with no idle polling; reconnect and role-scope cleanup',async t=>{
+ reset();window.localStorage.setItem(key,conversation);const r=await mount(t);
+ assert.equal(intervals.size,0,'no every-two-seconds message timer');
+ assert.equal(f.streams.length,1);const stream=f.streams[0];
+ assert.deepEqual(stream.callbacks.map(x=>x.filter.filter),['conversation_id=eq.'+conversation,'id=eq.'+conversation]);
+ const before=calls.filter(c=>c.action==='load').length;
+ await act(async()=>{await new Promise(resolve=>setImmediate(resolve));});
+ assert.equal(calls.filter(c=>c.action==='load').length,before,'idle generates zero reads');
+ f.loadMessages=[{id:'agent-pushed',role:'agent',content:'ONE REALTIME HUMAN REPLY',created_at:'2026-10-28T00:00:00Z'}];
+ await act(async()=>{stream.callbacks[0].cb({eventType:'INSERT'});await new Promise(resolve=>setImmediate(resolve));});
+ assert.equal(r.host.textContent.split('ONE REALTIME HUMAN REPLY').length-1,1);
+ await act(async()=>{stream.callbacks[0].cb({eventType:'INSERT'});await new Promise(resolve=>setImmediate(resolve));});
+ assert.equal(r.host.textContent.split('ONE REALTIME HUMAN REPLY').length-1,1,'redelivery is not duplicate UI');
+ const reconnectBefore=calls.filter(c=>c.action==='load').length;
+ await act(async()=>{stream.status('CHANNEL_ERROR');stream.status('SUBSCRIBED');await new Promise(resolve=>setImmediate(resolve));});
+ assert.equal(calls.filter(c=>c.action==='load').length,reconnectBefore+1);
+ await r.close();assert.equal(f.removed.length,1);
+ const closedReads=calls.length;stream.callbacks[0].cb({eventType:'INSERT'});await new Promise(resolve=>setImmediate(resolve));assert.equal(calls.length,closedReads);
+ assert.equal(calls.filter(c=>isSend(c)).length,0);assert.equal(network,0);
 });

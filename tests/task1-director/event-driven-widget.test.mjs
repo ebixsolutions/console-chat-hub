@@ -26,7 +26,7 @@ test("Task1C: stream never exposes messages or authorization across tenants", ()
   assert.match(endpoint, /const verifiedNotify = async/);
   assert.match(endpoint, /current\.visitor_session_id !== liveSession\.id/);
   assert.doesNotMatch(endpoint, /lifetime = setTimeout|setTimeout\(\(\) => \{ notify\("close"\)/);
-  assert.match(endpoint, /supabase\.removeChannel\(channel\)/);
+  assert.match(endpoint, /supabase\.removeChannel\(eventChannel\)/);
   assert.match(endpoint, /clearInterval\(heartbeat\)/);
   assert.match(endpoint, /"Cache-Control": "no-store, no-transform"/);
   assert.doesNotMatch(endpoint, /notify\((?:message|content|session_token)\)/);
@@ -39,3 +39,5 @@ test("Task1C: detail Inbox uses realtime events, with one read on reconnect only
   assert.match(detail, /subscribe\(handleDetailSubscribeStatus\)/);
   assert.match(detail, /removeChannel\(msgChannel\)/);
 });
+
+import './widget-event-runtime.test.mjs';

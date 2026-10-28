@@ -10,7 +10,7 @@ Deno.serve(async (req) => {
   try {
     const { conversation_id, session_token, after_message_id, subscribe_events } = await req.json().catch(() => ({}));
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (typeof conversation_id !== "string" || !uuid.test(conversation_id) || typeof session_token !== "string" || session_token.length < 32 || session_token.length > 256 || (after_message_id != null && (typeof after_message_id !== "string" || !uuid.test(after_message_id)))) {
+    if (typeof conversation_id !== "string" || !uuid.test(conversation_id) || typeof session_token !== "string" || (subscribe_events !== undefined && typeof subscribe_events !== "boolean") || session_token.length < 32 || session_token.length > 256 || (after_message_id != null && (typeof after_message_id !== "string" || !uuid.test(after_message_id)))) {
       return json({ success: false, error: "invalid_request" }, 400);
     }
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey());
@@ -49,33 +49,51 @@ Deno.serve(async (req) => {
             try { controller.enqueue(encoder.encode("data: " + event + "\n\n")); }
             catch { teardown(); }
           };
-          // Revalidate exact visitor ownership on each actual database
-          // change. No scheduled token refresh / DB read is necessary,
-          // and a revoked session may not observe later event activity.
+          // Event bursts share a bounded authorization read. Every notification
+          // is rechecked against visitor, channel, tenant and Preview actor;
+          // no idle database timer and no credential/content in the event.
+          let checking = false;
+          let pending = false;
           const verifiedNotify = async () => {
             if (closed) return;
-            const { data: liveSession, error: sessionError } = await supabase
-              .from("visitor_session")
-              .select("id, channel_config:channel_config_id(id,company_id,is_active,channel_type,allowed_origins)")
-              .eq("session_token", session_token).maybeSingle();
-            const liveChannel = liveSession?.channel_config as {
-              id?: string; company_id?: string; is_active?: boolean;
-              channel_type?: string; allowed_origins?: string[] | null;
-            } | null;
-            if (sessionError || liveSession?.id !== session.id || !liveChannel ||
-              liveChannel.id !== channel.id || liveChannel.company_id !== channel.company_id ||
-              liveChannel.is_active !== true || liveChannel.channel_type !== "web_widget" ||
-              !validateWidgetOrigin(req, liveChannel.allowed_origins).ok) { teardown(); return; }
-            const { data: current, error: convError } = await supabase
-              .from("conversations")
-              .select("id,company_id,channel_config_id,visitor_session_id")
-              .eq("id", conversation_id).maybeSingle();
-            if (convError || !current || current.company_id !== liveChannel.company_id ||
-              current.channel_config_id !== liveChannel.id ||
-              current.visitor_session_id !== liveSession?.id) { teardown(); return; }
-            if (!closed) notify("invalidate");
+            pending = true;
+            if (checking) return;
+            checking = true;
+            try {
+              while (pending && !closed) {
+                pending = false;
+                const { data: liveSession, error: sessionError } = await supabase
+                  .from("visitor_session")
+                  .select("id, channel_config:channel_config_id(id,company_id,is_active,channel_type,allowed_origins)")
+                  .eq("session_token", session_token).maybeSingle();
+                const liveChannel = liveSession?.channel_config as {
+                  id?: string; company_id?: string; is_active?: boolean;
+                  channel_type?: string; allowed_origins?: string[] | null;
+                } | null;
+                if (closed) return;
+                if (sessionError || !liveSession || liveSession.id !== session.id || !liveChannel ||
+                  liveChannel.id !== channel.id || liveChannel.company_id !== channel.company_id ||
+                  liveChannel.is_active !== true || liveChannel.channel_type !== "web_widget" ||
+                  !validateWidgetOrigin(req, liveChannel.allowed_origins).ok) { teardown(); return; }
+                const { data: current, error: convError } = await supabase
+                  .from("conversations")
+                  .select("id,company_id,channel_config_id,visitor_session_id,metadata_source,status,assigned_agent_id")
+                  .eq("id", conversation_id).maybeSingle();
+                if (closed) return;
+                if (convError || !current || current.company_id !== liveChannel.company_id ||
+                  current.channel_config_id !== liveChannel.id ||
+                  current.visitor_session_id !== liveSession.id) { teardown(); return; }
+                if ((conv.metadata_source?.execution_class === "authenticated_admin_preview" ||
+                  current.metadata_source?.execution_class === "authenticated_admin_preview") &&
+                  !await originalPreviewRequest(req, createClient, supabase, current, false)) {
+                  teardown(); return;
+                }
+                if (!closed) notify("invalidate");
+              }
+            } catch { teardown(); }
+            finally { checking = false; }
           };
-          const channel = supabase.channel("widget-events-" + conversation_id + "-" + crypto.randomUUID())
+          const eventChannel = supabase.channel("widget-events-" + conversation_id + "-" + crypto.randomUUID())
             .on("postgres_changes", { event: "*", schema: "public", table: "messages",
               filter: "conversation_id=eq." + conversation_id }, () => { void verifiedNotify(); })
             .on("postgres_changes", { event: "UPDATE", schema: "public", table: "conversations",
@@ -85,9 +103,10 @@ Deno.serve(async (req) => {
             closed = true;
             if (heartbeat !== null) clearInterval(heartbeat);
             req.signal.removeEventListener("abort", onAbort);
-            void supabase.removeChannel(channel);
+            void supabase.removeChannel(eventChannel).catch(() => {});
             try { controller.close(); } catch { /* browser closed stream */ }
           };
+          if (req.signal.aborted) { teardown(); return; }
           req.signal.addEventListener("abort", onAbort, { once: true });
           // Heartbeat is a comment-only keepalive and performs no database
           // read. Session revocation is checked on actual change events.
@@ -97,7 +116,7 @@ Deno.serve(async (req) => {
               catch { teardown(); }
             }
           }, 25000);
-          channel.subscribe(status => {
+          eventChannel.subscribe(status => {
             if (closed) return;
             if (status === "SUBSCRIBED") notify("ready");
             if (status === "TIMED_OUT" || status === "CHANNEL_ERROR" || status === "CLOSED") teardown();

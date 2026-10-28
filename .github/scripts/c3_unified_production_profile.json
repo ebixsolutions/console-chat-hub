@@ -579,6 +579,7 @@
     "tests/task1-director/hosted-cross-topic-p0.test.mjs",
     "tests/task1-director/local-deno-shim.mjs",
     "tests/task1-director/source-chain.test.mjs",
+    "tests/task1-director/widget-event-runtime.test.mjs",
     "tests/uat-runtime/ce-live-baseline.sql",
     "tests/uat-runtime/contract.test.ts",
     "tests/uat-runtime/dual-tenant.py",
@@ -1258,14 +1259,23 @@
   },
   "authorized_task1c_event_price_sha256": {
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "5fd372de1b7e391ce0aa893e2397102d36814d63eef60740eac247a498a22d30",
-    "public/widget/chat.js": "927969dc7219f0c8bcfb5727e0bf94ce9740d1e362e3e6420ff91631a0f5df93",
+    "public/widget/chat.js": "ad5154033f8ab0df2e3efd05cdee6f7135e823eb3fe3de3e4008b1a794d1ad0f",
     "src/routes/_authenticated/console.conversations.$id.tsx": "f4ae206dc5afd085c39b13d3e32a9643a2fb6e7751852def6cafce9a4d9523c1",
     "supabase/functions/_shared/canonical-grounding.ts": "816fdd40b56fe0f48ecde8e9995e07d3b028a3fc9f3b23b6515e82c651dfe7a4",
-    "supabase/functions/_shared/canonical-kb-direct-answer.test.ts": "f7cf48dd65e89597e46c0d1a45a44e30932c88b1ab2d3a5758dea5b2cfdd4e64",
+    "supabase/functions/_shared/canonical-kb-direct-answer.test.ts": "cb6558d1ef7e6fa834ab8edf59e5a8effa7a1c0f407c6e041c30661fdd2b1dda",
     "supabase/functions/_shared/canonical-kb-direct-answer.ts": "e5a1b42a3ba11eae8c6128b4e778b7344f21890363a5d726df5ae8985bad073a",
-    "supabase/functions/widget-poll-messages/index.ts": "cd998933bf395aae9e589d5311791b2eb5aca77431d1ea970c68d551d2af63bf",
-    "tests/task1-director/event-driven-widget.test.mjs": "49c44a5b963c99b80faf4157379f9f87fe9abf5d6219bf27560f274b704654f2",
-    "tests/task1-director/source-chain.test.mjs": "67ba5225238c49a447c7fd737bc337ba84b1ff0ff128a27e9392d242c205327e"
+    "supabase/functions/widget-poll-messages/index.ts": "615eb9ad8d06867eacf5f8ababc4b8d9dda06feb3dbdf05c2dc24f7f47005022",
+    "tests/task1-director/event-driven-widget.test.mjs": "c2cf604c1e1b4139182ac4f943446f69de11cae1550cf1aaf3496065e75f47a5",
+    "tests/task1-director/source-chain.test.mjs": "42dfbb63ebf27f4a6e57f6deb6f1d9b2725ef13caac2687e82c725e16dc84389",
+    "src/components/console/OrdinaryWidgetPreview.tsx": "020deb69d8e38bead36e34a63b872f562c459794086fb7b75b6264877ff8279b",
+    "src/lib/public-widget-preview-asset.ts": "6ddebcac5eda712b8289ddbf8712ea6717a6617854003820894d3199f1465992",
+    "src/routes/_authenticated/console.widget-preview.tsx": "effbbe791ce21685ffc7f54de0ca07d291f195d694a9db70c30a5dce3b2ac19b",
+    "supabase/functions/generate-reply/index.ts": "2bf737f5b67990d879bf6ad3c67b835c3381fa754f76cf7ce5462d7f504fb005",
+    "tests/console-navigation/ordinary-preview-bridge.test.mjs": "21858f0b2726162a7e647daed4018adbb10af6ec71ae68f4f16ce8b9be87473f",
+    "tests/console-navigation/ordinary-widget-dom.test.mjs": "9729b07525f4738b75efedcd0837cf975229f88c0114d35f205bf3ebeb61a10a",
+    "tests/console-navigation/widget-input-dom.test.mjs": "c0857a665bf75ebafe2902fc1eab56785d711e670f39c7ef322cc5e9a84e911d",
+    "tests/task1-director/widget-event-runtime.test.mjs": "fbac4f97268e0bd636077ee7f4ef4af0815ef24ea4e76b8fb26f2619644ad5ec",
+    "tests/console-navigation/widget-recovery.test.mjs": "670f4db66fe5ecd97a3dfb124511089002d25ea9282aa26e774823270e1c9e5b"
   },
   "task1c_event_price_deployment_authorized": false
 }

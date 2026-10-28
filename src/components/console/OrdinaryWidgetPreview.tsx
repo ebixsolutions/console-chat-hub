@@ -15,27 +15,71 @@ export function OrdinaryWidgetPreview({ channel, actorId, lang }: { channel: Liv
   const activeRequest = useRef<AbortController | null>(null);
   const bridgeNonce = useRef(crypto.randomUUID());
   useEffect(() => {
+    let disposed = false;
+    let revision = 0;
+    let subscribed: string | null = null;
+    let events: ReturnType<typeof supabase.channel> | null = null;
+    const watchConversation = async (conversationId: unknown, target: Window) => {
+      if (!channel || !actorId || typeof conversationId !== "string" ||
+        !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(conversationId) ||
+        subscribed === conversationId || disposed) return;
+      const request = ++revision;
+      const {data: row, error} = await supabase.from("conversations")
+        .select("id,company_id,channel_config_id").eq("id", conversationId).maybeSingle();
+      if (disposed || request !== revision || target !== frame.current?.contentWindow) return;
+      if (error || row?.id !== conversationId || row.company_id !== channel.company_id ||
+        row.channel_config_id !== channel.id) return;
+      if (events) void supabase.removeChannel(events);
+      subscribed = conversationId;
+      const notify = () => {
+        if (disposed || request !== revision || target !== frame.current?.contentWindow) return;
+        // Never forward raw database rows or the staff authentication token.
+        target.postMessage({type:"ordinary-preview-event-v2", nonce:bridgeNonce.current,
+          conversation_id:conversationId}, window.location.origin);
+      };
+      events = supabase.channel(`ordinary-preview-events-${actorId}-${conversationId}`)
+        .on("postgres_changes", {event:"*",schema:"public",table:"messages",
+          filter:`conversation_id=eq.${conversationId}`}, notify)
+        .on("postgres_changes", {event:"UPDATE",schema:"public",table:"conversations",
+          filter:`id=eq.${conversationId}`}, notify)
+        .subscribe(status => { if (status === "SUBSCRIBED") notify(); });
+    };
     const onMessage = async (event: MessageEvent) => {
       const data=event.data;
-      if (!channel || !actorId || event.origin!==window.location.origin || event.source!==frame.current?.contentWindow || data?.type!=="ordinary-preview-request-v2" || data.nonce!==bridgeNonce.current || typeof data.id!=="string") return;
+      if (disposed || !channel || !actorId || event.origin!==window.location.origin || event.source!==frame.current?.contentWindow || data?.type!=="ordinary-preview-request-v2" || data.nonce!==bridgeNonce.current || typeof data.id!=="string") return;
       const match=/^\/(create-visitor-session|receive-widget-message|widget-poll-messages)(\?[^#]*)?$/.exec(data.path ?? "");
       if (!match || !["GET","POST"].includes(data.method)) return;
       let body;try {body=data.body ? JSON.parse(data.body):undefined;} catch{return;}
       if(match[1]==="create-visitor-session" && (data.method!=="POST" || body?.channel_id!==channel.id || body?.console_preview!=="ordinary-widget-control-v2"))return;
       if(match[1]==="receive-widget-message" && data.method==="POST" && body?.console_preview!=="ordinary-widget-control-v2")return;
       if(match[1]==="receive-widget-message" && data.method==="GET" && new URLSearchParams(match[2]?.slice(1)).get("console_preview")!=="ordinary-widget-control-v2")return;
+      // Ordinary Preview uses the authenticated bridge for JSON readback;
+      // staff credentials cannot be used to start a visitor streaming request.
+      if (body?.subscribe_events !== undefined) return;
       try {
         const result=await supabase.functions.invoke(match[1]+(match[2] ?? ""),{method:data.method,body});
-        if(!active.current || event.source!==frame.current?.contentWindow)return;
+        if(disposed || !active.current || event.source!==frame.current?.contentWindow)return;
         let response=result.data,status=result.error ? 503:200;
         const context=result.error && "context" in result.error ? result.error.context:undefined;
         if(context instanceof Response){status=context.status;response=await context.clone().json().catch(()=>null);}
+        if(disposed || event.source!==frame.current?.contentWindow)return;
         // Only visitor API output crosses the bridge. Auth/JWT credentials never enter iframe code.
         (event.source as Window).postMessage({type:"ordinary-preview-response-v2",nonce:bridgeNonce.current,id:data.id,status,body:response},event.origin);
-      } catch { if(active.current && event.source===frame.current?.contentWindow)(event.source as Window).postMessage({type:"ordinary-preview-response-v2",nonce:bridgeNonce.current,id:data.id,status:503,body:{success:false,error:"preview_request_unconfirmed"}},event.origin); }
+        if (!result.error && response?.success === true && data.method === "POST" &&
+          (match[1] === "create-visitor-session" || match[1] === "widget-poll-messages")) {
+          void watchConversation(match[1] === "create-visitor-session" ? response.data?.conversation_id : body?.conversation_id,
+            event.source as Window).catch(() => {});
+        }
+      } catch { if(!disposed && active.current && event.source===frame.current?.contentWindow)(event.source as Window).postMessage({type:"ordinary-preview-response-v2",nonce:bridgeNonce.current,id:data.id,status:503,body:{success:false,error:"preview_request_unconfirmed"}},event.origin); }
     };
-    window.addEventListener("message",onMessage);return()=>window.removeEventListener("message",onMessage);
-  },[channel?.id,actorId]);
+    window.addEventListener("message",onMessage);
+    return () => {
+      disposed = true; revision++; subscribed = null;
+      window.removeEventListener("message",onMessage);
+      if (events) void supabase.removeChannel(events);
+    };
+  },[channel?.id,channel?.company_id,actorId]);
+
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const allowed = Boolean(actorId && channel?.company_id && channel.is_active && channel.channel_type === "web_widget" && channel.allowed_origins?.includes(origin));

@@ -1516,10 +1516,20 @@
   }
 
 
+  window.addEventListener("message", function(event) {
+    var data = event.data;
+    if (!consolePreview || !pollActive || document.hidden ||
+        event.source !== window.parent || event.origin !== previewParentOrigin ||
+        data?.type !== "ordinary-preview-event-v2" || data.nonce !== previewBridge ||
+        data.conversation_id !== state.conversationId) return;
+    executePoll(); // canonical authenticated readback; never trust event content
+  });
+
   // Existing session-validated Edge Function delivers events, not periodic reads.
   function startPolling() {
     if (pollActive) return;
     pollActive = true;
+    eventReconnectFailures = 0;
     renderQueueEstimate();
     if (consolePreview) executePoll();
     else openMessageEventStream();
@@ -1558,11 +1568,14 @@
       body: JSON.stringify({ conversation_id:conv, session_token:state.sessionToken, subscribe_events:true }),
       signal: controller.signal,
     }).then(async function(response) {
-      if (response.status === 401 || response.status === 403) {
+      if (controller.signal.aborted || generation !== pollGeneration || eventStreamAbort !== controller) return;
+      if ([401, 403, 404].includes(response.status)) {
         pollActive = false;
         throw new Error("widget_event_unauthorized");
       }
-      if (!response.ok || !response.body) throw new Error("widget_event_stream_failed");
+      if (!response.ok || !response.body ||
+          !String(response.headers.get("Content-Type") || "").toLowerCase().startsWith("text/event-stream"))
+        throw new Error("widget_event_stream_failed");
       var reader = response.body.getReader(), decoder = new TextDecoder(), buffer = "";
       while (pollActive && generation === pollGeneration) {
         var chunk = await reader.read();
@@ -1580,7 +1593,7 @@
         });
       }
     }).catch(function(error) {
-      if (error?.message === "widget_event_unauthorized" && !controller.signal.aborted) {
+      if (error?.message === "widget_event_unauthorized" && !controller.signal.aborted && generation === pollGeneration) {
         appendMessageObj({id:"widget-event-authorization-denied",role:"system",
           content:"Live updates are not authorized for this Widget session.",
           created_at:new Date().toISOString()});
@@ -1588,6 +1601,7 @@
     }).finally(function() {
       if (eventStreamAbort !== controller) return;
       eventStreamAbort = null;
+      controller.abort();
       if (!pollActive || generation !== pollGeneration || document.hidden) return;
       if (++eventReconnectFailures > 5) {
         pollActive = false;

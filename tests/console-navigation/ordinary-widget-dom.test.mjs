@@ -33,3 +33,17 @@ test('resolved ordinary Widget does not allow emoji to bypass its disabled texta
 test('real public textarea keyboard/paste/deletion/emoji selection preserves a scoped draft with zero sends',async t=>{const r=await mount(t);await r.user.click(r.input());await r.user.type(r.input(),'廣東話 English 123');await r.user.paste(' !?');assert.equal(r.input().value,'廣東話 English 123 !?');r.input().setSelectionRange(0,3);await r.user.keyboard('{Backspace}');assert.equal(r.input().value,' English 123 !?');r.input().setSelectionRange(0,1);await r.user.click(r.w.document.querySelector('#nx-emoji-btn'));const e=r.w.document.querySelector('.nx-emoji-item');const emoji=e.textContent;await r.user.click(e);assert.equal(r.input().value,emoji+'English 123 !?');assert.equal(r.w.localStorage.getItem(prefix+'_draft_'+conversation),r.input().value);assert.equal(sends(r).length,0);});
 
 test('unbound restored session fails closed without automatic replacement or delivery retry',async t=>{const storage={[prefix+'_session_token']:'session-token-with-more-than-32-characters',[prefix+'_conversation_id']:conversation,[prefix+'_channel_id']:channel};const r=await mount(t,{storage,unbound:true});type(r,'Who are you?');assert(r.send().disabled);assert.equal(r.requests.filter(x=>x.url.includes('create-visitor-session')).length,0);assert.equal(sends(r).length,0);assert.equal(r.w.localStorage.getItem(prefix+'_conversation_id'),conversation);});
+
+
+test('Task1C ordinary Widget uses exact parent event authority and receives a pushed human reply once',async t=>{
+ const options={rows:[]};const r=await mount(t,options);const before=r.requests.filter(x=>x.url.includes('widget-poll-messages')).length;
+ options.rows=[{id:message,role:'agent',content:'ONLY ONE PUSHED REPLY',created_at:'2026-10-28T00:00:00Z'}];
+ const hint={type:'ordinary-preview-event-v2',nonce:'native-bridge',conversation_id:conversation};
+ for(const [data,source,origin] of [[{...hint,nonce:'wrong'},r.w.parent,r.w.location.origin],[{...hint,conversation_id:'foreign'},r.w.parent,r.w.location.origin],[hint,r.w,r.w.location.origin],[hint,r.w.parent,'https://foreign.invalid']])
+  r.w.dispatchEvent(new r.w.MessageEvent('message',{source,origin,data}));
+ await r.flush();assert.equal(r.requests.filter(x=>x.url.includes('widget-poll-messages')).length,before);
+ const send=()=>r.w.dispatchEvent(new r.w.MessageEvent('message',{source:r.w.parent,origin:r.w.location.origin,data:hint}));
+ send();await r.flush();assert.equal(r.requests.filter(x=>x.url.includes('widget-poll-messages')).length,before+1);assert.equal(r.w.document.body.textContent.split('ONLY ONE PUSHED REPLY').length-1,1);
+ send();await r.flush();assert.equal(r.w.document.body.textContent.split('ONLY ONE PUSHED REPLY').length-1,1);
+ assert.equal(sends(r).length,0);
+});

@@ -1143,25 +1143,54 @@ function PreviewWidget({
   };
 
   useEffect(() => {
-    if (mode !== "live" || !testConversationId) return;
+    if (mode !== "live" || !testConversationId || !storageKey) return;
     let active = true;
     let inFlight = false;
+    let pending = false;
     let failures = 0;
     const controller = new AbortController();
+    // Realtime is only an invalidation hint. The existing authenticated
+    // endpoint rechecks actor/tenant/ticket before anything reaches the UI.
     const poll = async () => {
-      if (!active || inFlight || failures >= 3) return;
+      if (!active || failures >= 3 || currentScope.current !== storageKey || document.hidden) return;
+      pending = true;
+      if (inFlight) return;
       inFlight = true;
       try {
-        const result = await loadLiveConversation(testConversationId, false, AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]));
-        if (!active) return;
-        failures = result ? 0 : failures + 1;
-        if (failures >= 3) setConversationFailure(true);
-      } catch { if (active) { failures += 1; if (failures >= 3) setConversationFailure(true); } }
-      finally { inFlight = false; }
+        while (pending && active && currentScope.current === storageKey && !document.hidden) {
+          pending = false;
+          const result = await loadLiveConversation(testConversationId, false,
+            AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]));
+          if (!active) return;
+          failures = result ? 0 : failures + 1;
+          if (failures >= 3) { setConversationFailure(true); pending = false; }
+        }
+      } catch {
+        if (active) setConversationFailure(true);
+        pending = false;
+      } finally { inFlight = false; }
     };
+    const changes = supabase.channel(`widget-live-events-${testConversationId}`)
+      .on("postgres_changes", {event:"*", schema:"public", table:"messages",
+        filter:`conversation_id=eq.${testConversationId}`}, () => { void poll(); })
+      .on("postgres_changes", {event:"UPDATE", schema:"public", table:"conversations",
+        filter:`id=eq.${testConversationId}`}, () => { void poll(); })
+      .subscribe(status => {
+        if (!active) return;
+        // A subscribed snapshot closes the initial-load/subscribe race and
+        // reconciles a real reconnect, never an every-N-seconds history read.
+        if (status === "SUBSCRIBED") { failures = 0; void poll(); }
+        if (status === "TIMED_OUT" || status === "CHANNEL_ERROR" || status === "CLOSED")
+          setConversationFailure(true);
+      });
+    const resume = () => { if (!document.hidden) { failures = 0; void poll(); } };
+    document.addEventListener("visibilitychange", resume);
     void poll();
-    const timer = setInterval(() => void poll(), 2000);
-    return () => { active = false; controller.abort(); clearInterval(timer); };
+    return () => {
+      active = false; pending = false; controller.abort();
+      document.removeEventListener("visibilitychange", resume);
+      void supabase.removeChannel(changes);
+    };
   }, [mode, testConversationId, storageKey, pollRevision]);
 
   useEffect(() => {

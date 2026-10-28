@@ -27,7 +27,7 @@ const result=await build({entryPoints:[entry],bundle:true,write:false,platform:'
     if(a.path==='lucide-react')return {contents:'export const AlertCircle=()=>null,Check=()=>null,Copy=()=>null,History=()=>null,Image=()=>null,Loader2=()=>null,MonitorDot=()=>null,Paperclip=()=>null,Plus=()=>null,Smile=()=>null,UserRound=()=>null,Video=()=>null;'};
     if(a.path==='@tanstack/react-router')return {contents:'export const createFileRoute=()=>x=>x;'};
     if(a.path.includes('runtime-authority'))return {contents:'export const resolveAuthoritativeSupabaseBinding=()=>({url:"https://nrfxhqabwblzxoushgnm.supabase.co"});'};
-    if(a.path.includes('/supabase/client'))return {contents:f+'export const supabase={auth:{getSession:async()=>({data:{session:{access_token:"isolated-test-session"}},error:null})},functions:{invoke:(...args)=>f.invoke(...args)}};'};
+    if(a.path.includes('/supabase/client'))return {contents:f+'export const supabase={auth:{getSession:async()=>({data:{session:{access_token:"isolated-test-session"}},error:null})},functions:{invoke:(...args)=>f.invoke(...args)},channel:name=>{const stream={name,callbacks:[],on(type,filter,cb){this.callbacks.push({type,filter,cb});return this},subscribe(cb){this.status=cb;return this}};f.streams.push(stream);return stream},removeChannel:async stream=>{f.streams=f.streams.filter(s=>s!==stream);}};'};
     if(a.path.endsWith('useAuth'))return {contents:f+'export const useAuth=()=>({user:f.user});'};
     if(a.path.endsWith('useCurrentRole'))return {contents:'export const useCurrentRole=()=>({role:"admin",loading:false});'};
     if(a.path.endsWith('useEffectiveRole'))return {contents:'export const useConsoleLang=()=>"en";'};
@@ -47,7 +47,7 @@ let calls=[],intervals=new Map(),store=new Map();
 const originalSetInterval=globalThis.setInterval,originalClearInterval=globalThis.clearInterval;
 test.after(()=>{globalThis.setInterval=originalSetInterval;globalThis.clearInterval=originalClearInterval;fs.rmSync(temp,{recursive:true,force:true});});
 function reset(){
-  calls=[];intervals=new Map();store=new Map([[storageKey,conversation]]);
+  calls=[];intervals=new Map();store=new Map([[storageKey,conversation]]);fixture.streams=[];
   globalThis.setInterval=fn=>{const id={};intervals.set(id,fn);return id;};globalThis.clearInterval=id=>intervals.delete(id);
   globalThis.window={localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,v),removeItem:k=>store.delete(k)},addEventListener(){},removeEventListener(){}};
   globalThis.document={addEventListener(){},removeEventListener(){}};
@@ -71,7 +71,7 @@ const button=(r,label)=>r.root.findAllByType('button').find(n=>text({children:n.
 async function click(r,label){const b=button(r,label);assert.ok(b,'button '+label);assert.notEqual(b.props.disabled,true,label+' disabled');await act(async()=>b.props.onClick());}
 async function mount(){let r;await act(async()=>{r=create(React.createElement(PreviewWidget,props));});return r;}
 async function enter(r,value){await act(async()=>r.root.findByType('input').props.onChange({target:{value}}));}
-async function tick(){await act(async()=>{for(const fn of [...intervals.values()])await fn();});}
+async function tick(){await act(async()=>{for(const stream of [...fixture.streams])stream.callbacks[0].cb({eventType:"INSERT"});await new Promise(resolve=>setImmediate(resolve));});}
 async function close(r){await act(async()=>r.unmount());}
 const sends=()=>calls.filter(x=>x.body.action==='send');
 
@@ -84,11 +84,11 @@ test('history transport failure is not empty history and does not revoke indepen
   reset();fixture.historyError=true;const r=await mount();await click(r,'Conversation History');assert.match(content(r),/History.*(?:unavailable|could not be loaded)/);assert(!content(r).includes('No Live AI Test history yet.'));assert.equal(r.root.findByType('input').props.disabled,false);assert.equal(button(r,'Send').props.disabled,true);
   assert.match(content(r),/scopeReady=true/);fixture.historyError=false;await click(r,'Conversation History');await click(r,'Conversation History');assert(!content(r).includes('History could not be loaded'));assert.equal(r.root.findByType('input').props.disabled,false);assert.equal(sends().length,0);await close(r);
 });
-test('three polling failures preserve messages, pause reads and explicitly restart the SAME conversation',async()=>{
+test('three event-triggered read failures preserve messages, pause reads and explicitly restart the SAME conversation',async()=>{
   reset();const r=await mount();fixture.loadError=true;await tick();await tick();await tick();assert.match(content(r),/Conversation refresh failed/);assert.match(content(r),/Existing request/);const count=calls.length;await tick();assert.equal(calls.length,count);
   fixture.loadError=false;fixture.rows.push({id:'a1',role:'agent',content:'Actual agent message'});await click(r,'Refresh conversation');assert.match(content(r),/Actual agent message/);assert(!content(r).includes('Conversation refresh failed'));await tick();assert(calls.length>count);assert.equal(sends().length,0);await close(r);
 });
-test('thrown polling errors use the same recoverable read state without a delivery-unknown claim',async()=>{
+test('thrown event-triggered read errors use the same recoverable read state without a delivery-unknown claim',async()=>{
   reset();const r=await mount();fixture.loadThrows=true;await tick();await tick();await tick();assert.match(content(r),/Conversation refresh failed/);assert(!content(r).includes('Delivery could not be confirmed'));fixture.loadThrows=false;await click(r,'Refresh conversation');assert(!content(r).includes('Conversation refresh failed'));await close(r);
 });
 test('human assignment keeps click-send enabled and never claims agent answered/took over from assignment alone',async()=>{
@@ -112,7 +112,7 @@ test('scope changes discard old conversation data and require new verified conte
   reset();const r=await mount();fixture.historyError=true;fixture.rows=[];await act(async()=>r.update(React.createElement(PreviewWidget,{...props,scopeChannelId:'different-channel'})));assert(!content(r).includes('Existing request'));assert.equal(r.root.findByType('input').props.disabled,false);assert.equal(r.root.findByType('input').props.value,'');assert.equal(button(r,'Send').props.disabled,true);assert.equal(sends().length,0);await close(r);
 });
 
-test('a polled AI-pending flag cannot intercept an explicit R1 when no send is in flight',async()=>{
+test('an event-read AI-pending flag cannot intercept an explicit R1 when no send is in flight',async()=>{
   reset();fixture.generating=true;const r=await mount();await enter(r,'Please connect me to human support');assert.equal(button(r,'Send').props.disabled,false);await click(r,'Send');assert.equal(sends().length,1);assert.equal(sends()[0].body.query,'Please connect me to human support');await close(r);
 });
 

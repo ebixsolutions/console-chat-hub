@@ -333,3 +333,14 @@ test("Task1 source guards: published-reference price cannot become a verified cu
 
 // Same Task1C native regression suite, executed by the existing isolated final gate.
 import './event-driven-widget.test.mjs';
+
+
+test('Task1C source-recorded price is resolved before the secondary retrieval-score gate',()=>{
+ const code=task1SourceRead('supabase/functions/generate-reply/index.ts','utf8');
+ const resolve=code.indexOf('_canonicalKbDirectAnswer = resolveCanonicalKbDirectAnswer({');
+ const gate=code.indexOf('if (!_sourceRecordedPriceReady && !hasUsableFullContentEvidence(usableChunks, minScore))');
+ assert(resolve>0 && gate>resolve,'exact named price must not dead-end before renderer');
+ assert.match(code,/const _sourceRecordedPriceReady = !_mixedRequest && !isHighRisk &&/);
+ assert.match(code,/_canonicalKbDirectAnswer\?\.kind === "listed_price_unverified"/);
+ assert.match(code,/!_priorGroundedTransform/);
+});

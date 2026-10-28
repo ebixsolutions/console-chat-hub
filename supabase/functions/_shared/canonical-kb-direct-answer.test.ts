@@ -363,15 +363,19 @@ Deno.test("Task1 cross-industry named product price is evidence-bound, with no i
     ] },
     authority: { ...doc.authority!, currentness: "unknown", entity_ids: [] },
   };
-  const { response } = await bindRagApiResponse(Response.json({
-    success: true, context_found: true,
-    selected_documents: [{ document_id: documentId, title: customerName,
-      source_type: "product", document_score: 0.03, authority: named.authority,
-      evidence: named.chunks.map(({ status: _status, ...row }) => row) }],
-    citations: [],
-  }), ORIGINAL_RAG_ACTIVATION);
-  bindRagServiceDocument(response, named);
-  for (const item of named.chunks) bindRagServiceDocument(response, item);
+  const bindNamed = async (fixture: KBDocumentCandidate) => {
+    const { response } = await bindRagApiResponse(Response.json({
+      success: true, context_found: true,
+      selected_documents: [{ document_id: fixture.document_id, title: fixture.title,
+        source_type: fixture.source_type, document_score: fixture.document_score, authority: fixture.authority,
+        evidence: fixture.chunks.map(({ status: _status, ...row }) => row) }],
+      citations: [],
+    }), ORIGINAL_RAG_ACTIVATION);
+    bindRagServiceDocument(response, fixture);
+    for (const item of fixture.chunks) bindRagServiceDocument(response, item);
+    return fixture;
+  };
+  await bindNamed(named);
   const request = "轻量冲锋衣 几钱？";
   const answerNamed = answer(request, [named]);
   assert(answerNamed.selection.ok && answerNamed.selection.document?.document_id === documentId &&
@@ -397,7 +401,8 @@ Deno.test("Task1 cross-industry named product price is evidence-bound, with no i
       reference_authority:answerNamed.selection.authority_decision }});
   assert(forged.decision === "block", "B2 accidentally allowed a name-only current price");
   for (const [name, contentValue] of [
-    ["不同商品", fullContent], ["冲锋衣", fullContent],
+    ["不同商品", fullContent.replace(customerName, "不同商品")],
+    ["冲锋衣", fullContent.replace(customerName, "冲锋衣")],
     [customerName, fullContent.replace(customerName,"輕量外套")],
     [customerName, fullContent.replace("HK$1,299","USD 1,299")],
   ]) {
@@ -405,6 +410,7 @@ Deno.test("Task1 cross-industry named product price is evidence-bound, with no i
       chunks:named.chunks.map(c=>({...c,content:contentValue})),
       llm_context:{...named.llm_context,full_content_evidence:named.llm_context.full_content_evidence.map(e=>({...e,content:contentValue}))},
     };
+    await bindNamed(fixture);
     const observed = answer(request,[fixture]);
     if (name !== customerName || !contentValue.includes(customerName))
       assert(observed.resolved === null, "unrelated product identity accepted");

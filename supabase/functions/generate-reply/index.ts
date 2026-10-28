@@ -6278,7 +6278,26 @@ Latest applicable corrections replace old values; an answered clarification is n
         _visitorLang,
       );
     }
-    if (!hasUsableFullContentEvidence(usableChunks, minScore)) {
+    _canonicalKbDirectAnswer = resolveCanonicalKbDirectAnswer({
+      request: _productFactualRequest,
+      selection: _groundingSelection,
+      language: _visitorLang,
+      customer_context: (() => {
+        const entities = (_c3CommerceSnapshot?.state.entities ?? []).filter((entity) =>
+          !["cancelled", "deferred"].includes(entity.status) && entity.model &&
+          _effectiveNaturalCustomerIntent.kind === "product_factual_query" &&
+          entity.model === _effectiveNaturalCustomerIntent.product);
+        return entities.length === 1
+          ? { model: entities[0].model!, sunlight: entities[0].attributes.sunlight }
+          : undefined;
+      })(),
+    });
+    // A source-bound, explicitly non-current record needs exact field and
+    // lineage proof, not an artificially promoted vector score. Keep the
+    // existing score gate for every generated/current-price/high-risk answer.
+    const _sourceRecordedPriceReady = !_mixedRequest && !isHighRisk &&
+      !_priorGroundedTransform && _canonicalKbDirectAnswer?.kind === "listed_price_unverified";
+    if (!_sourceRecordedPriceReady && !hasUsableFullContentEvidence(usableChunks, minScore)) {
       _pr5RagMatchState = "partial_match";
       const requiredResponse = await evaluateAndPersistRequiredRulesLive(
         supabaseAdmin,
@@ -6407,20 +6426,6 @@ Latest applicable corrections replace old values; an answered clarification is n
       : undefined;
 
     finalPromptChunks = usableFullContent;
-    _canonicalKbDirectAnswer = resolveCanonicalKbDirectAnswer({
-      request: _productFactualRequest,
-      selection: _groundingSelection,
-      language: _visitorLang,
-      customer_context: (() => {
-        const entities = (_c3CommerceSnapshot?.state.entities ?? []).filter((entity) =>
-          !["cancelled", "deferred"].includes(entity.status) && entity.model &&
-          _effectiveNaturalCustomerIntent.kind === "product_factual_query" &&
-          entity.model === _effectiveNaturalCustomerIntent.product);
-        return entities.length === 1
-          ? { model: entities[0].model!, sunlight: entities[0].attributes.sunlight }
-          : undefined;
-      })(),
-    });
     _canonicalKbTenantId = _kbTenantResult.scope.singaporeTenantId;
     _kbDone = true;
   }
