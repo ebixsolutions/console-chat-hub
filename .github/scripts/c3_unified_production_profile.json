@@ -1245,7 +1245,8 @@
     "supabase/functions/_shared/conversation-service-planner.ts": "3129df8d8f6820cb0c53d1ba8d673d1a1f866224c1da2dd7a0b53a01f6fda41d",
     "supabase/functions/_shared/conversation-service-planner.test.ts": "7d6712dfb47e725a1bed16c7380e4a69dc2fc8173e3b20425e6970356df094d1",
     "supabase/functions/_shared/canonical-kb-direct-answer.ts": "ac9926584492fa6dfc046b1ac6ed66de6c7d3dcadcd328ee95c3df345f50c892",
-    "supabase/functions/_shared/canonical-kb-direct-answer.test.ts": "a27097d30dabd0b9ca26aa093cb78fbf8c167a94ca7e16595d9accb5e66934d4"
+    "supabase/functions/_shared/canonical-kb-direct-answer.test.ts": "a27097d30dabd0b9ca26aa093cb78fbf8c167a94ca7e16595d9accb5e66934d4",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "ff034e7aec7379a8694e57961fb5df56ec02c9e3c5306681440115bf92fbb43c"
   },
   "task1_c4_recovery_deployment_authorized": false,
   "authorized_task1_feedback_security_sha256": {
