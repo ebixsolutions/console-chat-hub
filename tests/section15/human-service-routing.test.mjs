@@ -130,7 +130,10 @@ for (const question of evidence) test(`merchant evidence retained: ${question}`,
   const plan = planConversationService({ ...defaults, question });
   assert.equal(plan.action, 'published_kb_lookup');
   assert.equal(plan.knowledge_state, 'lookup_required');
-  assert.equal(JSON.parse(plan.kb_query).question, question.normalize('NFKC'));
+  assert.equal(typeof plan.kb_query, 'string');
+  // A standalone factual request uses natural text; bounded context remains JSON.
+  const queryQuestion = plan.kb_query.startsWith('{') ? JSON.parse(plan.kb_query).question : plan.kb_query;
+  assert.equal(queryQuestion, question.normalize('NFKC'), 'the complete current request must reach KB unchanged');
   assert.equal(renderServicePlanReply(plan, null), null);
 });
 for (const question of business) test(`mixed/unknown business semantic path retained: ${question}`, () => {
