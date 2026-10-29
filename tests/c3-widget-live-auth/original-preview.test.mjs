@@ -10,13 +10,27 @@ const out=await build({stdin:{contents:`export {kbErrorFamily,knowledgeFailureSt
 const {kbErrorFamily,knowledgeFailureState,createWidgetLiveHandler,ORIGINAL_PREVIEW_AUTHORIZATION,ORIGINAL_PREVIEW_ACCOUNTS,signOriginalPreview,verifyOriginalPreview,authenticatedInboxAuthority,trustedDispatchScope,accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit,createKBStageDiagnostics,fetchKBRag,resolveTenantScope,resolveKBEndpoint,selectCanonicalGrounding,deriveCurrentGroundingTarget,prepareRemoteRetrieval,signRemote}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
 const realFetch=globalThis.fetch;const realKbClient=globalThis.__c3KbClient;test.after(()=>{globalThis.fetch=realFetch;if(realKbClient===undefined)delete globalThis.__c3KbClient;else globalThis.__c3KbClient=realKbClient;});
 const body=JSON.stringify({contents:[{role:'user',parts:[{text:'Compare options for my business.'}]}],generationConfig:{maxOutputTokens:2048}});
+const semanticConfigBundle=await build({stdin:{contents:"export {COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_SYSTEM_PROMPT} from './supabase/functions/_shared/commerce-semantic-frame.ts'; export {buildVertexGenerationConfig} from './supabase/functions/_shared/vertex-generation-config.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
+const {COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_SYSTEM_PROMPT,buildVertexGenerationConfig}=await import('data:text/javascript;base64,'+Buffer.from(semanticConfigBundle.outputFiles[0].text).toString('base64'));
 function setup(account,{grant=true}={}){
  f.account=account;f.user={id:crypto.randomUUID(),email:account.email,email_confirmed_at:'2026-01-01T00:00:00Z'};
  f.env={SUPABASE_URL:'https://nrfxhqabwblzxoushgnm.supabase.co',SUPABASE_ANON_KEY:'public',SUPABASE_SECRET_KEY:'isolated-secret-not-production',LLM_PROVIDER:'vertex',GOOGLE_SERVICE_ACCOUNT_JSON:'isolated-provider-config',GOOGLE_PROJECT_ID:'fixture-project',GOOGLE_REGION:'asia-east1',LLM_MODEL_GENERATION:'gemini-2.5-flash',...(grant?{ORIGINAL_WIDGET_PREVIEW_AUTHORIZATION:ORIGINAL_PREVIEW_AUTHORIZATION}:{})};
  f.rows={company_membership:[{user_id:f.user.id,company_id:account.company,role:'admin',is_active:true}],company:[{id:account.company,is_active:true}],channel_config:[{id:account.channel,company_id:account.company,is_active:true,channel_type:'web_widget',allowed_origins:['https://console-chat-hub.lovable.app']}],visitor_session:[],conversations:[],messages:[]};f.logs=[];f.rpc=[];f.transport=[];f.provider=0;f.writes=0;f.deferAnswer=false;f.omitVisitor=false;f.afterReceive=null;f.tasks=[];f.releaseGeneration=null;
- f.db={rpc:async(n)=>{f.rpc.push(n);throw Error('Original Preview must not borrow synthetic quota/registration');},from(table){let filters=[],single=false,op=null,payload,fields='',opts={};const q={
- select(s,o={}){fields=s;opts=o;return q;},eq(k,v){filters.push([k,v]);return q;},is(k,v){filters.push([k,v]);return q;},neq(k,v){filters.push([k,v,true]);return q;},order(){return q;},limit(){return q;},maybeSingle(){single=true;return q;},single(){single=true;return q;},insert(v){op='insert';payload=v;return q;},delete(){op='delete';return q;},update(v){op='update';payload=v;return q;},then(resolve,reject){return Promise.resolve().then(()=>{
- const get=(r,k)=>k.includes('->>')?r[k.split('->>')[0]]?.[k.split('->>')[1]]:r[k];let rows=(f.rows[table]??[]).filter(r=>filters.every(([k,v,ne])=>ne?get(r,k)!==v:get(r,k)===v));
+ f.db={rpc:async(n)=>{f.rpc.push(n);throw Error('Original Preview must not borrow synthetic quota/registration');},from(table){let filters=[],predicates=[],single=false,op=null,payload,fields='',opts={},signal;const q={
+ select(s,o={}){fields=s;opts=o;return q;},eq(k,v){filters.push([k,v]);return q;},is(k,v){filters.push([k,v]);return q;},neq(k,v){filters.push([k,v,true]);return q;},
+ in(k,values){predicates.push(row=>values.includes(row[k]));return q;},lte(k,value){predicates.push(row=>k==='created_at'?Date.parse(row[k])<=Date.parse(value):row[k]<=value);return q;},
+ abortSignal(value){assert(value instanceof AbortSignal);signal=value;return q;},
+ or(expression){
+  // Only the two server-owned history filters used by semantic recovery are
+  // supported. An unfamiliar filter fails this fixture rather than bypassing it.
+  const cursor=/^created_at\.lt\.([^,]+),and\(created_at\.eq\.([^,]+),id\.lt\.([^,)]+)\)$/u.exec(expression);
+  if(cursor){assert.equal(cursor[1],cursor[2]);predicates.push(row=>Date.parse(row.created_at)<Date.parse(cursor[1])||Date.parse(row.created_at)===Date.parse(cursor[1])&&row.id<cursor[3]);}
+  else {const terms=expression.split(',').map(clause=>{const match=/^content\.ilike\.\*([\p{Script=Han}]+)\*$/u.exec(clause);assert(match,'unsupported fixture history filter');return match[1];});predicates.push(row=>terms.some(term=>String(row.content??'').includes(term)));}
+  return q;
+ },
+ order(){return q;},limit(){return q;},maybeSingle(){single=true;return q;},single(){single=true;return q;},insert(v){op='insert';payload=v;return q;},delete(){op='delete';return q;},update(v){op='update';payload=v;return q;},then(resolve,reject){return Promise.resolve().then(()=>{
+ signal?.throwIfAborted();
+ const get=(r,k)=>k.includes('->>')?r[k.split('->>')[0]]?.[k.split('->>')[1]]:r[k];let rows=(f.rows[table]??[]).filter(r=>filters.every(([k,v,ne])=>ne?get(r,k)!==v:get(r,k)===v)&&predicates.every(predicate=>predicate(r)));
  if(op==='insert'){if(payload.id && f.rows[table].some(r=>r.id===payload.id))return {data:null,error:{code:'23505'}};const row={id:crypto.randomUUID(),...payload};f.rows[table].push(row);rows=[row];f.writes++;}
  if(op==='delete'){f.rows[table]=f.rows[table].filter(r=>!rows.includes(r));f.writes++;}
  if(op==='update'){rows.forEach(r=>Object.assign(r,payload));f.writes++;}
@@ -273,12 +287,13 @@ async function inboxHandler(slug){
 }
 const knowledgeHandler=await inboxHandler('kb-search-proxy'),policyHandler=await inboxHandler('agent-assist');
 const priorInboxClient=globalThis.__c3InboxClient;test.after(()=>{if(priorInboxClient===undefined)delete globalThis.__c3InboxClient;else globalThis.__c3InboxClient=priorInboxClient;});
-async function setupInbox(fault='none',documentFixture={}){
+async function setupInbox(fault='none',documentFixture={},semanticFixture=null){
  const x=await embeddingFixture(['signature','expired','foreign-response','changed-content','no-match'].includes(fault)?fault:'none',documentFixture);
  f.env.SUPABASE_SERVICE_ROLE_KEY=f.env.SUPABASE_SECRET_KEY;f.env.LLM_MODEL_ASSIST='gemini-2.5-flash';f.env.GOOGLE_SERVICE_ACCOUNT_JSON='{}';
+ if(semanticFixture)f.env.LLM_MODEL_EVALUATION='gemini-2.5-flash';
  f.rows.user_roles=[{user_id:f.user.id,role:'admin'}];f.rows.agent_profile=[{id:crypto.randomUUID(),user_id:f.user.id,role:'admin',status:'active',display_name:'Isolated actor'}];f.rows.upstream_call_log=[];
  const binding=JSON.parse(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION).bindings[0];
- f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify({version:1,bindings:[{...binding,operations:['knowledge','policy'],allow_assist:true}]});
+ f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify({version:1,bindings:[{...binding,operations:['knowledge','policy'],allow_assist:true,...(semanticFixture?{allow_semantic_context:true}:{})}]});
  if(fault==='no-inbox-grant')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;
  if(fault==='no-assist'){const g=JSON.parse(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION);g.bindings[0].allow_assist=false;f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify(g);}
  if(fault==='BO-revoked')delete f.env.ORIGINAL_WIDGET_PREVIEW_AUTHORIZATION;
@@ -292,13 +307,18 @@ async function setupInbox(fault='none',documentFixture={}){
  if(fault==='assigned-agent'||fault==='unassigned-agent'){
   f.rows.user_roles[0].role='agent';f.rows.company_membership[0].role='agent';f.rows.agent_profile[0].role='agent';x.c.assigned_agent_id=fault==='assigned-agent'?f.rows.agent_profile[0].id:crypto.randomUUID();
  }
- const from=f.db.from;f.db.from=function(table){const q=from.call(this,table);q.in=()=>q;q.not=()=>q;return q;};
+ const from=f.db.from;f.db.from=function(table){const q=from.call(this,table);q.not=()=>q;return q;};
  const auth={getUser:async()=>({data:{user:fault==='unauthenticated'?null:f.user},error:null})};f.db.auth=auth;
  globalThis.__c3InboxClient=(url,key)=>{assert.equal(url,f.env.SUPABASE_URL);assert([f.env.SUPABASE_SECRET_KEY,f.env.SUPABASE_ANON_KEY].includes(key));return f.db;};
- let model=0;const prompts=[];
+ let model=0;const prompts=[],modelKinds={semantic:0,answer:0};
  globalThis.fetch=async(url,init)=>{
   if(String(url)===x.endpoint){if(fault==='tool-failure')return new Response(null,{status:503});if(fault==='revoke-on-return')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;return await x.upstream(url,init);}
   assert.equal(String(url),f.url,'no unrelated provider or accounting endpoint');model++;const b=JSON.parse(init.body);const text=b.contents.map(c=>c.parts.map(p=>p.text??'').join('')).join('');prompts.push(text);
+  if(b.generationConfig?.responseSchema?.properties?.context_encoding?.enum?.includes('semantic_values_v4')){
+   modelKinds.semantic++;assert(semanticFixture,'unexpected semantic dispatch without a source-bound fixture');
+   return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(semanticFixture)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:120}});
+  }
+  modelKinds.answer++;
   if(text.includes('proposed_claims'))return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({grounded:fault!=='unsupported-policy',unsupported_claims:fault==='unsupported-policy'?['unsupported full refund']:[],evidence_ids:['E1'],resolution:fault==='unsupported-policy'?'unsupported':'supported'})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
   let answer={queries:[]};if(text.includes('Text to check:'))answer=fault==='unsupported-policy'?{status:'compliant',summary:'Every cancellation receives an unconditional full refund.',issues:[]}:fault==='invalid-policy'?{status:'violation',summary:'invalid fixture',issues:[]}:{status:'warning',summary:'Isolated policy assessment',issues:[{excerpt:'fixture',policy_label:'Evidence 1',severity:'warning'}]};
   return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(answer)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
@@ -308,7 +328,7 @@ async function setupInbox(fault='none',documentFixture={}){
   const body=slug==='knowledge'?{query:'published subscription policy',top_k:3,conversation_id:x.c.id}:{tool_type:assistTool,conversation_id:x.c.id,content,context_mode:contextMode};
   const r=await(slug==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};
  };
- return {...x,send:request,model:()=>model,prompts};
+ return {...x,send:request,model:()=>model,modelKinds:()=>({...modelKinds}),prompts};
 }
 for(const fault of ['none','BO-revoked','no-preview-grant','human-control','no-inbox-grant','role','inactive-membership','foreign-ticket','synthetic','wrong-channel','signature','expired','foreign-response','changed-content','tool-failure','no-match','revoke-on-return'])test('actual Inbox Knowledge handler preserves ticket and separates staff authority/paid scope: '+fault,async()=>{
  const x=await setupInbox(fault);const marker=JSON.stringify(x.c.metadata_source),before=f.rows.messages.length;
@@ -328,9 +348,23 @@ for(const fault of ['none','BO-revoked','human-control','assigned-agent','unassi
 // fixture above. These are actual local handler paths, never live product facts.
 const inboxProductFixture={title:'Unseen instrument kit',source_type:'Product',entity_ids:['ITEM-Q9'],
  content:'spu_code: INSTRUMENT\nspu_name: Unseen instrument kit\nsku_code: ITEM-Q9\nprice: 125.0 CNY\nstock: 0\ndescription: Isolated fixture only.'};
+// Same active provider transport as the runtime-chain fixtures. The proposal
+// identifies the customer-authored subject but supplies no merchant facts.
+function providerWireV4(delta){
+ const nodes=(value,path=[])=>{const kind=value===null?'null':Array.isArray(value)?'array':typeof value;return [{path,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},...(['object','array'].includes(kind)?Object.entries(value).flatMap(([key,child])=>nodes(child,[...path,key])):[])];};
+ const list=nodes(delta);
+ return {context_encoding:'semantic_values_v4',operation:'ASK_FACT',confidence:.98,
+  containers:list.filter(node=>['object','array','null'].includes(node.kind)).map(({path,kind})=>({path,kind})),
+  strings:list.filter(node=>node.kind==='string').map(({path,text})=>({path,text})),
+  numbers:list.filter(node=>node.kind==='number').map(({path,number})=>({path,number})),
+  booleans:list.filter(node=>node.kind==='boolean').map(({path,boolean})=>({path,boolean}))};
+}
 for(const [facet,content,tool] of [['price','幾錢？','suggest_reply'],['stock','有冇貨？','knowledge_helper']]) {
  for(const mode of ['conversation','manual'])test(`actual agent-assist ${mode} ${facet}: ${mode==='conversation'?'one fresh subject-bound query':'no inherited subject or paid dispatch'}`,async()=>{
-  const x=await setupInbox('none',inboxProductFixture);
+  const semantic=providerWireV4({language:'zh-HK',intent:'merchant_facts',requested_facts:[facet],
+   referents:[{ref:'ITEM-Q9',source:'prior_turn',confidence:.98}],
+   demands:[{question:`ITEM-Q9 ${content}`,source_quote:content,subject_refs:['ITEM-Q9'],source_type:'product',requested_facts:[facet],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]});
+  const x=await setupInbox('none',inboxProductFixture,semantic);
   const prior=crypto.randomUUID(),source=crypto.randomUUID();
   // This DB fixture returns rows in the same newest-first order requested by
   // the handler. Prior assistant prices deliberately cannot become evidence.
@@ -344,9 +378,14 @@ for(const [facet,content,tool] of [['price','幾錢？','suggest_reply'],['stock
   if(mode==='manual'){
    assert.equal(r.status,422,JSON.stringify(r));assert.equal(r.data.requires_clarification,true);
    assert.equal(x.posts(),0);assert.equal(x.model(),0);assert.equal(x.queries.length,0);
+   assert.deepEqual(x.modelKinds(),{semantic:0,answer:0});
   }else{
    assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.success,true);assert.equal(r.data.knowledge_grounded,true);
-   assert.equal(x.posts(),1);assert.equal(x.model(),0,'source-record drafts need no invented provider answer');
+   assert.equal(x.posts(),1);assert.equal(x.model(),1);
+   assert.deepEqual(x.modelKinds(),{semantic:1,answer:0},'one semantic read, with no invented provider answer');
+   // The model boundary may redact numeric UUID/date spans. Actual raw source
+   // IDs remain checked below in the server's canonical request receipt.
+   assert(x.prompts[0].includes('"role":"visitor","content":"ITEM-Q9 功能"'),'semantic read must receive the actual customer-authored subject');
    assert.equal(x.queries.length,1);assert(x.queries[0].includes('ITEM-Q9'));
    assert(x.queries[0].includes(content.normalize('NFKC')),JSON.stringify(x.queries));
    assert(!/Earlier|999|99\./u.test(x.queries[0]),'old assistant facts leaked into the current query');
@@ -365,6 +404,51 @@ for(const [facet,content,tool] of [['price','幾錢？','suggest_reply'],['stock
   assert.equal(JSON.stringify(x.c.metadata_source),marker);assert.equal(f.rpc.length,0);
  });
 }
+for(const fault of ['none','default-denied','opt-in-false','assist-disabled','policy-authority','arbitrary-evaluation','wrong-slot','wrong-schema','missing-schema','wrong-system','wrong-purpose','attempt-two','oversized-output','prepare-hook','missing-source','wrong-source','foreign-source','recalled-source','assistant-source','source-time-drift','source-content-changed','replay','new-operation-replay','grant-revoked','grant-revoked-during-source-read','membership-revoked-during-source-read'])test('Inbox semantic context has separate opt-in and never grants answer grounding: '+fault,async()=>{
+ const x=await setupInbox('none',{},providerWireV4({demands:[]}));
+ const grant=JSON.parse(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION);
+ if(fault==='default-denied')delete grant.bindings[0].allow_semantic_context;
+ if(fault==='opt-in-false')grant.bindings[0].allow_semantic_context=false;
+ if(fault==='assist-disabled')grant.bindings[0].allow_assist=false;
+ f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify(grant);
+ const authority=await authenticatedInboxAuthority(f.db,f.user.id,x.c.company_id,x.c.id,fault==='policy-authority'?'policy':'knowledge');
+ if(fault==='grant-revoked')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;
+ const source={id:crypto.randomUUID(),conversation_id:x.c.id,role:'visitor',content:'幾錢？',is_recalled:false,created_at:'2026-10-29T08:02:00Z',metadata:{}};
+ f.rows.messages=[source];
+ if(fault==='foreign-source')source.conversation_id=crypto.randomUUID();
+ if(fault==='recalled-source')source.is_recalled=true;
+ if(fault==='assistant-source')source.role='assistant';
+ if(['grant-revoked-during-source-read','membership-revoked-during-source-read'].includes(fault)){
+  const from=f.db.from;f.db.from=function(table){const query=from.call(this,table);if(table==='messages'){const then=query.then;query.then=(resolve,reject)=>then.call(query,result=>{if(fault==='grant-revoked-during-source-read')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;else f.rows.company_membership[0].is_active=false;return resolve(result);},reject);}return query;};
+ }
+ const request={systemInstruction:{parts:[{text:COMMERCE_SEMANTIC_SYSTEM_PROMPT}]},contents:[{role:'user',parts:[{text:'Latest customer turn: 幾錢？'}]}],
+  generationConfig:buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash')};
+ if(fault==='wrong-system')request.systemInstruction.parts[0].text='Answer the customer using invented merchant facts.';
+ if(fault==='wrong-schema')request.generationConfig.responseSchema={type:'OBJECT',properties:{context_encoding:{type:'STRING',enum:['semantic_values_v4']}}};
+ if(fault==='missing-schema'||fault==='arbitrary-evaluation')delete request.generationConfig.responseSchema;
+ if(fault==='oversized-output')request.generationConfig.maxOutputTokens=4097;
+ const payload=JSON.stringify(request);
+ const meta={companyId:x.c.company_id,conversationId:x.c.id,operationId:`agent-assist:semantic:${x.c.id}:${crypto.randomUUID()}`,legacyAuthority:authority,
+  provider:'vertex',purpose:fault==='wrong-purpose'?'assist':'evaluation',slot:fault==='wrong-slot'?'agent-assist-suggest_reply':fault==='arbitrary-evaluation'?'grounding-verifier':'commerce-semantic-interpreter',attempt:fault==='attempt-two'?2:1,request:payload,
+  semanticSource:{messageId:source.id,createdAt:source.created_at,contentSha256:await fixtureDigest(source.content)}};
+ if(fault==='missing-source')delete meta.semanticSource;
+ if(fault==='wrong-source')meta.semanticSource.messageId=crypto.randomUUID();
+ if(fault==='source-time-drift')meta.semanticSource.createdAt='2026-10-29T08:03:00Z';
+ if(fault==='source-content-changed')source.content='同一訊息識別碼下已經更改的客戶原文';
+ let semanticPosts=0,prepares=0;const upstream=async()=>{semanticPosts++;return Response.json({});};
+ const dispatch=patch=>accountedModelFetch(f.db,{...meta,...patch},f.url,{method:'POST',body:payload},upstream,undefined,fault==='prepare-hook'?async()=>{prepares++;return {};}:undefined);
+ if(['none','replay','new-operation-replay'].includes(fault)){
+  await dispatch();assert.equal(semanticPosts,1);
+  if(fault!=='none')await assert.rejects(()=>dispatch(fault==='new-operation-replay'?{operationId:`agent-assist:semantic:${x.c.id}:${crypto.randomUUID()}`}:{ }));
+  // Understanding the question never creates evidence for a merchant answer.
+  await assert.rejects(()=>accountedModelFetch(f.db,{...meta,operationId:`answer:${crypto.randomUUID()}`,purpose:'assist',slot:'agent-assist-suggest_reply',request:body},f.url,{method:'POST',body},upstream),error=>error.code==='INBOX_PAID_SCOPE_DENIED');
+  assert.equal(semanticPosts,1);
+ }else{
+  await assert.rejects(()=>dispatch(),error=>error.code===(fault==='membership-revoked-during-source-read'?'INBOX_AUTHORITY_DENIED':'INBOX_PAID_SCOPE_DENIED'));assert.equal(semanticPosts,0);
+ }
+ assert.equal(x.posts(),0,'semantic admission must not fabricate a KB receipt');
+ assert.equal(x.model(),0);assert.equal(prepares,0);assert.equal(f.rpc.length,0);
+});
 for(const fault of ['none','role-revoked','membership-revoked','channel-revoked','forged','foreign-conversation','operation'])test('opaque Inbox context rechecks revocation and cannot be serialized/spoofed: '+fault,async()=>{
  const x=await setupInbox();const token=await authenticatedInboxAuthority(f.db,f.user.id,x.c.company_id,x.c.id,'knowledge');
  if(fault==='role-revoked')f.rows.user_roles=[];
@@ -837,6 +921,16 @@ async function originalAggregationFixture(fault='none',inbox=false,responseFixtu
  };
  return {...x,binding,up,search,send,posts:()=>posts,queries};
 }
+for(const optIn of [false,true])test('Inbox semantic context opt-in preserves the existing authenticated RAG grant: '+optIn,async()=>{
+ const x=await originalAggregationFixture('none',true);
+ const grant=JSON.parse(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION);grant.bindings[0].allow_semantic_context=optIn;
+ f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION=JSON.stringify(grant);
+ try{
+  const result=await x.send('knowledge');assert.equal(result.status,200,JSON.stringify(result));assert.equal(result.data.success,true);
+  assert.equal(result.data.selected_document_id,directorOriginalRag.selected_documents[0].document_id);
+  assert.equal(x.posts(),1);assert(result.data.results.length>0);assert.equal(f.rpc.length,0);
+ }finally{globalThis.fetch=realFetch;}
+});
 test('Director original sample is retained unchanged including missing fields and low relevance',()=>{
  assert.equal(directorOriginalRag.selected_documents[0].document_id,'c8db6f2c410a4be0af56e955117320ff');
  assert.equal(directorOriginalRag.citations[0].relevance,'low');

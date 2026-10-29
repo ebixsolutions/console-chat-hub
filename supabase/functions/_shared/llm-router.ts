@@ -86,6 +86,8 @@ export interface LlmCall {
   /** Written to upstream_call_log so spend is attributable to a tenant. */
   companyId: string | null;
   legacyAuthority?: object;
+  /** Actual customer source rechecked by explicit Inbox semantic admission. */
+  semanticSource?: {messageId:string;createdAt:string;contentSha256:string};
   conversationId: string | null;
   tag: string;
   /**
@@ -1033,7 +1035,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           log(call.tag,{event:"request_schema_prepared",request_id:requestId,...vertexResponseSchemaDiagnostic(call.responseSchema)});
         res = await accountedModelFetch(serviceClient(), {
           companyId: call.companyId, conversationId: call.conversationId, operationId: call.operationId, legacyAuthority: call.legacyAuthority,
-          provider: adapter.id, purpose: call.purpose, slot: call.tag, attempt, request: req.body,
+          provider: adapter.id, purpose: call.purpose, slot: call.tag, attempt, request: req.body, semanticSource: call.semanticSource,
         }, req.url, {
           method: "POST",
           headers: req.headers,

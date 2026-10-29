@@ -116,6 +116,8 @@ export async function prepareSemanticRequest(
     company_id: input.company_id,
     conversation_id: input.conversation_id,
     source_message_id: input.source_message_id,
+    source_created_at: input.source_created_at,
+    source_content: input.source_content ?? input.latest,
     latest: input.latest,
     history: recent as CommerceSemanticHistoryTurn[],
     recovered_history: recovery.rows as CommerceSemanticHistoryTurn[],

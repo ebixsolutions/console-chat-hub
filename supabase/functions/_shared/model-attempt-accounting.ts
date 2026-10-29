@@ -1,4 +1,6 @@
-import { buildVertexEndpoint } from "./vertex-generation-config.ts";
+import { buildVertexEndpoint, normalizeVertexResponseSchema } from "./vertex-generation-config.ts";
+import { COMMERCE_SEMANTIC_PROVIDER_SCHEMA, COMMERCE_SEMANTIC_SYSTEM_PROMPT } from "./commerce-semantic-frame.ts";
+import { compareMessageChronology } from "./semantic-history-recovery.ts";
 import { uatFetch, UatDenied, trustedDispatchScope, authenticatedInboxIdentity, type InboxIdentity } from "./uat-execution-contract.ts";
 import { ORIGINAL_PREVIEW_ACCOUNTS } from "./original-widget-preview.ts";
 import { originalPreviewRagConfiguration } from "./original-preview-kb-config.ts";
@@ -23,6 +25,8 @@ export class ModelAccountingError extends Error {
 export interface ModelAttempt {
   companyId: string | null;
   legacyAuthority?: object;
+  /** Server-provided source; its persisted ticket, role, timestamp and recall state are rechecked before semantic I/O. */
+  semanticSource?: {messageId:string;createdAt:string;contentSha256:string};
   conversationId: string | null;
   operationId: string;
   provider: string;
@@ -49,6 +53,8 @@ type Scope = {company:string;actor:string;channel:string;tenant:string;endpoint:
 const permits=new WeakMap<object,Scope>();
 const inboxDispatched=new WeakMap<object,Set<string>>();
 const inboxGrounded=new WeakMap<object,{authorization:string;expires:number}>();
+const inboxSemanticDispatched=new WeakSet<object>();
+const inboxSemanticSchema=JSON.stringify(normalizeVertexResponseSchema(COMMERCE_SEMANTIC_PROVIDER_SCHEMA));
 const endpoint="https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search";
 const uuid=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 export type OriginalPreviewKBPermit=object;
@@ -135,16 +141,53 @@ async function inboxBinding(db:AccountingRpc,meta:ModelAttempt,checked?:InboxIde
   if(![1,2,3].includes(g?.version) || Object.keys(g).some(k=>!["version","bindings"].includes(k)) || !Array.isArray(g.bindings) || g.bindings.length>20)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
   const matches=g.bindings.filter((b:any)=>b?.actor_id===a.actor && b.company_id===a.company && b.channel_id===a.channel && b.tenant_id===String(map?.[a.company]) && b.endpoint===endpoint &&
     Array.isArray(b.operations) && b.operations.length>0 && b.operations.every((o:any)=>["knowledge","policy"].includes(o)) && b.operations.includes(a.operation) && b.provider==="singapore-kb" && b.purpose==="kb_embedding" && typeof b.allow_assist==="boolean" &&
+    (!Object.hasOwn(b,"allow_semantic_context") || typeof b.allow_semantic_context==="boolean") &&
     (b.remote_mode===RAG_API_MODE?g.version===3 && a.actor===FRANKIE_KB_SCOPE.actor && a.company===FRANKIE_KB_SCOPE.company && a.channel===FRANKIE_KB_SCOPE.channel && b.tenant_id===FRANKIE_KB_SCOPE.tenant && !!ragApiPolicy(b):b.remote_mode!==LIVE_METADATA_MODE?!!queryEmbeddingEvidence(b):g.version>=2 && a.actor===FRANKIE_KB_SCOPE.actor && a.company===FRANKIE_KB_SCOPE.company && a.channel===FRANKIE_KB_SCOPE.channel && b.tenant_id===FRANKIE_KB_SCOPE.tenant && !!liveMetadataPolicy(b)) &&
-    Object.keys(b).every(k=>["actor_id","company_id","channel_id","tenant_id","endpoint","operations","provider","purpose","allow_assist","remote_mode","allow_remote_embedding","remote_runtime_sha256","deployment_evidence_sha256","embedding_config_sha256","lineage_evidence_sha256","attestation_payload","attestation_signature","evidence_reference","rag_api_contract","accepted_remote_risk"].includes(k)));
+    Object.keys(b).every(k=>["actor_id","company_id","channel_id","tenant_id","endpoint","operations","provider","purpose","allow_assist","allow_semantic_context","remote_mode","allow_remote_embedding","remote_runtime_sha256","deployment_evidence_sha256","embedding_config_sha256","lineage_evidence_sha256","attestation_payload","attestation_signature","evidence_reference","rag_api_contract","accepted_remote_risk"].includes(k)));
   if(matches.length!==1)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
   return {...matches[0],_grant_version:g.version,_live:matches[0].remote_mode===LIVE_METADATA_MODE,_api:matches[0].remote_mode===RAG_API_MODE};
 }
 async function authorizeInboxKB(db:AccountingRpc,meta:ModelAttempt,url:string,init:RequestInit,b:any):Promise<OriginalPreviewKBPermit> {
-  if((b._live || b._api) && (!validLiveRagCredential(init,b.tenant_id) || Object.keys(b).some(k=>!["_grant_version","_live","_api","actor_id","company_id","channel_id","tenant_id","endpoint","provider","purpose","operations","allow_assist","remote_mode","allow_remote_embedding",...(b._api?["rag_api_contract","accepted_remote_risk"]:["evidence_reference"])].includes(k))))throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");let r:any;try{r=JSON.parse(meta.request);}catch{throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");}
+  if((b._live || b._api) && (!validLiveRagCredential(init,b.tenant_id) || Object.keys(b).some(k=>!["_grant_version","_live","_api","actor_id","company_id","channel_id","tenant_id","endpoint","provider","purpose","operations","allow_assist","allow_semantic_context","remote_mode","allow_remote_embedding",...(b._api?["rag_api_contract","accepted_remote_risk"]:["evidence_reference"])].includes(k))))throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");let r:any;try{r=JSON.parse(meta.request);}catch{throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");}
   if(meta.provider!=="singapore-kb" || meta.purpose!=="kb_embedding" || meta.slot!=="context-search" || meta.attempt!==1 || url!==endpoint || init.method!=="POST" || String(init.body)!==meta.request || new TextEncoder().encode(meta.request).length>8192 || typeof r.query!=="string" || !r.query.trim() || new TextEncoder().encode(r.query).length>2048 || String(r.company_id)!==b.tenant_id || !Number.isSafeInteger(r.company_id) || Object.keys(r).some(k=>!["query","company_id","candidate_top_k","max_documents","max_summary_chunks","max_full_content_chunks","score_threshold"].includes(k)) || !Number.isInteger(r.candidate_top_k) || r.candidate_top_k<1 || r.candidate_top_k>50 || r.max_documents!==5 || r.max_summary_chunks!==1 || r.max_full_content_chunks!==3 || r.score_threshold!==0.05)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
   const token={};permits.set(token,{company:meta.companyId!,actor:b.actor_id,channel:b.channel_id,tenant:b.tenant_id,endpoint,request:meta.request,runtime:b._api?RAG_API_MODE:b._live?LIVE_METADATA_MODE:b.remote_runtime_sha256,authorization:Deno.env.get("AUTHENTICATED_INBOX_KB_AUTHORIZATION")!,authorizationKey:"AUTHENTICATED_INBOX_KB_AUTHORIZATION",expires:Date.now()+60000,verified:false,used:false,...(b._api?{apiPolicy:ragApiPolicy(b)!,ragKeys:Deno.env.get("KB_SINGAPORE_TENANT_API_KEYS_JSON")}:b._live?{livePolicy:liveMetadataPolicy(b)!,ragKeys:Deno.env.get("KB_SINGAPORE_TENANT_API_KEYS_JSON")}:{evidence:queryEmbeddingEvidence(b)!})});return token;
 }
+/** A separate, default-denied interpretation permission. This never grants
+ * merchant evidence or the post-KB answer permission. The current configured
+ * evaluation model/endpoint is checked by the shared provider boundary below. */
+function inboxSemanticRequest(meta:ModelAttempt):boolean {
+  if(meta.provider!=="vertex" || meta.purpose!=="evaluation" || meta.slot!=="commerce-semantic-interpreter" || meta.attempt!==1 ||
+    !uuid.test(meta.semanticSource?.messageId ?? "") || !/^[a-f0-9]{64}$/.test(meta.semanticSource?.contentSha256 ?? "") ||
+    !Number.isFinite(Date.parse(meta.semanticSource?.createdAt ?? "")))return false;
+  try {
+    const body=JSON.parse(meta.request),config=body.generationConfig;
+    const only=(value:any,keys:string[])=>value && typeof value==="object" && !Array.isArray(value) && Object.keys(value).every(key=>keys.includes(key));
+    return Boolean(only(body,["systemInstruction","contents","generationConfig"]) &&
+      only(body.systemInstruction,["parts"]) && Array.isArray(body.systemInstruction.parts) && body.systemInstruction.parts.length===1 &&
+      only(body.systemInstruction.parts[0],["text"]) && body.systemInstruction.parts[0].text===COMMERCE_SEMANTIC_SYSTEM_PROMPT &&
+      Array.isArray(body.contents) && body.contents.length===1 && only(body.contents[0],["role","parts"]) && body.contents[0].role==="user" &&
+      Array.isArray(body.contents[0].parts) && body.contents[0].parts.length===1 && only(body.contents[0].parts[0],["text"]) &&
+      typeof body.contents[0].parts[0].text==="string" && Boolean(body.contents[0].parts[0].text.trim()) &&
+      only(config,["maxOutputTokens","temperature","thinkingConfig","responseMimeType","responseSchema"]) &&
+      Number.isInteger(config.maxOutputTokens) && config.maxOutputTokens>0 && config.maxOutputTokens<=4096 && config.temperature===0 &&
+      only(config.thinkingConfig,["thinkingBudget"]) && config.thinkingConfig.thinkingBudget===0 &&
+      config.responseMimeType==="application/json" && JSON.stringify(config.responseSchema)===inboxSemanticSchema);
+  } catch {return false;}
+}
+async function recheckInboxSemanticSource(db:AccountingRpc,meta:ModelAttempt,signal?:AbortSignal|null):Promise<void> {
+  if(!db.from || !meta.semanticSource)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
+  let query=db.from("messages").select("id,conversation_id,role,content,created_at,is_recalled")
+    .eq("id",meta.semanticSource.messageId).eq("conversation_id",meta.conversationId).eq("is_recalled",false);
+  if(signal)query=query.abortSignal(signal);
+  const result=await query.maybeSingle(),row=result.data;
+  if(result.error || row?.id!==meta.semanticSource.messageId || row?.conversation_id!==meta.conversationId || row?.is_recalled!==false ||
+    !["visitor","customer","user"].includes(row?.role) || typeof row?.content!=="string" || !row.content.trim() ||
+    typeof row.created_at!=="string" || !Number.isFinite(Date.parse(row.created_at)) ||
+    compareMessageChronology({id:row.id,created_at:row.created_at},{id:meta.semanticSource.messageId,created_at:meta.semanticSource.createdAt})!==0)
+    throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
+  if(await sha256(row.content)!==meta.semanticSource.contentSha256)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
+}
+
 export async function accountedModelFetch(
   db: AccountingRpc,
   meta: ModelAttempt,
@@ -166,9 +209,18 @@ export async function accountedModelFetch(
     throw e;
   }
   let kbPermit:OriginalPreviewKBPermit|undefined;
+  let inboxSemanticGrant:string|undefined;
+  let inboxSemanticExpires=0;
   if(mode==="authenticated_inbox") {
+    const authorization=Deno.env.get("AUTHENTICATED_INBOX_KB_AUTHORIZATION");
     const b=await inboxBinding(db,meta,checkedInbox);
     if(meta.provider==="singapore-kb") {if(!prepare)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");kbPermit=await authorizeInboxKB(db,meta,url,init,b);}
+    else if(inboxSemanticRequest(meta)) {
+      if(prepare || !authorization || !meta.legacyAuthority || checkedInbox?.operation!=="knowledge" ||
+        b.allow_assist!==true || b.allow_semantic_context!==true)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
+      inboxSemanticGrant=authorization;
+      inboxSemanticExpires=Math.min(checkedInbox.expires,Date.now()+60000);
+    }
     else if(!b.allow_assist || !meta.legacyAuthority || inboxGrounded.get(meta.legacyAuthority)?.authorization!==Deno.env.get("AUTHENTICATED_INBOX_KB_AUTHORIZATION") || (inboxGrounded.get(meta.legacyAuthority)?.expires ?? 0)<=Date.now() || meta.provider!=="vertex" || meta.purpose!=="assist")throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
   }
   if(mode==="authenticated_preview" && meta.provider==="singapore-kb") {
@@ -211,7 +263,13 @@ export async function accountedModelFetch(
   // Established authenticated Production path: preserve exact provider request/response.
   // Permanent Guard is deferred; no new endpoint, provider, credential or tenant scope.
   if(mode==="authenticated_inbox") {
-    await inboxBinding(db,meta);
+    if(inboxSemanticGrant!==undefined)await recheckInboxSemanticSource(db,meta,preparedInit.signal);
+    const currentBinding=await inboxBinding(db,meta);
+    if(inboxSemanticGrant!==undefined) {
+      if(currentBinding.allow_assist!==true || currentBinding.allow_semantic_context!==true ||
+        Deno.env.get("AUTHENTICATED_INBOX_KB_AUTHORIZATION")!==inboxSemanticGrant || inboxSemanticExpires<=Date.now())
+        throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
+    }
     if(!meta.operationId || meta.operationId.length>240)throw new ModelAccountingError("INBOX_PAID_SCOPE_DENIED");
     const identity=JSON.stringify([meta.operationId,meta.provider,meta.slot,meta.attempt]);
     const used=inboxDispatched.get(meta.legacyAuthority!) ?? new Set<string>();
@@ -224,6 +282,12 @@ export async function accountedModelFetch(
   // No asynchronous work may separate the final evidence consumption from I/O.
   if(kbPermit){const s=permits.get(kbPermit)!;if((s.apiPolicy || s.livePolicy) && !validLiveRagCredential(preparedInit,s.tenant))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");}
   if(kbPermit && !consumeOriginalPreviewKBPermit(kbPermit))throw new ModelAccountingError("UAT_REMOTE_BOUND_UNVERIFIED");
+  // One interpretation per opaque request authority, even with another
+  // operation ID or concurrent calls. No await separates consumption and I/O.
+  if(inboxSemanticGrant!==undefined) {
+    if(inboxSemanticDispatched.has(meta.legacyAuthority!))throw new ModelAccountingError("INBOX_REPLAY_DENIED");
+    inboxSemanticDispatched.add(meta.legacyAuthority!);
+  }
   onDispatch?.();
   const response=await upstream(url, (mode==="authenticated_preview" || mode==="authenticated_inbox") ? {...preparedInit,redirect:"error"} : preparedInit);
   if(kbPermit) {
