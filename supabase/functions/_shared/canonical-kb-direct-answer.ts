@@ -1,14 +1,16 @@
-import { parseKbProductRecord, kbProductRecordPrice } from "./kb-product-record.ts";
+import { parseKbProductRecord, kbProductRecordPrice, kbProductRecordStock, catalogueFactRequest } from "./kb-product-record.ts";
 import { type CanonicalGroundingResult, namedPriceProductLabel, exactNamedProductEvidence } from "./canonical-grounding.ts";
 import type { KBFullChunk } from "./deterministic-kb-client.ts";
 import { classifyProductFactualQuery } from "./natural-customer-response.ts";
 
 export interface CanonicalKbDirectAnswer {
-  kind: "product_record" | "stock_unknown" | "price" | "price_unknown" | "listed_price_unverified" | "specification" | "policy";
+  kind: "product_record" | "stock_unknown" | "price" | "price_unknown" | "listed_price_unverified" | "specification" | "policy" | "recorded_product_facts";
   reply: string;
   evidence_chunks: KBFullChunk[];
   structured_facts?: Array<{ field: string; value: string | number; model: string; document_id: string; chunk_id: string }>;
-  unresolved_fact_fields?: Array<"stock">;
+  unresolved_fact_fields?: Array<"stock" | "price" | "variant" | "product_identity">;
+  recorded_facts?: Array<{field:string;value:string|number;model:string;document_id:string;chunk_id:string;currentness:"unverified"}>;
+  identity_confirmation_required?: boolean;
   price_fact?: { model: string; value: number; currency: "HKD"; document_id: string; chunk_id: string; full_content: string };
 }
 
@@ -178,6 +180,78 @@ function customerProductIdentity(brand: string | null, model: string, language: 
   return [latin, model].filter(Boolean).join(" ");
 }
 
+/** Render source-recorded facts, never current quotes or stock reservations. */
+function catalogueRecordedAnswer(input:{request:string;selection:Extract<CanonicalGroundingResult,{ok:true}>;language:Language}):CanonicalKbDirectAnswer|null {
+  const {request,selection,language}=input, binding=selection.catalogue_binding;
+  if(!binding || !selection.document)return null;
+  const query=catalogueFactRequest(request);if(!query)return null;
+  const chunk=selection.chunks.find(c=>c.chunk_id===binding.chunk_id && c.document_id===binding.document_id && c.chunk_type==="full_content" &&
+    selection.evidence.some(e=>e.chunk_id===c.chunk_id && e.document_id===c.document_id && e.content===c.content));
+  if(!chunk || binding.document_id!==selection.authority_decision.selected_source_id)return null;
+  const record=parseKbProductRecord(chunk.content);
+  if(record.ambiguous || JSON.stringify(record)!==JSON.stringify(binding.record))return null;
+  const price=kbProductRecordPrice(record),stock=kbProductRecordStock(record);
+  const name=record.display_name??record.models[0]??record.sku_codes[0]??record.spu_codes[0];
+  if(!name)return null;
+  const sku=record.sku_codes[0]??null,spu=record.spu_codes[0]??null;
+  const variants=Object.entries(record.variants).map(([key,value])=>`${key}: ${value}`).join("; ");
+  const label=[name,sku?`SKU: ${sku}`:spu?`SPU: ${spu}`:null,variants||null].filter(Boolean).join(" / ");
+  const en=language==="en",cn=language==="zh-CN";
+  const parts=[en?`Published source record: ${label}.`:cn?`已发布商品记录：${label}。`:`已發布商品記錄：${label}。`];
+  const facts:NonNullable<CanonicalKbDirectAnswer["recorded_facts"]>=[];
+  const add=(field:string,value:string|number)=>facts.push({field,value,model:sku??spu??name,document_id:chunk.document_id,chunk_id:chunk.chunk_id!,currentness:"unverified"});
+  add("product_name",name);if(sku)add("sku",sku);if(spu)add("spu",spu);
+  for(const [key,value] of Object.entries(record.variants))add(`variant_${key}`,value);
+  const unresolved:NonNullable<CanonicalKbDirectAnswer["unresolved_fact_fields"]>=[];
+  if(query.price){
+    if(price.reason==="ok" && price.amount!==null){
+      const amount=price.amount.toLocaleString("en-US",{maximumFractionDigits:4});
+      const display=price.currency==="HKD"?`HK$${amount}`:price.currency?`${price.currency} ${amount}`:amount;
+      parts.push(en?`The source price field records ${display}${price.currency?"":" (currency not specified by the source)"}.`:
+        cn?`价格栏位记录 ${display}${price.currency?"":"（来源未注明币别）"}。`:`價格欄位記錄 ${display}${price.currency?"":"（來源未註明幣別）"}。`);
+      add("price_amount",price.amount);if(price.currency)add("price_currency",price.currency);
+    }else{
+      unresolved.push("price");
+      parts.push(en?"The source price is missing, invalid or conflicting; I cannot establish a price from it.":cn?"来源价格缺漏、无效或有冲突，未能确认金额。":"來源價格缺漏、無效或有衝突，未能確認金額。");
+    }
+  }
+  // Stock is a distinct source field. Zero is known; absent/invalid is unknown.
+  // Do not derive inventory from price, generic quantity, booleans or prose.
+  if(stock.reason==="ok" && stock.quantity!==null){
+    parts.push(en?`Recorded stock quantity: ${stock.quantity}.`:cn?`记录库存数量：${stock.quantity}。`:`記錄庫存數量：${stock.quantity}。`);
+    add("stock_quantity",stock.quantity);
+  }else if(query.stock){
+    unresolved.push("stock");
+    parts.push(en?"The source stock quantity is missing, invalid or conflicting; it is unknown, not zero.":cn?"来源库存数量缺漏、无效或有冲突；未能确认，不会当成零库存。":"來源庫存數量缺漏、無效或有衝突；未能確認，唔會當成零庫存。");
+  }
+  if(query.price)parts.push(en?"This is a source-recorded amount, not a formal quotation. The current price is unverified.":cn?"这是来源记录，尚未核实现价，并非正式报价。":"呢個係來源記錄，未核實係現價，並非正式報價。");
+  if(stock.has_field || query.stock){
+    parts.push(en?"This record does not establish live availability or reserve inventory; current availability still needs merchant verification.":cn?"这份记录不代表即时可售库存，也未预留商品；现货仍须商家核实。":"呢份記錄唔代表即時可售庫存，亦未預留商品；現貨仍須商家核實。");
+    if(query.stock && !/(?:記錄|记录|資料|资料|recorded|source)/iu.test(request) && !unresolved.includes("stock"))unresolved.push("stock");
+  }
+  const confirmation=binding.match_kind==="short_name_candidate";
+  if(confirmation){
+    unresolved.push("product_identity");
+    parts.push(en?`Is “${name}” the product you mean?`:cn?`你指的是「${name}」这款吗？`:`你指嘅係「${name}」呢款嗎？`);
+  }
+  return {kind:query.price && price.reason==="ok"?"listed_price_unverified":"recorded_product_facts",reply:parts.join(" "),evidence_chunks:[chunk],
+    structured_facts:[],recorded_facts:facts,unresolved_fact_fields:unresolved,identity_confirmation_required:confirmation};
+}
+
+/** Ambiguous returned variants are options, never rank-first price/stock. */
+export function catalogueVariantClarification(selection:CanonicalGroundingResult,language:Language):{reply:string;options:unknown[];requested_facts:{price:boolean;stock:boolean;specification:boolean}}|null {
+  if(!selection.ok || !selection.catalogue_options?.length)return null;
+  const options=selection.catalogue_options;
+  if(options.some(o=>o.authority.decision!=="USE_CURRENT_KB" || o.authority.selected_source_id!==o.document_id || o.record.ambiguous))return null;
+  const labels=options.map(o=>[o.record.display_name??o.record.names[0]??o.record.models[0],
+    o.record.sku_codes[0]?`SKU: ${o.record.sku_codes[0]}`:null,...Object.entries(o.record.variants).map(([k,v])=>`${k}: ${v}`)].filter(Boolean).join(" / "));
+  const reply=language==="en"?`The returned published records contain these product/variant options: ${labels.join("; ")}. Which SKU or specification do you mean? I will check that variant’s source price and stock, without mixing rows.`:
+    language==="zh-CN"?`已发布资料中有以下商品／规格：${labels.join("；")}。你要问哪个 SKU 或规格？我会按该款资料查价格和库存，不会混用不同规格。`:
+    `已發布資料有以下商品／規格：${labels.join("；")}。你要問邊個 SKU 或規格？我會按該款資料查價格同庫存，唔會混用不同規格。`;
+  return {reply,requested_facts:{price:selection.catalogue_request?.price===true,stock:selection.catalogue_request?.stock===true,specification:selection.catalogue_request?.specification===true},options:options.map(o=>({document_id:o.document_id,chunk_id:o.chunk_id,spu:o.record.spu_codes[0]??null,sku:o.record.sku_codes[0]??null,
+    product_name:o.record.display_name,variants:o.record.variants,reference_authority:o.authority}))};
+}
+
 /** Source-bound Full Content; only verified currentness can produce price proof. */
 export function resolveCanonicalKbDirectAnswer(input: {
   request: string;
@@ -202,6 +276,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
     decision.selected_source_id !== selection.document.document_id) return null;
 
   const request = input.request.normalize("NFKC");
+  if(selection.catalogue_binding)return catalogueRecordedAnswer({request,selection,language});
   const requested = classifyProductFactualQuery(request);
   const ids = exactKbModelIds(request);
   const nameTarget = ids.length === 0 ? namedPriceProductLabel(request) : null;
@@ -274,7 +349,7 @@ export function resolveCanonicalKbDirectAnswer(input: {
     if (consistent) {
       const chosen = usable[0], value = chosen.value;
       const amount = value.amount!.toLocaleString("en-US", {maximumFractionDigits:2});
-      const display = value.currency === "HKD" ? `HK$${amount}` : amount;
+      const display = value.currency === "HKD" ? `HK$${amount}` : value.currency ? `${value.currency} ${amount}` : amount;
       const currencyNote = value.currency ? "" : language === "en" ? " (currency not specified by the source)"
         : language === "zh-CN" ? "（来源未注明币别）" : "（來源未註明幣別）";
       const reply = language === "en"

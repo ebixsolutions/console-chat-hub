@@ -335,3 +335,22 @@ Deno.test("Task 1 factual current source outranks old Commerce topic without cha
  equal(mismatch.current_goal,baseline.current_goal,"unbound ASK_FACT changed original goal projection");
  equal(mismatch.current_topic,baseline.current_topic,"unbound ASK_FACT changed original topic projection");
 });
+
+Deno.test("Task1C recorded catalogue price/stock never become a current customer quote or confirmed stock",()=>{
+ const state=commerce();const before=JSON.stringify(state);
+ const rows:MemoryHistoryRow[]=[{id:"catalogue-answer",role:"assistant",content:"來源價格欄位記錄 CNY 2,100。記錄庫存數量：0；現貨仍須商家核實。",metadata:{control_commit:"ai",source_message_id:MID,response_route:"canonical_kb_direct_answer",answer_kind:"recorded_product_facts",unresolved_fact_fields:["stock"],recorded_kb_facts:[{field:"price_amount",value:2100,currentness:"unverified",model:"P002-NV-XL",document_id:"doc",chunk_id:"chunk"},{field:"price_currency",value:"CNY",currentness:"unverified",model:"P002-NV-XL",document_id:"doc",chunk_id:"chunk"},{field:"stock_quantity",value:0,currentness:"unverified",model:"P002-NV-XL",document_id:"doc",chunk_id:"chunk"}],citation_lineage:{selected_document_id:"doc",evidence_chunk_ids:["chunk"]}}},{id:MID,role:"visitor",content:"P002-NV-XL 價格及現貨？"}];
+ const memory=build({state,rows,sourceFactualTurn:true});
+ assert(memory.open_questions.some(q=>q.includes("stock")),"recorded zero incorrectly resolved current inventory");
+ assert(!memory.current_customer_facts.some(f=>f.value===2100||f.key.includes("stock")),"merchant snapshot became customer current fact");
+ equal(JSON.stringify(state),before,"catalogue snapshot mutated canonical Commerce");
+});
+Deno.test("Task1C product-name and SKU confirmation remain pending through compaction",()=>{
+ for(const fields of [["variant"],["product_identity"],["price"]]){
+  const rows:MemoryHistoryRow[]=[{id:"catalogue-question",role:"assistant",content:"已發布資料有兩款規格；你指邊個 SKU？",metadata:{control_commit:"ai",source_message_id:MID,response_route:"canonical_kb_direct_answer",answer_kind:"catalogue_variant_clarification",unresolved_fact_fields:fields,identity_confirmation_required:fields[0]==="product_identity"}},{id:MID,role:"visitor",content:"轻量冲锋衣 價錢同庫存？"}];
+  const first=build({rows,sourceFactualTurn:true});
+  const q=first.question_lifecycle?.find(item=>item.source_message_id===MID);
+  assert(q?.status==="pending"&&q.resolution?.includes("catalogue"),"catalogue choice incorrectly resolved");
+  const second=build({previous:first,rows:[],memoryRevision:2});
+  assert(second.question_lifecycle?.some(item=>item.source_message_id===MID&&item.status==="pending"),"compaction discarded pending identity");
+ }
+});

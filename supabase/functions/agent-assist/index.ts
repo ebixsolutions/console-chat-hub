@@ -1,3 +1,4 @@
+import { resolveCanonicalKbDirectAnswer, catalogueVariantClarification } from "../_shared/canonical-kb-direct-answer.ts";
 import { safeExecutionCode, executionFailure, type ExecutionFailure } from "../_shared/execution-failure.ts";
 import { authenticatedInboxAuthority, type InboxOperation } from "../_shared/uat-execution-contract.ts";
 import {
@@ -912,6 +913,22 @@ Deno.serve(async (req) => {
         req,
       );
     }
+    const catalogueLanguage = servicePlan?.language === "en" ? "en" : servicePlan?.language === "zh-CN" ? "zh-CN" : "zh-TW";
+    const catalogueAnswer = groundingSelection.catalogue_binding
+      ? resolveCanonicalKbDirectAnswer({request:followup ? `${followup.subject} ${content}` : content,selection:groundingSelection,language:catalogueLanguage}) : null;
+    const catalogueQuestion = catalogueVariantClarification(groundingSelection,catalogueLanguage);
+    if(toolType==="suggest_reply" && (catalogueAnswer || catalogueQuestion)){
+      return jsonRes({success:true,tool_type:"suggest_reply",draft_only:true,
+        knowledge_grounded:!!catalogueAnswer,scope_mode:tenant.scope.mode,
+        selected_document_id:groundingSelection.document?.document_id??null,
+        response_route:"canonical_kb_direct_answer",answer_kind:catalogueAnswer?.kind??"catalogue_variant_clarification",
+        reference_authority:groundingSelection.authority_decision,
+        recorded_kb_facts:catalogueAnswer?.recorded_facts??[],
+        unresolved_fact_fields:catalogueAnswer?.unresolved_fact_fields??["variant"],
+        catalogue_options:catalogueQuestion?.options??[],
+        citation_lineage:catalogueAnswer?{selected_document_id:groundingSelection.document?.document_id,evidence_chunk_ids:catalogueAnswer.evidence_chunks.map(c=>c.chunk_id)}:null,
+        result:{suggestions:[{content:catalogueAnswer?.reply??catalogueQuestion!.reply,tone_label:"Informative"}]}},200,req);
+    }
     if (toolType === "knowledge_helper") {
       const selected = groundingSelection.document,
         evidence = groundingSelection.evidence.slice(0, 3);
@@ -925,7 +942,8 @@ Deno.serve(async (req) => {
             selected_document_id: null,
             result: {
               status: "insufficient_evidence",
-              orientation_summary: "",
+              orientation_summary: catalogueQuestion?.reply ?? "",
+              catalogue_options: catalogueQuestion?.options ?? [],
               evidence: [],
             },
           },
@@ -944,6 +962,8 @@ Deno.serve(async (req) => {
           citation_lineage:{selected_document_id:selected.document_id,evidence_chunk_ids:evidence.map(e=>e.chunk_id)},
           result: {
             status: "available",
+            recorded_product_facts: catalogueAnswer?.recorded_facts ?? [],
+            source_recorded_reply: catalogueAnswer?.reply ?? null,
             orientation_summary:
               selected.llm_context.orientation_summary?.slice(0, 800) ?? "",
             evidence: evidence.map((i, n) => ({

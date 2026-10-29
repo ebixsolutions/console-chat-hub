@@ -1,4 +1,4 @@
-import { parseKbProductRecord, kbProductRecordNames, kbProductFieldKey } from "./kb-product-record.ts";
+import { parseKbProductRecord, kbProductRecordNames, kbProductFieldKey, catalogueFactRequest, matchCatalogueRecord, kbProductRecordPrice, kbProductRecordStock, type CatalogueMatch, type CatalogueRequest, type KbProductRecord } from "./kb-product-record.ts";
 import type {
   KBDocumentCandidate,
   KBFullChunk,
@@ -42,6 +42,15 @@ export interface CurrentGroundingTarget {
   explicit_topic: boolean;
   target_changed: boolean;
 }
+export interface CatalogueSourceBinding {
+  record: KbProductRecord;
+  match_kind: CatalogueMatch["kind"];
+  document_id: string;
+  chunk_id: string;
+}
+export interface CatalogueSourceOption extends CatalogueSourceBinding {
+  authority: ReferenceAuthorityDecision;
+}
 export type CanonicalGroundingResult =
   | {
     ok: true;
@@ -55,6 +64,9 @@ export type CanonicalGroundingResult =
       document_jurisdictions: string[];
     };
     authority_decision: ReferenceAuthorityDecision;
+    catalogue_binding?: CatalogueSourceBinding;
+    catalogue_options?: CatalogueSourceOption[];
+    catalogue_request?: CatalogueRequest;
   }
   | {
     ok: false;
@@ -538,6 +550,7 @@ export function selectCanonicalGrounding(
     options.expectedTopicIds ?? [],
     options.targetChanged === true,
   );
+  const catalogueQuery = policyOnly ? null : catalogueFactRequest(currentTurnText);
   const namedPriceTarget = namedPriceProductLabel(currentTurnText);
   const expectedEntityIds = namedPriceTarget ? unique([...target.entity_ids, namedPriceTarget]) : target.entity_ids;
   const freeFactRequest = options.requireSubjectSupport === true || (options.semanticFactDescriptions?.length ?? 0) > 0;
@@ -555,6 +568,7 @@ export function selectCanonicalGrounding(
     evidenceScore: number;
     lexicalScore: number;
     authorityCandidate: ReferenceEvidenceCandidate;
+    catalogueRows: Array<{chunk:KBFullChunk;match:CatalogueMatch;preferred:boolean}>;
   }> = [];
 
   for (const document of documents ?? []) {
@@ -575,7 +589,18 @@ export function selectCanonicalGrounding(
 
     const currentTargetRequest = currentTurnText || requestText;
     const lexicalScore = lexicalRelevance(currentTargetRequest, document);
-    const namedPriceEvidence = namedPriceTarget !== null &&
+    const catalogueRows = catalogueQuery && /product|商品|產品|产品/iu.test(document.source_type)
+      ? document.chunks.flatMap(chunk => {
+        if(chunk.chunk_type!=="full_content" || !chunk.chunk_id)return [];
+        const record=parseKbProductRecord(chunk.content), price=kbProductRecordPrice(record);
+        const rich = record.spu_codes.length || record.sku_codes.length || Object.keys(record.variants).length ||
+          (catalogueQuery.stock && kbProductRecordStock(record).has_field) ||
+          (price.reason==="ok" && price.currency!==null && price.currency!=="HKD");
+        const match=matchCatalogueRecord(catalogueQuery,record);
+        return match?[{chunk,match,preferred:Boolean(rich)}]:[];
+      }):[];
+    const catalogueEvidence = catalogueRows.some(row=>row.preferred);
+    const namedPriceEvidence = catalogueEvidence || namedPriceTarget !== null &&
       document.chunks.some(chunk => exactNamedProductEvidence(namedPriceTarget, document, chunk));
     // An exact customer-named product without full-content identity proof
     // cannot inherit a similarly ranked but unrelated catalogue entry.
@@ -585,7 +610,7 @@ export function selectCanonicalGrounding(
       const rows = document.chunks.filter(c => c.chunk_type === "full_content")
         .map(c => parseKbProductRecord(c.content));
       const knownKeys = new Set(["name", "title", "productname", "producttitle", "itemname", "model", "productmodel",
-        "商品名稱", "商品名称", "產品名稱", "产品名称", "名稱", "名称", "商品型號", "商品型号", "產品型號", "产品型号"]);
+        "商品名稱", "商品名称", "產品名稱", "产品名称", "名稱", "名称", "商品型號", "商品型号", "產品型號", "产品型号", "spuname", "skuname", "spucode", "skucode"]);
       console.info(JSON.stringify({endpoint:"canonical-grounding",stage:"named_product_identity",
         document_id: /^[a-z0-9-]{1,96}$/iu.test(document.document_id) ? document.document_id : null,
         full_content_count:rows.length,format:rows.map(r=>r.format),
@@ -634,12 +659,12 @@ export function selectCanonicalGrounding(
     }
     if (!evidence.length) continue;
     if (namedPriceTarget && !chunks.some(chunk =>
-      exactNamedProductEvidence(namedPriceTarget, document, chunk) &&
+      (catalogueRows.some(row=>row.chunk===chunk) || exactNamedProductEvidence(namedPriceTarget, document, chunk)) &&
       evidence.some(item => item.chunk_id === chunk.chunk_id && item.content === chunk.content))) continue;
     // Bind against the evidence that will actually reach generation. A subject
     // present only in a discarded/low-score chunk must not authorize another
     // surviving chunk, even within the same authenticated document.
-    const subjectSupported = (namedPriceTarget !== null && chunks.some(chunk =>
+    const subjectSupported = catalogueRows.some(row=>chunks.includes(row.chunk) && evidence.some(e=>e.chunk_id===row.chunk.chunk_id && e.content===row.chunk.content)) || (namedPriceTarget !== null && chunks.some(chunk =>
       exactNamedProductEvidence(namedPriceTarget, document, chunk) &&
       evidence.some(item => item.chunk_id === chunk.chunk_id && item.content === chunk.content))) ||
       (!!subject && fullContentSubjectMatch(subject, {
@@ -658,6 +683,7 @@ export function selectCanonicalGrounding(
       chunks,
       evidence,
       applicability,
+      catalogueRows: catalogueRows.filter(row=>chunks.includes(row.chunk) && evidence.some(e=>e.chunk_id===row.chunk.chunk_id && e.content===row.chunk.content)),
       evidenceScore: Math.max(...evidence.map((e) => e.score), 0),
       lexicalScore,
       authorityCandidate: {
@@ -672,7 +698,8 @@ export function selectCanonicalGrounding(
         currentness: effectiveCurrentness,
         entity_ids: unique([
           ...(metadata?.entity_ids ?? []),
-          ...(namedPriceEvidence ? [namedPriceTarget!] : []),
+          ...(namedPriceEvidence && namedPriceTarget ? [namedPriceTarget] : []),
+          ...catalogueRows.flatMap(row=>[...row.match.record.spu_codes,...row.match.record.sku_codes,...kbProductRecordNames(row.match.record)]),
           ...namedTargetTokens(candidateText(document)),
         ]),
         topic_ids: unique([
@@ -687,7 +714,7 @@ export function selectCanonicalGrounding(
             const key=topic.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"");
             return key.length>=3 && candidateText(document).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"").includes(key) || serviceFactTopicMatch(topic,currentTargetRequest,document);
           }) : []),
-          ...(namedPriceEvidence ? ["price", "product_facts"] : []),
+          ...(namedPriceEvidence ? ["price", "product_facts", ...(catalogueQuery?.stock?["stock"]:[])] : []),
           ...(document.source_type.toLowerCase() === "product" ? ["product_facts"] : []),
           ...(metadata?.claims ?? []).map((claim) => claim.key),
           ...topicTokens(candidateText(document)),
@@ -715,6 +742,67 @@ export function selectCanonicalGrounding(
           : extractStructuredClaims(evidence),
       },
     });
+  }
+
+  // Resolve each source-owned SKU independently before asking a variant
+  // question. Different SKU prices are not contradictory quotes for one SKU;
+  // competing facts for the SAME SKU still use the unchanged authority gate.
+  if(catalogueQuery && eligible.some(c=>c.catalogueRows.some(row=>row.preferred))) {
+    const groups=new Map<string,Array<{candidate:typeof eligible[number];row:typeof eligible[number]["catalogueRows"][number]}>>();
+    for(const candidate of eligible)for(const row of candidate.catalogueRows){
+      if(!candidate.applicability.accepted)continue;
+      const record=row.match.record;
+      const key=JSON.stringify([record.spu_codes[0]??record.names[0]??record.models[0]??null,
+        record.sku_codes[0]??null,Object.entries(record.variants).sort()]);
+      const values=groups.get(key)??[];values.push({candidate,row});groups.set(key,values);
+    }
+    const resolved:Array<{candidate:typeof eligible[number];row:typeof eligible[number]["catalogueRows"][number];authority:ReferenceAuthorityDecision}>=[];
+    let conflicting=false;
+    let conflictDecision:ReferenceAuthorityDecision|null=null;
+    for(const values of groups.values()){
+      const scoped = values.map(({candidate,row})=>{
+        const price=kbProductRecordPrice(row.match.record),stock=kbProductRecordStock(row.match.record);
+        return {...candidate.authorityCandidate,
+          entity_ids:[...candidate.authorityCandidate.entity_ids??[],catalogueQuery.label],
+          topic_ids:[...candidate.authorityCandidate.topic_ids??[],"product_facts",...(catalogueQuery.price?["price"]:[]),...(catalogueQuery.stock?["stock"]:[])],request_subject_supported:true,
+          // Authority selection may choose the latest version. It must never
+          // choose by vector score when same-authority rows disagree.
+          claims:[...(price.reason==="ok"?[{key:"catalogue_price",value:`${price.currency}:${price.amount}`}]:[]),
+            ...(stock.reason==="ok"?[{key:"catalogue_stock",value:String(stock.quantity)}]:[])],
+        };
+      });
+      const authority=resolveReferenceAuthority({candidates:scoped,expected_tenant_id:options.expectedTenantId,
+        expected_entity_ids:[catalogueQuery.label],expected_topic_ids:["product_facts"],
+        require_request_subject_match:true,require_explicit_target_match:true,
+        expected_region:expectedRegion,requires_current_kb:options.requiresCurrentKb!==false});
+      if(authority.decision==="CONFLICT_UNRESOLVED"){conflicting=true;conflictDecision=authority;continue;}
+      if(authority.decision!=="USE_CURRENT_KB" || !authority.selected_source_id)continue;
+      const matches=values.filter(v=>v.candidate.document.document_id===authority.selected_source_id);
+      // Two differing chunks inside the same document cannot be collapsed.
+      const fingerprints=new Set(matches.map(v=>JSON.stringify(v.row.match.record.fields)));
+      if(fingerprints.size!==1){conflicting=true;continue;}
+      const winner=matches[0];if(winner)resolved.push({...winner,authority});
+    }
+    if(!conflicting && resolved.length===1){
+      const {candidate,row,authority}=resolved[0];
+      return {ok:true,document:candidate.document,chunks:[row.chunk],
+        evidence:candidate.evidence.filter(e=>e.chunk_id===row.chunk.chunk_id && e.content===row.chunk.content),
+        applicability:candidate.applicability,authority_decision:authority,
+        catalogue_binding:{record:row.match.record,match_kind:row.match.kind,document_id:candidate.document.document_id,chunk_id:row.chunk.chunk_id!}};
+    }
+    if(!conflicting && resolved.length>1){
+      const authority=resolveReferenceAuthority({candidates:[],expected_tenant_id:options.expectedTenantId,requires_current_kb:true});
+      return {ok:true,document:null,chunks:[],evidence:[],
+        applicability:{accepted:false,reason:"catalogue_variant_or_product_ambiguous",request_jurisdiction:detectExplicitJurisdiction(requestText),document_jurisdictions:[]},
+        authority_decision:authority,catalogue_request:catalogueQuery,catalogue_options:resolved.slice(0,8).map(({candidate,row,authority})=>({
+          record:row.match.record,match_kind:row.match.kind,document_id:candidate.document.document_id,chunk_id:row.chunk.chunk_id!,authority}))};
+    }
+    if(conflicting){
+      const authority=conflictDecision ?? resolveReferenceAuthority({candidates:[],expected_tenant_id:options.expectedTenantId,requires_current_kb:true});
+      return {ok:true,document:null,chunks:[],evidence:[],authority_decision:authority,
+        applicability:{accepted:false,reason:"catalogue_same_sku_conflict",request_jurisdiction:detectExplicitJurisdiction(requestText),document_jurisdictions:[]}};
+    }
+    // No authorized catalogue match: retain the generic authoritative path.
   }
 
   const authorityDecision = resolveReferenceAuthority({

@@ -85,7 +85,9 @@ Deno.test("Task1C conflicts/costs/foreign amounts never become the HKD selling p
     "price: $599", "cost_price: HK$599\nspecial_price: HK$499", "price: 12,99", "price: HK$599 SGD",
   ]) {
     const {result} = resolve(await bindRow(`name: ${product}\n${fields}`));
-    assert(result?.kind === "price_unknown" && !result.reply.includes("HK$599") && !result.price_fact, "unsafe price extraction");
+    const explicitUsd = fields === "price: 599\ncurrency: USD" || fields === "price: USD 599";
+    assert(result?.kind === (explicitUsd ? "listed_price_unverified" : "price_unknown") &&
+      !result.reply.includes("HK$599") && !result.price_fact && (!explicitUsd || result.reply.includes("USD 599")), "unsafe price extraction");
   }
 });
 Deno.test("Task1C actual wire binding and tenant/publication/currentness remain mandatory", async () => {

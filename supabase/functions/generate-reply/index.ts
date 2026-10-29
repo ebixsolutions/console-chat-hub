@@ -1,3 +1,4 @@
+import { resolveCatalogueVariantFollowup } from "../_shared/kb-product-record.ts";
 import { resolveFactualFollowup, buildFactualFollowupPrompt, factualSubject, literalFactualSubject } from "../_shared/conversation-semantic-contract.ts";
 import { originalPreviewEnabled } from "../_shared/original-widget-preview.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "../_shared/execution-failure.ts";
@@ -128,6 +129,7 @@ import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import {
   type CanonicalKbDirectAnswer,
   resolveCanonicalKbDirectAnswer,
+  catalogueVariantClarification,
 } from "../_shared/canonical-kb-direct-answer.ts";
 import {
   buildInheritedTransformCitationMetadata,
@@ -4540,7 +4542,9 @@ async function orchestrationGenerateReply(
     return new Response(JSON.stringify({success:false,error:"semantic_interpretation_failed",code:_semanticFailure,failure:_semanticDiagnostic,retryable:_semanticDiagnostic?.retryable === true}),
       {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
-  const _customerRequestDecision = resolveCustomerRequestDecision(_h1LastMsg,_a3SemanticFrame,_pr5HistoryRows ?? []);
+  const _catalogueFollowup = _criticalE2ExpectedTenantId && source_message_id
+    ? resolveCatalogueVariantFollowup(_h1LastMsg, _pr5HistoryRows ?? [], {conversation_id,company_id:_criticalE2ExpectedTenantId,source_message_id}) : null;
+  const _customerRequestDecision = resolveCustomerRequestDecision(_catalogueFollowup?.request ?? _h1LastMsg,_a3SemanticFrame,_pr5HistoryRows ?? []);
   // Resolve once before writer, Memory, planner and KB. No new authority.
   if (classifyLocalTopicRisk(_h1LastMsg)?.level === "high") _customerRequestDecision.kind="other";
   if (_a3SemanticFrame) _a3SemanticFrame=applyCustomerRequestDecision(_a3SemanticFrame,_customerRequestDecision);
@@ -4787,6 +4791,10 @@ async function orchestrationGenerateReply(
       ? _productFollowUpArbitration.grounded_question : _h1LastMsg;
   }
   if(_mixedRequest && _customerRequestDecision.merchant_request) _productFactualRequest=_customerRequestDecision.merchant_request;
+  if(_catalogueFollowup && !_explicitHandoffRequested && !_mixedRequest){
+    _productFactualRequest=_catalogueFollowup.request;
+    _effectiveNaturalCustomerIntent=classifyNaturalCustomerIntent(_productFactualRequest);
+  }
   // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
   // If Commerce and Memory already committed this exact source on a prior
   // attempt, reuse their bounded server-derived receipt. Never run a second
@@ -5879,7 +5887,7 @@ Latest applicable corrections replace old values; an answered clarification is n
         : null,
       _h1LastMsg,
     );
-    const userQuery = _c3ServicePlan.kb_query || _productKbContract?.query || _semanticRetrieval.query;
+    const userQuery = _catalogueFollowup?.request || _c3ServicePlan.kb_query || _productKbContract?.query || _semanticRetrieval.query;
     ragResult = !userQuery
       ? {
         success: true,
@@ -6056,7 +6064,7 @@ Latest applicable corrections replace old values; an answered clarification is n
         minScore,
         requirePublished: true,
         requestText: userQuery,
-        currentTurnText: _mixedRequest ? _productFactualRequest : _factualFollowup
+        currentTurnText: _catalogueFollowup || _mixedRequest ? _productFactualRequest : _factualFollowup
           ? `${_factualFollowup.subject} ${_h1LastMsg}`
           : _canonicalTurn.operation === "PRONOUN_OR_ELLIPSIS" && _semanticRetrieval.mode === "contextual"
           ? _semanticRetrieval.query : _h1LastMsg,
@@ -6110,6 +6118,21 @@ Latest applicable corrections replace old values; an answered clarification is n
       })),
     };
     ragResult.trace_metadata = traceMetadata;
+    const _catalogueQuestion = !_mixedRequest && !isHighRisk
+      ? catalogueVariantClarification(_groundingSelection,_visitorLang) : null;
+    if(_catalogueQuestion && !_explicitHandoffRequested && !_deferR1ForE1 && !_explicitJurisdiction){
+      const committed=await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,source_message_id,_catalogueQuestion.reply,{
+        response_route:"canonical_kb_direct_answer",answer_kind:"catalogue_variant_clarification",
+        service_action:"targeted_clarification",unresolved_fact_fields:["variant"],
+        catalogue_options:_catalogueQuestion.options,catalogue_requested_facts:_catalogueQuestion.requested_facts,factual_grounding_required:true,
+        grounding_state:"source_variants_require_choice",rag_api_status:"success"});
+      await cleanupThinking(supabaseAdmin,conversation_id,source_message_id);
+      if(!committed.ok){
+        if(["human_control","resolved","superseded_source"].includes(committed.result))return new Response(JSON.stringify({success:true,skipped:committed.result}),{headers:{...corsHeaders,"Content-Type":"application/json"}});
+        return new Response(JSON.stringify({success:false,error:`catalogue_clarification_commit_${committed.result}`}),{status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+      }
+      return new Response(JSON.stringify({success:true,response_route:"canonical_kb_direct_answer",answer_kind:"catalogue_variant_clarification"}),{headers:{...corsHeaders,"Content-Type":"application/json"}});
+    }
     if (usableChunks.length === 0) {
       _pr5RagMatchState = _c1AuthorityDecision?.decision ===
           "CONFLICT_UNRESOLVED"
@@ -6296,7 +6319,7 @@ Latest applicable corrections replace old values; an answered clarification is n
     // lineage proof, not an artificially promoted vector score. Keep the
     // existing score gate for every generated/current-price/high-risk answer.
     const _sourceRecordedPriceReady = !_mixedRequest && !isHighRisk &&
-      !_priorGroundedTransform && _canonicalKbDirectAnswer?.kind === "listed_price_unverified";
+      !_priorGroundedTransform && (_canonicalKbDirectAnswer?.kind === "listed_price_unverified" || _canonicalKbDirectAnswer?.kind === "recorded_product_facts");
     if (!_sourceRecordedPriceReady && !hasUsableFullContentEvidence(usableChunks, minScore)) {
       _pr5RagMatchState = "partial_match";
       const requiredResponse = await evaluateAndPersistRequiredRulesLive(
@@ -6629,6 +6652,9 @@ Latest applicable corrections replace old values; an answered clarification is n
           answer_kind: _canonicalKbDirectAnswer.kind,
           unresolved_fact_fields: _canonicalKbDirectAnswer.unresolved_fact_fields ?? [],
           kb_retrieval_request: ragResult?.query_text_preview ?? null,
+          // Snapshot facts must not enter Memory as current quotes/stock.
+          recorded_kb_facts: (_canonicalKbDirectAnswer.recorded_facts ?? []).map(fact=>({...fact,source_message_id,tenant_id:_canonicalKbTenantId})),
+          identity_confirmation_required: _canonicalKbDirectAnswer.identity_confirmation_required === true,
           authoritative_kb_facts: (_canonicalKbDirectAnswer.structured_facts ?? []).map((fact) => ({
             ...fact, authority: _c1AuthorityDecision.selected_authority_class, currentness_at_answer: _c1AuthorityDecision.provenance.currentness ?? "unknown",
             source_message_id, tenant_id: _canonicalKbTenantId,

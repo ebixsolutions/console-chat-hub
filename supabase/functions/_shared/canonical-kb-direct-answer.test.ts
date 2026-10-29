@@ -130,7 +130,9 @@ Deno.test("Task1 price parsing stays source-bound through citation, B2 and unkno
       continue;
     }
     assert(selection.ok && resolved && citation, "selected source missing:" + JSON.stringify({fields,selection,resolved,citation}));
-    assert(resolved.kind === (expected === null ? "price_unknown" : "price"), JSON.stringify({fields,resolved}));
+    const explicitSgd = fields.length === 1 && fields[0] === "銷售價: 6980 SGD";
+    assert(resolved.kind === (explicitSgd ? "listed_price_unverified" : expected === null ? "price_unknown" : "price"), JSON.stringify({fields,resolved}));
+    if(explicitSgd)assert(resolved.reply.includes("SGD 6,980")&&!resolved.price_fact,"foreign amount lost or converted");
     assert((resolved.price_fact?.value ?? null) === expected, "wrong current-price proof");
     if (expected !== null) {
       const fact = resolved.price_fact!;
@@ -151,7 +153,7 @@ Deno.test("Task1 price parsing stays source-bound through citation, B2 and unkno
       }
     } else assert(!/HK\$/.test(resolved.reply), "invalid monetary evidence rendered");
     const {selection:referenceSelection,resolved:recorded,citation:recordedCitation} = await serviceReference(fixture);
-    assert(recorded?.kind === (expected === null ? "price_unknown" : "listed_price_unverified"),JSON.stringify({fields,recorded}));
+    assert(recorded?.kind === (explicitSgd ? "listed_price_unverified" : expected === null ? "price_unknown" : "listed_price_unverified"),JSON.stringify({fields,recorded}));
     assert(!recorded.price_fact, "unknown currentness promoted into current-price proof");
     assert(recordedCitation?.citation_lineage.evidence_state === "unknown", "source citation missing or promoted to current");
     assert(referenceSelection.ok,"service selection missing");
@@ -216,7 +218,9 @@ Deno.test("A2 price uses only explicit selling price, not cost or special price"
     chunks: [{ ...chunk, content: content.replace("銷售價: 6980", "銷售價: SGD 6980") }],
     llm_context: { ...doc.llm_context, full_content_evidence: [{ ...doc.llm_context.full_content_evidence[0],
       content: content.replace("銷售價: 6980", "銷售價: SGD 6980") }] } };
-  assert(answer("CW-SUL90BA 售價幾多？", [foreignCurrency]).resolved?.kind === "price_unknown", "currency_fabrication");
+  const foreignAnswer=answer("CW-SUL90BA 售價幾多？", [foreignCurrency]).resolved;
+  assert(foreignAnswer?.kind === "listed_price_unverified" && foreignAnswer.reply.includes("SGD 6,980") &&
+    !foreignAnswer.reply.includes("HK$") && !foreignAnswer.price_fact, "currency_fabrication");
 });
 
 Deno.test("A3 nonexistent SKU stays honest UNKNOWN", () => {
@@ -414,7 +418,7 @@ Deno.test("Task1 cross-industry named product price is evidence-bound, with no i
     const observed = answer(request,[fixture]);
     if (name !== customerName || !contentValue.includes(customerName))
       assert(observed.resolved === null, "unrelated product identity accepted");
-    else assert(observed.resolved?.kind === "price_unknown" && !/HK\$1,299/.test(observed.resolved.reply),
+    else assert(observed.resolved?.kind === "listed_price_unverified" && observed.resolved.reply.includes("USD 1,299") && !observed.resolved.price_fact && !/HK\$1,299/.test(observed.resolved.reply),
       "foreign-currency amount silently promoted to HKD");
   }
 });
@@ -433,3 +437,6 @@ Deno.test("Task1C named price lookup never captures normal knowledge queries", (
 
 // SAME Task1C: imported row schema -> canonical selection -> direct answer -> B2.
 import "./canonical-kb-product-record.test.ts";
+
+// Same Task1C source-field, variant, currency and stock regression.
+import "./catalogue-price-stock.test.ts";

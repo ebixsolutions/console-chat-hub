@@ -344,3 +344,18 @@ test('Task1C source-recorded price is resolved before the secondary retrieval-sc
  assert.match(code,/_canonicalKbDirectAnswer\?\.kind === "listed_price_unverified"/);
  assert.match(code,/!_priorGroundedTransform/);
 });
+
+
+test('Task1C catalogue source answers share safe consumer wiring and real fresh-query followup',()=>{
+ const handler=task1SourceRead('supabase/functions/generate-reply/index.ts','utf8');
+ const assist=task1SourceRead('supabase/functions/agent-assist/index.ts','utf8');
+ assert.match(handler,/resolveCatalogueVariantFollowup\(_h1LastMsg/);
+ assert.match(handler,/const userQuery = _catalogueFollowup\?\.request \|\|/);
+ assert.match(handler,/_catalogueQuestion && !_explicitHandoffRequested && !_deferR1ForE1/);
+ assert.match(handler,/catalogue_requested_facts:_catalogueQuestion\.requested_facts/);
+ assert.match(handler,/commitAiReplyWithControlGate/);
+ assert.match(handler,/recorded_kb_facts:\s*\(_canonicalKbDirectAnswer\.recorded_facts/);
+ assert.match(assist,/toolType==="suggest_reply"/);
+ assert.match(assist,/draft_only:true/);
+ assert.match(assist,/recorded_product_facts: catalogueAnswer\?\.recorded_facts/);
+});
