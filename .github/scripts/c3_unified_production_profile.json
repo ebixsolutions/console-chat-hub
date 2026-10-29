@@ -1378,7 +1378,7 @@
     "supabase/functions/_shared/llm-router.ts": "7030594a8207971d263a61ce474a00031dcc6772bff22c5d92149f015b425d7b",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "bfab5a3a3ea2cb17c099dfeff2b4fbef034c29676b1119c0053afbba1cbd5742",
     "supabase/functions/agent-assist/index.ts": "10f5bbd3a5d90df8e648ff762fc288887396088bdec060ac39ab1b1a7dd13511",
-    "supabase/functions/generate-reply/index.ts": "172cadfb75f1c1815948db01cdf69a21c5d9f5aee019d63acf3ea331c63aa402",
+    "supabase/functions/generate-reply/index.ts": "99154db9f8de3de87ef096ed8dd33be47e7a65d4c4c383ffe5cfa2718ef8ad7a",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "0ad21b55900ad89b131b6b2d13b2866b52a7cc017f839f6c18e0b405fc297928",
     "tests/edge/task2-2-output-grounding-router.test.ts": "e4e4a1b936b9d1b1e3dfe6d45f6021287b0957568ea13d6164b1ba784e056016",
     "tests/emergency-p0/chain.test.mjs": "fbf49bb83832204b30c23f3861a641ee78e79437b0c9224edb3fee17d9edad7a"

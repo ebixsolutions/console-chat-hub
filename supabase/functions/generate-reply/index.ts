@@ -6331,20 +6331,24 @@ Latest applicable corrections replace old values; an answered clarification is n
         _visitorLang,
       );
     }
-    _canonicalKbDirectAnswer = canUseSingleDemandDirectAnswer(_currentFactualRequest) ? resolveCanonicalKbDirectAnswer({
-      request: _productFactualRequest,
-      selection: _groundingSelection,
-      language: _visitorLang,
-      customer_context: (() => {
-        const entities = (_c3CommerceSnapshot?.state.entities ?? []).filter((entity) =>
-          !["cancelled", "deferred"].includes(entity.status) && entity.model &&
-          _effectiveNaturalCustomerIntent.kind === "product_factual_query" &&
-          entity.model === _effectiveNaturalCustomerIntent.product);
-        return entities.length === 1
-          ? { model: entities[0].model!, sunlight: entities[0].attributes.sunlight }
-          : undefined;
-      })(),
-    }) : null;
+    if (canUseSingleDemandDirectAnswer(_currentFactualRequest)) {
+      _canonicalKbDirectAnswer = resolveCanonicalKbDirectAnswer({
+        request: _productFactualRequest,
+        selection: _groundingSelection,
+        language: _visitorLang,
+        customer_context: (() => {
+          const entities = (_c3CommerceSnapshot?.state.entities ?? []).filter((entity) =>
+            !["cancelled", "deferred"].includes(entity.status) && entity.model &&
+            _effectiveNaturalCustomerIntent.kind === "product_factual_query" &&
+            entity.model === _effectiveNaturalCustomerIntent.product);
+          return entities.length === 1
+            ? { model: entities[0].model!, sunlight: entities[0].attributes.sunlight }
+            : undefined;
+        })(),
+      });
+    } else {
+      _canonicalKbDirectAnswer = null;
+    }
     // A source-bound, explicitly non-current record needs exact field and
     // lineage proof, not an artificially promoted vector score. Keep the
     // existing score gate for every generated/current-price/high-risk answer.
