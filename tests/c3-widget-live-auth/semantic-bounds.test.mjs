@@ -47,6 +47,48 @@ test('bounded limits keep exact legal edge values, no text truncation or scalar 
  assert.deepEqual(normalizeDecisionContext(v),v);assert(validate(frame(entity(v))));assert(normalizeCommerceSemanticFrame(frame(entity(v))));
 });
 
+function boundaryV3(context, container='attributes') {
+ const w={context_encoding:'semantic_fields_v3',operation:'UPDATE_ITEM',confidence:0.97,
+  language:'und',intent:'unknown',topic:null,customer_correction:false,additive:false,
+  transaction_state:'unknown',payment_state:'unknown',booking_state:'unknown',fulfillment_state:'unknown',
+  requested_facts:[],explicit_negations:[],customer_facts:[],referents:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+  entities:[{name:'requested service',kind:'service',confidence:0.97,entity_ref:'',category_hint:null,sku:null,model:null,quantity:null,unit:null,
+   capabilities:{requires_delivery:false,supports_pickup:false,requires_installation:false,requires_booking:false,requires_quote:false,
+    requires_site_check:false,digital_fulfilment:false,recurring_billing:false,rental_return:false,customization:false}}],
+  containers:[],strings:[],numbers:[],booleans:[]};
+ const prefix=container==='customer_fact'?['customer_facts','0','value']:['entities','0',container];
+ if(container==='customer_fact'){w.entities=[];w.customer_facts=[{key:'boundary_requirement'}];}
+ for(const node of nodes(context,prefix)){
+  const {path,kind}=node;
+  if(['object','array','null'].includes(kind))w.containers.push({path,kind});
+  else if(kind==='string')w.strings.push({path,text:node.text});
+  else if(kind==='number')w.numbers.push({path,number:node.number});
+  else w.booleans.push({path,boolean:node.boolean});
+ }
+ return w;
+}
+for(const container of ['attributes','constraints'])for(const leaf of [{},[]])test(`depth-three empty ${Array.isArray(leaf)?'array':'object'} in ${container} agrees across grammar, canonical, v2 and v3`,()=>{
+ const context={a:{b:{c:leaf}}},proposal=frame(entity());proposal.entities[0][container]=context;
+ assert.deepEqual(normalizeDecisionContext(context),context);assert(validate(proposal),JSON.stringify(validate.errors));
+ const expected=normalizeCommerceSemanticFrame(proposal);assert(expected);
+ const delta={entities:proposal.entities};
+ const v2={context_encoding:'semantic_paths_v2',operation:'UPDATE_ITEM',confidence:0.97,nodes:nodes(delta)};
+ assert.deepEqual(normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(v2)),expected);
+ assert.deepEqual(normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(boundaryV3(context,container))),expected);
+ const invalid={a:{b:{c:{d:leaf}}}};const tooDeep=frame(entity());tooDeep.entities[0][container]=invalid;
+ assert.equal(validate(tooDeep),false);assert.equal(normalizeCommerceSemanticFrame(tooDeep),null);
+ assert.equal(normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(boundaryV3(invalid,container))),null);
+});
+for(const leaf of [{},[]])test('customer fact boundary preserves empty '+(Array.isArray(leaf)?'array':'object')+' without admitting a deeper child',()=>{
+ const value={a:{b:leaf}},proposal={operation:'UPDATE_ITEM',confidence:0.97,customer_facts:[{key:'boundary_requirement',value}]};
+ assert(validate(proposal));const expected=normalizeCommerceSemanticFrame(proposal);assert(expected);
+ assert.deepEqual(normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(boundaryV3(value,'customer_fact'))),expected);
+ const v2={context_encoding:'semantic_paths_v2',operation:'UPDATE_ITEM',confidence:0.97,nodes:nodes({customer_facts:proposal.customer_facts})};
+ assert.deepEqual(normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(v2)),expected);
+ const invalid={a:{b:{c:leaf}}};assert.equal(normalizeCommerceSemanticFrame({...proposal,customer_facts:[{key:'boundary_requirement',value:invalid}]}),null);
+ assert.equal(normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(boundaryV3(invalid,'customer_fact'))),null);
+});
+
 test('diagnostics cannot leak customer values, secrets, field names or an unredacted provider object',()=>{
  const raw={private_customer_key:'Bearer '+('s'.repeat(400))};let diagnostic;
  normalizeCommerceSemanticFrame(frame(entity({},raw)),(_,d)=>{diagnostic=d;});

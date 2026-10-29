@@ -62,7 +62,7 @@ export function classifyProductFactualQuery(
   return productFactualIntent(models[0], facts);
 }
 
-function productFactualFacets(text: string): ProductFactualFacet[] {
+export function productFactualFacets(text: string): ProductFactualFacet[] {
   const matchers: Array<[ProductFactualFacet, RegExp]> = [
     ["policy", /(?:billing|booking|cancellation|return|warranty)\s+policy|付款政策|預約政策|预约政策|取消政策|保養政策|保修政策|退貨政策|退货政策/i],
     ["features", /(?:功能|feature|特點|特点|特色)/i],

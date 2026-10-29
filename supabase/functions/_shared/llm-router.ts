@@ -1,4 +1,5 @@
 import { contradictsAvailableFollowupEvidence, type FactualFollowupContext } from "./conversation-semantic-contract.ts";
+import type { ResolvedFactualRequestContext } from "./factual-request-context.ts";
 import { uatExecutionReadiness } from "./uat-execution-readiness.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
 import { trustedDispatchScope, UatDenied, UAT_THINKING } from "./uat-execution-contract.ts";
@@ -70,6 +71,8 @@ export interface LlmCall {
   factualEvidenceAbsent?: boolean;
   /** Supplied only by the source-bound handler after canonical KB selection. */
   factualFollowup?: FactualFollowupContext;
+  /** Same handler-resolved request used for retrieval, never fact authority. */
+  resolvedFactualRequest?: ResolvedFactualRequestContext;
   /** Set only after fresh full-content subject/authority selection, not HTTP200. */
   factualEvidenceAvailable?: boolean;
   purpose: ModelPurpose;
@@ -641,7 +644,8 @@ async function verifyGroundedGeneration(
   ].join("\n");
   const verifierUser = [
     "Current request and resolved conversational referent (reference only, never external authority):",
-    JSON.stringify({question:call.user, followup:call.factualFollowup ?? null}),
+    JSON.stringify({question:call.user, followup:call.factualFollowup ?? null,
+      resolved_request:call.resolvedFactualRequest ?? null}),
     "Authoritative Evidence:",
     verifierEvidence.evidence_text,
     "",

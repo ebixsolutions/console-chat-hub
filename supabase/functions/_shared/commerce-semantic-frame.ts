@@ -320,7 +320,7 @@ export const COMMERCE_SEMANTIC_WIRE_SCHEMA: Record<string, unknown> = {
   required: ["operation", "confidence"],
   properties: {
     operation: { type: "string", enum: [...OPERATIONS] },
-    confidence: { type: "number" },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
     language: { type: "string" },
     intent: { type: "string" },
     topic: { type: "string", nullable: true },
@@ -353,7 +353,7 @@ export const COMMERCE_SEMANTIC_WIRE_SCHEMA: Record<string, unknown> = {
             type: "string",
             enum: ["current_turn", "prior_turn", "persistent_state", "unknown"],
           },
-          confidence: { type: "number" },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
         },
       },
     },
@@ -374,12 +374,12 @@ export const COMMERCE_SEMANTIC_WIRE_SCHEMA: Record<string, unknown> = {
         properties: {
           name: { type: "string" },
           kind: { type: "string", enum: [...KINDS] },
-          confidence: { type: "number" },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
           entity_ref: { type: "string" },
           category_hint: { type: "string", nullable: true },
           sku: { type: "string", nullable: true },
           model: { type: "string", nullable: true },
-          quantity: { type: "number", nullable: true },
+          quantity: { type: "number", nullable: true, minimum: 0 },
           unit: { type: "string", nullable: true },
           attributes_json: { type: "string" },
           constraints_json: { type: "string" },
@@ -429,17 +429,10 @@ const compactEntity = structuredClone((compactDeltaProperties.entities as {
 }).items);
 delete compactEntity.properties.attributes_json;
 delete compactEntity.properties.constraints_json;
-// This is the grammar advertised to the semantic producer, not a new provider
-// API schema. Keep other callers of decisionContextSchema unchanged.
-function semanticDecisionValueSchema(depth = 2): Record<string, unknown> {
-  const scalar = {type:["string","number","boolean","null"],maxLength:DECISION_CONTEXT_LIMITS.text};
-  if (!depth) return scalar;
-  const child = semanticDecisionValueSchema(depth - 1);
-  return {anyOf:[scalar,{type:"array",maxItems:DECISION_CONTEXT_LIMITS.items,items:child},
-    {type:"object",maxProperties:DECISION_CONTEXT_LIMITS.fields,propertyNames:{minLength:1,maxLength:80},additionalProperties:child}]};
-}
+// The semantic grammar and canonical context validator share their limits and
+// depth convention; do not maintain a second, narrower leaf vocabulary here.
 const semanticContextObject = () => ({ type: "object", maxProperties: DECISION_CONTEXT_LIMITS.fields,
-  propertyNames: {minLength: 1, maxLength: 80}, additionalProperties: semanticDecisionValueSchema() });
+  propertyNames: {minLength: 1, maxLength: 80}, additionalProperties: decisionContextSchema() });
 compactEntity.properties.attributes = semanticContextObject();
 compactEntity.properties.constraints = semanticContextObject();
 export const COMMERCE_SEMANTIC_DELTA_SCHEMA = {
@@ -448,7 +441,7 @@ export const COMMERCE_SEMANTIC_DELTA_SCHEMA = {
     ...compactDeltaProperties,
     customer_facts: { type: "array", maxItems: 16, items: {
       type: "object", required: ["key", "value"],
-      properties: { key: { type: "string",minLength:1,maxLength:120 }, value: semanticDecisionValueSchema() },
+      properties: { key: { type: "string",minLength:1,maxLength:120 }, value: decisionContextSchema() },
     } },
     entities: { type: "array", maxItems: 12, items: compactEntity },
   },
@@ -554,7 +547,7 @@ export const COMMERCE_SEMANTIC_TYPED_INSTRUCTIONS =
  * typed paths, not an expanded recursive provider schema. The original native
  * grammar and canonical validator still validate the reconstructed proposal.
  * No neutral entity/fact/lifecycle fields are generated just to fill a schema. */
-export const COMMERCE_SEMANTIC_PROVIDER_SCHEMA: Record<string, unknown> = {
+export const COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA: Record<string, unknown> = {
   type: "object", required: ["context_encoding", "operation", "confidence", "nodes"],
   propertyOrdering: ["context_encoding", "operation", "confidence", "nodes"],
   properties: {
@@ -595,19 +588,153 @@ export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V2 =
   "Canonical validation independently rejects invalid proposals. The following is semantic vocabulary for reconstruction, NOT the provider response schema: " +
   JSON.stringify(COMMERCE_SEMANTIC_DELTA_SCHEMA);
 
+/** Fixed semantic fields keep their canonical types/enums at generation time.
+ * Only open customer contexts use paths. Four homogeneous node arrays avoid
+ * recursive provider schemas, optional scalar slots and anyOf branch growth.
+ * Older transports remain readable; canonical admission is still independent. */
+const providerFields = structuredClone(COMMERCE_SEMANTIC_WIRE_SCHEMA.properties) as Record<string, any>;
+delete providerFields.entities.items.properties.attributes_json;
+delete providerFields.entities.items.properties.constraints_json;
+providerFields.customer_facts.items = { type: "object", properties: { key: { type: "string" } } };
+const providerContextNodes = (field: string, value: Record<string, unknown>) => ({
+  // Keep the large total-node budget in the decoder, not in the provider's
+  // grammar compiler. Each node still has a small, bounded path grammar.
+  type: "array", items: { type: "object", required: ["path", field], properties: {
+    path: { type: "array", items: { type: "string" }, minItems: 3, maxItems: 6 }, [field]: value,
+  } },
+});
+export const COMMERCE_SEMANTIC_PROVIDER_SCHEMA: Record<string, unknown> = {
+  type: "object", properties: {
+    context_encoding: { type: "string", enum: ["semantic_fields_v3"] },
+    ...providerFields,
+    containers: providerContextNodes("kind", { type: "string", enum: ["object", "array", "null"] }),
+    strings: providerContextNodes("text", { type: "string" }),
+    numbers: providerContextNodes("number", { type: "number" }),
+    booleans: providerContextNodes("boolean", { type: "boolean" }),
+  },
+};
+orderSemanticTransport(COMMERCE_SEMANTIC_PROVIDER_SCHEMA);
+export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V3 =
+  "Follow the supplied response schema and its property order. Return context_encoding=semantic_fields_v3. " +
+  "Fixed semantic fields are native JSON, not typed-tree paths. The required neutral values are transport defaults, not customer facts: " +
+  "[] for empty lists, false for unsupported correction/additive/capabilities, unknown for unchanged lifecycle states, und for unknown language, unknown for unknown intent, " +
+  "null for unspecified nullable text/quantity, and an empty entity_ref when unresolved. Never create a customer fact or entity to fill a required list. " +
+  "customer_facts entries declare only their key; each value is carried by context paths. " +
+  "Only attributes, constraints and customer fact values use the four context arrays: containers has object/array/null nodes, strings has text, numbers has number, booleans has boolean. " +
+  "Their full paths start with [entities, entity index, attributes or constraints] or [customer_facts, fact index, value]. Use zero-based decimal index strings for declared entries. " +
+  "Declare every context object/array parent, including its context root, once. Context paths cannot write fixed fields, another undeclared entity/fact, or the frame root. " +
+  "Entity attributes/constraints roots must be objects. Every customer fact needs exactly one value root, of its actual type. " +
+  "An absent entity context means no new context; a supplied empty object/array is represented explicitly and kept. " +
+  "No duplicate paths across arrays, inactive scalar slots, JSON encoded inside strings, copied historical facts, credentials or truncated requirements. " +
+  "Preserve false, zero, null, empty containers, entity association and latest corrections. " +
+  "For attributes/constraints their root is depth 0; no value/container may be deeper than 3. Customer fact values have at most 2 further levels. " +
+  "At the depth limit an object/array must be empty. Use at most 40 fields per object, 12 entries per array, 96 scalar leaves, 80 characters per key and 300 normalized characters per context string. " +
+  "Do not repeat the response schema in output. Invalid proposals are rejected without retry or a partial state change.";
+
+// Diagnostic labels come only from this fixed vocabulary, never from a model's
+// customer-authored keys, text, paths, enum values or Error.message.
+type SemanticFieldClass =
+  | "frame" | "operation" | "confidence" | "language" | "intent" | "topic"
+  | "customer_correction" | "additive" | "transaction_state" | "payment_state"
+  | "booking_state" | "fulfillment_state" | "requested_facts" | "explicit_negations"
+  | "entities" | "entity" | "entity_name" | "entity_kind" | "entity_confidence"
+  | "entity_ref" | "entity_text" | "entity_quantity" | "entity_capabilities"
+  | "entity_attributes" | "entity_constraints" | "customer_facts" | "customer_fact"
+  | "customer_fact_key" | "customer_fact_value" | "referents" | "referent"
+  | "referent_ref" | "referent_source" | "referent_confidence" | "ambiguity"
+  | "ambiguity_flag" | "ambiguity_reasons" | "clarification_question"
+  | "context_encoding" | "context_nodes" | "context_node" | "context_path"
+  | "context_kind" | "context_scalar";
+type SemanticVocabularyDiagnostic = {
+  field_class: SemanticFieldClass;
+  reason: "type" | "required" | "enum" | "range" | "bounds" | "field";
+};
+const rootFieldClasses: Record<string, SemanticFieldClass> = {
+  operation:"operation", confidence:"confidence", language:"language", intent:"intent", topic:"topic",
+  customer_correction:"customer_correction", additive:"additive", transaction_state:"transaction_state",
+  payment_state:"payment_state", booking_state:"booking_state", fulfillment_state:"fulfillment_state",
+  requested_facts:"requested_facts", explicit_negations:"explicit_negations", context_encoding:"context_encoding",
+};
+function semanticFieldClass(path: string[]): SemanticFieldClass {
+  const [root,,field] = path;
+  if (root === "entities") {
+    if (path.length < 3) return path.length === 1 ? "entities" : "entity";
+    const fields: Record<string, SemanticFieldClass> = {
+      name:"entity_name", kind:"entity_kind", confidence:"entity_confidence", entity_ref:"entity_ref",
+      category_hint:"entity_text", sku:"entity_text", model:"entity_text", unit:"entity_text",
+      quantity:"entity_quantity", capabilities:"entity_capabilities", attributes:"entity_attributes", constraints:"entity_constraints",
+    };
+    return Object.hasOwn(fields,field) ? fields[field] : "entity";
+  }
+  if (root === "customer_facts") return path.length === 1 ? "customer_facts" : path.length === 2 ? "customer_fact"
+    : field === "key" ? "customer_fact_key" : field === "value" ? "customer_fact_value" : "customer_fact";
+  if (root === "referents") return path.length === 1 ? "referents" : path.length === 2 ? "referent"
+    : field === "ref" ? "referent_ref" : field === "source" ? "referent_source" : field === "confidence" ? "referent_confidence" : "referent";
+  if (root === "ambiguity") return path[1] === "is_ambiguous" ? "ambiguity_flag" : path[1] === "reasons" ? "ambiguity_reasons"
+    : path[1] === "clarification_question" ? "clarification_question" : "ambiguity";
+  if (["containers","strings","numbers","booleans"].includes(root)) return path.length === 1 ? "context_nodes"
+    : path.length === 2 ? "context_node" : field === "path" ? "context_path" : field === "kind" ? "context_kind" : "context_scalar";
+  return Object.hasOwn(rootFieldClasses,root) ? rootFieldClasses[root] : "frame";
+}
+/** Type/required/enum validation must precede the canonical normalizer, which
+ * intentionally supplies defaults. Return only a safe reason and field class.
+ * Provider checks also close every fixed object and enforce scalar/list ranges;
+ * canonical context bounds retain their original detailed validator below. */
+function semanticSchemaMismatch(value: unknown, schema: any, path: string[] = [], provider = false): SemanticVocabularyDiagnostic | null {
+  const mismatch = (reason: SemanticVocabularyDiagnostic["reason"], at = path): SemanticVocabularyDiagnostic => ({field_class:semanticFieldClass(at),reason});
+  if (value === null && schema.nullable === true) return null;
+  const type = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+  const typeMatches = (s: any) => (Array.isArray(s.type) ? s.type : [s.type]).includes(type);
+  if (schema.anyOf) {
+    const attempts = schema.anyOf.map((branch:any) => semanticSchemaMismatch(value,branch,path,provider));
+    if (attempts.some((attempt:SemanticVocabularyDiagnostic|null) => attempt === null)) return null;
+    const sameType = schema.anyOf.findIndex(typeMatches);
+    return sameType < 0 ? mismatch("type") : attempts[sameType];
+  }
+  if (!typeMatches(schema) || type === "number" && !Number.isFinite(value)) return mismatch("type");
+  if (schema.enum && !schema.enum.includes(value)) return mismatch("enum");
+  if (type === "number" && provider &&
+      (schema.minimum !== undefined && (value as number) < schema.minimum || schema.maximum !== undefined && (value as number) > schema.maximum)) return mismatch("range");
+  if (type === "array") {
+    const array = value as unknown[];
+    if ((provider || schema.maxItems === 0) &&
+        (schema.minItems !== undefined && array.length < schema.minItems || schema.maxItems !== undefined && array.length > schema.maxItems)) return mismatch("bounds");
+    for (const [index, item] of array.entries()) {
+      const error = semanticSchemaMismatch(item,schema.items,[...path,String(index)],provider);
+      if (error) return error;
+    }
+  } else if (type === "object") {
+    const object = value as Record<string, unknown>;
+    const missing = (schema.required ?? []).find((key:string) => !Object.hasOwn(object,key));
+    if (missing !== undefined) return mismatch("required",[...path,missing]);
+    if (schema.maxProperties === 0 && Object.keys(object).length) return mismatch("bounds");
+    for (const [key, child] of Object.entries(object)) {
+      if (schema.properties && Object.hasOwn(schema.properties,key)) {
+        const error = semanticSchemaMismatch(child,schema.properties[key],[...path,key],provider);
+        if (error) return error;
+      } else if (schema.additionalProperties === false || provider) return mismatch("field");
+      else if (typeof schema.additionalProperties === "object") {
+        const error = semanticSchemaMismatch(child,schema.additionalProperties,[...path,key],provider);
+        if (error) return error;
+      }
+    }
+  }
+  return null;
+}
+
 type SemanticWireStage = "envelope" | "node_path" | "node_kind" | "node_fields" | "scalar_value" |
   "duplicate_path" | "root" | "parent" | "array_index" | "object_key" | "sparse_array" |
   "delta_fields" | "entity_fields" | "capability_fields" | "fact_fields" | "referent_fields" |
   "ambiguity_fields" | "canonical_vocabulary" | "canonical_range";
 class SemanticWireError extends Error {
-  constructor(readonly diagnostic: {container:"wire_nodes";stage:SemanticWireStage;node_index?:number;node_count:number}) {
+  constructor(readonly diagnostic: {container:"wire_nodes";stage:SemanticWireStage;node_index?:number;node_count:number} & Partial<SemanticVocabularyDiagnostic>) {
     super("wire_context_nodes");
   }
 }
 function decodeProviderSemanticTree(value: Record<string, unknown>): Record<string, unknown> {
   let index: number | undefined;
-  const fail = (stage:SemanticWireStage): never => {throw new SemanticWireError({container:"wire_nodes",stage,
-    ...(index===undefined?{}:{node_index:index}),node_count:Array.isArray(value.nodes)?Math.min(value.nodes.length,32769):0});};
+  const fail = (stage:SemanticWireStage, detail?:SemanticVocabularyDiagnostic): never => {throw new SemanticWireError({container:"wire_nodes",stage,
+    ...(index===undefined?{}:{node_index:index}),node_count:Array.isArray(value.nodes)?Math.min(value.nodes.length,32769):0,...detail});};
   if (Object.keys(value).some(k=>!["context_encoding","operation","confidence","nodes"].includes(k)) ||
       value.context_encoding!=="semantic_paths_v2" || !Array.isArray(value.nodes) ||
       !value.nodes.length || value.nodes.length>32768) return fail("envelope");
@@ -655,29 +782,58 @@ function decodeProviderSemanticTree(value: Record<string, unknown>): Record<stri
   // native vocabulary's types/required fields/enums BEFORE normalization can
   // coerce a malformed quantity or turn a string context into an empty object.
   // Canonical bounds, sanitization and business authority remain unchanged.
-  const matches=(v:unknown,s:any):boolean=>{
-    if(v===null && s.nullable===true)return true;
-    if(s.anyOf)return s.anyOf.some((branch:any)=>matches(v,branch));
-    const type=v===null?"null":Array.isArray(v)?"array":typeof v;
-    if(!(Array.isArray(s.type)?s.type:[s.type]).includes(type))return false;
-    if(type==="number"&&!Number.isFinite(v))return false;
-    if(s.enum&&!s.enum.includes(v))return false;
-    if(type==="array")return (v as unknown[]).every(item=>matches(item,s.items));
-    if(type==="object"){
-      const object=v as Record<string,unknown>;
-      if((s.required??[]).some((key:string)=>!Object.hasOwn(object,key)))return false;
-      return Object.entries(object).every(([key,child])=>s.properties?.[key]
-        ? matches(child,s.properties[key])
-        : s.additionalProperties===false?false:typeof s.additionalProperties==="object"?matches(child,s.additionalProperties):true);
-    }
-    return true;
-  };
-  if(!matches(delta,COMMERCE_SEMANTIC_DELTA_SCHEMA))return fail("canonical_vocabulary");
+  const vocabulary = semanticSchemaMismatch(delta,COMMERCE_SEMANTIC_DELTA_SCHEMA);
+  if(vocabulary)return fail("canonical_vocabulary",vocabulary);
   for(const entry of [...(Array.isArray(delta.entities)?delta.entities:[]),...(Array.isArray(delta.referents)?delta.referents:[])]) {
     if(isRecord(entry)&&(typeof entry.confidence!=="number"||entry.confidence<0||entry.confidence>1 ||
       entry.quantity!==undefined&&entry.quantity!==null&&(typeof entry.quantity!=="number"||entry.quantity<0)))return fail("canonical_range");
   }
   return {...delta,operation:value.operation,confidence:value.confidence};
+}
+
+function decodeProviderSemanticFields(value: Record<string, unknown>): Record<string, unknown> {
+  const collections = ["containers","strings","numbers","booleans"] as const;
+  const count = collections.reduce((n,key) => n + (Array.isArray(value[key]) ? value[key].length : 0),0);
+  const fail = (stage:SemanticWireStage, detail?:SemanticVocabularyDiagnostic): never => {
+    throw new SemanticWireError({container:"wire_nodes",stage,node_count:Math.min(count,32769),...detail});
+  };
+  if (count > 32768) return fail("envelope");
+  const vocabulary = semanticSchemaMismatch(value,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,[],true);
+  if (vocabulary) return fail(vocabulary.reason === "range" ? "canonical_range" : "canonical_vocabulary",vocabulary);
+
+  const delta = {...value};
+  for (const key of ["context_encoding","operation","confidence",...collections]) delete delta[key];
+  type Node = {path:string[];kind:string;text?:string;number?:number;boolean?:boolean};
+  const encode = (v:unknown,path:string[]=[]):Node[] => {
+    const kind = v === null ? "null" : Array.isArray(v) ? "array" : typeof v;
+    const node:Node = {path,kind,...(kind === "string" ? {text:v as string} : kind === "number" ? {number:v as number} : kind === "boolean" ? {boolean:v as boolean} : {})};
+    return [node,...(kind === "object" || kind === "array" ? Object.entries(v as object).flatMap(([key,child]) => encode(child,[...path,key])) : [])];
+  };
+  const nodes = encode(delta);
+  const fixedNodeCount = nodes.length;
+  const entities = delta.entities as unknown[];
+  const facts = delta.customer_facts as unknown[];
+  for (const collection of collections) for (const raw of value[collection] as Record<string,unknown>[]) {
+    const path = raw.path as string[];
+    const [root,index,field] = path;
+    const canonicalIndex = /^(0|[1-9][0-9]*)$/.test(index);
+    const entityContext = root === "entities" && canonicalIndex && Number(index) < entities.length && ["attributes","constraints"].includes(field);
+    const factContext = root === "customer_facts" && canonicalIndex && Number(index) < facts.length && field === "value";
+    if (!entityContext && !factContext) return fail("node_path",{field_class:semanticFieldClass(path),reason:"field"});
+    if (factContext && path.length > 5) return fail("node_path",{field_class:"customer_fact_value",reason:"bounds"});
+    const kind = collection === "containers" ? raw.kind as string : collection === "strings" ? "string" : collection === "numbers" ? "number" : "boolean";
+    nodes.push({path,kind,...(kind === "string" ? {text:raw.text as string} : kind === "number" ? {number:raw.number as number} : kind === "boolean" ? {boolean:raw.boolean as boolean} : {})});
+  }
+  try {
+    // Reuse the original closed tree/identity/duplicate/array checks and strict
+    // canonical admission; context paths cannot replace any native fixed node.
+    return decodeProviderSemanticTree({context_encoding:"semantic_paths_v2",operation:value.operation,confidence:value.confidence,nodes});
+  } catch (error) {
+    if (!(error instanceof SemanticWireError)) throw error;
+    const {node_index,...diagnostic} = error.diagnostic;
+    throw new SemanticWireError({...diagnostic,node_count:Math.min(count,32769),
+      ...(node_index !== undefined && node_index >= fixedNodeCount ? {node_index:node_index-fixedNodeCount} : {})});
+  }
 }
 
 function decodeContextNodes(raw: unknown, depthLimit: number): unknown {
@@ -754,8 +910,9 @@ export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSema
   const reject = (reason: SemanticContractRejection, diagnostic?:SemanticContractDiagnostic): null => { onReject?.(reason,diagnostic); return null; };
   if (!isRecord(value)) return reject("wire_object");
   if (Object.hasOwn(value, "context_encoding")) {
-    try { value = value.context_encoding==="semantic_paths_v2" ? decodeProviderSemanticTree(value) : decodeTypedContextFrame(value); } catch (error) {
-      // Only fixed stage enums and bounded counts: never keys, paths, values,
+    try { value = value.context_encoding==="semantic_fields_v3" ? decodeProviderSemanticFields(value)
+      : value.context_encoding==="semantic_paths_v2" ? decodeProviderSemanticTree(value) : decodeTypedContextFrame(value); } catch (error) {
+      // Only fixed stage/field/reason enums and bounded counts: never keys, paths, values,
       // model payloads or Error.message (which could contain customer data).
       return reject("wire_context_nodes",error instanceof SemanticWireError?error.diagnostic:undefined);
     }

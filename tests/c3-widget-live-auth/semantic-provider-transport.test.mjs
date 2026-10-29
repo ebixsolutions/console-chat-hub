@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import Ajv from 'ajv';
 import {build} from 'esbuild';
 const compiled=await build({stdin:{contents:"export * from './supabase/functions/_shared/commerce-semantic-frame.ts'; export * from './supabase/functions/_shared/vertex-generation-config.ts'; export {resolveCustomerRequestDecision} from './supabase/functions/_shared/commerce-state-authority.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
-const {resolveCustomerRequestDecision,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const {resolveCustomerRequestDecision,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 function nodes(value,path=[]){const kind=value===null?'null':Array.isArray(value)?'array':typeof value;return [{path,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},...(['object','array'].includes(kind)?Object.entries(value).flatMap(([k,v])=>nodes(v,[...path,k])):[])];}
 const wire=(delta={},operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:0.98,nodes:nodes(delta)});
 const canonical=v=>normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(v));
@@ -17,7 +18,7 @@ function providerAccepts(s,v){
  return typeof v===type;
 }
 test('provider-shaped fixtures establish required scalar pairing without loosening the decoder',()=>{
- const current=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash').responseSchema.properties.nodes.items;
+ const current=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,0,'gemini-2.5-flash').responseSchema.properties.nodes.items;
  const historical={type:'object',required:['path','kind'],properties:{path:{type:'array',items:{type:'string'},maxItems:6},kind:{type:'string',enum:['object','array','string','number','boolean','null']},text:{type:'string'},number:{type:'number'},boolean:{type:'boolean'}}};
  for(const [kind,field,value] of [['string','text','eight'],['number','number',0],['boolean','boolean',false]]){
   const malformed={path:['customer_facts','0','value'],kind};assert(providerAccepts(historical,malformed));assert(!providerAccepts(current,malformed));
@@ -37,19 +38,101 @@ for(const [stage,mutate] of [
 ])test('wire rejection stage is bounded and redacted: '+stage,()=>{
  const w=wire();mutate(w);let diagnostic;assert.equal(decodeCommerceSemanticWire(w,(code,d)=>{assert.equal(code,'wire_context_nodes');diagnostic=d;}),null);
  assert.equal(diagnostic.stage,stage);assert.equal(diagnostic.container,'wire_nodes');assert(diagnostic.node_count>0&&diagnostic.node_count<=32769);
- assert(Object.keys(diagnostic).every(k=>['stage','container','node_index','node_count'].includes(k)));assert(!JSON.stringify(diagnostic).includes('PRIVATE-'));
+ assert(Object.keys(diagnostic).every(k=>['stage','container','node_index','node_count','field_class','reason'].includes(k)));assert(!JSON.stringify(diagnostic).includes('PRIVATE-'));
+ if(stage==='canonical_vocabulary')assert.deepEqual({field_class:diagnostic.field_class,reason:diagnostic.reason},{field_class:'requested_facts',reason:'type'});
 });
 test('v239 failure repair: real Vertex request builder receives only one shallow typed-tree grammar, never the expanded Commerce schema',()=>{
- const config=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash');
+ const config=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,0,'gemini-2.5-flash');
  assert.deepEqual(config.responseSchema.required,['context_encoding','operation','confidence','nodes']);
  assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_paths_v2']);
  assert(!('entities' in config.responseSchema.properties));assert(!('customer_facts' in config.responseSchema.properties));
- const d=vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_SCHEMA);assert.equal(d.objects,7);assert.equal(d.arrays,7);assert(d.schema_bytes<2000);assert.equal(d.transport,'semantic_paths_v2');
+ const d=vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA);assert.equal(d.objects,7);assert.equal(d.arrays,7);assert(d.schema_bytes<2000);assert.equal(d.transport,'semantic_paths_v2');
  // Structural regression budget, not a claim of live provider acceptance.
  assert(!/delta_json|value_json|additionalProperties/.test(JSON.stringify(config.responseSchema)));
  const alternatives=config.responseSchema.properties.nodes.items.anyOf;assert.equal(alternatives.length,6);
  for(const branch of alternatives){assert.deepEqual(branch.required,Object.keys(branch.properties));assert.equal(branch.properties.path.maxItems,'6');}
  assert.equal(config.thinkingConfig.thinkingBudget,0);
+});
+
+// Explicit v3 fixtures exercise the actual wire, not an unavailable historical
+// provider payload. No production encoder is used to construct expected values.
+const v3=(patch={})=>({context_encoding:'semantic_fields_v3',operation:'ASK_FACT',confidence:0.98,
+ language:'zh-HK',intent:'product_information',topic:'unseen model Q9',customer_correction:false,additive:false,
+ transaction_state:'unknown',payment_state:'unknown',booking_state:'unknown',fulfillment_state:'unknown',
+ requested_facts:['price'],explicit_negations:[],customer_facts:[],referents:[],
+ ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},entities:[],
+ containers:[],strings:[],numbers:[],booleans:[],...patch});
+const v3Entity=(patch={})=>({name:'unseen model Q9',kind:'physical_product',confidence:0.98,
+ entity_ref:'',category_hint:null,sku:null,model:null,quantity:null,unit:null,
+ capabilities:{requires_delivery:false,supports_pickup:false,requires_installation:false,requires_booking:false,
+ requires_quote:false,requires_site_check:false,digital_fulfilment:false,recurring_billing:false,rental_return:false,customization:false},...patch});
+const providerV3Accepts=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_PROVIDER_SCHEMA);
+test('v3 constrains native semantic types/enums with no optional or union grammar branches',()=>{
+ const config=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash');
+ assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_fields_v3']);
+ assert(!('nodes' in config.responseSchema.properties));
+ const inspect=s=>{assert(!s.anyOf);if(s.properties){assert.deepEqual(s.required,Object.keys(s.properties));assert.deepEqual(s.propertyOrdering,Object.keys(s.properties));Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);};
+ inspect(config.responseSchema);
+ for(const [collection,valueField] of [['containers','kind'],['strings','text'],['numbers','number'],['booleans','boolean']]){
+  const item=config.responseSchema.properties[collection].items;
+  assert.deepEqual(item.required,['path',valueField]);assert.equal(item.properties.path.minItems,'3');assert.equal(item.properties.path.maxItems,'6');
+ }
+ const d=vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_SCHEMA);
+ assert.equal(d.transport,'semantic_fields_v3');assert.equal(d.objects,10);assert.equal(d.arrays,14);assert(d.schema_bytes<6000);
+ // This is a deterministic compiler-shape budget, not Hosted Vertex acceptance.
+ assert(providerV3Accepts(v3({entities:[v3Entity()]})),JSON.stringify(providerV3Accepts.errors));
+ assert(canonical(v3({entities:[v3Entity()]})));
+});
+for(const [label,mutate,field_class,reason] of [
+ ['missing entity confidence',w=>delete w.entities[0].confidence,'entity_confidence','required'],
+ ['string entity confidence',w=>w.entities[0].confidence='0.98','entity_confidence','type'],
+ ['unknown entity kind',w=>w.entities[0].kind='PRIVATE-INVALID-KIND','entity_kind','enum'],
+ ['nonnullable entity reference',w=>w.entities[0].entity_ref=null,'entity_ref','type'],
+ ['boolean quantity',w=>w.entities[0].quantity=false,'entity_quantity','type'],
+ ['negative quantity',w=>w.entities[0].quantity=-1,'entity_quantity','range'],
+ ['out of range confidence',w=>w.entities[0].confidence=2,'entity_confidence','range'],
+ ['numeric requested fact',w=>w.requested_facts=[17],'requested_facts','type'],
+ ['lifecycle alias',w=>w.payment_state='PRIVATE-NOT-PAID','payment_state','enum'],
+ ['referent source alias',w=>w.referents=[{ref:'PRIVATE-SUBJECT',source:'PRIVATE-HISTORY',confidence:0.98}],'referent_source','enum'],
+])test('v3 producer and strict decoder agree on rejection: '+label,()=>{
+ const w=v3({entities:[v3Entity()]});mutate(w);
+ assert.equal(providerV3Accepts(w),false,'the producer must constrain this error before decoding');
+ let diagnostic;assert.equal(decodeCommerceSemanticWire(w,(code,d)=>{assert.equal(code,'wire_context_nodes');diagnostic=d;}),null);
+ assert.equal(diagnostic.field_class,field_class);assert.equal(diagnostic.reason,reason);
+ assert(!JSON.stringify(diagnostic).includes('PRIVATE-'));assert(!JSON.stringify(diagnostic).includes('0.98'));
+});
+test('v3 preserves independent entity associations, unknowns and explicit false/zero/null/empty values',()=>{
+ const w=v3({operation:'UPDATE_ITEM',customer_correction:true,entities:[v3Entity({name:'first request'}),v3Entity({name:'second request',kind:'rental'})],
+  customer_facts:[{key:'seats'},{key:'auto_renew'},{key:'date'},{key:'excluded_options'},{key:'extra_requirements'}],
+  containers:[{path:['entities','0','attributes'],kind:'object'},{path:['entities','1','constraints'],kind:'object'},
+   {path:['customer_facts','2','value'],kind:'null'},{path:['customer_facts','3','value'],kind:'array'},{path:['customer_facts','4','value'],kind:'object'}],
+  strings:[{path:['entities','0','attributes','customer_label'],text:'first requirement'},{path:['entities','1','constraints','customer_label'],text:'second requirement'}],
+  numbers:[{path:['customer_facts','0','value'],number:0}],booleans:[{path:['customer_facts','1','value'],boolean:false}]});
+ assert(providerV3Accepts(w));const actual=canonical(w);assert(actual);
+ assert.deepEqual(actual.customer_facts.map(f=>f.value),[0,false,null,[],{}]);
+ assert.equal(actual.entities[0].attributes.customer_label,'first requirement');assert.equal(actual.entities[1].constraints.customer_label,'second requirement');
+ assert.deepEqual(actual.entities[0].constraints,{});assert.deepEqual(actual.entities[1].attributes,{});
+ assert.equal(actual.entities[0].quantity,null);assert.equal(actual.payment_state,'unknown');assert.equal(actual.customer_correction,true);
+});
+for(const [label,mutate] of [
+ ['undeclared entity',w=>w.containers.push({path:['entities','1','attributes'],kind:'object'})],
+ ['undeclared fact',w=>w.strings.push({path:['customer_facts','0','value'],text:'PRIVATE-VALUE'})],
+ ['fixed entity identity overwrite',w=>w.strings.push({path:['entities','0','name'],text:'PRIVATE-OVERRIDE'})],
+ ['other entity fixed identity overwrite',w=>{w.entities.push(v3Entity({name:'second'}));w.strings.push({path:['entities','1','entity_ref'],text:'PRIVATE-OVERRIDE'});}],
+ ['frame root injection',w=>w.containers.push({path:[],kind:'object'})],
+ ['duplicate path across typed arrays',w=>w.strings.push({path:['entities','0','attributes'],text:'PRIVATE-OVERRIDE'})],
+ ['missing context parent',w=>w.strings.push({path:['entities','0','constraints','customer_key'],text:'PRIVATE-VALUE'})],
+ ['sparse context array',w=>{w.customer_facts=[{key:'PRIVATE-FACT'}];w.containers.push({path:['customer_facts','0','value'],kind:'array'});w.numbers.push({path:['customer_facts','0','value','1'],number:0});}],
+ ['prototype path',w=>w.strings.push({path:['entities','0','attributes','constructor'],text:'PRIVATE-VALUE'})],
+ ['inactive scalar slot',w=>w.containers[0].text='PRIVATE-VALUE'],
+ ['unknown fixed field',w=>w.PRIVATE_DYNAMIC_KEY='PRIVATE-VALUE'],
+ ['untrusted capability',w=>w.entities[0].capabilities.PRIVATE_PROMISE=true],
+ ['missing customer fact value',w=>w.customer_facts=[{key:'PRIVATE-FACT'}]],
+])test('v3 rejects context/authority corruption without customer-data diagnostics: '+label,()=>{
+ const w=v3({entities:[v3Entity()],containers:[{path:['entities','0','attributes'],kind:'object'}]});mutate(w);
+ let diagnostic;assert.equal(decodeCommerceSemanticWire(w,(code,d)=>{assert.equal(code,'wire_context_nodes');diagnostic=d;}),null);
+ assert(diagnostic);assert(!JSON.stringify(diagnostic).includes('PRIVATE-'));assert(!JSON.stringify(diagnostic).includes('PRIVATE_'));
+ assert(Object.keys(diagnostic).every(k=>['stage','container','node_index','node_count','field_class','reason'].includes(k)));
 });
 for(const [business,delta] of [
  ['rooms',{customer_facts:[{key:'areas',value:{small:80,large:100,living:180,unit:'sq_ft'}},{key:'sunlight',value:'none'}],entities:[{name:'living room unit',entity_ref:'living',kind:'physical_product',quantity:1,unit:'unit',confidence:0.98,attributes:{width:70,height:55,unit:'cm'},constraints:{night_noise:false,budget:{amount:6000,unit:'HKD'}}}]}],

@@ -59,7 +59,8 @@ export function vertexResponseSchemaDiagnostic(schema: Record<string, unknown>):
     if(s.properties)Object.values(s.properties).forEach(visit);if(s.items)visit(s.items);if(s.anyOf)s.anyOf.forEach(visit);};
   visit(normalized);
   return {schema_bytes:new TextEncoder().encode(JSON.stringify(normalized)).length,objects,arrays,enum_values:enumValues,
-    transport:(normalized.properties as any)?.context_encoding?.enum?.[0]==="semantic_paths_v2"?"semantic_paths_v2":"other"};
+    transport:["semantic_paths_v2","semantic_fields_v3"].includes((normalized.properties as any)?.context_encoding?.enum?.[0])
+      ? (normalized.properties as any).context_encoding.enum[0] : "other"};
 }
 
 export function buildVertexGenerationConfig(

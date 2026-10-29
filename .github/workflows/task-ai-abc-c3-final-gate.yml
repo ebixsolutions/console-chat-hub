@@ -299,6 +299,8 @@ jobs:
           node tests/c3-widget-live-auth/handler.test.mjs
           node --test tests/c3-widget-live-auth/legacy-history.test.mjs
           node --test tests/c3-widget-live-auth/ordinary-receive.test.mjs tests/c3-widget-live-auth/original-preview.test.mjs tests/c3-widget-live-auth/original-preview-ingress.test.mjs
+          node tests/c3-widget-live-auth/semantic-provider-transport.test.mjs
+          node tests/c3-widget-live-auth/semantic-bounds.test.mjs
           node --test src/lib/widget-message-merge.test.mjs
           # Same Task 1 native Source-chain repair; no paid calls or Hosted substitutions.
           node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/source-chain.test.mjs
@@ -307,7 +309,9 @@ jobs:
             supabase/functions/_shared/conversation-long-memory.test.ts \
             supabase/functions/_shared/conversation-recall.test.ts \
             supabase/functions/_shared/pre-send-conversion-supervisor.test.ts \
-            supabase/functions/_shared/conversation-service-planner.test.ts
+            supabase/functions/_shared/conversation-service-planner.test.ts \
+            supabase/functions/_shared/current-factual-request.test.ts \
+            supabase/functions/_shared/canonical-kb-product-record.test.ts
           C3_OFFLINE
           cat "$RUNNER_TEMP/c3-rev14-offline/profile.log"
       - name: Native PostgreSQL 17 captured trigger and concurrency safety tests

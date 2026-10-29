@@ -73,6 +73,9 @@ import {
   requiresCurrentMerchantEvidence,
 } from "../_shared/natural-customer-response.ts";
 import { productKbSemanticContract } from "../_shared/product-kb-semantic-contract.ts";
+import { resolveCurrentFactualRequest, type CurrentFactualRequest } from "../_shared/current-factual-request.ts";
+import { buildCurrentFactualRequestPrompt, currentFactualFollowupContext, currentFactualRequestContext, currentFactualRequestReceipt } from "../_shared/factual-request-context.ts";
+import { DecisionContextLimitError } from "../_shared/bounded-decision-context.ts";
 import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
 import {
   persistRequiredEscalationClarification,
@@ -4800,6 +4803,30 @@ async function orchestrationGenerateReply(
     _productFactualRequest=_catalogueFollowup.request;
     _effectiveNaturalCustomerIntent=classifyNaturalCustomerIntent(_productFactualRequest);
   }
+  // Resolve the merchant read once, after the scoped canonical state read.
+  // This is interpretation only: no state, lifecycle or merchant-fact authority
+  // is introduced. Planner, retrieval, grounding and rendering share it below.
+  let _currentFactualRequest: CurrentFactualRequest | undefined;
+  let _factualContextLimit = false;
+  try {
+    _currentFactualRequest = resolveCurrentFactualRequest({
+      question: _catalogueFollowup?.request ?? _h1LastMsg,
+      history: _pr5HistoryRows ?? [],
+      semantic: _a3SemanticFrame,
+      commerce: _c3CommerceSnapshot?.state ?? null,
+      request_decision: _customerRequestDecision,
+    });
+  } catch (error) {
+    if (!(error instanceof DecisionContextLimitError)) throw error;
+    // Never fall back to a shorter query that silently drops requirements.
+    _factualContextLimit = true;
+  }
+  if (_currentFactualRequest?.applicable && _currentFactualRequest.answer_request) {
+    _productFactualRequest = _currentFactualRequest.answer_request;
+    _effectiveNaturalCustomerIntent = _currentFactualRequest.needs_subject_clarification
+      ? {kind:"product_factual_clarification",product:null,candidates:_currentFactualRequest.subjects,reason:"CURRENT_FACTUAL_SUBJECT_UNRESOLVED"}
+      : classifyNaturalCustomerIntent(_productFactualRequest);
+  }
   // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
   // If Commerce and Memory already committed this exact source on a prior
   // attempt, reuse their bounded server-derived receipt. Never run a second
@@ -4869,15 +4896,21 @@ async function orchestrationGenerateReply(
         id: typeof row.id === "string" ? row.id : null,
         metadata: row.metadata,
       }));
-  const _factualFollowup = _a3SemanticFrame?.ambiguity.is_ambiguous ? null
+  const _factualFollowup = _currentFactualRequest?.applicable
+    ? currentFactualFollowupContext(_currentFactualRequest, _c3RecentServiceMessages)
+    : _a3SemanticFrame?.ambiguity.is_ambiguous ? null
     : resolveFactualFollowup(_h1LastMsg, _c3RecentServiceMessages);
-  const _semanticFactualSubject = !factualSubject(_h1LastMsg) &&
+  const _semanticFactualSubject = _currentFactualRequest?.applicable
+    ? _currentFactualRequest.subject
+    : !factualSubject(_h1LastMsg) &&
       _a3SemanticFrame?.operation === "ASK_FACT" && _a3SemanticFrame.confidence >= 0.62 &&
       !_a3SemanticFrame.ambiguity.is_ambiguous
     ? literalFactualSubject(_h1LastMsg, _a3SemanticFrame.entities
       .filter(entity=>entity.confidence>=0.62).map(entity=>entity.name))
     : null;
-  const _factualFollowupPrompt = buildFactualFollowupPrompt(_factualFollowup);
+  const _factualFollowupPrompt = _currentFactualRequest?.applicable
+    ? buildCurrentFactualRequestPrompt(_currentFactualRequest)
+    : buildFactualFollowupPrompt(_factualFollowup);
   const _c3TrustedCustomerContext = await fetchTrustedCustomerContext({
     conversation_id,
     company_id: _criticalE2ExpectedTenantId ?? "",
@@ -4895,6 +4928,7 @@ async function orchestrationGenerateReply(
     applyServiceRuntimeDerivation({
       question: _productFactualRequest,
       request_decision: _customerRequestDecision,
+      factual_request: _currentFactualRequest,
       semantic_frame: _a3SemanticFrame,
       committed_source_message_id: _c3CommerceSnapshot?.source_message_id === _h1SourceMessageId ? _h1SourceMessageId : undefined,
       language: _visitorLang,
@@ -4920,6 +4954,12 @@ async function orchestrationGenerateReply(
       explicit_handoff: _explicitHandoffRequested,
     }, _c3RuntimeInputs),
   );
+  if (_factualContextLimit) {
+    _c3ServicePlan.action = "offer_handoff_or_reframe";
+    _c3ServicePlan.knowledge_state = "tool_failure";
+    _c3ServicePlan.kb_query = null;
+    _c3ServicePlan.safe_assumptions = [...new Set([..._c3ServicePlan.safe_assumptions,"query_context_limit"])];
+  }
   const _c3ResolvedAddressCorrection = resolveCommittedAddressCorrection({
     text: _h1LastMsg,
     source_message_id: _h1SourceMessageId,
@@ -5073,7 +5113,8 @@ Latest applicable corrections replace old values; an answered clarification is n
     Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
   const _c3CustomerOnlyReply = _c3IsGroundedReadOnlyRecap && _c3CommerceSnapshot?.state.entities.length === 0
     ? renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang) : null;
-  const _c3PlannedReply = _customerGuidance || _mixedRequest || _purePriorGroundedTransform ? null : _c3IsGroundedReadOnlyRecap
+  const _c3PlannedReply = (_customerGuidance || _mixedRequest || _purePriorGroundedTransform) &&
+    !_c3ServicePlan.safe_assumptions.includes("query_context_limit") ? null : _c3IsGroundedReadOnlyRecap
     ? _c3CustomerOnlyReply ?? _c3Recall.reply
     : _c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")
     ? null
@@ -5881,18 +5922,22 @@ Latest applicable corrections replace old values; an answered clarification is n
         _visitorLang,
       );
     }
-    const _semanticRetrieval = buildCanonicalRetrievalQuery(
-      _productFactualRequest,
-      _pr5HistoryRows ?? [],
-    );
+    const _semanticRetrieval = _currentFactualRequest?.applicable
+      ? {query:_currentFactualRequest.query ?? "", mode:_currentFactualRequest.resolution === "follow_up" ? "contextual" as const : "standalone" as const}
+      : buildCanonicalRetrievalQuery(_productFactualRequest, _pr5HistoryRows ?? []);
     const _productKbContract = productKbSemanticContract(
       _effectiveNaturalCustomerIntent,
-      _productFollowUpArbitration.kind === "resolved"
+      !_currentFactualRequest?.applicable && _productFollowUpArbitration.kind === "resolved"
         ? _productFollowUpArbitration.resolved_topic
         : null,
       _h1LastMsg,
     );
-    const userQuery = _catalogueFollowup?.request || _c3ServicePlan.kb_query || _productKbContract?.query || _semanticRetrieval.query;
+    const userQuery = (_currentFactualRequest?.applicable
+      ? _currentFactualRequest.query
+      : _catalogueFollowup?.request || _c3ServicePlan.kb_query || _productKbContract?.query || _semanticRetrieval.query) ?? "";
+    const _kbRequestContract = userQuery
+      ? await currentFactualRequestReceipt(_currentFactualRequest, userQuery, source_message_id)
+      : null;
     ragResult = !userQuery
       ? {
         success: true,
@@ -6038,12 +6083,12 @@ Latest applicable corrections replace old values; an answered clarification is n
     const isHighRisk = _pr5LocalRisk?.level === "high";
     const minScore = isHighRisk ? 0.78 : 0.45;
     const _semanticTopicIds = [
-      _a3SemanticFrame?.topic,
-      ...(_a3SemanticFrame?.requested_facts ?? []),
+      _currentFactualRequest?.applicable ? _currentFactualRequest.subject : _a3SemanticFrame?.topic,
+      ...(_currentFactualRequest?.applicable ? _currentFactualRequest.requested_facts : _a3SemanticFrame?.requested_facts ?? []),
     ].filter((value): value is string =>
       typeof value === "string" && value.trim().length > 0
     );
-    const _c1TargetChanged = _canonicalTurn.topic_action === "SWITCH" ||
+    const _c1TargetChanged = _currentFactualRequest?.topic_changed === true || _canonicalTurn.topic_action === "SWITCH" ||
       _canonicalTurn.topic_action === "CORRECT" ||
       _a3SemanticFrame?.customer_correction === true;
     _c1CurrentTarget = deriveCurrentGroundingTarget(
@@ -6069,7 +6114,7 @@ Latest applicable corrections replace old values; an answered clarification is n
         minScore,
         requirePublished: true,
         requestText: userQuery,
-        currentTurnText: _catalogueFollowup || _mixedRequest ? _productFactualRequest : _factualFollowup
+        currentTurnText: _currentFactualRequest?.applicable || _catalogueFollowup || _mixedRequest ? _productFactualRequest : _factualFollowup
           ? `${_factualFollowup.subject} ${_h1LastMsg}`
           : _canonicalTurn.operation === "PRONOUN_OR_ELLIPSIS" && _semanticRetrieval.mode === "contextual"
           ? _semanticRetrieval.query : _h1LastMsg,
@@ -6099,6 +6144,7 @@ Latest applicable corrections replace old values; an answered clarification is n
     const usableChunks = _jurisdictionSupported ? _scoreUsableChunks : [];
     const traceMetadata = {
       rag_api_status: "success",
+      kb_request_contract: _kbRequestContract,
       total_results: ragResult.chunks.length,
       filtered_results: usableChunks.length,
       jurisdiction_constraint: _explicitJurisdiction,
@@ -6130,7 +6176,7 @@ Latest applicable corrections replace old values; an answered clarification is n
         response_route:"canonical_kb_direct_answer",answer_kind:"catalogue_variant_clarification",
         service_action:"targeted_clarification",unresolved_fact_fields:["variant"],
         catalogue_options:_catalogueQuestion.options,catalogue_requested_facts:_catalogueQuestion.requested_facts,factual_grounding_required:true,
-        grounding_state:"source_variants_require_choice",rag_api_status:"success"});
+        grounding_state:"source_variants_require_choice",rag_api_status:"success",kb_request_contract:_kbRequestContract});
       await cleanupThinking(supabaseAdmin,conversation_id,source_message_id);
       if(!committed.ok){
         if(["human_control","resolved","superseded_source"].includes(committed.result))return new Response(JSON.stringify({success:true,skipped:committed.result}),{headers:{...corsHeaders,"Content-Type":"application/json"}});
@@ -6657,6 +6703,8 @@ Latest applicable corrections replace old values; an answered clarification is n
           answer_kind: _canonicalKbDirectAnswer.kind,
           unresolved_fact_fields: _canonicalKbDirectAnswer.unresolved_fact_fields ?? [],
           kb_retrieval_request: ragResult?.query_text_preview ?? null,
+          kb_request_contract: ragResult?.trace_metadata?.kb_request_contract ?? null,
+          ...(_currentFactualRequest?.subject ? {factual_request_subject:_currentFactualRequest.subject} : {}),
           // Snapshot facts must not enter Memory as current quotes/stock.
           recorded_kb_facts: (_canonicalKbDirectAnswer.recorded_facts ?? []).map(fact=>({...fact,source_message_id,tenant_id:_canonicalKbTenantId})),
           identity_confirmation_required: _canonicalKbDirectAnswer.identity_confirmation_required === true,
@@ -6669,7 +6717,8 @@ Latest applicable corrections replace old values; an answered clarification is n
             source_message_id, tenant_id: _canonicalKbTenantId,
           })),
           product_follow_up_arbitration:
-            _productFollowUpArbitration.kind === "resolved"
+            _productFollowUpArbitration.kind === "resolved" &&
+              (!_currentFactualRequest?.applicable || _currentFactualRequest.subject === _productFollowUpArbitration.intent.product)
               ? {
                 decision: "CURRENT_KB_REQUIRED",
                 referent: _productFollowUpArbitration.intent.product,
@@ -6884,6 +6933,7 @@ Latest applicable corrections replace old values; an answered clarification is n
     generalDecisionSupport:_mixedRequest,
     factualEvidenceAbsent:_mixedEvidenceUnavailable,
     factualFollowup: _factualFollowup ?? undefined,
+    resolvedFactualRequest: currentFactualRequestContext(_currentFactualRequest),
     factualEvidenceAvailable: _c1AuthorityDecision?.decision === "USE_CURRENT_KB" && Boolean(ragResult?.chunks?.some(c => c.chunk_type === "full_content")),
     maxTokens: resolveGenerationMaxTokens(),
     operationId:
@@ -7015,6 +7065,8 @@ Latest applicable corrections replace old values; an answered clarification is n
   const citationMeta = citationMetaBase && _c1AuthorityDecision
     ? {
       ...citationMetaBase,
+      ...(ragResult?.trace_metadata?.kb_request_contract
+        ? {kb_request_contract:ragResult.trace_metadata.kb_request_contract} : {}),
       reference_authority: referenceAuthorityMetadata(_c1AuthorityDecision),
       ...(_c1AuthorityDecision.decision === "USE_CURRENT_KB" && (_factualFollowup?.subject ?? _semanticFactualSubject)
         ? {factual_request_subject:_factualFollowup?.subject ?? _semanticFactualSubject} : {}),

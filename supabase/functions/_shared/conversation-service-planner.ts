@@ -14,6 +14,7 @@ import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { activeCustomerGoal, customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { requiresSemanticKnowledge, scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
+import type { CurrentFactualRequest } from "./current-factual-request.ts";
 import { isBareCommerceSubjectMention, isPersonalOrderStatusRequest, isCustomerGuidanceRequest, resolveCustomerRequestDecision, type CustomerRequestDecision } from "./commerce-state-authority.ts";
 import { classifyCanonicalConversationTurn, isFactualExplanationQuestion } from "./conversation-semantic-contract.ts";
 import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state.ts";
@@ -130,6 +131,8 @@ export interface ServiceCalculationTerm {
 
 export interface ServicePlanInput {
   request_decision?: CustomerRequestDecision;
+  /** Source-bound read interpretation shared with retrieval and answering. */
+  factual_request?: CurrentFactualRequest;
   question: string;
   semantic_frame?: CommerceSemanticFrame | null;
   committed_source_message_id?: string;
@@ -416,7 +419,7 @@ function requestedSlot(question: string): string | null {
 }
 
 function buildKbQuery(question: string, input: ServicePlanInput): string {
-  return scopedServiceKnowledgeQuery(question, input.semantic_frame, input.commerce, input.recent_messages);
+  return scopedServiceKnowledgeQuery(question, input.semantic_frame, input.commerce, input.recent_messages, input.factual_request);
 }
 
 /**
@@ -572,7 +575,10 @@ export function planConversationService(
     handoff_requested: false,
   };
   const requestDecision=input.request_decision ?? resolveCustomerRequestDecision(question,input.semantic_frame ?? null,input.recent_messages ?? []);
-  const semanticMerchantRead = requestDecision.kind!=="guidance" && requiresSemanticKnowledge(input.semantic_frame);
+  const resolvedMerchantRead = input.factual_request?.applicable === true &&
+    !input.factual_request.needs_subject_clarification;
+  const semanticMerchantRead = requestDecision.kind!=="guidance" &&
+    (requiresSemanticKnowledge(input.semantic_frame) || resolvedMerchantRead);
   // A memory slot miss says nothing about external factual authority. The
   // provider may legitimately propose NO_STATE_CHANGE for a read; do not let
   // that erase the already classified current factual speech act.
@@ -646,12 +652,15 @@ export function planConversationService(
       ["negated_request", "conditional_or_future", "reference_or_report", "mention_only"].includes(handoffContext.category)) {
     return { ...base, action: "handoff_context_acknowledgement", handoff_context: handoffContext.category };
   }
-  if (input.semantic_frame?.ambiguity.is_ambiguous && !input.recall.handled) {
+  if (input.factual_request?.needs_subject_clarification ||
+      input.semantic_frame?.ambiguity.is_ambiguous && !input.recall.handled) {
     return { ...base, action: "targeted_clarification", missing_slots: ["specific_product_or_item"], clarification_target: "specific_product_or_item" };
   }
   if (merchantReadRequired) {
     let query: string;
-    try { query = canonicalFactualRead && !semanticMerchantRead
+    try { query = input.factual_request?.applicable && input.factual_request.query
+      ? input.factual_request.query
+      : canonicalFactualRead && !semanticMerchantRead
       ? buildCanonicalRetrievalQuery(question, input.recent_messages ?? []).query
       : buildKbQuery(question, input); }
     catch (error) {

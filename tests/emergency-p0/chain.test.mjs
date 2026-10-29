@@ -53,7 +53,8 @@ async function assertCatalogueReply(f,{source,name='轻量化户外冲锋衣',sk
  const priorCommerce=structuredClone(f.tables.conversation_commerce_state[0]);
  const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits.length,1);
  const reply=f.commits[0],meta=reply.metadata;
- assert.equal(meta.response_route,'canonical_kb_direct_answer',JSON.stringify({route:meta.response_route,failure:meta.execution_failure,gates:catalogueGateEvents(f)}));
+ assert.equal(meta.response_route,'canonical_kb_direct_answer',JSON.stringify({route:meta.response_route,failure:meta.execution_failure,gates:catalogueGateEvents(f),
+  scope:meta.kb_request_contract,trace:meta.current_grounding_target,grounding:f.events.filter(e=>/named_product_identity|grounding_selection|authority_reason/iu.test(JSON.stringify(e)))}));
  assert.notEqual(meta.generation_success,false);assert.notEqual(meta.degraded,true);
  assert(reply.content.includes(name)&&reply.content.includes(sku),'source-owned product identity missing');
  if(priceRequested)assert(reply.content.includes('CNY '+price.toLocaleString('en-US')),'recorded source amount/currency missing');
@@ -188,17 +189,23 @@ function fixture(text,options={}) {
     return Response.json({candidates:[{content:{parts:[{text}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}});
    }
    assert.equal(body.generationConfig.responseMimeType,'application/json');
-   assert.deepEqual(body.generationConfig.responseSchema.properties.context_encoding.enum,['semantic_paths_v2']);
-   assert.equal(body.generationConfig.responseSchema.properties.nodes.items.anyOf.every(b=>b.properties.path.maxItems==='6'),true);
-   assert(body.systemInstruction.parts[0].text.includes('Follow the supplied response schema'));assert(!body.systemInstruction.parts[0].text.includes('array of {key,value}'));assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_paths_v2'));assert(body.systemInstruction.parts[0].text.includes('in constraints'));
-   assert(body.systemInstruction.parts[0].text.includes('Canonical validation independently rejects invalid proposals'));
+   const semanticSchema=body.generationConfig.responseSchema;
+   assert.deepEqual(semanticSchema.properties.context_encoding.enum,['semantic_fields_v3']);
+   for(const [list,field] of [['containers','kind'],['strings','text'],['numbers','number'],['booleans','boolean']]){
+    const item=semanticSchema.properties[list].items;
+    assert.deepEqual(Object.keys(item.properties),['path',field]);assert.deepEqual(item.required,['path',field]);
+    assert.equal(item.properties.path.maxItems,'6');
+   }
+   assert(!JSON.stringify(semanticSchema).includes('"anyOf"'),'fixed v3 fields must not reintroduce union branch growth');
+   assert(body.systemInstruction.parts[0].text.includes('Follow the supplied response schema'));
+   assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_fields_v3'));
+   assert(!body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_paths_v2'));
    if(options.enforceSmallTransport){
-    assert(Buffer.byteLength(JSON.stringify(body.generationConfig.responseSchema))<2000);
-    assert.deepEqual(Object.keys(body.generationConfig.responseSchema.properties),['context_encoding','operation','confidence','nodes']);
-    assert(!body.systemInstruction.parts[0].text.includes('supply required neutral transport defaults'));
+    assert(Buffer.byteLength(JSON.stringify(semanticSchema))<6000);
+    assert.deepEqual(Object.keys(semanticSchema.properties),['context_encoding','operation','confidence','language','intent','topic','customer_correction','additive','transaction_state','payment_state','booking_state','fulfillment_state','requested_facts','explicit_negations','customer_facts','referents','ambiguity','entities','containers','strings','numbers','booleans']);
    }
    if(options.enforceSchemaBranchBudget){
-    const inspect=s=>{if(s.properties){const optional=Object.keys(s.properties).filter(k=>!s.required?.includes(k));if(optional.length>3)throw Error('isolated-provider-schema-branch-budget');Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);if(s.anyOf){assert.equal(s.anyOf.length,6);s.anyOf.forEach(inspect);}};
+    const inspect=s=>{if(s.properties){assert.deepEqual(s.required,Object.keys(s.properties),'v3 fixed objects have no optional field branches');Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);assert.equal(s.anyOf,undefined);};
     inspect(body.generationConfig.responseSchema);
    }
    if(mode==='400')return Response.json({error:{status:'INVALID_ARGUMENT',message:'response schema too complex; PRIVATE-SECRET user@example.invalid',details:[{fieldViolations:[{field:'generation_config.response_schema',description:'PRIVATE-SECRET'}]}]}},{status:400});
@@ -292,7 +299,7 @@ function fixture(text,options={}) {
    if(spec==='npm:@supabase/supabase-js@2.45.0'||spec==='https://esm.sh/@supabase/supabase-js@2.45.0')return {...sdk,createClient:(u,k,opts)=>sdk.createClient(u,k,{...opts,auth:{autoRefreshToken:false,persistSession:false},global:{fetch:network}})};
    throw Error('unapproved external import '+spec);
   };
-  new Function('require','module','exports','Deno','fetch','console',code)(require,module,module.exports,deno,network,{log:(...v)=>events.push(v),warn:(...v)=>events.push(v),error:(...v)=>events.push(v.map(x=>x instanceof Error?{name:x.name,message:x.message}:x))});
+  new Function('require','module','exports','Deno','fetch','console',code)(require,module,module.exports,deno,network,{log:(...v)=>events.push(v),info:(...v)=>events.push(v),warn:(...v)=>events.push(v),error:(...v)=>events.push(v.map(x=>x instanceof Error?{name:x.name,message:x.message}:x))});
   modules.set(file,module.exports);return module.exports;
  }
  load(path.join(root,'supabase/functions/generate-reply/index.ts'));
@@ -553,7 +560,7 @@ for(const alias of ['lifecycle','correction','negations'])test('prompt/decoder i
  const r=await f.load(path.join(root,'supabase/functions/_shared/commerce-semantic-interpreter.ts')).interpretCommerceSemantics({company_id:company,conversation_id:ticket,source_message_id:source,latest:'Please correct my requirements',persistent_state_summary:'{}'});
  assert.equal(r.frame,null);assert.equal(r.contract_rejection,'wire_delta_fields');assert(!JSON.stringify(r).includes('PRIVATE-SECRET'));
  const request=f.requests.find(x=>x.url.includes('aiplatform')).body.systemInstruction.parts[0].text;
- assert(request.includes('customer_correction'));assert(request.includes('semantic_paths_v2'));assert(request.includes('customer_facts'));assert(request.includes('flat typed tree'));assert(request.includes('nodes'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
+ assert(request.includes('customer_correction'));assert(request.includes('semantic_fields_v3'));assert(request.includes('customer_facts'));assert(request.includes('Fixed semantic fields are native JSON'));assert(request.includes('containers'));assert(request.includes('numbers'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
 });
 
 test('Hosted Frankie correction then same-ticket Summary retains latest canonical Memory and passes unchanged B2',async()=>{
@@ -753,8 +760,8 @@ for(const [business,latest,values] of [
  assert.equal(r.status,200,JSON.stringify(r));
  const requests=f.requests.filter(x=>x.url.endsWith(':generateContent')&&x.body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.'));
  assert.equal(requests.length,1);const config=requests[0].body.generationConfig;
- assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_paths_v2']);
- assert(config.responseSchema.properties.nodes.items.anyOf.every(b=>b.properties.path.maxItems==='6'));
+ assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_fields_v3']);
+ for(const list of ['containers','strings','numbers','booleans'])assert.equal(config.responseSchema.properties[list].items.properties.path.maxItems,'6');
  assert(!JSON.stringify(f.events).includes('canonical_entity_bounds'));assert(!f.requests.some(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered')));
  const memory=f.tables.conversation_memory_state.at(-1)?.memory;assert(memory,JSON.stringify({r,events:f.events.slice(-8)}));
  for(const [key,value] of Object.entries(values)){const fact=memory.current_customer_facts.find(x=>x.key===key);assert(fact,JSON.stringify(memory));assert.deepEqual(fact.value,value);assert.equal(fact.source_message_id,source);}
@@ -882,7 +889,10 @@ test('same-ticket ASK_FACT binds the antecedent in retrieval and the bounded gen
  const f=fixture('你頭先講嗰個計劃包括啲乜？',{originalPreview:true,fullChain:true,previous:seed.tables,history:[...seed.tables.messages].reverse(),source:uuid(880),originalRagResponse:candidates,answer:'這份資料列出空調機、洗衣機、雪櫃、電視機、電腦、列印機、掃描器及顯示器。',semantic:providerWire({intent:'other',topic:'features',requested_facts:['features']},'ASK_FACT')});
  await f.run();
  const retrieval=f.requests.find(x=>x.url.includes('context-search'));assert(retrieval,'fresh retrieval required');assert(JSON.stringify(retrieval.body).includes('四電一腦'),'resolved subject survives valid ASK_FACT');
- const generation=f.requests.find(x=>x.url.endsWith(':generateContent')&&!x.body.generationConfig.responseSchema);assert(generation,JSON.stringify({commits:f.commits,events:f.events.slice(-7)}));assert(generation.body.systemInstruction.parts[0].text.includes('RESOLVED_FACTUAL_FOLLOWUP'),'reference must survive bounded Memory envelope');
+ const generation=f.requests.find(x=>x.url.endsWith(':generateContent')&&!x.body.generationConfig.responseSchema);assert(generation,JSON.stringify({commits:f.commits,events:f.events.slice(-7)}));
+ const requestBlock=generation.body.systemInstruction.parts[0].text.split('[CURRENT_FACTUAL_REQUEST]\n')[1];assert(requestBlock,'reference must survive bounded Memory envelope');
+ const resolved=JSON.parse(requestBlock.split('\n')[0]);assert.equal(resolved.subject,'四電一腦');assert.deepEqual(resolved.requested_facts,['features']);
+ assert.equal(resolved.original_question,'你頭先講嗰個計劃包括啲乜?');assert.equal(resolved.resolved_question,'四電一腦 你頭先講嗰個計劃包括啲乜?');
  assert.equal(f.commits[0]?.metadata.citation_lineage.selected_document_id,sample.selected_documents[0].document_id);
  const dispatches=()=>f.requests.filter(x=>x.url.includes("context-search")||x.url.includes("aiplatform")).length;const before=dispatches();await f.run();assert.equal(f.commits.length,1);assert.equal(dispatches(),before);
 });
@@ -1178,4 +1188,240 @@ test('Director current guidance correction after declarative advice persists lat
  assert(memory.cancelled_or_superseded.some(x=>JSON.stringify(x.value).includes('browser_tabs_open_simultaneously')&&JSON.stringify(x.value).includes('20')),'superseded customer fact remains historical only');
  const commerce=f.tables.conversation_commerce_state[0].state;
  assert.deepEqual(commerce.customer_constraints.customer_reported_facts.usage_scenario.value,value);
+});
+
+// Task1C request resolution regressions. These are synthetic source records and
+// deliberately stale but structurally valid semantic proposals. They exercise
+// the complete handler, not a helper reimplementation or a Hosted replay.
+function task1cModelDocument({model='CW-SUL70BA',price=4680,stock=7,currentness='current',tenant='34',regions=['hong_kong'],publication='published',score=.97,id='resolved-model-document'}={}) {
+ const content=`商品型號: ${model}\n品牌: Fixture Home\n描述: 3/4匹窗口式冷氣\n功能: 製冷、送風及除濕\n銷售價: HK$${price.toLocaleString('en-US')}\n庫存: ${stock}`;
+ return {document_id:id,title:model,source_type:'Product',document_score:score,
+  authority:{tenant_id:tenant,publication_state:publication,currentness,entity_ids:[model],regions,version:'isolated-request-resolution-v1'},
+  evidence:[{document_id:id,chunk_id:id+'-full',chunk_type:'full_content',score,content}]};
+}
+function task1cRagDocuments(...documents) {return {success:true,context_found:true,selected_documents:documents,citations:[]};}
+const task1cSemanticFact=(subject,facets)=>({context_encoding:'semantic_fields_v3',operation:'ASK_FACT',confidence:.98,
+ language:'zh-TW',intent:'other',topic:subject,customer_correction:false,additive:false,
+ transaction_state:'unknown',payment_state:'unknown',booking_state:'unknown',fulfillment_state:'unknown',
+ requested_facts:facets,explicit_negations:[],customer_facts:[],referents:[],
+ ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+ entities:subject?[{name:subject,kind:'physical_product',confidence:.98,entity_ref:'',category_hint:null,sku:null,model:null,quantity:null,unit:null,
+  capabilities:{requires_delivery:false,supports_pickup:false,requires_installation:false,requires_booking:false,requires_quote:false,
+   requires_site_check:false,digital_fulfilment:false,recurring_billing:false,rental_return:false,customization:false}}]:[],
+ containers:[],strings:[],numbers:[],booleans:[]});
+function task1cObservedRequest(f,{subject,facets,exclude=[]}) {
+ const calls=f.requests.filter(r=>r.url.includes('context-search'));
+ assert.equal(calls.length,1,'one new visitor request must produce one scoped retrieval: '+JSON.stringify({
+  commits:f.commits.map(c=>({route:c.metadata.response_route,code:c.metadata.source_error_code,failure:c.metadata.execution_failure})),
+  failures:f.events.filter(event=>/error|fail|reject|exception/iu.test(JSON.stringify(event))),
+  stages:f.events.flat().filter(value=>typeof value==='string').slice(-8),
+  requests:f.requests.map(r=>new URL(r.url).pathname)}));
+ const query=calls[0].body.query;assert.equal(typeof query,'string');
+ let parsed=null;try{parsed=JSON.parse(query)}catch{}
+ if(parsed&&typeof parsed==='object'){
+  assert.equal(parsed.topic,subject,query);assert.deepEqual(parsed.requested_facts,facets,query);
+ }else{
+  const markers={price:/(?:幾錢|几钱|多少錢|多少钱|價錢|价钱|價格|价格|售價|售价|\bprice\b|\bcost\b|how much)/iu,
+   stock:/(?:有冇貨|有沒有貨|有没有货|庫存|库存|現貨|现货|\bstock\b|\binventory\b|\bavailability\b)/iu,
+   features:/(?:功能|特點|特点|\bfeatures?\b)/iu};
+  const observed=Object.keys(markers).filter(facet=>markers[facet].test(query));
+  assert.deepEqual(observed.sort(),[...facets].sort(),'retrieval changed the latest requested facet: '+query);
+ }
+ assert(query.includes(subject),query);
+ for(const phrase of exclude)assert(!query.includes(phrase),'obsolete subject/facet leaked into the RAG request: '+query);
+ return {query,parsed};
+}
+function task1cCommittedAnswer(f,{source,document='resolved-model-document',currentness='current'}) {
+ assert.equal(f.commits.length,1,JSON.stringify({commits:f.commits,events:f.events}));
+ const reply=f.commits[0],meta=reply.metadata;
+ assert.equal(meta.response_route,'canonical_kb_direct_answer',JSON.stringify({route:meta.response_route,failure:meta.execution_failure,gates:catalogueGateEvents(f),
+  scope:meta.kb_request_contract,trace:meta.current_grounding_target,grounding:f.events.filter(e=>/named_product_identity|grounding_selection|authority_reason/iu.test(JSON.stringify(e)))}));
+ assert.notEqual(meta.generation_success,false);assert.notEqual(meta.degraded,true);
+ assert.equal(meta.citation_lineage.selected_document_id,document);
+ assert.deepEqual(meta.citation_lineage.evidence_chunk_ids,[document+'-full']);
+ assert.equal(meta.reference_authority.provenance.currentness,currentness);
+ assert.equal(meta.b2_source_message_id,source);assert.equal(meta.b2_commit_source,'commit_ai_reply_tx');
+ assert.equal(meta.b2_expected_company_id,'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493');
+ const query=f.requests.find(r=>r.url.includes('context-search')).body.query,receipt=meta.kb_request_contract;
+ assert.equal(receipt?.version,'current-factual-request-1');assert.equal(receipt.source_message_id,source);
+ assert.equal(receipt.query_sha256,hash(query));assert.equal(receipt.query_char_count,query.length);
+ assert(!Object.hasOwn(receipt,'query')&&!Object.hasOwn(receipt,'question'),'safe receipt must not duplicate complete customer text');
+ const expectedGate=meta.kb_fact_proof?'B2_ALLOW_CURRENT_KB_SELLING_PRICE':'B2_ALLOW';
+ assert(catalogueGateEvents(f).some(e=>e.source_message_id===source&&e.gate_decision==='allow'&&e.gate_code===expectedGate&&e.commit_attempted===true),JSON.stringify(catalogueGateEvents(f)));
+ assert.equal(f.requests.filter(r=>r.url.endsWith(':generateContent')).length,1,'direct source renderer needs only the semantic model attempt');
+ return reply;
+}
+async function task1cAssertReplay(f) {
+ const rag=f.requests.filter(r=>r.url.includes('context-search')).length;
+ const models=f.requests.filter(r=>r.url.endsWith(':generateContent')).length;
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+ assert.equal(f.requests.filter(r=>r.url.includes('context-search')).length,rag);
+ assert.equal(f.requests.filter(r=>r.url.endsWith(':generateContent')).length,models);
+}
+
+for(const model of ['CW-SUL70BA','NX-482A'])test('Task1C resolved request full handler: explicit model price defeats stale feature proposal '+model,async()=>{
+ const source=uuid(model==='CW-SUL70BA'?3001:3002);
+ const f=fixture(`${model} 幾錢？`,{source,originalPreview:true,fullChain:true,
+  originalRagResponse:task1cRagDocuments(task1cModelDocument({model})),semantic:task1cSemanticFact(model,['features'])});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));
+ task1cObservedRequest(f,{subject:model,facets:['price'],exclude:['"features"','training','permission']});
+ const reply=task1cCommittedAnswer(f,{source});assert(reply.content.includes(model));assert.match(reply.content,/HK\$4,680/);
+ assert.equal(reply.metadata.answer_kind,'price');assert.equal(reply.metadata.kb_fact_proof?.value,4680);
+ assert.equal(reply.metadata.kb_fact_proof?.currency,'HKD');assert.equal(reply.metadata.kb_fact_proof?.model,model);
+ assert(!reply.content.includes('製冷、送風及除濕'),'previous feature intent replaced the price answer');
+ await task1cAssertReplay(f);
+});
+
+test('Task1C resolved request full handler: features then bare price then bare stock use new facets and fresh evidence',async()=>{
+ const first=fixture('CW-SUL70BA 有咩功能？',{source:uuid(3010),originalPreview:true,fullChain:true,
+  originalRagResponse:task1cRagDocuments(task1cModelDocument()),semantic:task1cSemanticFact('CW-SUL70BA',['features'])});
+ await first.run();task1cObservedRequest(first,{subject:'CW-SUL70BA',facets:['features']});
+ const initial=task1cCommittedAnswer(first,{source:uuid(3010)});assert.match(initial.content,/製冷|除濕/);
+ const price=fixture('幾錢？',{source:uuid(3011),originalPreview:true,fullChain:true,previous:first.tables,
+  history:first.tables.messages.slice().reverse(),originalRagResponse:task1cRagDocuments(task1cModelDocument({price:4980})),
+  semantic:task1cSemanticFact('CW-SUL70BA',['features'])});
+ await price.run();task1cObservedRequest(price,{subject:'CW-SUL70BA',facets:['price'],exclude:['"features"']});
+ const priceReply=task1cCommittedAnswer(price,{source:uuid(3011)});assert.match(priceReply.content,/HK\$4,980/);assert(!priceReply.content.includes('4,680'));
+ assert.equal(priceReply.metadata.kb_request_contract.resolution,'follow_up');assert.equal(priceReply.metadata.kb_request_contract.subject_source_message_id,uuid(3010));
+ assert.deepEqual(priceReply.metadata.kb_request_contract.requested_fact_classes,['price']);
+ const stock=fixture('有冇貨？',{source:uuid(3012),originalPreview:true,fullChain:true,previous:price.tables,
+  history:price.tables.messages.slice().reverse(),originalRagResponse:task1cRagDocuments(task1cModelDocument({price:4980,stock:3})),
+  semantic:task1cSemanticFact('CW-SUL70BA',['price'])});
+ await stock.run();task1cObservedRequest(stock,{subject:'CW-SUL70BA',facets:['stock'],exclude:['"price"','"features"']});
+ const stockReply=task1cCommittedAnswer(stock,{source:uuid(3012)});
+ assert.equal(stockReply.metadata.kb_request_contract.resolution,'follow_up');assert.equal(stockReply.metadata.kb_request_contract.subject_source_message_id,uuid(3010));
+ assert.deepEqual(stockReply.metadata.kb_request_contract.requested_fact_classes,['stock']);
+ assert.match(stockReply.content,/(?:庫存數量|库存数量|stock quantity)[:：]\s*3/iu);assert(!stockReply.content.includes('4,980'));
+ assert(stockReply.metadata.unresolved_fact_fields.includes('stock'),'recorded count must not establish live availability');
+ assert.equal(stockReply.metadata.kb_fact_proof,undefined);
+ assert(stockReply.metadata.recorded_kb_facts.some(v=>v.field==='stock_quantity'&&v.value===3&&v.currentness==='unverified'));
+ await task1cAssertReplay(stock);
+});
+
+for(const [question,subject,name,spu,sku,amount,id] of [
+ ['另外，轻量冲锋衣几钱？','轻量冲锋衣','轻量化户外冲锋衣','P002','P002-NV-XL',2100,3020],
+ ['How much is Harbor Summit Jacket?','Harbor Summit Jacket','Harbor Summit Jacket','HJ310','HJ310-NV-XL',1290,3021],
+])test('Task1C resolved request full handler: explicit new named product owns query and answer '+subject,async()=>{
+ const seed=catalogueRetainedSeed(subject===name?'Harbor Jacket':subject,name);
+ const catalogue=catalogueRagFixture({name,spu,sku,price:amount}).selected_documents[0];
+ catalogue.document_id='resolved-catalogue-document';catalogue.evidence[0].document_id=catalogue.document_id;catalogue.evidence[0].chunk_id=catalogue.document_id+'-full';
+ // Higher-ranked old product is deliberately first; retrieval order is not
+ // authority to reuse the old topic, price or feature facet.
+ const f=fixture(question,{...seed,source:uuid(id),originalPreview:true,fullChain:true,
+  originalRagResponse:task1cRagDocuments(task1cModelDocument({score:.99}),catalogue),semantic:task1cSemanticFact('CW-SUL70BA',['features'])});
+ const before=structuredClone(f.tables.conversation_commerce_state);
+ await f.run();task1cObservedRequest(f,{subject,facets:['price'],exclude:['CW-SUL70BA','"features"','training','permission']});
+ const reply=task1cCommittedAnswer(f,{source:uuid(id),document:'resolved-catalogue-document',currentness:'unknown'});
+ assert(reply.content.includes(name)&&reply.content.includes(sku));assert(reply.content.includes('CNY '+amount.toLocaleString('en-US')));
+ assert(!reply.content.includes('CW-SUL70BA')&&!reply.content.includes('4,680'));
+ assert(!reply.metadata.kb_fact_proof);assert.deepEqual(reply.metadata.authoritative_kb_facts,[]);
+ assert(reply.metadata.recorded_kb_facts.every(v=>v.document_id==='resolved-catalogue-document'&&v.chunk_id==='resolved-catalogue-document-full'&&v.currentness==='unverified'));
+ // The existing writer may advance row revision and customer-source recency
+ // after an explicit topic marker. That is not a new merchant/customer fact.
+ // Preserve every business value; authorize the answer against the real latest
+ // revision instead of claiming that this whole lookup performed zero writes.
+ const business=rows=>rows.map(row=>({...row.state,entities:row.state.entities.map(({provenance,...entity})=>entity)}));
+ assert.deepEqual(business(f.tables.conversation_commerce_state),business(before),'lookup must not rewrite retained customer requirements');
+ assert.equal(reply.metadata.b2_expected_revision,f.tables.conversation_commerce_state[0].revision);
+ await task1cAssertReplay(f);
+});
+
+test('Task1C resolved request full handler: same model with unknown currentness remains a recorded HKD price',async()=>{
+ const source=uuid(3030),f=fixture('CW-SUL70BA 幾錢？',{source,originalPreview:true,fullChain:true,
+  originalRagResponse:task1cRagDocuments(task1cModelDocument({currentness:'unknown'})),semantic:task1cSemanticFact('CW-SUL70BA',['price'])});
+ await f.run();task1cObservedRequest(f,{subject:'CW-SUL70BA',facets:['price']});
+ const reply=task1cCommittedAnswer(f,{source,currentness:'unknown'});assert.match(reply.content,/HK\$4,680/);
+ assert.equal(reply.metadata.answer_kind,'listed_price_unverified');assert(!reply.metadata.kb_fact_proof);
+ assert.match(reply.content,/未核實|未核实|unverified/iu);
+ assert(!reply.metadata.authoritative_kb_facts.some(v=>v.currentness_at_answer==='current'));
+});
+
+for(const [kind,changes] of [['foreign-tenant',{tenant:'99'}],['historical',{currentness:'historical'}],['wrong-subject',{model:'NX-482A'}]])test('Task1C resolved request full handler: current scope still rejects '+kind,async()=>{
+ const source=uuid(3040),f=fixture('CW-SUL70BA 幾錢？',{source,originalPreview:true,fullChain:true,
+  originalRagResponse:task1cRagDocuments(task1cModelDocument(changes)),semantic:task1cSemanticFact('CW-SUL70BA',['features'])});
+ await f.run();task1cObservedRequest(f,{subject:'CW-SUL70BA',facets:['price']});
+ assert(!f.commits.some(c=>/4,680/.test(c.content)),JSON.stringify(f.commits));
+ assert(!f.commits.some(c=>c.metadata.kb_fact_proof||c.metadata.citation_lineage?.selected_document_id==='resolved-model-document'));
+ assert(!f.requests.some(r=>r.url.endsWith(':generateContent')&&!r.body?.generationConfig?.responseSchema),'ineligible source reached draft generation');
+});
+
+for(const result of ['stale_authorized_revision','tenant_mismatch'])test('Task1C resolved request full handler: direct price preserves final CAS denial '+result,async()=>{
+ const f=fixture('CW-SUL70BA 幾錢？',{source:uuid(3050),originalPreview:true,fullChain:true,rpcResult:result,
+  originalRagResponse:task1cRagDocuments(task1cModelDocument()),semantic:task1cSemanticFact('CW-SUL70BA',['price'])});
+ await f.run();task1cObservedRequest(f,{subject:'CW-SUL70BA',facets:['price']});assert.equal(f.commits.length,0);
+ const attempts=f.requests.filter(r=>r.url.endsWith('/commit_ai_reply_tx'));
+ assert(attempts.length>0,'the guarded final commit must be attempted');
+ assert(attempts.every(r=>r.body.p_metadata.b2_source_message_id===uuid(3050)&&r.body.p_metadata.b2_expected_company_id==='3d6e17b5-ec79-4f75-aa7f-eaa824ff8493'));
+});
+
+for(const resolution of ['supported','unsupported'])test('Task1C resolved request full handler: genuine v3 proposal reaches complete-question verifier '+resolution,async()=>{
+ const subject='Harbor Care Premium',source=uuid(3060),answer='Harbor Care Premium includes inspection and collection.';
+ const semantic=task1cSemanticFact(subject,['included service scope']);semantic.entities[0].kind='service';
+ const document={document_id:'resolved-service-document',title:subject,source_type:'Service',document_score:.95,
+  authority:{tenant_id:'34',publication_state:'published',currentness:'unknown'},
+  evidence:[{document_id:'resolved-service-document',chunk_id:'resolved-service-full',chunk_type:'full_content',score:.95,content:answer}]};
+ const question='Could you explain Harbor Care Premium?';
+ const f=fixture(question,{source,originalPreview:true,fullChain:true,semantic,originalRagResponse:task1cRagDocuments(document),answer,verifierResolution:resolution});
+ await f.run();const retrieval=f.requests.filter(r=>r.url.includes('context-search'));assert.equal(retrieval.length,1);
+ assert(retrieval[0].body.query.includes(subject));
+ const generation=f.requests.find(r=>r.url.endsWith(':generateContent')&&!r.body.generationConfig.responseSchema);
+ assert(generation,'current request must reach governed generation');
+ assert(generation.body.systemInstruction.parts[0].text.includes('[CURRENT_FACTUAL_REQUEST]'));
+ const verifier=f.requests.find(r=>r.body?.generationConfig?.responseSchema?.properties?.grounded);
+ assert(verifier,'complete-question verifier is required');assert(JSON.stringify(verifier.body).includes(question));
+ assert(JSON.stringify(verifier.body).includes('COMPLETE current request'));
+ assert.equal(f.requests.filter(r=>r.url.endsWith(':generateContent')).length,3,'semantic, generation and verifier only');
+ if(resolution==='supported'){
+  assert.equal(f.commits[0]?.content,answer);assert.equal(f.commits[0].metadata.citation_lineage.selected_document_id,document.document_id);
+  assert.equal(f.commits[0].metadata.kb_request_contract.query_sha256,hash(retrieval[0].body.query));
+ }else{
+  assert(!f.commits.some(c=>c.content===answer));assert.equal(f.commits[0]?.metadata.source_error_code,'LLM_GROUNDING_REJECTED');
+ }
+});
+
+test('Task1C resolved request full handler: oversized mixed request preserves conditions and never falls back to a shorter paid query',async()=>{
+ const seed=catalogueRetainedSeed();
+ const retained=seed.previous.conversation_commerce_state[0].state.entities.find(e=>e.attributes.product_name==='轻量冲锋衣');
+ retained.constraints=Object.fromEntries(Array.from({length:6},(_,i)=>['requirement_'+i,('customer-condition-'+i+' ').repeat(13).trim()]));
+ const before=structuredClone(retained.constraints);
+ const question='Explain how to compare jacket materials and check the price of 轻量冲锋衣.';
+ const f=fixture(question,{...seed,source:uuid(3070),originalPreview:true,fullChain:true,
+  semantic:task1cSemanticFact('轻量冲锋衣',['price']),originalRagResponse:catalogueRagFixture()});
+ await f.run();assert.equal(f.commits.length,1,JSON.stringify({commits:f.commits,events:f.events}));
+ assert(f.commits[0].metadata.safe_assumptions?.includes('query_context_limit'),JSON.stringify(f.commits[0].metadata));
+ assert.equal(f.commits[0].metadata.knowledge_state,'tool_failure');
+ assert.equal(f.requests.filter(r=>r.url.includes('context-search')).length,0,'must not drop the conditions and query a shorter subset');
+ assert.equal(f.requests.filter(r=>r.url.endsWith(':generateContent')).length,1,'bounded failure cannot dispatch generation or verifier');
+ assert(!f.commits[0].metadata.citation_lineage&&!f.commits[0].metadata.kb_fact_proof);
+ const after=f.tables.conversation_commerce_state[0].state.entities.find(e=>e.attributes.product_name==='轻量冲锋衣');
+ assert.deepEqual(after.constraints,before,'oversized lookup erased retained customer requirements');
+});
+
+test('Task1C resolved request full handler: canonical referent beyond recent history reaches generation and verifier with the same subject',async()=>{
+ const seed=catalogueRetainedSeed(),model='CW-SUL70BA',oldSource=uuid(3080),source=uuid(3081);
+ const retained=seed.previous.conversation_commerce_state[0].state.entities[0];
+ retained.model=model;retained.attributes.product_name=model;retained.provenance.source_message_id=oldSource;
+ const semantic=task1cSemanticFact(null,['energy label']);semantic.referents=[{ref:retained.entity_id,source:'persistent_state',confidence:.98}];
+ const document=task1cModelDocument({id:'resolved-old-subject-current-evidence'});
+ document.evidence[0].content=`商品型號: ${model}\n能源資料: 請參閱官方能源標籤；現有記錄未列出能源級別。`;
+ const question='佢嘅能源資料係點？',answer=`${model} 的能源資料請參閱官方能源標籤；現有記錄未列出能源級別。`;
+ const f=fixture(question,{...seed,history:[],source,originalPreview:true,fullChain:true,semantic,
+  originalRagResponse:task1cRagDocuments(document),answer});
+ await f.run();assert.equal(f.commits[0]?.content,answer,JSON.stringify({commits:f.commits,events:f.events.slice(-6)}));
+ assert(!f.tables.messages.some(row=>row.id===oldSource),'original customer turn is deliberately outside recent history');
+ const rag=f.requests.filter(r=>r.url.includes('context-search'));assert.equal(rag.length,1);assert(rag[0].body.query.includes(model));
+ const generation=f.requests.find(r=>r.url.endsWith(':generateContent')&&!r.body.generationConfig.responseSchema);assert(generation);
+ const system=generation.body.systemInstruction.parts[0].text;
+ assert(system.includes('[CURRENT_FACTUAL_REQUEST]')&&system.includes('"subject":"'+model+'"'));
+ const verifier=f.requests.find(r=>r.body?.generationConfig?.responseSchema?.properties?.grounded);assert(verifier);
+ const verifierText=verifier.body.contents.flatMap(c=>c.parts).map(p=>p.text??'').join('\n');
+ const scope=JSON.parse(verifierText.split('\n').find(line=>line.startsWith('{"question":')));
+ assert.equal(scope.followup,null,'a missing historical message must not create a fabricated prior-answer anchor');
+ assert.deepEqual(scope.resolved_request,{original_question:question.normalize('NFKC'),resolved_question:model+' '+question.normalize('NFKC'),
+  subject:model,requested_facts:['energy label'],resolution:'follow_up'});
+ assert.equal(f.commits[0].metadata.citation_lineage.selected_document_id,document.document_id);
+ assert.equal(f.commits[0].metadata.kb_request_contract.subject_source_message_id,oldSource);
+ assert.equal(f.commits[0].metadata.kb_request_contract.query_sha256,hash(rag[0].body.query));
+ assert.equal(f.requests.filter(r=>r.url.endsWith(':generateContent')).length,3);
+ await task1cAssertReplay(f);
 });

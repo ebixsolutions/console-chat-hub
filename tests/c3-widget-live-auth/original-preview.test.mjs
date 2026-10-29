@@ -159,10 +159,10 @@ for(const account of ORIGINAL_PREVIEW_ACCOUNTS)test(account.email+': Origin revo
 // Every credential/runtime/evidence here is an isolated fixture. No model, KB
 // server or Production is contacted; these are not Hosted acceptance receipts.
 const fixtureDigest=async s=>Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))).toString('hex');
-async function embeddingFixture(fault='none') {
+async function embeddingFixture(fault='none',documentFixture={}) {
  setup(ORIGINAL_PREVIEW_ACCOUNTS[0]);f.user.id='3bdf936e-b543-41d8-9fff-fa020a85f3f6';f.rows.company_membership[0].user_id=f.user.id;
  const {c}=await start(),secret='isolated-existing-kb-key-not-production';
- const content='Isolated published subscription policy; not merchant data.';
+ const content=documentFixture.content??'Isolated published subscription policy; not merchant data.';
  const endpoint='https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search';
  const a={protocol:'original-preview-query-embedding-v1',actor:f.user.id,company:c.company_id,channel:c.channel_config_id,tenant:'34',endpoint,
   runtime_sha256:await fixtureDigest('ISOLATED_RUNTIME_NOT_LIVE'),deployment_evidence_sha256:await fixtureDigest('ISOLATED_DEPLOYMENT_RECEIPT'),embedding_config_sha256:await fixtureDigest('ISOLATED_EMBEDDING_SETTINGS'),lineage_evidence_sha256:await fixtureDigest('ISOLATED_LINEAGE_RECEIPT'),
@@ -192,13 +192,13 @@ async function embeddingFixture(fault='none') {
  f.env.KB_SINGAPORE_TENANT_API_KEYS_JSON=JSON.stringify({'34':secret});
  const request=JSON.stringify({query:'What is the published subscription policy?',company_id:34,candidate_top_k:10,max_documents:5,max_summary_chunks:1,max_full_content_chunks:3,score_threshold:0.05});
  const meta={companyId:c.company_id,conversationId:c.id,operationId:'kb:'+crypto.randomUUID(),provider:'singapore-kb',purpose:'kb_embedding',slot:'context-search',attempt:fault==='attempt'?2:1,request};
- let posts=0;
+ let posts=0;const queries=[];
  const upstream=async(url,init)=>{
-  assert.equal(String(url),endpoint,'existing API only; no invented accounting endpoint');assert.equal(init.method,'POST');assert.equal(init.redirect,'error');posts++;
+  assert.equal(String(url),endpoint,'existing API only; no invented accounting endpoint');assert.equal(init.method,'POST');assert.equal(init.redirect,'error');posts++;queries.push(JSON.parse(init.body).query);
   if(fault==='unknown')throw new TypeError('isolated transport unknown');
   if(fault==='revoke-response')delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
   if(fault==='no-match')return Response.json({success:true,context_found:false,selected_documents:[],citations:[]});
-  const d={document_id:'fixture-published-policy',title:'Fixture policy',source_type:'policy',document_score:0.99,metadata:{regions:['HK'],entity_ids:['subscription-fixture']},evidence:[{chunk_id:'fixture-chunk-2',chunk_type:'full_content',content:fault==='changed-content'?'Changed unreviewed content':content,score:0.99}]};
+  const d={document_id:'fixture-published-policy',title:documentFixture.title??'Fixture policy',source_type:documentFixture.source_type??'policy',document_score:0.99,metadata:{regions:['HK'],entity_ids:documentFixture.entity_ids??['subscription-fixture']},evidence:[{chunk_id:'fixture-chunk-2',chunk_type:'full_content',content:fault==='changed-content'?'Changed unreviewed content':content,score:0.99}]};
   if(fault==='foreign-response')d.tenant_id='35';
   if(fault==='old-version')d.version_id='fixture-version-1';
   if(fault==='draft')d.authority={publication_state:'draft'};
@@ -212,7 +212,7 @@ async function embeddingFixture(fault='none') {
   if(fault==='revoke-prepare')delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;
   return headers;
  };
- return {c,secret,endpoint,request,meta,upstream,prepare,posts:()=>posts};
+ return {c,secret,endpoint,request,meta,upstream,prepare,posts:()=>posts,queries};
 }
 
 for(const fault of ['none','no-match','no-grant','BO-revoked','human-control','assigned-agent','actor','mapping','attempt','signature','expired','future','runtime','lineage-digest','retries','generation','ingestion','mutable-runtime','mutable-lineage','foreign-attestation','proof-bypass','revoke-prepare','revoke-response','foreign-response','old-version','draft','changed-content','unreviewed-chunk','chunk-type','unknown'])test('Frankie separately authorized existing query embedding, closed controls and current lineage: '+fault,async()=>{
@@ -273,8 +273,8 @@ async function inboxHandler(slug){
 }
 const knowledgeHandler=await inboxHandler('kb-search-proxy'),policyHandler=await inboxHandler('agent-assist');
 const priorInboxClient=globalThis.__c3InboxClient;test.after(()=>{if(priorInboxClient===undefined)delete globalThis.__c3InboxClient;else globalThis.__c3InboxClient=priorInboxClient;});
-async function setupInbox(fault='none'){
- const x=await embeddingFixture(['signature','expired','foreign-response','changed-content','no-match'].includes(fault)?fault:'none');
+async function setupInbox(fault='none',documentFixture={}){
+ const x=await embeddingFixture(['signature','expired','foreign-response','changed-content','no-match'].includes(fault)?fault:'none',documentFixture);
  f.env.SUPABASE_SERVICE_ROLE_KEY=f.env.SUPABASE_SECRET_KEY;f.env.LLM_MODEL_ASSIST='gemini-2.5-flash';f.env.GOOGLE_SERVICE_ACCOUNT_JSON='{}';
  f.rows.user_roles=[{user_id:f.user.id,role:'admin'}];f.rows.agent_profile=[{id:crypto.randomUUID(),user_id:f.user.id,role:'admin',status:'active',display_name:'Isolated actor'}];f.rows.upstream_call_log=[];
  const binding=JSON.parse(f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION).bindings[0];
@@ -303,8 +303,9 @@ async function setupInbox(fault='none'){
   let answer={queries:[]};if(text.includes('Text to check:'))answer=fault==='unsupported-policy'?{status:'compliant',summary:'Every cancellation receives an unconditional full refund.',issues:[]}:fault==='invalid-policy'?{status:'violation',summary:'invalid fixture',issues:[]}:{status:'warning',summary:'Isolated policy assessment',issues:[{excerpt:'fixture',policy_label:'Evidence 1',severity:'warning'}]};
   return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(answer)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
  };
- const request=async(slug,content='Please assess my subscription cancellation draft.')=>{
-  const body=slug==='knowledge'?{query:'published subscription policy',top_k:3,conversation_id:x.c.id}:{tool_type:'check_policy',conversation_id:x.c.id,content,context_mode:'conversation'};
+ const request=async(slug,content='Please assess my subscription cancellation draft.',contextMode='conversation')=>{
+  const assistTool=['suggest_reply','knowledge_helper'].includes(slug)?slug:'check_policy';
+  const body=slug==='knowledge'?{query:'published subscription policy',top_k:3,conversation_id:x.c.id}:{tool_type:assistTool,conversation_id:x.c.id,content,context_mode:contextMode};
   const r=await(slug==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};
  };
  return {...x,send:request,model:()=>model,prompts};
@@ -322,6 +323,48 @@ for(const fault of ['none','BO-revoked','human-control','assigned-agent','unassi
  else if(fault==='no-match'){assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.result.status,'insufficient_evidence');assert.equal(x.model(),0);}
  else {assert(r.status>=400,JSON.stringify(r));assert.notEqual(r.data.result?.status,'compliant');}
 });
+
+// Synthetic product content is signed through the same existing attestation
+// fixture above. These are actual local handler paths, never live product facts.
+const inboxProductFixture={title:'Unseen instrument kit',source_type:'Product',entity_ids:['ITEM-Q9'],
+ content:'spu_code: INSTRUMENT\nspu_name: Unseen instrument kit\nsku_code: ITEM-Q9\nprice: 125.0 CNY\nstock: 0\ndescription: Isolated fixture only.'};
+for(const [facet,content,tool] of [['price','幾錢？','suggest_reply'],['stock','有冇貨？','knowledge_helper']]) {
+ for(const mode of ['conversation','manual'])test(`actual agent-assist ${mode} ${facet}: ${mode==='conversation'?'one fresh subject-bound query':'no inherited subject or paid dispatch'}`,async()=>{
+  const x=await setupInbox('none',inboxProductFixture);
+  const prior=crypto.randomUUID(),source=crypto.randomUUID();
+  // This DB fixture returns rows in the same newest-first order requested by
+  // the handler. Prior assistant prices deliberately cannot become evidence.
+  f.rows.messages=[
+   {id:source,conversation_id:x.c.id,role:'visitor',content,is_recalled:false,created_at:'2026-10-29T08:02:00Z',metadata:{}},
+   {id:crypto.randomUUID(),conversation_id:x.c.id,role:'assistant',content:'Earlier unverified price 999 CNY and stock 99.',is_recalled:false,created_at:'2026-10-29T08:01:00Z',metadata:{}},
+   {id:prior,conversation_id:x.c.id,role:'visitor',content:'ITEM-Q9 功能',is_recalled:false,created_at:'2026-10-29T08:00:00Z',metadata:{}},
+  ];
+  const before=JSON.stringify(f.rows.messages),marker=JSON.stringify(x.c.metadata_source);
+  const r=await x.send(tool,content,mode);
+  if(mode==='manual'){
+   assert.equal(r.status,422,JSON.stringify(r));assert.equal(r.data.requires_clarification,true);
+   assert.equal(x.posts(),0);assert.equal(x.model(),0);assert.equal(x.queries.length,0);
+  }else{
+   assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.success,true);assert.equal(r.data.knowledge_grounded,true);
+   assert.equal(x.posts(),1);assert.equal(x.model(),0,'source-record drafts need no invented provider answer');
+   assert.equal(x.queries.length,1);assert(x.queries[0].includes('ITEM-Q9'));
+   assert(x.queries[0].includes(content.normalize('NFKC')),JSON.stringify(x.queries));
+   assert(!/Earlier|999|99\./u.test(x.queries[0]),'old assistant facts leaked into the current query');
+   assert.equal(r.data.kb_request_contract.resolution,'follow_up');assert.equal(r.data.kb_request_contract.subject_source_message_id,prior);
+   assert.deepEqual(r.data.kb_request_contract.requested_fact_classes,[facet]);
+   assert.equal(r.data.kb_request_contract.query_sha256,await fixtureDigest(x.queries[0]));
+   assert.deepEqual(r.data.citation_lineage.evidence_chunk_ids,['fixture-chunk-2']);
+   const reply=tool==='suggest_reply'?r.data.result.suggestions[0].content:r.data.result.source_recorded_reply;
+   const facts=tool==='suggest_reply'?r.data.recorded_kb_facts:r.data.result.recorded_product_facts;
+   assert(reply.includes('ITEM-Q9'));assert(facts.some(f=>f.field==='stock_quantity'&&f.value===0));
+   if(facet==='price'){assert(reply.includes('CNY 125'));assert(facts.some(f=>f.field==='price_amount'&&f.value===125));}
+   else {assert(!reply.includes('125'));assert(!facts.some(f=>f.field==='price_amount'));}
+   assert(facts.every(f=>f.currentness==='unverified'),'source record became a current quote/inventory guarantee');
+  }
+  assert.equal(JSON.stringify(f.rows.messages),before,'assist must not submit a visitor/assistant message');
+  assert.equal(JSON.stringify(x.c.metadata_source),marker);assert.equal(f.rpc.length,0);
+ });
+}
 for(const fault of ['none','role-revoked','membership-revoked','channel-revoked','forged','foreign-conversation','operation'])test('opaque Inbox context rechecks revocation and cannot be serialized/spoofed: '+fault,async()=>{
  const x=await setupInbox();const token=await authenticatedInboxAuthority(f.db,f.user.id,x.c.company_id,x.c.id,'knowledge');
  if(fault==='role-revoked')f.rows.user_roles=[];

@@ -68,13 +68,19 @@ export function normalizeDecisionContext(value: unknown): Record<string, Decisio
   return visit(value, 0) as Record<string, DecisionValue>;
 }
 
-/** Finite schema: leaves and at most two additional container levels. */
-export function decisionContextSchema(depth = 2): Record<string, unknown> {
-  const scalar = { type: ["string", "number", "boolean", "null"] };
-  if (!depth) return scalar;
+/** Same depth convention as visit(): a container may exist at the limit, but
+ * cannot contain a child beyond it. Empty objects/arrays therefore remain
+ * meaningful values at the boundary, just like false, zero and null. */
+export function decisionContextSchema(depth = DECISION_CONTEXT_LIMITS.depth - 1): Record<string, unknown> {
+  const scalar = { type: ["string", "number", "boolean", "null"], maxLength: DECISION_CONTEXT_LIMITS.text };
+  if (!depth) return { anyOf: [scalar,
+    { type: "array", maxItems: 0, items: scalar },
+    { type: "object", maxProperties: 0, additionalProperties: false },
+  ] };
   const child = decisionContextSchema(depth - 1);
-  return { anyOf: [scalar, { type: "array", items: child, maxItems: 12 },
-    { type: "object", additionalProperties: child }] };
+  return { anyOf: [scalar, { type: "array", items: child, maxItems: DECISION_CONTEXT_LIMITS.items },
+    { type: "object", maxProperties: DECISION_CONTEXT_LIMITS.fields,
+      propertyNames: { minLength: 1, maxLength: 80 }, additionalProperties: child }] };
 }
 
 /** Latest explicit value wins; absent fields retain active customer requirements. */

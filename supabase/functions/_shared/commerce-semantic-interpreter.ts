@@ -4,7 +4,7 @@ import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { requirementMutationText } from "./commerce-state-authority.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
-  COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V2,
+  COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V3,
   COMMERCE_SEMANTIC_PROVIDER_SCHEMA,
   type SemanticContractRejection,
   type SemanticContractDiagnostic,
@@ -45,15 +45,13 @@ const SYSTEM = `You are a multilingual commerce semantic interpreter.
 Your job is ONLY to understand the customer's commerce meaning and return one JSON object following the supplied typed transport schema, which the server decodes into the canonical commerce semantic frame.
 Do not answer the customer. Do not invent product facts, prices, availability, policies, T&C, delivery rules or company facts.
 Do not assume an industry taxonomy. Interpret unfamiliar products/services compositionally from the customer's words and context.
-Wire contract: context_encoding=semantic_paths_v2, operation, confidence and nodes are required. nodes represents only THIS turn's changes, references, questions and ambiguity as a flat typed tree. Omit unchanged/default fields from the tree. The server supplies the canonical version, empty arrays, nulls and unknown lifecycle defaults.
+Wire contract: context_encoding=semantic_fields_v3. Follow the supplied native fixed-field schema and property order. Include only THIS turn's changed/referenced entities, newly asserted customer facts, questions and ambiguity. Required neutral scalar/list values are transport defaults, not new customer evidence. Only open customer contexts use the four typed path arrays.
 Lifecycle scope: delaying a lookup, quotation search, comparison, or choice of model is not cancelling or deferring the product/service requirement. An undecided model is not a deferred item. Use CANCEL_ITEM/REMOVE_ITEM/DEFER only when the customer explicitly cancels/removes/pauses the item or purchase/service itself; preserve real item cancellation and deferral. A request for general guidance without external research keeps the stated need current and does not create a quote, order or payment state.
-Optional semantic fields inside the typed tree: language, intent, topic, entities, referents, customer_facts, customer_correction, additive, explicit_negations, requested_facts, transaction_state, payment_state, booking_state, fulfillment_state, ambiguity. Newly supplied or changed customer_facts require UPDATE_ITEM rather than NO_STATE_CHANGE; read-only recap must not re-emit unchanged facts.
-customer_facts contains at most 16 named {key,value} records represented only by typed tree paths for newly asserted CUSTOMER background/needs, not merchant evidence. Keep meaningful field names, quantities with units, false, zero, null/unknown, exclusions and nested constraints. Reuse the exact retained key from persistent current_customer_facts when correcting the same field; never emit an old value as a second current fact under a synonym. Never include a fact solely recalled from prior context. A background catalogue count/team/market/interface is a customer fact, not an item to buy or cancel. Control/handoff/recap instructions are not facts or entities.
-An entity needs name, kind, confidence; include entity_ref, category_hint, sku, model, quantity, unit, attributes, constraints and capabilities only when actually supplied/needed. capabilities contains ONLY requested true flags, never merchant support. Omission is not a customer denial; retain explicit false in attributes/constraints/customer_facts.
-Allowed operation: ADD_ITEM, SET_QUANTITY, UPDATE_ITEM, REMOVE_ITEM, CANCEL_ITEM, RESERVE, REQUEST_QUOTE, ASK_FACT, ASK_CALCULATION, CONFIRM, DEFER, NO_STATE_CHANGE.
-Allowed kind: physical_product, digital_good, service, rental, subscription, ticket, custom_item, b2b_product, unknown.
-Lifecycle values use none/unknown unless exact customer evidence: transaction draft/pending_confirmation/confirmed/completed/cancelled; payment pending_quote/pending_payment/paid/failed/refunded/partially_refunded; booking requested/pending/booked/completed/cancelled; fulfillment requested/pending/scheduled/in_progress/fulfilled/cancelled.
-ambiguity when needed: {is_ambiguous:true,reasons:[short reason],clarification_question:short question}. Do not repeat complete history/state, unchanged entities or resolved fields. Never make up provenance; the server binds the actual latest visitor message.
+Newly supplied or changed customer_facts require UPDATE_ITEM rather than NO_STATE_CHANGE; read-only recap must not re-emit unchanged facts.
+customer_facts contains at most 16 named keys for newly asserted CUSTOMER background/needs, not merchant evidence; attach each actual value with paths under customer_facts/index/value. Keep meaningful field names, quantities with units, false, zero, null/unknown, exclusions and nested constraints. Reuse the exact retained key from persistent current_customer_facts when correcting the same field; never emit an old value as a second current fact under a synonym. Never include a fact solely recalled from prior context. A background catalogue count/team/market/interface is a customer fact, not an item to buy or cancel. Control/handoff/recap instructions are not facts or entities.
+An entity needs name, kind and confidence; required nullable fields use null when unspecified, entity_ref uses an empty string when unresolved. Add attributes/constraints paths only for actually supplied/needed context. Set capability flags true ONLY for requested capabilities, never merchant support; false defaults do not mean customer denial. Retain explicit customer-authored false in attributes/constraints/customer_facts.
+Use only the operation/kind/lifecycle values constrained by the response schema. Unchanged lifecycle fields are unknown; customer evidence never grants merchant authority.
+When a meaning remains unresolved, set ambiguity.is_ambiguous=true with concise reasons and a clarification_question. Otherwise use false, an empty reasons list and a null clarification_question. Do not repeat complete history/state, unchanged entities or resolved fields. Never make up provenance; the server binds the actual latest visitor message.
 Core rules:
 1. Resolve ellipsis, pronouns and short follow-ups from recent customer context and persistent state only when confidence is sufficient. If two or more plausible referents/meanings remain, set ambiguity.is_ambiguous=true, explain concise reasons, provide a clarification_question, use NO_STATE_CHANGE and do not propose a mutation.
 2. Keep semantics language-neutral even though language records the customer's input language.
@@ -317,8 +315,8 @@ export async function interpretCommerceSemantics(
   try { result = await callModel({
     purpose: "evaluation",
     system: SYSTEM +
-      COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V2 +
-      "\nFor corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraint values encoded in constraints and customer_correction=true. Output budget 4096 tokens; emit only current-turn facts/entities as typed tree nodes, never neutral placeholder facts or copied state. Do not include reasoning.",
+      COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V3 +
+      "\nFor corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraint values encoded in constraints and customer_correction=true. Output budget 4096 tokens; emit only current-turn facts/entities, never placeholder customer facts or copied state. Do not include reasoning.",
     user: buildUser(input, persistentStateSummary),
     maxTokens: 4096,
     operationId: `commerce-semantic:${input.source_message_id}`,
@@ -327,8 +325,8 @@ export async function interpretCommerceSemantics(
     tag: "commerce-semantic-interpreter",
     responseFormat: "json",
     responseSchema: COMMERCE_SEMANTIC_PROVIDER_SCHEMA,
-    // The provider sees one shallow typed-node grammar, not the expanded
-    // Commerce frame. Strict reconstruction + original canonical still win.
+    // Native fixed fields constrain semantic types/enums. Open contexts use
+    // nonrecursive homogeneous node arrays; canonical authority still wins.
     thinkingBudget: 0,
     signal: input.signal,
   }); } catch (error) {

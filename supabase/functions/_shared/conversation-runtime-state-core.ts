@@ -1,5 +1,6 @@
 import { classifyCanonicalConversationTurn, type ConversationOperation, type EvidenceAuthority } from "./conversation-semantic-contract.ts";
 import { exactProductIdentifiers } from "./natural-customer-response.ts";
+import { hasCurrentFactualReadHint, resolveCurrentFactualRequest } from "./current-factual-request.ts";
 import { customerBusinessText, isCurrentRequirementsRecap } from "./commerce-state-authority.ts";
 
 export type RuntimeHistoryRow = { id?: string; role?: string; content?: string | null; created_at?: string | null; metadata?: unknown };
@@ -326,7 +327,7 @@ function workflow5PostSecurityRecoveryResponse(latestInput: string, lang: Runtim
   const latest = clean(latestInput);
   // A service-recovery phrase is presentation context, not authority to suppress a
   // concrete published-fact request in the same turn. Let the normal KB path answer it.
-  if (retrievalTargetHint(latest)) return null;
+  if (hasCurrentFactualReadHint(latest)) return null;
   const normalServiceRecovery = /(?:再(?:講|说|說)|再給|再给|give|show).{0,24}(?:合法|正常|lawful|normal).{0,24}(?:平台功能|平台服务|平台服務|platform feature|service).{0,30}(?:恢復|恢复|recover)|(?:證明|证明|prove).{0,24}(?:服務|服务|service).{0,24}(?:恢復|恢复|recover)/i.test(latest);
   if (normalServiceRecovery) {
     if (lang === "en") return "Normal service has resumed. For example, you can ask about CRM tags; I’ll only describe capabilities or limits supported by published information.";
@@ -648,151 +649,39 @@ export function resolveConversationMemoryResponse(latestInput: string, newestFir
   return null;
 }
 
-function retrievalTargetHint(text: string): string | null {
-  const t = clean(text);
-  if (!t) return null;
-  if (/\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b/i.test(t) || /(?:型號|型号|model)/i.test(t) || /(?:呢部|這部|这部|this one).{0,24}(?:幾錢|几钱|價錢|价钱|價格|价格|price|噪音|db|保養|保修|warranty)/i.test(t) || /(?:噪音|db|保養|保修|warranty)/i.test(t)) {
-    return "Exact published product record: model identity, price, specifications, noise level, warranty and included/excluded product facts.";
-  }
-  if (/(?:送貨|送货|delivery|shipping|九龍|九龙|澳門|澳门|macau|地址).{0,40}(?:範圍|范围|安排|政策|policy|改|修改|change|fee|費|费)?/i.test(t)) {
-    return "Published delivery policy lookup terms: service area, Kowloon, Macau handling, delivery-address change, pre-dispatch requirements, identity verification, human handling, system confirmation, delivery conditions and fees.";
-  }
-  if (/(?:退款|退貨|退货|refund|return|刮痕|損壞|损坏|damage|百分比|比例)/i.test(t)) {
-    return "Published terms and policy: returns, refunds, damaged goods, evidence requirements, fixed-percentage rules and case-by-case handling.";
-  }
-  if (/(?:smoke\s*test\s*(?:basic|growth|pro)|growth|basic|pro\s*plan|sku|staff|app|push|crm|會員等級|会员等级|ai\s*seo|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年)/i.test(t)) {
-    return "Published product/plan record: exact price, billing cadence, SKU/staff limits, App, Push, CRM, member tiers and AI SEO inclusions.";
-  }
-  return null;
-}
-
-function factualFollowupNeedsSubject(text: string): boolean {
-  const t = clean(text);
-  if (!t) return false;
-  if (/^(?:直接|就|咁|那|再|同埋|另外|and|what about|then|so)/i.test(t) && t.length <= 120) return true;
-  return t.length <= 80 && /(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|staff|sku|app|push|crm|會員等級|会员等级|噪音|db|保養|保修|warranty|百分比|比例|included|包括|有冇|有没有|係咪|是否)/i.test(t);
-}
-
-function recentFactualSubjects(previousCustomerTurns: string[], max = 5): string[] {
-  const strong = /(?:\b[A-Z]{2,}[A-Z0-9]*[- ]?\d{2,}[A-Z0-9-]*\b|Smoke\s*Test\s*(?:Basic|Growth|Pro)|\bGrowth\b|\bBasic\b|\bPro\b)/i;
-  const out: string[] = [];
-  for (const turn of previousCustomerTurns) {
-    if (!strong.test(turn)) continue;
-    const value = turn.slice(0, 260);
-    if (!out.includes(value)) out.push(value);
-    if (out.length >= max) break;
-  }
-  if (!out.length && previousCustomerTurns[0]) out.push(previousCustomerTurns[0].slice(0, 260));
-  return out;
-}
-
-function recentFactualSubject(previousCustomerTurns: string[]): string | null {
-  return recentFactualSubjects(previousCustomerTurns, 1)[0] ?? null;
-}
-
-function pluralFactualReference(text: string): boolean {
-  return /(?:[兩两二三四五六七八九十幾几]\s*(?:款|部|個|个)|呢幾款|呢几款|這幾款|这几款|these\s+(?:models?|products?)|those\s+(?:models?|products?)|all\s+(?:models?|products?))/i.test(clean(text));
-}
-
 export function buildCanonicalRetrievalQuery(latestInput: string, newestFirst: RuntimeHistoryRow[]): CanonicalRetrievalQuery {
   const latest = clean(latestInput);
   const state = projectConversationRuntimeState(newestFirst);
   const semantic = classifyCanonicalConversationTurn(latest, newestFirst);
-  if (!latest) return { query: "", mode: "standalone", latest: "", context_turns: [], state };
-  const targetHint = retrievalTargetHint(latest);
-  const hasExplicitCurrentTarget =
-    /\b(?:smoke\s+test\s+)?(?:basic|growth|pro)\b|\b(?:product|model|sku)\s*[:#-]?\s*[a-z0-9][a-z0-9._/-]*|(?:香港|hong\s*kong|\bhk\b|台灣|台湾|taiwan|澳門|澳门|macau|macao|新加坡|singapore)/i.test(latest);
-  const currentTargetBoundary = hasExplicitCurrentTarget &&
-    (semantic.topic_action === "SWITCH" || semantic.topic_action === "CORRECT");
-  if (currentTargetBoundary) {
-    return {
-      query: [
-        `Current request: ${latest}`,
-        ...(targetHint ? [`Retrieval target: ${targetHint}`] : []),
-        "Authority boundary: use only evidence compatible with the current target; all incompatible prior targets are superseded for this turn.",
-      ].join("\n").slice(0, 1600),
-      mode: "standalone",
-      latest,
-      context_turns: [],
-      state: { ...state, jurisdiction: detectExplicitJurisdiction(latest) ?? state.jurisdiction },
-    };
-  }
-  const earlyPrevious = newestFirst
-    .filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
-    .map((row) => clean(row.content))
-    .filter((x) => x && x !== latest && x !== "__THINKING__");
-  const earlyPublishedFactQuestion = /[?？]|(?:幾多|多少|幾錢|几钱|價錢|价钱|價格|价格|price|monthly|yearly|每月|每年|limit|上限|included|包括|有冇|有没有|係咪|是否|噪音|db|保養|保修|warranty|百分比|比例)|^(?:直接|再講|再说|tell me)/i.test(latest);
-  if (targetHint && earlyPublishedFactQuestion) {
-    const subjects = pluralFactualReference(latest) ? recentFactualSubjects(earlyPrevious) : [recentFactualSubject(earlyPrevious)].filter((x): x is string => Boolean(x));
-    const query = [
-      `Current request: ${latest}`,
-      `Retrieval target: ${targetHint}`,
-      ...(subjects.length ? [`Inherited factual subjects from customer context: ${subjects.join(" / ")}`] : []),
-    ].join("\n").slice(0, 1800);
-    return {
-      query,
-      mode: subjects.length ? "contextual" : "standalone",
-      latest,
-      context_turns: subjects.length ? earlyPrevious.slice(0, 6) : [],
-      state,
-    };
-  }
-
-  if (semantic.operation === "CONVERSATION_MEMORY" && !targetHint) {
+  if (!latest) return {query: "", mode: "standalone", latest: "", context_turns: [], state};
+  const factual = resolveCurrentFactualRequest({question: latestInput, history: newestFirst});
+  if (factual.applicable) return {
+    query: factual.query ?? latest,
+    mode: factual.resolution === "follow_up" ? "contextual" : "standalone",
+    latest,
+    context_turns: factual.context_turns,
+    state: {...state, jurisdiction: detectExplicitJurisdiction(latest) ?? state.jurisdiction},
+  };
+  // Keep existing conversational-memory behavior. Factual retrieval above no
+  // longer expands a price/stock question into unrelated plan/product fields.
+  if (semantic.operation === "CONVERSATION_MEMORY") {
     const parts = [`Conversation-memory request: ${latest}`];
     if (state.first_customer_turn) parts.push(`First customer turn: ${state.first_customer_turn}`);
     if (state.prior_recommendations.length) parts.push(`Relevant prior recommendations: ${state.prior_recommendations.join(" / ")}`);
-    return { query: parts.join("\n").slice(0, 1200), mode: "memory", latest, context_turns: [], state };
+    return {query: parts.join("\n").slice(0, 1200), mode: "memory", latest, context_turns: [], state};
   }
-
-  const explicitJurisdiction = detectExplicitJurisdiction(latest);
-  const previous = newestFirst.filter((row) => CUSTOMER.has(String(row.role ?? "").toLowerCase())).map((row) => clean(row.content)).filter((x) => x && x !== latest && x !== "__THINKING__");
-  const referencesCurrentRequirements = /(?:基於|基于|根據|根据|按|依照|based on|according to).{0,30}(?:最新|目前|現在|现在|current).{0,20}(?:需求|要求|條件|条件|requirements?)/i.test(latest);
-  const followupNeedsSubject = factualFollowupNeedsSubject(latest);
-  const inheritedSubject = followupNeedsSubject ? recentFactualSubject(previous) : null;
-  const needsContext = semantic.needs_history || referencesCurrentRequirements || followupNeedsSubject;
-
-  const explicitBoundary = Boolean(explicitJurisdiction) && semantic.operation !== "RETURN_TO_PRIOR_TOPIC" && semantic.operation !== "CORRECTION" && !followupNeedsSubject;
-  if (referencesCurrentRequirements) {
-    const requirementLines = currentRequirementLines(state.current_requirements, state.language);
-    return {
-      query: [
-        `Current request: ${latest}`,
-        targetHint ? `Retrieval target: ${targetHint}` : "Retrieval target: published plan limits, included features, admin/staff seats, and market eligibility only.",
-        ...(inheritedSubject ? [`Inherited factual subject from customer context: ${inheritedSubject}`] : []),
-        ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),
-      ].join("\n").slice(0, 1600),
-      mode: "contextual",
-      latest,
-      context_turns: [],
-      state,
-    };
-  }
-
-  if (!needsContext || explicitBoundary) {
-    const standaloneQuery = targetHint
-      ? `Current request: ${latest}\nRetrieval target: ${targetHint}`
-      : latest;
-    return { query: standaloneQuery.slice(0, 1600), mode: "standalone", latest, context_turns: [], state: { ...state, jurisdiction: explicitJurisdiction ?? state.jurisdiction } };
-  }
-
-  const contextTurns = previous.filter((x) => !MEMORY.test(x) && !/^(不要猜|唔好估|不要估|do not guess|don.t guess|不要真人|不需要真人)/i.test(x)).slice(0, 5);
-  if (state.first_customer_turn && !contextTurns.includes(state.first_customer_turn) && /(回收|政策|規則|规则|安排|official|policy|recycling)/i.test(latest)) contextTurns.push(state.first_customer_turn);
-  if (!contextTurns.length) return { query: latest, mode: "standalone", latest, context_turns: [], state };
-  const requirementLines = currentRequirementLines(state.current_requirements, state.language);
-  return {
-    query: [
-      `Current request: ${latest}`,
-      ...(targetHint ? [`Retrieval target: ${targetHint}`] : []),
-      ...(inheritedSubject ? [`Inherited factual subject from customer context: ${inheritedSubject}`] : []),
-      ...(requirementLines.length ? [`Current customer requirement snapshot (latest wins): ${requirementLines.join(" / ")}`] : []),
-      `Relevant prior customer context: ${contextTurns.join(" / ")}`,
-    ].join("\n").slice(0, 1600),
-    mode: "contextual",
-    latest,
-    context_turns: contextTurns,
-    state,
-  };
+  const jurisdiction = detectExplicitJurisdiction(latest);
+  const boundary = semantic.topic_action === "SWITCH" || semantic.topic_action === "CORRECT" || Boolean(jurisdiction) && semantic.operation !== "RETURN_TO_PRIOR_TOPIC";
+  if (boundary || !semantic.needs_history) return {query: latest, mode: "standalone", latest, context_turns: [],
+    state: {...state, jurisdiction: jurisdiction ?? state.jurisdiction}};
+  const previous = newestFirst.filter(row => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
+    .map(row => clean(row.content)).filter(text => text && text !== latest && text !== "__THINKING__");
+  // Unknown follow-up grammar keeps only the nearest customer turn. It cannot
+  // skip a new topic to inject an old model or a fixed SaaS feature vocabulary.
+  const context = previous[0];
+  if (!context || MEMORY.test(context)) return {query: latest, mode: "standalone", latest, context_turns: [], state};
+  return {query: `Current request: ${latest}\nRelevant prior customer context: ${context}`,
+    mode: "contextual", latest, context_turns: [context], state};
 }
 
 export function buildCanonicalAssistRetrievalQuery(assistanceInput: string, newestFirst: RuntimeHistoryRow[]): CanonicalRetrievalQuery {
@@ -828,5 +717,5 @@ export function workflow5ShortTopicHint(text: string): string | null {
   if (["crm", "客戶管理", "客户管理"].includes(compact)) return "CRM";
   if (["push", "推送", "推播", "通知", "推送通知"].includes(compact)) return "Push notifications";
   if (["app", "手機app", "手机app", "手機應用", "手机应用", "應用程式", "应用程序"].includes(compact)) return "App support";
-  return retrievalTargetHint(text);
+  return hasCurrentFactualReadHint(text) ? "Current merchant factual request" : null;
 }

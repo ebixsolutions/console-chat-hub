@@ -36,6 +36,28 @@ function resolve(doc: KBDocumentCandidate) {
     requirePublished:true,expectedTenantId:"34",expectedEntityIds:[],expectedTopicIds:[],requiresCurrentKb:true});
   return {selection,result:resolveCanonicalKbDirectAnswer({request,selection,language:"zh-TW"})};
 }
+for (const question of ["另外，轻量冲锋衣几钱？", "Also, what is the price of 轻量冲锋衣?"]) {
+  Deno.test(`Task1C topic marker keeps the same product identity through selection and answering: ${question}`, async () => {
+    const doc = await bindRow(`商品名稱: ${product}\n銷售價: 599\n幣別: CNY`);
+    const selection = selectCanonicalGrounding([doc], {requestText:question,currentTurnText:question,
+      expectedSubject:product,requireSubjectSupport:true,minScore:.45,requirePublished:true,expectedTenantId:"34",requiresCurrentKb:true});
+    const result = resolveCanonicalKbDirectAnswer({request:question,selection,language:"zh-TW"});
+    assert(selection.ok && selection.document?.document_id === documentId, "topic marker became part of product identity");
+    assert(result?.kind === "listed_price_unverified" && result.reply.includes("CNY 599"), "selected full-content amount was lost");
+    assert(!result.price_fact && result.reply.includes("未核實係現價"), "source record became a current quote");
+  });
+}
+Deno.test("Task1C explicit color and size fields preserve variant authority through the answer", async () => {
+  const doc = await bindRow("name: Harbor field pack\ncolor: navy\nsize: XL\nprice: HK$199\nstock: 3");
+  for (const [color, expected] of [["navy", true], ["red", false]] as const) {
+    const question = `Harbor field pack color: ${color} size: XL price and stock?`;
+    const selection = selectCanonicalGrounding([doc], {requestText:question,currentTurnText:question,
+      expectedSubject:"Harbor field pack",requireSubjectSupport:true,minScore:.45,requirePublished:true,expectedTenantId:"34",requiresCurrentKb:true});
+    const result = resolveCanonicalKbDirectAnswer({request:question,selection,language:"en"});
+    assert(Boolean(result) === expected, "variant qualification was dropped or treated as part of the name");
+    if (expected) assert(result!.reply.includes("199") && result!.reply.includes("3"), "source price or stock lost");
+  }
+});
 for (const key of ["商品型號","商品型号","產品型號","产品型号","名稱","名称","name","title","product_name","Product-Name","productName","商品名稱","商品名称"]) {
   Deno.test(`Task1C imported record uses source identity column ${key}, not Row 4 title`, async () => {
     const {selection,result} = resolve(await bindRow(`${key}: ${product}\n價格: 599.50\n幣別: HKD\n顏色: 海軍藍`));

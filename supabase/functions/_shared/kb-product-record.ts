@@ -206,10 +206,19 @@ export function catalogueFactRequest(request: string): CatalogueRequest | null {
   if(!price&&!stock&&!specification)return null;
   const upper=normalizeCatalogueCode(text);
   const codes=[...new Set((upper.match(/\b(?:[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+|[A-Z]{1,8}\d{2,}[A-Z0-9]*)\b/gu)??[]).filter(code=>/\d/u.test(code)))];
-  const size=/\b(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|[2-9]XL)\b/u.exec(upper)?.[1]??null;
-  const color=/(?:顏色|颜色|colou?r)\s*[:=]\s*([^\s,，?？;；]{1,20})/iu.exec(text)?.[1]??
+  const sizeField=/(?:尺碼|尺码|size)\s*[:=]\s*(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|[2-9]XL)\b/iu.exec(text);
+  const colorField=/(?:顏色|颜色|colou?r)\s*[:=]\s*([^\s,，?？;；]{1,20})/iu.exec(text);
+  const size=sizeField?.[1]?.toUpperCase()??/\b(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|[2-9]XL)\b/u.exec(upper)?.[1]??null;
+  const color=colorField?.[1]??
     /(?:^|[\s,，])([\p{Script=Han}]{1,5}色)(?=$|[\s,，?？])/u.exec(text)?.[1]??null;
-  let label=text.replace(/^(?:(?:請問|请问|想問|想问|我想知道|我想知|幫我查|帮我查|請查|请查)\s*)+/u,"")
+  // Conversational topic markers and explicit variant field names locate the
+  // request; they are not part of the merchant's product name. Keep the source
+  // question unchanged for request verification and preserve variant checks.
+  let label=text.replace(/^(?:(?:另外|改問|改问|轉去|转去|轉睇|转看|回到|返回|講返|讲回|其實係|其实是|改成|改返)[，,:：\s]*|(?:also[, ]+|actually[, ]+(?:i (?:mean|meant)\s+)?|i (?:mean|meant)\s+|switch(?:ing)? to\s+|mov(?:e|ing) to\s+|back to\s+|return to\s+|what about\s+))+/iu,"")
+    .replace(/^(?:(?:請問|请问|想問|想问|我想知道|我想知|幫我查|帮我查|請查|请查)\s*)+/u,"");
+  if(sizeField)label=label.replace(sizeField[0]," ");
+  if(colorField)label=label.replace(colorField[0]," ");
+  label=label
     .replace(/^(?:how much (?:is|for|does) (?:the )?|what(?:'s| is) the (?:price|cost|stock|inventory|availability) (?:of|for) (?:the )?|(?:price|stock|inventory) (?:of|for) (?:the )?)/iu,"")
     .replace(/(?:嘅|的)?(?:售價|售价|價錢|价钱|價格|价格|幾錢|几钱|多少錢|多少钱|庫存|库存|現貨|现货|規格|规格|有冇貨|有沒有貨|有没有货|price|cost|stock|inventory|availability|in stock|available|specs?)(?:係幾多|是多少|有幾多|几多|幾多|多少|how many|please)?/giu," ")
     .replace(/^(?:is|are|do you have)\s+(?:the\s+)?/iu,"")
