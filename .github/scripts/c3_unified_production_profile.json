@@ -1277,7 +1277,7 @@
     "supabase/functions/_shared/canonical-kb-direct-answer.ts": "7b3567cde9cbf1634e865411ba073230d51b5dc33a93352d27b46bc5bc9212e8",
     "supabase/functions/widget-poll-messages/index.ts": "615eb9ad8d06867eacf5f8ababc4b8d9dda06feb3dbdf05c2dc24f7f47005022",
     "tests/task1-director/event-driven-widget.test.mjs": "c2cf604c1e1b4139182ac4f943446f69de11cae1550cf1aaf3496065e75f47a5",
-    "tests/task1-director/source-chain.test.mjs": "7ef0f0666fa573f5efbdbc3519594134f2054b5cdd24473396d47a2168b38781",
+    "tests/task1-director/source-chain.test.mjs": "c0e58f14e41855ece8ffaf1fc21cd22bffa00f2acb903bd1a9623cc6afb7662a",
     "src/components/console/OrdinaryWidgetPreview.tsx": "020deb69d8e38bead36e34a63b872f562c459794086fb7b75b6264877ff8279b",
     "src/lib/public-widget-preview-asset.ts": "6ddebcac5eda712b8289ddbf8712ea6717a6617854003820894d3199f1465992",
     "src/routes/_authenticated/console.widget-preview.tsx": "effbbe791ce21685ffc7f54de0ca07d291f195d694a9db70c30a5dce3b2ac19b",
