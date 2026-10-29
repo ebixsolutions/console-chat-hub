@@ -96,8 +96,8 @@ test('hosted C3 routing preserves guidance through actual generator and planner 
   assert.match(generate,/_customerGuidance = _customerRequestDecision.kind === "guidance"/);
   assert.match(generate,/_g1SkipKB = _pr5GreetingOrTrivial \|\| Boolean\(_priorGroundedTransform\) \|\| _customerGuidance/);
   assert.match(planner,/const resolvedMerchantRead = input\.factual_request\?\.applicable === true &&\s*!input\.factual_request\.needs_subject_clarification;/);
-  assert.match(planner,/const semanticMerchantRead = requestDecision\.kind!=="guidance" &&\s*\(requiresSemanticKnowledge\(input\.semantic_frame\) \|\| resolvedMerchantRead\);/,
-    'guidance stays outside both semantic and resolved factual KB reads');
+  assert.match(planner,/const semanticMerchantRead = semanticDemandContract \? resolvedMerchantRead : requestDecision\.kind!=="guidance" &&\s*\(requiresSemanticKnowledge\(input\.semantic_frame\) \|\| resolvedMerchantRead\);/,
+    'canonical demands own merchant scope; the legacy guidance fallback remains outside KB reads');
 });
 
 test('source-bound mixed ASK_FACT commits only current customer numeric and string fields via Commerce reducer',()=>{
@@ -352,7 +352,7 @@ test('Task1C catalogue source answers share safe consumer wiring and real fresh-
  const handler=task1SourceRead('supabase/functions/generate-reply/index.ts','utf8');
  const assist=task1SourceRead('supabase/functions/agent-assist/index.ts','utf8');
  assert.match(handler,/resolveCatalogueVariantFollowup\(_h1LastMsg/);
- assert.match(handler,/_currentFactualRequest = resolveCurrentFactualRequest\(\{\s*question: _catalogueFollowup\?\.request \?\? _h1LastMsg,/,
+ assert.match(handler,/_currentFactualRequest = resolveCurrentFactualRequest\(\{\s*question: _semanticRequestQuestion,/,
    'source-bound catalogue variants enter the same current request resolver');
  assert.match(handler,/const userQuery = \(_currentFactualRequest\?\.applicable\s*\? _currentFactualRequest\.query\s*: _catalogueFollowup\?\.request \|\| _c3ServicePlan\.kb_query \|\| _productKbContract\?\.query \|\| _semanticRetrieval\.query\) \?\? "";/,
    'the current resolved question owns retrieval; catalogue and planner remain fallback paths');

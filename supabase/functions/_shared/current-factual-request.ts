@@ -8,11 +8,31 @@ import {
 import { catalogueFactRequest } from "./kb-product-record.ts";
 import {
   isCurrentRequirementsRecap, isPersonalOrderStatusRequest,
-  resolveCustomerRequestDecision, withoutExcludedLookups, type CustomerRequestDecision,
+  applyCustomerRequestDecision, resolveCustomerRequestDecision, withoutExcludedLookups, type CustomerRequestDecision,
 } from "./commerce-state-authority.ts";
-import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
+import type { CommerceSemanticAmbiguity, CommerceSemanticDemand, CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
-import { DecisionContextLimitError, mergeDecisionContext, normalizeDecisionContext } from "./bounded-decision-context.ts";
+import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { DecisionContextLimitError, mergeDecisionContext, normalizeDecisionContext, type DecisionValue } from "./bounded-decision-context.ts";
+
+export type FactualDemandSourceType = "product" | "policy" | "transaction" | "general" | "unknown";
+export interface CurrentFactualDemand {
+  id: string;
+  question: string;
+  source_quote: string;
+  subjects: string[];
+  subject_source_message_ids: string[];
+  source_type: FactualDemandSourceType;
+  requested_facts: string[];
+  constraints: Record<string, DecisionValue>;
+  customer_correction: boolean;
+  explicit_negations: string[];
+  ambiguity: CommerceSemanticAmbiguity;
+}
+export interface FactualRequestMissingEvidence {
+  demand_id: string;
+  reason: "live_transaction_unavailable" | "subject_unresolved" | "semantic_ambiguity" | "source_quote_unbound";
+}
 
 /** A read target, not merchant evidence, transaction authority or a state delta.
  * History must already be bounded to the caller's source, ticket and tenant.
@@ -20,6 +40,9 @@ import { DecisionContextLimitError, mergeDecisionContext, normalizeDecisionConte
  * missing subject. No prior answer's price, stock or policy is copied here. */
 export interface CurrentFactualRequest {
   version: "current-factual-request-1";
+  source_message_id: string | null;
+  original_question: string;
+  interpretation_source: "semantic_demands" | "legacy_compatibility";
   applicable: boolean;
   question: string;
   merchant_request: string | null;
@@ -30,6 +53,12 @@ export interface CurrentFactualRequest {
   answer_request: string | null;
   resolution: "explicit" | "follow_up" | "unresolved" | "none";
   subject_source_message_id: string | null;
+  subject_source_message_ids: string[];
+  demands: CurrentFactualDemand[];
+  kb_required: boolean;
+  transaction_required: boolean;
+  unresolved_demand_ids: string[];
+  missing_evidence: FactualRequestMissingEvidence[];
   topic_changed: boolean;
   context_turns: string[];
   needs_subject_clarification: boolean;
@@ -40,9 +69,11 @@ export type FactualRequestHistoryRow = {
 };
 export interface ResolveCurrentFactualRequestInput {
   question: string;
+  source_message_id?: string | null;
   history?: FactualRequestHistoryRow[];
   semantic?: CommerceSemanticFrame | null;
   commerce?: ConversationCommerceState | null;
+  memory?: CanonicalConversationMemory | null;
   request_decision?: CustomerRequestDecision;
 }
 
@@ -150,12 +181,172 @@ function locateSubjects(question: string, hints: string[]): LocatedSubject {
   return {subjects: [], reference: null};
 }
 
+type SubjectBinding = {subject: string; source_message_id: string | null; customer_text: string | null; current: boolean};
+const clearAmbiguity = (): CommerceSemanticAmbiguity => ({is_ambiguous: false, reasons: [], clarification_question: null});
+function explicitlyNegatesSubject(text: string, subject: string): boolean {
+  const escaped = subject.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(`(?:\\bnot\\s+|唔係\\s*|不是\\s*|並非\\s*|并非\\s*)${escaped}(?![a-z0-9_-])`, "iu").test(text);
+}
+
+/** A model may propose a referent, but only a customer's actual words bind it.
+ * Recovered rows have already passed the caller's ticket/tenant/source bound.
+ * Retained entities and Memory anchors supply aliases/IDs, never substitute
+ * for the original customer text or carry merchant facts into this contract. */
+function bindSemanticSubject(ref: string, input: ResolveCurrentFactualRequestInput): SubjectBinding | null {
+  const frame = trustedFrame(input.semantic);
+  const aliases = unique([
+    ref,
+    ...(frame?.entities ?? []).filter(entity => entity.confidence >= .62 &&
+      [entity.entity_ref, entity.name, entity.model].some(name => norm(name) === norm(ref)))
+      .flatMap(entity => [entity.model ?? "", entity.name]),
+    ...(input.commerce?.entities ?? []).filter(entity => entityNames(entity).some(name => norm(name) === norm(ref)))
+      .flatMap(entityNames),
+  ]).filter(validSubject).sort((a, b) => b.length - a.length);
+  const current = literalFactualSubject(input.question, aliases);
+  if (current && explicitlyNegatesSubject(input.question, current)) return null;
+  if (validSubject(current)) return {subject: current, source_message_id: input.source_message_id ?? null,
+    customer_text: input.question, current: true};
+  const semanticRef = frame?.referents.find(candidate => norm(candidate.ref) === norm(ref));
+  if (semanticRef?.source === "current_turn" || semanticRef?.source === "unknown") return null;
+  const inactive = new Set((input.commerce?.entities ?? []).filter(entity => INACTIVE.has(entity.status)).flatMap(entityNames).map(norm));
+  if (aliases.some(alias => inactive.has(norm(alias)))) return null;
+  for (const row of input.history ?? []) {
+    if (!CUSTOMER.has(String(row.role ?? "").toLowerCase())) continue;
+    const text = clean(row.content);
+    if (!text || text === clean(input.question) || row.id && row.id === input.source_message_id || CONTROL_ONLY.test(text)) continue;
+    const name = literalFactualSubject(text, aliases);
+    if (!validSubject(name)) continue;
+    // Only an applicable correction/cancellation can invalidate this named
+    // historical reference. An unrelated product or lifecycle turn is not a
+    // global history barrier. The semantic demand owns whether a historical
+    // subject is intended; this function proves it using actual customer text.
+    if (LIFECYCLE_BOUNDARY.test(text) && !/(?:policy|政策|\bif\b|如果|唔好取消|不要取消|do not cancel|don't cancel)/iu.test(text)) return null;
+    if (explicitlyNegatesSubject(text, name)) return null;
+    return {subject: name, source_message_id: row.id ?? null, customer_text: text, current: false};
+  }
+  return null;
+}
+
+function proposedReferences(frame: CommerceSemanticFrame | null): string[] {
+  if (!frame) return [];
+  const refs = frame.referents.filter(ref => ref.confidence >= .62 && ref.source !== "unknown").map(ref => ref.ref);
+  return refs.length ? unique(refs) : unique(frame.entities.filter(entity => entity.confidence >= .62)
+    .map(entity => entity.model ?? entity.name).filter(validSubject));
+}
+
+function subjectConstraints(subjects: string[], input: ResolveCurrentFactualRequestInput): Record<string, DecisionValue> {
+  let result: Record<string, DecisionValue> = {};
+  for (const entity of input.commerce?.entities ?? []) {
+    if (INACTIVE.has(entity.status) || entity.provenance.source_type !== "customer" || !entity.provenance.source_message_id ||
+      !entityNames(entity).some(name => subjects.some(subject => norm(name) === norm(subject)))) continue;
+    const source = (input.history ?? []).find(row => row.id === entity.provenance.source_message_id && CUSTOMER.has(String(row.role ?? "").toLowerCase()));
+    if (!source || !subjects.some(subject => literalFactualSubject(source.content ?? "", [subject]))) continue;
+    result = mergeDecisionContext(result, entity.constraints);
+  }
+  return result;
+}
+
+function isKbDemand(demand: CurrentFactualDemand): boolean {
+  return ["product", "policy", "unknown"].includes(demand.source_type);
+}
+
+/** Structured semantic demands own scope. This layer validates their source
+ * quotes/references and preserves every demand; it does not classify them a
+ * second time using product words or give any demand evidence authority. */
+function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, proposed: CommerceSemanticDemand[]): CurrentFactualRequest {
+  const question = clean(input.question), frame = input.semantic!;
+  const missing: FactualRequestMissingEvidence[] = [];
+  const contexts: string[] = [];
+  const bindings: SubjectBinding[] = [];
+  const demands = proposed.map((demand, index): CurrentFactualDemand => {
+    const id = `demand-${index + 1}`;
+    const sourceQuote = clean(demand.source_quote);
+    const quoteBound = !!sourceQuote && norm(question).includes(norm(sourceQuote));
+    const ambiguity: CommerceSemanticAmbiguity = {
+      is_ambiguous: demand.ambiguity.is_ambiguous,
+      reasons: [...demand.ambiguity.reasons], clarification_question: demand.ambiguity.clarification_question,
+    };
+    if (!quoteBound) {
+      ambiguity.is_ambiguous = true; ambiguity.reasons.push("source_quote_unbound");
+      missing.push({demand_id: id, reason: "source_quote_unbound"});
+    }
+    const refs = demand.subject_refs.length ? demand.subject_refs : demand.source_type === "product"
+      ? proposedReferences(trustedFrame(frame)) : [];
+    const resolved = quoteBound && !demand.ambiguity.is_ambiguous
+      ? refs.map(ref => bindSemanticSubject(ref, input)) : [];
+    const located = resolved.filter((binding): binding is SubjectBinding => binding !== null);
+    // Product/category discovery may intentionally have no specific item.
+    // Missing-reference ambiguity belongs to the semantic demand, not to a
+    // new rule that every product read must name a SKU before searching.
+    const unresolved = refs.length > located.length;
+    if (quoteBound && unresolved && !demand.ambiguity.is_ambiguous) {
+      ambiguity.is_ambiguous = true; ambiguity.reasons.push("subject_not_bound_to_customer_source");
+      missing.push({demand_id: id, reason: "subject_unresolved"});
+    }
+    if (demand.ambiguity.is_ambiguous) missing.push({demand_id: id, reason: "semantic_ambiguity"});
+    if (quoteBound && demand.source_type === "transaction") missing.push({demand_id: id, reason: "live_transaction_unavailable"});
+    bindings.push(...located);
+    contexts.push(...located.filter(binding => !binding.current && binding.customer_text).map(binding => clean(binding.customer_text)));
+    const subjects = unique(located.map(binding => binding.subject));
+    return {
+      id, question: clean(demand.question), source_quote: sourceQuote, subjects,
+      subject_source_message_ids: unique(located.map(binding => binding.source_message_id ?? "")),
+      source_type: demand.source_type, requested_facts: unique(demand.requested_facts),
+      constraints: mergeDecisionContext(subjectConstraints(subjects, input), demand.constraints),
+      customer_correction: demand.customer_correction, explicit_negations: [...demand.explicit_negations], ambiguity,
+    };
+  });
+  const boundDemands = demands.filter(demand => !missing.some(item => item.demand_id === demand.id && item.reason === "source_quote_unbound"));
+  const kbDemands = boundDemands.filter(isKbDemand);
+  const subjects = unique(kbDemands.flatMap(demand => demand.subjects));
+  const allSourceIds = unique(demands.flatMap(demand => demand.subject_source_message_ids));
+  const currentSubjects = bindings.filter(binding => binding.current);
+  const priorSubjects = bindings.filter(binding => !binding.current);
+  const needsSubject = kbDemands.length > 0 && kbDemands.every(demand => demand.ambiguity.is_ambiguous);
+  // Preserve the entire original request for answer generation/verification;
+  // only the retrieval projection excludes guidance and private transactions.
+  const resolvedContext = unique(priorSubjects.map(binding => binding.subject));
+  const answerRequest = kbDemands.length
+    ? [question, resolvedContext.length ? `[Resolved subjects: ${resolvedContext.join("; ")}]` : null].filter(Boolean).join("\n") : null;
+  const request: CurrentFactualRequest = {
+    version: "current-factual-request-1", source_message_id: input.source_message_id ?? null,
+    original_question: input.question, interpretation_source: "semantic_demands",
+    applicable: kbDemands.length > 0, question, merchant_request: kbDemands.map(demand => demand.source_quote).join("; ") || null,
+    subject: subjects.length === 1 ? subjects[0] : null, subjects,
+    requested_facts: unique(kbDemands.flatMap(demand => demand.requested_facts)), query: null, answer_request: answerRequest,
+    resolution: subjects.length ? currentSubjects.length ? "explicit" : "follow_up" : needsSubject ? "unresolved" : "none",
+    subject_source_message_id: priorSubjects.length === 1 ? priorSubjects[0].source_message_id : currentSubjects.length === 1 ? currentSubjects[0].source_message_id : null,
+    subject_source_message_ids: allSourceIds, demands,
+    kb_required: kbDemands.length > 0, transaction_required: boundDemands.some(demand => demand.source_type === "transaction"),
+    unresolved_demand_ids: unique(missing.map(item => item.demand_id)), missing_evidence: missing,
+    topic_changed: TOPIC_BOUNDARY.test(question) || frame.customer_correction,
+    context_turns: unique(contexts), needs_subject_clarification: needsSubject,
+  };
+  if (request.applicable) request.query = serializeCurrentFactualQuery(input, request);
+  return request;
+}
+
 /** Shared legacy serializer. It retains typed, bounded customer requirements;
  * a resolved current subject narrows state matching instead of appending every
  * retained entity or an unrelated historical topic. */
 export function serializeCurrentFactualQuery(
   input: ResolveCurrentFactualRequestInput, request: CurrentFactualRequest, forceContext = false,
 ): string {
+  if (request.interpretation_source === "semantic_demands" && request.applicable) {
+    const demands = request.demands.filter(demand => isKbDemand(demand) &&
+      !request.missing_evidence.some(missing => missing.demand_id === demand.id && missing.reason === "source_quote_unbound"));
+    // Keep the complete request as the answer contract, while the retrieval
+    // projection contains only KB needs. No transaction identifier/history or
+    // declined general-guidance clause is appended merely to fill a query.
+    const query = JSON.stringify({questions: demands.map(demand => ({
+      question: demand.source_quote, subjects: demand.subjects,
+      requested_facts: demand.requested_facts, source_type: demand.source_type,
+      ...(Object.keys(demand.constraints).length ? {constraints: demand.constraints} : {}),
+      ...(demand.explicit_negations.length ? {explicit_negations: demand.explicit_negations} : {}),
+    }))});
+    if (query.length > 1000) throw new DecisionContextLimitError();
+    return query;
+  }
   if (request.needs_subject_clarification && !forceContext) {
     const query = request.merchant_request ?? request.question;
     if (query.length > 1000) throw new DecisionContextLimitError();
@@ -219,16 +410,19 @@ export function serializeCurrentFactualQuery(
   return query;
 }
 
-export function resolveCurrentFactualRequest(input: ResolveCurrentFactualRequestInput): CurrentFactualRequest {
+function resolveLegacyCurrentFactualRequest(input: ResolveCurrentFactualRequestInput): CurrentFactualRequest {
   const question = clean(input.question), history = input.history ?? [];
   const rows = semanticRows(history), semantic = trustedFrame(input.semantic);
   const decision = input.request_decision ?? resolveCustomerRequestDecision(question, input.semantic ?? null,
     rows.map(row => ({...row, role: row.role ?? "", content: row.content ?? ""})));
   const turn = classifyCanonicalConversationTurn(question, rows);
   const topicChanged = TOPIC_BOUNDARY.test(question) || turn.topic_action === "SWITCH" || turn.topic_action === "CORRECT";
-  const empty: CurrentFactualRequest = {version: "current-factual-request-1", applicable: false, question,
+  const empty: CurrentFactualRequest = {version: "current-factual-request-1", source_message_id: input.source_message_id ?? null,
+    original_question: input.question, interpretation_source: "legacy_compatibility", applicable: false, question,
     merchant_request: null, subject: null, subjects: [], requested_facts: [], query: null, answer_request: null,
-    resolution: "none", subject_source_message_id: null, topic_changed: topicChanged, context_turns: [], needs_subject_clarification: false};
+    resolution: "none", subject_source_message_id: null, subject_source_message_ids: [], demands: [], kb_required: false,
+    transaction_required: false, unresolved_demand_ids: [], missing_evidence: [],
+    topic_changed: topicChanged, context_turns: [], needs_subject_clarification: false};
   const transform = ["CONVERSATION_MEMORY", "SIMPLIFY", "REPHRASE", "TRANSLATE", "SUMMARIZE", "TRIVIAL", "EXPLICIT_HANDOFF"].includes(turn.operation);
   if (!question || decision.kind === "guidance" || isCurrentRequirementsRecap(question) || isPersonalOrderStatusRequest(question) ||
     transform && !(semantic?.operation === "ASK_FACT" && decision.kind === "mixed")) return empty;
@@ -252,19 +446,32 @@ export function resolveCurrentFactualRequest(input: ResolveCurrentFactualRequest
     subject: located.subjects.length === 1 ? located.subjects[0] : null,
     resolution: located.subjects.length ? "explicit" : "unresolved", answer_request: merchant};
   const inactive = new Set((input.commerce?.entities ?? []).filter(entity => INACTIVE.has(entity.status)).flatMap(entityNames).map(norm));
+  const semanticRefs = semanticRead ? proposedReferences(semantic) : [];
   const needsSubject = !located.subjects.length && (POINTER.test(merchant) ||
-    literalFacts.some(fact => fact !== "policy"));
+    literalFacts.some(fact => fact !== "policy") || semanticRefs.length > 0);
   // An explicit current subject always wins. Only dependent questions search
   // history, and a changed/ambiguous topic never revives an older candidate.
   if (needsSubject && !topicChanged && !PLURAL_POINTER.test(merchant)) {
     let skippedCurrent = false;
     let historyBoundary = false;
+    // Validated semantic dependencies are not restricted to price/stock
+    // wording. For any requested fact, the proposed reference still needs an
+    // actual customer mention; no model-only entity can manufacture a target.
+    const semanticBindings = semanticRefs.map(ref => bindSemanticSubject(ref, input));
+    const semanticBinding = semanticBindings.length === 1 ? semanticBindings[0] : null;
+    if (semanticBinding) {
+      request.subject = semanticBinding.subject; request.subjects = [semanticBinding.subject];
+      request.resolution = semanticBinding.current ? "explicit" : "follow_up";
+      request.subject_source_message_id = semanticBinding.source_message_id;
+      request.context_turns = semanticBinding.current || !semanticBinding.customer_text ? [] : [clean(semanticBinding.customer_text)];
+      request.answer_request = `${semanticBinding.subject} ${merchant}`;
+    } else if (semanticBindings.length > 1) historyBoundary = true;
     // Preserve the existing source-bound generic service/policy locator. Its
     // cited name must match a customer turn; the old answer is never copied.
     // This also handles natural first-turn wording that does not fit a product
     // grammar, and narrows descriptive scheme names via the existing anchor.
     const grounded = resolveFactualFollowup(merchant, rows.slice(0, 32));
-    if (grounded && validSubject(grounded.subject) && !POINTER.test(grounded.subject)) {
+    if (!request.subject && !historyBoundary && grounded && validSubject(grounded.subject) && !POINTER.test(grounded.subject)) {
       const prior = locateSubjects(grounded.prior_question, unique([...hints, grounded.subject]));
       historyBoundary = inactive.has(norm(grounded.subject)) || prior.subjects.length > 1;
       if (!historyBoundary) {
@@ -294,29 +501,46 @@ export function resolveCurrentFactualRequest(input: ResolveCurrentFactualRequest
       // customer topic or unknown statement to reach a convenient old item.
       if (!currentFacets(text).length && !POINTER.test(text)) { historyBoundary = true; break; }
     }
-    if (!request.subject && !historyBoundary && semantic) {
-      // A server-scoped unique active referent can locate a read when the
-      // bounded recent history does not contain its original customer turn.
-      const refs = semantic.referents.filter(ref => ref.confidence >= .62 && ref.source !== "unknown").map(ref => norm(ref.ref));
-      const matches = (input.commerce?.entities ?? []).filter(entity => !INACTIVE.has(entity.status) &&
-        entityNames(entity).some(name => refs.includes(norm(name))));
-      const candidate = matches.length === 1 && refs.length === 1 ? matches[0] : null;
-      const name = candidate ? clean(candidate.model ?? candidate.attributes.model ?? candidate.attributes.product_name ?? candidate.attributes.name) : "";
-      // Preserve existing generic-service typed requirement reads. Unlike a
-      // bare price/stock follow-up, these carry a current validated entity and
-      // decision context; they still gain no merchant evidence authority.
-      const generic = !literalFacts.length && !history.length && semantic.entities.length === 1 &&
-        semantic.entities[0].confidence >= .62 ? semantic.entities[0] : null;
-      const genericName = generic ? clean(generic.model ?? generic.name) : "";
-      const target = validSubject(name) ? name : validSubject(genericName) && !inactive.has(norm(genericName)) ? genericName : null;
-      if (target) {
-        request.subject = target; request.subjects = [target]; request.resolution = "follow_up";
-        request.subject_source_message_id = candidate?.provenance.source_message_id ?? null;
-        request.answer_request = `${target} ${merchant}`;
-      }
-    }
   }
   request.needs_subject_clarification = needsSubject && !request.subject;
   request.query = serializeCurrentFactualQuery(input, request);
+  return request;
+}
+
+export function resolveCurrentFactualRequest(input: ResolveCurrentFactualRequestInput): CurrentFactualRequest {
+  if (input.semantic && input.semantic.confidence >= .62 &&
+    (input.semantic.demands?.length || input.request_decision?.semantic_demands !== undefined)) {
+    const decision = input.request_decision?.semantic_demands !== undefined ? input.request_decision :
+      resolveCustomerRequestDecision(input.question, input.semantic,
+        (input.history ?? []).map(row => ({...row, role: row.role ?? "", content: row.content ?? ""})));
+    const frame = applyCustomerRequestDecision(input.semantic, decision);
+    const proposed = (input.semantic.demands ?? []).filter(demand => !(decision.excluded_lookup_quotes ?? []).includes(demand.source_quote));
+    return resolveSemanticDemands({...input, semantic: frame, request_decision: decision}, proposed);
+  }
+  // Old/manual callers retain their bounded behavior. Their interpretation is
+  // explicitly marked compatibility data; it must not masquerade as a newly
+  // source-validated semantic decomposition of every possible customer need.
+  const request = resolveLegacyCurrentFactualRequest(input);
+  request.kb_required = request.applicable;
+  request.transaction_required = isPersonalOrderStatusRequest(input.question);
+  request.subject_source_message_ids = unique([
+    request.subject_source_message_id ?? "",
+    ...(request.resolution === "explicit" && request.subjects.length ? [input.source_message_id ?? ""] : []),
+  ]);
+  const sourceType: FactualDemandSourceType = request.transaction_required ? "transaction" : request.applicable ? "unknown" : "general";
+  request.demands = [{id: "demand-1", question: request.question, source_quote: request.original_question,
+    subjects: request.subjects, subject_source_message_ids: request.subject_source_message_ids,
+    source_type: sourceType, requested_facts: request.requested_facts,
+    constraints: subjectConstraints(request.subjects, input), customer_correction: input.semantic?.customer_correction ?? false,
+    explicit_negations: [...(input.semantic?.explicit_negations ?? [])],
+    ambiguity: request.needs_subject_clarification
+      ? {is_ambiguous: true, reasons: ["subject_not_bound_to_customer_source"], clarification_question: null}
+      : clearAmbiguity()}];
+  if (request.transaction_required) request.missing_evidence.push({demand_id: "demand-1", reason: "live_transaction_unavailable"});
+  if (request.needs_subject_clarification) request.missing_evidence.push({demand_id: "demand-1", reason: "subject_unresolved"});
+  request.unresolved_demand_ids = unique(request.missing_evidence.map(item => item.demand_id));
+  if (request.applicable && request.answer_request && request.merchant_request !== request.question) {
+    request.answer_request = [request.question, request.subject && request.resolution === "follow_up" ? `[Resolved subject: ${request.subject}]` : null].filter(Boolean).join("\n");
+  }
   return request;
 }

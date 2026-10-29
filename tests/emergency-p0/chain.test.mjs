@@ -22,7 +22,16 @@ function typedContextNodes(value,at=[]) {
  return [{path:at,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},
   ...((kind==='object'||kind==='array')?Object.entries(value).flatMap(([k,v])=>typedContextNodes(v,[...at,k])):[])];
 }
-const providerWire=(delta,operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:0.98,nodes:typedContextNodes(delta)});
+// Retained fixtures exercise decoder compatibility; new demand cases use the active v4 transport.
+const providerWire=(delta,operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:.98,nodes:typedContextNodes(delta)});
+const providerWireV4=(delta,operation='UPDATE_ITEM')=>{
+ const nodes=typedContextNodes(delta);
+ return {context_encoding:'semantic_values_v4',operation,confidence:.98,
+  containers:nodes.filter(n=>['object','array','null'].includes(n.kind)).map(({path,kind})=>({path,kind})),
+  strings:nodes.filter(n=>n.kind==='string').map(({path,text})=>({path,text})),
+  numbers:nodes.filter(n=>n.kind==='number').map(({path,number})=>({path,number})),
+  booleans:nodes.filter(n=>n.kind==='boolean').map(({path,boolean})=>({path,boolean}))};
+};
 const recoveredSemanticCase=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/task1c-semantic-recovery.json'),'utf8'));
 const retainedCatalogueCase=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/task1c-catalogue-retained-state.json'),'utf8'));
 
@@ -163,7 +172,9 @@ function fixture(text,options={}) {
  const company=options.company ?? (options.originalPreview?'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493':uuid(1)),source=options.source??uuid(3);
  const requests=[],logs=[],commits=[],events=[]; let handler,mode=options.mode || 'ok',foreign=false;
  const conversation={id:ticket,company_id:company,status:options.human?'human_control':'open',assigned_agent_id:null,metadata_source:{}};
- const visitor={id:source,conversation_id:ticket,role:'visitor',content:text,is_recalled:false,created_at:'2026-10-14T01:00:00.000Z',metadata:{}};
+ const priorTimes=(options.history??[]).map(row=>Date.parse(row.created_at)).filter(Number.isFinite);
+ const sourceTime=options.source_created_at??new Date(Math.max(Date.parse('2026-10-14T01:00:00.000Z'),...priorTimes.map(value=>value+1000))).toISOString();
+ const visitor={id:source,conversation_id:ticket,role:'visitor',content:text,is_recalled:false,created_at:sourceTime,metadata:{}};
  const tables={ce_evaluation_state:[],handoff_event:[],conversation_commerce_state_event:[],company:[{id:company,is_active:true}],conversations:[conversation],messages:[visitor],conversation_commerce_state:[],conversation_memory_state:[],conversation_memory_state_event:[],c3_memory_reply_lifecycle_receipt:[]};
  let generationIndex=0, previewInitialization;
  const claimReaders=[];
@@ -190,22 +201,22 @@ function fixture(text,options={}) {
    }
    assert.equal(body.generationConfig.responseMimeType,'application/json');
    const semanticSchema=body.generationConfig.responseSchema;
-   assert.deepEqual(semanticSchema.properties.context_encoding.enum,['semantic_fields_v3']);
+   assert.deepEqual(semanticSchema.properties.context_encoding.enum,['semantic_values_v4']);
    for(const [list,field] of [['containers','kind'],['strings','text'],['numbers','number'],['booleans','boolean']]){
     const item=semanticSchema.properties[list].items;
     assert.deepEqual(Object.keys(item.properties),['path',field]);assert.deepEqual(item.required,['path',field]);
     assert.equal(item.properties.path.maxItems,'6');
    }
-   assert(!JSON.stringify(semanticSchema).includes('"anyOf"'),'fixed v3 fields must not reintroduce union branch growth');
-   assert(body.systemInstruction.parts[0].text.includes('Follow the supplied response schema'));
-   assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_fields_v3'));
+   assert(!JSON.stringify(semanticSchema).includes('"anyOf"'),'typed transport must not reintroduce union branch growth');
+   assert(body.systemInstruction.parts[0].text.includes('Follow the supplied typed transport schema'));
+   assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_values_v4'));
    assert(!body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_paths_v2'));
    if(options.enforceSmallTransport){
-    assert(Buffer.byteLength(JSON.stringify(semanticSchema))<6000);
-    assert.deepEqual(Object.keys(semanticSchema.properties),['context_encoding','operation','confidence','language','intent','topic','customer_correction','additive','transaction_state','payment_state','booking_state','fulfillment_state','requested_facts','explicit_negations','customer_facts','referents','ambiguity','entities','containers','strings','numbers','booleans']);
+    assert(Buffer.byteLength(JSON.stringify(semanticSchema))<2000);
+    assert.deepEqual(Object.keys(semanticSchema.properties),['context_encoding','operation','confidence','containers','strings','numbers','booleans']);
    }
    if(options.enforceSchemaBranchBudget){
-    const inspect=s=>{if(s.properties){assert.deepEqual(s.required,Object.keys(s.properties),'v3 fixed objects have no optional field branches');Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);assert.equal(s.anyOf,undefined);};
+    const inspect=s=>{if(s.properties){assert.deepEqual(s.required,Object.keys(s.properties),'typed transport objects have no optional field branches');Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);assert.equal(s.anyOf,undefined);};
     inspect(body.generationConfig.responseSchema);
    }
    if(mode==='400')return Response.json({error:{status:'INVALID_ARGUMENT',message:'response schema too complex; PRIVATE-SECRET user@example.invalid',details:[{fieldViolations:[{field:'generation_config.response_schema',description:'PRIVATE-SECRET'}]}]}},{status:400});
@@ -250,7 +261,7 @@ function fixture(text,options={}) {
     if(options.rpcResult)return Response.json({result:options.rpcResult});
     if(foreign)return Response.json({result:'tenant_mismatch'});
     if(commits.length)return Response.json(body.p_content===commits[0].content?{result:'idempotent',message_id:commits[0].id}:{result:'response_substitution'});
-    const reply={id:options.source?uuid(Number(source.slice(-6))+1000):uuid(10),conversation_id:ticket,role:'assistant',content:body.p_content,is_recalled:false,metadata:{...body.p_metadata,source_message_id:source,control_commit:'ai'}};
+    const reply={id:options.source?uuid(Number(source.slice(-6))+1000):uuid(10),conversation_id:ticket,role:'assistant',content:body.p_content,is_recalled:false,created_at:new Date(Date.parse(visitor.created_at)+1).toISOString(),metadata:{...body.p_metadata,source_message_id:source,control_commit:'ai'}};
     commits.push(reply);tables.messages.push(reply);return Response.json({result:'success',message_id:reply.id});
    }
    throw Error('unhandled isolated RPC '+rpc);
@@ -258,7 +269,7 @@ function fixture(text,options={}) {
   const table=url.pathname.split('/').at(-1);
   if(table==='upstream_call_log'&&method==='POST'){logs.push(body);return new Response(null,{status:201});}
   if(method==='DELETE')return new Response(null,{status:204});
-  assert(method==='GET'||(table==='messages'&&method==='PATCH'),'unexpected mutation '+table);
+  assert(method==='GET'||method==='HEAD'||(table==='messages'&&method==='PATCH'),'unexpected mutation '+table);
   assert(table in tables,'unhandled isolated table '+table);
   let rows=tables[table];
   for(const [field,value] of url.searchParams){
@@ -266,7 +277,18 @@ function fixture(text,options={}) {
    if(value.startsWith('eq.')) rows=rows.filter(r=>(field==='metadata'?JSON.stringify(get(r)):String(get(r)))===value.slice(3));
    if(value==='is.null')rows=rows.filter(r=>get(r)===null);
    if(value.startsWith('neq.')) rows=rows.filter(r=>String(r[field])!==value.slice(4));
+   if(value.startsWith('in.(')) {const wanted=value.slice(4,-1).split(',').map(v=>v.replace(/^"|"$/g,''));rows=rows.filter(r=>wanted.includes(String(get(r))));}
+   if(value.startsWith('lte.')) rows=rows.filter(r=>String(get(r))<=value.slice(4));
+   if(value.startsWith('lt.')) rows=rows.filter(r=>String(get(r))<value.slice(3));
+   if(value.startsWith('ilike.')) {const needle=value.slice(6).replace(/^%|%$/g,'').replace(/\\([_%\\])/g,'$1').toLowerCase();rows=rows.filter(r=>String(get(r)).toLowerCase().includes(needle));}
+   if(field==='or') {
+    const boundary=value.match(/^\(created_at\.lt\.([^,]+),and\(created_at\.eq\.([^,]+),id\.(lt|lte)\.([^)]+)\)\)$/);
+    if(boundary) rows=rows.filter(r=>r.created_at<boundary[1]||r.created_at===boundary[2]&&(boundary[3]==='lte'?r.id<=boundary[4]:r.id<boundary[4]));
+   }
   }
+  const ordering=url.searchParams.get('order');
+  if(ordering)rows=[...rows].sort((a,b)=>{for(const part of ordering.split(',')){const [key,direction]=part.split('.');const result=String(a[key]??'').localeCompare(String(b[key]??''));if(result)return direction==='desc'?-result:result;}return 0;});
+  const limit=url.searchParams.get('limit');if(limit)rows=rows.slice(0,Number(limit));
   if(foreign&&table==='company')rows=[];
   if(foreign&&table==='messages'&&url.searchParams.get('id')===`eq.${source}`)rows=[];
   if(method==='PATCH'){
@@ -560,7 +582,7 @@ for(const alias of ['lifecycle','correction','negations'])test('prompt/decoder i
  const r=await f.load(path.join(root,'supabase/functions/_shared/commerce-semantic-interpreter.ts')).interpretCommerceSemantics({company_id:company,conversation_id:ticket,source_message_id:source,latest:'Please correct my requirements',persistent_state_summary:'{}'});
  assert.equal(r.frame,null);assert.equal(r.contract_rejection,'wire_delta_fields');assert(!JSON.stringify(r).includes('PRIVATE-SECRET'));
  const request=f.requests.find(x=>x.url.includes('aiplatform')).body.systemInstruction.parts[0].text;
- assert(request.includes('customer_correction'));assert(request.includes('semantic_fields_v3'));assert(request.includes('customer_facts'));assert(request.includes('Fixed semantic fields are native JSON'));assert(request.includes('containers'));assert(request.includes('numbers'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
+ assert(request.includes('customer_correction'));assert(request.includes('semantic_values_v4'));assert(request.includes('customer_facts'));assert(request.includes('strict canonical vocabulary still applies'));assert(request.includes('containers'));assert(request.includes('numbers'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
 });
 
 test('Hosted Frankie correction then same-ticket Summary retains latest canonical Memory and passes unchanged B2',async()=>{
@@ -760,7 +782,7 @@ for(const [business,latest,values] of [
  assert.equal(r.status,200,JSON.stringify(r));
  const requests=f.requests.filter(x=>x.url.endsWith(':generateContent')&&x.body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.'));
  assert.equal(requests.length,1);const config=requests[0].body.generationConfig;
- assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_fields_v3']);
+ assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_values_v4']);
  for(const list of ['containers','strings','numbers','booleans'])assert.equal(config.responseSchema.properties[list].items.properties.path.maxItems,'6');
  assert(!JSON.stringify(f.events).includes('canonical_entity_bounds'));assert(!f.requests.some(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered')));
  const memory=f.tables.conversation_memory_state.at(-1)?.memory;assert(memory,JSON.stringify({r,events:f.events.slice(-8)}));
@@ -892,7 +914,7 @@ test('same-ticket ASK_FACT binds the antecedent in retrieval and the bounded gen
  const generation=f.requests.find(x=>x.url.endsWith(':generateContent')&&!x.body.generationConfig.responseSchema);assert(generation,JSON.stringify({commits:f.commits,events:f.events.slice(-7)}));
  const requestBlock=generation.body.systemInstruction.parts[0].text.split('[CURRENT_FACTUAL_REQUEST]\n')[1];assert(requestBlock,'reference must survive bounded Memory envelope');
  const resolved=JSON.parse(requestBlock.split('\n')[0]);assert.equal(resolved.subject,'四電一腦');assert.deepEqual(resolved.requested_facts,['features']);
- assert.equal(resolved.original_question,'你頭先講嗰個計劃包括啲乜?');assert.equal(resolved.resolved_question,'四電一腦 你頭先講嗰個計劃包括啲乜?');
+ assert.equal(resolved.original_question,'你頭先講嗰個計劃包括啲乜？');assert.equal(resolved.resolved_question,'四電一腦 你頭先講嗰個計劃包括啲乜?');
  assert.equal(f.commits[0]?.metadata.citation_lineage.selected_document_id,sample.selected_documents[0].document_id);
  const dispatches=()=>f.requests.filter(x=>x.url.includes("context-search")||x.url.includes("aiplatform")).length;const before=dispatches();await f.run();assert.equal(f.commits.length,1);assert.equal(dispatches(),before);
 });
@@ -1405,10 +1427,12 @@ test('Task1C resolved request full handler: canonical referent beyond recent his
  const document=task1cModelDocument({id:'resolved-old-subject-current-evidence'});
  document.evidence[0].content=`商品型號: ${model}\n能源資料: 請參閱官方能源標籤；現有記錄未列出能源級別。`;
  const question='佢嘅能源資料係點？',answer=`${model} 的能源資料請參閱官方能源標籤；現有記錄未列出能源級別。`;
- const f=fixture(question,{...seed,history:[],source,originalPreview:true,fullChain:true,semantic,
+ const oldRow={id:oldSource,conversation_id:ticket,role:'visitor',content:model+' 介紹一下',created_at:'2026-10-13T01:00:00.000Z',is_recalled:false,metadata:{}};
+ const intervening=Array.from({length:130},(_,i)=>({id:uuid(5000+i),conversation_id:ticket,role:'visitor',content:'thanks',created_at:new Date(Date.parse(oldRow.created_at)+(i+1)*1000).toISOString(),is_recalled:false,metadata:{}}));
+ const f=fixture(question,{...seed,history:[...intervening.reverse(),oldRow],source,originalPreview:true,fullChain:true,semantic,
   originalRagResponse:task1cRagDocuments(document),answer});
  await f.run();assert.equal(f.commits[0]?.content,answer,JSON.stringify({commits:f.commits,events:f.events.slice(-6)}));
- assert(!f.tables.messages.some(row=>row.id===oldSource),'original customer turn is deliberately outside recent history');
+ assert(f.tables.messages.findIndex(row=>row.id===oldSource)>100,'original customer source remains in storage beyond the recent query window');
  const rag=f.requests.filter(r=>r.url.includes('context-search'));assert.equal(rag.length,1);assert(rag[0].body.query.includes(model));
  const generation=f.requests.find(r=>r.url.endsWith(':generateContent')&&!r.body.generationConfig.responseSchema);assert(generation);
  const system=generation.body.systemInstruction.parts[0].text;
@@ -1416,12 +1440,135 @@ test('Task1C resolved request full handler: canonical referent beyond recent his
  const verifier=f.requests.find(r=>r.body?.generationConfig?.responseSchema?.properties?.grounded);assert(verifier);
  const verifierText=verifier.body.contents.flatMap(c=>c.parts).map(p=>p.text??'').join('\n');
  const scope=JSON.parse(verifierText.split('\n').find(line=>line.startsWith('{"question":')));
- assert.equal(scope.followup,null,'a missing historical message must not create a fabricated prior-answer anchor');
- assert.deepEqual(scope.resolved_request,{original_question:question.normalize('NFKC'),resolved_question:model+' '+question.normalize('NFKC'),
-  subject:model,requested_facts:['energy label'],resolution:'follow_up'});
+ assert.equal(scope.followup?.subject,model,'retrieved raw customer source anchors the resolved question');
+ assert(scope.followup?.prior_question.includes(model));
+ assert.equal(scope.followup?.prior_answer,'','old answers must not become merchant evidence');
+ assert.equal(scope.resolved_request.original_question,question);
+ assert.equal(scope.resolved_request.resolved_question,model+' '+question.normalize('NFKC'));
+ assert.equal(scope.resolved_request.subject,model);
+ assert.deepEqual(scope.resolved_request.requested_facts,['energy label']);
+ assert.equal(scope.resolved_request.resolution,'follow_up');
  assert.equal(f.commits[0].metadata.citation_lineage.selected_document_id,document.document_id);
  assert.equal(f.commits[0].metadata.kb_request_contract.subject_source_message_id,oldSource);
  assert.equal(f.commits[0].metadata.kb_request_contract.query_sha256,hash(rag[0].body.query));
  assert.equal(f.requests.filter(r=>r.url.endsWith(':generateContent')).length,3);
  await task1cAssertReplay(f);
+});
+
+// Task1 semantic context: controlled v4 proposals traverse the real handler,
+// source recovery, retrieval, generation/verifier and Memory persistence. These
+// fixtures establish source behavior, not live model/provider acceptance.
+const task1SemanticContextDemand=(question,patch={})=>({
+ question,source_quote:question,subject_refs:[],source_type:'product',requested_facts:[],constraints:{},
+ customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},...patch,
+});
+const task1SemanticContextWire=(demands,patch={})=>providerWireV4({
+ language:'zh-HK',intent:'merchant_facts',requested_facts:[...new Set(demands.flatMap(demand=>demand.requested_facts))],
+ demands,...patch,
+},'ASK_FACT');
+function task1SemanticContextPrompt(f){
+ const generation=f.requests.find(request=>request.url.endsWith(':generateContent')&&!request.body?.generationConfig?.responseSchema);
+ assert(generation,'the complete request must reach governed generation');
+ const system=generation.body.systemInstruction.parts[0].text;
+ const block=system.split('[CURRENT_FACTUAL_REQUEST]\n')[1];assert(block,'generation is missing the unified current request');
+ return {generation,system,request:JSON.parse(block.split('\n')[0])};
+}
+function task1SemanticContextCommitted(f,result,answer,document){
+ assert.equal(result.status,200,JSON.stringify({result,events:f.events.slice(-8)}));
+ assert.equal(f.commits.length,1,JSON.stringify({commits:f.commits,events:f.events.slice(-8)}));
+ const reply=f.commits[0];assert.equal(reply.content,answer,JSON.stringify(reply.metadata));
+ assert.equal(reply.metadata.citation_lineage?.selected_document_id,document);
+ assert.equal(reply.metadata.b2_commit_source,'commit_ai_reply_tx');assert.notEqual(reply.metadata.generation_success,false);
+ const memory=f.tables.conversation_memory_state[0]?.memory;assert(memory,'the answered customer request must have durable Memory');
+ return {reply,memory};
+}
+
+for(const [question,id] of [['邊個牌子出嘅？',7101],['它是甚麼品牌？',7102]])test('Task1 semantic context: v4 unfamiliar brand follow-up retains the actual customer subject '+question,async()=>{
+ const model='CW-SUL70BA',oldSource='a7c101ab-c401-4d8b-8c63-8a10701abcde',source=uuid(id);
+ const old={id:oldSource,conversation_id:ticket,role:'visitor',content:`我想了解 ${model}。`,created_at:'2026-10-13T01:00:00.000Z',is_recalled:false,metadata:{}};
+ const answer=`${model} 的品牌是 Fixture Home。`;
+ const f=fixture(question,{source,originalPreview:true,fullChain:true,history:[old],answer,
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{question:`${model} 的品牌是甚麼？`,subject_refs:[model],requested_facts:['brand']})],
+   {topic:model,referents:[{ref:model,source:'prior_turn',confidence:.98}]}),
+  originalRagResponse:task1cRagDocuments(task1cModelDocument({id:'v4-brand-document'}))});
+ const result=await f.run();const {reply,memory}=task1SemanticContextCommitted(f,result,answer,'v4-brand-document');
+ const rag=f.requests.filter(request=>request.url.includes('context-search'));assert.equal(rag.length,1);
+ const query=JSON.parse(rag[0].body.query);assert.equal(query.questions.length,1);assert.deepEqual(query.questions[0].subjects,[model]);assert.deepEqual(query.questions[0].requested_facts,['brand']);
+ const generated=task1SemanticContextPrompt(f);assert.equal(generated.request.original_question,question);assert.equal(generated.request.subject,model);
+ assert.equal(generated.request.subject_source_message_ids.length,1);assert.deepEqual(generated.request.demands[0].requested_facts,['brand']);
+ // The real LLM privacy boundary redacts UUIDs. Exact source ownership remains
+ // asserted against the server receipt and durable customer anchor below.
+ assert.equal(reply.metadata.kb_request_contract.subject_source_message_id,oldSource);
+ assert.equal(reply.metadata.kb_request_contract.query_sha256,hash(rag[0].body.query));
+ const anchor=memory.factual_read_anchors?.find(item=>item.source_message_id===source);assert(anchor,'read follow-up was not retained');
+ assert(anchor.subjects.includes(model));assert(anchor.subject_source_message_ids.includes(oldSource));
+ assert(!(f.tables.conversation_commerce_state[0]?.state.entities??[]).some(entity=>entity.model===model),'a read-only reference became a purchase entity');
+});
+
+test('Task1 semantic context: v4 mixed personal order and product question preserves both demands without leaking the order into KB',async()=>{
+ const source=uuid(7110),model='CW-SUL70BA',orderQuote='訂單 12354 出貨未？',productQuote=`${model} 有咩功能？`;
+ const question=orderQuote+'另外 '+productQuote;
+ const answer=`${model} 提供製冷、送風及除濕功能。我目前未能核實訂單 12354 的即時出貨狀態，需要商家查核。`;
+ const f=fixture(question,{source,originalPreview:true,fullChain:true,answer,
+  semantic:task1SemanticContextWire([
+   task1SemanticContextDemand(orderQuote,{subject_refs:['12354'],source_type:'transaction',requested_facts:['order_status']}),
+   task1SemanticContextDemand(productQuote,{subject_refs:[model],requested_facts:['features']}),
+  ],{topic:model}),originalRagResponse:task1cRagDocuments(task1cModelDocument({id:'v4-mixed-features-document'}))});
+ const result=await f.run();const {reply,memory}=task1SemanticContextCommitted(f,result,answer,'v4-mixed-features-document');
+ const rag=f.requests.filter(request=>request.url.includes('context-search'));assert.equal(rag.length,1,'whole-turn order routing bypassed the product lookup');
+ assert(!rag[0].body.query.includes('12354'));assert(!rag[0].body.query.includes('order_status'));
+ const query=JSON.parse(rag[0].body.query);assert.equal(query.questions.length,1);assert.deepEqual(query.questions[0].subjects,[model]);assert.deepEqual(query.questions[0].requested_facts,['features']);
+ const generated=task1SemanticContextPrompt(f);assert.equal(generated.request.original_question,question);assert.equal(generated.request.demands.length,2);
+ assert.deepEqual(generated.request.demands.map(demand=>demand.source_type),['transaction','product']);
+ assert.equal(generated.request.transaction_required,true);assert(generated.request.missing_evidence.some(item=>item.reason==='live_transaction_unavailable'));
+ assert(generated.system.includes('Missing live transaction evidence remains unresolved'));
+ const verifier=f.requests.find(request=>request.body?.generationConfig?.responseSchema?.properties?.grounded);assert(verifier,'mixed requests must reach the complete-question verifier');
+ assert(JSON.stringify(verifier.body).includes('live_transaction_unavailable'));assert(JSON.stringify(verifier.body).includes('12354'));
+ assert.equal(reply.metadata.kb_request_contract.demand_count,2);assert.equal(reply.metadata.kb_request_contract.transaction_required,true);
+ assert(memory.question_lifecycle.some(item=>item.text.includes('12354')&&item.text.includes(model)),'Memory lost one part of the original request');
+});
+
+test('Task1 semantic context: v4 membership preserves policy demand and reaches KB without topical early return',async()=>{
+ const question='會員等級？',source=uuid(7120),answer='會員分為基本會員及進階會員；基本會員適用一般購物，進階會員可參加會員活動。';
+ const document={document_id:'v4-membership-policy',title:'會員等級',source_type:'FAQ',document_score:.97,
+  authority:{tenant_id:'34',publication_state:'published',currentness:'current',regions:['hong_kong']},
+  evidence:[{document_id:'v4-membership-policy',chunk_id:'v4-membership-policy-full',chunk_type:'full_content',score:.97,content:answer}]};
+ const f=fixture(question,{source,originalPreview:true,fullChain:true,answer,
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{question:'會員有哪些等級，各級有甚麼分別？',source_type:'policy',requested_facts:['membership_tiers']})],{topic:'會員等級'}),
+  originalRagResponse:task1cRagDocuments(document)});
+ // Task1 owns interpretation and dispatch. This actual FAQ also exposed the
+ // remaining Task2 policy-applicability gap: full-content matching can reject
+ // this relevant answer as wrong_topic. Do not turn that rejection into a
+ // golden result or claim that this case verifies source selection/answering.
+ const result=await f.run();assert.equal(result.status,200,JSON.stringify(result));assert.equal(f.commits.length,1);
+ const reply=f.commits[0],memory=f.tables.conversation_memory_state[0]?.memory;assert(memory);
+ const rag=f.requests.filter(request=>request.url.includes('context-search'));assert.equal(rag.length,1,'short membership wording took the former fixed no-information exit');
+ assert.deepEqual(JSON.parse(rag[0].body.query),{questions:[{question:question.normalize('NFKC'),subjects:[],requested_facts:['membership_tiers'],source_type:'policy'}]});
+ assert.equal(reply.metadata.kb_request_contract.demand_count,1);assert.equal(reply.metadata.kb_request_contract.source_message_id,source);
+ assert.equal(reply.metadata.kb_request_contract.query_sha256,hash(rag[0].body.query));assert.equal(reply.metadata.rag_api_status,'success');
+ assert.notEqual(reply.metadata.response_route,'workflow5_topical_recovery');
+ assert(memory.question_lifecycle.some(item=>item.source_message_id===source&&item.text===question.normalize('NFKC')),'Memory changed the original short question');
+ const anchor=memory.factual_read_anchors.find(item=>item.source_message_id===source);assert(anchor);assert.equal(anchor.customer_text,question.normalize('NFKC'));
+ assert.deepEqual(anchor.requested_facts,['membership_tiers']);
+});
+
+test('Task1 semantic context: v4 restores the first customer original after 130 intervening turns before querying KB',async()=>{
+ const model='CW-SUL70BA',oldSource='b7c131ab-c401-4d8b-8c63-8a13701abcde',source=uuid(7131),question='最初嗰部係咩牌子？',answer=`最初提到的 ${model}，品牌是 Fixture Home。`;
+ const old={id:oldSource,conversation_id:ticket,role:'visitor',content:`最初想了解的是 ${model}。`,created_at:'2026-10-13T01:00:00.000Z',is_recalled:false,metadata:{}};
+ const history=Array.from({length:130},(_,i)=>({id:uuid(7200+i),conversation_id:ticket,role:'visitor',content:'thanks',
+  created_at:new Date(Date.parse(old.created_at)+(i+1)*1000).toISOString(),is_recalled:false,metadata:{}})).reverse();
+ history.push(old);
+ const f=fixture(question,{source,originalPreview:true,fullChain:true,history,answer,
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{question:`${model} 的品牌是甚麼？`,subject_refs:[model],requested_facts:['brand']})],
+   {topic:model,referents:[{ref:model,source:'prior_turn',confidence:.98}]}),
+  originalRagResponse:task1cRagDocuments(task1cModelDocument({id:'v4-recovered-brand-document'}))});
+ const result=await f.run();const {reply,memory}=task1SemanticContextCommitted(f,result,answer,'v4-recovered-brand-document');
+ const semantic=f.requests.find(request=>request.body?.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.'));assert(semantic);
+ const semanticText=semantic.body.contents.flatMap(content=>content.parts).map(part=>part.text??'').join('\n');
+ assert(semanticText.includes(old.content));assert(semanticText.includes('Recovered earlier original customer messages'));
+ assert(f.tables.messages.findIndex(row=>row.id===oldSource)>100);
+ const rag=f.requests.filter(request=>request.url.includes('context-search'));assert.equal(rag.length,1);assert.deepEqual(JSON.parse(rag[0].body.query).questions[0].subjects,[model]);
+ const generated=task1SemanticContextPrompt(f);assert.equal(generated.request.subject,model);assert.equal(generated.request.subject_source_message_ids.length,1);
+ assert.equal(reply.metadata.kb_request_contract.subject_source_message_id,oldSource);
+ assert(memory.factual_read_anchors.some(anchor=>anchor.source_message_id===source&&anchor.subject_source_message_ids.includes(oldSource)));
 });

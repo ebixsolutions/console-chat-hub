@@ -113,6 +113,113 @@ test('actual interpreter carries safe canonical bounds diagnostics, preserves na
  }finally {previous===undefined?delete globalThis.__semanticBoundsModel:globalThis.__semanticBoundsModel=previous;}
 });
 
+const semanticContextModule=async()=>{
+ const compiled=await build({stdin:{contents:`export {interpretCommerceSemantics,buildPersistentCommerceStateSummary,selectSemanticRecentHistory,SEMANTIC_CONTEXT_CHAR_LIMIT,SEMANTIC_HISTORY_CHAR_LIMIT} from './supabase/functions/_shared/commerce-semantic-interpreter.ts';`,resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'isolated-context-provider',setup(b){b.onResolve({filter:/^\.\/llm-router\.ts$/},()=>({path:'isolated-context-model',namespace:'provider'}));b.onLoad({filter:/.*/,namespace:'provider'},()=>({contents:'export const callModel = (...args) => globalThis.__semanticContextModel(...args);'}));}}]});
+ return import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+};
+const contextInterpreter=await semanticContextModule();
+const demandFixture=(patch={})=>({question:'When can CW-SUL70BA be delivered?',source_quote:'幾時可送貨？',subject_refs:['CW-SUL70BA'],source_type:'product',requested_facts:['delivery_time'],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},...patch});
+function activeSemanticResponse(delta) {
+ const all=nodes({demands:[],...delta});
+ return {context_encoding:'semantic_values_v4',operation:'ASK_FACT',confidence:.98,
+  containers:all.filter(n=>['object','array','null'].includes(n.kind)).map(({path,kind})=>({path,kind})),
+  strings:all.filter(n=>n.kind==='string').map(({path,text})=>({path,text})),
+  numbers:all.filter(n=>n.kind==='number').map(({path,number})=>({path,number})),
+  booleans:all.filter(n=>n.kind==='boolean').map(({path,boolean})=>({path,boolean}))};
+}
+test('semantic Memory projection retains read goals, source anchors, corrections and current typed customer facts',()=>{
+ const {buildPersistentCommerceStateSummary}=contextInterpreter;
+ const memory={current_goal:'Compare the first product delivery options',current_goal_source_message_id:'goal-source',current_topic:'product research',current_topic_source_message_id:'topic-source',factual_read_anchors_incomplete:true,latest_corrections:['delivery floor is now 2'],
+  open_questions:['CW-SUL70BA delivery time'],question_lifecycle:[{source_message_id:'old-question',text:'CW-SUL70BA delivery time',status:'pending'}],
+  factual_read_anchors:[{source_message_id:'old-question',created_at:'2026-10-01T00:00:00Z',customer_text:'CW-SUL70BA介紹一下',subjects:['CW-SUL70BA'],subject_source_message_ids:['old-question'],requested_facts:['description']}],
+  grounded_reference_lineage:[{document_id:'old-doc',evidence_chunk_ids:['old-chunk'],source_message_id:'old-question'}],
+  current_customer_facts:[{key:'stairs',value:false,source_message_id:'correction'},{key:'deposit',value:0,source_message_id:'correction'},{key:'date',value:null,source_message_id:'old-question'}]};
+ const result=JSON.parse(buildPersistentCommerceStateSummary({revision:3,state:{entities:[],current_topic:'other commerce topic'}},{revision:8,memory}));
+ assert.equal(result.memory_context.current_goal,memory.current_goal);assert.equal(result.memory_context.current_topic,'product research');
+ assert.equal(result.memory_context.current_goal_source_message_id,'goal-source');assert.equal(result.memory_context.current_topic_source_message_id,'topic-source');assert.equal(result.memory_context.factual_read_anchors_incomplete,true);
+ assert.deepEqual(result.memory_context.factual_read_anchors,memory.factual_read_anchors);assert.deepEqual(result.memory_context.open_questions,memory.open_questions);
+ assert.deepEqual(result.memory_context.question_lifecycle,memory.question_lifecycle);assert.deepEqual(result.memory_context.grounded_reference_lineage,memory.grounded_reference_lineage);
+ assert.deepEqual(result.current_customer_facts.map(f=>f.value),[false,0,null]);assert.equal(result.memory_context.revision,8);
+ assert.deepEqual(result.state.entities,[],'read anchors must not become purchase entities');
+});
+test('oversized unrelated state does not erase bounded Memory sections or masquerade as complete',()=>{
+ const {buildPersistentCommerceStateSummary,SEMANTIC_CONTEXT_CHAR_LIMIT}=contextInterpreter;
+ const result=JSON.parse(buildPersistentCommerceStateSummary({revision:5,state:{entities:[{attributes:{huge:'x'.repeat(SEMANTIC_CONTEXT_CHAR_LIMIT)}}]}},
+  {memory:{current_goal:'return to the first product',current_customer_facts:[{key:'capacity',value:0,source_message_id:'original'}],factual_read_anchors:[{source_message_id:'original',subjects:['Q9'],customer_text:'Q9 specs'}]}}));
+ assert.equal(result.context_incomplete,true);assert(result.omitted_context.includes('state'));
+ assert.equal(result.current_customer_facts[0].value,0);assert.equal(result.memory_context.current_goal,'return to the first product');
+ assert.equal(result.memory_context.factual_read_anchors[0].source_message_id,'original');assert(JSON.stringify(result).length<=SEMANTIC_CONTEXT_CHAR_LIMIT);
+});
+test('actual interpreter presents recovered originals independently of the recent twelve and preserves late constraints',async()=>{
+ const previous=globalThis.__semanticContextModel;
+ const fullOriginal='CW-SUL70BA was the first product. '+('Earlier customer detail. '.repeat(40))+'Final requirement: no stairs, second floor.';
+ assert(fullOriginal.length>800);
+ const authority={server_capability:'isolated-admission'};
+ let calls=0;
+ globalThis.__semanticContextModel=async request=>{
+  calls++;assert.equal(request.operationId,'assist:isolated-semantic');assert.equal(request.legacyAuthority,authority);
+  assert(request.user.includes(fullOriginal));assert(request.user.includes('original-turn'));assert(request.user.includes('2026-10-01T00:00:00Z'));
+  assert(request.user.includes('recent-119'));assert(request.user.includes('recent-108'));assert(!request.user.includes('recent-107'));
+  assert(request.user.includes('context_incomplete=true'));assert(request.system.includes('semantic_values_v4'));
+  return {ok:true,request_id:'isolated',text:JSON.stringify(activeSemanticResponse({requested_facts:['delivery_time'],demands:[demandFixture({constraints:{stairs:false,floor:2}})]}))};
+ };
+ try {
+  const result=await contextInterpreter.interpretCommerceSemantics({company_id:'company',conversation_id:'ticket',source_message_id:'current',latest:'幾時可送貨？',
+   operation_id:'assist:isolated-semantic',legacy_authority:authority,persistent_state_summary:null,
+   history:Array.from({length:120},(_,i)=>({id:'recent-'+(119-i),role:'visitor',content:'A recent unrelated turn '+(119-i)})),
+   recovered_history:[{id:'original-turn',role:'visitor',created_at:'2026-10-01T00:00:00Z',content:fullOriginal}],history_recovery:{context_incomplete:true}});
+  assert.equal(calls,1);assert.equal(result.failure_code,null);assert.deepEqual(result.frame.demands[0].constraints,{floor:2,stairs:false});
+ } finally {previous===undefined?delete globalThis.__semanticContextModel:globalThis.__semanticContextModel=previous;}
+});
+test('invented demand source quote is rejected with redacted diagnostics before any downstream request',async()=>{
+ const previous=globalThis.__semanticContextModel;let calls=0;
+ globalThis.__semanticContextModel=async()=>{calls++;return {ok:true,request_id:'isolated',text:JSON.stringify(activeSemanticResponse({requested_facts:['delivery_time'],demands:[demandFixture({source_quote:'PRIVATE-INVENTED-CUSTOMER-CLAUSE'})]}))};};
+ try {
+  const result=await contextInterpreter.interpretCommerceSemantics({company_id:'company',conversation_id:'ticket',source_message_id:'current',latest:'幾時可送貨？',persistent_state_summary:'{}'});
+  assert.equal(calls,1);assert.equal(result.frame,null);assert.equal(result.contract_rejection,'canonical_demand_source_quote');
+  assert.equal(result.contract_diagnostic.field_class,'demand_source_quote');assert(!JSON.stringify(result).includes('PRIVATE-'));
+ } finally {previous===undefined?delete globalThis.__semanticContextModel:globalThis.__semanticContextModel=previous;}
+});
+test('same source ID with a business projection or staff query preserves the complete actual customer turn',async()=>{
+ const previous=globalThis.__semanticContextModel;
+ const source={id:'current',role:'visitor',created_at:'2026-10-02T00:00:00Z',content:'我想先了解 CW-SUL70BA，預算是 4500，幾時可送貨？',metadata:{source:'verified-customer'}};
+ try {
+  for(const latest of ['幾時可送貨？','請協助回答他的送貨查詢']) {
+   const input={company_id:'company',conversation_id:'ticket',source_message_id:'current',latest,persistent_state_summary:null,history:[source]};
+   const chosen=contextInterpreter.selectSemanticRecentHistory(input);assert.equal(chosen[0],source);assert.deepEqual(chosen[0].metadata,{source:'verified-customer'});
+   globalThis.__semanticContextModel=async request=>{
+    assert(request.user.includes(source.content.normalize('NFKC')));assert(request.user.includes('4500'));assert(request.user.includes(latest.normalize('NFKC')));
+    return {ok:true,request_id:'isolated',text:JSON.stringify(activeSemanticResponse({requested_facts:['delivery_time'],demands:[demandFixture({source_quote:latest})]}))};
+   };
+   const result=await contextInterpreter.interpretCommerceSemantics(input);assert.equal(result.failure_code,null);
+  }
+  assert.deepEqual(contextInterpreter.selectSemanticRecentHistory({history:[source],latest:source.content,source_message_id:'current'}),[],'only an identical latest source is deduplicated');
+ } finally {previous===undefined?delete globalThis.__semanticContextModel:globalThis.__semanticContextModel=previous;}
+});
+test('the shared recent selector leaves a twentieth original eligible for recovery and retains its full text',async()=>{
+ const previous=globalThis.__semanticContextModel;
+ const history=Array.from({length:40},(_,i)=>({id:'turn-'+i,role:'visitor',content:i===0?'幾時可送貨？':'Recent unrelated message '+i,created_at:'2026-10-02T00:00:00Z',metadata:{position:i}}));
+ history[20].content='The original product was CW-SUL70BA. '+('Original detail. '.repeat(55))+'Final condition: second floor, no stairs.';
+ const input={company_id:'company',conversation_id:'ticket',source_message_id:'turn-0',latest:'幾時可送貨？',persistent_state_summary:null,history,recovered_history:[history[20]]};
+ const chosen=contextInterpreter.selectSemanticRecentHistory(input);
+ assert.equal(chosen.length,12);assert.equal(chosen[0],history[1]);assert.equal(chosen[11],history[12]);assert(!chosen.some(row=>row.id==='turn-20'));
+ globalThis.__semanticContextModel=async request=>{
+  assert(request.user.includes(history[20].content));assert(request.user.includes('Final condition: second floor, no stairs.'));assert(!request.user.includes('Recent unrelated message 19'));
+  return {ok:true,request_id:'isolated',text:JSON.stringify(activeSemanticResponse({requested_facts:['delivery_time'],demands:[demandFixture()]}))};
+ };
+ try {assert.equal((await contextInterpreter.interpretCommerceSemantics(input)).failure_code,null);}
+ finally {previous===undefined?delete globalThis.__semanticContextModel:globalThis.__semanticContextModel=previous;}
+});
+test('history input overflow fails before a model call instead of truncating an original requirement',async()=>{
+ const previous=globalThis.__semanticContextModel;let calls=0;
+ globalThis.__semanticContextModel=async()=>{calls++;throw Error('must not dispatch oversized context');};
+ try {
+  const result=await contextInterpreter.interpretCommerceSemantics({company_id:'company',conversation_id:'ticket',source_message_id:'current',latest:'幾時可送貨？',persistent_state_summary:'{}',
+   recovered_history:[{id:'old',role:'visitor',content:'x'.repeat(contextInterpreter.SEMANTIC_HISTORY_CHAR_LIMIT+1)}]});
+  assert.equal(calls,0);assert.equal(result.frame,null);assert.equal(result.failure_code,'SEMANTIC_INPUT_LIMIT');assert.equal(result.failure_stage,'input_context');
+ } finally {previous===undefined?delete globalThis.__semanticContextModel:globalThis.__semanticContextModel=previous;}
+});
+
 function nodes(value,path=[]) {
  const kind=value===null?'null':Array.isArray(value)?'array':typeof value;
  return [{path,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},

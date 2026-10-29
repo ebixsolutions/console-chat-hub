@@ -307,6 +307,7 @@ jobs:
           node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/hosted-cross-topic-p0.test.mjs
           node --disable-warning=ExperimentalWarning --experimental-transform-types tests/task1-director/local-deno-shim.mjs \
             supabase/functions/_shared/conversation-long-memory.test.ts \
+            supabase/functions/_shared/semantic-history-recovery.test.ts \
             supabase/functions/_shared/conversation-recall.test.ts \
             supabase/functions/_shared/pre-send-conversion-supervisor.test.ts \
             supabase/functions/_shared/conversation-service-planner.test.ts \

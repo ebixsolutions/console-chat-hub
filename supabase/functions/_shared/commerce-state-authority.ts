@@ -1,6 +1,6 @@
 import { factualSubject } from "./conversation-semantic-contract.ts";
 import { classifyHandoffIntent, splitHandoffClauses } from "./handoff-intent.ts";
-import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
+import type { CommerceSemanticDemand, CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 
 /** A superseded numeric requirement is not an item cancellation. Only this
@@ -461,6 +461,9 @@ export type CustomerRequestDecision = {
   general_request: string | null;
   merchant_request: string | null;
   latest_requirements: string;
+  /** Source-validated semantic scope; this does not authorize evidence reads. */
+  semantic_demands?: CommerceSemanticDemand[];
+  excluded_lookup_quotes?: string[];
 };
 type RequestHistory = {id?:string|null;role:string;content:string;metadata?:unknown;created_at?:string|null};
 /** One source-bound decision for the writer, planner, query and generation.
@@ -470,10 +473,55 @@ type RequestHistory = {id?:string|null;role:string;content:string;metadata?:unkn
 export function resolveCustomerRequestDecision(question:string, semantic: {
   intent:string;confidence:number;requested_facts:string[];ambiguity:{is_ambiguous:boolean};
   operation?:string;additive?:boolean;entities?:Array<{model?:string|null}>;customer_facts?:unknown[];
+  demands?:CommerceSemanticDemand[];
 } | null, history:RequestHistory[]=[]):CustomerRequestDecision {
   const text=clean(question);
   const empty:CustomerRequestDecision={kind:"other",continuation:false,general_request:null,merchant_request:null,latest_requirements:text};
   if(!semantic || semantic.confidence<0.62)return empty;
+  if (semantic.demands?.length) {
+    // The provider has already decomposed meaning. Validate source ownership
+    // and explicit refusal here, rather than replacing unfamiliar demand
+    // wording with a second product/guidance keyword interpretation.
+    const normalize = (value:string) => value.normalize("NFKC").replace(/\s+/gu," ").trim().toLowerCase();
+    const demands = semantic.demands.filter(demand => clean(demand.source_quote) &&
+      normalize(text).includes(normalize(demand.source_quote)));
+    const excluded = demands.filter(demand => {
+      if (!["product","policy","unknown"].includes(demand.source_type)) return false;
+      const quote = clean(demand.source_quote);
+      if (!withoutExcludedLookups(quote).trim()) return true;
+      const lookupText = (value:string) => normalize(withoutExcludedLookups(value)
+        .replace(/[.!！。?？;；，,]+/gu," "));
+      // Quoting only "price" from "do not check price" cannot remove the
+      // customer's control instruction. Locate the quote in the permitted
+      // lookup projection as well as in the original source.
+      if (!lookupText(text).includes(lookupText(quote))) return true;
+      const refusal = /^\s*(?:不要|唔要|不想知道|(?:I\s+)?(?:do not|don't) want)\s*/iu.exec(quote);
+      if (!refusal) return false;
+      let object = quote.slice(refusal[0].length).replace(/[?？.!！。;；]+$/gu, "").trim();
+      for (const ref of demand.subject_refs) if (ref && normalize(object).includes(normalize(ref))) {
+        const escaped = ref.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+        object = object.replace(new RegExp(escaped,"giu"), " ").trim();
+      }
+      const facet = MERCHANT_FACT_REQUEST.exec(object);
+      // A field-only refusal is different from a negative product condition
+      // such as "don't want a noisy product; what options are available?".
+      return !!facet && object.replace(facet[0], "").trim() === "";
+    });
+    const active = demands.filter(demand => !excluded.includes(demand));
+    const kb = active.filter(demand => ["product","policy","unknown"].includes(demand.source_type));
+    const general = active.filter(demand => demand.source_type === "general");
+    const transactions = active.filter(demand => demand.source_type === "transaction");
+    // A human request remains control, never a side effect of interpreting a
+    // KB clause. Existing caller handoff precedence still owns its execution.
+    const handoff = classifyHandoffIntent(text).explicit_request;
+    const kind: CustomerRequestDecision["kind"] = handoff ? "other" : kb.length
+      ? general.length || transactions.length ? "mixed" : "merchant_facts"
+      : general.length && !transactions.length ? "guidance" : "other";
+    return {...empty, kind, semantic_demands: active,
+      excluded_lookup_quotes: excluded.map(demand => demand.source_quote),
+      general_request: general.length ? general.map(demand => demand.source_quote).join("; ") : null,
+      merchant_request: kb.length ? kb.map(demand => demand.source_quote).join("; ") : null};
+  }
   const bounded=history.slice(0,12);
   const lastAssistant=bounded.find(row=>row.role==="assistant");
   const priorCustomer=bounded.find(row=>["visitor","user","customer"].includes(row.role) && clean(row.content)!==text);
@@ -534,6 +582,12 @@ export function isCustomerGuidanceRequest(question:string,semantic:{intent:strin
  * Empty ADD_ITEM is not a new transaction. Resolved existing references retain
  * UPDATE_ITEM; genuinely additive/new entities and all lifecycle writers stay. */
 export function applyCustomerRequestDecision(frame:CommerceSemanticFrame,decision:CustomerRequestDecision):CommerceSemanticFrame {
+  if (decision.semantic_demands) {
+    return {...frame, demands: decision.semantic_demands,
+      requested_facts: decision.kind === "guidance" ? [] : [...new Set(decision.semantic_demands.flatMap(demand => demand.requested_facts))],
+      explicit_negations: [...new Set([...frame.explicit_negations, ...(decision.excluded_lookup_quotes ?? [])])],
+      ...(decision.kind === "guidance" ? {intent: "customer_guidance"} : {})};
+  }
   if(decision.kind!=="guidance")return frame;
   return {...frame,intent:"customer_guidance",requested_facts:[],
     ...(decision.continuation && frame.operation==="ADD_ITEM" && !frame.entities.length && !frame.customer_facts?.length && !frame.additive ? {operation:"NO_STATE_CHANGE" as const} : {})};

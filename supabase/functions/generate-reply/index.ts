@@ -118,7 +118,6 @@ import {
   buildWorkflow5TopicalClarification,
   resolveConversationMemoryResponse,
   resolveWorkflow5ConversationLanguage,
-  workflow5ShortTopicHint,
 } from "../_shared/conversation-runtime-state.ts";
 import { classifyCanonicalConversationTurn } from "../_shared/conversation-semantic-contract.ts";
 import {
@@ -174,7 +173,7 @@ import {
   resolveCommittedAddressCorrection,
   runCommerceStateRuntime,
 } from "../_shared/commerce-state-runtime.ts";
-import { interpretCommerceSemantics } from "../_shared/commerce-semantic-interpreter.ts";
+import { prepareSemanticRequest, type PreparedSemanticRequest } from "../_shared/prepare-semantic-request.ts";
 import type { CommerceSemanticFrame } from "../_shared/commerce-semantic-frame.ts";
 import {
   buildBoundedConversationContext,
@@ -4296,7 +4295,7 @@ async function orchestrationGenerateReply(
   ] = await Promise.all([
     supabaseAdmin
       .from("messages")
-      .select("id, role, content, created_at, metadata")
+      .select("id, conversation_id, role, content, created_at, is_recalled, metadata")
       .eq("conversation_id", conversation_id)
       .eq("is_recalled", false)
       .neq("content", "__THINKING__")
@@ -4329,62 +4328,7 @@ async function orchestrationGenerateReply(
     _pr5HistoryRows ?? [],
   );
   const _explicitHandoffRequested = isHandoffIntent(_h1LastMsg);
-  const _w5ShortTopicHint = _explicitHandoffRequested
-    ? null
-    : workflow5ShortTopicHint(_h1LastMsg);
-  if (_w5ShortTopicHint === "membership tiers") {
-    const topicalReply = _visitorLang === "en"
-      ? "You’re asking about membership tiers. I don’t have enough confirmed published information to state the tier structure, inclusions, or limits, so I won’t guess."
-      : _visitorLang === "zh-CN"
-      ? "你问的是会员等级。目前没有足够已确认的已发布资料来确定会员等级的架构、包含内容或限制，所以我不会猜。"
-      : "你問的是會員等級。目前未有足夠已確認的已發布資料去確定會員等級的架構、包含內容或限制，所以我唔會估。";
-    const topicalCommit = await commitAiReplyWithControlGate(
-      supabaseAdmin,
-      conversation_id,
-      source_message_id,
-      topicalReply,
-      {
-        response_route: "workflow5_topical_recovery",
-        escalation_action: "continue_ai",
-        handoff_required: false,
-        topic: _w5ShortTopicHint,
-        factual_grounding_required: true,
-        grounding_state: "published_evidence_unconfirmed",
-      },
-    );
-    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    if (topicalCommit.ok) {
-      return new Response(
-        JSON.stringify({
-          success: true,
-          reply: topicalReply,
-          response_route: "workflow5_topical_recovery",
-          handoff_required: false,
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-    if (
-      ["human_control", "resolved", "superseded_source"].includes(
-        topicalCommit.result,
-      )
-    ) {
-      return new Response(
-        JSON.stringify({ success: true, skipped: topicalCommit.result }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: `workflow5_topical_recovery_${topicalCommit.result}`,
-      }),
-      {
-        status: 409,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
-    );
-  }
+  // Short merchant questions use the same semantic and evidence path as paraphrases.
   // P0 critical preflight: E2 must run before customer-context and generic clarification early returns.
   const _criticalE2ExpectedTenantId =
     typeof conversation.company_id === "string" &&
@@ -4511,22 +4455,33 @@ async function orchestrationGenerateReply(
   // Production semantics use the existing approved LLM router and its bounded policy.
   // It never writes commerce state and never supplies external product/policy facts.
   let _a3SemanticFrame: CommerceSemanticFrame | null = null;
+  let _semanticPrepared: PreparedSemanticRequest | null = null;
+  let _semanticHistory = (_pr5HistoryRows ?? []) as MemoryHistoryRow[];
   let _semanticFailure: string | null = null;
   let _semanticDiagnostic: ExecutionFailure | undefined;
   const _semanticBusinessText = customerBusinessText(_h1LastMsg);
   if (_criticalE2ExpectedTenantId && _semanticBusinessText && !isCurrentRequirementsRecap(_semanticBusinessText)) {
     try {
-      const semanticResult = await interpretCommerceSemantics({
+      _semanticPrepared = await prepareSemanticRequest(supabaseAdmin, {
         company_id: _criticalE2ExpectedTenantId,
         conversation_id,
         source_message_id: _h1SourceMessageId,
+        source_created_at: sourceVisitorMessage.created_at,
+        source_content: _h1LastMsg,
         latest: _semanticBusinessText,
-        history: (_pr5HistoryRows ?? []).map((row: MemoryHistoryRow) => ({
-          role: String((row as { role?: unknown }).role ?? ""),
-          content: String((row as { content?: unknown }).content ?? ""),
-        })),
+        recent_history: _semanticHistory,
         signal: requestSignal,
       });
+      _semanticHistory = _semanticPrepared.history;
+      const semanticResult = _semanticPrepared.semantic;
+      console.info(JSON.stringify({
+        event: "semantic_history_recovery",
+        source_message_id: _h1SourceMessageId,
+        read_count: _semanticPrepared.recovery.read_count,
+        recovered_count: _semanticPrepared.recovery.rows.length,
+        context_incomplete: _semanticPrepared.recovery.context_incomplete,
+        reason: _semanticPrepared.recovery.reason,
+      }));
       _a3SemanticFrame = semanticResult.frame;
       _semanticFailure = semanticResult.failure_code;
       if (_semanticFailure) _semanticDiagnostic = semanticResult.failure ?? executionFailure(_semanticFailure,{source_message_id:_h1SourceMessageId});
@@ -4550,9 +4505,12 @@ async function orchestrationGenerateReply(
     return new Response(JSON.stringify({success:false,error:"semantic_interpretation_failed",code:_semanticFailure,failure:_semanticDiagnostic,retryable:_semanticDiagnostic?.retryable === true}),
       {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
+  const _semanticRoutingHistory = _semanticHistory.map(row => ({...row, role:String(row.role ?? ""), content:String(row.content ?? "")}));
   const _catalogueFollowup = _criticalE2ExpectedTenantId && source_message_id
-    ? resolveCatalogueVariantFollowup(_h1LastMsg, _pr5HistoryRows ?? [], {conversation_id,company_id:_criticalE2ExpectedTenantId,source_message_id}) : null;
-  const _customerRequestDecision = resolveCustomerRequestDecision(_catalogueFollowup?.request ?? _h1LastMsg,_a3SemanticFrame,_pr5HistoryRows ?? []);
+    ? resolveCatalogueVariantFollowup(_h1LastMsg, _semanticRoutingHistory, {conversation_id,company_id:_criticalE2ExpectedTenantId,source_message_id}) : null;
+  const _semanticRequestQuestion = _a3SemanticFrame?.demands?.length
+    ? _h1LastMsg : _catalogueFollowup?.request ?? _h1LastMsg;
+  const _customerRequestDecision = resolveCustomerRequestDecision(_semanticRequestQuestion,_a3SemanticFrame,_semanticRoutingHistory);
   // Resolve once before writer, Memory, planner and KB. No new authority.
   if (classifyLocalTopicRisk(_h1LastMsg)?.level === "high") _customerRequestDecision.kind="other";
   if (_a3SemanticFrame) _a3SemanticFrame=applyCustomerRequestDecision(_a3SemanticFrame,_customerRequestDecision);
@@ -4570,23 +4528,20 @@ async function orchestrationGenerateReply(
   let _c3ReadOnlyMemorySource: string | null = null;
   let _c3TrustedPersistedMemoryReadback: TrustedPersistedMemoryReadback | null = null;
   let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
+  let _currentFactualRequest: CurrentFactualRequest | undefined;
+  let _factualContextLimit = false;
   // A factual subject/reference is not a customer-owned purchase requirement.
   // Keep pure evidence reads out of the commerce mutation interpreter; a
   // corrected lookup subject must not create an unresolved commerce correction.
   // Mixed facts/constraints, quantity, lifecycle and option-research turns still
   // use the unchanged state writer. Memory and B2 remain on their original path.
   const _pureFactualSubjectRead = Boolean(_a3SemanticFrame &&
-    _a3SemanticFrame.operation === "ASK_FACT" && _a3SemanticFrame.confidence >= 0.72 &&
+    _a3SemanticFrame.operation === "ASK_FACT" && _a3SemanticFrame.confidence >= 0.62 &&
     !_a3SemanticFrame.ambiguity.is_ambiguous && !_a3SemanticFrame.additive &&
-    _a3SemanticFrame.requested_facts.length > 0 && _a3SemanticFrame.entities.length > 0 &&
-    literalFactualSubject(_h1LastMsg,_a3SemanticFrame.entities.map(entity=>entity.name)) &&
-    !isCustomerGuidanceRequest(_h1LastMsg,_a3SemanticFrame) &&
+    (_a3SemanticFrame.requested_facts.length > 0 ||
+      _a3SemanticFrame.demands?.some(demand => ["product","policy"].includes(demand.source_type))) &&
     !_a3SemanticFrame.customer_facts?.length &&
-    !["explore_options","recommend_options","compare_options"].includes(_a3SemanticFrame.intent) &&
-    [_a3SemanticFrame.transaction_state,_a3SemanticFrame.payment_state,_a3SemanticFrame.booking_state,_a3SemanticFrame.fulfillment_state].every(s=>s==="none"||s==="unknown") &&
-    _a3SemanticFrame.entities.every(entity=>entity.quantity===null && entity.unit===null &&
-      !Object.keys(entity.attributes).length && !Object.keys(entity.constraints).length &&
-      Object.values(entity.capabilities).every(value=>value===false)));
+    [_a3SemanticFrame.transaction_state,_a3SemanticFrame.payment_state,_a3SemanticFrame.booking_state,_a3SemanticFrame.fulfillment_state].every(s=>s==="none"||s==="unknown"));
   const _purePriorGroundedTransform = Boolean(_priorGroundedTransform && _a3SemanticFrame &&
     _a3SemanticFrame.operation === "NO_STATE_CHANGE" && _a3SemanticFrame.confidence >= 0.72 &&
     !_a3SemanticFrame.ambiguity.is_ambiguous && !_a3SemanticFrame.additive &&
@@ -4672,7 +4627,7 @@ async function orchestrationGenerateReply(
         ]);
       _c3EmptyStateVerified = _a3Commerce?.reason === "read_only_current_requirements_recap" &&
         !memoryReadError && !commerceReadError && !persistedMemory && !commerceRow;
-      let memoryHistory = (_pr5HistoryRows ?? []) as MemoryHistoryRow[];
+      let memoryHistory = _semanticHistory;
       if (!persistedMemory && (_pr5VisitorTurnCount ?? 0) > 50) {
         const { data: rebuildRows } = await supabaseAdmin.from("messages")
           .select("id,role,content,created_at,metadata")
@@ -4697,6 +4652,21 @@ async function orchestrationGenerateReply(
           revision: Number(commerceRow.revision),
           state: commerceState,
         };
+      }
+      try {
+        _currentFactualRequest = resolveCurrentFactualRequest({
+          question: _semanticRequestQuestion,
+          source_message_id: _h1SourceMessageId,
+          history: _semanticHistory,
+          memory: _semanticPrepared?.memory ?? null,
+          semantic: _a3SemanticFrame,
+          commerce: commerceState,
+          request_decision: _customerRequestDecision,
+        });
+      } catch (error) {
+        if (!(error instanceof DecisionContextLimitError)) throw error;
+        // An incomplete request must not become a shorter, apparently complete lookup.
+        _factualContextLimit = true;
       }
       const readOnlyRecap = _a3Commerce?.reason ===
         "read_only_current_requirements_recap";
@@ -4747,7 +4717,13 @@ async function orchestrationGenerateReply(
               : Number(commerceRow.revision),
             commerce_state: commerceState,
             request_decision: _customerRequestDecision,
-            source_factual_turn: _a3SemanticFrame?.operation === "ASK_FACT" && (_a3SemanticFrame?.requested_facts.length ?? 0) > 0,
+            source_factual_turn: _currentFactualRequest?.kb_required === true,
+            factual_read_request: _currentFactualRequest?.kb_required ? {
+              source_message_id: _h1SourceMessageId,
+              subjects: _currentFactualRequest.subjects,
+              subject_source_message_ids: _currentFactualRequest.subject_source_message_ids,
+              requested_facts: _currentFactualRequest.requested_facts,
+            } : undefined,
             customer_fact_delta: (_a3SemanticFrame?.customer_facts ?? []).map(f=>({...f,authority:"customer" as const,source_message_id:_h1SourceMessageId})),
             pending_lifecycle_reply: _a3Commerce?.trusted_lifecycle_commit ?? null,
             newest_first: memoryHistory,
@@ -4806,21 +4782,6 @@ async function orchestrationGenerateReply(
   // Resolve the merchant read once, after the scoped canonical state read.
   // This is interpretation only: no state, lifecycle or merchant-fact authority
   // is introduced. Planner, retrieval, grounding and rendering share it below.
-  let _currentFactualRequest: CurrentFactualRequest | undefined;
-  let _factualContextLimit = false;
-  try {
-    _currentFactualRequest = resolveCurrentFactualRequest({
-      question: _catalogueFollowup?.request ?? _h1LastMsg,
-      history: _pr5HistoryRows ?? [],
-      semantic: _a3SemanticFrame,
-      commerce: _c3CommerceSnapshot?.state ?? null,
-      request_decision: _customerRequestDecision,
-    });
-  } catch (error) {
-    if (!(error instanceof DecisionContextLimitError)) throw error;
-    // Never fall back to a shorter query that silently drops requirements.
-    _factualContextLimit = true;
-  }
   if (_currentFactualRequest?.applicable && _currentFactualRequest.answer_request) {
     _productFactualRequest = _currentFactualRequest.answer_request;
     _effectiveNaturalCustomerIntent = _currentFactualRequest.needs_subject_clarification
@@ -4897,7 +4858,7 @@ async function orchestrationGenerateReply(
         metadata: row.metadata,
       }));
   const _factualFollowup = _currentFactualRequest?.applicable
-    ? currentFactualFollowupContext(_currentFactualRequest, _c3RecentServiceMessages)
+    ? currentFactualFollowupContext(_currentFactualRequest, _semanticHistory)
     : _a3SemanticFrame?.ambiguity.is_ambiguous ? null
     : resolveFactualFollowup(_h1LastMsg, _c3RecentServiceMessages);
   const _semanticFactualSubject = _currentFactualRequest?.applicable
@@ -5102,7 +5063,7 @@ ${JSON.stringify({
   })}
 Latest applicable corrections replace old values; an answered clarification is not a new transaction. Inactive entities stay inactive. Customer requirements never authorize merchant claims.
 [/EFFECTIVE_CUSTOMER_REQUIREMENTS]`;
-  const _mixedGuidanceInstruction = _mixedRequest
+  const _mixedGuidanceInstruction = _mixedRequest && _customerRequestDecision.general_request
     ? "[MIXED_REQUEST] Give useful conditional general decision criteria separately from merchant facts. Only the merchant facet was queried. Current E* full content alone supports named merchant/model/policy facts; never let general guidance imply those claims are verified. When no eligible evidence was returned, answer the general facet and state only that the specific merchant facts remain unverified. A failed transport/admission is not no-match. [/MIXED_REQUEST]" : "";
   const _naturalGuidanceReply: string | null = null;
 
@@ -5382,7 +5343,7 @@ Latest applicable corrections replace old values; an answered clarification is n
   }
   const _turnClassification = classifyConversationTurn(_h1LastMsg);
   if (
-    !_customerGuidance && !_mixedRequest && !_w5ShortTopicHint &&
+    !_customerGuidance && !_mixedRequest &&
     _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
     _turnClassification.should_clarify_before_kb &&

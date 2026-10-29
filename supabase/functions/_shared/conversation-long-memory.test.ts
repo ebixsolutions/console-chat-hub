@@ -15,6 +15,7 @@ import {
   createEmptyConversationCommerceState,
   type ConversationCommerceState,
 } from "./commerce-state-contract.ts";
+import type { FactualReadRequest } from "./semantic-history-recovery.ts";
 
 function assert(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
@@ -41,10 +42,12 @@ function build(options: {
   turns?: number;
   memoryRevision?: number;
   sourceFactualTurn?: boolean;
+  factualReadRequest?: FactualReadRequest;
 } = {}) {
   return buildCanonicalConversationMemory({
     previous: options.previous,
     source_factual_turn:options.sourceFactualTurn,
+    factual_read_request:options.factualReadRequest,
     conversation_id: CID,
     company_id: COID,
     source_message_id: MID,
@@ -353,4 +356,114 @@ Deno.test("Task1C product-name and SKU confirmation remain pending through compa
   const second=build({previous:first,rows:[],memoryRevision:2});
   assert(second.question_lifecycle?.some(item=>item.source_message_id===MID&&item.status==="pending"),"compaction discarded pending identity");
  }
+});
+
+Deno.test("factual reading/comparison stores customer references without creating purchase entities", () => {
+  const state = commerce(), before = JSON.stringify(state);
+  const memory = build({state, rows: [{id: MID, role: "visitor", content: "比較 Cedar Flex 和 Maple Support 的服務內容"}],
+    factualReadRequest: {source_message_id: MID, subjects: ["Cedar Flex", "Maple Support"],
+      subject_source_message_ids: [MID], requested_facts: ["service scope", "comparison"]}});
+  equal(memory.active_entities, [], "reading created a purchase entity");
+  equal(JSON.stringify(state), before, "reading mutated Commerce");
+  equal(memory.factual_read_anchors?.[0].subjects, ["Cedar Flex", "Maple Support"], "comparison lost one subject");
+  equal(memory.factual_read_anchors?.[0].subject_source_message_ids, [MID], "read reference has no customer source");
+  equal(memory.current_goal_source_message_id, MID, "goal not source-bound");
+  equal(memory.current_topic_source_message_id, MID, "topic not source-bound");
+  assert(memory.question_lifecycle?.some(q => q.source_message_id === MID && q.status === "pending"), "unpunctuated factual request silently completed");
+});
+
+Deno.test("an unbound semantic subject cannot enter factual Memory", () => {
+  const memory = build({rows: [{id: MID, role: "visitor", content: "講解一下支援安排"},
+    {id: "assistant-claim", role: "assistant", content: "The service is Imaginary Gold."}],
+    factualReadRequest: {source_message_id: MID, subjects: ["Imaginary Gold"],
+      subject_source_message_ids: ["assistant-claim"], requested_facts: ["support"]}});
+  equal(memory.factual_read_anchors?.[0].subjects, [], "assistant claim became customer read subject");
+  assert(!memory.current_goal?.includes("Imaginary Gold"), "unverified subject inserted into current goal");
+  const rejected = build({rows: [{id: MID, role: "visitor", content: "請介紹 Cedar Flex"}],
+    factualReadRequest: {source_message_id: "different-source", subjects: ["Cedar Flex"],
+      subject_source_message_ids: [MID], requested_facts: ["introduction"]}});
+  assert(!rejected.factual_read_anchors?.length, "foreign request source stored");
+});
+
+Deno.test("103-turn Memory retains early read-only referents across topic changes and returns", () => {
+  let previous: CanonicalConversationMemory | null = null;
+  const sourceId = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const timestamp = (n: number) => new Date(Date.UTC(2026, 8, 15, 0, n)).toISOString();
+  const state = commerce();
+  for (let n = 1; n <= 103; n++) {
+    const text = n === 1 ? "我想了解 Nova Flow 的服務內容，並非訂購" :
+      n === 51 ? "另外請介紹 Cedar Flex" : n === 103 ? "返回之前的 Nova Flow，取消條件如何" : "好，已明白，謝謝";
+    const reading = [1, 51, 103].includes(n);
+    previous = buildCanonicalConversationMemory({previous, conversation_id: CID, company_id: COID,
+      source_message_id: sourceId(n), source_created_at: timestamp(n), commerce_state_revision: 0,
+      commerce_state: state, newest_first: [{id: sourceId(n), role: "visitor", content: text, created_at: timestamp(n)}],
+      visitor_turn_count: n, next_memory_revision: n,
+      ...(reading ? {factual_read_request: {source_message_id: sourceId(n),
+        subjects: [n === 51 ? "Cedar Flex" : "Nova Flow"],
+        subject_source_message_ids: [sourceId(n === 103 ? 1 : n)], requested_facts: [n === 103 ? "cancellation" : "information"]}} : {}),
+    });
+  }
+  assert(previous, "missing memory");
+  assert(previous.factual_read_anchors?.some(a => a.source_message_id === sourceId(1)), "early reading source evicted by small talk");
+  assert(previous.factual_read_anchors?.some(a => a.source_message_id === sourceId(51)), "topic change erased old references");
+  equal(previous.factual_read_anchors?.at(-1)?.subjects, ["Nova Flow"], "return bound to stale different topic");
+  assert(previous.current_topic?.includes("Nova Flow"), "wrong current topic after return");
+  equal(previous.active_entities, [], "long read conversation created commerce entities");
+  equal(state.entities, [], "external state mutated");
+  assert(JSON.stringify(previous).length <= C3_MEMORY_JSON_CHAR_BUDGET, "reading memory unbounded");
+});
+
+Deno.test("factual follow-up goal retains the bound subject rather than an isolated short question", () => {
+  const prior = build({rows: [{id: "old-source", role: "visitor", content: "請介紹 AX-17"}], sourceFactualTurn: false});
+  prior.factual_read_anchors = [{source_message_id: "old-source", created_at: "2026-09-14T00:00:00Z", customer_text: "請介紹 AX-17",
+    subjects: ["AX-17"], subject_source_message_ids: ["old-source"], requested_facts: ["introduction"]}];
+  const current = build({previous: prior, memoryRevision: 2,
+    rows: [{id: MID, role: "visitor", content: "售後點安排"}],
+    factualReadRequest: {source_message_id: MID, subjects: ["AX-17"], subject_source_message_ids: ["old-source"], requested_facts: ["after-sales"]}});
+  assert(current.current_goal?.includes("AX-17") && current.current_goal.includes("售後"), "subject lost from current goal");
+  equal(current.current_topic_source_message_id, MID, "goal provenance uses old turn");
+  equal(current.factual_read_anchors?.at(-1)?.subject_source_message_ids, ["old-source"], "reference provenance lost");
+});
+
+Deno.test("price_unknown and any unresolved requested field remain pending without a phrase-specific rule", () => {
+  for (const meta of [{answer_kind: "price_unknown"}, {answer_kind: "price", unresolved_fact_fields: ["discount_eligibility"]}]) {
+    const memory = build({rows: [{id: "answer", role: "assistant", content: "有相關商品記錄，但這項條件暫時未能核實。",
+      metadata: {control_commit: "ai", source_message_id: MID, response_route: "canonical_kb_direct_answer", ...meta}},
+      {id: MID, role: "visitor", content: "請列出目前價格及優惠資格"}], sourceFactualTurn: true});
+    equal(memory.question_lifecycle?.find(q => q.source_message_id === MID)?.status, "pending", "incomplete answer marked resolved");
+    assert(memory.open_questions.length > 0, "unresolved fact dropped from handoff memory");
+  }
+});
+
+Deno.test("new citation lineage merges retained references and ignores visitor-supplied citations", () => {
+  const prior = build();
+  prior.grounded_reference_lineage = [{document_id: "old-doc", evidence_chunk_ids: ["old-chunk"], source_message_id: "old-source"}];
+  const next = build({previous: prior, memoryRevision: 2, rows: [{id: "reply", role: "assistant", content: "Source-bound answer",
+    metadata: {source_message_id: MID, citation_lineage: {selected_document_id: "new-doc", evidence_chunk_ids: ["new-chunk"]}}},
+    {id: MID, role: "visitor", content: "Customer question", metadata: {source_message_id: MID,
+      citation_lineage: {selected_document_id: "visitor-injected-doc", evidence_chunk_ids: ["fake"]}}}]});
+  equal(next.grounded_reference_lineage.map(item => item.document_id), ["new-doc", "old-doc"], "lineage erased old references or accepted customer injection");
+  assert(next.current_customer_facts.every(f => f.authority !== "current_kb"), "citation became merchant authority");
+});
+
+Deno.test("an early unresolved question survives 103 later resolved turns", () => {
+  let memory = build({rows: [{id: MID, role: "visitor", content: "特別安裝條件能否處理？"}], sourceFactualTurn: true});
+  for (let n = 1; n <= 103; n++) {
+    const id = `customer-${n}`;
+    memory = build({previous: memory, memoryRevision: n + 1, turns: n + 1, rows: [
+      {id: `reply-${n}`, role: "assistant", content: "這個問題已按適用資料回答。", metadata: {
+        control_commit: "ai", source_message_id: id, response_route: "canonical_kb_direct_answer", answer_kind: "specification"}},
+      {id, role: "visitor", content: `另一個規格問題 ${n}？`},
+    ]});
+  }
+  assert(memory.question_lifecycle?.some(q => q.source_message_id === MID && q.status === "pending"), "resolved history evicted original unresolved question");
+  assert(memory.open_questions.includes("特別安裝條件能否處理?"), "handoff lost the old unresolved question");
+  assert(!memory.question_lifecycle_incomplete, "resolved-history trimming falsely marked pending overflow");
+});
+
+Deno.test("pending-question capacity overflow is explicit rather than silently complete", () => {
+  const memory = build({rows: Array.from({length: 30}, (_, i) => ({id: `pending-${i}`, role: "visitor", content: `尚未解決的服務條件 ${i}？`}))});
+  assert(memory.question_lifecycle_incomplete === true, "pending overflow hidden");
+  assert((memory.question_lifecycle?.length ?? 0) <= 24, "unbounded pending memory");
+  equal(build({previous: memory, memoryRevision: 2, rows: []}).question_lifecycle_incomplete, true, "compaction falsely cleared incomplete context");
 });

@@ -3,10 +3,80 @@ import assert from 'node:assert/strict';
 import Ajv from 'ajv';
 import {build} from 'esbuild';
 const compiled=await build({stdin:{contents:"export * from './supabase/functions/_shared/commerce-semantic-frame.ts'; export * from './supabase/functions/_shared/vertex-generation-config.ts'; export {resolveCustomerRequestDecision} from './supabase/functions/_shared/commerce-state-authority.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
-const {resolveCustomerRequestDecision,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const {resolveCustomerRequestDecision,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 function nodes(value,path=[]){const kind=value===null?'null':Array.isArray(value)?'array':typeof value;return [{path,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},...(['object','array'].includes(kind)?Object.entries(value).flatMap(([k,v])=>nodes(v,[...path,k])):[])];}
 const wire=(delta={},operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:0.98,nodes:nodes(delta)});
 const canonical=v=>normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(v));
+// Independent native proposals are encoded only for fixture construction. The
+// production decoder is checked against their full canonical meaning below.
+function v4(delta={},operation='UPDATE_ITEM') {
+ const list=nodes({demands:[],...delta});
+ return {context_encoding:'semantic_values_v4',operation,confidence:0.98,
+  containers:list.filter(n=>['object','array','null'].includes(n.kind)).map(({path,kind})=>({path,kind})),
+  strings:list.filter(n=>n.kind==='string').map(({path,text})=>({path,text})),
+  numbers:list.filter(n=>n.kind==='number').map(({path,number})=>({path,number})),
+  booleans:list.filter(n=>n.kind==='boolean').map(({path,boolean})=>({path,boolean}))};
+}
+const demand=(patch={})=>({question:'What is the current price of model Q9?',source_quote:'Q9 price?',subject_refs:['Q9'],
+ source_type:'product',requested_facts:['price'],constraints:{},customer_correction:false,explicit_negations:[],
+ ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},...patch});
+const providerV4Accepts=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_PROVIDER_SCHEMA);
+test('active v4 keeps provider grammar small and typed while semantic vocabulary is validated independently',()=>{
+ const config=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash');
+ assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_values_v4']);
+ assert.deepEqual(config.responseSchema.required,['context_encoding','operation','confidence','containers','strings','numbers','booleans']);
+ assert(!('entities' in config.responseSchema.properties));assert(!('demands' in config.responseSchema.properties));
+ const inspect=s=>{assert(!s.anyOf);if(s.properties){assert.deepEqual(s.required,Object.keys(s.properties));assert.deepEqual(s.propertyOrdering,Object.keys(s.properties));Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);};
+ inspect(config.responseSchema);
+ const current=vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_SCHEMA),rejected=vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA);
+ assert.equal(current.transport,'semantic_values_v4');
+ assert.equal(current.objects,5);assert.equal(current.arrays,8);assert.equal(current.enum_values,16);assert(current.schema_bytes<1600);
+ assert(current.schema_bytes<rejected.schema_bytes/3);assert(!/anyOf|additionalProperties|delta_json|value_json/.test(JSON.stringify(config.responseSchema)));
+ assert.equal(config.thinkingConfig.thinkingBudget,0);
+ // Offline compiler shape is not evidence of Hosted provider acceptance.
+ const fixture=v4({demands:[demand()],requested_facts:['price']},'ASK_FACT');
+ assert(providerV4Accepts(fixture),JSON.stringify(providerV4Accepts.errors));assert(canonical(fixture));
+});
+test('v4 preserves every independent product, live transaction and policy clause and exact typed constraints',()=>{
+ const delta={customer_correction:true,customer_facts:[{key:'users',value:0},{key:'renewal',value:false},{key:'date',value:null}],
+  demands:[demand({customer_correction:true,constraints:{renewal:false,capacity:{amount:0,unit:'users'},excluded:[],date:null}}),
+   demand({question:'Where is my order 12354?',source_quote:'Where is my order 12354?',subject_refs:['12354'],source_type:'transaction',requested_facts:['delivery_progress']}),
+   demand({question:'What is the return policy?',source_quote:'What is the return policy?',subject_refs:[],source_type:'policy',requested_facts:['return_policy']})],
+  requested_facts:['price','return_policy'],payment_state:'unknown'};
+ const fixture=v4(delta);assert(providerV4Accepts(fixture));
+ const actual=canonical(fixture);assert(actual);assert.deepEqual(actual,normalizeCommerceSemanticFrame({operation:'UPDATE_ITEM',confidence:0.98,...delta}));
+ assert.deepEqual(actual.demands.map(d=>d.source_type),['product','transaction','policy']);
+ assert.deepEqual(actual.demands[0].constraints,{capacity:{amount:0,unit:'users'},date:null,excluded:[],renewal:false});
+ assert.deepEqual(actual.demands[1].requested_facts,['delivery_progress']);assert.deepEqual(actual.demands[2].subject_refs,[]);
+ assert.deepEqual(canonical({...fixture,containers:fixture.containers.toReversed(),strings:fixture.strings.toReversed()}),actual);
+});
+for(const [label,delta] of [
+ ['invalid lifecycle enum',{payment_state:'PRIVATE-STATUS'}],
+ ['coerced quantity',{entities:[{name:'Q9',kind:'physical_product',confidence:0.98,quantity:false}]}],
+ ['invalid entity kind',{entities:[{name:'Q9',kind:'PRIVATE-KIND',confidence:0.98}]}],
+ ['missing entity confidence',{entities:[{name:'Q9',kind:'physical_product'}]}],
+ ['unknown demand type',{demands:[demand({source_type:'PRIVATE-ROUTE'})]}],
+ ['invented provenance field',{demands:[{...demand(),source_message_id:'PRIVATE-ID'}]}],
+ ['coerced demand reference',{demands:[demand({subject_refs:[17]})]}],
+ ['stringified demand context',{demands:[demand({constraints:'{"budget":0}'})]}],
+ ['oversized demand array',{demands:Array(13).fill(demand())}],
+ ['oversized demand quote',{demands:[demand({source_quote:'x'.repeat(1601)})]}],
+ ['NFKC-expanded demand quote',{demands:[demand({source_quote:'㍿'.repeat(401)})]}],
+ ['NFKC-expanded subject reference',{demands:[demand({subject_refs:['㍿'.repeat(41)]})]}],
+ ['unbounded demand context',{demands:[demand({constraints:{a:{b:{c:{value:0}}}}})]}],
+])test('v4 retains strict canonical vocabulary and limits: '+label,()=>{
+ let diagnostic;
+ const decoded=decodeCommerceSemanticWire(v4(delta),(_code,d)=>{diagnostic=d;});
+ const result=normalizeCommerceSemanticFrame(decoded,(_code,d)=>{diagnostic??=d;});
+ assert.equal(result,null);assert(!JSON.stringify(diagnostic??{}).includes('PRIVATE-'));
+});
+test('v4 rejects cross-collection path overwrites, undeclared parents, missing demand list and absent typed scalar',()=>{
+ const duplicate=v4({customer_facts:[{key:'seats',value:0}]});duplicate.booleans.push({path:['customer_facts','0','value'],boolean:false});assert.equal(canonical(duplicate),null);
+ const missingParent=v4();missingParent.strings.push({path:['demands','0','question'],text:'PRIVATE-VALUE'});assert.equal(canonical(missingParent),null);
+ const noDemands=v4();noDemands.containers=noDemands.containers.filter(n=>n.path[0]!=='demands');assert.equal(canonical(noDemands),null);
+ const noValue=v4();noValue.numbers.push({path:['topic']});assert.equal(providerV4Accepts(noValue),false);assert.equal(canonical(noValue),null);
+ const noClauses=v4({requested_facts:['price']},'ASK_FACT');assert.equal(canonical(noClauses),null);
+});
 // Independent check of the documented provider schema subset. This reproduces
 // a source-contract mismatch, NOT the unavailable historical malformed node.
 function providerAccepts(s,v){
@@ -66,9 +136,9 @@ const v3Entity=(patch={})=>({name:'unseen model Q9',kind:'physical_product',conf
  entity_ref:'',category_hint:null,sku:null,model:null,quantity:null,unit:null,
  capabilities:{requires_delivery:false,supports_pickup:false,requires_installation:false,requires_booking:false,
  requires_quote:false,requires_site_check:false,digital_fulfilment:false,recurring_billing:false,rental_return:false,customization:false},...patch});
-const providerV3Accepts=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_PROVIDER_SCHEMA);
+const providerV3Accepts=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA);
 test('v3 constrains native semantic types/enums with no optional or union grammar branches',()=>{
- const config=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash');
+ const config=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA,0,'gemini-2.5-flash');
  assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_fields_v3']);
  assert(!('nodes' in config.responseSchema.properties));
  const inspect=s=>{assert(!s.anyOf);if(s.properties){assert.deepEqual(s.required,Object.keys(s.properties));assert.deepEqual(s.propertyOrdering,Object.keys(s.properties));Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);};
@@ -77,7 +147,7 @@ test('v3 constrains native semantic types/enums with no optional or union gramma
   const item=config.responseSchema.properties[collection].items;
   assert.deepEqual(item.required,['path',valueField]);assert.equal(item.properties.path.minItems,'3');assert.equal(item.properties.path.maxItems,'6');
  }
- const d=vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_SCHEMA);
+ const d=vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA);
  assert.equal(d.transport,'semantic_fields_v3');assert.equal(d.objects,10);assert.equal(d.arrays,14);assert(d.schema_bytes<6000);
  // This is a deterministic compiler-shape budget, not Hosted Vertex acceptance.
  assert(providerV3Accepts(v3({entities:[v3Entity()]})),JSON.stringify(providerV3Accepts.errors));

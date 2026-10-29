@@ -17,6 +17,13 @@ import {
 import { readExactMemoryReplyLifecycle } from "./memory-reply-lifecycle-readback.ts";
 import { readExactConversationMemoryCommit } from "./authoritative-commit-readback.ts";
 import {
+  buildFactualReadAnchor,
+  factualReadAnchors,
+  SEMANTIC_HISTORY_RECOVERY_LIMITS,
+  type FactualReadAnchor,
+  type FactualReadRequest,
+} from "./semantic-history-recovery.ts";
+import {
   applyAddressReplacementCorrection,
   parseAddressReplacementCorrection,
 } from "./commerce-state-reducer.ts";
@@ -143,6 +150,13 @@ export interface MemoryQuestionLifecycle {
 
 export interface CanonicalConversationMemory {
   question_lifecycle?: MemoryQuestionLifecycle[];
+  question_lifecycle_incomplete?: boolean;
+  /** Customer-authored read references, independent of purchase entities. */
+  factual_read_anchors?: FactualReadAnchor[];
+  /** An index can be compacted; its referenced messages remain recoverable. */
+  factual_read_anchors_incomplete?: boolean;
+  current_goal_source_message_id?: string | null;
+  current_topic_source_message_id?: string | null;
   /** Server-derived receipt kept in the existing bounded memory row for same-source reply retry. */
   pending_lifecycle_reply?: B2TrustedLifecycleCommit;
   version: typeof CONVERSATION_MEMORY_VERSION;
@@ -445,17 +459,19 @@ function retainedCustomerRegions(rows: MemoryHistoryRow[]): CanonicalConversatio
 function lineage(rows: MemoryHistoryRow[]) {
   const result: CanonicalConversationMemory["grounded_reference_lineage"] = [];
   for (const row of rows) {
+    if (row.role !== "assistant") continue;
     const metadata = record(row.metadata);
     const citation = record(metadata?.citation_lineage);
     const documentId = clean(citation?.selected_document_id, 160);
     const chunkIds = Array.isArray(citation?.evidence_chunk_ids)
       ? uniqueStrings(citation!.evidence_chunk_ids as unknown[], 12, 160)
       : [];
-    if (!documentId || !chunkIds.length) continue;
+    const sourceId = clean(metadata?.source_message_id, 80);
+    if (!documentId || !chunkIds.length || !sourceId) continue;
     result.push({
       document_id: documentId,
       evidence_chunk_ids: chunkIds,
-      source_message_id: clean(metadata?.source_message_id, 80) || null,
+      source_message_id: sourceId,
     });
   }
   return result.slice(0, MAX_LINEAGE);
@@ -542,29 +558,66 @@ function projectCommerce(
   };
 }
 
+function retainQuestionLifecycle(items: MemoryQuestionLifecycle[], limit: number): {
+  items: MemoryQuestionLifecycle[]; incomplete: boolean;
+} {
+  const pending = items.filter(item => item.status === "pending");
+  const retained = pending.slice(-limit);
+  const remaining = limit - retained.length;
+  if (remaining > 0) retained.push(...items.filter(item => item.status !== "pending").slice(-remaining));
+  const ids = new Set(retained.map(item => item.source_message_id));
+  return {items: items.filter(item => ids.has(item.source_message_id)), incomplete: pending.length > limit};
+}
+
 function fitMemory(memory: CanonicalConversationMemory): CanonicalConversationMemory {
   let fitted = memory;
   const size = () => JSON.stringify(fitted).length;
   if (size() <= C3_MEMORY_JSON_CHAR_BUDGET) return fitted;
-  fitted = { ...fitted, question_lifecycle: fitted.question_lifecycle?.slice(-12).map(item=>({...item,text:item.text.slice(0,400)})), historical_facts: fitted.historical_facts.slice(-8), prior_topics: fitted.prior_topics.slice(-6) };
+  if (fitted.factual_read_anchors?.length) {
+    // Drop duplicate excerpts before any locating source ID. The raw customer
+    // messages remain in the original message store for on-demand recovery.
+    fitted = {...fitted, factual_read_anchors: fitted.factual_read_anchors.map(anchor => ({
+      ...anchor, customer_text: anchor.customer_text.slice(0, 160),
+      ...(anchor.customer_text.length > 160 ? {text_truncated: true} : {}),
+    }))};
+    if (size() <= C3_MEMORY_JSON_CHAR_BUDGET) return fitted;
+    if ((fitted.factual_read_anchors?.length ?? 0) > 4) fitted = {
+      ...fitted, factual_read_anchors: fitted.factual_read_anchors!.slice(-4), factual_read_anchors_incomplete: true,
+    };
+    if (size() <= C3_MEMORY_JSON_CHAR_BUDGET) return fitted;
+  }
+  const lifecycle = retainQuestionLifecycle(fitted.question_lifecycle ?? [], 12);
+  fitted = { ...fitted, question_lifecycle: lifecycle.items.map(item=>({...item,text:item.text.slice(0,400)})),
+    ...(lifecycle.incomplete ? {question_lifecycle_incomplete: true} : {}),
+    historical_facts: fitted.historical_facts.slice(-8), prior_topics: fitted.prior_topics.slice(-6) };
   if (size() <= C3_MEMORY_JSON_CHAR_BUDGET) return fitted;
   fitted = { ...fitted, grounded_reference_lineage: fitted.grounded_reference_lineage.slice(0, 6) };
   if (size() <= C3_MEMORY_JSON_CHAR_BUDGET) return fitted;
   fitted = { ...fitted, open_questions: fitted.open_questions.slice(0, 6), pending_actions: fitted.pending_actions.slice(0, 6), active_constraints: fitted.active_constraints.slice(0, 6) };
+  if (size() > C3_MEMORY_JSON_CHAR_BUDGET && fitted.factual_read_anchors?.length) {
+    fitted = {...fitted, factual_read_anchors_incomplete: true,
+      factual_read_anchors: fitted.factual_read_anchors.map(anchor => ({
+        ...anchor, customer_text: "", subjects: [], requested_facts: [], text_truncated: true,
+      }))};
+    if (size() > C3_MEMORY_JSON_CHAR_BUDGET) fitted = {...fitted, factual_read_anchors: []};
+  }
   if (size() > C3_MEMORY_JSON_CHAR_BUDGET) throw new Error("C3_CURRENT_FACTS_EXCEED_MEMORY_BUDGET");
   return fitted;
 }
 
 /** Existing memory projection owns unresolved lifecycle; transcript questions are not a queue. */
 function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerceState | null,
-  prior: CanonicalConversationMemory | null): MemoryQuestionLifecycle[] {
+  prior: CanonicalConversationMemory | null, factualSourceIds: Set<string> = new Set()): {
+    items: MemoryQuestionLifecycle[]; incomplete: boolean;
+  } {
   const items = new Map((prior?.question_lifecycle ?? []).map(item=>[item.source_message_id,{...item}]));
   const entities = state?.entities ?? [];
   for (const row of [...rows].reverse()) {
     const content=clean(row.content,1600);
     const meta = record(row.metadata);
     if (CUSTOMER_ROLES.has(String(row.role ?? "")) && row.id && !classifySocialTurn(content) &&
-      !isCurrentRequirementsRecap(content) && /[?？]|(?:what|how|why|can|could|幾多|有冇|夠唔夠)/i.test(content) && !items.has(row.id)) {
+      !isCurrentRequirementsRecap(content) && (factualSourceIds.has(row.id) ||
+        /[?？]|(?:what|how|why|can|could|幾多|有冇|夠唔夠)/i.test(content)) && !items.has(row.id)) {
       const matches = entities.filter(entity=>[entity.model,entity.attributes.product_name,entity.category.replace(/_/g," "),industryEntityLabel(entity.entity_id,"zh-TW"),industryEntityLabel(entity.entity_id,"en")]
         .some(name=>typeof name === "string" && content.toLowerCase().includes(name.toLowerCase())));
       items.set(row.id,{source_message_id:row.id,text:content,status:"pending",entity_id:matches.length===1?matches[0].entity_id:null});
@@ -576,11 +629,12 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
     const stockUnknown = meta.response_route === "canonical_kb_direct_answer" && (meta.answer_kind === "stock_unknown" ||
       Array.isArray(meta.unresolved_fact_fields) && meta.unresolved_fact_fields.includes("stock"));
     const cataloguePending=meta.response_route === "canonical_kb_direct_answer" &&
-      (meta.identity_confirmation_required===true || Array.isArray(meta.unresolved_fact_fields) &&
+      (meta.answer_kind === "price_unknown" || meta.identity_confirmation_required===true || Array.isArray(meta.unresolved_fact_fields) &&
         meta.unresolved_fact_fields.some(field=>["price","variant","product_identity"].includes(String(field))));
     const missingCustomerDecision = meta.response_route === "product_guidance" && /[?？]$/.test(content);
-    const missingMerchantEvidence=meta.merchant_evidence_unavailable===true || meta.grounding_state==="no_current_evidence";
-    if (!item && (clarification || site || stockUnknown || cataloguePending || missingCustomerDecision)) {
+    const missingMerchantEvidence=meta.merchant_evidence_unavailable===true || meta.grounding_state==="no_current_evidence" ||
+      Array.isArray(meta.unresolved_fact_fields) && meta.unresolved_fact_fields.length > 0;
+    if (!item && (clarification || site || stockUnknown || cataloguePending || missingCustomerDecision || missingMerchantEvidence)) {
       const source=rows.find(row=>row.id===meta.source_message_id && CUSTOMER_ROLES.has(String(row.role)));
       if (!source || classifySocialTurn(clean(source.content)) || isCurrentRequirementsRecap(clean(source.content))) continue;
       const matches=entities.filter(entity=>[entity.model,entity.attributes.product_name,entity.category.replace(/_/g," "),industryEntityLabel(entity.entity_id,"zh-TW"),industryEntityLabel(entity.entity_id,"en")]
@@ -625,7 +679,7 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
     item.status="superseded";item.resolution="entity inactive";
     item.resolution_source_message_id=entities.find(entity=>entity.entity_id===item.entity_id)?.provenance.source_message_id ?? null;
   }
-  return [...items.values()].slice(-24);
+  return retainQuestionLifecycle([...items.values()], 24);
 }
 
 /** Business projection only: never grants R1 authority or changes its classifier.
@@ -638,6 +692,7 @@ export function buildCanonicalConversationMemory(args: {
   customer_fact_delta?: ConversationMemoryFact[];
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
   source_factual_turn?: boolean;
+  factual_read_request?: FactualReadRequest;
   previous?: CanonicalConversationMemory | null;
   conversation_id: string;
   company_id: string;
@@ -662,7 +717,17 @@ export function buildCanonicalConversationMemory(args: {
       args.previous.company_id === args.company_id
     ? args.previous
     : null;
-  const lifecycle = questionLifecycle(args.newest_first,args.commerce_state,prior);
+  const currentReadAnchor = args.source_factual_turn || args.factual_read_request
+    ? buildFactualReadAnchor({source_message_id: args.source_message_id,
+      source_created_at: args.source_created_at, rows: args.newest_first,
+      request: args.factual_read_request, previous: prior?.factual_read_anchors}) : null;
+  const allReadAnchors = [...factualReadAnchors(prior?.factual_read_anchors)
+    .filter(anchor => anchor.source_message_id !== currentReadAnchor?.source_message_id),
+    ...(currentReadAnchor ? [currentReadAnchor] : [])];
+  const readAnchors = allReadAnchors.slice(-SEMANTIC_HISTORY_RECOVERY_LIMITS.anchor_count);
+  const lifecycleResult = questionLifecycle(args.newest_first,args.commerce_state,prior,
+    new Set(readAnchors.map(anchor => anchor.source_message_id)));
+  const lifecycle = lifecycleResult.items;
   const open = uniqueStrings(lifecycle.filter(item=>item.status === "pending").map(item=>item.text),MAX_OPEN);
   const genericEntities = (args.commerce_state?.entities ?? []).filter(e=>e.entity_id.startsWith("generic:"));
   const genericGoal = genericEntities.length ? genericEntities.map(e=>`${e.attributes.product_name ?? e.category}: ${e.quantity} ${e.attributes.unit ?? "units"}${["cancelled","deferred"].includes(e.status)?` (${args.commerce_state?.language==="en"?e.status:e.status==="deferred"?"已暫緩":"已取消"})`:""}${e.attributes.requested_date?`, requested date ${e.attributes.requested_date}`:""}`).join("; ") : null;
@@ -701,14 +766,17 @@ export function buildCanonicalConversationMemory(args: {
       ? currentSourceText : null;
   // Trusted current ASK_FACT takes precedence over a historical Commerce topic,
   // but never creates a product, quotation, entitlement or KB authority.
-  const currentFactualRow = args.source_factual_turn
+  const currentFactualRow = args.source_factual_turn || currentReadAnchor
     ? args.newest_first.find(row => row.id === args.source_message_id && CUSTOMER_ROLES.has(String(row.role ?? "")))
     : null;
   const factualText = currentFactualRow && !classifySocialTurn(clean(currentFactualRow.content,1600)) &&
       !classifyHandoffIntent(clean(currentFactualRow.content,1600)).explicit_request &&
       !isCurrentRequirementsRecap(clean(currentFactualRow.content,1600))
     ? businessMessageText(currentFactualRow.content).slice(0,1600) : null;
-  const businessGoal = sourceBoundGuidanceGoal || factualText || sourceBoundCustomerFactGoal || genericGoal || entityGoal || requirementGoal || (args.request_decision?.continuation ? clean(args.request_decision.latest_requirements,1600) : null) || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
+  const sourceBoundFactualGoal = factualText && currentReadAnchor?.subjects.length &&
+      !currentReadAnchor.subjects.every(subject => factualText.toLocaleLowerCase().includes(subject.toLocaleLowerCase()))
+    ? `${currentReadAnchor.subjects.join(" / ")}: ${factualText}`.slice(0, 1600) : factualText;
+  const businessGoal = sourceBoundGuidanceGoal || sourceBoundFactualGoal || sourceBoundCustomerFactGoal || genericGoal || entityGoal || requirementGoal || (args.request_decision?.continuation ? clean(args.request_decision.latest_requirements,1600) : null) || (fallbackGoal && !classifyHandoffIntent(fallbackGoal).explicit_request ? fallbackGoal : null);
   const runtimeRegions = [
     ...(runtime.current_requirements.current_market
       ? [{ region: runtime.current_requirements.current_market, temporal_scope: "current" as const }]
@@ -791,6 +859,9 @@ export function buildCanonicalConversationMemory(args: {
   const canonicalEntityFacts: ConversationMemoryFact[] = (args.commerce_state?.entities ?? []).filter(e=>!['deferred','cancelled'].includes(e.status)).flatMap(e=>[
     ...(customerRequestedQuantity(e) === null ? [] : [{key:`entity:${e.entity_id}:quantity`,value:e.quantity,authority:"canonical_commerce" as const,entity_id:e.entity_id,source_message_id:e.provenance.source_message_id}]),
     ...(typeof e.attributes.requested_date === "string" ? [{key:`entity:${e.entity_id}:requested_date`,value:e.attributes.requested_date,authority:"customer" as const,entity_id:e.entity_id,source_message_id:e.provenance.source_message_id}] : [])]);
+  const currentTopic = sourceBoundFactualGoal || sourceBoundGuidanceGoal || sourceBoundCustomerFactGoal || (!currentSourceText
+    ? businessMessageText(prior?.current_topic) || businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || null
+    : businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || businessMessageText(prior?.current_topic) || null);
   const memory: CanonicalConversationMemory = {
     version: CONVERSATION_MEMORY_VERSION,
     memory_revision: args.next_memory_revision,
@@ -799,7 +870,14 @@ export function buildCanonicalConversationMemory(args: {
     source_message_id: args.source_message_id,
     commerce_state_revision: args.commerce_state_revision,
     current_goal: businessGoal,
+    ...(readAnchors.length ? {factual_read_anchors: readAnchors} : {}),
+    ...(prior?.factual_read_anchors_incomplete || allReadAnchors.length > readAnchors.length
+      ? {factual_read_anchors_incomplete: true} : {}),
+    current_goal_source_message_id: sourceBoundGuidanceGoal || sourceBoundFactualGoal || sourceBoundCustomerFactGoal
+      ? args.source_message_id : prior?.current_goal === businessGoal ? prior.current_goal_source_message_id ?? null
+      : null,
     question_lifecycle: lifecycle,
+    ...(prior?.question_lifecycle_incomplete || lifecycleResult.incomplete ? {question_lifecycle_incomplete: true} : {}),
     active_entities: commerce.active_entities,
     latest_corrections: uniqueStrings([
       ...((args.customer_fact_delta ?? []).some(f => (prior?.current_customer_facts ?? []).some(old => old.key === f.key && !sameCanonicalJson(old.value,f.value)))
@@ -852,10 +930,11 @@ export function buildCanonicalConversationMemory(args: {
     open_questions: open,
     pending_actions: uniqueStrings([...commerce.pending_actions,...lifecycle.filter(item=>item.status === "pending" && item.resolution?.includes("professional")).map(item=>item.text)],MAX_ACTIONS),
     prior_topics: uniqueStrings([...runtime.prior_topics.slice().reverse(), ...(prior?.prior_topics ?? [])], MAX_TOPICS).reverse(),
-    current_topic: factualText || sourceBoundGuidanceGoal || sourceBoundCustomerFactGoal || (!currentSourceText
-      ? businessMessageText(prior?.current_topic) || businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || null
-      : businessMessageText(args.commerce_state?.current_topic) || runtime.current_topic || businessMessageText(prior?.current_topic) || null),
-    grounded_reference_lineage: lineage(args.newest_first).length ? lineage(args.newest_first) : (prior?.grounded_reference_lineage ?? []).slice(0, MAX_LINEAGE),
+    current_topic: currentTopic,
+    current_topic_source_message_id: sourceBoundFactualGoal || sourceBoundGuidanceGoal || sourceBoundCustomerFactGoal
+      ? args.source_message_id : currentTopic === prior?.current_topic ? prior?.current_topic_source_message_id ?? null : null,
+    grounded_reference_lineage: [...new Map([...lineage(args.newest_first), ...(prior?.grounded_reference_lineage ?? [])]
+      .map(item => [`${item.source_message_id}:${item.document_id}:${item.evidence_chunk_ids.join(",")}`, item])).values()].slice(0, MAX_LINEAGE),
     handoff_relevant_state: {
       current_goal: businessGoal,
       active_entity_ids: commerce.active_entities.map((entity) => entity.entity_id),
@@ -890,6 +969,13 @@ export function isCanonicalConversationMemory(value: unknown): value is Canonica
   }
   for (const key of ["active_entities", "latest_corrections", "current_customer_facts", "customer_preferences", "active_constraints", "current_regions", "historical_facts", "cancelled_or_superseded", "open_questions", "pending_actions", "prior_topics", "grounded_reference_lineage"]) {
     if (!Array.isArray(row[key])) return false;
+  }
+  if (row.factual_read_anchors !== undefined && (!Array.isArray(row.factual_read_anchors) ||
+    factualReadAnchors(row.factual_read_anchors).length !== row.factual_read_anchors.length)) return false;
+  if (row.factual_read_anchors_incomplete !== undefined && typeof row.factual_read_anchors_incomplete !== "boolean") return false;
+  if (row.question_lifecycle_incomplete !== undefined && typeof row.question_lifecycle_incomplete !== "boolean") return false;
+  for (const key of ["current_goal_source_message_id", "current_topic_source_message_id"]) {
+    if (row[key] !== undefined && row[key] !== null && (typeof row[key] !== "string" || !clean(row[key], 80))) return false;
   }
   return Boolean(record(row.transaction_summary) && record(row.handoff_relevant_state)) && JSON.stringify(value).length <= C3_MEMORY_JSON_CHAR_BUDGET;
 }
@@ -1012,6 +1098,7 @@ export function composeBoundedGenerationEnvelope(args: {
 
 export async function refreshConversationLongMemory(client: LongMemoryDbClient, args: {
   source_factual_turn?: boolean;
+  factual_read_request?: FactualReadRequest;
   request_decision?: CustomerRequestDecision;
   customer_fact_delta?: ConversationMemoryFact[];
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
@@ -1202,7 +1289,12 @@ export async function reconcileDeliveredMemoryReply(client: LongMemoryDbClient, 
     .eq("conversation_id",args.conversation_id).eq("company_id",stored.company_id).maybeSingle();
   if(sourceError || !source || commerceError || (commerce?.revision??null)!==stored.commerce_state_revision) return false;
   const prior: CanonicalConversationMemory=stored.memory;
-  const lifecycle=questionLifecycle([reply,source],commerce?.state??null,prior);
+  const lifecycleResult=questionLifecycle([reply,source],commerce?.state??null,prior);
+  // The frozen reply-finalization RPC may update lifecycle, not arbitrary
+  // Memory fields. An unexpected legacy overflow must not silently drop an
+  // unresolved question or pretend the full lifecycle was reconciled.
+  if (lifecycleResult.incomplete && !prior.question_lifecycle_incomplete) return false;
+  const lifecycle=lifecycleResult.items;
   const open=uniqueStrings(lifecycle.filter(item=>item.status==="pending").map(item=>item.text),MAX_OPEN);
   const professional=prior.question_lifecycle?.filter(item=>item.resolution?.includes("professional")).map(item=>item.text)??[];
   const pending=uniqueStrings([...prior.pending_actions.filter(item=>!professional.includes(item)),...lifecycle.filter(item=>item.status==="pending"&&item.resolution?.includes("professional")).map(item=>item.text)],MAX_ACTIONS);

@@ -24,6 +24,8 @@ import { buildCanonicalAssistRetrievalQuery } from "../_shared/conversation-runt
 import { resolveCurrentFactualRequest, type CurrentFactualRequest } from "../_shared/current-factual-request.ts";
 import { currentFactualRequestReceipt, buildCurrentFactualRequestPrompt } from "../_shared/factual-request-context.ts";
 import { DecisionContextLimitError } from "../_shared/bounded-decision-context.ts";
+import { prepareSemanticRequest, type PreparedSemanticRequest } from "../_shared/prepare-semantic-request.ts";
+import { applyCustomerRequestDecision, resolveCustomerRequestDecision } from "../_shared/commerce-state-authority.ts";
 import { buildWarmHandoffPackage } from "../_shared/warm-handoff.ts";
 import { parsePersistedC2Handoff } from "../_shared/transaction-closure-handoff.ts";
 import {
@@ -217,11 +219,11 @@ async function loadAssistConversationHistory(
   conversationId: string,
 ) {
   const { data, error } = await supabaseAdmin.from("messages").select(
-    "id, role, content, metadata, created_at",
+    "id, conversation_id, role, content, metadata, created_at, is_recalled",
   ).eq("conversation_id", conversationId).eq("is_recalled", false).neq(
     "content",
     "__THINKING__",
-  ).order("created_at", { ascending: false }).limit(24);
+  ).order("created_at", { ascending: false }).order("id", {ascending:false}).limit(50);
   if (error) return null;
   return (data ?? []).filter((row: any) =>
     typeof row?.content === "string" && row.content.trim()
@@ -668,20 +670,78 @@ Deno.serve(async (req) => {
     // C2 persisted handoff, translation, grammar and authorization remain above.
     let servicePlan: ServiceDialoguePlan | null = null;
     let assistFactualRequest: CurrentFactualRequest | undefined;
+    let assistSemanticPrepared: PreparedSemanticRequest | null = null;
+    let assistConversationHistory: any[] | null = null;
+    if (["suggest_reply", "knowledge_helper"].includes(toolType) &&
+        body.context_mode !== "manual" && conv.company_id) {
+      assistConversationHistory = await loadAssistConversationHistory(supabaseAdmin, conversationId);
+      if (assistConversationHistory === null) {
+        return jsonRes({success:false,error:"assist_conversation_context_unavailable"},500,req);
+      }
+      const boundary = assistConversationHistory.find(row => row.role === "visitor");
+      if (boundary) {
+        assistSemanticPrepared = await prepareSemanticRequest(supabaseAdmin, {
+          company_id: conv.company_id,
+          conversation_id: conversationId,
+          source_message_id: String(boundary.id),
+          source_created_at: String(boundary.created_at),
+          source_content: String(boundary.content),
+          latest: content,
+          recent_history: assistConversationHistory,
+          operation_id: `agent-assist:semantic:${conversationId}:${crypto.randomUUID()}`,
+          legacy_authority: inboxAuthority,
+          signal: req.signal,
+        });
+        if (assistSemanticPrepared.semantic.failure_code) {
+          return jsonRes({success:false,error:"assist_semantic_interpretation_failed",
+            code:assistSemanticPrepared.semantic.failure_code,
+            failure:assistSemanticPrepared.semantic.failure},503,req);
+        }
+        assistConversationHistory = assistSemanticPrepared.history;
+        const assistDecision = resolveCustomerRequestDecision(content, assistSemanticPrepared.semantic.frame,
+          assistConversationHistory.map(row => ({...row,role:String(row.role ?? ""),content:String(row.content ?? "")})));
+        if (assistSemanticPrepared.semantic.frame) assistSemanticPrepared.semantic.frame =
+          applyCustomerRequestDecision(assistSemanticPrepared.semantic.frame, assistDecision);
+        try {
+          assistFactualRequest = resolveCurrentFactualRequest({
+            question: content,
+            // Staff-authored search text must not masquerade as a customer turn.
+            source_message_id: content === boundary.content ? String(boundary.id) : undefined,
+            history: assistConversationHistory,
+            semantic: assistSemanticPrepared.semantic.frame,
+            memory: assistSemanticPrepared.memory,
+            commerce: assistSemanticPrepared.commerce,
+            request_decision: assistDecision,
+          });
+        } catch (error) {
+          if (!(error instanceof DecisionContextLimitError)) throw error;
+          return jsonRes({success:false,error:"assist_kb_context_limit",retryable:false},422,req);
+        }
+      }
+    }
+    const assistMemory = assistSemanticPrepared ? assistSemanticPrepared.memory : c3Memory;
+    if (toolType === "knowledge_helper" && assistFactualRequest?.transaction_required && !assistFactualRequest.kb_required) {
+      const transactionPlan = planConversationService({
+        question: content,
+        factual_request: assistFactualRequest,
+        semantic_frame: assistSemanticPrepared?.semantic.frame ?? null,
+        language: /[\u4e00-\u9fff]/.test(content) ? "zh-TW" : "en",
+        memory: assistMemory,
+        commerce: assistSemanticPrepared?.commerce ?? null,
+        recall: {handled:false},
+        recent_messages: [],
+      });
+      return jsonRes({success:true,tool_type:"knowledge_helper",knowledge_grounded:false,
+        scope_mode:scope.mode,selected_document_id:null,response_route:"c3_service_customer_issue_next_step",
+        result:{status:"insufficient_evidence",orientation_summary:renderServicePlanReply(transactionPlan,null,[]) ?? "",
+          catalogue_options:[],evidence:[]}},200,req);
+    }
     if (
       toolType === "suggest_reply" && body.context_mode !== "manual" &&
       conv.company_id
     ) {
-      const { data: recallHistory, error: recallHistoryError } =
-        await supabaseAdmin.from("messages")
-          .select("id,role,content,created_at").eq(
-            "conversation_id",
-            conversationId,
-          )
-          .eq("is_recalled", false).neq("content", "__THINKING__")
-          .order("created_at", { ascending: false }).order("id", {
-            ascending: false,
-          }).limit(24);
+      const recallHistory = assistConversationHistory ?? await loadAssistConversationHistory(supabaseAdmin, conversationId);
+      const recallHistoryError = recallHistory === null;
       const recallSource = (recallHistory ?? []).find((row: any) =>
         row.role === "visitor"
       );
@@ -711,7 +771,7 @@ Deno.serve(async (req) => {
           conversation_id: conversationId,
           company_id: conv.company_id,
           source_message_id: String(recallSource.id),
-          memory: c3Memory,
+          memory: assistMemory,
           commerce: recallSnapshot,
           recent_questions: (recallHistory ?? []).filter((row: any) =>
             row.role === "visitor"
@@ -725,9 +785,10 @@ Deno.serve(async (req) => {
           id: String(row.id ?? ""),
         }));
         try {
-          assistFactualRequest = resolveCurrentFactualRequest({
+          assistFactualRequest ??= resolveCurrentFactualRequest({
             question: content,
             history: recallHistory ?? [],
+            memory: assistMemory,
             commerce: recallSnapshot?.state ?? null,
           });
         } catch (error) {
@@ -749,6 +810,7 @@ Deno.serve(async (req) => {
         servicePlan = planConversationService(applyServiceRuntimeDerivation({
           question: assistFactualRequest.answer_request ?? content,
           factual_request: assistFactualRequest,
+          semantic_frame: assistSemanticPrepared?.semantic.frame ?? null,
           language: /[\u4e00-\u9fff]/.test(content) ? "zh-TW" : "en",
           recall: {
             handled: recallRoute.decision.handled,
@@ -759,7 +821,7 @@ Deno.serve(async (req) => {
               ? undefined
               : recallRoute.decision.detail,
           },
-          memory: c3Memory,
+          memory: assistMemory,
           commerce: recallSnapshot?.state ?? null,
           recent_messages: serviceMessages,
         }, serviceRuntime));
@@ -878,7 +940,7 @@ Deno.serve(async (req) => {
       ? "manual"
       : "conversation";
     let retrievalQuery = content.slice(0, 500);
-    const history = await loadAssistConversationHistory(
+    const history = assistConversationHistory ?? await loadAssistConversationHistory(
       supabaseAdmin,
       conversationId,
     );
@@ -916,7 +978,7 @@ Deno.serve(async (req) => {
     else if (contextMode === "conversation") {
       retrievalQuery = (servicePlan?.kb_query ||
         buildCanonicalAssistRetrievalQuery(
-          [content, c3Memory?.current_goal, c3Memory?.current_topic].filter(
+          [content, assistMemory?.current_goal, assistMemory?.current_topic].filter(
             Boolean,
           ).join(" "),
           history,

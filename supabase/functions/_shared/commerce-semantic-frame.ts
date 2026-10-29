@@ -99,6 +99,20 @@ export interface CommerceSemanticReferent {
   confidence: number;
 }
 
+/** Read-only clauses of the current customer request. Source IDs and authority
+ * are bound by the server; a model-supplied subject is only a candidate. */
+export interface CommerceSemanticDemand {
+  question: string;
+  source_quote: string;
+  subject_refs: string[];
+  source_type: "product" | "policy" | "transaction" | "general" | "unknown";
+  requested_facts: string[];
+  constraints: Record<string, DecisionValue>;
+  customer_correction: boolean;
+  explicit_negations: string[];
+  ambiguity: CommerceSemanticAmbiguity;
+}
+
 export interface CommerceSemanticFrame {
   version: typeof COMMERCE_SEMANTIC_FRAME_VERSION;
   language: string;
@@ -108,6 +122,7 @@ export interface CommerceSemanticFrame {
   topic: string | null;
   entities: CommerceSemanticEntity[];
   referents: CommerceSemanticReferent[];
+  demands?: CommerceSemanticDemand[];
   customer_correction: boolean;
   additive: boolean;
   explicit_negations: string[];
@@ -433,6 +448,27 @@ delete compactEntity.properties.constraints_json;
 // depth convention; do not maintain a second, narrower leaf vocabulary here.
 const semanticContextObject = () => ({ type: "object", maxProperties: DECISION_CONTEXT_LIMITS.fields,
   propertyNames: {minLength: 1, maxLength: 80}, additionalProperties: decisionContextSchema() });
+const semanticDemandSchema = {
+  type: "object", additionalProperties: false,
+  required: ["question", "source_quote", "subject_refs", "source_type", "requested_facts", "constraints", "customer_correction", "explicit_negations", "ambiguity"],
+  properties: {
+    question: {type:"string",minLength:1,maxLength:1600},
+    source_quote: {type:"string",minLength:1,maxLength:1600},
+    subject_refs: {type:"array",maxItems:12,items:{type:"string",minLength:1,maxLength:160}},
+    source_type: {type:"string",enum:["product","policy","transaction","general","unknown"]},
+    requested_facts: {type:"array",maxItems:20,items:{type:"string",minLength:1,maxLength:200}},
+    constraints: semanticContextObject(),
+    customer_correction: {type:"boolean"},
+    explicit_negations: {type:"array",maxItems:20,items:{type:"string",minLength:1,maxLength:200}},
+    ambiguity: {type:"object",additionalProperties:false,required:["is_ambiguous","reasons","clarification_question"],properties:{
+      is_ambiguous:{type:"boolean"},reasons:{type:"array",maxItems:12,items:{type:"string",maxLength:200}},
+      clarification_question:{type:["string","null"],maxLength:400},
+    }},
+  },
+};
+(COMMERCE_SEMANTIC_RESPONSE_SCHEMA.properties as Record<string,unknown>).demands = {
+  type:"array",maxItems:12,items:semanticDemandSchema,
+};
 compactEntity.properties.attributes = semanticContextObject();
 compactEntity.properties.constraints = semanticContextObject();
 export const COMMERCE_SEMANTIC_DELTA_SCHEMA = {
@@ -444,6 +480,7 @@ export const COMMERCE_SEMANTIC_DELTA_SCHEMA = {
       properties: { key: { type: "string",minLength:1,maxLength:120 }, value: decisionContextSchema() },
     } },
     entities: { type: "array", maxItems: 12, items: compactEntity },
+    demands: {type:"array",maxItems:12,items:semanticDemandSchema},
   },
 };
 
@@ -603,7 +640,7 @@ const providerContextNodes = (field: string, value: Record<string, unknown>) => 
     path: { type: "array", items: { type: "string" }, minItems: 3, maxItems: 6 }, [field]: value,
   } },
 });
-export const COMMERCE_SEMANTIC_PROVIDER_SCHEMA: Record<string, unknown> = {
+export const COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA: Record<string, unknown> = {
   type: "object", properties: {
     context_encoding: { type: "string", enum: ["semantic_fields_v3"] },
     ...providerFields,
@@ -613,7 +650,7 @@ export const COMMERCE_SEMANTIC_PROVIDER_SCHEMA: Record<string, unknown> = {
     booleans: providerContextNodes("boolean", { type: "boolean" }),
   },
 };
-orderSemanticTransport(COMMERCE_SEMANTIC_PROVIDER_SCHEMA);
+orderSemanticTransport(COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA);
 export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V3 =
   "Follow the supplied response schema and its property order. Return context_encoding=semantic_fields_v3. " +
   "Fixed semantic fields are native JSON, not typed-tree paths. The required neutral values are transport defaults, not customer facts: " +
@@ -631,6 +668,52 @@ export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V3 =
   "At the depth limit an object/array must be empty. Use at most 40 fields per object, 12 entries per array, 96 scalar leaves, 80 characters per key and 300 normalized characters per context string. " +
   "Do not repeat the response schema in output. Invalid proposals are rejected without retry or a partial state change.";
 
+/** The v260 fixed-field grammar was rejected by the provider before inference.
+ * Keep a small, nonrecursive typed transport independent of the number of
+ * semantic fields. Homogeneous value arrays need neither nullable scalar slots,
+ * optional branches, nor a repeated commerce vocabulary in the provider grammar.
+ * The reconstructed tree still passes the closed canonical schema and bounds. */
+const semanticValueNodes = (field: string, value: Record<string, unknown>) => ({
+  type: "array", items: {type:"object",required:["path",field],properties:{
+    path:{type:"array",items:{type:"string"},maxItems:6},[field]:value,
+  }},
+});
+export const COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA: Record<string, unknown> = {
+  type: "object", properties: {
+    context_encoding:{type:"string",enum:["semantic_values_v4"]},
+    operation:{type:"string",enum:[...OPERATIONS]},
+    confidence:{type:"number",minimum:0,maximum:1},
+    containers:semanticValueNodes("kind",{type:"string",enum:["object","array","null"]}),
+    strings:semanticValueNodes("text",{type:"string"}),
+    numbers:semanticValueNodes("number",{type:"number"}),
+    booleans:semanticValueNodes("boolean",{type:"boolean"}),
+  },
+};
+orderSemanticTransport(COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA);
+export const COMMERCE_SEMANTIC_PROVIDER_SCHEMA = COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA;
+export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V4 =
+  "Return context_encoding=semantic_values_v4, operation, confidence, containers, strings, numbers, booleans in schema order. " +
+  "The four arrays represent one flat typed tree of this turn's optional semantic delta. containers contains {path,kind} for object/array/null; " +
+  "strings contains {path,text}, numbers contains {path,number}, booleans contains {path,boolean}. Empty collections are []. " +
+  "Declare exactly one object root at path [] in containers, and every object/array parent of a value. " +
+  "Object children append the original key; array children append contiguous zero-based decimal index strings. " +
+  "Operation and confidence belong only in the outer object. No duplicate paths, unknown fixed fields, inactive scalar slots, JSON encoded inside strings or guessed defaults. " +
+  "Only changed/referenced fields are included; an omitted field is not deletion. Preserve actual false, zero, null, empty containers, units, associations and corrections. " +
+  "Every independently answerable customer clause belongs in demands, including mixed product, policy, transaction and general guidance requests. " +
+  "Each demand has question (complete meaning), source_quote (a nonempty exact span of the latest customer turn), subject_refs (candidate names/IDs, never invented provenance), " +
+  "source_type (product/policy/transaction/general/unknown), requested_facts, constraints, customer_correction, explicit_negations, ambiguity. " +
+  "A demand's scope and constraints must not spill into another demand. Keep uncertain demands with ambiguity rather than dropping them or guessing a subject. " +
+  "Empty subject_refs is valid for broad category discovery or an independent policy/general question; it must not conceal an unresolved product-specific follow-up. " +
+  "For a dependent short question, resolve its actual subject from customer context or set that demand's ambiguity. Keep independently resolved demands usable. " +
+  "Use demands=[] for a turn without a request. All required demand fields use the customer's meaning; empty lists/constraints and neutral ambiguity are structural, not new facts. " +
+  "Current merchant evidence is requested_facts; a personal order/delivery progress request has source_type=transaction and never receives an invented status. " +
+  "A question about a general policy remains policy even beside a personal order question. " +
+  "Canonical attributes/constraints root depth is 0 and maximum depth is 3; customer fact values allow 2 further levels. " +
+  "Limits remain 40 fields per context object, 12 array items, 96 scalar leaves, 80 characters per key and 300 normalized characters per context string. " +
+  "Preserve all newly supplied requirements or return explicit context-limit ambiguity, never a partial proposal. " +
+  "The following grammar defines allowed reconstructed semantic fields/types/vocabulary, not additional provider schema branches: " +
+  JSON.stringify(COMMERCE_SEMANTIC_DELTA_SCHEMA);
+
 // Diagnostic labels come only from this fixed vocabulary, never from a model's
 // customer-authored keys, text, paths, enum values or Error.message.
 type SemanticFieldClass =
@@ -644,7 +727,8 @@ type SemanticFieldClass =
   | "referent_ref" | "referent_source" | "referent_confidence" | "ambiguity"
   | "ambiguity_flag" | "ambiguity_reasons" | "clarification_question"
   | "context_encoding" | "context_nodes" | "context_node" | "context_path"
-  | "context_kind" | "context_scalar";
+  | "context_kind" | "context_scalar" | "demands" | "demand" | "demand_question"
+  | "demand_source_quote" | "demand_subject_refs" | "demand_source_type" | "demand_constraints";
 type SemanticVocabularyDiagnostic = {
   field_class: SemanticFieldClass;
   reason: "type" | "required" | "enum" | "range" | "bounds" | "field";
@@ -657,6 +741,15 @@ const rootFieldClasses: Record<string, SemanticFieldClass> = {
 };
 function semanticFieldClass(path: string[]): SemanticFieldClass {
   const [root,,field] = path;
+  if (root === "demands") {
+    if (path.length < 3) return path.length === 1 ? "demands" : "demand";
+    const fields: Record<string, SemanticFieldClass> = {
+      question:"demand_question",source_quote:"demand_source_quote",subject_refs:"demand_subject_refs",
+      source_type:"demand_source_type",constraints:"demand_constraints",requested_facts:"requested_facts",
+      explicit_negations:"explicit_negations",customer_correction:"customer_correction",ambiguity:"ambiguity",
+    };
+    return Object.hasOwn(fields,field) ? fields[field] : "demand";
+  }
   if (root === "entities") {
     if (path.length < 3) return path.length === 1 ? "entities" : "entity";
     const fields: Record<string, SemanticFieldClass> = {
@@ -693,6 +786,13 @@ function semanticSchemaMismatch(value: unknown, schema: any, path: string[] = []
   }
   if (!typeMatches(schema) || type === "number" && !Number.isFinite(value)) return mismatch("type");
   if (schema.enum && !schema.enum.includes(value)) return mismatch("enum");
+  if (type === "string" && provider) {
+    // Canonical cleaning uses NFKC, which can expand a compatibility character.
+    // Check that same representation before any bounded clean() can slice it.
+    const text = (value as string).normalize("NFKC").replace(/\s+/g," ").trim();
+    if (schema.minLength !== undefined && text.length < schema.minLength ||
+        schema.maxLength !== undefined && text.length > schema.maxLength) return mismatch("bounds");
+  }
   if (type === "number" && provider &&
       (schema.minimum !== undefined && (value as number) < schema.minimum || schema.maximum !== undefined && (value as number) > schema.maximum)) return mismatch("range");
   if (type === "array") {
@@ -712,7 +812,7 @@ function semanticSchemaMismatch(value: unknown, schema: any, path: string[] = []
       if (schema.properties && Object.hasOwn(schema.properties,key)) {
         const error = semanticSchemaMismatch(child,schema.properties[key],[...path,key],provider);
         if (error) return error;
-      } else if (schema.additionalProperties === false || provider) return mismatch("field");
+      } else if (schema.additionalProperties === false || provider && schema.additionalProperties === undefined) return mismatch("field");
       else if (typeof schema.additionalProperties === "object") {
         const error = semanticSchemaMismatch(child,schema.additionalProperties,[...path,key],provider);
         if (error) return error;
@@ -798,7 +898,7 @@ function decodeProviderSemanticFields(value: Record<string, unknown>): Record<st
     throw new SemanticWireError({container:"wire_nodes",stage,node_count:Math.min(count,32769),...detail});
   };
   if (count > 32768) return fail("envelope");
-  const vocabulary = semanticSchemaMismatch(value,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,[],true);
+  const vocabulary = semanticSchemaMismatch(value,COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA,[],true);
   if (vocabulary) return fail(vocabulary.reason === "range" ? "canonical_range" : "canonical_vocabulary",vocabulary);
 
   const delta = {...value};
@@ -834,6 +934,29 @@ function decodeProviderSemanticFields(value: Record<string, unknown>): Record<st
     throw new SemanticWireError({...diagnostic,node_count:Math.min(count,32769),
       ...(node_index !== undefined && node_index >= fixedNodeCount ? {node_index:node_index-fixedNodeCount} : {})});
   }
+}
+
+function decodeProviderSemanticValues(value: Record<string, unknown>): Record<string, unknown> {
+  const collections = ["containers","strings","numbers","booleans"] as const;
+  const count = collections.reduce((n,key) => n + (Array.isArray(value[key]) ? value[key].length : 0),0);
+  const fail = (stage: SemanticWireStage, detail?: SemanticVocabularyDiagnostic): never => {
+    throw new SemanticWireError({container:"wire_nodes",stage,node_count:Math.min(count,32769),...detail});
+  };
+  if (count > 32768) return fail("envelope");
+  const vocabulary = semanticSchemaMismatch(value,COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA,[],true);
+  if (vocabulary) return fail(vocabulary.reason === "range" ? "canonical_range" : "canonical_vocabulary",vocabulary);
+  const nodes = collections.flatMap(collection => (value[collection] as Record<string,unknown>[]).map(raw => {
+    const kind = collection === "containers" ? raw.kind : collection === "strings" ? "string" : collection === "numbers" ? "number" : "boolean";
+    return {path:raw.path,kind,...(kind === "string" ? {text:raw.text} : kind === "number" ? {number:raw.number} : kind === "boolean" ? {boolean:raw.boolean} : {})};
+  }));
+  const decoded = decodeProviderSemanticTree({context_encoding:"semantic_paths_v2",operation:value.operation,confidence:value.confidence,nodes});
+  // Active producers must identify every current clause. Missing demand data is
+  // not permission to fall back to independent phrase-based interpretation.
+  if (!Array.isArray(decoded.demands)) return fail("canonical_vocabulary",{field_class:"demands",reason:"required"});
+  if (Array.isArray(decoded.requested_facts) && decoded.requested_facts.length && !decoded.demands.length) {
+    return fail("canonical_vocabulary",{field_class:"demands",reason:"required"});
+  }
+  return decoded;
 }
 
 function decodeContextNodes(raw: unknown, depthLimit: number): unknown {
@@ -898,10 +1021,12 @@ export type SemanticContractRejection =
   | "wire_context_nodes"
   | "canonical_confidence" | "canonical_array_bounds" | "canonical_fact"
   | "canonical_fact_bounds" | "canonical_entity" | "canonical_entity_kind"
-  | "canonical_entity_name" | "canonical_entity_bounds";
+  | "canonical_entity_name" | "canonical_entity_bounds" | "canonical_demand"
+  | "canonical_demand_bounds" | "canonical_demand_source_quote";
 export type SemanticContractDiagnostic = SemanticWireError["diagnostic"] | {
-  container: "attributes" | "constraints" | "customer_fact";
+  container: "attributes" | "constraints" | "customer_fact" | "demand_constraints";
   entity_index?: number;
+  demand_index?: number;
   violation: DecisionContextLimitDiagnostic;
 };
 type RejectSemantic = (reason: SemanticContractRejection, diagnostic?: SemanticContractDiagnostic) => void;
@@ -910,7 +1035,8 @@ export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSema
   const reject = (reason: SemanticContractRejection, diagnostic?:SemanticContractDiagnostic): null => { onReject?.(reason,diagnostic); return null; };
   if (!isRecord(value)) return reject("wire_object");
   if (Object.hasOwn(value, "context_encoding")) {
-    try { value = value.context_encoding==="semantic_fields_v3" ? decodeProviderSemanticFields(value)
+    try { value = value.context_encoding==="semantic_values_v4" ? decodeProviderSemanticValues(value)
+      : value.context_encoding==="semantic_fields_v3" ? decodeProviderSemanticFields(value)
       : value.context_encoding==="semantic_paths_v2" ? decodeProviderSemanticTree(value) : decodeTypedContextFrame(value); } catch (error) {
       // Only fixed stage/field/reason enums and bounded counts: never keys, paths, values,
       // model payloads or Error.message (which could contain customer data).
@@ -1044,6 +1170,7 @@ export function normalizeCommerceSemanticFrame(value: unknown, onReject?: Reject
   for (const key of [
     "entities",
     "referents",
+    "demands",
     "customer_facts",
     "requested_facts",
     "explicit_negations",
@@ -1129,6 +1256,28 @@ export function normalizeCommerceSemanticFrame(value: unknown, onReject?: Reject
   }
 
   const confidence = clampConfidence(value.confidence);
+  const demands: CommerceSemanticDemand[] = [];
+  for (const raw of Array.isArray(value.demands) ? value.demands : []) {
+    const mismatch = semanticSchemaMismatch(raw,semanticDemandSchema,["demands",String(demands.length)],true);
+    if (mismatch || !isRecord(raw)) return reject("canonical_demand",mismatch ?
+      {container:"wire_nodes",stage:"canonical_vocabulary",node_count:0,...mismatch} : undefined);
+    const question = clean(raw.question,1600), sourceQuote = clean(raw.source_quote,1600);
+    const subjects = (raw.subject_refs as string[]).map(ref => clean(ref,160));
+    const facts = (raw.requested_facts as string[]).map(fact => clean(fact,200));
+    if (!question || !sourceQuote || subjects.some(ref => !ref) || facts.some(fact => !fact)) return reject("canonical_demand");
+    let constraints: Record<string,DecisionValue>;
+    try { constraints = normalizeDecisionContext(raw.constraints); }
+    catch (error) {
+      if (error instanceof DecisionContextLimitError) return reject("canonical_demand_bounds",error.diagnostic ?
+        {container:"demand_constraints",demand_index:demands.length,violation:error.diagnostic} : undefined);
+      throw error;
+    }
+    demands.push({question,source_quote:sourceQuote,subject_refs:subjects,
+      source_type:raw.source_type as CommerceSemanticDemand["source_type"],requested_facts:facts,constraints,
+      customer_correction:raw.customer_correction === true,
+      explicit_negations:(raw.explicit_negations as string[]).map(text => clean(text,200)),
+      ambiguity:normalizeAmbiguity(raw.ambiguity,confidence)});
+  }
   const ambiguity = normalizeAmbiguity(value.ambiguity, confidence);
   const operation: CommerceSemanticOperation = ambiguity.is_ambiguous
     ? "NO_STATE_CHANGE"
@@ -1143,6 +1292,7 @@ export function normalizeCommerceSemanticFrame(value: unknown, onReject?: Reject
     topic: value.topic === null ? null : clean(value.topic, 160) || null,
     entities,
     referents,
+    demands,
     customer_correction: value.customer_correction === true,
     additive: value.additive === true,
     explicit_negations: (Array.isArray(value.explicit_negations) ? value.explicit_negations : [])

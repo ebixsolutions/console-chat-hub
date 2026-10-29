@@ -526,7 +526,9 @@ export function planConversationService(
     knowledge_state: "not_needed" as ServiceKnowledgeState,
     kb_query: null as string | null,
     handoff_requested: input.explicit_handoff === true,
-    safe_assumptions: [] as string[],
+    safe_assumptions: input.factual_request?.transaction_required
+      ? ["no_live_account_or_order_state", "no_completed_action_without_runtime_evidence"]
+      : [] as string[],
     ...(observedEmotion && clean(observedEmotion.kind)
       ? {
         emotion_trace: {
@@ -554,9 +556,15 @@ export function planConversationService(
     recall_detail: clean(input.recall.detail, 100) || undefined,
   };
   if (input.explicit_handoff) return { ...base, action: "explicit_handoff" };
-  // A personal order enquiry is not a product/policy KB lookup. No live order
-  // connector is asserted here; the existing honest intake route owns it.
-  if (isPersonalOrderStatusRequest(question)) return {...base, action:"customer_issue_next_step",issue_kind:"order_status_lookup",safe_assumptions:["no_live_account_or_order_state","no_completed_action_without_runtime_evidence"]};
+  // The canonical demand contract distinguishes a private transaction from
+  // other questions in the SAME turn. A transaction-only read keeps the
+  // existing honest intake route; a mixed turn must still retrieve its KB
+  // demands and carry the missing live-transaction evidence into verification.
+  const semanticDemandContract = input.factual_request?.interpretation_source === "semantic_demands";
+  const transactionOnly = semanticDemandContract
+    ? input.factual_request!.transaction_required && !input.factual_request!.kb_required
+    : isPersonalOrderStatusRequest(question) && !input.factual_request?.kb_required;
+  if (transactionOnly) return {...base, action:"customer_issue_next_step",issue_kind:"order_status_lookup",safe_assumptions:["no_live_account_or_order_state","no_completed_action_without_runtime_evidence"]};
   // A bare item name alone is neither a quantity nor an order.
   if (isBareCommerceSubjectMention(question,input.semantic_frame)) return {
     ...base,action:"targeted_clarification",
@@ -568,7 +576,7 @@ export function planConversationService(
   const readOnlyControlFrame = !input.semantic_frame || input.semantic_frame.operation === "NO_STATE_CHANGE" ||
     (input.semantic_frame.operation === "DEFER" && !input.commerce && !input.committed_source_message_id &&
       !input.semantic_frame.customer_facts?.length && !input.semantic_frame.customer_correction && !input.semantic_frame.additive);
-  if (serviceDiscussion.kind === "control_or_process" && readOnlyControlFrame && input.recall.reason !== "CURRENT_KB_REQUIRED") return {
+  if (serviceDiscussion.kind === "control_or_process" && readOnlyControlFrame && input.recall.reason !== "CURRENT_KB_REQUIRED" && !input.factual_request?.kb_required) return {
     ...base, action: "handoff_context_acknowledgement",
     handoff_context: serviceDiscussion.handoff.category,
     human_service_process_question: serviceDiscussion.process_question,
@@ -577,7 +585,7 @@ export function planConversationService(
   const requestDecision=input.request_decision ?? resolveCustomerRequestDecision(question,input.semantic_frame ?? null,input.recent_messages ?? []);
   const resolvedMerchantRead = input.factual_request?.applicable === true &&
     !input.factual_request.needs_subject_clarification;
-  const semanticMerchantRead = requestDecision.kind!=="guidance" &&
+  const semanticMerchantRead = semanticDemandContract ? resolvedMerchantRead : requestDecision.kind!=="guidance" &&
     (requiresSemanticKnowledge(input.semantic_frame) || resolvedMerchantRead);
   // A memory slot miss says nothing about external factual authority. The
   // provider may legitimately propose NO_STATE_CHANGE for a read; do not let
@@ -592,7 +600,8 @@ export function planConversationService(
       isFactualExplanationQuestion(question) && ["NEW_FACTUAL_QUERY","PRONOUN_OR_ELLIPSIS"].includes(canonicalTurn.operation)) &&
     !isCustomerGuidanceRequest(question, input.semantic_frame) &&
     !isProductSupportProblem(question);
-  const merchantReadRequired = requestDecision.kind!=="guidance" && ( serviceDiscussion.kind === "merchant_evidence" || input.recall.reason === "CURRENT_KB_REQUIRED" || semanticMerchantRead || canonicalFactualRead);
+  const merchantReadRequired = semanticDemandContract ? input.factual_request!.kb_required :
+    requestDecision.kind!=="guidance" && ( serviceDiscussion.kind === "merchant_evidence" || input.recall.reason === "CURRENT_KB_REQUIRED" || semanticMerchantRead || canonicalFactualRead);
   if (
     !semanticMerchantRead &&
     input.calculation_status &&
@@ -653,7 +662,7 @@ export function planConversationService(
     return { ...base, action: "handoff_context_acknowledgement", handoff_context: handoffContext.category };
   }
   if (input.factual_request?.needs_subject_clarification ||
-      input.semantic_frame?.ambiguity.is_ambiguous && !input.recall.handled) {
+      !semanticDemandContract && input.semantic_frame?.ambiguity.is_ambiguous && !input.recall.handled) {
     return { ...base, action: "targeted_clarification", missing_slots: ["specific_product_or_item"], clarification_target: "specific_product_or_item" };
   }
   if (merchantReadRequired) {

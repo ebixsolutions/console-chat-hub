@@ -51,7 +51,8 @@ Deno.test("semantic proposal normalization and adapter preserve bounded nested r
   assert(validated, "valid bounded proposal rejected");
   const hints=semanticFrameToEntityHints(validated);
   assert(JSON.stringify(hints[0].constraints)===JSON.stringify(validated.entities[0].constraints), "adapter dropped typed restrictions");
-  const c=JSON.parse(scopedServiceKnowledgeQuery("Can it meet these requirements?",validated,null));
+  const c=JSON.parse(scopedServiceKnowledgeQuery("Can it meet these requirements?",validated,null,
+    [{id:"archive-customer-source",role:"visitor",content:"Could you explain Archive service?"}]));
   assert(c.current[0].constraints.resolution.unit==="dpi" && c.current[0].constraints.colour===false, "semantic projection dropped unit or negation");
 });
 
@@ -60,7 +61,8 @@ Deno.test("latest same-subject correction retains other active requirements with
   state.entities=[{entity_id:"generic:studio",category:"studio rental",quantity:1,status:"researching",attributes:{product_name:"Atrium studio"},
     constraints:{requires_stairs:true,max_people:8,fee:{value:50,unit:"HKD",operator:"maximum"}},provenance:{source_type:"customer",source_message_id:"old"}}];
   const semantic=frame("studio rental");semantic.entities=[{...frameEntity(),constraints:{requires_stairs:false,fee:{value:0}}}];
-  const c=JSON.parse(scopedServiceKnowledgeQuery("No stairs, and the deposit must be zero",semantic,state));
+  const c=JSON.parse(scopedServiceKnowledgeQuery("No stairs, and the deposit must be zero",semantic,state,
+    [{id:"old",role:"visitor",content:"Atrium studio for eight people; stairs are acceptable and the maximum deposit is HKD 50."}]));
   assert(c.prior.length===0 && c.current[0].constraints.requires_stairs===false && c.current[0].constraints.max_people===8, "latest correction lost retained scope");
   assert(c.current[0].constraints.fee.value===0 && c.current[0].constraints.fee.unit==="HKD", "partial correction lost unit");
 });
@@ -170,7 +172,8 @@ Deno.test("explicit unique referent excludes another active option in the same c
   state.entities=[{entity_id:"generic:studio",category:"studio rental",quantity:1,status:"researching",attributes:{product_name:"Atrium studio"},constraints:{max_people:8},provenance:{source_type:"customer",source_message_id:"prior"}},
     {entity_id:"generic:other",category:"studio rental",quantity:1,status:"researching",attributes:{product_name:"OTHER-ACTIVE-STUDIO"},constraints:{max_people:40},provenance:{source_type:"customer",source_message_id:"other"}}];
   const semantic=frame("studio rental");semantic.referents=[{ref:"generic:studio",source:"prior_turn",confidence:.9}];
-  const query=scopedServiceKnowledgeQuery("Will that one fit?",semantic,state);
+  const query=scopedServiceKnowledgeQuery("Will that one fit?",semantic,state,
+    [{id:"prior",role:"visitor",content:"I am considering Atrium studio for eight people."}]);
   assert(query.includes("Atrium studio")&&!query.includes("OTHER-ACTIVE-STUDIO"),"category overrode resolved referent");
   semantic.entities=[frameEntity()];state.entities[0].status="cancelled";
   assert(!scopedServiceKnowledgeQuery("Other options?",semantic,state).includes("Atrium studio"),"semantic proposal resurrected cancelled subject");
@@ -187,12 +190,13 @@ Deno.test("persisted entity unit and explicit quantity survive an unspecified fo
  const prior=JSON.parse(scopedServiceKnowledgeQuery("Which option fits?",null,state)).prior[0];
  assert(prior.unit==="people"&&prior.quantity===8,"persisted unit/explicit quantity dropped");
  const semantic=frame("studio rental");semantic.entities=[frameEntity()];
- const current=JSON.parse(scopedServiceKnowledgeQuery("Which option fits?",semantic,state)).current[0];
+ const history=[{id:"old",role:"visitor",content:"Atrium studio for eight people, without stairs."}];
+ const current=JSON.parse(scopedServiceKnowledgeQuery("Which option fits?",semantic,state,history)).current[0];
  assert(current.unit==="people"&&current.quantity===8,"unspecified follow-up lost supplied unit/quantity");
  state.entities[0].attributes.quantity_basis="system_default";
  assert(JSON.parse(scopedServiceKnowledgeQuery("Which option fits?",null,state)).prior[0].quantity===null,"system default promoted to customer requirement");
  semantic.entities[0].quantity=4;semantic.entities[0].unit="people";
- assert(JSON.parse(scopedServiceKnowledgeQuery("Actually four people",semantic,state)).current[0].quantity===4,"explicit latest quantity correction lost");
+ assert(JSON.parse(scopedServiceKnowledgeQuery("Actually four people",semantic,state,history)).current[0].quantity===4,"explicit latest quantity correction lost");
 });
 
 Deno.test("query overflow cannot enter any earlier local shortcut in the real generator call chain",async()=>{
