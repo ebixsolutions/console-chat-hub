@@ -45,10 +45,11 @@ Deno.test('Catalogue exact product: actual decoder -> bound Full Content -> CNY/
  assert(x.result?.recorded_facts?.some(f=>f.field==='stock_quantity'&&f.value===5&&f.currentness==='unverified'),'stock source proof missing');
  assert(b2(x).decision==='allow','unchanged B2 denied qualified facts');
 });
-Deno.test('Catalogue short name: return source-owned candidate with confirmation, never silent alias',async()=>{
+Deno.test('Catalogue short name: answer only for the candidate record without reconfirming known context',async()=>{
  const x=answer('轻量冲锋衣 几钱？',[await document()]);
  assert(x.result?.reply.includes('CNY 2,100')&&x.result.reply.includes(full)&&x.result.identity_confirmation_required,'short-name conditional answer absent');
- assert(x.result?.unresolved_fact_fields?.includes('product_identity')&&x.result.reply.endsWith('嗎？'),'identity silently confirmed');
+ assert(x.result?.unresolved_fact_fields?.includes('product_identity')&&x.result.reply.includes('名稱相近')&&x.result.reply.includes('商品對應仍未確認'),'identity silently confirmed');
+ assert(!x.result?.reply.includes('你指嘅係')&&x.result?.catalogue_options?.length===1,'repeated identity question or missing requery target');
  assert(b2(x).decision==='allow','B2 denied candidate facts');
 });
 Deno.test('Catalogue stock-only lookup does not require a price request',async()=>{
@@ -56,6 +57,16 @@ Deno.test('Catalogue stock-only lookup does not require a price request',async()
  assert(x.result?.reply.includes('數量：5')&&!x.result.reply.includes('2,100'),'stock-only lost/price unsolicited');
  assert(x.result?.reply.includes('即時可售')&&!x.result.price_fact,'stock became live guarantee');
  assert(b2(x).decision==='allow','stock snapshot denied');
+});
+Deno.test('Catalogue source candidate without SKU offers a usable fresh query and preserves uncertainty',async()=>{
+ const noSku=ROW4.replace('sku_code: P002–NV–XL\n','');
+ for(const language of ['en','zh-CN','zh-TW'] as const){
+  const x=answer('轻量冲锋衣 價格及庫存？',[await document(noSku)],language);
+  assert(x.result?.reply.includes('CNY 2,100')&&x.result.identity_confirmation_required&&x.result.unresolved_fact_fields?.includes('product_identity'),'no-SKU candidate lost known facts or uncertainty');
+  assert(!x.result?.catalogue_options&&!x.result?.reply.includes('SKU'),'no-SKU candidate offered an unavailable selection route');
+  assert(/full source product name|来源完整商品名称|來源完整商品名稱/u.test(x.result!.reply),'no actionable full-name lookup guidance');
+  assert(b2(x).decision==='allow','no-SKU source candidate rejected by B2');
+ }
 });
 Deno.test('Catalogue stock zero is a known integer, not missing',async()=>{
  const x=answer('P002-NV-XL price and stock?',[await document(ROW4.replace('stock: 5','stock: 0'))],'en');
@@ -156,6 +167,37 @@ Deno.test('Catalogue immediate variant choice yields a fresh lookup request, nev
  assert(!resolveCatalogueVariantFollowup('XL',[{...history[1],company_id:'other'}],scope),'cross-tenant context selected');
  assert(!resolveCatalogueVariantFollowup('XL',[{id:'topic-switch',role:'visitor',content:'另外問退款'},history[1]],scope),'unrelated topic skipped');
  assert(!resolveCatalogueVariantFollowup('XL',[{...history[1],metadata:{...history[1].metadata,control_commit:'human'}}],scope),'unverified assistant metadata selected');
+});
+Deno.test('Catalogue candidate exact SKU repeats requested facets through fresh evidence only',async()=>{
+ const x=answer('轻量冲锋衣 價格及庫存？',[await document()]);
+ if(!x.result?.identity_confirmation_required||!x.result.catalogue_options)throw Error('no source candidate');
+ const scope={conversation_id:'conversation',company_id:'company',source_message_id:'sku-followup'};
+ const anchor={id:'candidate-answer',role:'assistant',conversation_id:scope.conversation_id,company_id:scope.company_id,
+  metadata:{control_commit:'ai',b2_expected_company_id:scope.company_id,answer_kind:x.result.kind,
+   identity_confirmation_required:true,unresolved_fact_fields:x.result.unresolved_fact_fields,
+   catalogue_options:x.result.catalogue_options,catalogue_requested_facts:x.result.catalogue_requested_facts}};
+ const history=[{id:scope.source_message_id,role:'visitor',content:'P002–NV–XL'},anchor];
+ const next=resolveCatalogueVariantFollowup('P002–NV–XL',history,scope);
+ assert(next?.request==='P002-NV-XL price and stock?'&&next.source_assistant_message_id===anchor.id,'candidate SKU lost requested facets');
+ assert(!JSON.stringify(x.result.catalogue_options).includes('2100')&&!JSON.stringify(x.result.catalogue_options).includes('stock_quantity'),'retrieval target carried old commerce facts');
+ const fresh=answer(next!.request,[await document(ROW4.replace('2100.0','2200.0').replace('stock: 5','stock: 0'))]);
+ assert(fresh.result?.reply.includes('CNY 2,200')&&!fresh.result.reply.includes('2,100')&&fresh.result.recorded_facts?.some(f=>f.field==='stock_quantity'&&f.value===0),'fresh result reused old price/stock');
+ assert(fresh.result?.identity_confirmation_required===false&&!fresh.result.unresolved_fact_fields?.includes('product_identity')&&!fresh.result.price_fact,'exact SKU did not resolve only product identity');
+ for(const text of ['XL','藏青色','係','yes','P002-NV-M','取消 P002-NV-XL','真人 P002-NV-XL','轻量冲锋衣 幾錢？']){
+  assert(!resolveCatalogueVariantFollowup(text,history,scope),'candidate product identity silently accepted: '+text);
+ }
+ for(const invalid of [
+  {...anchor,company_id:'other-company'},
+  {...anchor,conversation_id:'other-conversation'},
+  {...anchor,metadata:{...anchor.metadata,b2_expected_company_id:'other-company'}},
+  {...anchor,metadata:{...anchor.metadata,control_commit:'human'}},
+  {...anchor,metadata:{...anchor.metadata,identity_confirmation_required:false}},
+  {...anchor,metadata:{...anchor.metadata,catalogue_requested_facts:{}}},
+  {...anchor,metadata:{...anchor.metadata,catalogue_options:[{...(x.result.catalogue_options[0] as Record<string,unknown>),document_id:'foreign-document'}]}},
+  {...anchor,metadata:{...anchor.metadata,catalogue_options:[...x.result.catalogue_options,...x.result.catalogue_options]}},
+ ])assert(!resolveCatalogueVariantFollowup('P002-NV-XL',[invalid],scope),'untrusted or ambiguous candidate context selected');
+ assert(!resolveCatalogueVariantFollowup('P002-NV-XL',[{id:'different-topic',role:'visitor',content:'問退貨'},anchor],scope),'intervening visitor topic ignored');
+ assert(!resolveCatalogueVariantFollowup('P002-NV-XL',[{id:'different-answer',role:'assistant',content:'退貨說明'},anchor],scope),'older candidate skipped to');
 });
 Deno.test('Catalogue ordinary model price plus explicit stock shares the same snapshot path',async()=>{
  const body='商品型號: CW-SUL90BA\nprice: HKD 6,980\nstock: 5';

@@ -24,6 +24,105 @@ function typedContextNodes(value,at=[]) {
 }
 const providerWire=(delta,operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:0.98,nodes:typedContextNodes(delta)});
 const recoveredSemanticCase=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/task1c-semantic-recovery.json'),'utf8'));
+const retainedCatalogueCase=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/task1c-catalogue-retained-state.json'),'utf8'));
+
+function catalogueRetainedSeed(short='轻量冲锋衣',full='轻量化户外冲锋衣') {
+ const sample=JSON.parse(JSON.stringify(retainedCatalogueCase).replaceAll('轻量化户外冲锋衣',full).replaceAll('轻量冲锋衣',short));
+ const company='3d6e17b5-ec79-4f75-aa7f-eaa824ff8493';
+ const memory={...sample.memory.memory,company_id:company,conversation_id:ticket};
+ const previous={conversation_commerce_state:[{...sample.commerce,company_id:company,conversation_id:ticket}],conversation_memory_state:[],conversation_commerce_state_event:[],conversation_memory_state_event:[]};
+ const history=sample.commerce.state.entities.map((entity,i)=>({id:entity.provenance.source_message_id,conversation_id:ticket,role:'visitor',content:entity.attributes.product_name,created_at:`2026-10-13T00:00:0${i}.000Z`,is_recalled:false,metadata:{}}));
+ history.unshift({id:sample.memory.source_message_id,conversation_id:ticket,role:'visitor',content:memory.current_goal,created_at:'2026-10-13T00:01:00.000Z',is_recalled:false,metadata:{}});
+ return {previous,memory,history};
+}
+
+function catalogueRagFixture({name='轻量化户外冲锋衣',spu='P002',sku='P002-NV-XL',price=2100,stock=5}={}) {
+ // User-supplied product column transcription plus explicit synthetic wire
+ // authority. No claim that the original Hosted RAG response was retained.
+ const content=`spu_code: ${spu}\nspu_name: ${name}\nsku_code: ${sku}\nspec_color: 藏青色\nspec_size: XL\nprice: ${price}.0 CNY\nstock: ${stock}\ndescription: 防水透氣面料，適合登山及日常通勤。`;
+ return {success:true,context_found:true,selected_documents:[{document_id:'isolated-catalogue-document',title:'Row 4',source_type:'Product',document_score:0.03,
+  authority:{tenant_id:'34',publication_state:'published',currentness:'unknown'},
+  evidence:[{document_id:'isolated-catalogue-document',chunk_id:'isolated-catalogue-chunk',chunk_type:'full_content',content,score:0.03}]}],citations:[]};
+}
+
+function catalogueGateEvents(f) {
+ return f.events.flat().filter(x=>typeof x==='string').flatMap(x=>{try{return [JSON.parse(x)]}catch{return []}}).filter(x=>x.stage==='b2_gate_result');
+}
+
+async function assertCatalogueReply(f,{source,name='轻量化户外冲锋衣',sku='P002-NV-XL',price=2100,stock=5,priceRequested=true,confirmation=true,expectPending=confirmation}={}) {
+ const priorCommerce=structuredClone(f.tables.conversation_commerce_state[0]);
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits.length,1);
+ const reply=f.commits[0],meta=reply.metadata;
+ assert.equal(meta.response_route,'canonical_kb_direct_answer',JSON.stringify({route:meta.response_route,failure:meta.execution_failure,gates:catalogueGateEvents(f)}));
+ assert.notEqual(meta.generation_success,false);assert.notEqual(meta.degraded,true);
+ assert(reply.content.includes(name)&&reply.content.includes(sku),'source-owned product identity missing');
+ if(priceRequested)assert(reply.content.includes('CNY '+price.toLocaleString('en-US')),'recorded source amount/currency missing');
+ assert(new RegExp('(?:quantity:|數量：|数量：)\\s*'+stock+'(?:[。.]|\\s)').test(reply.content),'recorded stock missing');
+ assert.equal(meta.identity_confirmation_required,confirmation);
+ assert.equal(meta.unresolved_fact_fields.includes('product_identity'),confirmation);
+ if(confirmation){
+  assert.equal(meta.catalogue_options.length,1);const option=meta.catalogue_options[0];
+  assert.equal(option.sku,sku);assert.equal(option.product_name,name);assert.equal(option.document_id,'isolated-catalogue-document');assert.equal(option.chunk_id,'isolated-catalogue-chunk');
+  assert.equal(option.reference_authority.decision,'USE_CURRENT_KB');assert.equal(option.reference_authority.selected_source_id,option.document_id);
+  assert.deepEqual(Object.keys(option).sort(),['chunk_id','document_id','product_name','reference_authority','sku','spu','variants'],'follow-up target must carry no amount/stock authority');
+  assert.equal(meta.catalogue_requested_facts.price,priceRequested);
+ }
+ assert.deepEqual(meta.authoritative_kb_facts,[],'recorded source fields became current merchant facts');assert(!meta.kb_fact_proof,'recorded amount became a verified quotation');
+ assert.equal(meta.b2_source_message_id,source);assert.equal(meta.b2_expected_company_id,'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493');
+ assert.equal(meta.b2_commit_source,'commit_ai_reply_tx');assert.match(meta.b2_response_hash,/^[a-f0-9]{64}$/);
+ assert.equal(meta.citation_lineage.selected_document_id,'isolated-catalogue-document');assert.deepEqual(meta.citation_lineage.evidence_chunk_ids,['isolated-catalogue-chunk']);
+ assert(meta.recorded_kb_facts.some(x=>x.field==='stock_quantity'&&x.value===stock));
+ if(priceRequested){assert(meta.recorded_kb_facts.some(x=>x.field==='price_amount'&&x.value===price));assert(meta.recorded_kb_facts.some(x=>x.field==='price_currency'&&x.value==='CNY'));}
+ for(const fact of meta.recorded_kb_facts){assert.equal(fact.source_message_id,source);assert.equal(fact.tenant_id,'34');assert.equal(fact.currentness,'unverified');assert.equal(fact.document_id,'isolated-catalogue-document');assert.equal(fact.chunk_id,'isolated-catalogue-chunk');}
+ const gates=catalogueGateEvents(f);assert(gates.some(x=>x.source_message_id===source&&x.gate_decision==='allow'&&x.gate_code==='B2_ALLOW'&&x.commit_attempted===true));assert(!gates.some(x=>x.gate_decision!=='allow'));
+ assert.equal(f.requests.filter(x=>x.url.includes('context-search')).length,1,'each customer fact request needs one fresh scoped retrieval');
+ const models=f.requests.filter(x=>x.url.endsWith(':generateContent'));assert.equal(models.length,1,'deterministic recorded facts must not cause extra generation/verifier calls');assert(models[0].body.systemInstruction.parts[0].text.includes('multilingual commerce semantic interpreter'));
+ assert.deepEqual(f.tables.conversation_commerce_state[0].state.quotes,[],'recorded facts mutated canonical quote authority');
+ assert.deepEqual(f.tables.conversation_commerce_state[0],priorCommerce,'catalogue read changed retained customer entities, requirements or commerce revision');
+ const memory=f.tables.conversation_memory_state[0].memory;
+ assert(![...memory.current_customer_facts,...memory.historical_facts].some(x=>x.authority==='current_kb'||x.value?.currentness==='current'),'recorded amount/stock promoted to current Memory');
+ assert(!memory.current_customer_facts.some(x=>/price|stock|sku|product_identity/.test(x.key)&&x.source_message_id===source),'KB fields became customer-authoritative identity/price');
+ if(expectPending)assert(memory.question_lifecycle.some(x=>x.source_message_id===source&&x.status==='pending'),'unverified availability/identity must remain unresolved');
+ if(confirmation)assert(memory.question_lifecycle.some(x=>x.source_message_id===source&&x.resolution==='catalogue source price or product/variant confirmation pending'));
+ const counts={requests:f.requests.length,commits:f.commits.length};const duplicate=await f.run();assert.equal(duplicate.body.idempotent,true);assert.equal(f.commits.length,counts.commits);assert.equal(f.requests.filter(x=>x.url.includes('context-search')).length,1,'duplicate message requeried KB');assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1,'duplicate message redispatched model');
+ return {reply,r};
+}
+
+for(const [question,requested,priceRequested,id] of [['轻量冲锋衣 几钱？','price',true,2100],['轻量冲锋衣 有冇貨？','stock',false,2101]])test('Task1C v258 retained-state catalogue replay: '+requested,async()=>{
+ const f=fixture(question,{...catalogueRetainedSeed(),originalPreview:true,fullChain:true,source:uuid(id),originalRagResponse:catalogueRagFixture(),semantic:providerWire({language:'zh-TW',intent:'other',requested_facts:[requested]},'ASK_FACT')});
+ await assertCatalogueReply(f,{source:uuid(id),priceRequested});
+});
+test('Task1C v258 retained-state catalogue replay: sequential price then stock then exact SKU requeries changed stock',async()=>{
+ const first=fixture('轻量冲锋衣 几钱？',{...catalogueRetainedSeed(),originalPreview:true,fullChain:true,source:uuid(2110),originalRagResponse:catalogueRagFixture(),semantic:providerWire({language:'zh-TW',intent:'other',requested_facts:['price']},'ASK_FACT')});
+ await assertCatalogueReply(first,{source:uuid(2110)});
+ const stock=fixture('轻量冲锋衣 有冇貨？',{originalPreview:true,fullChain:true,source:uuid(2111),previous:first.tables,history:first.tables.messages.slice().reverse(),originalRagResponse:catalogueRagFixture(),semantic:providerWire({language:'zh-TW',intent:'other',requested_facts:['stock']},'ASK_FACT')});
+ await assertCatalogueReply(stock,{source:uuid(2111),priceRequested:false});
+ assert.deepEqual(stock.commits[0].metadata.catalogue_requested_facts,{price:false,stock:true,specification:false});
+ const chosen=fixture('P002-NV-XL',{originalPreview:true,fullChain:true,source:uuid(2112),previous:stock.tables,history:stock.tables.messages.slice().reverse(),originalRagResponse:catalogueRagFixture({price:2350,stock:4}),semantic:providerWire({language:'zh-TW',intent:'other',requested_facts:[]},'NO_STATE_CHANGE')});
+ await assertCatalogueReply(chosen,{source:uuid(2112),priceRequested:false,stock:4,confirmation:false,expectPending:true});
+ const request=chosen.requests.find(x=>x.url.includes('context-search'));
+ assert.equal(request.body.query,'P002-NV-XL stock?');assert.equal(chosen.commits[0].metadata.kb_retrieval_request,request.body.query);
+ assert(!chosen.commits[0].metadata.recorded_kb_facts.some(x=>x.field==='stock_quantity'&&x.value===5),'prior recorded stock reused as fresh evidence');
+ assert.equal(chosen.tables.conversation_commerce_state[0].revision,14);
+});
+test('Task1C v258 retained-state catalogue replay: exact SKU after price candidate requeries changed price',async()=>{
+ const first=fixture('轻量冲锋衣 几钱？',{...catalogueRetainedSeed(),originalPreview:true,fullChain:true,source:uuid(2120),originalRagResponse:catalogueRagFixture(),semantic:providerWire({language:'zh-TW',intent:'other',requested_facts:['price']},'ASK_FACT')});
+ await assertCatalogueReply(first,{source:uuid(2120)});
+ const chosen=fixture('P002-NV-XL',{originalPreview:true,fullChain:true,source:uuid(2121),previous:first.tables,history:first.tables.messages.slice().reverse(),originalRagResponse:catalogueRagFixture({price:2350,stock:4}),semantic:providerWire({language:'zh-TW',intent:'other',requested_facts:[]},'NO_STATE_CHANGE')});
+ await assertCatalogueReply(chosen,{source:uuid(2121),price:2350,stock:4,confirmation:false});
+ const request=chosen.requests.find(x=>x.url.includes('context-search'));
+ assert.equal(request.body.query,'P002-NV-XL price?');assert.equal(chosen.commits[0].metadata.kb_retrieval_request,request.body.query);
+ assert(!chosen.commits[0].metadata.recorded_kb_facts.some(x=>x.field==='price_amount'&&x.value===2100),'prior recorded price reused as fresh evidence');
+});
+test('Task1C v258 retained-state catalogue replay: English alternate abbreviated product uses the same source-bound path',async()=>{
+ const name='Harbor Summit Jacket',sku='HJ310-NV-XL';
+ const f=fixture('What is the price of Harbor Jacket?',{...catalogueRetainedSeed('Harbor Jacket',name),originalPreview:true,fullChain:true,source:uuid(2130),originalRagResponse:catalogueRagFixture({name,spu:'HJ310',sku,price:1290,stock:7}),semantic:providerWire({language:'en',intent:'other',requested_facts:['price']},'ASK_FACT')});
+ await assertCatalogueReply(f,{source:uuid(2130),name,sku,price:1290,stock:7});
+ // Existing language continuity can retain Chinese after the prior Chinese
+ // turns. This case proves English request/name matching, not a locale change.
+ assert.match(f.commits[0].content,/similarly named published source record|名稱相近嘅已發布商品記錄/i);
+ assert.match(f.commits[0].content,/intended product is still unconfirmed|商品對應仍未確認/i);
+});
 for(const malformed of [false,true])test('Task1C cd602ad2 persisted context through real semantic decoder and B2: '+(malformed?'reject malformed fixture':'valid provider-shaped continuation'),async()=>{
  const semantic=providerWire({intent:'other',customer_correction:true,customer_facts:[{key:'browser_tabs',value:{minimum_exclusive:20}},{key:'gaming',value:false}],requested_facts:[]});
  if(malformed)delete semantic.nodes.find(n=>n.kind==='number').number;
@@ -563,7 +662,16 @@ for(const boundary of ['humanAfterRepairClaim','newSourceAfterRepairClaim','clai
 
 test('a failed repaired draft remains durably reserved across replay',async()=>{
  const f=fixture('請說明洗衣機選機取捨，暫時不用查型號。',{fullChain:true,originalPreview:true,answers:['What product type do you need?','What product type do you need?'],semantic:wireDelta({intent:'customer_guidance',entities:[{name:'洗衣機',kind:'physical_product',confidence:0.97}],requested_facts:[]},'ADD_ITEM')});
- await f.run();const before=f.requests.filter(x=>x.url.endsWith(':generateContent')).length;assert.equal(before,3);assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.degraded,true,'a rejected repair is a failure receipt, never an AI answer');const r=await f.run();assert.equal(r.status,200);assert.equal(r.body.idempotent,true);assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,before);assert.equal(f.commits.length,1);
+ const first=await f.run();const before=f.requests.filter(x=>x.url.endsWith(':generateContent')).length;assert.equal(before,3);assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.degraded,true,'a rejected repair is a failure receipt, never an AI answer');
+ // Exercise real B2 rejection -> response clone -> terminal persistence. The
+ // closed inner code must survive without customer values or supervisor paths.
+ const meta=f.commits[0].metadata;
+ assert.equal(meta.response_route,'terminal_failure_recovery');assert.equal(meta.source_error_code,'B2_SUPERVISION_BLOCKED');assert.equal(meta.retryable,false);assert.equal(meta.generation_success,false);
+ assert.deepEqual(meta.execution_failure,{code:'B2_SUPERVISION_BLOCKED',stage:'canonical_validation',retryable:false,source_message_id:source,http_status:409,b2_code:'KNOWN_CONTEXT_RECONFIRMATION'});
+ assert.deepEqual(first.body.failure,meta.execution_failure);assert.equal(first.body.retryable,false);
+ assert.deepEqual(catalogueGateEvents(f).map(x=>[x.gate_decision,x.gate_code,x.commit_attempted]),[['block','KNOWN_CONTEXT_RECONFIRMATION',false],['block','KNOWN_CONTEXT_RECONFIRMATION',false],['allow','B2_ALLOW',true]]);
+ assert.doesNotMatch(JSON.stringify({diagnostic:meta.execution_failure,code:meta.source_error_code,reply:f.commits[0].content}),/What product type do you need|洗衣機|entities\[|attributes\.|customer_facts|detail|reason|SEMANTIC_INTERPRETER_UNAVAILABLE/);
+ const r=await f.run();assert.equal(r.status,200);assert.equal(r.body.idempotent,true);assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,before);assert.equal(f.commits.length,1);
 });
 
 test('bounded repair can still ask a genuinely unprovided purposeful clarification',async()=>{

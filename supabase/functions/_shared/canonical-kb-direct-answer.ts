@@ -11,6 +11,8 @@ export interface CanonicalKbDirectAnswer {
   unresolved_fact_fields?: Array<"stock" | "price" | "variant" | "product_identity">;
   recorded_facts?: Array<{field:string;value:string|number;model:string;document_id:string;chunk_id:string;currentness:"unverified"}>;
   identity_confirmation_required?: boolean;
+  catalogue_options?: unknown[];
+  catalogue_requested_facts?: {price:boolean;stock:boolean;specification:boolean};
   price_fact?: { model: string; value: number; currency: "HKD"; document_id: string; chunk_id: string; full_content: string };
 }
 
@@ -197,7 +199,17 @@ function catalogueRecordedAnswer(input:{request:string;selection:Extract<Canonic
   const variants=Object.entries(record.variants).map(([key,value])=>`${key}: ${value}`).join("; ");
   const label=[name,sku?`SKU: ${sku}`:spu?`SPU: ${spu}`:null,variants||null].filter(Boolean).join(" / ");
   const en=language==="en",cn=language==="zh-CN";
-  const parts=[en?`Published source record: ${label}.`:cn?`已发布商品记录：${label}。`:`已發布商品記錄：${label}。`];
+  const confirmation=binding.match_kind==="short_name_candidate";
+  // A bounded name match identifies a source candidate, not the customer's
+  // selected product. Answer only for that explicitly labelled record. Asking
+  // the customer to repeat a full name already in their canonical context
+  // caused the actual v258 KNOWN_CONTEXT_RECONFIRMATION failures. Do not infer
+  // identity from Memory or weaken B2 to admit the repeated question.
+  const parts=[confirmation
+    ? en?`A similarly named published source record: ${label}. The following facts belong only to this record.`
+      :cn?`名称相近的已发布商品记录：${label}。以下资料只属于这笔来源记录。`
+      :`名稱相近嘅已發布商品記錄：${label}。以下資料只屬於呢筆來源記錄。`
+    : en?`Published source record: ${label}.`:cn?`已发布商品记录：${label}。`:`已發布商品記錄：${label}。`];
   const facts:NonNullable<CanonicalKbDirectAnswer["recorded_facts"]>=[];
   const add=(field:string,value:string|number)=>facts.push({field,value,model:sku??spu??name,document_id:chunk.document_id,chunk_id:chunk.chunk_id!,currentness:"unverified"});
   add("product_name",name);if(sku)add("sku",sku);if(spu)add("spu",spu);
@@ -229,13 +241,23 @@ function catalogueRecordedAnswer(input:{request:string;selection:Extract<Canonic
     parts.push(en?"This record does not establish live availability or reserve inventory; current availability still needs merchant verification.":cn?"这份记录不代表即时可售库存，也未预留商品；现货仍须商家核实。":"呢份記錄唔代表即時可售庫存，亦未預留商品；現貨仍須商家核實。");
     if(query.stock && !/(?:記錄|记录|資料|资料|recorded|source)/iu.test(request) && !unresolved.includes("stock"))unresolved.push("stock");
   }
-  const confirmation=binding.match_kind==="short_name_candidate";
   if(confirmation){
     unresolved.push("product_identity");
-    parts.push(en?`Is “${name}” the product you mean?`:cn?`你指的是「${name}」这款吗？`:`你指嘅係「${name}」呢款嗎？`);
+    parts.push(sku
+      ? en?"The match to your intended product is still unconfirmed. You can provide the exact SKU for a fresh check."
+        :cn?"商品对应仍未确认；可提供确切 SKU，再查指定款式。"
+        :"商品對應仍未確認；可提供確切 SKU，再查指定款式。"
+      : en?"The match to your intended product is still unconfirmed. For a fresh check, include the full source product name with your price or stock question."
+        :cn?"商品对应仍未确认；可用来源完整商品名称连同价格或库存问题，再查指定商品。"
+        :"商品對應仍未確認；可用來源完整商品名稱連同價錢或庫存問題，再查指定商品。");
   }
   return {kind:query.price && price.reason==="ok"?"listed_price_unverified":"recorded_product_facts",reply:parts.join(" "),evidence_chunks:[chunk],
-    structured_facts:[],recorded_facts:facts,unresolved_fact_fields:unresolved,identity_confirmation_required:confirmation};
+    structured_facts:[],recorded_facts:facts,unresolved_fact_fields:unresolved,identity_confirmation_required:confirmation,
+    // This is a retrieval target only. A later exact SKU must requery the KB;
+    // no price, stock quantity or current-price authority is carried forward.
+    ...(confirmation && sku ? {catalogue_options:[{document_id:chunk.document_id,chunk_id:chunk.chunk_id,spu,sku,
+      product_name:name,variants:record.variants,reference_authority:selection.authority_decision}],
+      catalogue_requested_facts:{price:query.price,stock:query.stock,specification:query.specification}} : {})};
 }
 
 /** Ambiguous returned variants are options, never rank-first price/stock. */

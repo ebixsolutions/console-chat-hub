@@ -1,4 +1,4 @@
-import type { ExecutionFailure } from "./execution-failure.ts";
+import { executionFailure, type ExecutionFailure } from "./execution-failure.ts";
 /**
  * C3 request-budget and terminal-response guard.
  *
@@ -67,6 +67,23 @@ export function isRecoverableTerminalError(error: unknown): boolean {
   ].includes(error) ||
     /(?:^|_)b2_(?:block|indeterminate)$|^b2_supervision_(?:blocked|indeterminate)$/
       .test(error);
+}
+
+/** Classify an existing terminal outcome without echoing its route or details. */
+export function terminalFailureDiagnostic(
+  reason: unknown,
+  options: Parameters<typeof executionFailure>[1] = {},
+): ExecutionFailure {
+  const label = typeof reason === "string" && reason.length <= 160 ? reason : "";
+  const code = /(?:^|_)b2_block$|^b2_supervision_blocked$/.test(label)
+    ? "B2_SUPERVISION_BLOCKED"
+    : /(?:^|_)b2_indeterminate$|^b2_supervision_indeterminate$/.test(label)
+    ? "B2_SUPERVISION_INDETERMINATE"
+    : /^(?:commerce_state|canonical_memory|canonical_memory_commit)/.test(label)
+    ? "PERSISTENCE_FAILED"
+    : label === "generation_work_budget_exhausted" ? "LLM_TIMEOUT"
+    : "SEMANTIC_INTERPRETER_UNAVAILABLE";
+  return executionFailure(code, options);
 }
 
 /**

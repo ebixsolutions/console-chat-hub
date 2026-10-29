@@ -249,7 +249,8 @@ export function matchCatalogueRecord(query: CatalogueRequest, record:KbProductRe
   return null;
 }
 
-/** Resolve only an immediate, server-persisted variant question. This returns
+/** Resolve only an immediate, server-persisted variant question or an explicit
+ * SKU supplied for an unresolved source candidate. This returns
  * a new retrieval query, never historical price/stock authority or an order.
  * Callers pass their already authenticated tenant-scoped, newest-first history.
  */
@@ -267,13 +268,21 @@ export function resolveCatalogueVariantFollowup(question:string,history:Array<{i
  }
  if(!anchor?.id || !anchor.metadata || typeof anchor.metadata!=='object')return null;
  const meta=anchor.metadata as Record<string,unknown>;
- if(meta.control_commit!=='ai'||meta.b2_expected_company_id!==scope.company_id||meta.answer_kind!=='catalogue_variant_clarification'||!Array.isArray(meta.catalogue_options))return null;
+ const variantQuestion=meta.answer_kind==='catalogue_variant_clarification';
+ const candidateRecord=meta.identity_confirmation_required===true &&
+   ['listed_price_unverified','recorded_product_facts'].includes(String(meta.answer_kind));
+ if(meta.control_commit!=='ai'||meta.b2_expected_company_id!==scope.company_id||
+   (!variantQuestion&&!candidateRecord)||!Array.isArray(meta.catalogue_options)||
+   !meta.catalogue_options.length||meta.catalogue_options.length>8)return null;
  const matched=meta.catalogue_options.filter((raw:unknown)=>{
   if(!raw||typeof raw!=='object')return false;
   const item=raw as Record<string,unknown>, authority=item.reference_authority as Record<string,unknown>|undefined;
   if(typeof item.sku!=='string' || !/^[A-Za-z0-9][A-Za-z0-9._\-]{1,95}$/u.test(item.sku) ||
     !authority || authority.decision!=='USE_CURRENT_KB' || authority.selected_source_id!==item.document_id || typeof item.chunk_id!=='string')return false;
   if(text===normalizeCatalogueCode(item.sku))return true;
+  // A colour/size alone cannot confirm a candidate product's identity. Only
+  // the existing multi-variant question accepts a specification-only choice.
+  if(candidateRecord)return false;
   const variants=item.variants;if(!variants||typeof variants!=='object'||Array.isArray(variants))return false;
   const values=Object.values(variants).filter((v):v is string=>typeof v==='string'&&v.length>0).map(normalizeCatalogueCode);
   let remainder=text,found=0;

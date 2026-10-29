@@ -1,7 +1,7 @@
 import { resolveCatalogueVariantFollowup } from "../_shared/kb-product-record.ts";
 import { resolveFactualFollowup, buildFactualFollowupPrompt, factualSubject, literalFactualSubject } from "../_shared/conversation-semantic-contract.ts";
 import { originalPreviewEnabled } from "../_shared/original-widget-preview.ts";
-import { executionFailure, failureFromError, type ExecutionFailure } from "../_shared/execution-failure.ts";
+import { executionFailure, failureFromError, safeB2FailureCode, type ExecutionFailure } from "../_shared/execution-failure.ts";
 import { resolveIndustryProfile } from "../_shared/industry-runtime-adapter.ts";
 import { phase1CoachAllowed } from "../_shared/remote-model-accounting.ts";
 import {
@@ -194,6 +194,7 @@ import {
   isRecoverableTerminalError,
   isRecoverableTerminalStatus,
   runWithTerminalDeadline,
+  terminalFailureDiagnostic,
   terminalRecoveryReply,
 } from "../_shared/generation-terminal-guard.ts";
 import {
@@ -2351,19 +2352,22 @@ async function persistTerminalRecovery(
         request_id: originalFailure.request_id,
         source_message_id: sourceMessageId,
         http_status: originalFailure.http_status,
+        b2_code: originalFailure.b2_code,
       })
       : undefined;
+    let b2Code: unknown;
     if (originalResponse) {
       try {
         const payload = await originalResponse.clone().json();
-        if (payload.failure && typeof payload.failure === "object") diagnostic = executionFailure(payload.failure.code,{stage:payload.failure.stage,request_id:payload.failure.request_id,source_message_id:sourceMessageId,http_status:payload.failure.http_status});
+        b2Code = payload.b2_code;
+        if (payload.failure && typeof payload.failure === "object") diagnostic = executionFailure(payload.failure.code,{stage:payload.failure.stage,request_id:payload.failure.request_id,source_message_id:sourceMessageId,http_status:payload.failure.http_status,b2_code:payload.failure.b2_code ?? b2Code});
       } catch { /* No raw body or exception is exposed. */ }
     }
-    diagnostic ??= executionFailure(
-      /^(?:commerce_state|canonical_memory|canonical_memory_commit)/.test(reason) ? "PERSISTENCE_FAILED"
-        : reason === "generation_work_budget_exhausted" ? "LLM_TIMEOUT" : "SEMANTIC_INTERPRETER_UNAVAILABLE",
-      {source_message_id:sourceMessageId},
-    );
+    diagnostic ??= terminalFailureDiagnostic(reason, {
+      source_message_id: sourceMessageId,
+      http_status: originalResponse?.status,
+      b2_code: b2Code,
+    });
     const reply = terminalRecoveryReply(language, diagnostic);
     const committed = await commitAiReplyWithControlGate(
       admin,
@@ -3002,6 +3006,7 @@ ${legacyReturnToAiGuard}`;
       JSON.stringify({
         success: false,
         error: `ai_reply_commit_${committed.result}`,
+        b2_code: safeB2FailureCode(committed.b2_code),
       }),
       {
         status: 409,
@@ -6129,7 +6134,7 @@ Latest applicable corrections replace old values; an answered clarification is n
       await cleanupThinking(supabaseAdmin,conversation_id,source_message_id);
       if(!committed.ok){
         if(["human_control","resolved","superseded_source"].includes(committed.result))return new Response(JSON.stringify({success:true,skipped:committed.result}),{headers:{...corsHeaders,"Content-Type":"application/json"}});
-        return new Response(JSON.stringify({success:false,error:`catalogue_clarification_commit_${committed.result}`}),{status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+        return new Response(JSON.stringify({success:false,error:`catalogue_clarification_commit_${committed.result}`,b2_code:safeB2FailureCode(committed.b2_code)}),{status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
       }
       return new Response(JSON.stringify({success:true,response_route:"canonical_kb_direct_answer",answer_kind:"catalogue_variant_clarification"}),{headers:{...corsHeaders,"Content-Type":"application/json"}});
     }
@@ -6655,6 +6660,10 @@ Latest applicable corrections replace old values; an answered clarification is n
           // Snapshot facts must not enter Memory as current quotes/stock.
           recorded_kb_facts: (_canonicalKbDirectAnswer.recorded_facts ?? []).map(fact=>({...fact,source_message_id,tenant_id:_canonicalKbTenantId})),
           identity_confirmation_required: _canonicalKbDirectAnswer.identity_confirmation_required === true,
+          ...(_canonicalKbDirectAnswer.catalogue_options ? {
+            catalogue_options: _canonicalKbDirectAnswer.catalogue_options,
+            catalogue_requested_facts: _canonicalKbDirectAnswer.catalogue_requested_facts,
+          } : {}),
           authoritative_kb_facts: (_canonicalKbDirectAnswer.structured_facts ?? []).map((fact) => ({
             ...fact, authority: _c1AuthorityDecision.selected_authority_class, currentness_at_answer: _c1AuthorityDecision.provenance.currentness ?? "unknown",
             source_message_id, tenant_id: _canonicalKbTenantId,
@@ -6692,6 +6701,7 @@ Latest applicable corrections replace old values; an answered clarification is n
           JSON.stringify({
             success: false,
             error: `canonical_kb_direct_answer_commit_${committed.result}`,
+            b2_code: safeB2FailureCode(committed.b2_code),
           }),
           {
             status: 409,
@@ -7153,6 +7163,7 @@ Latest applicable corrections replace old values; an answered clarification is n
       JSON.stringify({
         success: false,
         error: `ai_reply_commit_${committed.result}`,
+        b2_code: safeB2FailureCode(committed.b2_code),
       }),
       {
         status: 409,
