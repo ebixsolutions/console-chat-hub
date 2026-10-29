@@ -1314,7 +1314,8 @@
     "tests/c3-widget-live-auth/original-preview.test.mjs": "5e5f06232bffcd611427a09c67035d87c0f1a793894fb77d4a7503966ad7b442",
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "b6860bf100a512b6309186ee4ead563eea74dd934be394ac60b0160a72674a63",
     "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "6669df2e7648dd2ac1351734290ac9f0d5813bbef1fe03ee8f4e009f44de1e07",
-    "tests/section15/human-service-routing.test.mjs": "84cee1f8ab39ef4678b2984d1dfdd5e33317fab5808dbeae87b72afd33454cd1"
+    "tests/section15/human-service-routing.test.mjs": "84cee1f8ab39ef4678b2984d1dfdd5e33317fab5808dbeae87b72afd33454cd1",
+    "supabase/functions/_shared/f13-runtime-recovery.test.ts": "e0b8539e080f818c8a9ff427e225beb80560e0dd2127b0df3c17b5b862805e18"
   },
   "task1c_event_price_deployment_authorized": false
 }

@@ -69,7 +69,13 @@ Deno.test('compact semantic transport uses bounded complete-delta budget, curren
   Deno.env.set('LLM_PROVIDER','anthropic');Deno.env.set('LLM_MODEL_EVALUATION','isolated-test-model');Deno.env.set('ANTHROPIC_API_KEY','isolated-fake-key');Deno.env.set('SUPABASE_URL','http://accounting.mock');Deno.env.set('SUPABASE_SERVICE_ROLE_KEY','mock-service-key');Deno.env.set('SUPABASE_SECRET_KEY','mock-service-key');
   let calls=0;
   globalThis.fetch=withMockAccounting(async(_url,init)=>{
-   calls++;const request=JSON.parse(String(init?.body));assert(request.max_tokens===4096,'budget changed');assert(request.system.includes('Omit unchanged/default fields'),'full snapshot still required');
+   calls++;const request=JSON.parse(String(init?.body));assert(request.max_tokens===4096,'budget changed');
+   assert(request.system.includes('Wire contract: context_encoding=semantic_fields_v3.'),'active semantic wire changed');
+   assert(request.system.includes("Include only THIS turn's changed/referenced entities"),'current-turn delta boundary lost');
+   assert(request.system.includes('Required neutral scalar/list values are transport defaults, not new customer evidence.'),'neutral defaults became customer evidence');
+   assert(request.system.includes('Do not repeat complete history/state, unchanged entities or resolved fields.'),'full snapshot still required');
+   // Retain the legacy canonical response to verify decoder compatibility with
+   // the current prompt; actual v3 wire fixtures are covered separately.
    return new Response(JSON.stringify({content:[{type:'text',text:JSON.stringify({operation:'NO_STATE_CHANGE',confidence:0.96,customer_facts:[{key:'auto_renew',value:false},{key:'seats',value:{amount:0,unit:'users'}},{key:'appointment_date',value:null}]})}],stop_reason:'end_turn',usage:{output_tokens:100}}));
   });
   const input={company_id:'11111111-1111-4111-8111-111111111111',conversation_id:'22222222-2222-4222-8222-222222222222',source_message_id:'isolated-source',latest:'No automatic renewal; zero users; appointment date is unknown.',history:Array.from({length:120},(_,i)=>({role:'visitor',content:`Past topic ${i}`}))};
