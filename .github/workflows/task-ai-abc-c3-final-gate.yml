@@ -312,6 +312,7 @@ jobs:
             supabase/functions/_shared/pre-send-conversion-supervisor.test.ts \
             supabase/functions/_shared/conversation-service-planner.test.ts \
             supabase/functions/_shared/current-factual-request.test.ts \
+            supabase/functions/_shared/factual-evidence-selection.test.ts \
             supabase/functions/_shared/canonical-kb-product-record.test.ts
           C3_OFFLINE
           cat "$RUNNER_TEMP/c3-rev14-offline/profile.log"
@@ -1546,6 +1547,7 @@ jobs:
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts supabase/functions/widget-live-ai-test/index.ts supabase/functions/receive-widget-message/index.ts supabase/functions/widget-poll-messages/index.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --allow-env --node-modules-dir=auto tests/quality95/retained-failures.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-env --allow-read --node-modules-dir=auto supabase/functions/_shared/factual-evidence-selection.test.ts tests/edge/task2-2-output-grounding-router.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --node-modules-dir=auto supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-long-memory.integration.test.ts supabase/functions/_shared/generation-terminal-guard.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock supabase/functions/_shared/deterministic-commerce-engine.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --node-modules-dir=auto \

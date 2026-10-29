@@ -1,5 +1,7 @@
 import { contradictsAvailableFollowupEvidence, type FactualFollowupContext } from "./conversation-semantic-contract.ts";
 import type { ResolvedFactualRequestContext } from "./factual-request-context.ts";
+import {GROUNDING_EVIDENCE_LIMITS, groundingEvidenceText, validGroundingEvidence, parseGroundingDemandResolutions,
+  groundingDemandResponseSchema, type GroundingEvidence, type GroundingVerificationReceipt} from "./grounding-evidence.ts";
 import { uatExecutionReadiness } from "./uat-execution-readiness.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
 import { trustedDispatchScope, UatDenied, UAT_THINKING } from "./uat-execution-contract.ts";
@@ -52,6 +54,7 @@ export type LlmResult =
     model: string;
     usage: LlmUsage;
     request_id: string;
+    grounding_verification?: GroundingVerificationReceipt;
   }
   | {
     ok: false;
@@ -75,6 +78,9 @@ export interface LlmCall {
   resolvedFactualRequest?: ResolvedFactualRequestContext;
   /** Set only after fresh full-content subject/authority selection, not HTTP200. */
   factualEvidenceAvailable?: boolean;
+  /** Explicit source data takes precedence even when empty. Never parsed out
+   * of request text, summaries, assistant history or an unbounded prompt tail. */
+  groundingEvidence?: GroundingEvidence;
   purpose: ModelPurpose;
   system: string;
   user: string;
@@ -390,9 +396,11 @@ interface ParsedGroundingBlock {
   evidence_text: string;
   chunk_ids: string[];
   transform_operations: string[];
+  bound_evidence?: GroundingEvidence;
 }
 
 interface GroundingVerifierDecision {
+  demand_resolutions?: unknown;
   question_resolution?: "supported" | "partial" | "unsupported";
   grounded: boolean;
   unsupported_claims: string[];
@@ -468,7 +476,10 @@ export function extractGroundingBlock(
   const marker = "Full Content Evidence:\n";
   const markerIndex = system.lastIndexOf(marker);
   if (markerIndex < 0) return null;
-  const raw = system.slice(markerIndex + marker.length).trim();
+  // Legacy compatibility only. Request/control blocks after the evidence are
+  // not source text; production semantic requests use explicit typed evidence.
+  const raw = system.slice(markerIndex + marker.length)
+    .split(/\n\s*\[(?:CURRENT_FACTUAL_REQUEST|FACT_ANSWER_SCOPE|FACTUAL_FOLLOWUP|CONVERSATION_MEMORY|CUSTOMER_CONVERSATION_POLICY)\]/u, 1)[0].trim();
   if (!raw || /^none\b/i.test(raw)) return null;
   const ids = [...raw.matchAll(/\[chunk:([^\]\s]+)\]/g)]
     .map((match) => (match[1] ?? "").trim())
@@ -485,6 +496,10 @@ export function buildVerifierEvidenceAliases(grounding: ParsedGroundingBlock): {
   evidence_text: string;
   allowed_ids: string[];
 } {
+  if (grounding.bound_evidence !== undefined) return {
+    evidence_text: groundingEvidenceText(grounding.bound_evidence.items),
+    allowed_ids: grounding.bound_evidence.items.map(item => item.id),
+  };
   let next = 0;
   const allowed: string[] = [];
   const aliased = grounding.evidence_text.replace(
@@ -564,6 +579,7 @@ export function parseGroundingVerifierDecision(
   if (resolution !== undefined && (typeof resolution !== "string" || !["supported", "partial", "unsupported"].includes(resolution))) return null;
 
   return {
+    ...(parsed.demand_resolutions !== undefined ? {demand_resolutions: parsed.demand_resolutions} : {}),
     ...(resolution !== undefined ? { question_resolution: resolution as "supported" | "partial" | "unsupported" } : {}),
     grounded: parsed.grounded,
     unsupported_claims: unsupported,
@@ -577,13 +593,14 @@ async function verifyGroundedGeneration(
   answer: string,
   grounding: ParsedGroundingBlock,
   timeoutMs: number,
-): Promise<{ ok: true } | { ok: false; reason: string; failure?:ExecutionFailure }> {
+): Promise<{ ok: true; receipt?: GroundingVerificationReceipt } | { ok: false; reason: string; failure?:ExecutionFailure }> {
+  if (answer.length > GROUNDING_EVIDENCE_LIMITS.answerCharacters) return {ok: false, reason: "answer_evidence_budget"};
   // The governed generation input already contains the current visitor request
   // and recent conversational state. It is valid evidence only for facts the
   // customer/conversation itself supplied (preferences, quantities, reference
   // ids, prior requests, recap state). It MUST NOT authorize product/company/
   // policy facts that remain KB/prior-grounded-only.
-  if ((call.factualFollowup || call.factualEvidenceAvailable) && contradictsAvailableFollowupEvidence(answer)) {
+  if ((call.factualFollowup || call.factualEvidenceAvailable) && !grounding.bound_evidence && contradictsAvailableFollowupEvidence(answer)) {
     return {ok:false, reason:"followup_denies_available_evidence"};
   }
   const conversationEvidence = extractCustomerConversationEvidence(call.user);
@@ -636,6 +653,12 @@ async function verifyGroundedGeneration(
     "Politeness, conversational transitions, questions, and non-factual wording do not need evidence.",
     call.generalDecisionSupport ? "Conditional general decision criteria may be proposed separately. They cannot certify any named merchant/product/policy claim, legal entitlement, numeric specification, price, stock or suitability guarantee. Those assertions still require supplied E* evidence. An absence of E* supports only a specific cannot-verify acknowledgement, never a claim that the fact does not exist." : "",
     "Any unsupported external factual claim makes grounded=false. A faithful restatement of customer-provided/conversation facts is allowed when supported by C1.",
+    ...(grounding.bound_evidence ? [
+      "Check all exact source items, their individual currentness and their applicability together. Complementary policy clauses/exceptions must be retained; contradictory clauses without a source-established scope or precedence cannot support a definitive claim.",
+      "The per-demand evidence list means candidate sources, not proven coverage. A policy_candidate cannot establish merchant-wide or product-specific applicability merely because retrieval returned it.",
+      "Return demand_resolutions for EVERY supplied demand exactly once: {demand_id,status:supported|partial|unavailable,evidence_ids:[E aliases]}. supported means every requested facet/condition in that demand is addressed; partial gives supported facts and explicitly identifies remaining gaps; unavailable explicitly acknowledges that demand's missing evidence or asks its necessary clarification. Omitting a demand is not an unavailable answer.",
+      "A blocked demand or transaction without a verified transaction source must be unavailable. Customer references and general policy never prove an individual order status or arrival. Existing missing_reasons prevent supported. Cite only the E aliases that actually support that demand; unavailable uses no E aliases. Overall question_resolution can be supported only if all demands are supported.",
+    ] : []),
     "evidence_chunk_ids may contain supplied E* aliases and C1 when they materially support the answer. This field is audit metadata; grounded must still reflect the rules above.",
     call.factualEvidenceAvailable
       ? "Also assess question_resolution separately from claim truth: supported means the answer addresses the requested subject and facet; partial means it gives useful applicable E* facts first and names only genuinely missing details; unsupported means irrelevant facts, an unhelpful no-data response, or failure to address the request. Never equate grounded claims with a resolved question. Return JSON with grounded, unsupported_claims, evidence_chunk_ids, question_resolution."
@@ -648,6 +671,8 @@ async function verifyGroundedGeneration(
     "Current request and resolved conversational referent (reference only, never external authority):",
     JSON.stringify({question:call.user, followup:call.factualFollowup ?? null,
       resolved_request:call.resolvedFactualRequest ?? null}),
+    ...(grounding.bound_evidence ? ["Demand coverage to verify (request metadata, not external evidence):",
+      JSON.stringify(grounding.bound_evidence.demands)] : []),
     "Authoritative Evidence:",
     verifierEvidence.evidence_text,
     "",
@@ -655,7 +680,7 @@ async function verifyGroundedGeneration(
     conversationEvidence,
     "",
     "Proposed answer:",
-    answer.slice(0, 3000),
+    answer,
   ].join("\n");
 
   let verifierAdapter: ProviderAdapter;
@@ -682,8 +707,9 @@ async function verifyGroundedGeneration(
           unsupported_claims: { type: "ARRAY", items: { type: "STRING" } },
           evidence_chunk_ids: { type: "ARRAY", items: { type: "STRING" } },
           ...(call.factualEvidenceAvailable ? {question_resolution:{type:"STRING",enum:["supported","partial","unsupported"]}} : {}),
+          ...(grounding.bound_evidence ? {demand_resolutions: groundingDemandResponseSchema(), question_resolution:{type:"STRING",enum:["supported","partial","unsupported"]}} : {}),
         },
-        required: ["grounded", "unsupported_claims", "evidence_chunk_ids", ...(call.factualEvidenceAvailable ? ["question_resolution"] : [])],
+        required: ["grounded", "unsupported_claims", "evidence_chunk_ids", ...(call.factualEvidenceAvailable || grounding.bound_evidence ? ["question_resolution"] : []), ...(grounding.bound_evidence ? ["demand_resolutions"] : [])],
       },
       (await trustedDispatchScope(serviceClient(),call.companyId,call.conversationId,call.legacyAuthority)) === "uat" ? UAT_THINKING : undefined,
     );
@@ -808,7 +834,13 @@ async function verifyGroundedGeneration(
         return { ok: false, reason: "verifier_invalid_output",failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"decode",request_id:call.operationId,http_status:res.status}) };
       }
 
-      const unresolvedQuestion = call.factualEvidenceAvailable &&
+      const usedEvidenceIds = decision.evidence_chunk_ids.filter(id => verifierEvidence.allowed_ids.includes(id));
+      const resolutions = grounding.bound_evidence
+        ? parseGroundingDemandResolutions(decision.demand_resolutions, grounding.bound_evidence, usedEvidenceIds) : null;
+      const invalidCoverage = grounding.bound_evidence && (!resolutions || !decision.question_resolution ||
+        decision.question_resolution === "unsupported" ||
+        (decision.question_resolution === "supported") !== resolutions.every(item => item.status === "supported"));
+      const unresolvedQuestion = invalidCoverage || !grounding.bound_evidence && call.factualEvidenceAvailable &&
         (!decision.question_resolution || decision.question_resolution === "unsupported" ||
           !decision.evidence_chunk_ids.some(id => verifierEvidence.allowed_ids.includes(id)));
       await recordUsage(
@@ -830,7 +862,10 @@ async function verifyGroundedGeneration(
         });
         return { ok: false, reason: "unsupported_semantic_claim" };
       }
-      return { ok: true };
+      return { ok: true, ...(grounding.bound_evidence && resolutions ? {receipt: {
+        used_evidence_ids: usedEvidenceIds,
+        question_resolution: decision.question_resolution as "supported" | "partial", demand_resolutions: resolutions,
+      }} : {}) };
     } catch (error) {
       if (error instanceof ModelAccountingError || error instanceof UatDenied) return { ok: false, reason: "model_accounting_denied",failure:executionFailure(error.code,{request_id:call.operationId}) };
       const aborted = error instanceof Error && error.name === "AbortError";
@@ -867,6 +902,14 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
     attempts: 0,
   };
   const requestId = call.operationId;
+  if (call.groundingEvidence !== undefined) {
+    const expected = call.resolvedFactualRequest?.demands ?? [];
+    if (!validGroundingEvidence(call.groundingEvidence) || expected.length !== call.groundingEvidence.demands.length ||
+        expected.some(demand => !call.groundingEvidence!.demands.some(item => item.id === demand.id && item.source_type === demand.source_type))) {
+      return {ok:false,code:"LLM_INPUT_BLOCKED",request_id:requestId,usage,
+        failure:executionFailure("LLM_INPUT_BLOCKED",{request_id:requestId})};
+    }
+  }
 
   // A caller that already cancelled must not start authority reads or reserve
   // execution. Preserve the original timeout result without any external I/O.
@@ -1152,9 +1195,13 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         break;
       }
 
+      let groundingReceipt: GroundingVerificationReceipt | undefined;
       const grounding =
         call.purpose === "generation" && call.responseFormat !== "json"
-          ? extractGroundingBlock(call.system) ?? (call.factualEvidenceAbsent ? {authority:"CURRENT_KB" as const,evidence_text:"",chunk_ids:[],transform_operations:[]} : null)
+          ? call.groundingEvidence !== undefined
+            ? {authority: "CURRENT_KB" as const, evidence_text: groundingEvidenceText(call.groundingEvidence.items),
+              chunk_ids: call.groundingEvidence.items.map(item => item.chunk_id), transform_operations: [], bound_evidence: call.groundingEvidence}
+            : extractGroundingBlock(call.system) ?? (call.factualEvidenceAbsent ? {authority:"CURRENT_KB" as const,evidence_text:"",chunk_ids:[],transform_operations:[]} : null)
           : null;
       if (grounding) {
         let groundingDecision: Awaited<ReturnType<typeof verifyGroundedGeneration>>;
@@ -1195,6 +1242,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
             usage,
           };
         }
+        groundingReceipt = groundingDecision.receipt;
       }
 
       usage.latency_ms = Date.now() - started;
@@ -1223,6 +1271,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         model: adapter.model,
         usage,
         request_id: requestId,
+        ...(groundingReceipt ? {grounding_verification: groundingReceipt} : {}),
       };
     } finally {
       clearTimeout(timer);

@@ -92,6 +92,7 @@ export async function currentFactualRequestReceipt(
       FACT_CLASSES.has(fact) ? fact : "other"))],
     query_sha256: queryHash,
     query_char_count: query.length,
+    query_byte_count: new TextEncoder().encode(query).length,
     history_turn_count: request?.context_turns.length ?? 0,
     topic_changed: request?.topic_changed ?? false,
     // A planned adapter invocation is not a remote billing/HTTP-count claim.

@@ -62,6 +62,16 @@ function build(options: {
 
 Deno.test("C3 memory schema validates versioned memory", () => assert(isCanonicalConversationMemory(build()), "valid memory rejected"));
 
+Deno.test("Task2 Memory merges repeated demand bindings before limiting distinct source lineage",()=>{
+  const source="previous-customer";
+  const binding=(document:string)=>({selected_document_id:document,evidence_chunk_ids:[document+"-chunk"],
+    reference_authority:{decision:"USE_CURRENT_KB",selected_source_id:document}});
+  const memory=build({rows:[{id:MID,role:"visitor",content:"Tell me the applicable conditions"},
+    {id:"previous-answer",role:"assistant",content:"The source conditions apply.",metadata:{source_message_id:source,
+      citation_lineage:{source_bindings:[...Array.from({length:16},()=>binding("product")),binding("delivery-policy")]}}}]});
+  equal(memory.grounded_reference_lineage.map(item=>item.document_id),["product","delivery-policy"],"later distinct source was truncated before deduplication");
+});
+
 Deno.test("Phase1 mixed factual answer retains merchant-owned stock unknown in handoff memory", () => {
  const rows:MemoryHistoryRow[]=[{id:"answer",role:"assistant",content:"TEA-R21 嘅重量：200 g。現貨仍需商家核實。",metadata:{control_commit:"ai",source_message_id:MID,response_route:"canonical_kb_direct_answer",answer_kind:"specification",unresolved_fact_fields:["stock"],authoritative_kb_facts:[{model:"TEA-R21",field:"weight",value:"200 g",authority:"CURRENT_KB",currentness_at_answer:"current"}]}},{id:MID,role:"visitor",content:"TEA-R21 嘅重量係幾多？有冇現貨？"}];
  const pending=build({rows});

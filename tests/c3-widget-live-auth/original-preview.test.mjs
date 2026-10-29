@@ -183,6 +183,8 @@ async function embeddingFixture(fault='none',documentFixture={}) {
   observed_at:Math.floor(Date.now()/1000)-1,expires:Math.floor(Date.now()/1000)+600,
   deployment_pinned_until_expiry:true,lineage_pinned_until_expiry:true,query_embedding_calls:1,embedding_retries:0,generation_calls:0,ingestion_allowed:false,reindex_allowed:false,max_query_bytes:2048,
   documents:[{document_id:'fixture-published-policy',version_id:'fixture-version-2',chunks:[{chunk_id:'fixture-chunk-2',chunk_type:'full_content',content_sha256:await fixtureDigest(content)}]}]};
+ if(documentFixture.documents)a.documents=await Promise.all(documentFixture.documents.map(async doc=>({document_id:doc.document_id,version_id:doc.version_id,
+  chunks:await Promise.all(doc.evidence.map(async chunk=>({chunk_id:chunk.chunk_id,chunk_type:chunk.chunk_type,content_sha256:await fixtureDigest(chunk.content)})))})));
  if(fault==='expired')a.expires=a.observed_at-1;
  if(fault==='future')a.observed_at=Math.floor(Date.now()/1000)+100;
  if(fault==='retries')a.embedding_retries=1;
@@ -218,7 +220,7 @@ async function embeddingFixture(fault='none',documentFixture={}) {
   if(fault==='draft')d.authority={publication_state:'draft'};
   if(fault==='unreviewed-chunk')d.evidence[0].chunk_id='unreviewed-chunk';
   if(fault==='chunk-type')d.evidence[0].chunk_type='rag_summary';
-  return Response.json({success:true,context_found:true,selected_documents:[d],llm_context:{combined_text:'UNTRUSTED COMBINED TEXT'}});
+  return Response.json({success:true,context_found:true,selected_documents:documentFixture.documents??[d],llm_context:{combined_text:'UNTRUSTED COMBINED TEXT'}});
  };
  const prepare=async(mode,permit)=>{
   if(fault==='proof-bypass')return {};
@@ -287,7 +289,7 @@ async function inboxHandler(slug){
 }
 const knowledgeHandler=await inboxHandler('kb-search-proxy'),policyHandler=await inboxHandler('agent-assist');
 const priorInboxClient=globalThis.__c3InboxClient;test.after(()=>{if(priorInboxClient===undefined)delete globalThis.__c3InboxClient;else globalThis.__c3InboxClient=priorInboxClient;});
-async function setupInbox(fault='none',documentFixture={},semanticFixture=null){
+async function setupInbox(fault='none',documentFixture={},semanticFixture=null,outputFixture={}){
  const x=await embeddingFixture(['signature','expired','foreign-response','changed-content','no-match'].includes(fault)?fault:'none',documentFixture);
  f.env.SUPABASE_SERVICE_ROLE_KEY=f.env.SUPABASE_SECRET_KEY;f.env.LLM_MODEL_ASSIST='gemini-2.5-flash';f.env.GOOGLE_SERVICE_ACCOUNT_JSON='{}';
  if(semanticFixture)f.env.LLM_MODEL_EVALUATION='gemini-2.5-flash';
@@ -310,17 +312,18 @@ async function setupInbox(fault='none',documentFixture={},semanticFixture=null){
  const from=f.db.from;f.db.from=function(table){const q=from.call(this,table);q.not=()=>q;return q;};
  const auth={getUser:async()=>({data:{user:fault==='unauthenticated'?null:f.user},error:null})};f.db.auth=auth;
  globalThis.__c3InboxClient=(url,key)=>{assert.equal(url,f.env.SUPABASE_URL);assert([f.env.SUPABASE_SECRET_KEY,f.env.SUPABASE_ANON_KEY].includes(key));return f.db;};
- let model=0;const prompts=[],modelKinds={semantic:0,answer:0};
+ let model=0;const prompts=[],modelRequests=[],modelKinds={semantic:0,answer:0};
  globalThis.fetch=async(url,init)=>{
   if(String(url)===x.endpoint){if(fault==='tool-failure')return new Response(null,{status:503});if(fault==='revoke-on-return')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;return await x.upstream(url,init);}
-  assert.equal(String(url),f.url,'no unrelated provider or accounting endpoint');model++;const b=JSON.parse(init.body);const text=b.contents.map(c=>c.parts.map(p=>p.text??'').join('')).join('');prompts.push(text);
+  assert.equal(String(url),f.url,'no unrelated provider or accounting endpoint');model++;const b=JSON.parse(init.body);modelRequests.push(b);const text=b.contents.map(c=>c.parts.map(p=>p.text??'').join('')).join('');prompts.push(text);
   if(b.generationConfig?.responseSchema?.properties?.context_encoding?.enum?.includes('semantic_values_v4')){
    modelKinds.semantic++;assert(semanticFixture,'unexpected semantic dispatch without a source-bound fixture');
    return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(semanticFixture)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:120}});
   }
   modelKinds.answer++;
-  if(text.includes('proposed_claims'))return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({grounded:fault!=='unsupported-policy',unsupported_claims:fault==='unsupported-policy'?['unsupported full refund']:[],evidence_ids:['E1'],resolution:fault==='unsupported-policy'?'unsupported':'supported'})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
+  if(text.includes('proposed_claims'))return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(outputFixture.verifier??{grounded:fault!=='unsupported-policy',unsupported_claims:fault==='unsupported-policy'?['unsupported full refund']:[],evidence_ids:['E1'],resolution:fault==='unsupported-policy'?'unsupported':'supported'})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
   let answer={queries:[]};if(text.includes('Text to check:'))answer=fault==='unsupported-policy'?{status:'compliant',summary:'Every cancellation receives an unconditional full refund.',issues:[]}:fault==='invalid-policy'?{status:'violation',summary:'invalid fixture',issues:[]}:{status:'warning',summary:'Isolated policy assessment',issues:[{excerpt:'fixture',policy_label:'Evidence 1',severity:'warning'}]};
+  if(text.includes('Customer message:')&&outputFixture.suggestions)answer={suggestions:outputFixture.suggestions};
   return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(answer)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
  };
  const request=async(slug,content='Please assess my subscription cancellation draft.',contextMode='conversation')=>{
@@ -328,7 +331,7 @@ async function setupInbox(fault='none',documentFixture={},semanticFixture=null){
   const body=slug==='knowledge'?{query:'published subscription policy',top_k:3,conversation_id:x.c.id}:{tool_type:assistTool,conversation_id:x.c.id,content,context_mode:contextMode};
   const r=await(slug==='knowledge'?knowledgeHandler:policyHandler)(new Request('https://isolated.invalid',{method:'POST',headers:{Authorization:'Bearer isolated',Origin:'https://console-chat-hub.lovable.app','Content-Type':'application/json'},body:JSON.stringify(body)}));return {status:r.status,data:await r.json()};
  };
- return {...x,send:request,model:()=>model,modelKinds:()=>({...modelKinds}),prompts};
+ return {...x,send:request,model:()=>model,modelKinds:()=>({...modelKinds}),prompts,modelRequests};
 }
 for(const fault of ['none','BO-revoked','no-preview-grant','human-control','no-inbox-grant','role','inactive-membership','foreign-ticket','synthetic','wrong-channel','signature','expired','foreign-response','changed-content','tool-failure','no-match','revoke-on-return'])test('actual Inbox Knowledge handler preserves ticket and separates staff authority/paid scope: '+fault,async()=>{
  const x=await setupInbox(fault);const marker=JSON.stringify(x.c.metadata_source),before=f.rows.messages.length;
@@ -404,6 +407,54 @@ for(const [facet,content,tool] of [['price','幾錢？','suggest_reply'],['stock
   assert.equal(JSON.stringify(x.c.metadata_source),marker);assert.equal(f.rpc.length,0);
  });
 }
+async function task2AssistFixture(fault='none'){
+ const first='訂購後一般幾時送貨？',second='偏遠地區有咩例外？',question=first+second;
+ const semantic=providerWireV4({language:'zh-HK',intent:'merchant_facts',requested_facts:['delivery_period','delivery_exceptions'],
+  demands:[first,second].map((quote,index)=>({question:quote,source_quote:quote,subject_refs:[],source_type:'policy',requested_facts:[index?'delivery_exceptions':'delivery_period'],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}))});
+ const documents=['一般訂單付款後三至五個工作天送貨。','偏遠地區需另外預約送貨時間，不適用一般時段。'].map((content,index)=>({
+  document_id:'task2-assist-policy-'+index,version_id:'task2-assist-version-'+index,title:'送貨政策',source_type:'policy',document_score:.99,
+  metadata:{regions:['HK'],entity_ids:[]},evidence:[{chunk_id:'task2-assist-chunk-'+index,chunk_type:'full_content',content,score:.99}]}));
+ const suggestions=[{content:'已發布資料列明，一般訂單付款後三至五個工作天送貨；偏遠地區需另外預約時間，不適用一般時段。',tone_label:'Informative'}];
+ const verifier={grounded:true,unsupported_claims:[],evidence_ids:['E1','E2'],resolution:'supported',
+  demand_resolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']},{demand_id:'demand-2',status:'supported',evidence_ids:['E2']}]};
+ if(fault==='unavailable'){
+  suggestions[0].content='目前未能確認一般送貨時間及偏遠地區安排，需要核實適用條件。';
+  verifier.evidence_ids=[];verifier.resolution='partial';verifier.demand_resolutions.forEach(item=>{item.status='unavailable';item.evidence_ids=[];});
+ }
+ if(fault==='omitted-demand')verifier.demand_resolutions.pop();
+ if(fault==='partial-inconsistent')verifier.resolution='partial';
+ if(fault==='oversized-draft')suggestions[0].content='說明'.repeat(501);
+ if(fault==='split-drafts'){
+  suggestions[0].content='一般訂單付款後三至五個工作天送貨。';suggestions.push({content:'偏遠地區需另外預約。',tone_label:'Neutral'});
+  verifier.grounded=false;verifier.unsupported_claims=['Each separate draft omits one demand.'];verifier.resolution='unsupported';
+ }
+ const x=await setupInbox('none',{documents},semantic,{suggestions,verifier});
+ f.rows.messages=[{id:crypto.randomUUID(),conversation_id:x.c.id,role:'visitor',content:question,is_recalled:false,created_at:'2026-10-29T08:00:00Z',metadata:{}}];
+ return {...x,question,suggestions};
+}
+for(const tool of ['knowledge_helper','suggest_reply'])test('Task2 actual agent-assist keeps complementary policy documents: '+tool,async()=>{
+ const x=await task2AssistFixture();const r=await x.send(tool,x.question);assert.equal(r.status,200,JSON.stringify(r));
+ assert.equal(x.posts(),1);assert.deepEqual(r.data.citations.map(item=>item.document_id),['task2-assist-policy-0','task2-assist-policy-1']);
+ assert.equal(r.data.selected_document_id,null);assert.equal(r.data.reference_authority,null);assert.equal(r.data.reference_authorities.length,tool==='knowledge_helper'?4:2);
+ if(tool==='knowledge_helper'){assert.equal(x.model(),1);assert.equal(r.data.answer_verified,false);assert.equal(r.data.result.evidence.length,2);}
+ else{
+  assert.equal(x.model(),3);assert.deepEqual(x.modelKinds(),{semantic:1,answer:2});assert.deepEqual(r.data.result.suggestions,x.suggestions);
+  assert.deepEqual(r.data.unresolved_fact_fields,[]);const verifier=x.modelRequests.find(request=>JSON.stringify(request.contents).includes('proposed_claims'));assert(verifier);
+  assert.equal(verifier.generationConfig.maxOutputTokens,800);assert(JSON.stringify(verifier.systemInstruction).includes('every suggestion independently'));
+  const payload=JSON.parse(verifier.contents[0].parts[0].text);assert.deepEqual(JSON.parse(payload.proposed_claims).suggestions,x.suggestions);
+ }
+ assert.equal(f.rpc.length,0);
+});
+test('Task2 actual agent-assist unavailable result cannot cite a merely retrieved source',async()=>{
+ const x=await task2AssistFixture('unavailable');const r=await x.send('suggest_reply',x.question);assert.equal(r.status,200,JSON.stringify(r));
+ assert.equal(r.data.knowledge_grounded,false);assert.equal(r.data.selected_document_id,null);assert.equal(r.data.citation_lineage,null);
+ assert.equal(r.data.reference_authority,null);assert.deepEqual(r.data.citations,[]);assert.deepEqual(r.data.unresolved_fact_fields,['demand-1','demand-2']);
+});
+for(const fault of ['omitted-demand','partial-inconsistent','oversized-draft','split-drafts'])test('Task2 actual agent-assist rejects incomplete coverage: '+fault,async()=>{
+ const x=await task2AssistFixture(fault);const r=await x.send('suggest_reply',x.question);assert.equal(r.status,502,JSON.stringify(r));
+ assert.equal(r.data.success,false);assert.equal(f.rpc.length,0);assert.equal(x.model(),fault==='oversized-draft'?2:3);
+});
+
 for(const fault of ['none','default-denied','opt-in-false','assist-disabled','policy-authority','arbitrary-evaluation','wrong-slot','wrong-schema','missing-schema','wrong-system','wrong-purpose','attempt-two','oversized-output','prepare-hook','missing-source','wrong-source','foreign-source','recalled-source','assistant-source','source-time-drift','source-content-changed','replay','new-operation-replay','grant-revoked','grant-revoked-during-source-read','membership-revoked-during-source-read'])test('Inbox semantic context has separate opt-in and never grants answer grounding: '+fault,async()=>{
  const x=await setupInbox('none',{},providerWireV4({demands:[]}));
  const grant=JSON.parse(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION);

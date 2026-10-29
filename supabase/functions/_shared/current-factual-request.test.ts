@@ -1,4 +1,4 @@
-import { resolveCurrentFactualRequest, type FactualRequestHistoryRow } from "./current-factual-request.ts";
+import { resolveCurrentFactualRequest, assertFactualQueryBudget, type FactualRequestHistoryRow } from "./current-factual-request.ts";
 import { scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
 import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state-core.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
@@ -265,6 +265,34 @@ function demand(question: string, source_type: CommerceSemanticDemand["source_ty
 function demanded(...demands: CommerceSemanticDemand[]): CommerceSemanticFrame {
   return {...frame(demands.flatMap(item => item.requested_facts), null), demands};
 }
+
+Deno.test("Task2 query bounds check UTF-8 bytes as well as characters",()=>{
+  for(const text of ["x".repeat(1001),"中".repeat(700)]) {
+    let rejected=false;try{assertFactualQueryBudget(text);}catch(error){rejected=error instanceof DecisionContextLimitError;}
+    assert(rejected,"oversized retrieval query was not rejected");
+  }
+  equal(assertFactualQueryBudget("中".repeat(600)),"中".repeat(600));
+});
+for(const ambiguous of [false,true])for(const overlap of ["whole_quote","negation"]){
+  Deno.test(`Task2 transaction isolation includes ambiguous private scope and every query field: ${ambiguous}/${overlap}`,()=>{
+    const order="訂單 AB-12345 出貨未？",product="AX-QZ81 有咩功能？",question=order+"另外 "+product;
+    const transaction=demand(order,"transaction",["shipment_status"],["AB-12345"]);
+    transaction.ambiguity={is_ambiguous:ambiguous,reasons:ambiguous?["order unconfirmed"]:[],clarification_question:null};
+    const kb=demand(overlap==="whole_quote"?question:product,"product",["features"],["AX-QZ81"]);
+    if(overlap==="negation")kb.explicit_negations=["not order AB-12345"];
+    const result=resolveCurrentFactualRequest({question,source_message_id:"customer-current",semantic:demanded(transaction,kb)});
+    assert(!result.query?.includes("AB-12345"),"private order locator entered KB projection");
+    assert(result.missing_evidence.some(item=>item.demand_id==="demand-2"&&item.reason==="transaction_scope_overlap"),"overlap not retained as unresolved");
+    equal(result.demands.length,2);assert(result.answer_request?.includes("AB-12345"),"complete answer context was lost");
+  });
+}
+Deno.test("Task2 clear policy remains retrievable beside an ambiguous product demand",()=>{
+  const product=demand("嗰部幾錢？","product",["price"]);product.ambiguity={is_ambiguous:true,reasons:["which product"],clarification_question:"Which product?"};
+  const policy=demand("一般退貨政策係點？","policy",["return_conditions"]);
+  const result=resolveCurrentFactualRequest({question:product.question+policy.question,semantic:demanded(product,policy)});
+  const query=JSON.parse(result.query!);equal(query.questions.length,1);equal(query.questions[0].source_type,"policy");
+  equal(result.demands.length,2);assert(result.missing_evidence.some(item=>item.demand_id==="demand-1"),"ambiguous part disappeared");
+});
 
 for (const [question, facts] of [
   ["會唔會好嘈？", ["operating noise and quiet-mode capability"]],

@@ -31,7 +31,7 @@ export interface CurrentFactualDemand {
 }
 export interface FactualRequestMissingEvidence {
   demand_id: string;
-  reason: "live_transaction_unavailable" | "subject_unresolved" | "semantic_ambiguity" | "source_quote_unbound";
+  reason: "live_transaction_unavailable" | "subject_unresolved" | "semantic_ambiguity" | "source_quote_unbound" | "transaction_scope_overlap";
 }
 
 /** A read target, not merchant evidence, transaction authority or a state delta.
@@ -257,7 +257,8 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
   const question = clean(input.question), frame = input.semantic!;
   const missing: FactualRequestMissingEvidence[] = [];
   const contexts: string[] = [];
-  const bindings: SubjectBinding[] = [];
+  const bindings: Array<SubjectBinding & {demand_id: string}> = [];
+  const privateLocators = new Map<string, string[]>();
   const demands = proposed.map((demand, index): CurrentFactualDemand => {
     const id = `demand-${index + 1}`;
     const sourceQuote = clean(demand.source_quote);
@@ -272,6 +273,8 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     }
     const refs = demand.subject_refs.length ? demand.subject_refs : demand.source_type === "product"
       ? proposedReferences(trustedFrame(frame)) : [];
+    if (quoteBound && demand.source_type === "transaction") privateLocators.set(id,
+      refs.filter(ref => norm(sourceQuote).includes(norm(ref))));
     const resolved = quoteBound && !demand.ambiguity.is_ambiguous
       ? refs.map(ref => bindSemanticSubject(ref, input)) : [];
     const located = resolved.filter((binding): binding is SubjectBinding => binding !== null);
@@ -285,8 +288,8 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     }
     if (demand.ambiguity.is_ambiguous) missing.push({demand_id: id, reason: "semantic_ambiguity"});
     if (quoteBound && demand.source_type === "transaction") missing.push({demand_id: id, reason: "live_transaction_unavailable"});
-    bindings.push(...located);
-    contexts.push(...located.filter(binding => !binding.current && binding.customer_text).map(binding => clean(binding.customer_text)));
+    bindings.push(...located.map(binding => ({...binding, demand_id: id})));
+    if (["product", "policy", "unknown"].includes(demand.source_type)) contexts.push(...located.filter(binding => !binding.current && binding.customer_text).map(binding => clean(binding.customer_text)));
     const subjects = unique(located.map(binding => binding.subject));
     return {
       id, question: clean(demand.question), source_quote: sourceQuote, subjects,
@@ -296,12 +299,34 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
       customer_correction: demand.customer_correction, explicit_negations: [...demand.explicit_negations], ambiguity,
     };
   });
+  // Excluding a transaction demand alone is insufficient when a model quotes
+  // the entire mixed message as a KB demand. Keep the request pending instead
+  // of forwarding the overlapping private clause or identifier to retrieval.
+  const transactions = demands.filter(demand => demand.source_type === "transaction" &&
+    !missing.some(item => item.demand_id === demand.id && item.reason === "source_quote_unbound"));
+  for (const demand of demands.filter(isKbDemand)) {
+    const overlaps = transactions.some(transaction => {
+      const a = norm(demand.source_quote), b = norm(transaction.source_quote);
+      return !!a && !!b && (a.includes(b) || b.includes(a)) || [...transaction.subjects, ...(privateLocators.get(transaction.id) ?? [])].some(subject =>
+        !demand.subjects.some(value => norm(value) === norm(subject)) &&
+        norm(JSON.stringify([demand.question, demand.source_quote, demand.subjects, demand.constraints,
+          demand.requested_facts, demand.explicit_negations])).includes(norm(subject)));
+    });
+    if (overlaps) {
+      demand.ambiguity.is_ambiguous = true;
+      demand.ambiguity.reasons.push("transaction_scope_overlap");
+      missing.push({demand_id: demand.id, reason: "transaction_scope_overlap"});
+    }
+  }
   const boundDemands = demands.filter(demand => !missing.some(item => item.demand_id === demand.id && item.reason === "source_quote_unbound"));
   const kbDemands = boundDemands.filter(isKbDemand);
   const subjects = unique(kbDemands.flatMap(demand => demand.subjects));
   const allSourceIds = unique(demands.flatMap(demand => demand.subject_source_message_ids));
-  const currentSubjects = bindings.filter(binding => binding.current);
-  const priorSubjects = bindings.filter(binding => !binding.current);
+  const kbIds = new Set(kbDemands.map(demand => demand.id));
+  const kbBindings = [...new Map(bindings.filter(binding => kbIds.has(binding.demand_id)).map(binding =>
+    [JSON.stringify([norm(binding.subject), binding.source_message_id]), binding])).values()];
+  const currentSubjects = kbBindings.filter(binding => binding.current);
+  const priorSubjects = kbBindings.filter(binding => !binding.current);
   const needsSubject = kbDemands.length > 0 && kbDemands.every(demand => demand.ambiguity.is_ambiguous);
   // Preserve the entire original request for answer generation/verification;
   // only the retrieval projection excludes guidance and private transactions.
@@ -333,24 +358,23 @@ export function serializeCurrentFactualQuery(
   input: ResolveCurrentFactualRequestInput, request: CurrentFactualRequest, forceContext = false,
 ): string {
   if (request.interpretation_source === "semantic_demands" && request.applicable) {
-    const demands = request.demands.filter(demand => isKbDemand(demand) &&
+    const demands = request.demands.filter(demand => isKbDemand(demand) && !demand.ambiguity.is_ambiguous &&
       !request.missing_evidence.some(missing => missing.demand_id === demand.id && missing.reason === "source_quote_unbound"));
     // Keep the complete request as the answer contract, while the retrieval
     // projection contains only KB needs. No transaction identifier/history or
     // declined general-guidance clause is appended merely to fill a query.
     const query = JSON.stringify({questions: demands.map(demand => ({
-      question: demand.source_quote, subjects: demand.subjects,
+      question: demand.question, ...(demand.question !== demand.source_quote ? {customer_text: demand.source_quote} : {}), subjects: demand.subjects,
       requested_facts: demand.requested_facts, source_type: demand.source_type,
+      ...(demand.source_type === "policy" ? {scope: "merchant_rules_and_subject_exceptions"} : {}),
       ...(Object.keys(demand.constraints).length ? {constraints: demand.constraints} : {}),
       ...(demand.explicit_negations.length ? {explicit_negations: demand.explicit_negations} : {}),
     }))});
-    if (query.length > 1000) throw new DecisionContextLimitError();
-    return query;
+    return demands.length ? assertFactualQueryBudget(query) : "";
   }
   if (request.needs_subject_clarification && !forceContext) {
     const query = request.merchant_request ?? request.question;
-    if (query.length > 1000) throw new DecisionContextLimitError();
-    return query;
+    return assertFactualQueryBudget(query);
   }
   const semantic = trustedFrame(input.semantic), state = input.commerce;
   const scope = new Set(request.subjects.map(norm));
@@ -394,8 +418,7 @@ export function serializeCurrentFactualQuery(
     request.requested_facts.some(fact => !currentFacets(fact.replace(/_/gu, " ")).length && !norm(request.question).includes(norm(fact)));
   if (!needsContext) {
     const query = request.answer_request ?? request.merchant_request ?? request.question;
-    if (query.length > 1000) throw new DecisionContextLimitError();
-    return query;
+    return assertFactualQueryBudget(query);
   }
   const context = {
     ...(request.resolution === "follow_up" && request.subject ? {resolved_subject: request.subject} : {}),
@@ -406,7 +429,12 @@ export function serializeCurrentFactualQuery(
     current: projected, prior,
   };
   const query = JSON.stringify(context);
-  if (query.length > 1000) throw new DecisionContextLimitError();
+  return assertFactualQueryBudget(query);
+}
+
+/** Matches the existing adapter/admission budgets before any paid dispatch. */
+export function assertFactualQueryBudget(query: string): string {
+  if (query.length > 1000 || new TextEncoder().encode(query).length > 2048) throw new DecisionContextLimitError();
   return query;
 }
 

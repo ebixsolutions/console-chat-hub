@@ -462,17 +462,24 @@ function lineage(rows: MemoryHistoryRow[]) {
     if (row.role !== "assistant") continue;
     const metadata = record(row.metadata);
     const citation = record(metadata?.citation_lineage);
-    const documentId = clean(citation?.selected_document_id, 160);
-    const chunkIds = Array.isArray(citation?.evidence_chunk_ids)
-      ? uniqueStrings(citation!.evidence_chunk_ids as unknown[], 12, 160)
-      : [];
     const sourceId = clean(metadata?.source_message_id, 80);
-    if (!documentId || !chunkIds.length || !sourceId) continue;
-    result.push({
-      document_id: documentId,
-      evidence_chunk_ids: chunkIds,
-      source_message_id: sourceId,
-    });
+    if (!sourceId) continue;
+    // Several demands may bind the same document. Deduplicate validated
+    // document/source pairs before applying the final Memory lineage limit.
+    const bindings = Array.isArray(citation?.source_bindings) ? citation.source_bindings.map(record) : [citation];
+    for (const binding of bindings) {
+      const documentId = clean(binding?.selected_document_id, 160);
+      const chunkIds = Array.isArray(binding?.evidence_chunk_ids)
+        ? uniqueStrings(binding.evidence_chunk_ids as unknown[], 12, 160) : [];
+      if (!documentId || !chunkIds.length) continue;
+      if (Array.isArray(citation?.source_bindings)) {
+        const authority = record(binding?.reference_authority);
+        if (authority?.decision !== "USE_CURRENT_KB" || authority.selected_source_id !== documentId) continue;
+      }
+      const prior = result.find(item => item.document_id === documentId && item.source_message_id === sourceId);
+      if (prior) prior.evidence_chunk_ids = uniqueStrings([...prior.evidence_chunk_ids, ...chunkIds], 12, 160);
+      else result.push({document_id: documentId, evidence_chunk_ids: chunkIds, source_message_id: sourceId});
+    }
   }
   return result.slice(0, MAX_LINEAGE);
 }

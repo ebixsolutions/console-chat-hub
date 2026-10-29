@@ -14,6 +14,9 @@ import {
 } from "./commerce-state-authority.ts";
 
 export interface CanonicalGroundingOptions {
+  /** Internal demand-aware selection only. This admits an authorized source
+   * for semantic applicability review, never certifies the answer or policy. */
+  evidenceScope?: "policy_candidate" | "discovery_candidate";
   /** Server-resolved same-ticket subject, independently required in fresh evidence. */
   expectedSubject?: string;
   minScore?: number;
@@ -448,7 +451,7 @@ function serviceTopicMatch(request:string,document:KBDocumentCandidate):boolean 
  * legitimate alias of a longer customer description only when that exact name
  * occurs in the customer subject too. No generated translation grants authority.
  */
-function fullContentSubjectMatch(subject: string, document: KBDocumentCandidate, explicitSubject = true): boolean {
+export function fullContentSubjectMatch(subject: string, document: KBDocumentCandidate, explicitSubject = true): boolean {
   const norm = (s: string) => s.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
   const q = norm(subject);
   const contains = (text: string, name: string) => {
@@ -540,6 +543,7 @@ export function selectCanonicalGrounding(
     ? Number(options.minScore)
     : 0;
   const policyOnly = options.policyOnly === true;
+  const candidateScope = options.evidenceScope !== undefined;
   const requirePublished = options.requirePublished !== false;
   const requestText = options.requestText ?? "";
   const currentTurnText = options.currentTurnText ?? requestText;
@@ -550,11 +554,11 @@ export function selectCanonicalGrounding(
     options.expectedTopicIds ?? [],
     options.targetChanged === true,
   );
-  const catalogueQuery = policyOnly ? null : catalogueFactRequest(currentTurnText);
-  const namedPriceTarget = namedPriceProductLabel(currentTurnText);
-  const expectedEntityIds = namedPriceTarget ? unique([...target.entity_ids, namedPriceTarget]) : target.entity_ids;
-  const freeFactRequest = options.requireSubjectSupport === true || (options.semanticFactDescriptions?.length ?? 0) > 0;
-  const expectedTopicIds = freeFactRequest ? unique(options.expectedTopicIds ?? []) : target.topic_ids;
+  const catalogueQuery = policyOnly || candidateScope ? null : catalogueFactRequest(currentTurnText);
+  const namedPriceTarget = candidateScope ? null : namedPriceProductLabel(currentTurnText);
+  const expectedEntityIds = candidateScope ? [] : namedPriceTarget ? unique([...target.entity_ids, namedPriceTarget]) : target.entity_ids;
+  const freeFactRequest = !candidateScope && (options.requireSubjectSupport === true || (options.semanticFactDescriptions?.length ?? 0) > 0);
+  const expectedTopicIds = candidateScope ? [] : freeFactRequest ? unique(options.expectedTopicIds ?? []) : target.topic_ids;
   const explicitSubject = options.expectedSubject ?? factualSubject(currentTurnText);
   const subject = namedPriceTarget ?? explicitSubject ??
     (freeFactRequest ? currentTurnText.slice(0, 500) : null);
@@ -670,7 +674,7 @@ export function selectCanonicalGrounding(
       (!!subject && fullContentSubjectMatch(subject, {
         ...document, llm_context: {...document.llm_context, full_content_evidence: evidence},
       },Boolean(explicitSubject)));
-    if (options.expectedSubject && !subjectSupported) continue;
+    if (!candidateScope && options.expectedSubject && !subjectSupported) continue;
 
     const applicability = assessApplicability(document, currentTargetRequest);
     const metadata = document.authority;

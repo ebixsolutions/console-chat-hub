@@ -67,6 +67,8 @@ export interface B2EvaluationInput {
   metadata?: Record<string, unknown> | null;
   /** Private server-side evidence, never accepted from a customer request or persisted. */
   trusted_kb_price_proof?: B2KbPriceProof | null;
+  /** Independently source-bound selling prices in a verified multi-demand answer. */
+  trusted_kb_price_claims?: B2KbPriceClaim[] | null;
   /** Private result from the server Commerce runtime, never request metadata. */
   trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
   /** Private Commerce-runtime receipt, never accepted from request metadata. */
@@ -235,6 +237,14 @@ export interface B2KbPriceProof {
   full_content: string;
 }
 
+export interface B2KbPriceClaim {
+  contract: "bound-kb-selling-price-v1";
+  source_message_id: string;
+  demand_id: string;
+  evidence_id: string;
+  proof: B2KbPriceProof;
+}
+
 export interface B2QueryResult {
   data: unknown;
   error: unknown;
@@ -258,6 +268,7 @@ export interface B2PersistenceInput<T> {
   persistence_kind: B2PersistenceKind;
   metadata?: Record<string, unknown> | null;
   trusted_kb_price_proof?: B2KbPriceProof | null;
+  trusted_kb_price_claims?: B2KbPriceClaim[] | null;
   trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
   trusted_journey_progress?: B2TrustedJourneyProgress | null;
   trusted_correction_commit?: B2TrustedCorrectionCommit | null;
@@ -314,7 +325,7 @@ export type B2PersistenceResult<T> =
     };
 
 const CURRENT_PRICE_CLAIM =
-  /(?:current|latest|today(?:'s)?|now|而家|現在|现在|目前|最新).{0,36}(?:price|quote|quotation|fee|價|价|報價|报价|收費|收费)|(?:price|quote|quotation|fee|價|价|報價|报价|收費|收费).{0,36}(?:current|latest|valid|confirmed|final|而家|現在|现在|目前|最新|有效|作準|作准|確認|确认)/i;
+  /(?:current|latest|today(?:'s)?|now|而家|現在|现在|現時|现时|現行|现行|目前|最新).{0,36}(?:price|quote|quotation|fee|價|价|報價|报价|收費|收费)|(?:price|quote|quotation|fee|價|价|報價|报价|收費|收费).{0,36}(?:current|latest|valid|confirmed|final|而家|現在|现在|現時|现时|現行|现行|目前|最新|有效|作準|作准|確認|确认)/i;
 const QUESTION =
   /[?？]|(?:what|which|when|where|who|how|please (?:tell|provide|confirm)|請問|请问|邊個|边个|邊度|边度|幾多|几多|多少|是否|係咪|是不是|請提供|请提供|請確認|请确认)/i;
 const RESTORE_OR_ACTIVE =
@@ -637,12 +648,19 @@ interface MoneyMention {
 
 function extractMoneyMentions(text: string): MoneyMention[] {
   const results: MoneyMention[] = [];
+  const upper = text.toUpperCase();
+  const modelRanges = exactKbModelIds(text).flatMap(model => {
+    const ranges: Array<[number,number]> = [];
+    for (let at = upper.indexOf(model); at >= 0; at = upper.indexOf(model,at+model.length)) ranges.push([at,at+model.length]);
+    return ranges;
+  });
   const pattern =
     /(?:\b(HKD|USD|TWD)\b\s*|((?:HK|US|NT)\$|\$)\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.([0-9]{1,2}))?\s*(元|蚊|dollars?)?/gi;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
     // Model identifiers and measurements are never prices, even when a
     // selling-price sentence appears nearby in the same short response.
+    if (!match[1] && !match[2] && !match[5] && modelRanges.some(([start,end])=>match!.index>=start&&match!.index<end)) continue;
     if (/[A-Za-z0-9]/.test(text[match.index - 1] ?? "") ||
       /[A-Za-z]/.test(text[match.index + match[0].length] ?? "")) continue;
     // Fractions and room measurements remain measurements even in a reply
@@ -690,37 +708,26 @@ function quoteMatchesClaim(
   return mentioned.length === 0;
 }
 
-function evaluateCurrentKbSellingPrice(input: B2EvaluationInput, draft: string): B2Decision {
+function validateKbSellingPriceSource(
+  proof: B2KbPriceProof, companyId: string, authority: unknown, lineage: unknown, citation: unknown,
+): B2Decision | null {
   const block = (code: string): B2Decision => ({ decision: "block", code });
-  const proof = input.trusted_kb_price_proof;
-  const metadata = input.metadata;
-  if (input.persistence_kind !== "ai_reply" || !proof || !isRecord(metadata) ||
-    metadata.response_route !== "canonical_kb_direct_answer" || metadata.answer_kind !== "price") {
-    return block("CURRENT_KB_PRICE_PROOF_MISSING");
-  }
-  const authority = metadata.reference_authority;
   const provenance = isRecord(authority) ? authority.provenance : null;
-  const lineage = metadata.citation_lineage;
-  const citations = metadata.citations;
-  const publicProof = metadata.kb_fact_proof;
-  const { full_content, request, company_id, ...publicFields } = proof;
+  const { full_content, request, company_id } = proof;
   if (!isRecord(authority) || !isRecord(provenance) || !isRecord(lineage) ||
-    !Array.isArray(citations) || citations.length !== 1 || !isRecord(citations[0]) ||
-    !isRecord(publicProof) ||
-    JSON.stringify(publicProof) !== JSON.stringify(publicFields) ||
+    !isRecord(citation) ||
     proof.field !== "selling_price" || proof.currency !== "HKD" ||
     proof.authority_decision !== "USE_CURRENT_KB" || proof.currentness !== "current" ||
     authority.decision !== "USE_CURRENT_KB" || provenance.currentness !== "current" ||
     provenance.region !== "hong_kong" || provenance.tenant_id !== proof.tenant_id ||
     authority.selected_source_id !== proof.document_id ||
-    company_id !== input.snapshot.company_id || !proof.tenant_id ||
-    lineage.selected_document_id !== proof.document_id || lineage.evidence_count !== 1 ||
+    company_id !== companyId || !proof.tenant_id ||
+    lineage.selected_document_id !== proof.document_id ||
     lineage.authority_decision !== "USE_CURRENT_KB" || lineage.evidence_state !== "current" ||
-    !Array.isArray(lineage.evidence_chunk_ids) || lineage.evidence_chunk_ids.length !== 1 ||
-    lineage.evidence_chunk_ids[0] !== proof.chunk_id ||
-    citations[0].document_id !== proof.document_id || citations[0].chunk_id !== proof.chunk_id ||
-    citations[0].chunk_type !== "full_content" ||
-    citations[0].authority_decision !== "USE_CURRENT_KB" || citations[0].evidence_state !== "current") {
+    !Array.isArray(lineage.evidence_chunk_ids) || !lineage.evidence_chunk_ids.includes(proof.chunk_id) ||
+    citation.document_id !== proof.document_id || citation.chunk_id !== proof.chunk_id ||
+    citation.chunk_type !== "full_content" ||
+    citation.authority_decision !== "USE_CURRENT_KB" || citation.evidence_state !== "current") {
     return block("CURRENT_KB_PRICE_LINEAGE_INVALID");
   }
   const model = exactKbModelIds(request);
@@ -737,14 +744,64 @@ function evaluateCurrentKbSellingPrice(input: B2EvaluationInput, draft: string):
     !Number.isFinite(proof.value) || proof.value <= 0) {
     return block("CURRENT_KB_PRICE_FACT_MISMATCH");
   }
+  return null;
+}
+
+function validateKbSellingPriceResponse(proof: B2KbPriceProof, draft: string): B2Decision | null {
   const money = extractMoneyMentions(draft);
   const exactPrice = `HK$${proof.value.toLocaleString("en-US")}`;
   if (money.length !== 1 || money[0].currency !== "HKD" ||
     money[0].amount !== proof.value || !draft.includes(exactPrice) ||
     /(?:成本|特價|特价|cost|special\s*price|有現貨|有现货|in stock)/i.test(draft)) {
-    return block("CURRENT_KB_PRICE_RESPONSE_MISMATCH");
+    return {decision:"block",code:"CURRENT_KB_PRICE_RESPONSE_MISMATCH"};
   }
+  return null;
+}
+
+function evaluateCurrentKbSellingPrice(input: B2EvaluationInput, draft: string): B2Decision {
+  const proof = input.trusted_kb_price_proof, metadata = input.metadata;
+  if (input.persistence_kind !== "ai_reply" || !proof || !isRecord(metadata) ||
+    metadata.response_route !== "canonical_kb_direct_answer" || metadata.answer_kind !== "price") {
+    return {decision:"block",code:"CURRENT_KB_PRICE_PROOF_MISSING"};
+  }
+  const {full_content: _content, request: _request, company_id: _company, ...publicFields} = proof;
+  const lineage = metadata.citation_lineage, citations = metadata.citations;
+  // Preserve the original direct-answer contract and error ordering exactly.
+  if (!isRecord(metadata.kb_fact_proof) || JSON.stringify(metadata.kb_fact_proof) !== JSON.stringify(publicFields) ||
+      !isRecord(lineage) || lineage.evidence_count !== 1 || !Array.isArray(lineage.evidence_chunk_ids) ||
+      lineage.evidence_chunk_ids.length !== 1 || !Array.isArray(citations) || citations.length !== 1) {
+    return {decision:"block",code:"CURRENT_KB_PRICE_LINEAGE_INVALID"};
+  }
+  const invalid = validateKbSellingPriceSource(proof,input.snapshot.company_id,metadata.reference_authority,lineage,citations[0]) ??
+    validateKbSellingPriceResponse(proof,draft);
+  if (invalid) return invalid;
   return { decision: "allow", code: "B2_ALLOW_CURRENT_KB_SELLING_PRICE" };
+}
+
+function hasVerifiedKbSellingPriceClause(input: B2EvaluationInput, clause: string): boolean {
+  const claims = input.trusted_kb_price_claims, metadata = input.metadata;
+  if (input.persistence_kind !== "ai_reply" || !claims?.length || claims.length > 15 || !isRecord(metadata)) return false;
+  const receipt = metadata.grounding_verification, lineage = metadata.citation_lineage;
+  if (!isRecord(receipt) || !Array.isArray(receipt.used_evidence_ids) || !Array.isArray(receipt.demand_resolutions) ||
+      !isRecord(lineage) || !Array.isArray(lineage.source_bindings) || !Array.isArray(metadata.citations)) return false;
+  const usedIds = receipt.used_evidence_ids, resolutions = receipt.demand_resolutions,
+    bindings = lineage.source_bindings, citations = metadata.citations;
+  const models = exactKbModelIds(clause);
+  if (models.length !== 1) return false;
+  // Equal amounts do not make a fee, discount, total or formal quote the
+  // product's selling-price field. This narrow allowance is field-specific.
+  if (!/(?:售價|售价|銷售價|销售价|(?:selling|current|latest|today(?:'s)?)\s+price|price\s*(?:is|=|:))/i.test(clause) ||
+      /(?:運費|运费|送貨費|送货费|收費|收费|費用|费用|安裝費|安装费|總額|总额|合計|合计|合共|小計|小计|套餐|套裝|套装|折後|折后|折扣|報價|报价|供款|分期|租金|按月|按年|每月|每年|每日|[二兩两三四五六七八九十百幾几數数多]\s*(?:部|台|件|個|个)|shipping|delivery|installation|\bfees?\b|\bcharges?\b|\btotals?\b|\bquotes?\b|quotation|package|bundle|discount|instal+ments?|monthly|annually|daily|rental|per\s+(?:month|year|day|week)|\b(?:two|three|four|five|six|seven|eight|nine|ten|several|multiple|pair|double)\b)/i.test(clause)) return false;
+  return claims.some(claim => {
+    if (claim.contract !== "bound-kb-selling-price-v1" || claim.source_message_id !== input.snapshot.source_message_id ||
+        claim.proof.model !== models[0] || !usedIds.includes(claim.evidence_id) ||
+        !resolutions.some(resolution => isRecord(resolution) && resolution.demand_id === claim.demand_id &&
+          ["supported","partial"].includes(String(resolution.status)) && Array.isArray(resolution.evidence_ids) && resolution.evidence_ids.includes(claim.evidence_id))) return false;
+    const citation = citations.find(item => isRecord(item) && item.document_id === claim.proof.document_id && item.chunk_id === claim.proof.chunk_id);
+    return bindings.some(binding => isRecord(binding) && Array.isArray(binding.demand_ids) && binding.demand_ids.includes(claim.demand_id) &&
+      !validateKbSellingPriceSource(claim.proof,input.snapshot.company_id,binding.reference_authority,binding,citation)) &&
+      !validateKbSellingPriceResponse(claim.proof,clause);
+  });
 }
 
 // Task1 B2: only affirmative *current* quote clauses require quote authority.
@@ -792,6 +849,9 @@ function evaluateQuoteReality(text: string, state: ConversationCommerceState, in
     return result.decision === "allow" ? null : result;
   }
   for (const clause of affirmativeCurrentQuoteClauses(text)) {
+    // Only this exact selling-price clause is exempt from a Commerce quote.
+    // Other prices/fees and all transaction checks still run on the full reply.
+    if (hasVerifiedKbSellingPriceClause(input,clause)) continue;
     const money = extractMoneyMentions(clause);
     if (!money.length) return {decision:"block",code:"CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT"};
     const mentioned = mentionedEntityIds(clause,state);
@@ -1650,6 +1710,7 @@ export async function executeB2PersistenceGate<T>(
       snapshot: initial.snapshot,
       metadata: input.metadata ? structuredClone(input.metadata) : input.metadata,
       trusted_kb_price_proof: input.trusted_kb_price_proof,
+      trusted_kb_price_claims: input.trusted_kb_price_claims,
       trusted_targeted_clarification: input.trusted_targeted_clarification,
       trusted_journey_progress: input.trusted_journey_progress,
       trusted_correction_commit: input.trusted_correction_commit,

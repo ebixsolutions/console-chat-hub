@@ -75,6 +75,9 @@ import {
 import { productKbSemanticContract } from "../_shared/product-kb-semantic-contract.ts";
 import { resolveCurrentFactualRequest, type CurrentFactualRequest } from "../_shared/current-factual-request.ts";
 import { buildCurrentFactualRequestPrompt, currentFactualFollowupContext, currentFactualRequestContext, currentFactualRequestReceipt } from "../_shared/factual-request-context.ts";
+import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer, type FactualEvidenceBundle} from "../_shared/factual-evidence-selection.ts";
+import {buildGroundingEvidencePrompt, type GroundingEvidence} from "../_shared/grounding-evidence.ts";
+import {buildFactualKbPriceClaims} from "../_shared/factual-kb-price-proof.ts";
 import { DecisionContextLimitError } from "../_shared/bounded-decision-context.ts";
 import { evaluateEscalationShadow } from "../_shared/escalation-shadow.ts";
 import {
@@ -204,6 +207,7 @@ import {
   type B2CanonicalSnapshot,
   type B2Decision,
   type B2KbPriceProof,
+  type B2KbPriceClaim,
   type B2PersistenceKind,
   type B2TrustedTargetedClarification,
   type B2TrustedReadOnlyRecap,
@@ -669,6 +673,7 @@ async function executeB2RpcPersistence<T>(
     persistence_kind: B2PersistenceKind;
     metadata?: Record<string, unknown> | null;
     trusted_kb_price_proof?: B2KbPriceProof | null;
+    trusted_kb_price_claims?: B2KbPriceClaim[] | null;
     trusted_targeted_clarification?: B2TrustedTargetedClarification | null;
     trusted_journey_progress?: B2TrustedJourneyProgress | null;
     trusted_correction_commit?: B2TrustedCorrectionCommit | null;
@@ -699,6 +704,7 @@ async function commitAiReplyWithControlGate(
   trustedLifecycleCommit: B2TrustedLifecycleCommit | null = null,
   trustedReadOnlyRecap: B2TrustedReadOnlyRecap | null = null,
   trustedCustomerCalculation: B2TrustedCustomerCalculation | null = null,
+  trustedKbPriceClaims: B2KbPriceClaim[] | null = null,
 ): Promise<
   | { ok: true; message_id: string | null; idempotent: boolean }
   | {
@@ -753,6 +759,7 @@ async function commitAiReplyWithControlGate(
       persistence_kind: "ai_reply",
       metadata: b2CommitEvidence,
       trusted_kb_price_proof: trustedKbPriceProof,
+      trusted_kb_price_claims: trustedKbPriceClaims,
       trusted_targeted_clarification: trustedTargetedClarification,
       trusted_journey_progress: trustedJourneyProgress,
       trusted_correction_commit: trustedCorrectionCommit,
@@ -5783,6 +5790,7 @@ Latest applicable corrections replace old values; an answered clarification is n
   const _pr5P1Signals = validateP1PredictionSignals(_pr5P1Input);
 
   let finalPromptChunks: KBFullChunk[] = [];
+  let _factualEvidenceBundle: Extract<FactualEvidenceBundle, {ok: true}> | null = null;
   let _canonicalKbDirectAnswer: CanonicalKbDirectAnswer | null = null;
   let _canonicalKbTenantId: string | null = null;
   let _c1AuthorityDecision: ReferenceAuthorityDecision | null = null;
@@ -5811,6 +5819,7 @@ Latest applicable corrections replace old values; an answered clarification is n
     }>;
     documents?: KBDocumentCandidate[];
     llm_context?: {
+      bound_evidence?: GroundingEvidence;
       selected_document_id: string;
       orientation_summary: string | null;
       full_content_evidence: Array<{
@@ -6068,9 +6077,7 @@ Latest applicable corrections replace old values; an answered clarification is n
     // evidence may answer known facets; the unchanged full-request verifier
     // still rejects irrelevant answers and unsupported factual claims.
     if (!_productKbContract) _c1CurrentTarget = {..._c1CurrentTarget,topic_ids:[],explicit_topic:false};
-    const _groundingSelection = selectCanonicalGrounding(
-      ragResult.documents ?? [],
-      {
+    const _groundingOptions = {
         expectedSubject: _factualFollowup?.subject ?? _semanticFactualSubject ?? undefined,
         minScore,
         requirePublished: true,
@@ -6087,25 +6094,36 @@ Latest applicable corrections replace old values; an answered clarification is n
         expectedRegion: _c1CurrentTarget.region,
         requiresCurrentKb: true,
         targetChanged: _c1CurrentTarget.target_changed,
-      },
-    );
+      };
+    const _demandSelection = _currentFactualRequest?.interpretation_source === "semantic_demands"
+      ? selectFactualEvidence(ragResult.documents ?? [], _currentFactualRequest, _groundingOptions) : null;
+    if (_demandSelection?.ok) _factualEvidenceBundle = _demandSelection;
+    const _groundingSelection = _demandSelection
+      ? _demandSelection.ok ? _demandSelection.primary : _demandSelection
+      : selectCanonicalGrounding(ragResult.documents ?? [], _groundingOptions);
+    if (_factualEvidenceBundle?.sources.length) _c1CurrentTarget = _factualEvidenceBundle.sources[0].target;
     _c1AuthorityDecision = _groundingSelection.ok
       ? _groundingSelection.authority_decision
       : null;
     const _scoreUsableChunks = _groundingSelection.ok
-      ? _groundingSelection.chunks
+      ? _factualEvidenceBundle?.chunks ?? _groundingSelection.chunks
       : [];
     const _explicitJurisdiction = extractExplicitJurisdictionConstraint(
       _h1LastMsg,
     );
-    const _jurisdictionSupported = evidenceSupportsJurisdiction(
+    // Typed demands already select authority/region independently. A missing
+    // region for one demand must not erase evidence for another region.
+    const _jurisdictionSupported = Boolean(_factualEvidenceBundle) || evidenceSupportsJurisdiction(
       _explicitJurisdiction,
       _scoreUsableChunks,
     );
     const usableChunks = _jurisdictionSupported ? _scoreUsableChunks : [];
+    if (!_jurisdictionSupported) _factualEvidenceBundle = null;
     const traceMetadata = {
       rag_api_status: "success",
       kb_request_contract: _kbRequestContract,
+      ...(_factualEvidenceBundle ? {factual_evidence_coverage: _factualEvidenceBundle.grounding.demands,
+        evidence_selection_limited: _factualEvidenceBundle.grounding.selection_limited} : {}),
       total_results: ragResult.chunks.length,
       filtered_results: usableChunks.length,
       jurisdiction_constraint: _explicitJurisdiction,
@@ -6130,7 +6148,7 @@ Latest applicable corrections replace old values; an answered clarification is n
       })),
     };
     ragResult.trace_metadata = traceMetadata;
-    const _catalogueQuestion = !_mixedRequest && !isHighRisk
+    const _catalogueQuestion = !_mixedRequest && !isHighRisk && canUseSingleDemandDirectAnswer(_currentFactualRequest)
       ? catalogueVariantClarification(_groundingSelection,_visitorLang) : null;
     if(_catalogueQuestion && !_explicitHandoffRequested && !_deferR1ForE1 && !_explicitJurisdiction){
       const committed=await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,source_message_id,_catalogueQuestion.reply,{
@@ -6313,7 +6331,7 @@ Latest applicable corrections replace old values; an answered clarification is n
         _visitorLang,
       );
     }
-    _canonicalKbDirectAnswer = resolveCanonicalKbDirectAnswer({
+    _canonicalKbDirectAnswer = canUseSingleDemandDirectAnswer(_currentFactualRequest) ? resolveCanonicalKbDirectAnswer({
       request: _productFactualRequest,
       selection: _groundingSelection,
       language: _visitorLang,
@@ -6326,7 +6344,7 @@ Latest applicable corrections replace old values; an answered clarification is n
           ? { model: entities[0].model!, sunlight: entities[0].attributes.sunlight }
           : undefined;
       })(),
-    });
+    }) : null;
     // A source-bound, explicitly non-current record needs exact field and
     // lineage proof, not an artificially promoted vector score. Keep the
     // existing score gate for every generated/current-price/high-risk answer.
@@ -6440,15 +6458,15 @@ Latest applicable corrections replace old values; an answered clarification is n
     const usableSummary = usableChunks.find((c) =>
       c.chunk_type === "rag_summary"
     );
-    const usableFullContent = usableChunks
-      .filter((c) => c.chunk_type === "full_content")
-      .slice(0, 3);
+    const usableFullContent = _factualEvidenceBundle ? usableChunks.filter(c => c.chunk_type === "full_content") : usableChunks
+      .filter((c) => c.chunk_type === "full_content").slice(0, 3);
     const selectedDocumentId = usableChunks[0]?.document_id ??
       usableChunks[0]?.doc_id;
 
     ragResult.llm_context = selectedDocumentId
       ? {
         selected_document_id: selectedDocumentId,
+        ...(_factualEvidenceBundle ? {bound_evidence: _factualEvidenceBundle.grounding} : {}),
         orientation_summary: usableSummary?.content ?? null,
         full_content_evidence: usableFullContent.map((c) => ({
           document_id: c.document_id ?? c.doc_id ?? selectedDocumentId,
@@ -6895,6 +6913,7 @@ Latest applicable corrections replace old values; an answered clarification is n
     factualEvidenceAbsent:_mixedEvidenceUnavailable,
     factualFollowup: _factualFollowup ?? undefined,
     resolvedFactualRequest: currentFactualRequestContext(_currentFactualRequest),
+    ...(!_priorGroundedTransform && _factualEvidenceBundle ? {groundingEvidence: _factualEvidenceBundle.grounding} : {}),
     factualEvidenceAvailable: _c1AuthorityDecision?.decision === "USE_CURRENT_KB" && Boolean(ragResult?.chunks?.some(c => c.chunk_type === "full_content")),
     maxTokens: resolveGenerationMaxTokens(),
     operationId:
@@ -6949,6 +6968,8 @@ Latest applicable corrections replace old values; an answered clarification is n
           handoff_required: false,
           factual_grounding_required: false,
           source_error_code: "LLM_GROUNDING_REJECTED",
+          unresolved_fact_fields: _currentFactualRequest?.demands.length
+            ? _currentFactualRequest.demands.map(demand=>demand.id) : ["grounding_verification"],
         },
       );
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
@@ -7011,6 +7032,8 @@ Latest applicable corrections replace old values; an answered clarification is n
 
   const citationMetaBase = _priorGroundedTransform
     ? buildInheritedTransformCitationMetadata(_priorGroundedTransform)
+    : _factualEvidenceBundle
+    ? buildFactualCitationMetadata(_factualEvidenceBundle, llm.grounding_verification?.used_evidence_ids ?? [], llm.grounding_verification?.demand_resolutions)
     : finalPromptChunks.length > 0
     ? buildCitationMetadata(
       finalPromptChunks,
@@ -7023,7 +7046,16 @@ Latest applicable corrections replace old values; an answered clarification is n
         : undefined,
     )
     : null;
-  const citationMeta = citationMetaBase && _c1AuthorityDecision
+  const citationMeta = _factualEvidenceBundle && llm.grounding_verification
+    ? {...citationMetaBase, kb_request_contract: ragResult?.trace_metadata?.kb_request_contract,
+      rag_api_status:"success", factual_grounding_required:true,
+      ...(_currentFactualRequest?.subject ? {factual_request_subject:_currentFactualRequest.subject} : {}),
+      grounding_verification: llm.grounding_verification,
+      factual_evidence_coverage: _factualEvidenceBundle.grounding.demands,
+      unresolved_fact_fields: llm.grounding_verification.demand_resolutions.filter(item => item.status !== "supported").map(item => item.demand_id),
+      evidence_selection_limited: _factualEvidenceBundle.grounding.selection_limited,
+      ...(!citationMetaBase ? {citations:[],citation_lineage:null,reference_authority:null,reference_authorities:[]} : {})}
+    : citationMetaBase && _c1AuthorityDecision
     ? {
       ...citationMetaBase,
       ...(ragResult?.trace_metadata?.kb_request_contract
@@ -7048,7 +7080,8 @@ Latest applicable corrections replace old values; an answered clarification is n
   }
   if (
     flags.ENABLE_KB && !_g1SkipKB && finalPromptChunks.length > 0 &&
-    !citationMeta
+    (!citationMeta || _factualEvidenceBundle && !llm.grounding_verification ||
+      _factualEvidenceBundle && Boolean(llm.grounding_verification?.used_evidence_ids.length) && !citationMetaBase)
   ) {
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     return new Response(
@@ -7064,15 +7097,20 @@ Latest applicable corrections replace old values; an answered clarification is n
     : _mixedRequest ? { ...citationMeta, response_route:"mixed_customer_guidance",
         factual_grounding_required:true, merchant_evidence_unavailable:_mixedEvidenceUnavailable }
     : citationMeta;
+  const trustedPriceClaims = _factualEvidenceBundle && _currentFactualRequest && llm.grounding_verification &&
+      conversation.company_id && source_message_id && _canonicalKbTenantId
+    ? buildFactualKbPriceClaims(_factualEvidenceBundle,_currentFactualRequest,llm.grounding_verification,
+        conversation.company_id,source_message_id,_canonicalKbTenantId) : null;
   let committed = await commitAiReplyWithControlGate(
     supabaseAdmin,conversation_id,source_message_id,aiReplyContent,finalReplyMetadata,
+    null,null,null,null,null,null,null,trustedPriceClaims,
   );
   // Only a definitely non-committed current-quote B2 block can be salvaged.
   // Delete unsafe clauses; no second model call, new price or B2 bypass.
   if (!committed.ok && committed.result === "b2_block" &&
       (committed.b2_code === "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT" ||
         committed.b2_code === "CURRENT_QUOTE_NOT_PROVEN") &&
-      (_customerGuidance || _mixedRequest)) {
+      !_factualEvidenceBundle && (_customerGuidance || _mixedRequest)) {
     const safeGuidance = stripUnverifiedCurrentQuoteClauses(aiReplyContent);
     if (safeGuidance) {
       const salvage = await commitAiReplyWithControlGate(
@@ -7093,7 +7131,7 @@ Latest applicable corrections replace old values; an answered clarification is n
   // The existing router revalidates the sealed original Preview/provider scope.
   if (!committed.ok && committed.result === "b2_block" &&
       committed.b2_code === "KNOWN_CONTEXT_RECONFIRMATION" && committed.known_context_repair &&
-      _customerGuidance && conversation.metadata_source?.execution_class === "authenticated_admin_preview") {
+      !_factualEvidenceBundle && _customerGuidance && conversation.metadata_source?.execution_class === "authenticated_admin_preview") {
     const known = committed.known_context_repair;
     const control = await supabaseAdmin.from("conversations")
       .select("id,company_id,status,assigned_agent_id").eq("id",conversation_id).maybeSingle();
@@ -7251,6 +7289,7 @@ function buildRagBlock(
       short_snippet?: string;
     }>;
     llm_context?: {
+      bound_evidence?: GroundingEvidence;
       selected_document_id: string;
       orientation_summary: string | null;
       full_content_evidence: Array<{
@@ -7266,6 +7305,7 @@ function buildRagBlock(
   if (!ragResult || !ragResult.success) return "";
 
   const context = ragResult.llm_context;
+  if (context?.bound_evidence !== undefined) return buildGroundingEvidencePrompt(context.bound_evidence);
   if (context) {
     const sections: string[] = [
       "Knowledge Base grounding rules:",

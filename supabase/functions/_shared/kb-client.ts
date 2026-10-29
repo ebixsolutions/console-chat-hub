@@ -544,6 +544,10 @@ export async function fetchKBRag(
   if (!query) {
     return { success: true, chunks: [], citations: [], documents: [], failure:executionFailure("KB_NO_MATCH") };
   }
+  if (query.length > 1000 || new TextEncoder().encode(query).length > 2048) {
+    return {success:false,chunks:[],citations:[],documents:[],error_code:"KB_QUERY_BUDGET_EXCEEDED",
+      failure:executionFailure("SEMANTIC_INPUT_LIMIT",{stage:"canonical_validation"})};
+  }
 
   const companyId = singaporeCompanyIdFromScope(scope);
   if (companyId === null) {

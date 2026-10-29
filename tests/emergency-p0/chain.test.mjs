@@ -194,7 +194,7 @@ function fixture(text,options={}) {
    if(options.fullChain && !body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.')) {
     const verifier=body.generationConfig.responseSchema?.properties?.grounded;
     const isRepair=body.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered');
-    const text=verifier?JSON.stringify({grounded:options.verifierGrounded??true,unsupported_claims:options.verifierGrounded===false?['unsupported merchant claim']:[],evidence_chunk_ids:options.verifierIds??['E1'],...(options.omitQuestionResolution?{}:{question_resolution:options.verifierResolution??'supported'})}):isRepair&&options.repairAnswer?options.repairAnswer:options.answers?.[generationIndex++]??options.answer??'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
+    const text=verifier?JSON.stringify({grounded:options.verifierGrounded??true,unsupported_claims:options.verifierGrounded===false?['unsupported merchant claim']:[],evidence_chunk_ids:options.verifierIds??['E1'],...(options.omitQuestionResolution?{}:{question_resolution:options.verifierResolution??'supported'}),...(options.verifierDemandResolutions!==undefined?{demand_resolutions:options.verifierDemandResolutions}:{})}):isRepair&&options.repairAnswer?options.repairAnswer:options.answers?.[generationIndex++]??options.answer??'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
     if(!verifier && options.humanAfterFirstDraft && generationIndex===1)conversation.status='human_control';
     if(!verifier && options.newSourceAfterFirstDraft && generationIndex===1)tables.messages.unshift({...visitor,id:uuid(999),content:'A newer customer question',created_at:'2026-10-14T01:00:01.000Z'});
     return Response.json({candidates:[{content:{parts:[{text}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}});
@@ -1483,11 +1483,124 @@ function task1SemanticContextCommitted(f,result,answer,document){
  return {reply,memory};
 }
 
+function task2PolicyDocument(id,content,patch={}) {
+ return {document_id:id,title:'客戶服務政策',source_type:'Policy',document_score:.96,
+  authority:{tenant_id:'34',publication_state:'published',currentness:'current',regions:['hong_kong'],version:'isolated-evidence-v1'},
+  evidence:[{document_id:id,chunk_id:id+'-full',chunk_type:'full_content',score:.96,content}],...patch};
+}
+test('Task2 evidence: KB transport rejects oversize query before credentials or network',async()=>{
+ const f=fixture('unused'),{fetchKBRag}=f.load(path.join(root,'supabase/functions/_shared/kb-client.ts'));
+ const unreachable=new Proxy({},{get(){throw Error('scope/credential accessed before query budget validation');}});
+ for(const query of ['x'.repeat(1001),'中'.repeat(700)]){
+  const result=await fetchKBRag({query,top_k:5},unreachable,unreachable);assert.equal(result.error_code,'KB_QUERY_BUDGET_EXCEEDED');
+ }
+ assert.equal(f.requests.length,0);
+});
+function task2PricePolicyFixture(options={}) {
+ const model='CW-SUL70BA',priceQuestion=`${model} 幾錢？`,discountQuestion='有冇會員折扣？',deliveryQuestion='訂購後一般多久可送貨？';
+ const question=priceQuestion+discountQuestion+deliveryQuestion;
+ const answer=`${model} 現時售價為 HK$4,680。會員購買可享九五折，特價商品除外。一般於訂購後三至五個工作天送貨，離島需另行確認。`;
+ return fixture(question,{source:uuid(8101),originalPreview:true,fullChain:true,answer,
+  verifierIds:['E1','E2','E3'],verifierDemandResolutions:[
+   {demand_id:'demand-1',status:'supported',evidence_ids:['E1']},
+   {demand_id:'demand-2',status:'supported',evidence_ids:['E2']},
+   {demand_id:'demand-3',status:'supported',evidence_ids:['E3']}],
+  semantic:task1SemanticContextWire([
+   task1SemanticContextDemand(priceQuestion,{subject_refs:[model],requested_facts:['price']}),
+   task1SemanticContextDemand(discountQuestion,{source_type:'policy',requested_facts:['membership_discount']}),
+   task1SemanticContextDemand(deliveryQuestion,{source_type:'policy',requested_facts:['delivery_time']}),
+  ],{topic:model}),originalRagResponse:task1cRagDocuments(task1cModelDocument({id:'task2-price'}),
+   task2PolicyDocument('task2-discount','會員購買一般商品可享九五折，特價商品除外。'),
+   task2PolicyDocument('task2-delivery','一般商品於訂購後三至五個工作天送貨，離島需另行確認。')),...options});
+}
+test('Task2 evidence: actual handler retains price and both applicable policy sources in one complete answer',async()=>{
+ const f=task2PricePolicyFixture();const result=await f.run();
+ const {reply,memory}=task1SemanticContextCommitted(f,result,`CW-SUL70BA 現時售價為 HK$4,680。會員購買可享九五折，特價商品除外。一般於訂購後三至五個工作天送貨，離島需另行確認。`,null);
+ assert.equal(f.requests.filter(request=>request.url.includes('context-search')).length,1);
+ assert.deepEqual(reply.metadata.citations.map(item=>item.document_id),['task2-price','task2-discount','task2-delivery']);
+ assert.deepEqual(reply.metadata.citation_lineage.source_bindings.map(item=>item.demand_ids),[['demand-1'],['demand-2'],['demand-3']]);
+ assert.equal(reply.metadata.reference_authority,null);assert.equal(reply.metadata.reference_authorities.length,3);
+ assert.deepEqual(reply.metadata.unresolved_fact_fields,[]);
+ assert.equal(reply.metadata.grounding_verification.question_resolution,'supported');
+ const nextQuestion='CW-SUL70BA 係咩品牌？';
+ const next=fixture(nextQuestion,{source:uuid(8102),originalPreview:true,fullChain:true,previous:f.tables,history:f.tables.messages,
+  answer:'CW-SUL70BA 的品牌是 Fixture Home。',verifierDemandResolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']}],
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(nextQuestion,{subject_refs:['CW-SUL70BA'],requested_facts:['brand']})],{topic:'CW-SUL70BA'}),
+  originalRagResponse:task1cRagDocuments(task1cModelDocument({id:'task2-next-brand'}))});
+ assert.equal((await next.run()).status,200);
+ assert(next.tables.conversation_memory_state[0].memory.grounded_reference_lineage.some(item=>item.document_id==='task2-delivery'),
+  'next-turn canonical Memory must retain the delivered policy source lineage');
+});
+
+for(const [name,options] of [
+ ['omitted demand',{verifierDemandResolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']}]}],
+ ['unknown evidence alias',{verifierIds:['E99']}],
+ ['partial receipt with falsely complete child demands',{verifierResolution:'partial'}],
+ ['unsupported fee using the valid selling-price amount',{answer:'CW-SUL70BA 現時售價為 HK$4,680。CW-SUL70BA 現時送貨收費 HK$4,680。會員可享九五折，特價商品除外。一般三至五個工作天送貨，離島需確認。'}],
+])test('Task2 evidence: actual handler rejects '+name,async()=>{
+ const f=task2PricePolicyFixture(options);const result=await f.run();
+ assert.equal(f.commits.length,1);assert(['LLM_GROUNDING_REJECTED','LLM_INVALID_OUTPUT','B2_SUPERVISION_BLOCKED'].includes(f.commits[0].metadata.source_error_code),JSON.stringify({result,reply:f.commits[0]}));
+ assert.notEqual(f.commits[0].content,options.answer);
+ const pending=f.tables.conversation_memory_state[0]?.memory.question_lifecycle.find(item=>item.source_message_id===uuid(8101));
+ assert.notEqual(pending?.status,'resolved');
+});
+
+test('Task2 evidence: actual handler cites only the policy actually used by the verifier',async()=>{
+ const question='普通訂單一般幾時送到？',answer='一般訂單於付款後三至五個工作天送貨，離島需另行確認。';
+ const f=fixture(question,{source:uuid(8110),originalPreview:true,fullChain:true,answer,verifierIds:['E2'],
+  verifierDemandResolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E2']}],
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'policy',requested_facts:['delivery_period']})]),
+  originalRagResponse:task1cRagDocuments(task2PolicyDocument('unrelated-policy','會員可參加專屬活動。'),task2PolicyDocument('used-policy',answer))});
+ const result=await f.run();const {reply}=task1SemanticContextCommitted(f,result,answer,'used-policy');
+ assert.deepEqual(reply.metadata.citations.map(item=>item.document_id),['used-policy']);
+ assert.equal(reply.metadata.reference_authorities.length,1);
+});
+
+test('Task2 evidence: actual handler preserves supported region while another region remains unavailable',async()=>{
+ const price='CW-SUL70BA 幾錢？',hk='香港訂購後一般幾時送貨？',tw='台灣可唔可以送？',question=price+hk+tw;
+ const answer='CW-SUL70BA 現時售價為 HK$4,680。香港一般訂單於付款後三至五個工作天送貨。台灣送貨安排目前未能確認。';
+ const f=fixture(question,{source:uuid(8111),originalPreview:true,fullChain:true,answer,verifierResolution:'partial',verifierIds:['E1','E2'],
+  verifierDemandResolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']},{demand_id:'demand-2',status:'supported',evidence_ids:['E2']},{demand_id:'demand-3',status:'unavailable',evidence_ids:[]}],
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(price,{subject_refs:['CW-SUL70BA'],requested_facts:['price']}),task1SemanticContextDemand(hk,{source_type:'policy',requested_facts:['delivery_period']}),
+   task1SemanticContextDemand(tw,{source_type:'policy',requested_facts:['delivery_region']})]),
+  originalRagResponse:task1cRagDocuments(task1cModelDocument({id:'hk-price'}),task2PolicyDocument('hk-delivery','香港一般訂單於付款後三至五個工作天送貨。'))});
+ const result=await f.run();const {reply}=task1SemanticContextCommitted(f,result,answer,null);
+ assert.deepEqual(reply.metadata.citations.map(item=>item.document_id),['hk-price','hk-delivery']);
+ assert.deepEqual(reply.metadata.unresolved_fact_fields,['demand-3']);assert.equal(reply.metadata.grounding_verification.question_resolution,'partial');
+});
+
+test('Task2 evidence: unresolved same-scope policy conflict fails complete-answer verification',async()=>{
+ const question='未開封的一般商品付款後幾日內可退？';
+ const a=task2PolicyDocument('returns-seven','一般商品未開封，可於付款後七日內退回。');
+ const b=task2PolicyDocument('returns-thirty','一般商品未開封，可於付款後三十日內退回。');
+ a.authority.claims=[{key:'return_days',value:'7'}];b.authority.claims=[{key:'return_days',value:'30'}];
+ const f=fixture(question,{source:uuid(8112),originalPreview:true,fullChain:true,answer:'一般商品未開封，可於付款後三十日內退回。',
+  verifierGrounded:false,verifierIds:[],verifierResolution:'unsupported',verifierDemandResolutions:[],
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'policy',requested_facts:['returns_period']})]),
+  originalRagResponse:task1cRagDocuments(a,b)});
+ const result=await f.run();assert.equal(f.commits[0]?.metadata.source_error_code,'LLM_GROUNDING_REJECTED',JSON.stringify({result,reply:f.commits[0]}));
+ const prompt=task1SemanticContextPrompt(f);assert(prompt.system.includes('七日內')&&prompt.system.includes('三十日內'));
+});
+
+test('Task2 evidence: verifier receives the whole answer beyond the former tail cutoff',async()=>{
+ const tail='未獲來源支持的額外保證。',answer='適用條件仍須逐項核對。'.repeat(350)+tail;
+ const f=task2PricePolicyFixture({answer,verifierGrounded:false,verifierIds:[],verifierResolution:'unsupported',verifierDemandResolutions:[]});
+ await f.run();const verifier=f.requests.find(request=>request.body?.generationConfig?.responseSchema?.properties?.grounded);
+ assert(verifier);const text=JSON.stringify(verifier.body.contents);assert(text.includes(tail)&&text.length>3000);
+ assert.equal(f.commits[0]?.metadata.source_error_code,'LLM_GROUNDING_REJECTED');assert.notEqual(f.commits[0].content,answer);
+});
+test('Task2 evidence: over-limit answer is rejected rather than partly verified',async()=>{
+ const answer='說明'.repeat(6100),f=task2PricePolicyFixture({answer});await f.run();
+ assert(!f.requests.some(request=>request.body?.generationConfig?.responseSchema?.properties?.grounded));
+ assert.notEqual(f.commits[0]?.content,answer);assert.equal(f.commits[0]?.metadata.source_error_code,'LLM_GROUNDING_REJECTED');
+});
+
 for(const [question,id] of [['邊個牌子出嘅？',7101],['它是甚麼品牌？',7102]])test('Task1 semantic context: v4 unfamiliar brand follow-up retains the actual customer subject '+question,async()=>{
  const model='CW-SUL70BA',oldSource='a7c101ab-c401-4d8b-8c63-8a10701abcde',source=uuid(id);
  const old={id:oldSource,conversation_id:ticket,role:'visitor',content:`我想了解 ${model}。`,created_at:'2026-10-13T01:00:00.000Z',is_recalled:false,metadata:{}};
  const answer=`${model} 的品牌是 Fixture Home。`;
  const f=fixture(question,{source,originalPreview:true,fullChain:true,history:[old],answer,
+  verifierDemandResolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']}],
   semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{question:`${model} 的品牌是甚麼？`,subject_refs:[model],requested_facts:['brand']})],
    {topic:model,referents:[{ref:model,source:'prior_turn',confidence:.98}]}),
   originalRagResponse:task1cRagDocuments(task1cModelDocument({id:'v4-brand-document'}))});
@@ -1510,6 +1623,7 @@ test('Task1 semantic context: v4 mixed personal order and product question prese
  const question=orderQuote+'另外 '+productQuote;
  const answer=`${model} 提供製冷、送風及除濕功能。我目前未能核實訂單 12354 的即時出貨狀態，需要商家查核。`;
  const f=fixture(question,{source,originalPreview:true,fullChain:true,answer,
+  verifierResolution:'partial',verifierDemandResolutions:[{demand_id:'demand-1',status:'unavailable',evidence_ids:[]},{demand_id:'demand-2',status:'supported',evidence_ids:['E1']}],
   semantic:task1SemanticContextWire([
    task1SemanticContextDemand(orderQuote,{subject_refs:['12354'],source_type:'transaction',requested_facts:['order_status']}),
    task1SemanticContextDemand(productQuote,{subject_refs:[model],requested_facts:['features']}),
@@ -1526,6 +1640,8 @@ test('Task1 semantic context: v4 mixed personal order and product question prese
  assert(JSON.stringify(verifier.body).includes('live_transaction_unavailable'));assert(JSON.stringify(verifier.body).includes('12354'));
  assert.equal(reply.metadata.kb_request_contract.demand_count,2);assert.equal(reply.metadata.kb_request_contract.transaction_required,true);
  assert(memory.question_lifecycle.some(item=>item.text.includes('12354')&&item.text.includes(model)),'Memory lost one part of the original request');
+ assert(memory.question_lifecycle.some(item=>item.source_message_id===source&&item.status==='pending'),'partially answered order/product request was falsely resolved');
+ assert.deepEqual(reply.metadata.unresolved_fact_fields,['demand-1']);
 });
 
 test('Task1 semantic context: v4 membership preserves policy demand and reaches KB without topical early return',async()=>{
@@ -1534,16 +1650,17 @@ test('Task1 semantic context: v4 membership preserves policy demand and reaches 
   authority:{tenant_id:'34',publication_state:'published',currentness:'current',regions:['hong_kong']},
   evidence:[{document_id:'v4-membership-policy',chunk_id:'v4-membership-policy-full',chunk_type:'full_content',score:.97,content:answer}]};
  const f=fixture(question,{source,originalPreview:true,fullChain:true,answer,
+  verifierDemandResolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']}],
   semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{question:'會員有哪些等級，各級有甚麼分別？',source_type:'policy',requested_facts:['membership_tiers']})],{topic:'會員等級'}),
   originalRagResponse:task1cRagDocuments(document)});
- // Task1 owns interpretation and dispatch. This actual FAQ also exposed the
- // remaining Task2 policy-applicability gap: full-content matching can reject
- // this relevant answer as wrong_topic. Do not turn that rejection into a
- // golden result or claim that this case verifies source selection/answering.
+ // Task2 now retains the FAQ as a policy candidate and verifies its actual
+ // applicability/answer coverage. The proposal and verifier remain isolated.
  const result=await f.run();assert.equal(result.status,200,JSON.stringify(result));assert.equal(f.commits.length,1);
  const reply=f.commits[0],memory=f.tables.conversation_memory_state[0]?.memory;assert(memory);
  const rag=f.requests.filter(request=>request.url.includes('context-search'));assert.equal(rag.length,1,'short membership wording took the former fixed no-information exit');
- assert.deepEqual(JSON.parse(rag[0].body.query),{questions:[{question:question.normalize('NFKC'),subjects:[],requested_facts:['membership_tiers'],source_type:'policy'}]});
+ assert.deepEqual(JSON.parse(rag[0].body.query),{questions:[{question:'會員有哪些等級，各級有甚麼分別？'.normalize('NFKC'),customer_text:question.normalize('NFKC'),subjects:[],requested_facts:['membership_tiers'],source_type:'policy',scope:'merchant_rules_and_subject_exceptions'}]});
+ assert.equal(reply.content,answer);assert.equal(reply.metadata.citation_lineage.selected_document_id,document.document_id);
+ assert.deepEqual(reply.metadata.grounding_verification.demand_resolutions,[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']}]);
  assert.equal(reply.metadata.kb_request_contract.demand_count,1);assert.equal(reply.metadata.kb_request_contract.source_message_id,source);
  assert.equal(reply.metadata.kb_request_contract.query_sha256,hash(rag[0].body.query));assert.equal(reply.metadata.rag_api_status,'success');
  assert.notEqual(reply.metadata.response_route,'workflow5_topical_recovery');
@@ -1559,6 +1676,7 @@ test('Task1 semantic context: v4 restores the first customer original after 130 
   created_at:new Date(Date.parse(old.created_at)+(i+1)*1000).toISOString(),is_recalled:false,metadata:{}})).reverse();
  history.push(old);
  const f=fixture(question,{source,originalPreview:true,fullChain:true,history,answer,
+  verifierDemandResolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']}],
   semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{question:`${model} 的品牌是甚麼？`,subject_refs:[model],requested_facts:['brand']})],
    {topic:model,referents:[{ref:model,source:'prior_turn',confidence:.98}]}),
   originalRagResponse:task1cRagDocuments(task1cModelDocument({id:'v4-recovered-brand-document'}))});
