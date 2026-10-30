@@ -1201,6 +1201,7 @@ Deno.serve(async (req) => {
             language:catalogueLanguage,companyId:scope.companyId,
             sourceMessageId:assistFactualRequest.source_message_id,
             expectedTenantId:tenant.scope.singaporeTenantId,
+            preserveQuestionInUnsentDraft:true,
           }) : null;
         // Preserve the existing per-draft bound without truncating a pending need.
         if(recovery && recovery.reply.length <= 1000)return jsonRes({

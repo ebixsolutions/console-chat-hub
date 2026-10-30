@@ -230,7 +230,7 @@ export interface SourceRecordedPartialRecovery {
  * policy applicability or a transaction, and never turns a partial turn complete. */
 export function resolveSourceRecordedPartialRecovery(
   bundle: Extract<FactualEvidenceBundle, {ok:true}>, request: CurrentFactualRequest,
-  options: {language:"en"|"zh-TW"|"zh-CN";companyId:string;sourceMessageId:string;expectedTenantId:string},
+  options: {language:"en"|"zh-TW"|"zh-CN";companyId:string;sourceMessageId:string;expectedTenantId:string; preserveQuestionInUnsentDraft?:true},
 ): SourceRecordedPartialRecovery | null {
   if (!options.companyId || !options.sourceMessageId || !options.expectedTenantId ||
       request.source_message_id !== options.sourceMessageId || request.interpretation_source !== "semantic_demands" ||
@@ -322,7 +322,9 @@ export function resolveSourceRecordedPartialRecovery(
       : sourceType === "product" ? (en ? "remaining product details" : cn ? "其余商品资料" : "其餘商品資料")
       : (en ? "remaining details" : cn ? "其余待核实资料" : "其餘待核實資料");
   };
-  const pending = [...new Set(request.demands.map(demand => {
+  const pending = options.preserveQuestionInUnsentDraft === true
+    ? [...new Set(request.demands.map(demand=>demand.source_quote.trim()))].filter(Boolean)
+    : [...new Set(request.demands.map(demand => {
     const factLabels = [...new Set(demand.requested_facts.map(fact => pendingFact(fact,demand.source_type)))];
     const subject = demand.subjects.length === 1
       ? demand.subjects[0].replace(/[?？\r\n]/gu," ").trim().slice(0,100) : "";

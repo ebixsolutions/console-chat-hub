@@ -358,3 +358,19 @@ Deno.test("Task 3 Hosted V2 regression: recorded partial price survives B2 with 
   equal(state.quotes,[]);
   equal(state.entities[0].model,"AX-QZ81");
 });
+
+
+Deno.test("Task 3 regression: unsent Agent Assist draft preserves exact pending questions, customer-facing recovery does not",async()=>{
+  const c=await recoveryCase();
+  const customer=resolveSourceRecordedPartialRecovery(c.bundle,c.req,recoveryOptions);
+  const draft=resolveSourceRecordedPartialRecovery(c.bundle,c.req,{...recoveryOptions,preserveQuestionInUnsentDraft:true});
+  assert(customer && draft);
+  assert(!customer.reply.includes(c.req.demands[0].source_quote));
+  assert(!customer.reply.includes(c.req.demands[1].source_quote));
+  assert(draft.reply.includes(c.req.demands[0].source_quote));
+  assert(draft.reply.includes(c.req.demands[1].source_quote));
+  equal(draft.unresolved_demand_ids,customer.unresolved_demand_ids);
+  equal(draft.recorded_facts,customer.recorded_facts);
+  equal(draft.citation_metadata,customer.citation_metadata);
+  assert(!draft.reply.includes("7"),"recorded stock cannot become current stock in a draft");
+});
