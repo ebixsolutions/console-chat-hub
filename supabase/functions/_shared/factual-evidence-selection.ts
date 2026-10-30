@@ -306,7 +306,7 @@ export function resolveSourceRecordedPartialRecovery(
     const value = key(fact);
     const en = options.language === "en", cn = options.language === "zh-CN";
     if (/(?:price|selling|售價|售价|價錢|价钱|現價|现价|價格|价格)/u.test(value))
-      return en ? "current price" : cn ? "当前售价" : "現時售價";
+      return en ? "price verification pending" : cn ? "售价待核实" : "售價待核實";
     if (/(?:stock|inventor|availab|現貨|现货|庫存|库存)/u.test(value))
       return en ? "live availability" : cn ? "实时库存" : "即時庫存";
     if (/(?:feature|specification|功能|規格|规格)/u.test(value))

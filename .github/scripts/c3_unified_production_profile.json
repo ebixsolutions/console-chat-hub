@@ -1369,7 +1369,7 @@
     "supabase/functions/_shared/current-factual-request.test.ts": "cbebe26151a4513f17ffe1fce5a76877e396079b50c9f073919ffec7e25d7d94",
     "supabase/functions/_shared/current-factual-request.ts": "55425be71a967cc39d868953c2ae774909e291bbf8dd69ce8d563bbe48de86d3",
     "supabase/functions/_shared/factual-evidence-selection.test.ts": "17260e5886b01e790cb72c1255347c783e24dcd3d8dce32682d206c06185617b",
-    "supabase/functions/_shared/factual-evidence-selection.ts": "464bd3e4eedebbbb225a5840ba94d4a4378df7b69e6efa7cb724d7cb648b05e1",
+    "supabase/functions/_shared/factual-evidence-selection.ts": "62d6f68f8a29c00ba6e4c556942e8a00c756d2cdfcbc77248d8a067f5a494783",
     "supabase/functions/_shared/factual-kb-price-proof.ts": "cf91428060d416fdce0985eecdefef0a0f75bacac90223b237399378f6d3732d",
     "supabase/functions/_shared/factual-request-context.ts": "74c91de2d6a33761afcc574571c7cb50cfb0bd2e0ce19e23c531eb7caef3b2d9",
     "supabase/functions/_shared/grounding-evidence.ts": "afacfba6048be141d678addd33c0f7ba8af49d7179995a533181e713ba984c6b",
