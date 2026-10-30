@@ -1510,29 +1510,44 @@ test('V2 partial recovery: rejected multi-demand draft preserves source-recorded
  assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
  assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,2);
 });
-test('V2 partial recovery: a definite B2 block has no first commit and only the safe clarification commits',async()=>{
- // The quoted customer premise is still unverified. The unchanged B2 quote
- // gate may reject it; recovery must use the original clarification, once.
- const price='AX-QZ81 現時售價為 HK$1,290？',stock='有冇現貨？';
- const f=v2PartialRecoveryFixture({question:price+stock,semantic:task1SemanticContextWire([
-  task1SemanticContextDemand(price,{subject_refs:['AX-QZ81'],requested_facts:['price']}),
-  task1SemanticContextDemand(stock,{subject_refs:['AX-QZ81'],requested_facts:['availability']}),
- ],{topic:'AX-QZ81'})});
- const result=await f.run();assert.equal(result.status,200,JSON.stringify({result,events:f.events.slice(-10)}));
- const gates=catalogueGateEvents(f);
- assert.deepEqual(gates.map(item=>[item.gate_decision,item.gate_code,item.commit_attempted]),
-  [['block','CURRENT_QUOTE_NOT_PROVEN',false],['allow','B2_ALLOW',true]],JSON.stringify({gates,commits:f.commits}));
- const writes=f.requests.filter(item=>item.url.endsWith('/commit_ai_reply_tx'));
- assert.equal(writes.length,1,'a blocked proposal must never reach the RPC');assert.equal(f.commits.length,1);
- assert.equal(f.commits[0].metadata.response_route,'grounding_recovery_clarification');
- assert.equal(f.commits[0].metadata.partial_recovery_b2_rejection,'CURRENT_QUOTE_NOT_PROVEN');
- assert(!/1,290|9,999,999/.test(f.commits[0].content));
- assert(!f.commits[0].metadata.recorded_kb_facts);assert(!f.commits[0].metadata.partial_recovery);
- assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
- assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,2);
- assert(f.tables.conversation_memory_state[0].memory.question_lifecycle.some(item=>item.source_message_id===uuid(8201)&&item.status==='pending'));
- const replay=await f.run();assert.equal(replay.body.idempotent,true);
- assert.equal(f.requests.filter(item=>item.url.endsWith('/commit_ai_reply_tx')).length,1);assert.equal(f.commits.length,1);
+test('V2 partial recovery: original visitor price question does not become a current quote or an unnecessary B2 denial',async()=>{
+  // The customer is asking about a current price, not asserting a verified
+  // quote. Repeating that question in an AI reply caused the observed Hosted
+  // KNOWN_CONTEXT_RECONFIRMATION / quote denial and erased known recorded facts.
+  // Keep the original question in the Visitor and demand lineage, not the reply.
+  const price='AX-QZ81 現時售價為 HK$1,290？',stock='有冇現貨？';
+  const f=v2PartialRecoveryFixture({question:price+stock,semantic:task1SemanticContextWire([
+   task1SemanticContextDemand(price,{subject_refs:['AX-QZ81'],requested_facts:['price']}),
+   task1SemanticContextDemand(stock,{subject_refs:['AX-QZ81'],requested_facts:['availability']}),
+  ],{topic:'AX-QZ81'})});
+  const result=await f.run();assert.equal(result.status,200,JSON.stringify({result,events:f.events.slice(-10)}));
+  const gates=catalogueGateEvents(f);
+  assert.deepEqual(gates.map(item=>[item.gate_decision,item.gate_code,item.commit_attempted]),
+   [['allow','B2_ALLOW',true]],JSON.stringify({gates,commits:f.commits}));
+  const writes=f.requests.filter(item=>item.url.endsWith('/commit_ai_reply_tx'));
+  assert.equal(writes.length,1,'exactly one gated atomic commit');assert.equal(f.commits.length,1);
+  const reply=f.commits[0],meta=reply.metadata;
+  assert.equal(meta.response_route,'canonical_kb_partial_recovery');
+  assert.match(reply.content,/AX-QZ81/);assert.match(reply.content,/HK\$1,290/);
+  assert.match(reply.content,/來源記錄|来源记录|source.recorded/iu);
+  assert.match(reply.content,/現貨|现货|live stock/iu);
+  assert.match(reply.content,/待核實|待核实|verification pending/iu);
+  assert(!reply.content.includes(price) && !reply.content.includes(stock),
+   'AI must not echo raw customer questions as apparent quote/reconfirmation');
+  assert(!/9,999,999|88 units|已確認有現貨|confirmed in stock/iu.test(reply.content));
+  assert.deepEqual(meta.partial_recovery.demand_outcomes.map(item=>[item.demand_id,item.status]),
+   [['demand-1','partial'],['demand-2','unavailable']]);
+  assert(meta.recorded_kb_facts.some(item=>item.field==='price_amount' && item.value===1290 &&
+   item.currentness==='unverified' && item.source_message_id===uuid(8201)));
+  assert.deepEqual(meta.authoritative_kb_facts,[]);assert(!meta.kb_fact_proof);
+  assert(meta.unresolved_fact_fields.includes('demand-1') && meta.unresolved_fact_fields.includes('demand-2'));
+  assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
+  assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,2);
+  assert(f.tables.conversation_memory_state[0].memory.question_lifecycle.some(item=>item.source_message_id===uuid(8201)&&item.status==='pending'));
+  assert.deepEqual(f.tables.conversation_commerce_state.flatMap(row=>row.state.quotes),[]);
+  const replay=await f.run();assert.equal(replay.body.idempotent,true);
+  assert.equal(f.requests.filter(item=>item.url.endsWith('/commit_ai_reply_tx')).length,1);
+  assert.equal(f.commits.length,1);
 });
 for(const [guard,option,expected] of [
  ['human control',{humanAfterFirstDraft:true},'human_control'],

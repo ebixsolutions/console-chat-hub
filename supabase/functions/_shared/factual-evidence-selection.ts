@@ -308,7 +308,7 @@ export function resolveSourceRecordedPartialRecovery(
     if (/(?:price|selling|售價|售价|價錢|价钱|現價|现价|價格|价格)/u.test(value))
       return en ? "price verification pending" : cn ? "售价待核实" : "售價待核實";
     if (/(?:stock|inventor|availab|現貨|现货|庫存|库存)/u.test(value))
-      return en ? "live availability" : cn ? "实时库存" : "即時庫存";
+      return en ? "live stock verification pending" : cn ? "现货库存待核实" : "現貨庫存待核實";
     if (/(?:feature|specification|功能|規格|规格)/u.test(value))
       return en ? "product features" : cn ? "商品功能" : "商品功能";
     if (/(?:deliver|ship|dispatch|送貨|送货|物流)/u.test(value))

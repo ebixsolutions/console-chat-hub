@@ -1369,7 +1369,7 @@
     "supabase/functions/_shared/current-factual-request.test.ts": "cbebe26151a4513f17ffe1fce5a76877e396079b50c9f073919ffec7e25d7d94",
     "supabase/functions/_shared/current-factual-request.ts": "55425be71a967cc39d868953c2ae774909e291bbf8dd69ce8d563bbe48de86d3",
     "supabase/functions/_shared/factual-evidence-selection.test.ts": "17260e5886b01e790cb72c1255347c783e24dcd3d8dce32682d206c06185617b",
-    "supabase/functions/_shared/factual-evidence-selection.ts": "62d6f68f8a29c00ba6e4c556942e8a00c756d2cdfcbc77248d8a067f5a494783",
+    "supabase/functions/_shared/factual-evidence-selection.ts": "29c66deda726d39d8bb9f77cd8523f2d695d252a220f2435b32da87e3e79749a",
     "supabase/functions/_shared/factual-kb-price-proof.ts": "cf91428060d416fdce0985eecdefef0a0f75bacac90223b237399378f6d3732d",
     "supabase/functions/_shared/factual-request-context.ts": "74c91de2d6a33761afcc574571c7cb50cfb0bd2e0ce19e23c531eb7caef3b2d9",
     "supabase/functions/_shared/grounding-evidence.ts": "afacfba6048be141d678addd33c0f7ba8af49d7179995a533181e713ba984c6b",
@@ -1381,7 +1381,7 @@
     "supabase/functions/generate-reply/index.ts": "9becf3dfc2ac81d19d670091879d134a0d81571f6031eb1a1db3838fe99cc947",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "3c6b4723da36a2047665db61c954ca93221ceffaadadb7a923c915c8d2e3abde",
     "tests/edge/task2-2-output-grounding-router.test.ts": "e4e4a1b936b9d1b1e3dfe6d45f6021287b0957568ea13d6164b1ba784e056016",
-    "tests/emergency-p0/chain.test.mjs": "5c6777e6aade299727497320dc9dcd5039a57eb4c3e61f76c1a4124e7cc1f65d"
+    "tests/emergency-p0/chain.test.mjs": "37469657787d098802f744a3d0b6831df7f93e30dfff18877b1486d4bf9cd982"
   },
   "task2_evidence_deployment_authorized": false
 }
