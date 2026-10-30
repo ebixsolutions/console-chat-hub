@@ -298,9 +298,37 @@ export function resolveSourceRecordedPartialRecovery(
   const used = [...new Set(outcomes.flatMap(item => item.evidence_ids))];
   const citation = buildFactualCitationMetadata(bundle,used,outcomes);
   if (!citation) return null;
-  // Keep every original request visible as pending; quoting it does not assert
-  // its premise or lend a product-price source to another policy/order demand.
-  const pending = [...new Set(request.demands.map(demand => demand.source_quote.trim()))].filter(Boolean);
+  // Keep original customer wording in the stored request/Visitor and every
+  // unresolved demand ID, never inside the reply. An echoed question can
+  // trigger B2's KNOWN_CONTEXT_RECONFIRMATION against an already-known model.
+  // Declarative labels state only what remains unverified, not a live offer.
+  const pendingFact = (fact: string, sourceType: CurrentFactualDemand["source_type"]) => {
+    const value = key(fact);
+    const en = options.language === "en", cn = options.language === "zh-CN";
+    if (/(?:price|selling|售價|售价|價錢|价钱|現價|现价|價格|价格)/u.test(value))
+      return en ? "current price" : cn ? "当前售价" : "現時售價";
+    if (/(?:stock|inventor|availab|現貨|现货|庫存|库存)/u.test(value))
+      return en ? "live availability" : cn ? "实时库存" : "即時庫存";
+    if (/(?:feature|specification|功能|規格|规格)/u.test(value))
+      return en ? "product features" : cn ? "商品功能" : "商品功能";
+    if (/(?:deliver|ship|dispatch|送貨|送货|物流)/u.test(value))
+      return en ? "delivery conditions" : cn ? "配送条件" : "送貨條件";
+    if (/(?:return|refund|cancel|退貨|退货|退款|取消)/u.test(value))
+      return en ? "return conditions" : cn ? "退换条件" : "退換條件";
+    if (/(?:discount|coupon|promotion|優惠|优惠|折扣|促銷|促销)/u.test(value))
+      return en ? "promotion applicability" : cn ? "优惠适用条件" : "優惠適用條件";
+    return sourceType === "transaction" ? (en ? "transaction status" : cn ? "交易状态" : "交易狀態")
+      : sourceType === "policy" ? (en ? "policy applicability" : cn ? "政策适用条件" : "政策適用條件")
+      : sourceType === "product" ? (en ? "remaining product details" : cn ? "其余商品资料" : "其餘商品資料")
+      : (en ? "remaining details" : cn ? "其余待核实资料" : "其餘待核實資料");
+  };
+  const pending = [...new Set(request.demands.map(demand => {
+    const factLabels = [...new Set(demand.requested_facts.map(fact => pendingFact(fact,demand.source_type)))];
+    const subject = demand.subjects.length === 1
+      ? demand.subjects[0].replace(/[?？\r\n]/gu," ").trim().slice(0,100) : "";
+    return [subject, (factLabels.length ? factLabels : [pendingFact("",demand.source_type)])
+      .join(options.language === "en" ? ", " : "、")].filter(Boolean).join(" — ");
+  }))].filter(Boolean);
   const remaining = options.language === "en"
     ? `Still unverified: ${pending.map(question => `“${question}”`).join("; ")}. The recorded price above does not confirm these requested details; merchant verification is still needed.`
     : options.language === "zh-CN"

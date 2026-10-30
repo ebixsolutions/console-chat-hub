@@ -245,7 +245,8 @@ for(const currentness of ["unknown","current"] as const)Deno.test("V2 source-fie
     assert(result.recorded_facts.every(item=>item.demand_id==="demand-1"&&item.document_id==="recovery-product"&&
       item.chunk_id==="recovery-product-chunk"&&item.source_field==="銷售價"&&item.source_message_id==="current-customer"&&
       item.tenant_id==="34"&&item.company_id==="company"&&item.currentness==="unverified"&&item.source_currentness===currentness));
-    assert(result.reply.includes("HK$1,290")&&result.reply.includes(c.req.demands[1].source_quote));
+    assert(result.reply.includes("HK$1,290")&&!result.reply.includes(c.req.demands[1].source_quote));
+    assert(!/[?？]/u.test(result.reply),"pending facts are declarative and cannot re-ask a known model");
     assert(!result.reply.includes("7"),"recorded stock must not become a live stock answer");
     const metadata={...result.citation_metadata,response_route:"canonical_kb_partial_recovery",recorded_kb_facts:result.recorded_facts,
       authoritative_kb_facts:[],partial_recovery:{contract:"canonical-source-field-recovery-1",question_resolution:"partial",demand_outcomes:result.demand_outcomes},
@@ -278,7 +279,8 @@ Deno.test("V2 source-field recovery: same-document catalogue rows keep exact per
   equal((result.citation_metadata.citations as Array<{document_id:string;chunk_id:string}>).map(item=>[item.document_id,item.chunk_id]),
     [["recovery-catalogue","row-a"],["recovery-catalogue","row-b"]]);
   assert(!JSON.stringify(result.citation_metadata).includes("recovery-policy"),"a pending policy borrowed answered-price citations");
-  assert(result.reply.includes(req.demands[2].source_quote)&&result.reply.includes(req.demands[3].source_quote));
+  assert(!result.reply.includes(req.demands[2].source_quote)&&!result.reply.includes(req.demands[3].source_quote));
+  assert(!/[?？]/u.test(result.reply),"cross-demand pending facts must not echo visitor questions");
   equal(result.unresolved_demand_ids,req.demands.map(item=>item.id));
 });
 Deno.test("V2 source-field recovery: unknown currency is explicit and never inferred from tenant or source region",async()=>{
@@ -322,4 +324,37 @@ Deno.test("V2 source-field recovery: catalogue short-name identity candidates do
   req.demands[1].requested_facts=["availability"];
   const bundle=selectFactualEvidence([product],req,options);assert(bundle.ok);
   equal(resolveSourceRecordedPartialRecovery(bundle,req,recoveryOptions),null);
+});
+
+
+Deno.test("Task 3 Hosted V2 regression: recorded partial price survives B2 with a known customer model",async()=>{
+  const c=await recoveryCase();
+  const partial=resolveSourceRecordedPartialRecovery(c.bundle,c.req,recoveryOptions);
+  assert(partial);
+  const state=createEmptyConversationCommerceState();
+  state.current_intent="select_product";
+  state.current_topic="air_conditioner";
+  state.entities.push({entity_id:"customer-known-product",category:"air_conditioner",brand:"Generic",
+    model:"AX-QZ81",quantity:1,status:"tentative",attributes:{room_sizes:[95],customer_goal:{missing:["price","availability"]}},
+    constraints:{},provenance:{source_type:"customer",source_message_id:"prior-customer"}});
+  state.customer_constraints={preferred_room_area_sq_ft:95,budget_currency:"HKD"};
+  const snapshot={conversation_id:"conversation",company_id:"company",source_message_id:"current-customer",
+    commerce_state_revision:3,commerce_state_source_message_id:"prior-customer",state};
+  const metadata={...partial.citation_metadata,response_route:"canonical_kb_partial_recovery",
+    recorded_kb_facts:partial.recorded_facts,authoritative_kb_facts:[],
+    partial_recovery:{contract:"canonical-source-field-recovery-1",question_resolution:"partial",
+      demand_outcomes:partial.demand_outcomes},unresolved_fact_fields:partial.unresolved_demand_ids,
+    factual_grounding_required:true};
+  const oldEcho=partial.reply+"\\n\\nUnverified question: AX-QZ81 price?";
+  const legacy=evaluateB2BeforeCommit({persistence_kind:"ai_reply",proposed_response:oldEcho,metadata,snapshot});
+  equal([legacy.decision,legacy.code],["block","KNOWN_CONTEXT_RECONFIRMATION"]);
+  const fixed=evaluateB2BeforeCommit({persistence_kind:"ai_reply",proposed_response:partial.reply,metadata,snapshot});
+  equal(fixed.decision,"allow");
+  assert(!/[?？]/u.test(partial.reply));
+  assert(!partial.reply.includes(c.req.demands[0].source_quote));
+  assert(!partial.reply.includes(c.req.demands[1].source_quote));
+  equal(partial.unresolved_demand_ids,["demand-1","demand-2"]);
+  equal(partial.recorded_facts.filter(f=>f.field==="price_amount").map(f=>f.value),[1290]);
+  equal(state.quotes,[]);
+  equal(state.entities[0].model,"AX-QZ81");
 });
