@@ -1289,7 +1289,7 @@
     "supabase/functions/_shared/canonical-kb-direct-answer.test.ts": "13f18f0b4c3aa1d410187dd284e671e0c113c6ce1e9d833e42198f5765e28a30",
     "supabase/functions/_shared/canonical-kb-direct-answer.ts": "7b3567cde9cbf1634e865411ba073230d51b5dc33a93352d27b46bc5bc9212e8",
     "supabase/functions/widget-poll-messages/index.ts": "615eb9ad8d06867eacf5f8ababc4b8d9dda06feb3dbdf05c2dc24f7f47005022",
-    "tests/task1-director/event-driven-widget.test.mjs": "c2cf604c1e1b4139182ac4f943446f69de11cae1550cf1aaf3496065e75f47a5",
+    "tests/task1-director/event-driven-widget.test.mjs": "0ab5c28b14b7ab238c594bc11648814bfa1f8078bed85368491fd638a5f85f08",
     "tests/task1-director/source-chain.test.mjs": "c0e58f14e41855ece8ffaf1fc21cd22bffa00f2acb903bd1a9623cc6afb7662a",
     "src/components/console/OrdinaryWidgetPreview.tsx": "020deb69d8e38bead36e34a63b872f562c459794086fb7b75b6264877ff8279b",
     "src/lib/public-widget-preview-asset.ts": "6ddebcac5eda712b8289ddbf8712ea6717a6617854003820894d3199f1465992",
