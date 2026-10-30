@@ -120,8 +120,8 @@ const semanticContextModule=async()=>{
 const contextInterpreter=await semanticContextModule();
 const demandFixture=(patch={})=>({question:'When can CW-SUL70BA be delivered?',source_quote:'幾時可送貨？',subject_refs:['CW-SUL70BA'],source_type:'product',requested_facts:['delivery_time'],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},...patch});
 function activeSemanticResponse(delta) {
- const all=nodes({demands:[],...delta});
- return {context_encoding:'semantic_values_v4',operation:'ASK_FACT',confidence:.98,
+ const all=nodes({demands:[],...delta}).filter(node=>node.path.length);
+ return {context_encoding:'semantic_values_v5',operation:'ASK_FACT',confidence:.98,
   containers:all.filter(n=>['object','array','null'].includes(n.kind)).map(({path,kind})=>({path,kind})),
   strings:all.filter(n=>n.kind==='string').map(({path,text})=>({path,text})),
   numbers:all.filter(n=>n.kind==='number').map(({path,number})=>({path,number})),
@@ -160,7 +160,7 @@ test('actual interpreter presents recovered originals independently of the recen
   calls++;assert.equal(request.operationId,'assist:isolated-semantic');assert.equal(request.legacyAuthority,authority);
   assert(request.user.includes(fullOriginal));assert(request.user.includes('original-turn'));assert(request.user.includes('2026-10-01T00:00:00Z'));
   assert(request.user.includes('recent-119'));assert(request.user.includes('recent-108'));assert(!request.user.includes('recent-107'));
-  assert(request.user.includes('context_incomplete=true'));assert(request.system.includes('semantic_values_v4'));
+  assert(request.user.includes('context_incomplete=true'));assert(request.system.includes('semantic_values_v5'));
   return {ok:true,request_id:'isolated',text:JSON.stringify(activeSemanticResponse({requested_facts:['delivery_time'],demands:[demandFixture({constraints:{stairs:false,floor:2}})]}))};
  };
  try {

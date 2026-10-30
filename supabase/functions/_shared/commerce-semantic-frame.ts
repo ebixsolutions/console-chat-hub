@@ -673,9 +673,9 @@ export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V3 =
  * semantic fields. Homogeneous value arrays need neither nullable scalar slots,
  * optional branches, nor a repeated commerce vocabulary in the provider grammar.
  * The reconstructed tree still passes the closed canonical schema and bounds. */
-const semanticValueNodes = (field: string, value: Record<string, unknown>) => ({
+const semanticValueNodes = (field: string, value: Record<string, unknown>, minPathItems?: number) => ({
   type: "array", items: {type:"object",required:["path",field],properties:{
-    path:{type:"array",items:{type:"string"},maxItems:6},[field]:value,
+    path:{type:"array",items:{type:"string"},...(minPathItems === undefined ? {} : {minItems:minPathItems}),maxItems:6},[field]:value,
   }},
 });
 export const COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA: Record<string, unknown> = {
@@ -690,7 +690,21 @@ export const COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA: Record<string, unknown> = {
   },
 };
 orderSemanticTransport(COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA);
-export const COMMERCE_SEMANTIC_PROVIDER_SCHEMA = COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA;
+/** v5 owns the invariant object root on the server. The provider must still
+ * declare every descendant parent; legacy v4 never receives this root. */
+export const COMMERCE_SEMANTIC_PROVIDER_V5_SCHEMA: Record<string, unknown> = {
+  type: "object", properties: {
+    context_encoding:{type:"string",enum:["semantic_values_v5"]},
+    operation:{type:"string",enum:[...OPERATIONS]},
+    confidence:{type:"number",minimum:0,maximum:1},
+    containers:semanticValueNodes("kind",{type:"string",enum:["object","array","null"]},1),
+    strings:semanticValueNodes("text",{type:"string"},1),
+    numbers:semanticValueNodes("number",{type:"number"},1),
+    booleans:semanticValueNodes("boolean",{type:"boolean"},1),
+  },
+};
+orderSemanticTransport(COMMERCE_SEMANTIC_PROVIDER_V5_SCHEMA);
+export const COMMERCE_SEMANTIC_PROVIDER_SCHEMA = COMMERCE_SEMANTIC_PROVIDER_V5_SCHEMA;
 export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V4 =
   "Return context_encoding=semantic_values_v4, operation, confidence, containers, strings, numbers, booleans in schema order. " +
   "The four arrays represent one flat typed tree of this turn's optional semantic delta. containers contains {path,kind} for object/array/null; " +
@@ -713,6 +727,23 @@ export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V4 =
   "Preserve all newly supplied requirements or return explicit context-limit ambiguity, never a partial proposal. " +
   "The following grammar defines allowed reconstructed semantic fields/types/vocabulary, not additional provider schema branches: " +
   JSON.stringify(COMMERCE_SEMANTIC_DELTA_SCHEMA);
+export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5 = COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V4
+  .replace("context_encoding=semantic_values_v4", "context_encoding=semantic_values_v5")
+  .replace("Declare exactly one object root at path [] in containers, and every object/array parent of a value.",
+    "The server supplies the one object root. Every provider path must be nonempty; never emit path []. Declare every descendant object/array parent of a value.") +
+  '\nComplete wire example for the latest customer turn "What is the price of product Q9?"; no merchant facts are supplied: ' + JSON.stringify({
+    context_encoding:"semantic_values_v5",operation:"ASK_FACT",confidence:0.98,
+    containers:[{path:["demands"],kind:"array"},{path:["demands","0"],kind:"object"},
+      {path:["demands","0","subject_refs"],kind:"array"},{path:["demands","0","requested_facts"],kind:"array"},
+      {path:["demands","0","constraints"],kind:"object"},{path:["demands","0","explicit_negations"],kind:"array"},
+      {path:["demands","0","ambiguity"],kind:"object"},{path:["demands","0","ambiguity","reasons"],kind:"array"},
+      {path:["demands","0","ambiguity","clarification_question"],kind:"null"}],
+    strings:[{path:["demands","0","question"],text:"What is the price of product Q9?"},
+      {path:["demands","0","source_quote"],text:"What is the price of product Q9?"},
+      {path:["demands","0","subject_refs","0"],text:"Q9"},{path:["demands","0","source_type"],text:"product"},
+      {path:["demands","0","requested_facts","0"],text:"price"}],numbers:[],
+    booleans:[{path:["demands","0","customer_correction"],boolean:false},{path:["demands","0","ambiguity","is_ambiguous"],boolean:false}],
+  });
 
 // Diagnostic labels come only from this fixed vocabulary, never from a model's
 // customer-authored keys, text, paths, enum values or Error.message.
@@ -936,19 +967,21 @@ function decodeProviderSemanticFields(value: Record<string, unknown>): Record<st
   }
 }
 
-function decodeProviderSemanticValues(value: Record<string, unknown>): Record<string, unknown> {
+function decodeProviderSemanticValues(value: Record<string, unknown>, implicitRoot = false): Record<string, unknown> {
   const collections = ["containers","strings","numbers","booleans"] as const;
-  const count = collections.reduce((n,key) => n + (Array.isArray(value[key]) ? value[key].length : 0),0);
+  // Include the one server-owned root in exactly the same tree/node budget.
+  const count = collections.reduce((n,key) => n + (Array.isArray(value[key]) ? value[key].length : 0),implicitRoot ? 1 : 0);
   const fail = (stage: SemanticWireStage, detail?: SemanticVocabularyDiagnostic): never => {
     throw new SemanticWireError({container:"wire_nodes",stage,node_count:Math.min(count,32769),...detail});
   };
   if (count > 32768) return fail("envelope");
-  const vocabulary = semanticSchemaMismatch(value,COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA,[],true);
+  const vocabulary = semanticSchemaMismatch(value,implicitRoot ? COMMERCE_SEMANTIC_PROVIDER_V5_SCHEMA : COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA,[],true);
   if (vocabulary) return fail(vocabulary.reason === "range" ? "canonical_range" : "canonical_vocabulary",vocabulary);
   const nodes = collections.flatMap(collection => (value[collection] as Record<string,unknown>[]).map(raw => {
     const kind = collection === "containers" ? raw.kind : collection === "strings" ? "string" : collection === "numbers" ? "number" : "boolean";
     return {path:raw.path,kind,...(kind === "string" ? {text:raw.text} : kind === "number" ? {number:raw.number} : kind === "boolean" ? {boolean:raw.boolean} : {})};
   }));
+  if (implicitRoot) nodes.unshift({path:[],kind:"object"});
   const decoded = decodeProviderSemanticTree({context_encoding:"semantic_paths_v2",operation:value.operation,confidence:value.confidence,nodes});
   // Active producers must identify every current clause. Missing demand data is
   // not permission to fall back to independent phrase-based interpretation.
@@ -1035,7 +1068,8 @@ export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSema
   const reject = (reason: SemanticContractRejection, diagnostic?:SemanticContractDiagnostic): null => { onReject?.(reason,diagnostic); return null; };
   if (!isRecord(value)) return reject("wire_object");
   if (Object.hasOwn(value, "context_encoding")) {
-    try { value = value.context_encoding==="semantic_values_v4" ? decodeProviderSemanticValues(value)
+    try { value = value.context_encoding==="semantic_values_v5" ? decodeProviderSemanticValues(value,true)
+      : value.context_encoding==="semantic_values_v4" ? decodeProviderSemanticValues(value)
       : value.context_encoding==="semantic_fields_v3" ? decodeProviderSemanticFields(value)
       : value.context_encoding==="semantic_paths_v2" ? decodeProviderSemanticTree(value) : decodeTypedContextFrame(value); } catch (error) {
       // Only fixed stage/field/reason enums and bounded counts: never keys, paths, values,
@@ -1318,7 +1352,7 @@ const SEMANTIC_INTERPRETER_SYSTEM = `You are a multilingual commerce semantic in
 Your job is ONLY to understand the customer's commerce meaning and return one JSON object following the supplied typed transport schema, which the server decodes into the canonical commerce semantic frame.
 Do not answer the customer. Do not invent product facts, prices, availability, policies, T&C, delivery rules or company facts.
 Do not assume an industry taxonomy. Interpret unfamiliar products/services compositionally from the customer's words and context.
-Wire contract: context_encoding=semantic_values_v4. Follow the supplied typed transport schema and property order. Include only THIS turn's changed/referenced entities, newly asserted customer facts, questions and ambiguity. Required empty collections are transport defaults, not new customer evidence. Use the four typed path arrays for the complete current-turn delta; strict canonical vocabulary still applies.
+Wire contract: context_encoding=semantic_values_v5. Follow the supplied typed transport schema and property order. Include only THIS turn's changed/referenced entities, newly asserted customer facts, questions and ambiguity. Required empty collections are transport defaults, not new customer evidence. Use the four typed path arrays for the complete current-turn delta; strict canonical vocabulary still applies.
 Lifecycle scope: delaying a lookup, quotation search, comparison, or choice of model is not cancelling or deferring the product/service requirement. An undecided model is not a deferred item. Use CANCEL_ITEM/REMOVE_ITEM/DEFER only when the customer explicitly cancels/removes/pauses the item or purchase/service itself; preserve real item cancellation and deferral. A request for general guidance without external research keeps the stated need current and does not create a quote, order or payment state.
 Newly supplied or changed customer_facts require UPDATE_ITEM rather than NO_STATE_CHANGE; read-only recap must not re-emit unchanged facts.
 customer_facts contains at most 16 named keys for newly asserted CUSTOMER background/needs, not merchant evidence; attach each actual value with paths under customer_facts/index/value. Keep meaningful field names, quantities with units, false, zero, null/unknown, exclusions and nested constraints. Reuse the exact retained key from persistent current_customer_facts when correcting the same field; never emit an old value as a second current fact under a synonym. Never include a fact solely recalled from prior context. A background catalogue count/team/market/interface is a customer fact, not an item to buy or cancel. Control/handoff/recap instructions are not facts or entities.
@@ -1350,5 +1384,5 @@ Core rules:
 Output budget: 4096 tokens. Return compact JSON without prose, markdown or reasoning. Do not repeat the transcript or persistent state. Include only entities changed or referenced by THIS turn; never reproduce an entire historical portfolio. Keep intent/topic/reasons concise. Do not copy already retained attributes merely to acknowledge or recap them. Empty entities/referents/requested_facts arrays are valid for a customer-only acknowledgement or read-only recap; omitted customer facts are NOT deletion events. Preserve every newly supplied decision-relevant value, unit, correction and explicit negation. If this turn itself cannot fit completely, return NO_STATE_CHANGE with ambiguity.is_ambiguous=true and a concise context-limit reason; do not silently truncate or invent a KB-insufficient reason.
 Return JSON only.`;
 export const COMMERCE_SEMANTIC_SYSTEM_PROMPT = SEMANTIC_INTERPRETER_SYSTEM +
-  COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V4 +
+  COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5 +
   "\nFor corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraint values encoded in constraints and customer_correction=true. Output budget 4096 tokens; emit only current-turn facts/entities, never placeholder customer facts or copied state. Do not include reasoning.";

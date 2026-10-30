@@ -22,11 +22,11 @@ function typedContextNodes(value,at=[]) {
  return [{path:at,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},
   ...((kind==='object'||kind==='array')?Object.entries(value).flatMap(([k,v])=>typedContextNodes(v,[...at,k])):[])];
 }
-// Retained fixtures exercise decoder compatibility; new demand cases use the active v4 transport.
+// Retained fixtures exercise decoder compatibility; new demand cases use the active v5 transport.
 const providerWire=(delta,operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:.98,nodes:typedContextNodes(delta)});
-const providerWireV4=(delta,operation='UPDATE_ITEM')=>{
- const nodes=typedContextNodes(delta);
- return {context_encoding:'semantic_values_v4',operation,confidence:.98,
+const providerWireV5=(delta,operation='UPDATE_ITEM')=>{
+ const nodes=typedContextNodes(delta).filter(node=>node.path.length);
+ return {context_encoding:'semantic_values_v5',operation,confidence:.98,
   containers:nodes.filter(n=>['object','array','null'].includes(n.kind)).map(({path,kind})=>({path,kind})),
   strings:nodes.filter(n=>n.kind==='string').map(({path,text})=>({path,text})),
   numbers:nodes.filter(n=>n.kind==='number').map(({path,number})=>({path,number})),
@@ -201,7 +201,7 @@ function fixture(text,options={}) {
    }
    assert.equal(body.generationConfig.responseMimeType,'application/json');
    const semanticSchema=body.generationConfig.responseSchema;
-   assert.deepEqual(semanticSchema.properties.context_encoding.enum,['semantic_values_v4']);
+   assert.deepEqual(semanticSchema.properties.context_encoding.enum,['semantic_values_v5']);
    for(const [list,field] of [['containers','kind'],['strings','text'],['numbers','number'],['booleans','boolean']]){
     const item=semanticSchema.properties[list].items;
     assert.deepEqual(Object.keys(item.properties),['path',field]);assert.deepEqual(item.required,['path',field]);
@@ -209,7 +209,7 @@ function fixture(text,options={}) {
    }
    assert(!JSON.stringify(semanticSchema).includes('"anyOf"'),'typed transport must not reintroduce union branch growth');
    assert(body.systemInstruction.parts[0].text.includes('Follow the supplied typed transport schema'));
-   assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_values_v4'));
+   assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_values_v5'));
    assert(!body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_paths_v2'));
    if(options.enforceSmallTransport){
     assert(Buffer.byteLength(JSON.stringify(semanticSchema))<2000);
@@ -582,7 +582,7 @@ for(const alias of ['lifecycle','correction','negations'])test('prompt/decoder i
  const r=await f.load(path.join(root,'supabase/functions/_shared/commerce-semantic-interpreter.ts')).interpretCommerceSemantics({company_id:company,conversation_id:ticket,source_message_id:source,latest:'Please correct my requirements',persistent_state_summary:'{}'});
  assert.equal(r.frame,null);assert.equal(r.contract_rejection,'wire_delta_fields');assert(!JSON.stringify(r).includes('PRIVATE-SECRET'));
  const request=f.requests.find(x=>x.url.includes('aiplatform')).body.systemInstruction.parts[0].text;
- assert(request.includes('customer_correction'));assert(request.includes('semantic_values_v4'));assert(request.includes('customer_facts'));assert(request.includes('strict canonical vocabulary still applies'));assert(request.includes('containers'));assert(request.includes('numbers'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
+ assert(request.includes('customer_correction'));assert(request.includes('semantic_values_v5'));assert(request.includes('customer_facts'));assert(request.includes('strict canonical vocabulary still applies'));assert(request.includes('containers'));assert(request.includes('numbers'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
 });
 
 test('Hosted Frankie correction then same-ticket Summary retains latest canonical Memory and passes unchanged B2',async()=>{
@@ -782,7 +782,7 @@ for(const [business,latest,values] of [
  assert.equal(r.status,200,JSON.stringify(r));
  const requests=f.requests.filter(x=>x.url.endsWith(':generateContent')&&x.body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.'));
  assert.equal(requests.length,1);const config=requests[0].body.generationConfig;
- assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_values_v4']);
+ assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_values_v5']);
  for(const list of ['containers','strings','numbers','booleans'])assert.equal(config.responseSchema.properties[list].items.properties.path.maxItems,'6');
  assert(!JSON.stringify(f.events).includes('canonical_entity_bounds'));assert(!f.requests.some(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered')));
  const memory=f.tables.conversation_memory_state.at(-1)?.memory;assert(memory,JSON.stringify({r,events:f.events.slice(-8)}));
@@ -1462,7 +1462,7 @@ const task1SemanticContextDemand=(question,patch={})=>({
  question,source_quote:question,subject_refs:[],source_type:'product',requested_facts:[],constraints:{},
  customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},...patch,
 });
-const task1SemanticContextWire=(demands,patch={})=>providerWireV4({
+const task1SemanticContextWire=(demands,patch={})=>providerWireV5({
  language:'zh-HK',intent:'merchant_facts',requested_facts:[...new Set(demands.flatMap(demand=>demand.requested_facts))],
  demands,...patch,
 },'ASK_FACT');

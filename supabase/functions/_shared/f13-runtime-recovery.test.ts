@@ -70,12 +70,12 @@ Deno.test('compact semantic transport uses bounded complete-delta budget, curren
   let calls=0;
   globalThis.fetch=withMockAccounting(async(_url,init)=>{
    calls++;const request=JSON.parse(String(init?.body));assert(request.max_tokens===4096,'budget changed');
-   assert(request.system.includes('Wire contract: context_encoding=semantic_values_v4.'),'active semantic wire changed');
+   assert(request.system.includes('Wire contract: context_encoding=semantic_values_v5.'),'active semantic wire changed');
    assert(request.system.includes("Include only THIS turn's changed/referenced entities"),'current-turn delta boundary lost');
    assert(request.system.includes('Required empty collections are transport defaults, not new customer evidence.'),'neutral defaults became customer evidence');
    assert(request.system.includes('Do not repeat complete history/state, unchanged entities or resolved fields.'),'full snapshot still required');
    // Retain the legacy canonical response to verify decoder compatibility with
-   // the current prompt; actual v4 wire fixtures are covered separately.
+   // the current prompt; actual v5 wire fixtures are covered separately.
    return new Response(JSON.stringify({content:[{type:'text',text:JSON.stringify({operation:'NO_STATE_CHANGE',confidence:0.96,customer_facts:[{key:'auto_renew',value:false},{key:'seats',value:{amount:0,unit:'users'}},{key:'appointment_date',value:null}]})}],stop_reason:'end_turn',usage:{output_tokens:100}}));
   });
   const input={company_id:'11111111-1111-4111-8111-111111111111',conversation_id:'22222222-2222-4222-8222-222222222222',source_message_id:'isolated-source',latest:'No automatic renewal; zero users; appointment date is unknown.',history:Array.from({length:120},(_,i)=>({role:'visitor',content:`Past topic ${i}`}))};

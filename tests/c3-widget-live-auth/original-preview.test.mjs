@@ -316,7 +316,7 @@ async function setupInbox(fault='none',documentFixture={},semanticFixture=null,o
  globalThis.fetch=async(url,init)=>{
   if(String(url)===x.endpoint){if(fault==='tool-failure')return new Response(null,{status:503});if(fault==='revoke-on-return')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;return await x.upstream(url,init);}
   assert.equal(String(url),f.url,'no unrelated provider or accounting endpoint');model++;const b=JSON.parse(init.body);modelRequests.push(b);const text=b.contents.map(c=>c.parts.map(p=>p.text??'').join('')).join('');prompts.push(text);
-  if(b.generationConfig?.responseSchema?.properties?.context_encoding?.enum?.includes('semantic_values_v4')){
+  if(b.generationConfig?.responseSchema?.properties?.context_encoding?.enum?.includes('semantic_values_v5')){
    modelKinds.semantic++;assert(semanticFixture,'unexpected semantic dispatch without a source-bound fixture');
    return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(semanticFixture)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:120}});
   }
@@ -353,10 +353,10 @@ const inboxProductFixture={title:'Unseen instrument kit',source_type:'Product',e
  content:'spu_code: INSTRUMENT\nspu_name: Unseen instrument kit\nsku_code: ITEM-Q9\nprice: 125.0 CNY\nstock: 0\ndescription: Isolated fixture only.'};
 // Same active provider transport as the runtime-chain fixtures. The proposal
 // identifies the customer-authored subject but supplies no merchant facts.
-function providerWireV4(delta){
+function providerWireV5(delta){
  const nodes=(value,path=[])=>{const kind=value===null?'null':Array.isArray(value)?'array':typeof value;return [{path,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},...(['object','array'].includes(kind)?Object.entries(value).flatMap(([key,child])=>nodes(child,[...path,key])):[])];};
- const list=nodes(delta);
- return {context_encoding:'semantic_values_v4',operation:'ASK_FACT',confidence:.98,
+ const list=nodes(delta).filter(node=>node.path.length);
+ return {context_encoding:'semantic_values_v5',operation:'ASK_FACT',confidence:.98,
   containers:list.filter(node=>['object','array','null'].includes(node.kind)).map(({path,kind})=>({path,kind})),
   strings:list.filter(node=>node.kind==='string').map(({path,text})=>({path,text})),
   numbers:list.filter(node=>node.kind==='number').map(({path,number})=>({path,number})),
@@ -364,7 +364,7 @@ function providerWireV4(delta){
 }
 for(const [facet,content,tool] of [['price','幾錢？','suggest_reply'],['stock','有冇貨？','knowledge_helper']]) {
  for(const mode of ['conversation','manual'])test(`actual agent-assist ${mode} ${facet}: ${mode==='conversation'?'one fresh subject-bound query':'no inherited subject or paid dispatch'}`,async()=>{
-  const semantic=providerWireV4({language:'zh-HK',intent:'merchant_facts',requested_facts:[facet],
+  const semantic=providerWireV5({language:'zh-HK',intent:'merchant_facts',requested_facts:[facet],
    referents:[{ref:'ITEM-Q9',source:'prior_turn',confidence:.98}],
    demands:[{question:`ITEM-Q9 ${content}`,source_quote:content,subject_refs:['ITEM-Q9'],source_type:'product',requested_facts:[facet],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]});
   const x=await setupInbox('none',inboxProductFixture,semantic);
@@ -409,7 +409,7 @@ for(const [facet,content,tool] of [['price','幾錢？','suggest_reply'],['stock
 }
 async function task2AssistFixture(fault='none'){
  const first='訂購後一般幾時送貨？',second='偏遠地區有咩例外？',question=first+second;
- const semantic=providerWireV4({language:'zh-HK',intent:'merchant_facts',requested_facts:['delivery_period','delivery_exceptions'],
+ const semantic=providerWireV5({language:'zh-HK',intent:'merchant_facts',requested_facts:['delivery_period','delivery_exceptions'],
   demands:[first,second].map((quote,index)=>({question:quote,source_quote:quote,subject_refs:[],source_type:'policy',requested_facts:[index?'delivery_exceptions':'delivery_period'],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}))});
  const documents=['一般訂單付款後三至五個工作天送貨。','偏遠地區需另外預約送貨時間，不適用一般時段。'].map((content,index)=>({
   document_id:'task2-assist-policy-'+index,version_id:'task2-assist-version-'+index,title:'送貨政策',source_type:'policy',document_score:.99,
@@ -456,7 +456,7 @@ for(const fault of ['omitted-demand','partial-inconsistent','oversized-draft','s
 });
 
 for(const fault of ['none','default-denied','opt-in-false','assist-disabled','policy-authority','arbitrary-evaluation','wrong-slot','wrong-schema','missing-schema','wrong-system','wrong-purpose','attempt-two','oversized-output','prepare-hook','missing-source','wrong-source','foreign-source','recalled-source','assistant-source','source-time-drift','source-content-changed','replay','new-operation-replay','grant-revoked','grant-revoked-during-source-read','membership-revoked-during-source-read'])test('Inbox semantic context has separate opt-in and never grants answer grounding: '+fault,async()=>{
- const x=await setupInbox('none',{},providerWireV4({demands:[]}));
+ const x=await setupInbox('none',{},providerWireV5({demands:[]}));
  const grant=JSON.parse(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION);
  if(fault==='default-denied')delete grant.bindings[0].allow_semantic_context;
  if(fault==='opt-in-false')grant.bindings[0].allow_semantic_context=false;
@@ -475,7 +475,7 @@ for(const fault of ['none','default-denied','opt-in-false','assist-disabled','po
  const request={systemInstruction:{parts:[{text:COMMERCE_SEMANTIC_SYSTEM_PROMPT}]},contents:[{role:'user',parts:[{text:'Latest customer turn: 幾錢？'}]}],
   generationConfig:buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash')};
  if(fault==='wrong-system')request.systemInstruction.parts[0].text='Answer the customer using invented merchant facts.';
- if(fault==='wrong-schema')request.generationConfig.responseSchema={type:'OBJECT',properties:{context_encoding:{type:'STRING',enum:['semantic_values_v4']}}};
+ if(fault==='wrong-schema')request.generationConfig.responseSchema={type:'OBJECT',properties:{context_encoding:{type:'STRING',enum:['semantic_values_v5']}}};
  if(fault==='missing-schema'||fault==='arbitrary-evaluation')delete request.generationConfig.responseSchema;
  if(fault==='oversized-output')request.generationConfig.maxOutputTokens=4097;
  const payload=JSON.stringify(request);
