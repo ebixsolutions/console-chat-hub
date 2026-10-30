@@ -7,12 +7,12 @@ const result=await build({entryPoints:['src/routes/_authenticated/console.conver
  if(a.path==='@tanstack/react-router')return {contents:'export const createFileRoute=()=>x=>x;'};
  if(a.path==='lucide-react')return {contents:'export const Loader2=()=>null;'};
  if(a.path==='sonner')return {contents:'export const toast={error(){},info(){},success(){}};'};
- if(a.path.includes('useAuth'))return {contents:'export const useAuth=()=>({user:{id:"owner"}});'};
+ if(a.path.includes('useAuth'))return {contents:'export const useAuth=()=>({user:{id:globalThis.__inboxSearch.actor??"owner"}});'};
  if(a.path.includes('useCurrentRole'))return {contents:'export const useCurrentRole=()=>({role:globalThis.__inboxSearch.role??"admin",loading:false});'};
  if(a.path.includes('useEffectiveRole'))return {contents:'export const useConsoleLang=()=>"en";'};
- if(a.path.includes('/integrations/'))return {contents:s+'export const supabase={from:table=>f.from(table),functions:{invoke(){throw Error("unexpected dispatch")}},channel:name=>({on(type,filter,cb){(f.realtime[name]??=[]).push({type,filter,cb});return this;},subscribe(){return this;}}),removeChannel(){}};'};
+ if(a.path.includes('/integrations/'))return {contents:s+'export const supabase={from:table=>f.from(table),functions:{invoke(...args){f.calls.push(args);throw Error("unexpected dispatch")}},channel:name=>({name,on(type,filter,cb){(f.realtime[name]??=[]).push({type,filter,cb});return this;},subscribe(status){this.status=status;f.channels.push(this);return this;}}),removeChannel(channel){channel.removed=true;}};'};
  if(a.path.includes('reply-request'))return {contents:'export class ReplyRequest{}'};
- if(a.path.includes('CRMPanel'))return {contents:'export const CRMPanel=()=>null,RIGHT_COPY={},buildBoundedContext=()=>"",computeContextRevisionKey=(id,msgs)=>id+":"+msgs.filter(m=>m.role==="visitor"&&!m.is_recalled).map(m=>m.id).join(",");'};
+ if(a.path.includes('CRMPanel'))return {contents:'export const CRMPanel=p=>{globalThis.__inboxSearch.crmProps=p;return null;},RIGHT_COPY={inserted:{en:"Inserted"}},buildBoundedContext=()=>"",computeContextRevisionKey=(id,msgs)=>id+":"+msgs.filter(m=>m.role==="visitor"&&!m.is_recalled).map(m=>[m.id,m.content,m.status].join("|")).join(",");'};
  if(a.path.includes('ComposerTools'))return {contents:'export const AttachmentButtons=()=>null,EmojiPickerButton=()=>null,insertAtCaret=()=>({value:"",caret:0});'};
  if(a.path.includes('MessageAttachment'))return {contents:'export const MessageAttachment=()=>null,isAttachmentMessage=()=>false;'};
  if(a.path.includes('feedback.service'))return {contents:'export const feedbackService={};'};
@@ -23,9 +23,9 @@ const result=await build({entryPoints:['src/routes/_authenticated/console.conver
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'c3-inbox-search-'));const file=path.join(dir,'ui.mjs');fs.writeFileSync(file,result.outputFiles[0].text);const {Route}=await import(pathToFileURL(file));fs.rmSync(dir,{recursive:true});
 const txt=x=>typeof x==='string'?x:Array.isArray(x)?x.map(txt).join(''):x?.children?.map(txt).join('')??'';
 let timers=[];let intervals=[];
-function reset(){timers=[];intervals=[];f.realtime={};f.role="admin";f.activityRead=null;f.reads=[];f.fail=false;f.previewFail=false;f.tables={conversations:[{id:'target',status:'open',assigned_agent_id:null,channel_config:{name:'Target channel'},visitor_session:{id:'visitor1',visitor_metadata:{name:'Target visitor'}}},{id:'other',status:'open',assigned_agent_id:null,channel_config:{name:'Other'},visitor_session:{id:'visitor2'}}],agent_profile:[],messages:[{id:'z1',conversation_id:'target',content:'Technical recovery',created_at:'2026-10-16',is_recalled:false},{id:'a1',conversation_id:'target',content:'有冇洗衣機訂閱服務資訊？請唔好憑空推套餐。',created_at:'2026-10-15',is_recalled:false},{id:'z2',conversation_id:'other',content:'Other message',created_at:'2026-10-16',is_recalled:false}]};
+function reset(){timers=[];intervals=[];f.realtime={};f.channels=[];f.calls=[];f.actor="owner";f.role="admin";f.activityRead=null;f.messageRead=null;f.historyReads=[];f.reads=[];const storage=new Map();globalThis.sessionStorage={getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)};f.fail=false;f.previewFail=false;f.tables={conversations:[{id:'target',company_id:'company-a',status:'open',assigned_agent_id:null,channel_config:{name:'Target channel'},visitor_session:{id:'visitor1',visitor_metadata:{name:'Target visitor'}}},{id:'other',company_id:'company-a',status:'open',assigned_agent_id:null,channel_config:{name:'Other'},visitor_session:{id:'visitor2'}}],agent_profile:[],messages:[{id:'z1',conversation_id:'target',content:'Technical recovery',created_at:'2026-10-16',is_recalled:false},{id:'a1',conversation_id:'target',content:'有冇洗衣機訂閱服務資訊？請唔好憑空推套餐。',created_at:'2026-10-15',is_recalled:false},{id:'z2',conversation_id:'other',content:'Other message',created_at:'2026-10-16',is_recalled:false}]};
  f.tables.conversation_status_log=[];f.tables.conversation_assignment=[];f.tables.handoff_event=[];
- f.from=table=>{let rows=[...f.tables[table]],needle=null,search=false;const q={select(){return q;},eq(k,v){rows=rows.filter(r=>r[k]===v);return q;},in(k,ids){rows=rows.filter(r=>ids.includes(r[k]));return q;},neq(k,v){rows=rows.filter(r=>r[k]!==v);return q;},or(){rows=rows.filter(r=>!r.is_recalled);return q;},ilike(k,v){search=true;needle=v.slice(1,-1).replace(/\\([\\%_])/g,'$1');rows=rows.filter(r=>String(r[k]).toLowerCase().includes(needle.toLowerCase()));return q;},order(k,{ascending}={}){rows.sort((a,b)=>String(a[k]).localeCompare(String(b[k]))*(ascending?1:-1));return q;},range(a,b){f.reads.push({table,search,needle});return Promise.resolve((search&&f.fail||(!search&&table==='messages'&&f.previewFail))?{data:null,error:{message:'read_failed'},count:null}:{data:rows.slice(a,b+1),error:null,count:rows.length});},maybeSingle:async()=>({data:rows[0]??null,error:null}),then(resolve,reject){return (f.activityRead&&["conversation_status_log","conversation_assignment","handoff_event"].includes(table)?f.activityRead(table,rows):Promise.resolve({data:rows,error:null,count:rows.length})).then(resolve,reject);}};return q;};
+ f.from=table=>{let rows=[...f.tables[table]],needle=null,search=false;const q={select(){return q;},eq(k,v){rows=rows.filter(r=>r[k]===v);return q;},in(k,ids){rows=rows.filter(r=>ids.includes(r[k]));return q;},neq(k,v){rows=rows.filter(r=>r[k]!==v);return q;},or(){rows=rows.filter(r=>!r.is_recalled);return q;},ilike(k,v){search=true;needle=v.slice(1,-1).replace(/\\([\\%_])/g,'$1');rows=rows.filter(r=>String(r[k]).toLowerCase().includes(needle.toLowerCase()));return q;},order(k,{ascending}={}){rows.sort((a,b)=>String(a[k]).localeCompare(String(b[k]))*(ascending?1:-1));return q;},range(a,b){f.reads.push({table,search,needle});return Promise.resolve((search&&f.fail||(!search&&table==='messages'&&f.previewFail))?{data:null,error:{message:'read_failed'},count:null}:{data:rows.slice(a,b+1),error:null,count:rows.length});},maybeSingle:async()=>({data:rows[0]??null,error:null}),then(resolve,reject){if(table==="messages")f.historyReads.push(rows.map(r=>r.id));return (table==="messages"&&f.messageRead?f.messageRead(rows):f.activityRead&&["conversation_status_log","conversation_assignment","handoff_event"].includes(table)?f.activityRead(table,rows):Promise.resolve({data:rows,error:null,count:rows.length})).then(resolve,reject);}};return q;};
  globalThis.window={setTimeout:fn=>(timers.push(fn),fn),clearTimeout:fn=>{timers=timers.filter(x=>x!==fn);},setInterval:fn=>(intervals.push(fn),fn),clearInterval:fn=>{intervals=intervals.filter(x=>x!==fn);}};globalThis.document={addEventListener(){},removeEventListener(){}};
 }
 async function mount(){let r;await act(async()=>r=create(React.createElement(Route.component)));return r;}
@@ -72,7 +72,7 @@ test('Task1 C4 Inbox keeps Agent Tools bound to current visitor revision, role a
  const r=await mount();
  await pickTicket(r,'Target visitor');
  assert.equal(f.toolProps?.conversationId,'target');
- assert.equal(f.toolProps?.toolScopeKey,'admin');
+ assert.deepEqual(JSON.parse(f.toolProps?.toolScopeKey),['owner','admin','company-a',null]);
  assert.match(f.toolProps?.contextRevisionKey??'',/visitor-target-v1/);
  const oldKey=f.toolProps.contextRevisionKey;
  await pickTicket(r,'Other Visitor');
@@ -87,7 +87,7 @@ test('Task1 C4 Inbox keeps Agent Tools bound to current visitor revision, role a
  assert.notEqual(f.toolProps.contextRevisionKey,otherKey,'new customer correction must invalidate C4 drafts and citations');
  f.role='agent';
  await pickTicket(r,'Target visitor');
- assert.equal(f.toolProps?.toolScopeKey,'agent','role changes must invalidate privileged tool results');
+ assert.deepEqual(JSON.parse(f.toolProps?.toolScopeKey),['owner','agent','company-a',null],'role changes must invalidate privileged tool results');
  await act(async()=>r.unmount());
 });
 
@@ -143,4 +143,74 @@ test('Task1 Inbox has zero periodic message/whole-list polling and reconnects on
  assert.equal(f.reads.filter(x=>x.table==='messages').length,prior,'Inbox preview uses push payload with no RLS-wide refetch');
  assert.equal(intervals.length,0);
  await act(async()=>r.unmount());
+});
+
+
+const currentChannel=name=>f.channels.filter(c=>c.name===name&&!c.removed).at(-1);
+const inboxDraft=r=>r.root.findByType('textarea');
+async function messageBubble(r,content){const bubble=r.root.findAll(n=>n.type==='div'&&n.props.onClick&&txt({children:n.children})===content).at(-1);assert(bubble,content);await act(async()=>bubble.props.onClick());}
+
+test('Task3 initial SUBSCRIBED catches the Inbox snapshot gap and coalesces sibling acknowledgements',async t=>{
+ reset();f.tables.messages=[{id:'before',conversation_id:'target',role:'visitor',content:'Before subscription',is_recalled:false,created_at:'2026-10-30T01:00:00Z'}];
+ const r=await mount();t.after(async()=>{await act(async()=>r.unmount())});await pickTicket(r,'Target visitor');
+ const listReads=f.reads.filter(x=>x.table==='conversations').length,historyReads=f.historyReads.length;
+ f.tables.conversations[0]={...f.tables.conversations[0],status:'pending',assigned_agent_id:'late-agent'};
+ f.tables.messages.push({id:'after',conversation_id:'target',role:'visitor',content:'Saved before subscription became ready',is_recalled:false,created_at:'2026-10-30T01:00:01Z'});
+ await act(async()=>{currentChannel('console-conversations').status('SUBSCRIBED');currentChannel('console-all-messages').status('SUBSCRIBED');currentChannel('console-messages-target').status('SUBSCRIBED');});
+ assert.equal(f.toolProps.convStatus,'pending');assert.match(txt(r.toJSON()),/Saved before subscription became ready/);
+ assert.equal(f.reads.filter(x=>x.table==='conversations').length,listReads+1,'same-turn global acknowledgements share a snapshot');
+ assert.equal(f.historyReads.length,historyReads+1,'same-turn acknowledgements share the selected history read');
+ assert.equal(intervals.length,0);assert.deepEqual(f.calls,[]);
+ f.tables.messages.push({id:'resume',conversation_id:'target',role:'visitor',content:'Saved during reconnect',is_recalled:false,created_at:'2026-10-30T01:00:02Z'});
+ await act(async()=>currentChannel('console-messages-target').status('SUBSCRIBED'));
+ assert.match(txt(r.toJSON()),/Saved during reconnect/,'every subsequent acknowledgement reconciles without needing a preceding error event');
+ assert.equal(f.historyReads.length,historyReads+2);
+});
+
+test('Task3 removed Inbox subscription cannot read or apply a previous ticket after navigation',async t=>{
+ reset();const r=await mount();t.after(async()=>{await act(async()=>r.unmount())});await pickTicket(r,'Target visitor');
+ const old=currentChannel('console-messages-target');await pickTicket(r,'Other Visitor');const before=f.historyReads.length;
+ await act(async()=>old.status('SUBSCRIBED'));
+ assert.equal(f.historyReads.length,before);assert.equal(f.toolProps.conversationId,'other');assert.deepEqual(f.calls,[]);
+});
+
+for(const change of ['actor','role','company','assignment','status','selected message','current draft','customer revision'])test('Task3 pending Replace rejects changed '+change+' and its retained callbacks',async t=>{
+ reset();f.tables.messages=[{id:'visitor',conversation_id:'target',role:'visitor',content:'Current customer question',is_recalled:false,created_at:'2026-10-30T01:00:00Z'},
+   {id:'assistant',conversation_id:'target',role:'assistant',content:'Existing answer',is_recalled:false,created_at:'2026-10-30T01:00:01Z'}];
+ const r=await mount();t.after(async()=>{await act(async()=>r.unmount())});await pickTicket(r,'Target visitor');await messageBubble(r,'Current customer question');
+ await act(async()=>f.toolProps.onUseDraft('Human draft'));
+ const oldApply=f.toolProps.onUseDraft;
+ await act(async()=>oldApply('Obsolete suggestion'));
+ const oldConfirm=activityButton(r,'Replace')?.props.onClick;assert(oldConfirm,'pending confirmation exists');
+ if(change==='actor'||change==='role'){
+   if(change==='actor')f.actor='new-owner';else f.role='supervisor';
+   await act(async()=>r.update(React.createElement(Route.component)));
+ }else if(['company','assignment','status'].includes(change)){
+   const delta=change==='company'?{company_id:'company-b'}:change==='assignment'?{assigned_agent_id:'new-agent'}:{status:'resolved'};
+   f.tables.conversations[0]={...f.tables.conversations[0],...delta};
+   await act(async()=>f.realtime['console-conversations'].at(-1).cb({eventType:'UPDATE',new:{id:'target',...delta}}));
+ }else if(change==='selected message')await messageBubble(r,'Existing answer');
+ else if(change==='current draft')await act(async()=>inboxDraft(r).props.onChange({target:{value:'Newer human draft'}}));
+ else{
+   f.tables.messages[0]={...f.tables.messages[0],content:'Corrected customer question'};
+   await act(async()=>f.realtime['console-messages-target'].at(-1).cb({eventType:'UPDATE',new:f.tables.messages[0]}));
+ }
+ assert.doesNotMatch(txt(r.toJSON()),/Replace Draft\?/,'context change closes pending confirmation');
+ const retainedDraft=inboxDraft(r).props.value;
+ await act(async()=>{oldConfirm();oldApply('Another obsolete suggestion')});
+ assert.equal(inboxDraft(r).props.value,retainedDraft);assert.doesNotMatch(txt(r.toJSON()),/Replace Draft\?/);
+ assert.deepEqual(f.calls,[]);
+ if(change==='actor'){
+   f.actor='owner';await act(async()=>r.update(React.createElement(Route.component)));
+   assert.equal(inboxDraft(r).props.value,'Human draft','old callback must not overwrite the prior actor draft either');
+ }
+});
+
+test('Task3 unchanged pending Replace applies once and remains draft-only',async t=>{
+ reset();const r=await mount();t.after(async()=>{await act(async()=>r.unmount())});await pickTicket(r,'Target visitor');
+ await act(async()=>f.crmProps.onInsertDraft('Human draft'));
+ await act(async()=>f.crmProps.onInsertDraft('Current verified excerpt'));
+ const confirm=activityButton(r,'Replace').props.onClick;await act(async()=>confirm());
+ assert.equal(inboxDraft(r).props.value,'Current verified excerpt');assert.doesNotMatch(txt(r.toJSON()),/Replace Draft\?/);
+ await act(async()=>confirm());assert.equal(inboxDraft(r).props.value,'Current verified excerpt');assert.deepEqual(f.calls,[]);
 });

@@ -1,4 +1,4 @@
-import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer} from "./factual-evidence-selection.ts";
+import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer, resolveSourceRecordedPartialRecovery} from "./factual-evidence-selection.ts";
 import {validGroundingEvidence, buildGroundingEvidencePrompt, parseGroundingDemandResolutions, groundingEvidenceText} from "./grounding-evidence.ts";
 import type {CurrentFactualRequest, CurrentFactualDemand} from "./current-factual-request.ts";
 import type {KBDocumentCandidate} from "./kb-client.ts";
@@ -6,6 +6,7 @@ import {buildFactualKbPriceClaims} from "./factual-kb-price-proof.ts";
 import {evaluateB2BeforeCommit} from "./pre-send-conversion-supervisor.ts";
 import {createEmptyConversationCommerceState} from "./commerce-state-contract.ts";
 import type {GroundingVerificationReceipt} from "./grounding-evidence.ts";
+import {bindRagApiResponse, bindRagServiceDocument, ORIGINAL_RAG_ACTIVATION} from "./preview-kb-query-embedding.ts";
 
 function assert(value: unknown, message = "assertion failed"): asserts value {if (!value) throw new Error(message);}
 function equal(a: unknown, b: unknown) {assert(JSON.stringify(a) === JSON.stringify(b), JSON.stringify({actual:a,expected:b}));}
@@ -207,4 +208,118 @@ Deno.test("coverage validation is bounded, bidirectional and null-safe",()=>{
   }
   assert(!parseGroundingDemandResolutions([],result.grounding,[]));
   assert(!parseGroundingDemandResolutions([{demand_id:"demand-1",status:"supported",evidence_ids:["E99"]}],result.grounding,["E99"]));
+});
+
+// Local source-field recovery fixtures: all identities and amounts are synthetic.
+// Authentication is the existing response/document/chunk binding, not a forged
+// authority enum; the recovered amount remains recorded-only after rejection.
+const recoveryOptions={language:"zh-TW" as const,companyId:"company",sourceMessageId:"current-customer",expectedTenantId:"34"};
+async function bindPublishedProduct(doc: KBDocumentCandidate) {
+  const {response,grounded}=await bindRagApiResponse(Response.json({success:true,context_found:true,
+    selected_documents:[{document_id:doc.document_id,title:doc.title,source_type:doc.source_type,
+      document_score:doc.document_score,authority:doc.authority,
+      evidence:doc.chunks.map(({status:_status,...chunk})=>chunk)}],citations:[]}),ORIGINAL_RAG_ACTIVATION);
+  assert(grounded,"isolated authenticated product response was invalid");
+  bindRagServiceDocument(response,doc);
+  for(const chunk of doc.chunks)bindRagServiceDocument(response,chunk);
+  return doc;
+}
+async function recoveryCase(fields="銷售價: HK$1,290",currentness:"unknown"|"current"="unknown",bind=true) {
+  const product=document("recovery-product","商品型號: AX-QZ81\n"+fields+"\n庫存: 7","product","AX-QZ81");
+  product.authority!.entity_ids=["AX-QZ81"];product.authority!.regions=["hong_kong"];product.authority!.currentness=currentness;
+  if(bind)await bindPublishedProduct(product);
+  const price=demand(1,"AX-QZ81 price?","product",["AX-QZ81"]);
+  const stock=demand(2,"Is AX-QZ81 in stock now?","product",["AX-QZ81"]);stock.requested_facts=["availability"];
+  const req=request([price,stock]);
+  const bundle=selectFactualEvidence([product],req,options);assert(bundle.ok);
+  return {product,req,bundle};
+}
+for(const currentness of ["unknown","current"] as const)Deno.test("V2 source-field recovery: "+currentness+" price stays recorded-only with live stock pending and unchanged B2",async()=>{
+  const c=await recoveryCase(undefined,currentness);
+  for(const language of ["en","zh-TW","zh-CN"] as const){
+    const result=resolveSourceRecordedPartialRecovery(c.bundle,c.req,{...recoveryOptions,language});assert(result);
+    equal(result.demand_outcomes.map(item=>[item.demand_id,item.status,item.evidence_ids]),
+      [["demand-1","partial",["E1"]],["demand-2","unavailable",[]]]);
+    equal(result.unresolved_demand_ids,["demand-1","demand-2"]);
+    equal(result.recorded_facts.map(item=>[item.field,item.value]),[["price_amount",1290],["price_currency","HKD"]]);
+    assert(result.recorded_facts.every(item=>item.demand_id==="demand-1"&&item.document_id==="recovery-product"&&
+      item.chunk_id==="recovery-product-chunk"&&item.source_field==="銷售價"&&item.source_message_id==="current-customer"&&
+      item.tenant_id==="34"&&item.company_id==="company"&&item.currentness==="unverified"&&item.source_currentness===currentness));
+    assert(result.reply.includes("HK$1,290")&&result.reply.includes(c.req.demands[1].source_quote));
+    assert(!result.reply.includes("7"),"recorded stock must not become a live stock answer");
+    const metadata={...result.citation_metadata,response_route:"canonical_kb_partial_recovery",recorded_kb_facts:result.recorded_facts,
+      authoritative_kb_facts:[],partial_recovery:{contract:"canonical-source-field-recovery-1",question_resolution:"partial",demand_outcomes:result.demand_outcomes},
+      unresolved_fact_fields:result.unresolved_demand_ids,factual_grounding_required:true};
+    const state=createEmptyConversationCommerceState();
+    const verdict=evaluateB2BeforeCommit({persistence_kind:"ai_reply",proposed_response:result.reply,metadata,
+      snapshot:{conversation_id:"conversation",company_id:"company",source_message_id:"current-customer",commerce_state_revision:0,
+        commerce_state_source_message_id:null,state}});
+    equal(verdict.decision,"allow");equal(state.quotes,[]);
+    assert(!("kb_fact_proof" in metadata)&&!("answer_kind" in metadata),"recovery must not borrow direct/current quote authority");
+  }
+});
+Deno.test("V2 source-field recovery: same-document catalogue rows keep exact per-demand price, currency and lineage",async()=>{
+  const a=document("recovery-catalogue","sku_code: AX-QZ81\nspu_name: Harbor field pack\nprice: 125.0 CNY\nstock: 0","product","Catalogue");
+  const b=document("recovery-catalogue","sku_code: BR-998\nspu_name: Ridge travel pack\nprice: 349.0 CNY\nstock: 5","product","Catalogue");
+  a.authority!.currentness="unknown";
+  a.chunks[0].chunk_id="row-a";a.llm_context.full_content_evidence[0].chunk_id="row-a";
+  b.chunks[0].chunk_id="row-b";b.llm_context.full_content_evidence[0].chunk_id="row-b";
+  a.chunks.push(b.chunks[0]);a.llm_context.full_content_evidence.push(b.llm_context.full_content_evidence[0]);
+  await bindPublishedProduct(a);
+  const req=request([demand(1,"AX-QZ81 price?","product",["AX-QZ81"]),demand(2,"BR-998 price?","product",["BR-998"]),
+    demand(3,"What are the delivery terms?"),demand(4,"Has my order shipped?","transaction")]);
+  req.missing_evidence=[{demand_id:"demand-4",reason:"live_transaction_unavailable"}];
+  const bundle=selectFactualEvidence([a,document("recovery-policy","Dispatch timing depends on the destination.")],req,options);assert(bundle.ok);
+  const result=resolveSourceRecordedPartialRecovery(bundle,req,{...recoveryOptions,language:"en"});assert(result);
+  equal(result.recorded_facts.filter(item=>item.field==="price_amount").map(item=>[item.demand_id,item.model,item.value,item.chunk_id]),
+    [["demand-1","AX-QZ81",125,"row-a"],["demand-2","BR-998",349,"row-b"]]);
+  equal(result.recorded_facts.filter(item=>item.field==="price_currency").map(item=>item.value),["CNY","CNY"]);
+  equal(result.demand_outcomes.map(item=>item.status),["partial","partial","unavailable","unavailable"]);
+  equal((result.citation_metadata.citations as Array<{document_id:string;chunk_id:string}>).map(item=>[item.document_id,item.chunk_id]),
+    [["recovery-catalogue","row-a"],["recovery-catalogue","row-b"]]);
+  assert(!JSON.stringify(result.citation_metadata).includes("recovery-policy"),"a pending policy borrowed answered-price citations");
+  assert(result.reply.includes(req.demands[2].source_quote)&&result.reply.includes(req.demands[3].source_quote));
+  equal(result.unresolved_demand_ids,req.demands.map(item=>item.id));
+});
+Deno.test("V2 source-field recovery: unknown currency is explicit and never inferred from tenant or source region",async()=>{
+  const c=await recoveryCase("銷售價: 1290");
+  const result=resolveSourceRecordedPartialRecovery(c.bundle,c.req,recoveryOptions);assert(result);
+  equal(result.recorded_facts.map(item=>[item.field,item.value]),[["price_amount",1290]]);
+  assert(result.reply.includes("1,290")&&result.reply.includes("未註明幣別"));
+  assert(!/HK\$|HKD|CNY/.test(result.reply));
+});
+Deno.test("V2 source-field recovery: unmet demand conditions, scope and source bindings cannot be stripped",async()=>{
+  for(const fault of ["constraints","negation","correction","ambiguity","subject_source","missing_evidence","source_id","tenant_id","cross_demand_chunk"]){
+    const c=await recoveryCase();const option={...recoveryOptions};
+    if(fault==="constraints")c.req.demands[0].constraints={quantity:2};
+    if(fault==="negation")c.req.demands[0].explicit_negations=["not a bundle"];
+    if(fault==="correction")c.req.demands[0].customer_correction=true;
+    if(fault==="ambiguity")c.req.demands[0].ambiguity.is_ambiguous=true;
+    if(fault==="subject_source")c.req.demands[0].subject_source_message_ids=[];
+    if(fault==="missing_evidence")c.req.missing_evidence=[{demand_id:"demand-1",reason:"source_quote_unbound"}];
+    if(fault==="source_id")option.sourceMessageId="different-customer";
+    if(fault==="tenant_id")option.expectedTenantId="99";
+    if(fault==="cross_demand_chunk"){
+      c.bundle.sources[0].demand_ids=["demand-2"];
+      c.bundle.grounding.items[0].demand_ids=["demand-2"];
+      c.bundle.grounding.items[0].demand_scopes={"demand-2":"subject_evidence"};
+      c.bundle.grounding.demands[0].evidence_ids=[];
+    }
+    equal(resolveSourceRecordedPartialRecovery(c.bundle,c.req,option),null);
+  }
+});
+Deno.test("V2 source-field recovery: absent, malformed and conflicting selling prices are not recovered",async()=>{
+  for(const fields of ["成本: HK$1290\n描述: List of 1290 packages","銷售價: HK$1,29","銷售價: HK$1290\n售價: HK$1390","銷售價: 未提供"]){
+    const c=await recoveryCase(fields);equal(resolveSourceRecordedPartialRecovery(c.bundle,c.req,recoveryOptions),null);
+  }
+  const unbound=await recoveryCase(undefined,"unknown",false);
+  equal(resolveSourceRecordedPartialRecovery(unbound.bundle,unbound.req,recoveryOptions),null);
+});
+Deno.test("V2 source-field recovery: catalogue short-name identity candidates do not become confirmed subjects",async()=>{
+  const product=document("recovery-short-name","spu_code: HF1\nspu_name: 輕量化戶外衝鋒衣\nsku_code: HF1-NV-XL\nprice: 125 CNY\nstock: 2","product","Row 4");
+  product.authority!.currentness="unknown";await bindPublishedProduct(product);
+  const req=request([demand(1,"輕量衝鋒衣幾錢？","product",["輕量衝鋒衣"]),demand(2,"有冇現貨？","product",["輕量衝鋒衣"])]);
+  req.demands[1].requested_facts=["availability"];
+  const bundle=selectFactualEvidence([product],req,options);assert(bundle.ok);
+  equal(resolveSourceRecordedPartialRecovery(bundle,req,recoveryOptions),null);
 });

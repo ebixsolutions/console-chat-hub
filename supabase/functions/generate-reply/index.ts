@@ -75,7 +75,7 @@ import {
 import { productKbSemanticContract } from "../_shared/product-kb-semantic-contract.ts";
 import { resolveCurrentFactualRequest, type CurrentFactualRequest } from "../_shared/current-factual-request.ts";
 import { buildCurrentFactualRequestPrompt, currentFactualFollowupContext, currentFactualRequestContext, currentFactualRequestReceipt } from "../_shared/factual-request-context.ts";
-import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer, type FactualEvidenceBundle} from "../_shared/factual-evidence-selection.ts";
+import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer, resolveSourceRecordedPartialRecovery, type FactualEvidenceBundle} from "../_shared/factual-evidence-selection.ts";
 import {buildGroundingEvidencePrompt, type GroundingEvidence} from "../_shared/grounding-evidence.ts";
 import {buildFactualKbPriceClaims} from "../_shared/factual-kb-price-proof.ts";
 import { DecisionContextLimitError } from "../_shared/bounded-decision-context.ts";
@@ -6959,23 +6959,51 @@ Latest applicable corrections replace old values; an answered clarification is n
       return new Response(JSON.stringify({success:false,error:"AI service error",failure,retryable:false}),{status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
     }
     if (llm.code === "LLM_GROUNDING_REJECTED") {
-      const recoveryReply = _factualFollowup || _c1AuthorityDecision?.decision === "USE_CURRENT_KB"
+      const clarificationReply = _factualFollowup || _c1AuthorityDecision?.decision === "USE_CURRENT_KB"
         ? (_visitorLang === "en" ? "I found relevant source material, but could not reliably validate this answer. This does not mean the information is unavailable." : "我搵到相關資料，但今次未能可靠核實回答；呢個唔代表資料不存在。")
         : GROUNDING_RECOVERY_WORDING[_visitorLang] ?? GROUNDING_RECOVERY_WORDING.en;
-      const committed = await commitAiReplyWithControlGate(
+      const partial = !_priorGroundedTransform && !_mixedRequest && _factualEvidenceBundle && _currentFactualRequest &&
+          _generationCompanyId && source_message_id && _canonicalKbTenantId
+        ? resolveSourceRecordedPartialRecovery(_factualEvidenceBundle,_currentFactualRequest,{
+          language:_visitorLang,companyId:_generationCompanyId,sourceMessageId:source_message_id,expectedTenantId:_canonicalKbTenantId,
+        }) : null;
+      const recoveryTrace = {
+        source_error_code:"LLM_GROUNDING_REJECTED",
+        failed_generation_request_id:llm.request_id,
+        kb_retrieval_request:ragResult?.query_text_preview ?? null,
+        kb_request_contract:ragResult?.trace_metadata?.kb_request_contract ?? null,
+        ...(_currentFactualRequest?.subject ? {factual_request_subject:_currentFactualRequest.subject} : {}),
+        ...(_factualEvidenceBundle ? {factual_evidence_coverage:_factualEvidenceBundle.grounding.demands,
+          evidence_selection_limited:_factualEvidenceBundle.grounding.selection_limited} : {}),
+      };
+      const unresolved = _currentFactualRequest?.demands.length
+        ? _currentFactualRequest.demands.map(demand=>demand.id) : ["grounding_verification"];
+      let responseRoute = partial ? "canonical_kb_partial_recovery" : "grounding_recovery_clarification";
+      let committed = await commitAiReplyWithControlGate(
         supabaseAdmin,
         conversation_id,
         source_message_id,
-        recoveryReply,
+        partial?.reply ?? clarificationReply,
         {
-          response_route: "grounding_recovery_clarification",
+          ...recoveryTrace,
+          ...(partial ? {...partial.citation_metadata,recorded_kb_facts:partial.recorded_facts,
+            authoritative_kb_facts:[],partial_recovery:{contract:"canonical-source-field-recovery-1",
+              question_resolution:"partial",demand_outcomes:partial.demand_outcomes},rag_api_status:"success"} : {}),
+          response_route: responseRoute,
           handoff_required: false,
-          factual_grounding_required: false,
-          source_error_code: "LLM_GROUNDING_REJECTED",
-          unresolved_fact_fields: _currentFactualRequest?.demands.length
-            ? _currentFactualRequest.demands.map(demand=>demand.id) : ["grounding_verification"],
+          factual_grounding_required: Boolean(partial),
+          unresolved_fact_fields: partial?.unresolved_demand_ids ?? unresolved,
         },
       );
+      // Only a definitely uncommitted B2 rejection may fall back to the existing
+      // clarification. Human control, supersession and unknown outcomes never retry.
+      if (partial && !committed.ok && committed.result === "b2_block") {
+        responseRoute = "grounding_recovery_clarification";
+        committed = await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,source_message_id,clarificationReply,{
+          ...recoveryTrace,response_route:responseRoute,handoff_required:false,factual_grounding_required:false,
+          unresolved_fact_fields:unresolved,partial_recovery_b2_rejection:safeB2FailureCode(committed.b2_code),
+        });
+      }
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
       if (!committed.ok) {
         if (
@@ -7002,7 +7030,7 @@ Latest applicable corrections replace old values; an answered clarification is n
       return new Response(
         JSON.stringify({
           success: true,
-          response_route: "grounding_recovery_clarification",
+          response_route: responseRoute,
           handoff_required: false,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },

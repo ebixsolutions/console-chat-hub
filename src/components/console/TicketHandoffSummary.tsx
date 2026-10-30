@@ -32,10 +32,11 @@ export function TicketHandoffSummary({ conversationId }: { conversationId: strin
   useEffect(() => {
     let cancelled = false;
     let latestRead = 0;
+    let inFlight = false;
+    let pending = false;
     setState(null);
-    async function load() {
-      const read = ++latestRead;
-      const stale = () => cancelled || read !== latestRead;
+    async function load(read: number) {
+      const stale = () => cancelled || read !== latestRead || document.hidden;
       try {
         const { data: conversation, error: ce } = await supabase
           .from("conversations")
@@ -64,7 +65,32 @@ export function TicketHandoffSummary({ conversationId }: { conversationId: strin
         if (!stale()) setState({ id: conversationId, summary: null, error: true });
       }
     }
-    void load();
+    async function drain() {
+      if (inFlight || cancelled || document.hidden) return;
+      inFlight = true;
+      try {
+        while (pending && !cancelled && !document.hidden) {
+          pending = false;
+          await load(latestRead);
+        }
+      } finally {
+        inFlight = false;
+      }
+    }
+    function requestLoad() {
+      if (cancelled) return;
+      // Invalidate an older response immediately; event bursts share one
+      // pending scoped read instead of starting overlapping database reads.
+      latestRead += 1;
+      pending = true;
+      void drain();
+    }
+    const handleVisibility = () => {
+      if (document.hidden) latestRead += 1;
+      else requestLoad();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    requestLoad();
     const channel = supabase
       .channel(`ticket-summary-${conversationId}`)
       .on(
@@ -75,11 +101,18 @@ export function TicketHandoffSummary({ conversationId }: { conversationId: strin
           table: "handoff_event",
           filter: `conversation_id=eq.${conversationId}`,
         },
-        () => void load(),
+        requestLoad,
       )
-      .subscribe();
+      .subscribe(status => {
+        // Reconcile the initial snapshot/subscribe gap and real reconnects.
+        // No recurring read or AI generation is scheduled by this component.
+        if (status === "SUBSCRIBED") requestLoad();
+      });
     return () => {
       cancelled = true;
+      latestRead += 1;
+      pending = false;
+      document.removeEventListener("visibilitychange", handleVisibility);
       void supabase.removeChannel(channel);
     };
   }, [conversationId, refresh]);

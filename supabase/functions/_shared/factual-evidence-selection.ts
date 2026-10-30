@@ -3,6 +3,8 @@ import {selectCanonicalGrounding, fullContentSubjectMatch, deriveCurrentGroundin
 import type {CurrentFactualRequest, CurrentFactualDemand} from "./current-factual-request.ts";
 import type {KBDocumentCandidate, KBFullChunk} from "./kb-client.ts";
 import {buildCitationMetadata} from "./citation-lineage.ts";
+import {currentKbSellingPrice, exactKbModelIds, resolveCanonicalKbDirectAnswer} from "./canonical-kb-direct-answer.ts";
+import {kbProductRecordPrice, parseKbProductRecord} from "./kb-product-record.ts";
 import {GROUNDING_EVIDENCE_LIMITS, groundingEvidenceText, validGroundingEvidence,
   type GroundingEvidence, type GroundingEvidenceItem, type GroundingDemand, type GroundingDemandResolution} from "./grounding-evidence.ts";
 
@@ -210,4 +212,102 @@ export function canUseSingleDemandDirectAnswer(request?: CurrentFactualRequest):
     demand.subjects.length === 1 && demand.subject_source_message_ids.length > 0 &&
     demand.requested_facts.length > 0 && demand.requested_facts.every(fact => ["price", "stock"].includes(fact)) &&
     Object.keys(demand.constraints).length === 0 && demand.explicit_negations.length === 0 && !request.missing_evidence.length;
+}
+
+export interface SourceRecordedPartialRecovery {
+  reply: string;
+  citation_metadata: Record<string, unknown>;
+  used_evidence_ids: string[];
+  demand_outcomes: Array<{demand_id:string;status:"partial"|"unavailable";reason:string;evidence_ids:string[];answered_fields:string[]}>;
+  unresolved_demand_ids: string[];
+  recorded_facts: Array<{field:"price_amount"|"price_currency";value:number|string;model:string;demand_id:string;
+    evidence_id:string;document_id:string;chunk_id:string;source_field:string;source_message_id:string;
+    tenant_id:string;company_id:string;currentness:"unverified";source_currentness:"current"|"unknown"}>;
+}
+
+/** Discard rejected generation completely. Only independently bound source
+ * fields may be reconstructed; this never verifies current price, live stock,
+ * policy applicability or a transaction, and never turns a partial turn complete. */
+export function resolveSourceRecordedPartialRecovery(
+  bundle: Extract<FactualEvidenceBundle, {ok:true}>, request: CurrentFactualRequest,
+  options: {language:"en"|"zh-TW"|"zh-CN";companyId:string;sourceMessageId:string;expectedTenantId:string},
+): SourceRecordedPartialRecovery | null {
+  if (!options.companyId || !options.sourceMessageId || !options.expectedTenantId ||
+      request.source_message_id !== options.sourceMessageId || request.interpretation_source !== "semantic_demands" ||
+      !request.demands.length || !validGroundingEvidence(bundle.grounding)) return null;
+  const outcomes: SourceRecordedPartialRecovery["demand_outcomes"] = request.demands.map(demand => ({
+    demand_id:demand.id,status:"unavailable",reason:"not_independently_proven",evidence_ids:[],answered_fields:[],
+  }));
+  const facts: SourceRecordedPartialRecovery["recorded_facts"] = [];
+  const replies: string[] = [];
+  for (const demand of request.demands) {
+    const coverage = bundle.grounding.demands.find(item => item.id === demand.id);
+    if (demand.source_type !== "product" || demand.ambiguity.is_ambiguous || demand.subjects.length !== 1 ||
+        !demand.subject_source_message_ids.length || demand.customer_correction || demand.explicit_negations.length ||
+        Object.keys(demand.constraints).length || !demand.requested_facts.some(fact => key(fact) === "price") ||
+        !demand.requested_facts.every(fact => ["price","stock","availability"].includes(key(fact))) ||
+        !coverage || coverage.blocked || coverage.missing_reasons.length ||
+        request.missing_evidence.some(item => item.demand_id === demand.id)) continue;
+    const sources = bundle.sources.filter(source => source.scope === "subject_evidence" &&
+      source.demand_ids.includes(demand.id) && source.target.entity_ids.length === 1 &&
+      key(source.target.entity_ids[0]) === key(demand.subjects[0]));
+    if (sources.length !== 1) continue;
+    const source = sources[0], authority = source.selection.authority_decision;
+    if (authority.provenance.tenant_id !== options.expectedTenantId) continue;
+    const canonical = resolveCanonicalKbDirectAnswer({request:demand.question,selection:source.selection,language:options.language});
+    if (!canonical || !["price","listed_price_unverified","recorded_product_facts"].includes(canonical.kind) ||
+        canonical.identity_confirmation_required || canonical.evidence_chunks.length !== 1) continue;
+    const chunk = canonical.evidence_chunks[0];
+    const item = bundle.grounding.items.find(value => value.document_id === chunk.document_id &&
+      value.chunk_id === chunk.chunk_id && value.content === chunk.content && value.demand_ids.includes(demand.id) &&
+      value.demand_scopes[demand.id] === "subject_evidence" && coverage.evidence_ids.includes(value.id) &&
+      value.source_authority.currentness === authority.provenance.currentness &&
+      value.source_authority.authority_class === authority.selected_authority_class);
+    if (!item) continue;
+    const price = kbProductRecordPrice(parseKbProductRecord(chunk.content));
+    if (price.reason !== "ok" || price.amount === null || !price.field ||
+        canonical.price_fact && canonical.price_fact.value !== price.amount) continue;
+    if (source.selection.catalogue_binding) {
+      const recorded = canonical.recorded_facts?.filter(fact => fact.document_id === item.document_id &&
+        fact.chunk_id === item.chunk_id && fact.currentness === "unverified") ?? [];
+      if (!recorded.some(fact => fact.field === "price_amount" && fact.value === price.amount) ||
+          price.currency && !recorded.some(fact => fact.field === "price_currency" && fact.value === price.currency)) continue;
+    } else if (exactKbModelIds(demand.subjects[0]).length === 1 && currentKbSellingPrice(chunk.content) !== price.amount) continue;
+    const subject = demand.subjects[0], amount = price.amount.toLocaleString("en-US",{maximumFractionDigits:4});
+    const display = price.currency === "HKD" ? `HK$${amount}` : price.currency ? `${price.currency} ${amount}` : amount;
+    const currencyNote = price.currency ? "" : options.language === "en" ? " (currency not specified by the source)"
+      : options.language === "zh-CN" ? "（来源未注明币别）" : "（來源未註明幣別）";
+    replies.push(options.language === "en"
+      ? `The published product record for ${subject} contains a selling-price field recording ${display}${currencyNote}. This source-recorded amount is not a formal quotation. The current price is unverified; the checkout price still needs merchant verification.`
+      : options.language === "zh-CN"
+      ? `${subject} 的已发布商品资料中，价格栏位记录 ${display}${currencyNote}。这只是来源记录，尚未核实现价，并非正式报价；实际结算价仍待商家核实。`
+      : `${subject} 嘅已發布商品資料中，價格欄位記錄 ${display}${currencyNote}。呢個只係來源記錄，未核實係現價，並非正式報價；實際結帳價仍待商家核實。`);
+    const provenance = {model:subject,demand_id:demand.id,evidence_id:item.id,document_id:item.document_id,
+      chunk_id:item.chunk_id,source_field:price.field,source_message_id:options.sourceMessageId,
+      tenant_id:options.expectedTenantId,company_id:options.companyId,currentness:"unverified" as const,
+      source_currentness:item.source_authority.currentness};
+    facts.push({...provenance,field:"price_amount",value:price.amount});
+    if (price.currency) facts.push({...provenance,field:"price_currency",value:price.currency});
+    const outcome = outcomes.find(value => value.demand_id === demand.id)!;
+    outcome.status = "partial";
+    outcome.reason = "source_recorded_price_currentness_unverified";
+    outcome.evidence_ids = [item.id];
+    outcome.answered_fields = price.currency ? ["price_amount","price_currency"] : ["price_amount"];
+  }
+  if (!facts.length) return null;
+  const used = [...new Set(outcomes.flatMap(item => item.evidence_ids))];
+  const citation = buildFactualCitationMetadata(bundle,used,outcomes);
+  if (!citation) return null;
+  // Keep every original request visible as pending; quoting it does not assert
+  // its premise or lend a product-price source to another policy/order demand.
+  const pending = [...new Set(request.demands.map(demand => demand.source_quote.trim()))].filter(Boolean);
+  const remaining = options.language === "en"
+    ? `Still unverified: ${pending.map(question => `“${question}”`).join("; ")}. The recorded price above does not confirm these requested details; merchant verification is still needed.`
+    : options.language === "zh-CN"
+    ? `仍待核实的问题：${pending.map(question => `「${question}」`).join("、")}。上述价格记录不能确认这些事项，仍需商家核实。`
+    : `仍待核實的問題：${pending.map(question => `「${question}」`).join("、")}。上述價格記錄未能確認呢啲事項，仍需商家核實。`;
+  const reply = [...new Set(replies),remaining].join("\n\n");
+  if (reply.length > GROUNDING_EVIDENCE_LIMITS.answerCharacters) return null;
+  return {reply,citation_metadata:citation,used_evidence_ids:used,demand_outcomes:outcomes,
+    unresolved_demand_ids:request.demands.map(demand => demand.id),recorded_facts:facts};
 }

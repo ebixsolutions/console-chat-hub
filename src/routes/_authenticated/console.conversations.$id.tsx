@@ -75,8 +75,9 @@ function ConversationDetailContent() {
   const [messagesTicketId, setMessagesTicketId] = useState<string | null>(null);
   const [messagesError, setMessagesError] = useState(false);
   const [conversationError, setConversationError] = useState(false);
-  const detailScopeRef = useRef(id);
-  detailScopeRef.current = id;
+  const detailScopeKey = JSON.stringify([id, user?.id, currentRole]);
+  const detailScopeRef = useRef(detailScopeKey);
+  detailScopeRef.current = detailScopeKey;
   const messageReadRef = useRef(0);
   const conversationReadRef = useRef(0);
   const scopedMessages = messagesTicketId === id ? messages : [];
@@ -107,22 +108,10 @@ function ConversationDetailContent() {
 
   // ── J1: Realtime infrastructure ──
   const replyRef = useRef<HTMLTextAreaElement>(null);
-  const detailReconnectPendingRef = useRef(false);
-
-  function handleDetailSubscribeStatus(status: string) {
-    if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR")
-      detailReconnectPendingRef.current = true;
-    if (status === "SUBSCRIBED" && detailReconnectPendingRef.current) {
-      detailReconnectPendingRef.current = false;
-      // One authenticated catch-up after reconnect, no periodic DB reads.
-      void loadConv();
-      void loadMessages();
-    }
-  }
 
   const loadConv = useCallback(async () => {
     const read = ++conversationReadRef.current;
-    const stale = () => read !== conversationReadRef.current || detailScopeRef.current !== id;
+    const stale = () => read !== conversationReadRef.current || detailScopeRef.current !== detailScopeKey;
     try {
       const { data, error } = await supabase
         .from("conversations")
@@ -136,11 +125,11 @@ function ConversationDetailContent() {
     } catch {
       if (!stale()) setConversationError(true);
     }
-  }, [id]);
+  }, [id, detailScopeKey]);
 
   const loadMessages = useCallback(async () => {
     const read = ++messageReadRef.current;
-    const stale = () => read !== messageReadRef.current || detailScopeRef.current !== id;
+    const stale = () => read !== messageReadRef.current || detailScopeRef.current !== detailScopeKey;
     try {
       const { data, error } = await supabase
         .from("messages")
@@ -156,7 +145,7 @@ function ConversationDetailContent() {
     } catch {
       if (!stale()) setMessagesError(true);
     }
-  }, [id]);
+  }, [id, detailScopeKey]);
 
   const loadAgents = useCallback(async () => {
     const { data } = await supabase
@@ -167,6 +156,21 @@ function ConversationDetailContent() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    let catchupQueued = false;
+    const current = () => active && detailScopeRef.current === detailScopeKey;
+    const handleDetailSubscribeStatus = (status: string) => {
+      if (status !== "SUBSCRIBED" || !current() || catchupQueued) return;
+      catchupQueued = true;
+      // Initial readiness and reconnect both reconcile the read/subscribe gap.
+      // Sibling acknowledgements share one catch-up; there is no polling timer.
+      void Promise.resolve().then(() => {
+        catchupQueued = false;
+        if (!current()) return;
+        void loadConv();
+        void loadMessages();
+      });
+    };
     setLoading(true);
     setConv(null);
     setMessagesTicketId(null);
@@ -174,7 +178,7 @@ function ConversationDetailContent() {
     setConversationError(false);
     (async () => {
       await Promise.all([loadConv(), loadMessages(), loadAgents()]);
-      if (detailScopeRef.current === id) setLoading(false);
+      if (current()) setLoading(false);
     })();
 
     const convChannel = supabase
@@ -188,7 +192,7 @@ function ConversationDetailContent() {
           filter: `id=eq.${id}`,
         },
         () => {
-          loadConv();
+          if (current()) void loadConv();
         },
       )
       .subscribe(handleDetailSubscribeStatus);
@@ -204,6 +208,7 @@ function ConversationDetailContent() {
           filter: `conversation_id=eq.${id}`,
         },
         (payload) => {
+          if (!current()) return;
           if (payload.eventType === "INSERT" && (payload.new as { content?: string })?.content === "__THINKING__")
             return;
           loadMessages();
@@ -212,11 +217,13 @@ function ConversationDetailContent() {
       .subscribe(handleDetailSubscribeStatus);
 
     return () => {
+      active = false;
+      messageReadRef.current++;
+      conversationReadRef.current++;
       supabase.removeChannel(convChannel);
       supabase.removeChannel(msgChannel);
-      detailReconnectPendingRef.current = false;
     };
-  }, [id, loadConv, loadMessages, loadAgents]);
+  }, [id, detailScopeKey, loadConv, loadMessages, loadAgents]);
 
   useEffect(() => {
     if (!user) return;

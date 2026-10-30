@@ -41,6 +41,7 @@ function ConversationsInboxGuard() {
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Conv = {
   id: string;
+  company_id?: string | null;
   status: string;
   priority: string | null;
   updated_at: string | null;
@@ -373,19 +374,22 @@ function SinglePageInbox() {
 
   const lang = useConsoleLang();
   const { role: currentRole } = useCurrentRole();
+  const inboxScopeKey = JSON.stringify([user?.id, currentRole]);
+  const liveInboxScopeKey = useRef(inboxScopeKey);
+  liveInboxScopeKey.current = inboxScopeKey;
   const [selectedMessage, setSelectedMessage] = useState<{ id: string; role: string; content: string } | null>(null);
   const [useConfirmOpen, setUseConfirmOpen] = useState(false);
   const [pendingUseText, setPendingUseText] = useState("");
 
   async function loadConversations() {
     const loadId = ++conversationLoadRef.current;
-    const stale = () => loadId !== conversationLoadRef.current;
+    const stale = () => loadId !== conversationLoadRef.current || liveInboxScopeKey.current !== inboxScopeKey;
     // Keep the existing authenticated client and RLS as the sole ticket authority.
     // Optional relational metadata and previews must not hide an authorized Inbox.
     let { data: convs, error: cErr } = await readInboxConversations((from, to) => supabase
       .from("conversations")
       .select(
-        "id,status,priority,updated_at,created_at,assigned_agent_id,channel_config:channel_config_id(name),visitor_session:visitor_session_id(id,visitor_metadata)",
+        "id,company_id,status,priority,updated_at,created_at,assigned_agent_id,channel_config:channel_config_id(name),visitor_session:visitor_session_id(id,visitor_metadata)",
         { count: "exact" },
       )
       .order("updated_at", { ascending: false })
@@ -398,7 +402,7 @@ function SinglePageInbox() {
       // Retry ONLY the same RLS-scoped conversations table and scalar columns.
       const flat = await readInboxConversations((from, to) => supabase
         .from("conversations")
-        .select("id,status,priority,updated_at,created_at,assigned_agent_id", { count: "exact" })
+        .select("id,company_id,status,priority,updated_at,created_at,assigned_agent_id", { count: "exact" })
         .order("updated_at", { ascending: false })
         .order("id", { ascending: false })
         .range(from, to));
@@ -477,7 +481,8 @@ function SinglePageInbox() {
   const loadMessages = useCallback(async (convId: string, showLoading = false, scrollToBottom = false) => {
     if (selectedIdRef.current !== convId) return;
     const read = ++messageLoadRef.current;
-    const stale = () => read !== messageLoadRef.current || selectedIdRef.current !== convId;
+    const scope = liveInboxScopeKey.current;
+    const stale = () => read !== messageLoadRef.current || selectedIdRef.current !== convId || liveInboxScopeKey.current !== scope;
     if (showLoading) {
       setLoadingMessages(true);
       setMessagesConversationId(null);
@@ -515,27 +520,34 @@ function SinglePageInbox() {
   const selectedIdRef = useRef<string | null>(null);
   selectedIdRef.current = selectedId;
   // Subscriptions deliver events, never recurring database reads.
-  // A reconnect or tab-resume may reconcile once after missed notifications.
-  const reconnectPendingRef = useRef(false);
+  // Every subscription acknowledgement closes its snapshot-to-stream gap.
+  // Sibling acknowledgements in the same turn share one scoped catch-up.
+  const snapshotCatchupRef = useRef<{ scope: string; ticket: string | null; list: boolean } | null>(null);
   const convDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function scheduleSnapshotCatchup(includeList: boolean) {
+    const scope = liveInboxScopeKey.current;
+    const pending = snapshotCatchupRef.current;
+    if (pending?.scope === scope) {
+      pending.list ||= includeList;
+      pending.ticket = selectedIdRef.current;
+      return;
+    }
+    const snapshot = { scope, ticket: selectedIdRef.current, list: includeList };
+    snapshotCatchupRef.current = snapshot;
+    void Promise.resolve().then(() => {
+      if (snapshotCatchupRef.current !== snapshot || liveInboxScopeKey.current !== scope) return;
+      snapshotCatchupRef.current = null;
+      if (snapshot.list) void loadConversations();
+      if (snapshot.ticket && snapshot.ticket === selectedIdRef.current) void loadMessages(snapshot.ticket, false);
+    });
+  }
 
   function debouncedLoadConversations() {
     if (convDebounceRef.current) clearTimeout(convDebounceRef.current);
     convDebounceRef.current = setTimeout(() => {
       loadConversations();
     }, 1000);
-  }
-  function handleSubscribeStatus(status: string) {
-    if (status === "SUBSCRIBED" && reconnectPendingRef.current) {
-      reconnectPendingRef.current = false;
-      // One authenticated RLS read only when a previously broken stream
-      // actually reconnects. No X-second timer and no new backend.
-      loadConversations();
-      const sid=selectedIdRef.current;
-      if(sid) void loadMessages(sid,false);
-    }
-    if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR")
-      reconnectPendingRef.current = true;
   }
 
   useEffect(() => {
@@ -550,11 +562,19 @@ function SinglePageInbox() {
     })();
   }, [user]);
   useEffect(() => {
+    let active = true;
+    const current = () => active && liveInboxScopeKey.current === inboxScopeKey;
+    const handleSubscribeStatus = (status: string) => {
+      if (current() && status === "SUBSCRIBED") scheduleSnapshotCatchup(true);
+    };
+    setConversations(null);
+    setMessagesConversationId(null);
     loadConversations();
     loadAgents();
     const convChannel = supabase
       .channel("console-conversations")
       .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, (payload) => {
+        if (!current()) return;
         const change = payload.new as Partial<Conv> | undefined;
         if(payload.eventType!=="UPDATE" || !change?.id ||
             !conversationsRef.current.some(c=>c.id===change.id)){
@@ -565,6 +585,7 @@ function SinglePageInbox() {
         // rescanning every message in all 542+ ticket histories.
         setConversations(current=>current?.map(c=>c.id!==change.id?c:{
           ...c,
+          company_id:change.company_id===undefined?c.company_id:change.company_id,
           status:typeof change.status==="string"?change.status:c.status,
           priority:change.priority===undefined?c.priority:change.priority,
           updated_at:change.updated_at??c.updated_at,
@@ -577,6 +598,7 @@ function SinglePageInbox() {
     const allMsgChannel = supabase
       .channel("console-all-messages")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
+        if (!current()) return;
         const row=payload.new as {conversation_id?:string;content?:string;created_at?:string;is_recalled?:boolean}|undefined;
         if(!row?.conversation_id||typeof row.content!=="string"||row.content==="__THINKING__")return;
         // Only update a ticket already returned under this actor's RLS.
@@ -588,11 +610,15 @@ function SinglePageInbox() {
       })
       .subscribe(handleSubscribeStatus);
     return () => {
+      active = false;
+      conversationLoadRef.current++;
+      messageLoadRef.current++;
+      snapshotCatchupRef.current = null;
       supabase.removeChannel(convChannel);
       supabase.removeChannel(allMsgChannel);
       if (convDebounceRef.current) clearTimeout(convDebounceRef.current);
     };
-  }, [loadAgents]);
+  }, [loadAgents, inboxScopeKey]);
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
@@ -608,42 +634,39 @@ function SinglePageInbox() {
       return;
     }
     loadMessages(selectedId, true);
-    let selectedReconnectPending=false;
+    let active = true;
+    const current = () => active && selectedIdRef.current === selectedId && liveInboxScopeKey.current === inboxScopeKey;
     const msgChannel = supabase
       .channel(`console-messages-${selectedId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "messages", filter: `conversation_id=eq.${selectedId}` },
         (payload) => {
+          if (!current()) return;
           if (payload.eventType === "INSERT" && (payload.new as { content?: string })?.content === "__THINKING__")
             return;
           loadMessages(selectedId, false, payload.eventType === "INSERT");
         },
       )
       .subscribe(status => {
-        if (status === "SUBSCRIBED" && selectedReconnectPending) {
-          selectedReconnectPending = false;
-          if (selectedIdRef.current === selectedId) void loadMessages(selectedId,false);
-        }
-        if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR")
-          selectedReconnectPending = true;
+        if (current() && status === "SUBSCRIBED") scheduleSnapshotCatchup(false);
       });
     return () => {
+      active = false;
+      messageLoadRef.current++;
       supabase.removeChannel(msgChannel);
     };
-  }, [selectedId, loadMessages]);
+  }, [selectedId, loadMessages, inboxScopeKey]);
 
   useEffect(() => {
     function handleVisibility() {
       if (!document.hidden) {
-        loadConversations();
-        const sid = selectedIdRef.current;
-        if (sid) loadMessages(sid, false);
+        scheduleSnapshotCatchup(true);
       }
     }
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [loadMessages]);
+  }, [loadMessages, inboxScopeKey]);
 
   async function callEF(name: string, body: Record<string, unknown>) {
     try {
@@ -940,12 +963,25 @@ function SinglePageInbox() {
     [messages, messagesConversationId, selectedId],
   );
 
-  // An unconfirmed Use-in-Draft action belongs to one ticket, customer context
-  // and operator role; never carry the pending text into a newer revision.
+  const currentSelectedMessage = selectedMessage && messagesConversationId === selectedId
+    ? messages.find(m => m.id === selectedMessage.id && !m.is_recalled) ?? null : null;
+  const toolScopeKey = JSON.stringify([user?.id, currentRole, selectedConv?.company_id, selectedConv?.assigned_agent_id]);
+  const draftActionKey = JSON.stringify([selectedId, toolScopeKey, selectedConv?.status, contextRevisionKey,
+    currentSelectedMessage?.id, currentSelectedMessage?.content, reply]);
+  const liveDraftActionKey = useRef(draftActionKey);
+  liveDraftActionKey.current = draftActionKey;
+  const pendingDraftAction = useRef<{ key: string; text: string } | null>(null);
+  const renderedPendingDraftAction = pendingDraftAction.current;
+  useEffect(() => {
+    liveDraftActionKey.current = draftActionKey;
+    return () => { liveDraftActionKey.current = ""; pendingDraftAction.current = null; };
+  }, []);
+  // Invalidate both the visible modal and any retained callback on context change.
   useEffect(() => {
     setUseConfirmOpen(false);
     setPendingUseText("");
-  }, [selectedId, contextRevisionKey, currentRole]);
+    pendingDraftAction.current = null;
+  }, [draftActionKey]);
 
   return (
     <div
@@ -1578,8 +1614,11 @@ function SinglePageInbox() {
             contextRevisionKey={contextRevisionKey}
             draftText={reply}
             currentRole={currentRole}
+            toolScopeKey={toolScopeKey}
             onInsertDraft={(text) => {
+              if (!selectedConv || liveDraftActionKey.current !== draftActionKey || selectedConv.status === "resolved") return;
               if (reply.trim() && reply.trim() !== text.trim()) {
+                pendingDraftAction.current = { key: draftActionKey, text };
                 setPendingUseText(text);
                 setUseConfirmOpen(true);
               } else {
@@ -1596,13 +1635,15 @@ function SinglePageInbox() {
             <AgentToolPanel
               conversationId={selectedId}
               convStatus={selectedConv.status}
-              toolScopeKey={currentRole ?? ""}
+              toolScopeKey={toolScopeKey}
               contextRevisionKey={contextRevisionKey}
               draftText={reply}
-              selectedMessage={selectedMessage}
+              selectedMessage={currentSelectedMessage}
               onClearSelection={() => setSelectedMessage(null)}
               onUseDraft={(text) => {
+                if (liveDraftActionKey.current !== draftActionKey || selectedConv.status === "resolved") return;
                 if (reply.trim() && reply.trim() !== text.trim()) {
+                  pendingDraftAction.current = { key: draftActionKey, text };
                   setPendingUseText(text);
                   setUseConfirmOpen(true);
                 } else {
@@ -1615,7 +1656,10 @@ function SinglePageInbox() {
         )}
       </div>
 
-      <Dialog open={useConfirmOpen} onOpenChange={setUseConfirmOpen}>
+      <Dialog open={useConfirmOpen} onOpenChange={(open) => {
+        setUseConfirmOpen(open);
+        if (!open) { pendingDraftAction.current = null; setPendingUseText(""); }
+      }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>{lang === "zh" ? "取代草稿？" : "Replace Draft?"}</DialogTitle>
@@ -1630,6 +1674,7 @@ function SinglePageInbox() {
               variant="outline"
               size="sm"
               onClick={() => {
+                pendingDraftAction.current = null;
                 setUseConfirmOpen(false);
                 setPendingUseText("");
               }}
@@ -1639,7 +1684,12 @@ function SinglePageInbox() {
             <Button
               size="sm"
               onClick={() => {
-                setReply(pendingUseText);
+                if (!renderedPendingDraftAction || pendingDraftAction.current !== renderedPendingDraftAction ||
+                    renderedPendingDraftAction.text !== pendingUseText || !selectedConv ||
+                    renderedPendingDraftAction.key !== liveDraftActionKey.current ||
+                    liveDraftActionKey.current !== draftActionKey || selectedConv?.status === "resolved") return;
+                pendingDraftAction.current = null;
+                setReply(renderedPendingDraftAction.text);
                 setUseConfirmOpen(false);
                 setPendingUseText("");
               }}

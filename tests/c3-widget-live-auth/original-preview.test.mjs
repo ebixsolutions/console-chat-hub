@@ -503,6 +503,66 @@ for(const fault of ['omitted-demand','partial-inconsistent','oversized-draft','s
  assert.equal(r.data.success,false);assert.equal(f.rpc.length,0);assert.equal(x.model(),fault==='oversized-draft'?2:3);
 });
 
+async function sourceFieldAssistFixture(stage='local_grounding',documentFixture=inboxProductFixture){
+ const quotes=['ITEM-Q9 price?','Is ITEM-Q9 in stock?'],question=quotes.join(' ');
+ const semantic=providerWireV5({language:'en',intent:'merchant_facts',topic:'ITEM-Q9',requested_facts:['price','availability'],
+  demands:quotes.map((quote,index)=>({question:quote,source_quote:quote,subject_refs:['ITEM-Q9'],source_type:'product',
+   requested_facts:[index?'availability':'price'],constraints:{},customer_correction:false,explicit_negations:[],
+   ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}))});
+ const rejected=stage==='local_grounding'
+  ?'ITEM-Q9 costs CNY 9999 and is available now. Rejected draft marker.'
+  :'ITEM-Q9 has price 125.0 CNY and guaranteed immediate availability. Rejected draft marker.';
+ const x=await setupInbox('none',documentFixture,semantic,{suggestions:[{content:rejected,tone_label:'Informative'}],
+  verifier:{grounded:false,unsupported_claims:['The source does not establish immediate availability.'],evidence_ids:[],resolution:'unsupported',demand_resolutions:[]}});
+ const source=crypto.randomUUID();
+ f.rows.messages=[{id:source,conversation_id:x.c.id,role:'visitor',content:question,is_recalled:false,created_at:'2026-10-29T08:00:00Z',metadata:{}}];
+ return {...x,question,source,rejected};
+}
+for(const stage of ['local_grounding','independent_verifier'])test('Task3 Inbox source-field recovery preserves known price after '+stage,async()=>{
+ const x=await sourceFieldAssistFixture(stage),before=JSON.stringify(f.rows.messages),marker=JSON.stringify(x.c.metadata_source);
+ const r=await x.send('suggest_reply',x.question);
+ assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.success,true);assert.equal(r.data.draft_only,true);
+ assert.equal(r.data.response_route,'canonical_kb_partial_recovery');assert.equal(r.data.source_error_code,'LLM_GROUNDING_REJECTED');
+ assert.equal(r.data.source_rejection_stage,stage);assert.equal(r.data.knowledge_grounded,true);
+ assert.equal(r.data.result.suggestions.length,1);const reply=r.data.result.suggestions[0].content;
+ assert(reply.includes('ITEM-Q9')&&/CNY\s*125/u.test(reply),reply);
+ assert(!/9999|Rejected draft marker|guaranteed immediate availability/u.test(reply),reply);
+ assert(/unverified|未核實|未核实/u.test(reply),reply);
+ assert(reply.includes('Is ITEM-Q9 in stock?'),'the unavailable stock demand must be explicitly retained');
+ assert.equal(r.data.partial_recovery.contract,'canonical-source-field-recovery-1');
+ assert.equal(r.data.partial_recovery.question_resolution,'partial');
+ assert.deepEqual(r.data.partial_recovery.demand_outcomes.map(item=>[item.demand_id,item.status]),[['demand-1','partial'],['demand-2','unavailable']]);
+ assert.deepEqual(r.data.unresolved_fact_fields,['demand-1','demand-2']);assert.deepEqual(r.data.authoritative_kb_facts,[]);
+ assert(r.data.recorded_kb_facts.some(item=>item.field==='price_amount'&&item.value===125));
+ assert(r.data.recorded_kb_facts.some(item=>item.field==='price_currency'&&item.value==='CNY'));
+ assert(r.data.recorded_kb_facts.every(item=>item.currentness==='unverified'&&item.source_message_id===x.source&&item.company_id===x.c.company_id&&item.tenant_id==='34'));
+ assert.deepEqual(r.data.citations.map(item=>item.chunk_id),['fixture-chunk-2']);
+ assert.deepEqual(r.data.citation_lineage.evidence_chunk_ids,['fixture-chunk-2']);
+ assert.equal(x.posts(),1);assert.deepEqual(x.modelKinds(),{semantic:1,answer:stage==='local_grounding'?1:2},'recovery must not request another answer or verifier');
+ assert.equal(JSON.stringify(f.rows.messages),before,'recovered suggestion must remain unsent');
+ assert.equal(JSON.stringify(x.c.metadata_source),marker);assert.equal(f.rpc.length,0);
+});
+test('Task3 Inbox source-field recovery cannot invent a missing price',async()=>{
+ const x=await sourceFieldAssistFixture('local_grounding',{...inboxProductFixture,content:inboxProductFixture.content.replace('price: 125.0 CNY','price: unavailable')});
+ const before=JSON.stringify(f.rows.messages),r=await x.send('suggest_reply',x.question);
+ assert.equal(r.status,502,JSON.stringify(r));assert.equal(r.data.failure.code,'LLM_GROUNDING_REJECTED');
+ assert(!r.data.result&&!r.data.partial_recovery);assert.equal(x.posts(),1);assert.deepEqual(x.modelKinds(),{semantic:1,answer:1});
+ assert.equal(JSON.stringify(f.rows.messages),before);assert.equal(f.rpc.length,0);
+});
+for(const tool of ['knowledge_helper','policy'])test('Task3 Inbox source-field recovery preserves '+tool+' semantics',async()=>{
+ const x=await sourceFieldAssistFixture(),before=JSON.stringify(f.rows.messages),r=await x.send(tool,x.question);
+ assert.equal(r.status,200,JSON.stringify(r));assert(!r.data.partial_recovery);assert(!r.data.result.suggestions);
+ if(tool==='knowledge_helper'){
+  assert.equal(r.data.result.status,'available');assert.equal(r.data.answer_verified,false);
+  assert(r.data.result.evidence.some(item=>item.content.includes('price: 125.0 CNY')));
+  assert.deepEqual(x.modelKinds(),{semantic:1,answer:0});
+ }else{
+  assert.equal(r.data.result.status,'insufficient_evidence');assert.equal(r.data.knowledge_grounded,false);
+  assert.deepEqual(x.modelKinds(),{semantic:0,answer:0});
+ }
+ assert.equal(x.posts(),1);assert.equal(JSON.stringify(f.rows.messages),before);assert.equal(f.rpc.length,0);
+});
+
 for(const fault of ['none','default-denied','opt-in-false','assist-disabled','policy-authority','arbitrary-evaluation','wrong-slot','wrong-schema','missing-schema','wrong-system','wrong-purpose','attempt-two','oversized-output','prepare-hook','missing-source','wrong-source','foreign-source','recalled-source','assistant-source','source-time-drift','source-content-changed','replay','new-operation-replay','grant-revoked','grant-revoked-during-source-read','membership-revoked-during-source-read'])test('Inbox semantic context has separate opt-in and never grants answer grounding: '+fault,async()=>{
  const x=await setupInbox('none',{},providerWireV5({demands:[]}));
  const grant=JSON.parse(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION);

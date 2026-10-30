@@ -1466,6 +1466,111 @@ const task1SemanticContextWire=(demands,patch={})=>providerWireV5({
  language:'zh-HK',intent:'merchant_facts',requested_facts:[...new Set(demands.flatMap(demand=>demand.requested_facts))],
  demands,...patch,
 },'ASK_FACT');
+
+function v2PartialRecoveryFixture(options={}) {
+ const model='AX-QZ81',priceQuestion=model+' 幾錢？',stockQuestion='有冇現貨？';
+ const document=task1cModelDocument({model,price:1290,stock:7,currentness:'unknown',id:'v2-recorded-price'});
+ const rejected=model+' costs HK$9,999,999 and 88 units are in stock.';
+ return fixture(options.question??priceQuestion+stockQuestion,{source:uuid(8201),originalPreview:true,fullChain:true,
+  answers:[rejected],originalRagResponse:task1cRagDocuments(document),
+  semantic:task1SemanticContextWire([
+   task1SemanticContextDemand(priceQuestion,{subject_refs:[model],requested_facts:['price']}),
+   task1SemanticContextDemand(stockQuestion,{subject_refs:[model],requested_facts:['availability']}),
+  ],{topic:model}),...options});
+}
+test('V2 partial recovery: rejected multi-demand draft preserves source-recorded price and pending live stock',async()=>{
+ const f=v2PartialRecoveryFixture();const result=await f.run();
+ assert.equal(result.status,200,JSON.stringify(result));assert.equal(f.commits.length,1);
+ const reply=f.commits[0],meta=reply.metadata;
+ assert.equal(meta.response_route,'canonical_kb_partial_recovery',JSON.stringify({content:reply.content,meta}));
+ assert.match(reply.content,/AX-QZ81/);assert.match(reply.content,/HK\$1,290/);
+ assert.match(reply.content,/來源記錄|来源记录|source.recorded/iu);
+ assert.match(reply.content,/現貨|现货|live stock/iu);
+ assert.match(reply.content,/未核實|未核实|unverified/iu);
+ assert(!/9,999,999|88 units/.test(reply.content),'the rejected draft was reused');
+ assert.deepEqual(meta.partial_recovery.demand_outcomes.map(item=>[item.demand_id,item.status]),
+  [['demand-1','partial'],['demand-2','unavailable']]);
+ assert.deepEqual(meta.citations.map(item=>item.document_id),['v2-recorded-price']);
+ assert.equal(meta.recorded_kb_facts.find(item=>item.field==='price_amount').value,1290);
+ assert(meta.recorded_kb_facts.every(item=>item.demand_id==='demand-1'&&item.source_message_id===uuid(8201)&&item.currentness==='unverified'));
+ assert(!meta.kb_fact_proof);assert.deepEqual(meta.authoritative_kb_facts,[]);
+ assert(meta.unresolved_fact_fields.includes('demand-2'));
+ assert.equal(meta.source_error_code,'LLM_GROUNDING_REJECTED');
+ assert(meta.kb_request_contract,'failed generation must retain the safe retrieval request trace');
+ assert(f.events.flat().some(value=>typeof value==='string'&&value.includes('grounding_exact_fact_rejected')));
+ assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
+ assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,2,'only semantic and the original rejected generation; no retry/verifier call');
+ assert.equal(meta.b2_source_message_id,uuid(8201));assert.equal(meta.b2_commit_source,'commit_ai_reply_tx');
+ const gates=catalogueGateEvents(f);assert.deepEqual(gates.map(item=>[item.gate_decision,item.gate_code,item.commit_attempted]),[['allow','B2_ALLOW',true]]);
+ const memory=f.tables.conversation_memory_state[0].memory;
+ assert(memory.question_lifecycle.some(item=>item.source_message_id===uuid(8201)&&item.status==='pending'));
+ assert(!memory.question_lifecycle.some(item=>item.source_message_id===uuid(8201)&&item.status==='resolved'));
+ assert.deepEqual(f.tables.conversation_commerce_state.flatMap(row=>row.state.quotes),[]);
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+ assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
+ assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,2);
+});
+test('V2 partial recovery: a definite B2 block has no first commit and only the safe clarification commits',async()=>{
+ // The quoted customer premise is still unverified. The unchanged B2 quote
+ // gate may reject it; recovery must use the original clarification, once.
+ const price='AX-QZ81 現時售價為 HK$1,290？',stock='有冇現貨？';
+ const f=v2PartialRecoveryFixture({question:price+stock,semantic:task1SemanticContextWire([
+  task1SemanticContextDemand(price,{subject_refs:['AX-QZ81'],requested_facts:['price']}),
+  task1SemanticContextDemand(stock,{subject_refs:['AX-QZ81'],requested_facts:['availability']}),
+ ],{topic:'AX-QZ81'})});
+ const result=await f.run();assert.equal(result.status,200,JSON.stringify({result,events:f.events.slice(-10)}));
+ const gates=catalogueGateEvents(f);
+ assert.deepEqual(gates.map(item=>[item.gate_decision,item.gate_code,item.commit_attempted]),
+  [['block','CURRENT_QUOTE_NOT_PROVEN',false],['allow','B2_ALLOW',true]],JSON.stringify({gates,commits:f.commits}));
+ const writes=f.requests.filter(item=>item.url.endsWith('/commit_ai_reply_tx'));
+ assert.equal(writes.length,1,'a blocked proposal must never reach the RPC');assert.equal(f.commits.length,1);
+ assert.equal(f.commits[0].metadata.response_route,'grounding_recovery_clarification');
+ assert.equal(f.commits[0].metadata.partial_recovery_b2_rejection,'CURRENT_QUOTE_NOT_PROVEN');
+ assert(!/1,290|9,999,999/.test(f.commits[0].content));
+ assert(!f.commits[0].metadata.recorded_kb_facts);assert(!f.commits[0].metadata.partial_recovery);
+ assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
+ assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,2);
+ assert(f.tables.conversation_memory_state[0].memory.question_lifecycle.some(item=>item.source_message_id===uuid(8201)&&item.status==='pending'));
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);
+ assert.equal(f.requests.filter(item=>item.url.endsWith('/commit_ai_reply_tx')).length,1);assert.equal(f.commits.length,1);
+});
+for(const [guard,option,expected] of [
+ ['human control',{humanAfterFirstDraft:true},'human_control'],
+ ['superseded source',{newSourceAfterFirstDraft:true},'superseded_source'],
+ ['stale revision',{rpcResult:'stale_authorized_revision'},'stale_authorized_revision'],
+ ['unknown RPC acknowledgement',{rpcResult:'unrecognized_acknowledgement'},'unexpected_result'],
+])test('V2 partial recovery: '+guard+' cannot trigger a second persistence attempt',async()=>{
+ const f=v2PartialRecoveryFixture(option);const result=await f.run();
+ assert.equal(f.commits.length,0,JSON.stringify({result,commits:f.commits}));
+ assert(result.body.skipped===expected||String(result.body.error).includes(expected),JSON.stringify(result));
+ const attempts=f.requests.filter(item=>item.url.endsWith('/commit_ai_reply_tx'));
+ assert.equal(attempts.length,1,JSON.stringify({result,gates:catalogueGateEvents(f)}));
+ assert.equal(attempts[0].body.p_metadata.response_route,'canonical_kb_partial_recovery');
+ assert.equal(catalogueGateEvents(f).length,1,'control/CAS/unknown denial retried the clarification branch');
+ assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
+ assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,2);
+});
+test('V2 partial recovery: constrained price retains the original unresolved clarification',async()=>{
+ const price='AX-QZ81 兩件幾錢？',stock='有冇現貨？';
+ const f=v2PartialRecoveryFixture({question:price+stock,semantic:task1SemanticContextWire([
+  task1SemanticContextDemand(price,{subject_refs:['AX-QZ81'],requested_facts:['price'],constraints:{quantity:2}}),
+  task1SemanticContextDemand(stock,{subject_refs:['AX-QZ81'],requested_facts:['availability']}),
+ ],{topic:'AX-QZ81'})});
+ const result=await f.run();assert.equal(result.status,200,JSON.stringify(result));assert.equal(f.commits.length,1);
+ const reply=f.commits[0];assert.equal(reply.metadata.response_route,'grounding_recovery_clarification');
+ assert(!reply.metadata.recorded_kb_facts);assert(!/1,290|9,999,999/.test(reply.content));
+ assert.deepEqual(reply.metadata.unresolved_fact_fields,['demand-1','demand-2']);
+ const query=JSON.parse(f.requests.find(item=>item.url.includes('context-search')).body.query);
+ assert.equal(query.questions[0].constraints.quantity,2,'recovery stripped the requested quantity');
+ assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,2);
+});
+test('V2 partial recovery: foreign-tenant evidence cannot become a recovered price',async()=>{
+ const f=v2PartialRecoveryFixture({originalRagResponse:task1cRagDocuments(task1cModelDocument({model:'AX-QZ81',price:1290,tenant:'99',currentness:'unknown',id:'foreign-recovery-price'}))});
+ await f.run();
+ assert(!f.commits.some(reply=>reply.metadata.response_route==='canonical_kb_partial_recovery'||reply.metadata.recorded_kb_facts?.length));
+ assert(!f.commits.some(reply=>/1,290|9,999,999/.test(reply.content)));
+ assert(!f.requests.some(item=>item.url.endsWith(':generateContent')&&!item.body?.generationConfig?.responseSchema));
+});
 function task1SemanticContextPrompt(f){
  const generation=f.requests.find(request=>request.url.endsWith(':generateContent')&&!request.body?.generationConfig?.responseSchema);
  assert(generation,'the complete request must reach governed generation');

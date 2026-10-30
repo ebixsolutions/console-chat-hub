@@ -23,7 +23,7 @@ import { factualSubject, resolveFactualFollowup } from "../_shared/conversation-
 import { buildCanonicalAssistRetrievalQuery } from "../_shared/conversation-runtime-state.ts";
 import { resolveCurrentFactualRequest, type CurrentFactualRequest } from "../_shared/current-factual-request.ts";
 import { currentFactualRequestReceipt, buildCurrentFactualRequestPrompt } from "../_shared/factual-request-context.ts";
-import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer} from "../_shared/factual-evidence-selection.ts";
+import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer, resolveSourceRecordedPartialRecovery} from "../_shared/factual-evidence-selection.ts";
 import {buildGroundingEvidencePrompt, groundingEvidenceText, parseGroundingDemandResolutions,
   type GroundingEvidence, type GroundingVerificationReceipt} from "../_shared/grounding-evidence.ts";
 import { DecisionContextLimitError } from "../_shared/bounded-decision-context.ts";
@@ -1190,7 +1190,34 @@ Deno.serve(async (req) => {
         );
       }
       const checked=await verifyAssistClaims(verificationRequest,boundEvidence ? JSON.stringify({suggestions:safe}) : safe.map(s=>s.content).join("\n"),evidence,{companyId:scope.companyId,conversationId,toolType:"suggest_reply",legacyAuthority:inboxAuthority,maxProviderAttempts:boundedModelAttempts},false,boundEvidence);
-      if(!checked.ok)return jsonRes({success:false,error:"suggest_failed",failure:checked.failure},502,req);
+      if(!checked.ok){
+        // Discard every rejected draft. The shared resolver may independently
+        // retain exact source-recorded fields; it cannot certify current price,
+        // availability or the unresolved remainder, and makes no provider call.
+        const recovery = checked.failure.code === "LLM_GROUNDING_REJECTED" &&
+          ["local_grounding","independent_verifier"].includes(checked.rejection_stage ?? "") &&
+          factualBundle?.ok && scope.companyId && assistFactualRequest.source_message_id
+          ? resolveSourceRecordedPartialRecovery(factualBundle,assistFactualRequest,{
+            language:catalogueLanguage,companyId:scope.companyId,
+            sourceMessageId:assistFactualRequest.source_message_id,
+            expectedTenantId:tenant.scope.singaporeTenantId,
+          }) : null;
+        // Preserve the existing per-draft bound without truncating a pending need.
+        if(recovery && recovery.reply.length <= 1000)return jsonRes({
+          success:true,tool_type:"suggest_reply",draft_only:true,knowledge_grounded:true,
+          scope_mode:tenant.scope.mode,kb_request_contract:kbRequestContract,
+          selected_document_id:(recovery.citation_metadata.citation_lineage as Record<string,unknown> | undefined)?.selected_document_id ?? null,
+          ...recovery.citation_metadata,
+          response_route:"canonical_kb_partial_recovery",
+          source_error_code:checked.failure.code,source_rejection_stage:checked.rejection_stage,
+          partial_recovery:{contract:"canonical-source-field-recovery-1",question_resolution:"partial",demand_outcomes:recovery.demand_outcomes},
+          recorded_kb_facts:recovery.recorded_facts,authoritative_kb_facts:[],
+          unresolved_fact_fields:recovery.unresolved_demand_ids,
+          factual_evidence_coverage:boundEvidence!.demands,evidence_selection_limited:boundEvidence!.selection_limited,
+          result:{suggestions:[{content:recovery.reply,tone_label:"Informative"}]},
+        },200,req);
+        return jsonRes({success:false,error:"suggest_failed",failure:checked.failure},502,req);
+      }
       const usedMetadata = factualBundle?.ok && checked.receipt ? buildFactualCitationMetadata(factualBundle,checked.receipt.used_evidence_ids,checked.receipt.demand_resolutions) : null;
       if (factualBundle?.ok && (!checked.receipt || checked.receipt.used_evidence_ids.length > 0 && !usedMetadata))
         return jsonRes({success:false,error:"suggest_citation_lineage_unavailable"},502,req);
