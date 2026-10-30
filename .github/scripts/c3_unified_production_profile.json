@@ -1334,7 +1334,7 @@
   "authorized_task1_semantic_context_sha256": {
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "87f917d514d7ebc92fcc4986841454c5cb3c9663c573b1e2ffe9292ac2d48c81",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "a44174dc718010a174b5d032a0a47898b1a9f3f358cfdd13f13eea6ac5f71350",
-    "supabase/functions/_shared/commerce-semantic-frame.ts": "1ef3fec892bf221ca0f516df093dbea5dcfa5fc46f72a8fb2448a068ea17a04c",
+    "supabase/functions/_shared/commerce-semantic-frame.ts": "ea9fd60a8a61b700b43234d6f42dc2c3dc2caa92fe0430a4facd033f3b95c63a",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "238768be768bf64698b98876f36bca0db3f3460e0eed10f7cbbaa8a771308694",
     "supabase/functions/_shared/commerce-state-authority.ts": "1ba770dd6fed9b15d5284212aec65b01a0a3cf140a91cdb863a3d04cbab2de57",
     "supabase/functions/_shared/conversation-long-memory.test.ts": "408a1db7894c8deff6bb77c7278299499d977a577b646ce827f57c273f23ca5a",
@@ -1366,8 +1366,8 @@
     "supabase/functions/_shared/canonical-grounding.ts": "0596a7c13b232b93434d7b06e5608077f3391fccb6356f279db542c0235a73a3",
     "supabase/functions/_shared/conversation-long-memory.test.ts": "5cd23ea35e7b1fb4f53b3263697f5b52024087d923f77d7d7f94ca85f652feb1",
     "supabase/functions/_shared/conversation-long-memory.ts": "946fd5163d655a138eb1045e03e0c000046cbb89e2c1c81f04d7f0f2a0cfba30",
-    "supabase/functions/_shared/current-factual-request.test.ts": "62f2311de73484366aa50b56ac255383c557ed7ff056c92dd11423874540bc78",
-    "supabase/functions/_shared/current-factual-request.ts": "9bd9ddd1ff8c568a6157dc6364e0061c48e0c7c5c78c203946073407708335f3",
+    "supabase/functions/_shared/current-factual-request.test.ts": "cbebe26151a4513f17ffe1fce5a76877e396079b50c9f073919ffec7e25d7d94",
+    "supabase/functions/_shared/current-factual-request.ts": "55425be71a967cc39d868953c2ae774909e291bbf8dd69ce8d563bbe48de86d3",
     "supabase/functions/_shared/factual-evidence-selection.test.ts": "a765704be9be6ff3c233ee4c103f599943c264052fbced7056d74b22c043dbd8",
     "supabase/functions/_shared/factual-evidence-selection.ts": "2a60af0734653232b97420f307d210343124aa68eb82aab34c91b942163f01a8",
     "supabase/functions/_shared/factual-kb-price-proof.ts": "cf91428060d416fdce0985eecdefef0a0f75bacac90223b237399378f6d3732d",
@@ -1379,9 +1379,9 @@
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "bfab5a3a3ea2cb17c099dfeff2b4fbef034c29676b1119c0053afbba1cbd5742",
     "supabase/functions/agent-assist/index.ts": "10f5bbd3a5d90df8e648ff762fc288887396088bdec060ac39ab1b1a7dd13511",
     "supabase/functions/generate-reply/index.ts": "99154db9f8de3de87ef096ed8dd33be47e7a65d4c4c383ffe5cfa2718ef8ad7a",
-    "tests/c3-widget-live-auth/original-preview.test.mjs": "7dacb57f644fe28332f16d683037853bbed5d2b336acd62d170aade3a7775290",
+    "tests/c3-widget-live-auth/original-preview.test.mjs": "6e732774ce4f210e2caf6c6c639e81094a61f0e280b063b9d0a2adb5c9753c80",
     "tests/edge/task2-2-output-grounding-router.test.ts": "e4e4a1b936b9d1b1e3dfe6d45f6021287b0957568ea13d6164b1ba784e056016",
-    "tests/emergency-p0/chain.test.mjs": "7aeefc4dc8ba1bc4e0cccc42df7c82fc8eab86759d5f7a6d590e5a2934b37fc5"
+    "tests/emergency-p0/chain.test.mjs": "8cf9459b9132d20f5f2b3868518fbd21473419eceb9028bafe4ca6dffa63a375"
   },
   "task2_evidence_deployment_authorized": false
 }

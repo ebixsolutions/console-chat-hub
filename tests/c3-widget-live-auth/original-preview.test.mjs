@@ -407,6 +407,54 @@ for(const [facet,content,tool] of [['price','幾錢？','suggest_reply'],['stock
   assert.equal(JSON.stringify(x.c.metadata_source),marker);assert.equal(f.rpc.length,0);
  });
 }
+for(const tool of ['knowledge_helper','suggest_reply'])for(const stale of [true,false])test(`Task3 topic-switch v5 Inbox ${tool}: ${stale?'confident older proposal':'correct newer proposal'}`,async()=>{
+ const older='AX-QZ81',newer='Harbor field pack',question='How much?',proposed=stale?older:newer;
+ const semantic=providerWireV5({language:'en',intent:'merchant_facts',topic:proposed,requested_facts:['price'],
+  referents:[{ref:proposed,source:'prior_turn',confidence:.98}],
+  demands:[{question:proposed+' price?',source_quote:question,subject_refs:[proposed],source_type:'product',requested_facts:['price'],
+   constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]});
+ // Both source records are available. A real old price must not make an older
+ // model-generated reference appropriate for the customer's new subject.
+ const documents=[{id:'topic-old-price',subject:older,price:5432},{id:'topic-new-price',subject:newer,price:1290}].map(item=>({
+  document_id:item.id,version_id:item.id+'-version',title:item.subject,source_type:'Product',document_score:.99,
+  metadata:{regions:['HK'],entity_ids:[item.subject]},evidence:[{chunk_id:item.id+'-full',chunk_type:'full_content',score:.99,
+   content:`${item.subject}\nPublished source price: CNY ${item.price}. This is an isolated source record.`}]}));
+ const suggestions=[{content:newer+' has a source-recorded price of CNY 1290; the current price needs confirmation.',tone_label:'Informative'}];
+ const verifier={grounded:true,unsupported_claims:[],evidence_ids:['E1'],resolution:'supported',
+  demand_resolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']}]};
+ const x=await setupInbox('none',{documents},semantic,{suggestions,verifier});
+ const currentSource=crypto.randomUUID(),newSource=crypto.randomUUID(),oldSource=crypto.randomUUID();
+ f.rows.messages=[
+  {id:currentSource,role:'visitor',content:question,created_at:'2026-10-29T08:04:00Z',metadata:{}},
+  {id:crypto.randomUUID(),role:'assistant',content:newer+' has a roll-top closure.',created_at:'2026-10-29T08:03:00Z',
+   metadata:{source_message_id:newSource,control_commit:'ai',response_route:'canonical_kb_direct_answer',factual_request_subject:newer}},
+  {id:newSource,role:'visitor',content:newer+' features?',created_at:'2026-10-29T08:02:00Z',metadata:{}},
+  {id:crypto.randomUUID(),role:'assistant',content:'A processing problem prevented an answer.',created_at:'2026-10-29T08:01:00Z',
+   metadata:{source_message_id:oldSource,control_commit:'ai',response_route:'terminal_failure_recovery',generation_success:false}},
+  {id:oldSource,role:'visitor',content:older+' price?',created_at:'2026-10-29T08:00:00Z',metadata:{}},
+ ].map(row=>({...row,conversation_id:x.c.id,is_recalled:false}));
+ const before=JSON.stringify(f.rows.messages),marker=JSON.stringify(x.c.metadata_source);
+ const result=await x.send(tool,question,'conversation');
+ assert.equal(result.status,200,JSON.stringify(result));assert.equal(result.data.success,true);
+ assert.equal(x.posts(),1);assert.equal(x.queries.length,1);
+ const query=JSON.parse(x.queries[0]);assert.deepEqual(query.questions[0].subjects,[newer]);
+ assert.deepEqual(query.questions[0].requested_facts,['price']);assert(!x.queries[0].includes(older));
+ assert.equal(result.data.kb_request_contract.subject_source_message_id,newSource);
+ assert.equal(result.data.kb_request_contract.query_sha256,await fixtureDigest(x.queries[0]));
+ assert.equal(result.data.selected_document_id,'topic-new-price');
+ assert(!JSON.stringify(result.data).includes(older)&&!JSON.stringify(result.data).includes('5432'),'older source leaked into the current assistance');
+ if(tool==='suggest_reply'){
+  assert.equal(result.data.draft_only,true);assert.deepEqual(result.data.result.suggestions,suggestions);
+  assert.deepEqual(x.modelKinds(),{semantic:1,answer:2});
+ }else{
+  assert.equal(result.data.result.status,'available');
+  assert(result.data.result.evidence.every(item=>item.document_id==='topic-new-price'));
+  assert.deepEqual(x.modelKinds(),{semantic:1,answer:0});
+ }
+ assert.equal(JSON.stringify(f.rows.messages),before,'assistance must not send or persist a customer/agent reply');
+ assert.equal(JSON.stringify(x.c.metadata_source),marker);assert.equal(f.rpc.length,0);
+});
+
 async function task2AssistFixture(fault='none'){
  const first='訂購後一般幾時送貨？',second='偏遠地區有咩例外？',question=first+second;
  const semantic=providerWireV5({language:'zh-HK',intent:'merchant_facts',requested_facts:['delivery_period','delivery_exceptions'],

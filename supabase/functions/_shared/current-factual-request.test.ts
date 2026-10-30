@@ -266,6 +266,253 @@ function demanded(...demands: CommerceSemanticDemand[]): CommerceSemanticFrame {
   return {...frame(demands.flatMap(item => item.requested_facts), null), demands};
 }
 
+function staleFollowup(question: string, oldSubject = "AX-QZ81", sourceType: CommerceSemanticDemand["source_type"] = "product") {
+  const item = demand(question, sourceType, sourceType === "policy" ? ["return conditions"] : ["price"], [oldSubject]);
+  item.question = `What is the price of ${oldSubject}?`;
+  const semantic = demanded(item);
+  semantic.referents = [{ref: oldSubject, source: "prior_turn", confidence: .98}];
+  return semantic;
+}
+
+for (const [question, latestSubject, priorSubject, latestText] of [
+  ["幾錢？", "轻量化户外冲锋衣", "AX-QZ81", "轻量化户外冲锋衣 功能"],
+  ["几钱？", "輕量化戶外衝鋒衣", "AX-QZ81", "輕量化戶外衝鋒衣 功能"],
+  ["How much?", "Harbor field pack", "AX-QZ81", "Harbor field pack features?"],
+  ["How much?", "BR-998", "Harbor field pack", "BR-998 features?"],
+]) {
+  Deno.test(`semantic stale subject cannot overrule the latest literal customer focus: ${question}/${latestSubject}`, () => {
+    const semantic = staleFollowup(question, priorSubject);
+    const history = [
+      {id: "latest-answer", role: "assistant", content: "Technical recovery: the previous attempt failed."},
+      {id: "latest-customer", role: "visitor", content: latestText},
+      {id: "old-customer", role: "visitor", content: `${priorSubject} price?`},
+    ];
+    const before = JSON.stringify({semantic, history});
+    const result = resolveCurrentFactualRequest({question, source_message_id: "current", semantic, history});
+    equal(result.subject, latestSubject); equal(result.subject_source_message_ids, ["latest-customer"]);
+    equal(result.resolution, "follow_up"); equal(result.requested_facts, ["price"]);
+    assert(!result.needs_subject_clarification && result.query?.includes(latestSubject), JSON.stringify(result));
+    assert(!JSON.stringify([result.query, result.answer_request, result.context_turns, result.demands]).includes(priorSubject), "stale subject survived the common request projection");
+    equal(JSON.stringify({semantic, history}), before, "source rows or model proposal were mutated");
+  });
+}
+
+Deno.test("source-bound focus repairs an omitted ref with a stale expanded semantic question", () => {
+  const question = "How much?", semantic = staleFollowup(question);
+  semantic.demands![0].subject_refs = []; semantic.referents = [];
+  const result = resolveCurrentFactualRequest({question, source_message_id: "current", semantic,
+    history: [{id: "latest", role: "visitor", content: "Harbor field pack features?"}, ...previous]});
+  equal(result.subject, "Harbor field pack"); equal(result.subject_source_message_ids, ["latest"]);
+  assert(!result.query?.includes("AX-QZ81") && !result.needs_subject_clarification, JSON.stringify(result));
+});
+
+Deno.test("a linked policy follow-up uses the same latest customer focus", () => {
+  const question = "佢嘅退貨條件係點？", semantic = staleFollowup(question, "AX-QZ81", "policy");
+  semantic.demands![0].question = "What are the return conditions for AX-QZ81?";
+  const result = resolveCurrentFactualRequest({question, semantic,
+    history: [{id: "new-service", role: "visitor", content: "Harbor field pack features?"}, ...previous]});
+  equal(result.subject, "Harbor field pack"); equal(result.demands[0].source_type, "policy");
+  equal(result.requested_facts, ["return conditions"]);
+  assert(result.query?.includes("merchant_rules_and_subject_exceptions") && !result.query.includes("AX-QZ81"), JSON.stringify(result));
+});
+
+Deno.test("a policy facet is not a replacement product identity", () => {
+  const question = "退貨政策呢？", semantic = staleFollowup(question, "AX-QZ81", "policy");
+  semantic.demands![0].question = "What is AX-QZ81's return policy?";
+  const result = resolveCurrentFactualRequest({question, semantic,
+    history: [{id: "new-product", role: "visitor", content: "Harbor field pack features?"}, ...previous]});
+  equal(result.subject, "Harbor field pack"); equal(result.subject_source_message_ids, ["new-product"]);
+  assert(!result.query?.includes("AX-QZ81"), JSON.stringify(result));
+});
+
+Deno.test("correct subject refs cannot retain a contradictory old expanded question", () => {
+  const question = "How much?", semantic = staleFollowup(question);
+  semantic.demands![0].subject_refs = ["Harbor field pack"];
+  semantic.referents = [{ref: "Harbor field pack", source: "prior_turn", confidence: .98}];
+  const result = resolveCurrentFactualRequest({question, semantic,
+    history: [{id: "new-product", role: "visitor", content: "Harbor field pack features?"}, ...previous]});
+  equal(result.subject, "Harbor field pack");
+  assert(!result.query?.includes("AX-QZ81") && !result.needs_subject_clarification, JSON.stringify(result));
+});
+
+Deno.test("a new named subject in another current clause outranks an old model for an elliptical demand", () => {
+  const product = demand("Harbor field pack features?", "product", ["features"], ["Harbor field pack"]);
+  const price = staleFollowup("How much?").demands![0];
+  const semantic = demanded(product, price);
+  semantic.referents = [{ref: "AX-QZ81", source: "prior_turn", confidence: .98}];
+  const result = resolveCurrentFactualRequest({question: `${product.source_quote} ${price.source_quote}`, source_message_id: "current", semantic, history: previous});
+  equal(result.demands.map(item => item.subjects), [["Harbor field pack"], ["Harbor field pack"]]);
+  equal(result.subject_source_message_ids, ["current"]);
+  assert(result.query?.includes("features") && result.query.includes("price") && !result.query.includes("AX-QZ81"), JSON.stringify(result));
+});
+
+Deno.test("an independent policy clause does not pollute the product focus of another demand", () => {
+  const product = demand("Harbor field pack features?", "product", ["features"], ["Harbor field pack"]);
+  const policy = demand("What is the general return policy?", "policy", ["return conditions"]);
+  const price = staleFollowup("How much?").demands![0];
+  const semantic = demanded(product, policy, price);
+  const result = resolveCurrentFactualRequest({question: [product, policy, price].map(item => item.source_quote).join(" "), source_message_id: "current", semantic, history: previous});
+  equal(result.demands.map(item => item.subjects), [["Harbor field pack"], [], ["Harbor field pack"]]);
+  assert(result.query?.includes("return conditions") && result.query.includes("price") && !result.query.includes("AX-QZ81"), JSON.stringify(result));
+});
+
+Deno.test("a current correction excludes only the negated identity, preserving the positively named replacement", () => {
+  const question = "Not AX-QZ81, BR-998 price?", semantic = demanded(demand(question, "product", ["price"], ["BR-998"]));
+  const result = resolveCurrentFactualRequest({question, source_message_id: "current", semantic, history: previous});
+  equal(result.subject, "BR-998"); equal(result.subject_source_message_ids, ["current"]);
+  assert(!result.needs_subject_clarification && result.answer_request?.includes("Not AX-QZ81"), JSON.stringify(result));
+});
+
+Deno.test("the next follow-up retains the positive product from a previous not-A-but-B correction", () => {
+  const question = "How much?", semantic = staleFollowup(question, "BR-998");
+  const result = resolveCurrentFactualRequest({question, semantic, history: [
+    {id: "correction", role: "visitor", content: "Not AX-QZ81, BR-998 price?"}, ...previous,
+  ]});
+  equal(result.subject, "BR-998"); equal(result.subject_source_message_ids, ["correction"]);
+  assert(!result.needs_subject_clarification, JSON.stringify(result));
+});
+
+Deno.test("source-bound customer requirement updates preserve focus without treating unknown rows as continuations", () => {
+  const question = "How much?", history = [
+    {id: "requirement-update", role: "visitor", content: "只買1件，送九龍"},
+    {id: "new-product", role: "visitor", content: "Harbor field pack features?"}, ...previous,
+  ];
+  const memory = {current_customer_facts: [{key: "delivery", value: "九龍", authority: "customer", source_message_id: "requirement-update"}]} as unknown as NonNullable<Parameters<typeof resolveCurrentFactualRequest>[0]["memory"]>;
+  const result = resolveCurrentFactualRequest({question, semantic: staleFollowup(question), history, memory});
+  equal(result.subject, "Harbor field pack"); equal(result.subject_source_message_ids, ["new-product"]);
+  const unproven = resolveCurrentFactualRequest({question, semantic: staleFollowup(question), history});
+  assert(unproven.needs_subject_clarification && unproven.query === "", "unknown row was silently skipped");
+});
+
+for (const control of ["Thanks", "用英文回答", "Please simplify that"]) {
+  Deno.test(`pure control/formatting preserves the latest subject: ${control}`, () => {
+    const question = "How much?";
+    const result = resolveCurrentFactualRequest({question, source_message_id: "current", semantic: staleFollowup(question), history: [
+      {id: "control", role: "visitor", content: control},
+      {id: "new-product", role: "visitor", content: "Harbor field pack features?"}, ...previous,
+    ]});
+    equal(result.subject, "Harbor field pack"); equal(result.subject_source_message_ids, ["new-product"]);
+  });
+}
+
+for (const boundary of ["How is the weather?", "換個話題", "Compare AX-QZ81 and BR-998"]) {
+  Deno.test(`confident semantic ref cannot cross an unknown or ambiguous latest focus: ${boundary}`, () => {
+    const question = "How much?";
+    const result = resolveCurrentFactualRequest({question, semantic: staleFollowup(question), history: [
+      {id: "boundary", role: "visitor", content: boundary}, ...previous,
+    ]});
+    assert(result.needs_subject_clarification && result.subject === null && result.query === "", JSON.stringify(result));
+    equal(result.subject_source_message_ids, []);
+  });
+}
+
+Deno.test("a poisoned elliptical Memory anchor cannot reset focus to its inferred old subject", () => {
+  const question = "How much?", semantic = staleFollowup(question);
+  const history = [
+    {id: "bad-price", role: "visitor", content: "幾錢？"},
+    {id: "new-product", role: "visitor", content: "Harbor field pack features?"}, ...previous,
+  ];
+  const memory = {factual_read_anchors: [{source_message_id: "bad-price", created_at: "2026-10-30T03:48:41Z",
+    customer_text: "幾錢？", subjects: ["AX-QZ81"], subject_source_message_ids: ["old-customer-source"], requested_facts: ["price"]}]} as unknown as NonNullable<Parameters<typeof resolveCurrentFactualRequest>[0]["memory"]>;
+  const result = resolveCurrentFactualRequest({question, semantic, history, memory});
+  equal(result.subject, "Harbor field pack"); equal(result.subject_source_message_ids, ["new-product"]);
+  assert(!JSON.stringify([result.query, result.context_turns, result.answer_request]).includes("AX-QZ81"), JSON.stringify(result));
+});
+
+Deno.test("literal Memory anchor names require the same original customer source", () => {
+  const question = "How much?", history = [
+    {id: "new-service", role: "visitor", content: "Tell me about the Atlas Circle offer"}, ...previous,
+  ];
+  const anchor = {source_message_id: "new-service", created_at: "2026-10-30T03:48:41Z",
+    customer_text: history[0].content, subjects: ["Atlas Circle"], subject_source_message_ids: ["new-service"], requested_facts: ["service scope"]};
+  const memory = {factual_read_anchors: [anchor]} as unknown as NonNullable<Parameters<typeof resolveCurrentFactualRequest>[0]["memory"]>;
+  const result = resolveCurrentFactualRequest({question, semantic: staleFollowup(question), history, memory});
+  equal(result.subject, "Atlas Circle"); equal(result.subject_source_message_ids, ["new-service"]);
+  const forged = resolveCurrentFactualRequest({question, semantic: staleFollowup(question), history,
+    memory: {...memory, factual_read_anchors: [{...anchor, source_message_id: "different-source"}]}});
+  assert(forged.subject !== "AX-QZ81", "unverified anchor caused fallback to the stale product");
+});
+
+for (const field of ["constraints", "explicit_negations", "customer_correction", "requested_facts"] as const) {
+  Deno.test(`stale subject conditions are not silently transferred to the new product: ${field}`, () => {
+    const question = "How much?", semantic = staleFollowup(question), item = semantic.demands![0];
+    if (field === "constraints") item.constraints = {room_area: {value: 300, unit: "square feet"}};
+    if (field === "explicit_negations") item.explicit_negations = ["no stairs for AX-QZ81"];
+    if (field === "customer_correction") item.customer_correction = true;
+    if (field === "requested_facts") item.requested_facts = ["price of AX-QZ81"];
+    const result = resolveCurrentFactualRequest({question, semantic, history: [
+      {id: "new-product", role: "visitor", content: "Harbor field pack features?"}, ...previous,
+    ]});
+    assert(result.needs_subject_clarification && result.query === "" && result.subject === null, JSON.stringify(result));
+    assert(result.original_question === question && result.demands.length === 1, "unresolved demand was discarded");
+  });
+}
+
+Deno.test("explicit named return and comparison still select their stated historical products", () => {
+  for (const question of ["Back to AX-QZ81, how much?", "Compare AX-QZ81 and BR-998 prices"]) {
+    const semantic = staleFollowup(question);
+    if (question.startsWith("Compare")) semantic.demands![0].subject_refs.push("BR-998");
+    const result = resolveCurrentFactualRequest({question, source_message_id: "current", semantic, history: [
+      {id: "new-product", role: "visitor", content: "Harbor field pack features?"}, ...previous,
+    ]});
+    equal(result.subjects, question.startsWith("Compare") ? ["AX-QZ81", "BR-998"] : ["AX-QZ81"]);
+    assert(!result.needs_subject_clarification && !result.query?.includes("Harbor"), JSON.stringify(result));
+  }
+});
+
+Deno.test("separate Chinese product names are not collapsed into a combined catalogue label", () => {
+  const question = "輕量化戶外衝鋒衣和純棉外套幾錢？";
+  const semantic = demanded(demand(question, "product", ["price"], ["輕量化戶外衝鋒衣", "純棉外套"]));
+  const result = resolveCurrentFactualRequest({question, source_message_id: "current", semantic});
+  equal(result.subjects, ["輕量化戶外衝鋒衣", "純棉外套"]); equal(result.subject, null);
+  assert(!result.needs_subject_clarification && result.demands[0].subjects.length === 2, JSON.stringify(result));
+});
+
+for (const question of ["Can it arrive earlier?", "How much for the first order?", "Original price?"]) {
+  Deno.test(`ordinary modifiers are not historical product selectors or product names: ${question}`, () => {
+    const result = resolveCurrentFactualRequest({question, semantic: staleFollowup(question), history: [
+      {id: "new-product", role: "visitor", content: "Harbor field pack features?"}, ...previous,
+    ]});
+    equal(result.subject, "Harbor field pack"); equal(result.subject_source_message_ids, ["new-product"]);
+    assert(!result.needs_subject_clarification && !result.query?.includes("AX-QZ81"), JSON.stringify(result));
+  });
+}
+
+Deno.test("an explicit ordinal return retains its source-bound earlier product", () => {
+  const question = "Return to the first model, price?";
+  const result = resolveCurrentFactualRequest({question, semantic: staleFollowup(question), history: [
+    {id: "new-product", role: "visitor", content: "Harbor field pack features?"}, ...previous,
+  ]});
+  equal(result.subject, "AX-QZ81"); equal(result.subject_source_message_ids, ["old-customer-source"]);
+  assert(!result.needs_subject_clarification, JSON.stringify(result));
+});
+
+Deno.test("both requested facets are not permission to revive an older product", () => {
+  const question = "Are delivery and installation both included?", semantic = staleFollowup(question);
+  semantic.demands![0].requested_facts = ["delivery inclusion", "installation inclusion"];
+  const result = resolveCurrentFactualRequest({question, semantic, history: [
+    {id: "new-product", role: "visitor", content: "Harbor field pack features?"}, ...previous,
+  ]});
+  equal(result.subject, "Harbor field pack"); equal(result.subject_source_message_ids, ["new-product"]);
+  assert(result.query?.includes("delivery inclusion") && result.query.includes("installation inclusion") && !result.query.includes("AX-QZ81"), JSON.stringify(result));
+});
+
+Deno.test("an explicit two-product comparison preserves both source-bound subjects", () => {
+  const question = "Compare both products' prices", semantic = demanded(demand(question, "product", ["price"], ["AX-QZ81", "BR-998"]));
+  const result = resolveCurrentFactualRequest({question, semantic, history: [
+    {id: "new-product", role: "visitor", content: "Harbor field pack features?"}, ...previous,
+  ]});
+  equal(result.subjects, ["AX-QZ81", "BR-998"]);
+  assert(!result.needs_subject_clarification && !result.query?.includes("Harbor"), JSON.stringify(result));
+});
+
+Deno.test("semantic category stock discovery does not invent a product from its interrogative phrase", () => {
+  const question = "What products are in stock?", semantic = demanded(demand(question, "product", ["available products"]));
+  const result = resolveCurrentFactualRequest({question, semantic, history: previous});
+  equal(result.subjects, []); equal(result.resolution, "none");
+  assert(!result.needs_subject_clarification && result.query?.includes(question) && !result.query.includes("AX-QZ81"), JSON.stringify(result));
+});
+
 Deno.test("Task2 query bounds check UTF-8 bytes as well as characters",()=>{
   for(const text of ["x".repeat(1001),"中".repeat(700)]) {
     let rejected=false;try{assertFactualQueryBudget(text);}catch(error){rejected=error instanceof DecisionContextLimitError;}

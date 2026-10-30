@@ -89,6 +89,10 @@ const TOPIC_BOUNDARY = /(?:換個話題|换个话题|轉個話題|转个话题|�
 const FACET_ONLY_LABEL = /^(?:price|cost|features?|specs?|specifications?|stock|inventory|availability|available|policy|details?|how much|how many left|in|and|or|only|just|the|what|how|is|are|功能|價錢|价钱|價格|价格|庫存|库存|現貨|现货|規格|规格|呢|呀|嗎|吗|貨|货)$/iu;
 const CONTROL_ONLY = /^(?:好|好的|好呀|明白|知道|多謝|谢谢|謝謝|ok(?:ay)?|thanks?|got it)[.!！。\s]*$/iu;
 const LIFECYCLE_BOUNDARY = /(?:取消|唔要|不要|先擺低|先放低|暫緩|暂缓)|\b(?:cancel(?:led)?|defer(?:red)?|no longer want)\b/iu;
+const EXPLICIT_HISTORY_REFERENCE = /(?:返去|返回|回到|講返|讲回|講回|說回|说回|前者|後者|后者)|(?:最初|原先|第[一二三四五六七八九十]+)(?:嗰|那|的|嘅)?(?:款|部|件|個|个|產品|产品|服務|服务)|\b(?:back to|return(?:ing)? to|the former|the latter)\b|\b(?:earlier|previous|original|first|second)\s+(?:one|item|product|model|service|plan|option)\b/iu;
+const EXPLICIT_COMPARISON = /(?:比較|比较|對比|对比|相比)|\b(?:compar(?:e|ing|ison)|versus|vs\.?|both)\b/iu;
+const POLICY_FACET_LABEL = /^(?:(?:general|merchant|store|the)\s+|(?:一般|通用|全店|商家)(?:嘅|的)?)*(?:退貨政策|退货政策|保養政策|保修政策|付款政策|預約政策|预约政策|取消政策|(?:billing|booking|cancellation|return|warranty)\s+policy)$/iu;
+const UNNAMED_REFERENCE_LABEL = /^(?:the\s+)?(?:current|original|listed|selling|earlier|previous|first|second|former|latter|last)(?:\s+(?:one|item|product|model|service|plan|option|order|price))?$/iu;
 
 function trustedFrame(input: CommerceSemanticFrame | null | undefined): CommerceSemanticFrame | null {
   return input && input.confidence >= 0.62 && !input.ambiguity.is_ambiguous ? input : null;
@@ -176,7 +180,8 @@ function locateSubjects(question: string, hints: string[]): LocatedSubject {
   // catalogue/service without a model may use the same ordinary feature or
   // policy construction; retain its literal designation, never infer a name.
   const named = /^(?:請問|请问|請介紹|请介绍|介紹|介绍|tell me about\s+)?\s*(.+?)\s*(?:嘅|的)?\s*(?:功能|特點|特点|規格|规格|退貨政策|退货政策|保養政策|保修政策)(?:係咩|是什麼|是什么|有哪些|有啲咩|呢|呀|嗎|吗)?[?？.!！。]*$/iu.exec(text)?.[1]?.trim() ??
-    /^(?:what (?:are|is) (?:the )?)?(?:features?|specifications?)\s+(?:of|for)\s+(?:the )?(.+?)[?？.!！。]*$/iu.exec(text)?.[1]?.trim();
+    /^(?:what (?:are|is) (?:the )?)?(?:features?|specifications?)\s+(?:of|for)\s+(?:the )?(.+?)[?？.!！。]*$/iu.exec(text)?.[1]?.trim() ??
+    /^(.+?)\s+(?:features?|specifications?|specs?)[?？.!！。]*$/iu.exec(text)?.[1]?.trim();
   if (validSubject(named) && !POINTER.test(named)) return {subjects: [named], reference: named};
   return {subjects: [], reference: null};
 }
@@ -234,6 +239,118 @@ function proposedReferences(frame: CommerceSemanticFrame | null): string[] {
     .map(entity => entity.model ?? entity.name).filter(validSubject));
 }
 
+/** A retained read anchor may help locate a literal name, never establish the
+ * current subject by itself. In particular, a poisoned "How much? -> old SKU"
+ * anchor cannot override the original customer's newer named product. */
+function customerSubjectHints(input: ResolveCurrentFactualRequestInput, row?: FactualRequestHistoryRow): string[] {
+  const anchored = row?.id ? (input.memory?.factual_read_anchors ?? [])
+    .filter(anchor => anchor.source_message_id === row.id && clean(anchor.customer_text) === clean(row.content))
+    .flatMap(anchor => anchor.subjects.filter(subject => literalFactualSubject(row.content ?? "", [subject]))) : [];
+  return unique([...literalHints(input), ...proposedReferences(trustedFrame(input.semantic)), ...anchored]);
+}
+
+function explicitCustomerSubjects(text: string, hints: string[]): string[] {
+  const literal = hints.filter(hint => validSubject(hint) && literalFactualSubject(text, [hint]));
+  const maximalLiteral = unique(literal).filter(subject => !literal.some(other => norm(subject) !== norm(other) && norm(other).includes(norm(subject))));
+  const located = locateSubjects(text, hints).subjects;
+  // A grammar-produced label spanning two separately named products is a
+  // comparison phrase, not a longer alias that can erase those identities.
+  const subjects = maximalLiteral.length > 1 ? unique([...maximalLiteral,
+    ...located.filter(subject => !maximalLiteral.some(name => norm(subject).includes(norm(name))))]) : unique([...located, ...literal]);
+  // A source may supply both an exact full name and its shorter alias. Keep
+  // the maximal literal designation, without translating or inventing aliases.
+  return subjects.filter(subject => !POLICY_FACET_LABEL.test(subject) &&
+    (!UNNAMED_REFERENCE_LABEL.test(subject) || maximalLiteral.some(literal => norm(literal) === norm(subject))) &&
+    !subjects.some(other => norm(subject) !== norm(other) && norm(other).includes(norm(subject))));
+}
+
+type CustomerDiscourseFocus = {bindings: SubjectBinding[]; blocked: boolean};
+function recentCustomerDiscourseFocus(input: ResolveCurrentFactualRequestInput): CustomerDiscourseFocus {
+  const inactive = new Set((input.commerce?.entities ?? []).filter(entity => INACTIVE.has(entity.status)).flatMap(entityNames).map(norm));
+  for (const row of input.history ?? []) {
+    if (!CUSTOMER.has(String(row.role ?? "").toLowerCase())) continue;
+    const text = clean(row.content);
+    if (!text || text === "__THINKING__" || row.id && row.id === input.source_message_id ||
+      !row.id && text === clean(input.question)) continue;
+    const mentioned = explicitCustomerSubjects(text, customerSubjectHints(input, row));
+    const subjects = mentioned.filter(subject => !explicitlyNegatesSubject(text, subject));
+    if (mentioned.length) {
+      if (!subjects.length || subjects.some(subject => inactive.has(norm(subject))) ||
+        LIFECYCLE_BOUNDARY.test(text) && !/(?:policy|政策|\bif\b|如果|唔好取消|不要取消|do not cancel|don't cancel)/iu.test(text)) {
+        return {bindings: [], blocked: true};
+      }
+      return {bindings: subjects.map(subject => ({subject, source_message_id: row.id ?? null, customer_text: text, current: false})), blocked: false};
+    }
+    if (TOPIC_BOUNDARY.test(text) || EXPLICIT_HISTORY_REFERENCE.test(text)) return {bindings: [], blocked: true};
+    const operation = classifyCanonicalConversationTurn(text, []).operation;
+    const committedCustomerContinuation = !!row.id && ((input.memory?.current_customer_facts ?? [])
+      .some(fact => fact.authority === "customer" && fact.source_message_id === row.id) || (input.commerce?.entities ?? [])
+      .some(entity => entity.provenance.source_type === "customer" && entity.provenance.source_message_id === row.id && !INACTIVE.has(entity.status)));
+    // Only proven control/formatting and subject-less factual continuations
+    // preserve the prior focus. An unknown customer statement is a boundary,
+    // not permission to scan backwards for a convenient historical SKU.
+    if (CONTROL_ONLY.test(text) || !currentFacets(text).length &&
+      ["TRIVIAL", "CONVERSATION_MEMORY", "TRANSLATE", "SIMPLIFY", "REPHRASE", "SUMMARIZE"].includes(operation) ||
+      committedCustomerContinuation || currentFacets(text).length ||
+      POINTER.test(text) && ["PRONOUN_OR_ELLIPSIS", "FOLLOW_UP_FACTUAL"].includes(operation)) continue;
+    return {bindings: [], blocked: true};
+  }
+  return {bindings: [], blocked: false};
+}
+
+type DemandSubjectResolution = {bindings: SubjectBinding[]; question: string; unresolved: boolean};
+function resolveDemandSubjects(
+  input: ResolveCurrentFactualRequestInput, demand: CommerceSemanticDemand, refs: string[], currentSubjects: string[],
+): DemandSubjectResolution {
+  const original = refs.map(ref => bindSemanticSubject(ref, input));
+  const originalBindings = original.filter((binding): binding is SubjectBinding => binding !== null);
+  const unchanged = () => ({bindings: originalBindings, question: clean(demand.question), unresolved: refs.length > originalBindings.length});
+  if (!["product", "policy", "unknown"].includes(demand.source_type)) return unchanged();
+  const quote = clean(demand.source_quote);
+  if (demand.source_type === "policy" && refs.length && refs.every(ref => POLICY_FACET_LABEL.test(ref)) &&
+    refs.some(ref => literalFactualSubject(quote, [ref]))) return unchanged();
+  const mentioned = explicitCustomerSubjects(quote, unique([...customerSubjectHints(input), ...refs]));
+  const explicit = mentioned.filter(subject => !explicitlyNegatesSubject(quote, subject));
+  // Empty refs can mean deliberate category discovery. Only a genuinely
+  // subject-less facet or a pronoun gains a missing referent from history;
+  // do not promote a grammar-derived discovery phrase into a named product.
+  const dependent = refs.length > 0 || POINTER.test(quote) ||
+    demand.source_type !== "policy" && currentFacets(quote).length > 0 && !mentioned.length;
+  if (!dependent) return unchanged();
+  if (mentioned.length && !explicit.length) return {bindings: [], question: quote, unresolved: true};
+  if (!explicit.length && (EXPLICIT_HISTORY_REFERENCE.test(quote) ||
+    refs.length > 1 && (PLURAL_POINTER.test(quote) || EXPLICIT_COMPARISON.test(quote)))) return unchanged();
+  // A cancelled, negated or invented semantic identity remains invalid. Focus
+  // repair corrects a stale but source-proven reference, never grants a new
+  // meaning to an unbound identity or revives its lifecycle authority.
+  if (!explicit.length && refs.length > originalBindings.length) return unchanged();
+  const current = explicit.length ? explicit : currentSubjects;
+  const focus = current.length
+    ? {bindings: current.map(subject => ({subject, source_message_id: input.source_message_id ?? null, customer_text: input.question, current: true})), blocked: false}
+    : TOPIC_BOUNDARY.test(quote) ? {bindings: [], blocked: true} : recentCustomerDiscourseFocus(input);
+  if (focus.blocked || !explicit.length && focus.bindings.length > 1) return {bindings: [], question: quote, unresolved: true};
+  if (!focus.bindings.length) return unchanged();
+  const sameSubjects = focus.bindings.length === originalBindings.length && focus.bindings.every(binding =>
+    originalBindings.some(original => norm(original.subject) === norm(binding.subject)));
+  // A wrong identity may also have caused the model to attach old, unquoted
+  // conditions. Do not transfer those conditions to another subject or silently
+  // delete them. A clear simple follow-up can be rebound from customer wording;
+  // a conflicting conditioned request remains unresolved for clarification.
+  const unboundConditions = Object.keys(demand.constraints).length > 0 || demand.explicit_negations.length > 0 || demand.customer_correction;
+  const historicalSubjects = (input.history ?? []).filter(row => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
+    .flatMap(row => explicitCustomerSubjects(clean(row.content), customerSubjectHints(input, row)));
+  const staleLabels = unique([...refs, ...historicalSubjects, ...exactProductIdentifiers(demand.question),
+    ...demand.requested_facts.flatMap(exactProductIdentifiers)]).filter(ref =>
+    !focus.bindings.some(binding => norm(binding.subject) === norm(ref)) && !literalFactualSubject(quote, [ref]));
+  const staleFact = staleLabels.some(ref => demand.requested_facts.some(fact => literalFactualSubject(fact, [ref])));
+  const staleCondition = staleLabels.some(ref => literalFactualSubject(JSON.stringify([demand.constraints, demand.explicit_negations]), [ref]));
+  if (!sameSubjects && unboundConditions || staleFact || staleCondition) return {bindings: [], question: quote, unresolved: true};
+  const staleQuestion = staleLabels.some(ref => literalFactualSubject(demand.question, [ref]));
+  if (sameSubjects && explicit.length && !staleQuestion) return {bindings: focus.bindings, question: clean(demand.question), unresolved: false};
+  return {bindings: focus.bindings,
+    question: `${focus.bindings.map(binding => binding.subject).join("; ")} ${quote}`, unresolved: false};
+}
+
 function subjectConstraints(subjects: string[], input: ResolveCurrentFactualRequestInput): Record<string, DecisionValue> {
   let result: Record<string, DecisionValue> = {};
   for (const entity of input.commerce?.entities ?? []) {
@@ -259,6 +376,12 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
   const contexts: string[] = [];
   const bindings: Array<SubjectBinding & {demand_id: string}> = [];
   const privateLocators = new Map<string, string[]>();
+  const explicitCurrentSubjects = unique(proposed.filter(demand => ["product", "policy", "unknown"].includes(demand.source_type) &&
+    (demand.subject_refs.length > 0 || proposedReferences(trustedFrame(input.semantic)).some(ref => literalFactualSubject(demand.source_quote, [ref]))) &&
+    (demand.source_type !== "policy" || demand.subject_refs.some(ref => !POLICY_FACET_LABEL.test(ref) && literalFactualSubject(demand.source_quote, [ref]))) &&
+    !!clean(demand.source_quote) && norm(question).includes(norm(demand.source_quote)))
+    .flatMap(demand => explicitCustomerSubjects(clean(demand.source_quote), unique([...customerSubjectHints(input), ...demand.subject_refs]))
+      .filter(subject => !explicitlyNegatesSubject(clean(demand.source_quote), subject))));
   const demands = proposed.map((demand, index): CurrentFactualDemand => {
     const id = `demand-${index + 1}`;
     const sourceQuote = clean(demand.source_quote);
@@ -276,12 +399,13 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     if (quoteBound && demand.source_type === "transaction") privateLocators.set(id,
       refs.filter(ref => norm(sourceQuote).includes(norm(ref))));
     const resolved = quoteBound && !demand.ambiguity.is_ambiguous
-      ? refs.map(ref => bindSemanticSubject(ref, input)) : [];
-    const located = resolved.filter((binding): binding is SubjectBinding => binding !== null);
+      ? resolveDemandSubjects(input, demand, refs, explicitCurrentSubjects)
+      : {bindings: [], question: clean(demand.question), unresolved: false};
+    const located = resolved.bindings;
     // Product/category discovery may intentionally have no specific item.
     // Missing-reference ambiguity belongs to the semantic demand, not to a
     // new rule that every product read must name a SKU before searching.
-    const unresolved = refs.length > located.length;
+    const unresolved = resolved.unresolved;
     if (quoteBound && unresolved && !demand.ambiguity.is_ambiguous) {
       ambiguity.is_ambiguous = true; ambiguity.reasons.push("subject_not_bound_to_customer_source");
       missing.push({demand_id: id, reason: "subject_unresolved"});
@@ -292,7 +416,7 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     if (["product", "policy", "unknown"].includes(demand.source_type)) contexts.push(...located.filter(binding => !binding.current && binding.customer_text).map(binding => clean(binding.customer_text)));
     const subjects = unique(located.map(binding => binding.subject));
     return {
-      id, question: clean(demand.question), source_quote: sourceQuote, subjects,
+      id, question: resolved.question, source_quote: sourceQuote, subjects,
       subject_source_message_ids: unique(located.map(binding => binding.source_message_id ?? "")),
       source_type: demand.source_type, requested_facts: unique(demand.requested_facts),
       constraints: mergeDecisionContext(subjectConstraints(subjects, input), demand.constraints),
@@ -344,6 +468,8 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     subject_source_message_ids: allSourceIds, demands,
     kb_required: kbDemands.length > 0, transaction_required: boundDemands.some(demand => demand.source_type === "transaction"),
     unresolved_demand_ids: unique(missing.map(item => item.demand_id)), missing_evidence: missing,
+    // This flag records an explicit switch/correction marker. The source-bound
+    // subjects above establish focus even when a new name has no such marker.
     topic_changed: TOPIC_BOUNDARY.test(question) || frame.customer_correction,
     context_turns: unique(contexts), needs_subject_clarification: needsSubject,
   };

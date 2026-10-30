@@ -1483,6 +1483,82 @@ function task1SemanticContextCommitted(f,result,answer,document){
  return {reply,memory};
 }
 
+// Current-topic applicability is separate from historical source existence.
+// All names, records and model responses here are isolated fixtures. In the
+// negative case the semantic provider confidently chooses a real older subject
+// and retrieval can even supply that subject's price; neither proves that the
+// customer's bare follow-up still refers to it.
+function task3TopicSwitchFixture({source,question='How much?',referent='AX-QZ81',documents,answer}={}) {
+ const oldSource=uuid(7301),newSource=uuid(7303),older='AX-QZ81',newer='Harbor field pack';
+ const history=[
+  {id:uuid(7304),role:'assistant',content:newer+' has a roll-top closure.',created_at:'2026-10-13T01:03:00.000Z',
+   metadata:{source_message_id:newSource,control_commit:'ai',response_route:'canonical_kb_direct_answer',
+    factual_request_subject:newer,citation_lineage:{selected_document_id:'earlier-pack-features',evidence_chunk_ids:['earlier-pack-features-full']}}},
+  {id:newSource,role:'visitor',content:newer+' features?',created_at:'2026-10-13T01:02:00.000Z',metadata:{}},
+  {id:uuid(7302),role:'assistant',content:'A processing problem prevented an answer; the question remains unresolved.',created_at:'2026-10-13T01:01:00.000Z',
+   metadata:{source_message_id:oldSource,control_commit:'ai',response_route:'terminal_failure_recovery',generation_success:false}},
+  {id:oldSource,role:'visitor',content:older+' price?',created_at:'2026-10-13T01:00:00.000Z',metadata:{}},
+ ].map(row=>({...row,conversation_id:ticket,is_recalled:false}));
+ const f=fixture(question,{source,originalPreview:true,fullChain:true,history,
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{question:referent+' price?',subject_refs:[referent],requested_facts:['price']})],
+   {language:'en',topic:referent,referents:[{ref:referent,source:question.includes(referent)?'current_turn':'prior_turn',confidence:.98}]}),
+  originalRagResponse:documents,...(answer?{answer,
+   verifierDemandResolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']}]}:{})});
+ return {f,source,oldSource,newSource,older,newer};
+}
+function task3TopicSwitchQuery(f,subject,excluded){
+ const calls=f.requests.filter(request=>request.url.includes('context-search'));
+ assert.equal(calls.length,1,'the factual follow-up must make one fresh subject-bound query');
+ const query=JSON.parse(calls[0].body.query);
+ assert.equal(query.questions.length,1);assert.deepEqual(query.questions[0].subjects,[subject]);
+ assert.deepEqual(query.questions[0].requested_facts,['price']);
+ assert(!calls[0].body.query.includes(excluded),'superseded conversational subject reached retrieval');
+ return calls[0];
+}
+test('Task3 topic-switch v5: a confident older reference cannot query or commit its genuine price',async()=>{
+ const c=task3TopicSwitchFixture({source:uuid(7310),documents:task1cRagDocuments(task1cModelDocument({model:'AX-QZ81',price:5432,id:'older-price-record'}))});
+ const result=await c.f.run();assert.equal(result.status,200,JSON.stringify(result));
+ task3TopicSwitchQuery(c.f,c.newer,c.older);
+ assert.equal(c.f.commits.length,1);const reply=c.f.commits[0];
+ assert(!reply.content.includes(c.older)&&!reply.content.includes('5,432'),'an available older price was substituted for the new product');
+ assert.notEqual(reply.metadata.factual_request_subject,c.older);
+ assert(!(reply.metadata.recorded_kb_facts??[]).some(fact=>fact.model===c.older||fact.value===5432));
+ const memory=c.f.tables.conversation_memory_state[0]?.memory;assert(memory,'the same-ticket request must retain its state');
+ const anchors=(memory.factual_read_anchors??[]).filter(anchor=>anchor.source_message_id===c.source);
+ assert(anchors.length>0,'the current read must retain its customer-bound subject');
+ assert(anchors.every(anchor=>anchor.subjects.includes(c.newer)&&!anchor.subjects.includes(c.older)&&anchor.subject_source_message_ids.includes(c.newSource)));
+ const questions=memory.question_lifecycle.filter(item=>item.source_message_id===c.source);
+ assert(questions.length>0&&questions.every(item=>item.status==='pending'),'an older product price must not resolve the new product question');
+ await task1cAssertReplay(c.f);
+});
+test('Task3 topic-switch v5: correct newer named subject receives fresh price evidence',async()=>{
+ const c=task3TopicSwitchFixture({source:uuid(7311),referent:'Harbor field pack',
+  answer:'Harbor field pack costs HK$1,290.',
+  documents:task1cRagDocuments(task1cModelDocument({model:'Harbor field pack',price:1290,id:'newer-price-record'}))});
+ const result=await c.f.run();assert.equal(result.status,200,JSON.stringify(result));
+ task3TopicSwitchQuery(c.f,c.newer,c.older);
+ assert.equal(c.f.commits.length,1);const reply=c.f.commits[0];
+ assert(reply.content.includes(c.newer)&&reply.content.includes('1,290'),JSON.stringify(reply));
+ assert(!reply.content.includes(c.older));assert.equal(reply.metadata.factual_request_subject,c.newer);
+ assert.equal(reply.metadata.kb_request_contract.subject_source_message_id,c.newSource);
+ assert.equal(reply.metadata.citation_lineage.selected_document_id,'newer-price-record');
+ assert.equal(reply.metadata.b2_commit_source,'commit_ai_reply_tx');
+ const anchor=c.f.tables.conversation_memory_state[0]?.memory.factual_read_anchors?.find(anchor=>anchor.source_message_id===c.source);
+ assert(anchor?.subjects.includes(c.newer)&&anchor.subject_source_message_ids.includes(c.newSource));
+ await task1cAssertReplay(c.f);
+});
+test('Task3 topic-switch v5: an explicit return to the older product remains valid',async()=>{
+ const c=task3TopicSwitchFixture({source:uuid(7312),question:'Back to AX-QZ81, how much?',
+  documents:task1cRagDocuments(task1cModelDocument({model:'AX-QZ81',price:5432,id:'explicit-return-price'}))});
+ const result=await c.f.run();assert.equal(result.status,200,JSON.stringify(result));
+ task3TopicSwitchQuery(c.f,c.older,c.newer);
+ const reply=task1cCommittedAnswer(c.f,{source:c.source,document:'explicit-return-price'});
+ assert(reply.content.includes(c.older)&&reply.content.includes('5,432'));assert(!reply.content.includes(c.newer));
+ assert.equal(reply.metadata.kb_request_contract.resolution,'explicit');
+ assert.equal(reply.metadata.kb_request_contract.subject_source_message_id,c.source);
+ await task1cAssertReplay(c.f);
+});
+
 function task2PolicyDocument(id,content,patch={}) {
  return {document_id:id,title:'客戶服務政策',source_type:'Policy',document_score:.96,
   authority:{tenant_id:'34',publication_state:'published',currentness:'current',regions:['hong_kong'],version:'isolated-evidence-v1'},
