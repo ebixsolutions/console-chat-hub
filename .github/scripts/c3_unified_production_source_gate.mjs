@@ -134,7 +134,7 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
 
  must(profile.task1_current_quote_recovery_deployment_authorized===false,'task1_current_quote_deployment_not_authorized');
  must(JSON.stringify(profile.authorized_task1_current_quote_recovery_sha256)===JSON.stringify(TASK1_CURRENT_QUOTE_RECOVERY),'task1_current_quote_scope_drift');
- for(const [p,s] of Object.entries(TASK1_CURRENT_QUOTE_RECOVERY))must(fs.existsSync(path.join(root,p))&&sha(fs.readFileSync(path.join(root,p)))===(TASK2_EVIDENCE_REPAIR[p]??TASK1_SEMANTIC_CONTEXT_REPAIR[p]??TASK1C_EVENT_PRICE_RECOVERY[p]??TASK1_C4_RECOVERY_SCOPE[p]??s),'task1_current_quote_hash_drift:'+p);
+ for(const [p,s] of Object.entries(TASK1_CURRENT_QUOTE_RECOVERY))must(fs.existsSync(path.join(root,p))&&sha(fs.readFileSync(path.join(root,p)))===(TASK3_GROUNDING_RETRY_SOURCE[p]??TASK2_EVIDENCE_REPAIR[p]??TASK1_SEMANTIC_CONTEXT_REPAIR[p]??TASK1C_EVENT_PRICE_RECOVERY[p]??TASK1_C4_RECOVERY_SCOPE[p]??s),'task1_current_quote_hash_drift:'+p);
  must(profile.task1_cross_topic_deployment_authorized===false,'task1_cross_topic_deployment_not_authorized');
  must(JSON.stringify(profile.authorized_task1_cross_topic_sha256)===JSON.stringify(TASK1_CROSS_TOPIC_REPAIR),'task1_cross_topic_scope_drift');
  for(const [f,h] of Object.entries(TASK1_CROSS_TOPIC_REPAIR))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===(TASK3_GROUNDING_RETRY_SOURCE[f]??TASK2_EVIDENCE_REPAIR[f]??TASK1_SEMANTIC_CONTEXT_REPAIR[f]??TASK1C_EVENT_PRICE_RECOVERY[f]??TASK1_C4_RECOVERY_SCOPE[f]??TASK1_WIDGET_UX_SCOPE[f]??TASK1_CURRENT_QUOTE_RECOVERY[f]??h),'task1_cross_topic_hash_drift:'+f);
