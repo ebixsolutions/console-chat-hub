@@ -289,6 +289,11 @@ Deno.test("V2 source-field recovery: unknown currency is explicit and never infe
   equal(result.recorded_facts.map(item=>[item.field,item.value]),[["price_amount",1290]]);
   assert(result.reply.includes("1,290")&&result.reply.includes("未註明幣別"));
   assert(!/HK\$|HKD|CNY/.test(result.reply));
+  assert(result.reply.includes("仍待核實：「AX-QZ81 — 售價待核實」、「AX-QZ81 — 現貨庫存待核實」。"));
+  const prompt=buildGroundingEvidencePrompt(c.bundle.grounding);
+  assert(prompt.includes("State the currency only when the source explicitly supplies it"));
+  assert(prompt.includes("A recorded stock quantity does not prove live availability"));
+  assert(!prompt.includes("HK$ amount"),"generation prompt must not force a currency absent from the source");
 });
 Deno.test("V2 source-field recovery: unmet demand conditions, scope and source bindings cannot be stripped",async()=>{
   for(const fault of ["constraints","negation","correction","ambiguity","subject_source","missing_evidence","source_id","tenant_id","cross_demand_chunk"]){

@@ -6952,6 +6952,40 @@ Latest applicable corrections replace old values; an answered clarification is n
     });
   }
 
+  // A bounded second draft is useful only when the first draft invented an
+  // exact token despite independently bound product-price evidence. Never
+  // retry verifier/config/accounting failures, change the source, or commit a
+  // rejected draft. Both attempts use the same exact and semantic verifier.
+  if (
+    !_priorGroundedTransform && !_mixedRequest && !llm.ok &&
+    llm.code === "LLM_GROUNDING_REJECTED" &&
+    llm.grounding_rejection_reason === "unsupported_exact_fact" &&
+    !requestSignal?.aborted && _factualEvidenceBundle && _currentFactualRequest &&
+    _generationCompanyId && source_message_id && _canonicalKbTenantId &&
+    resolveSourceRecordedPartialRecovery(_factualEvidenceBundle,_currentFactualRequest,{
+      language:_visitorLang,companyId:_generationCompanyId,sourceMessageId:source_message_id,
+      expectedTenantId:_canonicalKbTenantId,
+    })
+  ) {
+    llm = await callModel({
+      purpose: "generation",
+      system: `${finalSystemPrompt}\n\n[FACTUAL_RETRY] The preceding draft was rejected and never delivered. Write a fresh, short answer using only the same bound E* evidence. Give the source-recorded amount with its model, explicitly say when the currency and current price are unverified, and leave live availability pending without inferring stock from a record. Do not add unsupported numbers, currencies or claims, and do not echo the visitor's question. [/FACTUAL_RETRY]`,
+      user: _generationUserInput,
+      factualFollowup: _factualFollowup ?? undefined,
+      resolvedFactualRequest: currentFactualRequestContext(_currentFactualRequest),
+      groundingEvidence: _factualEvidenceBundle.grounding,
+      factualEvidenceAvailable: _c1AuthorityDecision?.decision === "USE_CURRENT_KB" && Boolean(ragResult?.chunks?.some(c => c.chunk_type === "full_content")),
+      maxTokens: Math.min(resolveGenerationMaxTokens(), 1024),
+      maxProviderAttempts: 1,
+      operationId: `generate-reply:orchestration:${conversation_id}:${source_message_id}:factual-retry`,
+      companyId: _generationCompanyId,
+      conversationId: conversation_id,
+      tag: "generate-reply-orchestration-factual-retry",
+      responseFormat: "text",
+      signal: requestSignal,
+    });
+  }
+
   if (!llm.ok) {
     const failure=llm.failure ?? executionFailure(llm.code,{request_id:llm.request_id,source_message_id,http_status:llm.status});
     if (["admission","config"].includes(failure.stage) || failure.code.startsWith("UAT_")) {

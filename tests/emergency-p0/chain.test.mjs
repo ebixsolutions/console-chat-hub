@@ -1354,7 +1354,7 @@ test('Task1C resolved request full handler: same model with unknown currentness 
  await f.run();task1cObservedRequest(f,{subject:'CW-SUL70BA',facets:['price']});
  const reply=task1cCommittedAnswer(f,{source,currentness:'unknown'});assert.match(reply.content,/HK\$4,680/);
  assert.equal(reply.metadata.answer_kind,'listed_price_unverified');assert(!reply.metadata.kb_fact_proof);
- assert.match(reply.content,/未核實|未核实|unverified/iu);
+ assert.match(reply.content,/唔係已核實|並非已核實|并非已核实|未核實|未核实|unverified/iu);
  assert(!reply.metadata.authoritative_kb_facts.some(v=>v.currentness_at_answer==='current'));
 });
 
@@ -1472,12 +1472,90 @@ function v2PartialRecoveryFixture(options={}) {
  const document=task1cModelDocument({model,price:1290,stock:7,currentness:'unknown',id:'v2-recorded-price'});
  const rejected=model+' costs HK$9,999,999 and 88 units are in stock.';
  return fixture(options.question??priceQuestion+stockQuestion,{source:uuid(8201),originalPreview:true,fullChain:true,
-  answers:[rejected],originalRagResponse:task1cRagDocuments(document),
+  answers:[rejected,rejected],originalRagResponse:task1cRagDocuments(document),
   semantic:task1SemanticContextWire([
    task1SemanticContextDemand(priceQuestion,{subject_refs:[model],requested_facts:['price']}),
    task1SemanticContextDemand(stockQuestion,{subject_refs:[model],requested_facts:['availability']}),
   ],{topic:model}),...options});
 }
+function v2RetryCalls(f) {
+ const calls=f.requests.filter(item=>item.url.endsWith(':generateContent'));
+ const semantic=calls.filter(item=>item.body?.systemInstruction?.parts?.[0]?.text?.includes('multilingual commerce semantic interpreter'));
+ const drafts=calls.filter(item=>!item.body?.generationConfig?.responseSchema&&!semantic.includes(item));
+ const verifiers=calls.filter(item=>item.body?.generationConfig?.responseSchema?.properties?.grounded);
+ return {calls,semantic,drafts,verifiers};
+}
+function v2BoundEvidence(call) {
+ const system=call.body.systemInstruction.parts[0].text;
+ const evidence=system.match(/\[KB_EVIDENCE_JSON\]\n([^]*?)\n\[\/KB_EVIDENCE_JSON\]/u)?.[1];
+ assert(evidence,'governed generation lost bound KB evidence');
+ return JSON.parse(evidence);
+}
+const v2PartialDemandResolutions=[
+ {demand_id:'demand-1',status:'partial',evidence_ids:['E1']},
+ {demand_id:'demand-2',status:'unavailable',evidence_ids:[]},
+];
+test('V2 exact-fact retry: one bounded second draft uses the same E1 and commits verified human wording once',async()=>{
+ const answer='AX-QZ81 嘅已發布商品資料記錄 HK$1,290。呢個金額未核實係現價；現貨庫存亦待商家確認。';
+ const f=v2PartialRecoveryFixture({answers:['AX-QZ81 costs HK$9,999,999 and 88 units are in stock.',answer],
+  verifierResolution:'partial',verifierIds:['E1'],verifierDemandResolutions:v2PartialDemandResolutions});
+ const result=await f.run();assert.equal(result.status,200,JSON.stringify({result,commits:f.commits,events:f.events.slice(-8)}));
+ assert.equal(f.commits.length,1);const reply=f.commits[0];assert.equal(reply.content,answer,'first rejected draft reached the customer');
+ assert.equal(reply.metadata.grounding_verification?.question_resolution,'partial');
+ assert.deepEqual(reply.metadata.grounding_verification?.demand_resolutions,v2PartialDemandResolutions);
+ assert.deepEqual(reply.metadata.unresolved_fact_fields,['demand-1','demand-2']);
+ assert.deepEqual(reply.metadata.citations.map(item=>item.document_id),['v2-recorded-price']);
+ assert(!reply.metadata.kb_fact_proof);assert.deepEqual(f.tables.conversation_commerce_state.flatMap(row=>row.state.quotes),[]);
+ const {calls,semantic,drafts,verifiers}=v2RetryCalls(f);
+ assert.equal(calls.length,4,'only semantic, rejected draft, one retry and one verifier may dispatch');
+ assert.equal(semantic.length,1);assert.equal(drafts.length,2);assert.equal(verifiers.length,1);
+ assert.deepEqual(v2BoundEvidence(drafts[0]),v2BoundEvidence(drafts[1]),'retry changed E1 authority or content');
+ assert.deepEqual(v2BoundEvidence(drafts[1]).map(item=>item.id),['E1']);
+ assert.equal(v2BoundEvidence(drafts[1])[0].source_authority.currentness,'unknown');
+ assert.deepEqual(drafts[0].body.contents,drafts[1].body.contents,'retry altered the customer input');
+ assert(drafts[1].body.systemInstruction.parts[0].text.includes('[FACTUAL_RETRY]'));
+ assert(drafts[1].body.generationConfig.maxOutputTokens<=1024,'retry output budget exceeded');
+ const verifierInput=JSON.stringify(verifiers[0].body.contents);
+ assert(verifierInput.includes(answer)&&!verifierInput.includes('9,999,999'),'verifier received rejected draft instead of retry');
+ assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
+ assert.equal(f.requests.filter(item=>item.url.endsWith('/commit_ai_reply_tx')).length,1);
+ assert.deepEqual(catalogueGateEvents(f).map(item=>[item.gate_decision,item.gate_code,item.commit_attempted]),[['allow','B2_ALLOW',true]]);
+ assert.equal(f.tables.c3_memory_reply_lifecycle_receipt.length,1,'retry duplicated Memory finalization');
+ const memory=f.tables.conversation_memory_state[0].memory;
+ assert(memory.question_lifecycle.some(item=>item.source_message_id===uuid(8201)&&item.status==='pending'));
+ assert(!memory.question_lifecycle.some(item=>item.source_message_id===uuid(8201)&&item.status==='resolved'));
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+ assert.equal(v2RetryCalls(f).calls.length,4);assert.equal(f.tables.c3_memory_reply_lifecycle_receipt.length,1);
+});
+test('V2 exact-fact retry: second unsupported draft falls back once without a verifier or a new KB request',async()=>{
+ const f=v2PartialRecoveryFixture();const result=await f.run();assert.equal(result.status,200,JSON.stringify(result));
+ assert.equal(f.commits.length,1);const reply=f.commits[0];assert.equal(reply.metadata.response_route,'canonical_kb_partial_recovery');
+ assert(!reply.content.includes('9,999,999')&&!reply.content.includes('88 units'));
+ assert(reply.metadata.failed_generation_request_id?.endsWith(':factual-retry'));
+ const {calls,semantic,drafts,verifiers}=v2RetryCalls(f);
+ assert.equal(calls.length,3);assert.equal(semantic.length,1);assert.equal(drafts.length,2);assert.equal(verifiers.length,0);
+ assert.deepEqual(v2BoundEvidence(drafts[0]),v2BoundEvidence(drafts[1]));
+ assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
+ assert.equal(f.requests.filter(item=>item.url.endsWith('/commit_ai_reply_tx')).length,1);
+ assert.deepEqual(catalogueGateEvents(f).map(item=>[item.gate_decision,item.gate_code,item.commit_attempted]),[['allow','B2_ALLOW',true]]);
+ assert.equal(f.tables.c3_memory_reply_lifecycle_receipt.length,1);
+ assert(f.tables.conversation_memory_state[0].memory.question_lifecycle.some(item=>item.source_message_id===uuid(8201)&&item.status==='pending'));
+});
+test('V2 retry guard: semantic grounding rejection does not dispatch another generation',async()=>{
+ const answer='AX-QZ81 嘅已發布商品資料記錄 HK$1,290。呢個金額未核實係現價；現貨庫存亦待商家確認。';
+ const f=v2PartialRecoveryFixture({answers:[answer],verifierGrounded:false,verifierResolution:'partial',
+  verifierIds:['E1'],verifierDemandResolutions:v2PartialDemandResolutions});
+ const result=await f.run();assert.equal(result.status,200,JSON.stringify(result));
+ const {calls,semantic,drafts,verifiers}=v2RetryCalls(f);
+ assert.equal(calls.length,3);assert.equal(semantic.length,1);assert.equal(drafts.length,1);assert.equal(verifiers.length,1);
+ assert(f.events.flat().some(value=>typeof value==='string'&&value.includes('grounding_semantic_rejected')));
+ assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.response_route,'canonical_kb_partial_recovery');
+ assert.notEqual(f.commits[0].content,answer);assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
+ assert.equal(f.requests.filter(item=>item.url.endsWith('/commit_ai_reply_tx')).length,1);
+ assert.deepEqual(catalogueGateEvents(f).map(item=>[item.gate_decision,item.gate_code,item.commit_attempted]),[['allow','B2_ALLOW',true]]);
+ assert.equal(f.tables.c3_memory_reply_lifecycle_receipt.length,1);
+ assert(f.tables.conversation_memory_state[0].memory.question_lifecycle.some(item=>item.source_message_id===uuid(8201)&&item.status==='pending'));
+});
 test('V2 partial recovery: rejected multi-demand draft preserves source-recorded price and pending live stock',async()=>{
  const f=v2PartialRecoveryFixture();const result=await f.run();
  assert.equal(result.status,200,JSON.stringify(result));assert.equal(f.commits.length,1);
@@ -1499,7 +1577,7 @@ test('V2 partial recovery: rejected multi-demand draft preserves source-recorded
  assert(meta.kb_request_contract,'failed generation must retain the safe retrieval request trace');
  assert(f.events.flat().some(value=>typeof value==='string'&&value.includes('grounding_exact_fact_rejected')));
  assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
- assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,2,'only semantic and the original rejected generation; no retry/verifier call');
+ assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,3,'semantic and exactly two rejected generations; no verifier call');
  assert.equal(meta.b2_source_message_id,uuid(8201));assert.equal(meta.b2_commit_source,'commit_ai_reply_tx');
  const gates=catalogueGateEvents(f);assert.deepEqual(gates.map(item=>[item.gate_decision,item.gate_code,item.commit_attempted]),[['allow','B2_ALLOW',true]]);
  const memory=f.tables.conversation_memory_state[0].memory;
@@ -1508,7 +1586,7 @@ test('V2 partial recovery: rejected multi-demand draft preserves source-recorded
  assert.deepEqual(f.tables.conversation_commerce_state.flatMap(row=>row.state.quotes),[]);
  const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
  assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
- assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,2);
+ assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,3);
 });
 test('V2 partial recovery: original visitor price question does not become a current quote or an unnecessary B2 denial',async()=>{
   // The customer is asking about a current price, not asserting a verified
@@ -1531,7 +1609,7 @@ test('V2 partial recovery: original visitor price question does not become a cur
   assert.match(reply.content,/AX-QZ81/);assert.match(reply.content,/HK\$1,290/);
   assert.match(reply.content,/來源記錄|来源记录|source.recorded/iu);
   assert.match(reply.content,/現貨|现货|live stock/iu);
-  assert.match(reply.content,/待核實|待核实|verification pending/iu);
+  assert.match(reply.content,/待商家核實|待商家核实|待核實|待核实|verification pending/iu);
   assert(!reply.content.includes(price) && !reply.content.includes(stock),
    'AI must not echo raw customer questions as apparent quote/reconfirmation');
   assert(!/9,999,999|88 units|已確認有現貨|confirmed in stock/iu.test(reply.content));
@@ -1542,7 +1620,7 @@ test('V2 partial recovery: original visitor price question does not become a cur
   assert.deepEqual(meta.authoritative_kb_facts,[]);assert(!meta.kb_fact_proof);
   assert(meta.unresolved_fact_fields.includes('demand-1') && meta.unresolved_fact_fields.includes('demand-2'));
   assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
-  assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,2);
+  assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,3);
   assert(f.tables.conversation_memory_state[0].memory.question_lifecycle.some(item=>item.source_message_id===uuid(8201)&&item.status==='pending'));
   assert.deepEqual(f.tables.conversation_commerce_state.flatMap(row=>row.state.quotes),[]);
   const replay=await f.run();assert.equal(replay.body.idempotent,true);
@@ -1563,7 +1641,7 @@ for(const [guard,option,expected] of [
  assert.equal(attempts[0].body.p_metadata.response_route,'canonical_kb_partial_recovery');
  assert.equal(catalogueGateEvents(f).length,1,'control/CAS/unknown denial retried the clarification branch');
  assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
- assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,2);
+ assert.equal(f.requests.filter(item=>item.url.endsWith(':generateContent')).length,3);
 });
 test('V2 partial recovery: constrained price retains the original unresolved clarification',async()=>{
  const price='AX-QZ81 兩件幾錢？',stock='有冇現貨？';

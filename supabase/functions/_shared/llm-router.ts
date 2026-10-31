@@ -62,6 +62,8 @@ export type LlmResult =
     status?: number;
     failure?: ExecutionFailure;
     invalid_output_reason?: "response_json" | "response_schema" | "empty" | "truncated";
+    /** Safe reason code only; rejected drafts and unsupported tokens stay out of the result. */
+    grounding_rejection_reason?: string;
     request_id: string;
     usage: LlmUsage;
   };
@@ -1236,6 +1238,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           return {
             ok: false,
             code: groundingDecision.reason === "model_accounting_denied" ? "LLM_ACCOUNTING_DENIED" : "LLM_GROUNDING_REJECTED",
+            grounding_rejection_reason: groundingDecision.reason,
             failure: groundingDecision.failure ?? executionFailure("LLM_GROUNDING_REJECTED",{request_id:requestId}),
             status: res.status,
             request_id: requestId,

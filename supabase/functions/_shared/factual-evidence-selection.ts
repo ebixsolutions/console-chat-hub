@@ -332,10 +332,10 @@ export function resolveSourceRecordedPartialRecovery(
       .join(options.language === "en" ? ", " : "、")].filter(Boolean).join(" — ");
   }))].filter(Boolean);
   const remaining = options.language === "en"
-    ? `Still unverified: ${pending.map(question => `“${question}”`).join("; ")}. The recorded price above does not confirm these requested details; merchant verification is still needed.`
+    ? `Still unverified: ${pending.map(question => `“${question}”`).join("; ")}.`
     : options.language === "zh-CN"
-    ? `仍待核实的问题：${pending.map(question => `「${question}」`).join("、")}。上述价格记录不能确认这些事项，仍需商家核实。`
-    : `仍待核實的問題：${pending.map(question => `「${question}」`).join("、")}。上述價格記錄未能確認呢啲事項，仍需商家核實。`;
+    ? `仍待核实：${pending.map(question => `「${question}」`).join("、")}。`
+    : `仍待核實：${pending.map(question => `「${question}」`).join("、")}。`;
   const reply = [...new Set(replies),remaining].join("\n\n");
   if (reply.length > GROUNDING_EVIDENCE_LIMITS.answerCharacters) return null;
   return {reply,citation_metadata:citation,used_evidence_ids:used,demand_outcomes:outcomes,
