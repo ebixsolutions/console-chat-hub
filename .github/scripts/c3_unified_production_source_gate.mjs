@@ -115,10 +115,10 @@ export function verifyIdentity(root,profile,expected){
 export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs.readFileSync(path.join(root,PROFILE_PATH))),expectedIdentity,sourceOnly=false}={}){
  must(profile.task3_grounding_retry_deployment_authorized===false,'task3_grounding_retry_deployment_not_authorized');
  must(JSON.stringify(profile.authorized_task3_grounding_retry_sha256)===JSON.stringify(TASK3_GROUNDING_RETRY_SOURCE),'task3_grounding_retry_scope_drift');
- for(const [f,h] of Object.entries(TASK3_GROUNDING_RETRY_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task3_grounding_retry_source_hash_drift:'+f);
  must(profile.task2_evidence_deployment_authorized===false,'task2_evidence_deployment_not_authorized');
  must(JSON.stringify(profile.authorized_task2_evidence_sha256)===JSON.stringify(TASK2_EVIDENCE_REPAIR),'task2_evidence_scope_drift');
  for(const [f,h] of Object.entries(TASK2_EVIDENCE_REPAIR))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===(TASK3_GROUNDING_RETRY_SOURCE[f]??h),'task2_evidence_source_hash_drift:'+f);
+ for(const [f,h] of Object.entries(TASK3_GROUNDING_RETRY_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task3_grounding_retry_source_hash_drift:'+f);
  must(profile.task1_semantic_context_deployment_authorized===false,'task1_semantic_context_deployment_not_authorized');
  must(JSON.stringify(profile.authorized_task1_semantic_context_sha256)===JSON.stringify(TASK1_SEMANTIC_CONTEXT_REPAIR),'task1_semantic_context_scope_drift');
  for(const [f,h] of Object.entries(TASK1_SEMANTIC_CONTEXT_REPAIR))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===(TASK3_GROUNDING_RETRY_SOURCE[f]??TASK2_EVIDENCE_REPAIR[f]??h),'task1c_source_hash_drift:'+f);
