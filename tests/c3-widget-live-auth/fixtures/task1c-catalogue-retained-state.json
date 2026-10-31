@@ -1,0 +1,911 @@
+{
+  "provenance": {
+    "production_version": 258,
+    "commerce_revision": 14,
+    "failure_code": "KNOWN_CONTEXT_RECONFIRMATION",
+    "note": "Sanitized retained post-failure state from 2026-10-29. UUIDs are synthetic. Provider proposals and product RAG payloads used by tests are explicit fixtures, not captured Hosted outputs. Reproduction sends fresh requests against the retained state, not a claim of exact pre-send replay."
+  },
+  "commerce": {
+    "state": {
+      "quotes": [],
+      "version": "commerce-state-1.0.0",
+      "delivery": {
+        "confirmed": false
+      },
+      "entities": [
+        {
+          "status": "researching",
+          "category": "air_conditioner",
+          "quantity": 1,
+          "entity_id": "air_conditioner:unscoped",
+          "attributes": {
+            "sku": null,
+            "unit": null,
+            "sunlight": "strong_afternoon_sun",
+            "room_sizes": {
+              "living_room": "180平方呎",
+              "large_bedroom": "100平方呎",
+              "small_bedroom": "80平方呎"
+            },
+            "capabilities": {
+              "customization": false,
+              "rental_return": false,
+              "requires_quote": false,
+              "supports_pickup": false,
+              "requires_booking": false,
+              "recurring_billing": false,
+              "requires_delivery": false,
+              "digital_fulfilment": false,
+              "requires_site_check": false,
+              "requires_installation": false
+            },
+            "product_name": "空调",
+            "commerce_kind": "physical_product",
+            "customer_goal": {
+              "missing": [
+                "sizing_decision",
+                "suitable_models"
+              ],
+              "category": "air_conditioner",
+              "collected": [
+                "sunlight",
+                "space_plan",
+                "room_sizes",
+                "installation_type"
+              ],
+              "objective": "replace_existing_appliance",
+              "updated_at": "2026-10-22T04:07:58.449461+00:00",
+              "journey_stage": "sizing_guidance",
+              "response_intent": "advance_decision",
+              "source_message_id": "00000000-0000-4000-8000-000000008000"
+            },
+            "quantity_basis": "system_default",
+            "industry_fields": {
+              "product": "空调"
+            },
+            "semantic_operation": "ADD_ITEM",
+            "industry_profile_id": "home_appliance",
+            "semantic_attributes": {
+              "room_size": {
+                "unit": "sq_ft",
+                "amount": 80
+              },
+              "room_sizes": {
+                "living_room": {
+                  "unit": "sq_ft",
+                  "amount": 180
+                },
+                "large_bedroom": {
+                  "unit": "sq_ft",
+                  "amount": 100
+                },
+                "small_bedroom": {
+                  "unit": "sq_ft",
+                  "amount": 80
+                }
+              },
+              "sun_exposure": "none",
+              "installation_type": "window_type"
+            },
+            "semantic_confidence": 0.9,
+            "semantic_booking_state": "unknown",
+            "semantic_frame_version": "commerce-semantic-1.0.0",
+            "semantic_payment_state": "unknown",
+            "industry_profile_version": "1.0.0",
+            "semantic_fulfillment_state": "unknown",
+            "semantic_transaction_state": "unknown"
+          },
+          "provenance": {
+            "recorded_at": "2026-10-22T04:07:58.449461+00:00",
+            "source_type": "customer",
+            "source_message_id": "00000000-0000-4000-8000-000000008000"
+          },
+          "constraints": {}
+        },
+        {
+          "brand": null,
+          "model": null,
+          "status": "tentative",
+          "category": "generic_product",
+          "quantity": 1,
+          "entity_id": "generic:轻量冲锋衣",
+          "attributes": {
+            "sku": null,
+            "unit": null,
+            "capabilities": {
+              "customization": false,
+              "rental_return": false,
+              "requires_quote": false,
+              "supports_pickup": false,
+              "requires_booking": false,
+              "recurring_billing": false,
+              "requires_delivery": false,
+              "digital_fulfilment": false,
+              "requires_site_check": false,
+              "requires_installation": false
+            },
+            "product_name": "轻量冲锋衣",
+            "commerce_kind": "physical_product",
+            "semantic_operation": "ADD_ITEM",
+            "semantic_attributes": {},
+            "semantic_confidence": 0.8,
+            "semantic_booking_state": "unknown",
+            "semantic_frame_version": "commerce-semantic-1.0.0",
+            "semantic_payment_state": "unknown",
+            "semantic_fulfillment_state": "unknown",
+            "semantic_transaction_state": "unknown"
+          },
+          "provenance": {
+            "recorded_at": "2026-10-28T02:33:33.069924+00:00",
+            "source_type": "customer",
+            "source_message_id": "00000000-0000-4000-8000-000000008001"
+          },
+          "constraints": {}
+        },
+        {
+          "brand": null,
+          "model": null,
+          "status": "tentative",
+          "category": "generic_product",
+          "quantity": 1,
+          "entity_id": "generic:轻量化户外冲锋衣",
+          "attributes": {
+            "sku": null,
+            "unit": null,
+            "capabilities": {
+              "customization": false,
+              "rental_return": false,
+              "requires_quote": false,
+              "supports_pickup": false,
+              "requires_booking": false,
+              "recurring_billing": false,
+              "requires_delivery": false,
+              "digital_fulfilment": false,
+              "requires_site_check": false,
+              "requires_installation": false
+            },
+            "product_name": "轻量化户外冲锋衣",
+            "commerce_kind": "physical_product",
+            "semantic_operation": "ADD_ITEM",
+            "semantic_attributes": {
+              "product_name": "轻量化户外冲锋衣"
+            },
+            "semantic_confidence": 0.8,
+            "semantic_booking_state": "unknown",
+            "semantic_frame_version": "commerce-semantic-1.0.0",
+            "semantic_payment_state": "unknown",
+            "semantic_fulfillment_state": "unknown",
+            "semantic_transaction_state": "unknown"
+          },
+          "provenance": {
+            "recorded_at": "2026-10-28T02:37:03.601632+00:00",
+            "source_type": "customer",
+            "source_message_id": "00000000-0000-4000-8000-000000008002"
+          },
+          "constraints": {}
+        },
+        {
+          "brand": null,
+          "model": null,
+          "status": "tentative",
+          "category": "generic_product",
+          "quantity": 2,
+          "entity_id": "generic:衫",
+          "attributes": {
+            "sku": null,
+            "unit": null,
+            "capabilities": {
+              "customization": false,
+              "rental_return": false,
+              "requires_quote": false,
+              "supports_pickup": false,
+              "requires_booking": false,
+              "recurring_billing": false,
+              "requires_delivery": false,
+              "digital_fulfilment": false,
+              "requires_site_check": false,
+              "requires_installation": false
+            },
+            "product_name": "衫",
+            "commerce_kind": "physical_product",
+            "semantic_operation": "ADD_ITEM",
+            "semantic_attributes": {},
+            "semantic_confidence": 0.8,
+            "semantic_booking_state": "unknown",
+            "semantic_frame_version": "commerce-semantic-1.0.0",
+            "semantic_payment_state": "unknown",
+            "semantic_fulfillment_state": "unknown",
+            "semantic_transaction_state": "unknown"
+          },
+          "provenance": {
+            "recorded_at": "2026-10-28T03:33:31.709029+00:00",
+            "source_type": "customer",
+            "source_message_id": "00000000-0000-4000-8000-000000008003"
+          },
+          "constraints": {}
+        },
+        {
+          "brand": null,
+          "model": null,
+          "status": "researching",
+          "category": "generic_product",
+          "quantity": 1,
+          "entity_id": "generic:衣服",
+          "attributes": {
+            "sku": null,
+            "unit": null,
+            "capabilities": {
+              "customization": false,
+              "rental_return": false,
+              "requires_quote": false,
+              "supports_pickup": false,
+              "requires_booking": false,
+              "recurring_billing": false,
+              "requires_delivery": false,
+              "digital_fulfilment": false,
+              "requires_site_check": false,
+              "requires_installation": false
+            },
+            "product_name": "衣服",
+            "commerce_kind": "physical_product",
+            "semantic_operation": "CONFIRM",
+            "semantic_attributes": {},
+            "semantic_confidence": 0.8,
+            "semantic_booking_state": "unknown",
+            "semantic_frame_version": "commerce-semantic-1.0.0",
+            "semantic_payment_state": "unknown",
+            "semantic_fulfillment_state": "unknown",
+            "semantic_transaction_state": "unknown"
+          },
+          "provenance": {
+            "recorded_at": "2026-10-28T03:35:30.140649+00:00",
+            "source_type": "customer",
+            "source_message_id": "00000000-0000-4000-8000-000000008004"
+          },
+          "constraints": {}
+        }
+      ],
+      "language": "zh-TW",
+      "metadata": {},
+      "conversion": {
+        "funnel_stage": "quotation",
+        "order_status": "none",
+        "payment_status": "none",
+        "next_best_action": null,
+        "quotation_status": "draft",
+        "cancelled_entity_ids": [],
+        "confirmed_entity_ids": [],
+        "tentative_entity_ids": [
+          "generic:轻量冲锋衣",
+          "generic:轻量化户外冲锋衣",
+          "generic:衫"
+        ]
+      },
+      "installation": {
+        "items": [],
+        "pending_checks": [
+          "window_opening_check"
+        ],
+        "site_conditions": {}
+      },
+      "current_topic": "air_conditioner",
+      "current_intent": "replace_existing_appliance",
+      "current_industry": "home_appliance",
+      "unresolved_items": [],
+      "latest_corrections": [],
+      "customer_constraints": {
+        "customer_reported_facts": {
+          "room_count": {
+            "value": {
+              "bedroom": 2,
+              "living_room": 1
+            },
+            "provenance": {
+              "recorded_at": "2026-10-22T04:01:35.92579+00:00",
+              "source_type": "customer",
+              "source_message_id": "00000000-0000-4000-8000-000000008005"
+            }
+          }
+        }
+      }
+    },
+    "revision": 14,
+    "source_message_id": "00000000-0000-4000-8000-000000008004"
+  },
+  "memory": {
+    "memory": {
+      "version": "conversation-memory-1.0.0",
+      "company_id": "00000000-0000-4000-8000-000000008006",
+      "updated_at": "2026-10-29T03:17:53.229265+00:00",
+      "current_goal": "轻量冲锋衣 有冇貨？",
+      "prior_topics": [
+        "轻量化户外冲锋衣",
+        "CW-SUL70BA 功能",
+        "冲锋衣 功能",
+        "几钱",
+        "CW-SUL70BA 几钱",
+        "sss",
+        "bbb",
+        "推荐2款衫给我",
+        "直接推荐就行",
+        "直接推荐你找到的那兩項给我",
+        "确认是 衣服",
+        "不是推荐给我吗"
+      ],
+      "current_topic": "轻量冲锋衣 有冇貨？",
+      "open_questions": [
+        "需要冷气的空间各有多少平方英尺?",
+        "想換冷氣,兩間睡房加個客廳,應該點揀好?",
+        "各位置係窗口位、分體位,定係其他安裝方式?",
+        "各窗口位可放機嘅闊度同高度各係幾多?",
+        "轻量冲锋衣 几钱?",
+        "几钱?",
+        "轻量冲锋衣 有冇貨?"
+      ],
+      "active_entities": [
+        {
+          "type": "air_conditioner",
+          "brand": null,
+          "model": null,
+          "region": null,
+          "status": "active",
+          "quantity": 1,
+          "entity_id": "air_conditioner:unscoped",
+          "transaction_state": {
+            "confirmed": false,
+            "tentative": false
+          },
+          "requested_quantity": null,
+          "current_requirements": {
+            "sku": null,
+            "unit": null,
+            "sunlight": "strong_afternoon_sun",
+            "room_sizes": {
+              "living_room": "180平方呎",
+              "large_bedroom": "100平方呎",
+              "small_bedroom": "80平方呎"
+            },
+            "capabilities": {
+              "customization": false,
+              "rental_return": false,
+              "requires_quote": false,
+              "supports_pickup": false,
+              "requires_booking": false,
+              "recurring_billing": false,
+              "requires_delivery": false,
+              "digital_fulfilment": false,
+              "requires_site_check": false,
+              "requires_installation": false
+            },
+            "product_name": "空调",
+            "commerce_kind": "physical_product",
+            "customer_goal": {
+              "missing": [
+                "sizing_decision",
+                "suitable_models"
+              ],
+              "category": "air_conditioner",
+              "collected": [
+                "sunlight",
+                "space_plan",
+                "room_sizes",
+                "installation_type"
+              ],
+              "objective": "replace_existing_appliance",
+              "updated_at": "2026-10-22T04:07:58.449461+00:00",
+              "journey_stage": "sizing_guidance",
+              "response_intent": "advance_decision",
+              "source_message_id": "00000000-0000-4000-8000-000000008000"
+            },
+            "quantity_basis": "system_default",
+            "industry_fields": {
+              "product": "空调"
+            },
+            "semantic_operation": "ADD_ITEM",
+            "industry_profile_id": "home_appliance",
+            "semantic_attributes": {
+              "room_size": {
+                "unit": "sq_ft",
+                "amount": 80
+              },
+              "room_sizes": {
+                "living_room": {
+                  "unit": "sq_ft",
+                  "amount": 180
+                },
+                "large_bedroom": {
+                  "unit": "sq_ft",
+                  "amount": 100
+                },
+                "small_bedroom": {
+                  "unit": "sq_ft",
+                  "amount": 80
+                }
+              },
+              "sun_exposure": "none",
+              "installation_type": "window_type"
+            },
+            "semantic_confidence": 0.9,
+            "semantic_booking_state": "unknown",
+            "semantic_frame_version": "commerce-semantic-1.0.0",
+            "semantic_payment_state": "unknown",
+            "industry_profile_version": "1.0.0",
+            "semantic_fulfillment_state": "unknown",
+            "semantic_transaction_state": "unknown"
+          }
+        },
+        {
+          "type": "generic_product",
+          "brand": null,
+          "model": null,
+          "region": null,
+          "status": "active",
+          "quantity": 1,
+          "entity_id": "generic:衣服",
+          "transaction_state": {
+            "confirmed": false,
+            "tentative": false
+          },
+          "requested_quantity": 1,
+          "current_requirements": {
+            "sku": null,
+            "unit": null,
+            "capabilities": {
+              "customization": false,
+              "rental_return": false,
+              "requires_quote": false,
+              "supports_pickup": false,
+              "requires_booking": false,
+              "recurring_billing": false,
+              "requires_delivery": false,
+              "digital_fulfilment": false,
+              "requires_site_check": false,
+              "requires_installation": false
+            },
+            "product_name": "衣服",
+            "commerce_kind": "physical_product",
+            "semantic_operation": "CONFIRM",
+            "semantic_attributes": {},
+            "semantic_confidence": 0.8,
+            "semantic_booking_state": "unknown",
+            "semantic_frame_version": "commerce-semantic-1.0.0",
+            "semantic_payment_state": "unknown",
+            "semantic_fulfillment_state": "unknown",
+            "semantic_transaction_state": "unknown"
+          }
+        },
+        {
+          "type": "generic_product",
+          "brand": null,
+          "model": null,
+          "region": null,
+          "status": "active",
+          "quantity": 2,
+          "entity_id": "generic:衫",
+          "transaction_state": {
+            "confirmed": false,
+            "tentative": true
+          },
+          "requested_quantity": 2,
+          "current_requirements": {
+            "sku": null,
+            "unit": null,
+            "capabilities": {
+              "customization": false,
+              "rental_return": false,
+              "requires_quote": false,
+              "supports_pickup": false,
+              "requires_booking": false,
+              "recurring_billing": false,
+              "requires_delivery": false,
+              "digital_fulfilment": false,
+              "requires_site_check": false,
+              "requires_installation": false
+            },
+            "product_name": "衫",
+            "commerce_kind": "physical_product",
+            "semantic_operation": "ADD_ITEM",
+            "semantic_attributes": {},
+            "semantic_confidence": 0.8,
+            "semantic_booking_state": "unknown",
+            "semantic_frame_version": "commerce-semantic-1.0.0",
+            "semantic_payment_state": "unknown",
+            "semantic_fulfillment_state": "unknown",
+            "semantic_transaction_state": "unknown"
+          }
+        },
+        {
+          "type": "generic_product",
+          "brand": null,
+          "model": null,
+          "region": null,
+          "status": "active",
+          "quantity": 1,
+          "entity_id": "generic:轻量冲锋衣",
+          "transaction_state": {
+            "confirmed": false,
+            "tentative": true
+          },
+          "requested_quantity": 1,
+          "current_requirements": {
+            "sku": null,
+            "unit": null,
+            "capabilities": {
+              "customization": false,
+              "rental_return": false,
+              "requires_quote": false,
+              "supports_pickup": false,
+              "requires_booking": false,
+              "recurring_billing": false,
+              "requires_delivery": false,
+              "digital_fulfilment": false,
+              "requires_site_check": false,
+              "requires_installation": false
+            },
+            "product_name": "轻量冲锋衣",
+            "commerce_kind": "physical_product",
+            "semantic_operation": "ADD_ITEM",
+            "semantic_attributes": {},
+            "semantic_confidence": 0.8,
+            "semantic_booking_state": "unknown",
+            "semantic_frame_version": "commerce-semantic-1.0.0",
+            "semantic_payment_state": "unknown",
+            "semantic_fulfillment_state": "unknown",
+            "semantic_transaction_state": "unknown"
+          }
+        },
+        {
+          "type": "generic_product",
+          "brand": null,
+          "model": null,
+          "region": null,
+          "status": "active",
+          "quantity": 1,
+          "entity_id": "generic:轻量化户外冲锋衣",
+          "transaction_state": {
+            "confirmed": false,
+            "tentative": true
+          },
+          "requested_quantity": 1,
+          "current_requirements": {
+            "sku": null,
+            "unit": null,
+            "capabilities": {
+              "customization": false,
+              "rental_return": false,
+              "requires_quote": false,
+              "supports_pickup": false,
+              "requires_booking": false,
+              "recurring_billing": false,
+              "requires_delivery": false,
+              "digital_fulfilment": false,
+              "requires_site_check": false,
+              "requires_installation": false
+            },
+            "product_name": "轻量化户外冲锋衣",
+            "commerce_kind": "physical_product",
+            "semantic_operation": "ADD_ITEM",
+            "semantic_attributes": {
+              "product_name": "轻量化户外冲锋衣"
+            },
+            "semantic_confidence": 0.8,
+            "semantic_booking_state": "unknown",
+            "semantic_frame_version": "commerce-semantic-1.0.0",
+            "semantic_payment_state": "unknown",
+            "semantic_fulfillment_state": "unknown",
+            "semantic_transaction_state": "unknown"
+          }
+        }
+      ],
+      "conversation_id": "00000000-0000-4000-8000-000000008007",
+      "current_regions": [],
+      "memory_revision": 55,
+      "pending_actions": [
+        "window_opening_check"
+      ],
+      "historical_facts": [],
+      "source_message_id": "00000000-0000-4000-8000-000000008008",
+      "updated_from_turn": 43,
+      "active_constraints": [],
+      "latest_corrections": [],
+      "question_lifecycle": [
+        {
+          "text": "需要冷气的空间各有多少平方英尺?",
+          "status": "pending",
+          "entity_id": null,
+          "resolution": "customer information required",
+          "source_message_id": "00000000-0000-4000-8000-000000008009",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008010"
+        },
+        {
+          "text": "想換冷氣,兩間睡房加個客廳,應該點揀好?",
+          "status": "pending",
+          "entity_id": null,
+          "resolution": "c3_service_tool_failure",
+          "source_message_id": "00000000-0000-4000-8000-000000008011",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008012"
+        },
+        {
+          "text": "想換冷氣,兩間睡房加個客廳,應該點揀好?",
+          "status": "resolved",
+          "entity_id": null,
+          "resolution": "customer_guidance",
+          "source_message_id": "00000000-0000-4000-8000-000000008005",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008013"
+        },
+        {
+          "text": "各位置係窗口位、分體位,定係其他安裝方式?",
+          "status": "pending",
+          "entity_id": null,
+          "resolution": "customer information required",
+          "source_message_id": "00000000-0000-4000-8000-000000008014",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008015"
+        },
+        {
+          "text": "各窗口位可放機嘅闊度同高度各係幾多?",
+          "status": "pending",
+          "entity_id": null,
+          "resolution": "customer information required",
+          "source_message_id": "00000000-0000-4000-8000-000000008016",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008017"
+        },
+        {
+          "text": "轻量冲锋衣 几钱?",
+          "status": "pending",
+          "entity_id": "generic:轻量冲锋衣",
+          "resolution": "merchant information requires current evidence",
+          "source_message_id": "00000000-0000-4000-8000-000000008018",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008019"
+        },
+        {
+          "text": "CW-SUL70BA 功能?",
+          "status": "resolved",
+          "entity_id": null,
+          "resolution": "delivered_answer",
+          "source_message_id": "00000000-0000-4000-8000-000000008020",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008021"
+        },
+        {
+          "text": "冲锋衣 功能?",
+          "status": "resolved",
+          "entity_id": null,
+          "resolution": "delivered_answer",
+          "source_message_id": "00000000-0000-4000-8000-000000008022",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008023"
+        },
+        {
+          "text": "几钱?",
+          "status": "pending",
+          "entity_id": null,
+          "resolution": "merchant information requires current evidence",
+          "source_message_id": "00000000-0000-4000-8000-000000008024",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008025"
+        },
+        {
+          "text": "CW-SUL70BA 几钱?",
+          "status": "resolved",
+          "entity_id": null,
+          "resolution": "grounding_recovery_clarification",
+          "source_message_id": "00000000-0000-4000-8000-000000008026",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008027"
+        },
+        {
+          "text": "CW-SUL70BA 几钱?",
+          "status": "resolved",
+          "entity_id": null,
+          "resolution": "grounding_recovery_clarification",
+          "source_message_id": "00000000-0000-4000-8000-000000008028",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008029"
+        },
+        {
+          "text": "不是推荐给我吗??",
+          "status": "resolved",
+          "entity_id": null,
+          "resolution": "c1_authority_conflict_clarification",
+          "source_message_id": "00000000-0000-4000-8000-000000008030",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008031"
+        },
+        {
+          "text": "轻量冲锋衣 几钱?",
+          "status": "pending",
+          "entity_id": "generic:轻量冲锋衣",
+          "resolution": "merchant information requires current evidence",
+          "source_message_id": "00000000-0000-4000-8000-000000008032",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008033"
+        },
+        {
+          "text": "轻量冲锋衣 几钱?",
+          "status": "pending",
+          "entity_id": "generic:轻量冲锋衣",
+          "resolution": "merchant information requires current evidence",
+          "source_message_id": "00000000-0000-4000-8000-000000008034",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008035"
+        },
+        {
+          "text": "冲锋衣 功能?",
+          "status": "resolved",
+          "entity_id": null,
+          "resolution": "delivered_answer",
+          "source_message_id": "00000000-0000-4000-8000-000000008036",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008037"
+        },
+        {
+          "text": "几钱?",
+          "status": "pending",
+          "entity_id": null,
+          "resolution": "merchant information requires current evidence",
+          "source_message_id": "00000000-0000-4000-8000-000000008038",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008039"
+        },
+        {
+          "text": "轻量冲锋衣 几钱?",
+          "status": "pending",
+          "entity_id": "generic:轻量冲锋衣",
+          "resolution": "merchant information requires current evidence",
+          "source_message_id": "00000000-0000-4000-8000-000000008040",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008041"
+        },
+        {
+          "text": "轻量冲锋衣 几钱?",
+          "status": "pending",
+          "entity_id": "generic:轻量冲锋衣",
+          "resolution": "merchant information requires current evidence",
+          "source_message_id": "00000000-0000-4000-8000-000000008042",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008043"
+        },
+        {
+          "text": "轻量冲锋衣 几钱?",
+          "status": "pending",
+          "entity_id": "generic:轻量冲锋衣",
+          "resolution": "merchant information requires current evidence",
+          "source_message_id": "00000000-0000-4000-8000-000000008044",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008045"
+        },
+        {
+          "text": "轻量冲锋衣 几钱?",
+          "status": "pending",
+          "entity_id": "generic:轻量冲锋衣",
+          "resolution": "terminal_failure_recovery",
+          "source_message_id": "00000000-0000-4000-8000-000000008046",
+          "resolution_source_message_id": "00000000-0000-4000-8000-000000008047"
+        },
+        {
+          "text": "轻量冲锋衣 有冇貨?",
+          "status": "pending",
+          "entity_id": "generic:轻量冲锋衣",
+          "source_message_id": "00000000-0000-4000-8000-000000008008"
+        }
+      ],
+      "transaction_summary": {
+        "order": "none",
+        "payment": "none",
+        "delivery": "not_confirmed",
+        "quotation": "draft",
+        "installation": "unknown"
+      },
+      "customer_preferences": [],
+      "current_customer_facts": [
+        {
+          "key": "room_size",
+          "value": [
+            {
+              "group": "room",
+              "label": "細房",
+              "value": "80平方呎",
+              "member_id": "room:1"
+            },
+            {
+              "group": "room",
+              "label": "大房",
+              "value": "100平方呎",
+              "member_id": "room:2"
+            },
+            {
+              "group": "living_room",
+              "label": "客廳",
+              "value": "180平方呎",
+              "member_id": "living_room:1"
+            }
+          ],
+          "region": null,
+          "authority": "customer",
+          "entity_id": null,
+          "source_message_id": "00000000-0000-4000-8000-000000008014"
+        },
+        {
+          "key": "room_count",
+          "value": {
+            "bedroom": 2,
+            "living_room": 1
+          },
+          "region": null,
+          "authority": "customer",
+          "entity_id": null,
+          "source_message_id": "00000000-0000-4000-8000-000000008005"
+        },
+        {
+          "key": "entity:generic:轻量冲锋衣:quantity",
+          "value": 1,
+          "region": null,
+          "authority": "canonical_commerce",
+          "entity_id": "generic:轻量冲锋衣",
+          "source_message_id": "00000000-0000-4000-8000-000000008001"
+        },
+        {
+          "key": "entity:generic:轻量化户外冲锋衣:quantity",
+          "value": 1,
+          "region": null,
+          "authority": "canonical_commerce",
+          "entity_id": "generic:轻量化户外冲锋衣",
+          "source_message_id": "00000000-0000-4000-8000-000000008002"
+        },
+        {
+          "key": "entity:generic:衫:quantity",
+          "value": 2,
+          "region": null,
+          "authority": "canonical_commerce",
+          "entity_id": "generic:衫",
+          "source_message_id": "00000000-0000-4000-8000-000000008003"
+        },
+        {
+          "key": "entity:generic:衣服:quantity",
+          "value": 1,
+          "region": null,
+          "authority": "canonical_commerce",
+          "entity_id": "generic:衣服",
+          "source_message_id": "00000000-0000-4000-8000-000000008004"
+        }
+      ],
+      "handoff_relevant_state": {
+        "current_goal": "轻量冲锋衣 有冇貨？",
+        "open_questions": [
+          "需要冷气的空间各有多少平方英尺?",
+          "想換冷氣,兩間睡房加個客廳,應該點揀好?",
+          "各位置係窗口位、分體位,定係其他安裝方式?",
+          "各窗口位可放機嘅闊度同高度各係幾多?",
+          "轻量冲锋衣 几钱?",
+          "几钱?"
+        ],
+        "pending_actions": [
+          "window_opening_check"
+        ],
+        "active_entity_ids": [
+          "air_conditioner:unscoped",
+          "generic:衣服",
+          "generic:衫",
+          "generic:轻量冲锋衣",
+          "generic:轻量化户外冲锋衣"
+        ]
+      },
+      "cancelled_or_superseded": [
+        {
+          "key": "superseded_room_size",
+          "value": [
+            {
+              "group": "room",
+              "label": "细房",
+              "value": "80平方呎",
+              "member_id": "room:1"
+            }
+          ],
+          "region": null,
+          "authority": "customer",
+          "entity_id": null,
+          "source_message_id": "00000000-0000-4000-8000-000000008048"
+        }
+      ],
+      "commerce_state_revision": 14,
+      "grounded_reference_lineage": [
+        {
+          "document_id": "isolated-prior-topic-document",
+          "source_message_id": "00000000-0000-4000-8000-000000008999",
+          "evidence_chunk_ids": [
+            "isolated-prior-topic-chunk"
+          ]
+        }
+      ]
+    },
+    "revision": 55,
+    "source_message_id": "00000000-0000-4000-8000-000000008008"
+  }
+}

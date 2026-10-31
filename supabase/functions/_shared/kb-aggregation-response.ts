@@ -3,9 +3,9 @@
 // Structured selected_documents[].evidence[] is authoritative for grounding.
 // llm_context.combined_text is intentionally not used as factual evidence.
 //
-// Task 1.1 invariant: Singapore may return multiple candidate documents, but
-// evidence is parsed and retained per document. Callers must select exactly one
-// winning document before exposing llm_context/policy evidence to the UI.
+// Evidence is parsed and retained per document. Demand-aware callers may keep
+// complementary sources after checking each source's authority and lineage;
+// a single document's authority never applies to another document's evidence.
 
 export type AggregationChunkType = "rag_summary" | "full_content" | "faq_pair" | "section";
 
@@ -65,6 +65,18 @@ export interface AggregationAuthorityMetadata {
   updated_at: string | null;
   source_priority: number | null;
   claims: Array<{ key: string; value: string }>;
+}
+
+/** Runtime constructor shared by all KB adapters so authority metadata cannot drift by transport. */
+export function createAggregationAuthorityMetadata(
+  value: AggregationAuthorityMetadata,
+): AggregationAuthorityMetadata {
+  return {
+    ...value,
+    entity_ids: [...value.entity_ids],
+    regions: [...value.regions],
+    claims: value.claims.map((claim) => ({ ...claim })),
+  };
 }
 
 export interface AggregationDocumentCandidate {

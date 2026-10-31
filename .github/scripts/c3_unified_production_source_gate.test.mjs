@@ -1,0 +1,141 @@
+import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {execFileSync} from 'node:child_process';
+import {verifyProductionSource,verifyIdentity,verifyChildEvidence,runChild,imports,PROFILE_PATH} from './c3_unified_production_source_gate.mjs';
+import {resolveAuthoritativeSupabaseBinding} from '../../src/integrations/supabase/runtime-authority.mjs';
+import {verifyDeterministicClosure} from './c3_deterministic_runtime_closure.mjs';
+const root=process.cwd(),profile=JSON.parse(fs.readFileSync(PROFILE_PATH));const tests=[];
+// Task 2 adds source evidence contracts, never deploy or paid-dispatch authority.
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,task2_evidence_deployment_authorized:true},sourceOnly:true}),/task2_evidence_deployment_not_authorized/);
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_task2_evidence_sha256:{}},sourceOnly:true}),/task2_evidence_scope_drift/);
+// Task 1 semantic-context source changes retain separate production authority and exact bytes.
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,task1_semantic_context_deployment_authorized:true},sourceOnly:true}),/task1_semantic_context_deployment_not_authorized/);
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_task1_semantic_context_sha256:{}},sourceOnly:true}),/task1_semantic_context_scope_drift/);
+// Task 1C latest scope must also fail closed on deployment or manifest drift.
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,task1c_event_price_deployment_authorized:true},sourceOnly:true}),/task1c_deployment_not_authorized/);
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_task1c_event_price_sha256:{}},sourceOnly:true}),/task1c_source_scope_drift/);
+// New Task 1C / same Closure Contract. These negatives must be exact,
+// not a permissive alternative error from a different guard.
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,task1_cross_topic_deployment_authorized:true},sourceOnly:true}),/task1_cross_topic_deployment_not_authorized/);
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_task1_cross_topic_sha256:{}},sourceOnly:true}),/task1_cross_topic_scope_drift/);
+function reject(name,fn,re){assert.throws(fn,new RegExp(re.source+"|task2_evidence_source_hash_drift:|task1c_source_hash_drift:|task1_current_quote_hash_drift:|task1_cross_topic_hash_drift:|task1_director_hash_drift:|live_execution_source_drift:|uat_source_drift:|uat_compatibility_source_drift:|director_functional_source_drift:"));tests.push({name,result:'PASS',rejected:true});}
+reject('Task 1 source repair cannot authorize production deployment',()=>verifyProductionSource({root,profile:{...profile,task1_director_repair_deployment_authorized:true},sourceOnly:true}),/task1_deployment_not_authorized/);
+reject('Task 1 exact source bytes cannot be widened',()=>verifyProductionSource({root,profile:{...profile,authorized_task1_director_repair_sha256:{}},sourceOnly:true}),/task1_director_scope_drift/);
+reject('live execution source repair cannot authorize deployment',()=>verifyProductionSource({root,profile:{...profile,live_execution_deployment_authorized:true},sourceOnly:true}),/live_execution_deployment_not_authorized/);
+reject('live execution exact scope cannot widen',()=>verifyProductionSource({root,profile:{...profile,authorized_live_execution_sha256:{}},sourceOnly:true}),/live_execution_scope_drift/);
+reject('Director functional source repair cannot authorize deployment',()=>verifyProductionSource({root,profile:{...profile,director_functional_deployment_authorized:true},sourceOnly:true}),/director_deployment_authority_masquerade/);
+reject('Director exact functional scope cannot widen',()=>verifyProductionSource({root,profile:{...profile,authorized_director_functional_repair_sha256:{}},sourceOnly:true}),/director_functional_scope_drift/);
+reject('UAT source approval cannot authorize deployment',()=>verifyProductionSource({root,profile:{...profile,uat_runtime_deployment_authorized:true},sourceOnly:true}),/uat_deployment_authority_masquerade/);
+reject('UAT exact source scope cannot be widened',()=>verifyProductionSource({root,profile:{...profile,authorized_uat_runtime_sha256:{}},sourceOnly:true}),/uat_source_scope_drift/);
+reject('UAT compatibility exact scope cannot be widened',()=>verifyProductionSource({root,profile:{...profile,authorized_uat_compatibility_sha256:{}},sourceOnly:true}),/uat_compatibility_scope_drift/);
+reject('accounting source approval cannot authorize Production',()=>verifyProductionSource({root,profile:{...profile,model_accounting_production_authorized:true},sourceOnly:true}),/model_accounting_authority_masquerade/);
+reject('nonproduction repair cannot widen approved file scope',()=>verifyProductionSource({root,profile:{...profile,authorized_nonproduction_preview_repair_sha256:{}},sourceOnly:true}),/nonproduction_preview_scope_drift/);
+reject('reference repair cannot expand exact source scope',()=>verifyProductionSource({root,profile:{...profile,authorized_section15_reference_repair_sha256:{}},sourceOnly:true}),/section15_reference_scope_drift/);
+reject('W19 compatibility cannot widen exact bytes',()=>verifyProductionSource({root,profile:{...profile,authorized_w19_compatibility_repair_sha256:{}},sourceOnly:true}),/w19_compatibility_scope_drift/);
+reject('compound repair cannot widen exact bytes',()=>verifyProductionSource({root,profile:{...profile,authorized_compound_dialogue_repair_sha256:{}},sourceOnly:true}),/compound_dialogue_scope_drift/);
+const source=verifyProductionSource({root,profile,sourceOnly:true});assert.equal(source.status,'SOURCE_VALIDATED');assert.equal(source.hosted_runtime,'NOT_TESTED');
+execFileSync(process.execPath,['--test','tests/phase1/request-response-propagation.test.mjs','tests/phase1/feedback-date-boundaries.test.mjs'],{cwd:root,stdio:'pipe'});
+reject('Quality95 source repair cannot authorize live traffic',()=>verifyProductionSource({root,profile:{...profile,quality95_extra_traffic_authorized:true},sourceOnly:true}),/quality95_production_authority_masquerade/);
+reject('Quality95 source repair cannot authorize deployment',()=>verifyProductionSource({root,profile:{...profile,quality95_production_deployment_authorized:true},sourceOnly:true}),/quality95_production_authority_masquerade/);
+reject('wrong profile',()=>verifyProductionSource({root,profile:{...profile,mode:'DETERMINISTIC_ONLY'},sourceOnly:true}),/wrong_profile/);
+reject('illegal provider',()=>verifyProductionSource({root,profile:{...profile,allowed_providers:['openai']},sourceOnly:true}),/unapproved_provider/);
+reject('entrypoint omission',()=>verifyProductionSource({root,profile:{...profile,entrypoints:profile.entrypoints.slice(1)},sourceOnly:true}),/entrypoint_scope_drift/);
+reject('scope expansion',()=>verifyProductionSource({root,profile:{...profile,authorized_changes:[...profile.authorized_changes,'package.json']},sourceOnly:true}),/authorization_scope_drift/);
+reject('stale identity',()=>verifyIdentity(root,profile,{head:'0'.repeat(40),tree:'0'.repeat(40)}),/stale_identity/);
+reject('unresolved dynamic import',()=>imports('await import(pathFromRequest);','unsafe.ts'),/dynamic_import_unresolved/);
+const fixture=fs.mkdtempSync(path.join(os.tmpdir(),'c3-production-controls-'));
+try{
+ for(const f of [...Object.keys(profile.authorized_task2_evidence_sha256 ?? {}),...Object.keys(profile.authorized_task1_semantic_context_sha256 ?? {}),...Object.keys(profile.authorized_task1c_event_price_sha256 ?? {}),...Object.keys(profile.authorized_task1_c4_recovery_sha256 ?? {}),...Object.keys(profile.authorized_task1_cross_topic_sha256 ?? {}),...Object.keys(profile.authorized_task1_director_repair_sha256 ?? {}),...Object.keys(profile.authorized_live_execution_sha256 ?? {}),...Object.keys(profile.authorized_director_functional_repair_sha256 ?? {}),...Object.keys(profile.authorized_uat_runtime_sha256 ?? {}),...Object.keys(profile.authorized_uat_compatibility_sha256 ?? {}),...Object.keys(profile.authorized_compound_dialogue_repair_sha256),...Object.keys(profile.authorized_w19_compatibility_repair_sha256),...Object.keys(profile.authorized_section15_reference_repair_sha256),...Object.keys(profile.authorized_nonproduction_preview_repair_sha256),...Object.keys(profile.authorized_kb_accounting_repair_sha256),...Object.keys(profile.authorized_model_accounting_repair_sha256),...Object.keys(profile.authorized_quality95_failure_repair_sha256),...profile.runtime_files,...Object.keys(profile.frozen_evidence_sha256),...Object.keys(profile.normalized_preview_sha256),...Object.keys(profile.widget_reply_stability_sha256),...Object.keys(profile.authorized_widget_auth_repair_sha256),...Object.keys(profile.authorized_unified_generic_service_repair_sha256),...Object.keys(profile.authorized_f13_f14_repair_sha256),...Object.keys(profile.authorized_b12_registry_repair_sha256),...Object.keys(profile.authorized_memory_reply_repair_sha256),...Object.keys(profile.authorized_preview_activation_sha256),...Object.keys(profile.accepted_demo_env_sha256),...Object.keys(profile.authorized_section15_repair_sha256)]){const dest=path.join(fixture,f);fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(path.join(root,f),dest);}
+ for(const f of Object.keys(profile.authorized_task2_evidence_sha256)){
+  const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized Task 2 source drift');
+  assert.throws(()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),new RegExp('task2_evidence_source_hash_drift:'+f.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  tests.push({name:'Task 2 exact source bytes '+f,result:'PASS',rejected:true});fs.writeFileSync(path.join(fixture,f),original);
+ }
+ for(const f of ['sql/c3_ordinary_preview_safety.sql','sql/c3_ordinary_preview_safety_rollback.sql','supabase/functions/_shared/widget-preview-authority.ts','supabase/functions/create-visitor-session/index.ts','tests/ordinary-preview-safety/native.py','tests/ordinary-preview-safety/runtime.mjs','tests/console-navigation/ordinary-preview-bridge.test.mjs','src/components/console/WidgetLiveAiTest.tsx','tests/console-navigation/legacy-widget-entry.test.mjs','public/widget/chat.js','src/routes/_authenticated/console.tsx','src/hooks/useConsoleIdentity.ts','src/components/console/OrdinaryWidgetPreview.tsx','src/lib/widget-preview-state.ts','src/lib/public-widget-preview-asset.ts','supabase/functions/receive-widget-message/index.ts','supabase/functions/_shared/widget-preview-control.ts','tests/console-navigation/ordinary-widget-dom.test.mjs','tests/console-navigation/ordinary-preview-route.test.mjs','tests/console-navigation/console-role-display.test.mjs','tests/c3-widget-live-auth/ordinary-receive.test.mjs','src/lib/api/config.service.ts','src/hooks/useCurrentRole.ts','tests/console-navigation/current-role.test.mjs','tests/console-navigation/widget-input-dom.test.mjs','tests/phase1/feedback-date-boundaries.test.mjs','src/start.ts','tests/phase1/request-response-propagation.test.mjs','src/lib/customer360/useCustomerContext.ts','src/routes/_authenticated/console.customer360.tsx','src/routes/_authenticated/console.visitor-analytics.tsx','tests/console-navigation/read-recovery.test.mjs','src/hooks/useTicketReply.ts','sql/c3_saved_responses.sql','sql/c3_saved_responses_rollback.sql','src/components/console/SavedResponses.tsx','src/components/console/TicketHandoffSummary.tsx','src/routes/_authenticated/console.conversations.$id.tsx','src/components/console/ce/CeBatchControls.tsx','src/lib/api/saved-responses.service.ts','src/lib/console/csv-export.ts','src/lib/console/saved-response-variables.ts','src/routes/_authenticated/console.feedback-responses.tsx','src/routes/_authenticated/console.analytics.tsx']) {
+  const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized original action source drift');
+  const expected = profile.authorized_task2_evidence_sha256?.[f] ? /task2_evidence_source_hash_drift:/ : profile.authorized_task1c_event_price_sha256?.[f]
+    ? /task1c_source_hash_drift:/ : /live_execution_source_drift:/;
+  assert.throws(()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),expected);
+  tests.push({name:'original action exact bytes '+f,result:'PASS',rejected:true});fs.writeFileSync(path.join(fixture,f),original);
+ }
+ for(const f of Object.keys(profile.authorized_director_functional_repair_sha256)){
+  const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized Director source drift');
+  reject('Director exact bytes '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/director_functional_source_drift/);fs.writeFileSync(path.join(fixture,f),original);
+ }
+ for(const f of [...new Set([...Object.keys(profile.authorized_compound_dialogue_repair_sha256),...Object.keys(profile.authorized_w19_compatibility_repair_sha256),...Object.keys(profile.authorized_section15_reference_repair_sha256)])]) {
+  const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized reference source drift');
+  reject('exact reference repair bytes '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/(?:source_drift|frozen_runtime_drift|section15_validation_drift)/);fs.writeFileSync(path.join(fixture,f),original);
+ }
+ for(const f of Object.keys(profile.authorized_f13_f14_repair_sha256)){fs.mkdirSync(path.dirname(path.join(fixture,f)),{recursive:true});fs.copyFileSync(path.join(root,f),path.join(fixture,f));}
+ for(const f of Object.keys(profile.normalized_preview_sha256)) {
+  const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unapproved preview drift\n');
+  reject('normalized preview binding drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/preview_binding_drift/);fs.writeFileSync(path.join(fixture,f),original);
+ }
+ for(const f of Object.keys(profile.widget_reply_stability_sha256)){const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized stability drift');reject('Widget reply stability drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/widget_stability_source_drift/);fs.writeFileSync(path.join(fixture,f),original);}
+ for(const f of Object.keys(profile.authorized_memory_reply_repair_sha256)){const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized lifecycle drift');reject('Memory reply lifecycle source drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),profile.authorized_section15_repair_sha256[f]?/section15_source_drift/:/memory_reply_source_drift/);fs.writeFileSync(path.join(fixture,f),original);}
+ for(const f of Object.keys(profile.authorized_preview_activation_sha256)){const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unapproved identity bypass');reject('preview activation source drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/preview_activation_source_drift/);fs.writeFileSync(path.join(fixture,f),original);}
+ reject('pending SQL falsely authorized',()=>verifyProductionSource({root:fixture,profile:{...profile,memory_reply_sql_production_authorized:true},sourceOnly:true}),/memory_reply_sql_authority_masquerade/);
+ for(const f of Object.keys(profile.authorized_widget_auth_repair_sha256)){const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized auth change');reject('Widget auth drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/widget_(?:auth|stability)_source_drift/);fs.writeFileSync(path.join(fixture,f),original);}
+ reject('generic repair profile cannot authorize different bytes',()=>verifyProductionSource({root:fixture,profile:{...profile,authorized_unified_generic_service_repair_sha256:{}},sourceOnly:true}),/generic_repair_scope_drift/);
+ for(const f of Object.keys(profile.authorized_unified_generic_service_repair_sha256)) {
+  const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unapproved generic service drift');
+  reject('generic repair source drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),profile.authorized_director_functional_repair_sha256[f]?/director_functional_source_drift/:/(?:section15_source_drift|generic_repair_source_drift|widget_(?:stability|auth)_source_drift|memory_reply_source_drift)/);
+  fs.writeFileSync(path.join(fixture,f),original);
+ }
+ reject('accepted Demo checkpoint cannot change',()=>verifyProductionSource({root:fixture,profile:{...profile,accepted_demo_checkpoint:{...profile.accepted_demo_checkpoint,head:'0'.repeat(40)}},sourceOnly:true}),/accepted_demo_profile_drift/);
+ reject('Section15 scope cannot change',()=>verifyProductionSource({root:fixture,profile:{...profile,authorized_section15_repair_sha256:{}},sourceOnly:true}),/section15_scope_drift/);
+ reject('Section15 source acceptance cannot authorize deployment',()=>verifyProductionSource({root:fixture,profile:{...profile,section15_deployment_authorized:true},sourceOnly:true}),/section15_production_authority_masquerade/);
+ for(const f of Object.keys(profile.authorized_section15_repair_sha256)){
+  const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized Section15 drift');
+  reject('Section15 exact source drift '+f,()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/section15_source_drift/);fs.writeFileSync(path.join(fixture,f),original);
+ }
+ const workflow='.github/workflows/task-ai-abc-c3-final-gate.yml';const workflowBytes=fs.readFileSync(path.join(fixture,workflow));
+ fs.appendFileSync(path.join(fixture,workflow),'\n# unauthorized CI source drift');
+ reject('CI lockfile repair permits only exact workflow bytes',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/director_functional_source_drift/);fs.writeFileSync(path.join(fixture,workflow),workflowBytes);
+ const memoryStep=workflowBytes.toString().split('      - name: Bounded Memory receipt and service rendering regressions')[1].split('      - name:')[0];
+ assert.equal((memoryStep.match(/deno (?:check|test) --no-lock /g)||[]).length,3);
+ tests.push({name:'all Memory regression Deno commands avoid tracked lockfile writes',result:'PASS'});
+ const authority='src/integrations/supabase/runtime-authority.mjs';const authorityBytes=fs.readFileSync(path.join(fixture,authority));
+ fs.appendFileSync(path.join(fixture,authority),'\n// unauthorized authority change');
+ reject('accepted Demo runtime authority drift',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/accepted_demo_env_source_drift/);fs.writeFileSync(path.join(fixture,authority),authorityBytes);
+ // Exercise the real resolver with the exact retained .env; no key is logged.
+ const values=Object.fromEntries(fs.readFileSync('.env','utf8').split('\n').filter(x=>x.includes('=')).map(x=>{const i=x.indexOf('=');return [x.slice(0,i),x.slice(i+1).replace(/^"|"$/g,'')]}));
+ const binding=resolveAuthoritativeSupabaseBinding({url:values.VITE_SUPABASE_URL,projectId:values.VITE_SUPABASE_PROJECT_ID,publishableKey:values.VITE_SUPABASE_PUBLISHABLE_KEY,functionsUrl:values.VITE_SUPABASE_FUNCTIONS_URL});
+ assert.equal(binding.projectId,'nrfxhqabwblzxoushgnm');assert.equal(binding.url,'https://nrfxhqabwblzxoushgnm.supabase.co');assert.equal(binding.functionsUrl,'https://nrfxhqabwblzxoushgnm.supabase.co/functions/v1');
+ tests.push({name:'retained environment uses exact production authority resolver',result:'PASS',scope:'resolver execution only, not hosted runtime'});
+ reject('B12 production permission cannot be invented',()=>verifyProductionSource({root:fixture,profile:{...profile,b12_sql_production_authorized:true},sourceOnly:true}),/b12_production_authority_masquerade/);
+ reject('B12 exact scope cannot be changed',()=>verifyProductionSource({root:fixture,profile:{...profile,authorized_b12_registry_repair_sha256:{}},sourceOnly:true}),/b12_scope_drift/);
+ reject('F13/F14 SQL permission cannot be invented',()=>verifyProductionSource({root:fixture,profile:{...profile,f13_f14_sql_production_authorized:true},sourceOnly:true}),/f13_f14_production_authority_masquerade/);
+ reject('F13/F14 scope cannot be changed',()=>verifyProductionSource({root:fixture,profile:{...profile,authorized_f13_f14_repair_sha256:{}},sourceOnly:true}),/f13_f14_scope_drift/);
+ const previewFile='vite.preview-environment.mjs';const previewBytes=fs.readFileSync(path.join(fixture,previewFile));fs.appendFileSync(path.join(fixture,previewFile),'\n// unauthorized selector drift');reject('nonproduction Preview bytes cannot drift',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/director_functional_source_drift/);fs.writeFileSync(path.join(fixture,previewFile),previewBytes);
+ const victim=profile.runtime_files.find(f=>f.endsWith('/kb-client.ts'));const original=fs.readFileSync(path.join(fixture,victim));fs.unlinkSync(path.join(fixture,victim));
+ reject('missing dependency',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/dependency_missing/);fs.writeFileSync(path.join(fixture,victim),original);
+ fs.appendFileSync(path.join(fixture,victim),'\nexport const tenantBypass=true;\n');reject('tenant / grounding frozen source changed',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/frozen_runtime_drift/);fs.writeFileSync(path.join(fixture,victim),original);
+ const provider='supabase/functions/_shared/llm-router.ts';const providerBytes=fs.readFileSync(path.join(fixture,provider));fs.appendFileSync(path.join(fixture,provider),'\nconst illegal="https://api.openai.com/v1";');reject('illegal provider endpoint source',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/frozen_runtime_drift/);fs.writeFileSync(path.join(fixture,provider),providerBytes);
+ const worker='supabase/functions/deliver-feedback-request/index.ts';const workerBytes=fs.readFileSync(path.join(fixture,worker));fs.appendFileSync(path.join(fixture,worker),'\nfetch("https://api.openai.com/v1");');reject('worker direct provider bypass',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/worker_direct_external_fetch/);fs.writeFileSync(path.join(fixture,worker),workerBytes);
+ const workerText=workerBytes.toString();
+ assert(workerText.includes('const actor = await validateAgent(req);'));
+ fs.writeFileSync(path.join(fixture,worker),workerText.replace('const actor = await validateAgent(req);','const actor = requestBody.actor;'));
+ reject('worker trusted actor bypass rejected',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/conditional_worker_integrity/);fs.writeFileSync(path.join(fixture,worker),workerBytes);
+ fs.writeFileSync(path.join(fixture,worker),workerText.replace('const scope = await resolveAgentCompanyScope(actor.supabaseAdmin, actor.agent);','const scope = {companyId: requestBody.company_id};'));
+ reject('worker client tenant spoof rejected',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/conditional_worker_integrity/);fs.writeFileSync(path.join(fixture,worker),workerBytes);
+ fs.writeFileSync(path.join(fixture,worker),workerText+'\nconst hardcodedSuccess={success:true,delivered:1};');
+ reject('worker hardcoded success addition rejected',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/conditional_worker_integrity/);fs.writeFileSync(path.join(fixture,worker),workerBytes);
+ // A later commit cannot exploit a path allowed by an older repair scope.
+ const identityRepo=path.join(fixture,'identity-repo');
+ execFileSync('git',['clone','--quiet','--shared',root,identityRepo]);
+ fs.appendFileSync(path.join(identityRepo,'package.json'),'\n');
+ execFileSync('git',['add','package.json'],{cwd:identityRepo});
+ execFileSync('git',['-c','user.name=C3 isolated test','-c','user.email=c3-test@example.invalid','commit','--quiet','-m','isolated unauthorized successor'],{cwd:identityRepo});
+ const identity={head:execFileSync('git',['rev-parse','HEAD'],{cwd:identityRepo,encoding:'utf8'}).trim(),tree:execFileSync('git',['rev-parse','HEAD^{tree}'],{cwd:identityRepo,encoding:'utf8'}).trim()};
+ reject('historically allowed path cannot authorize a new unrelated successor',()=>verifyIdentity(identityRepo,profile,identity),/section15_successor_scope:package.json/);
+ const frozen=Object.keys(profile.frozen_evidence_sha256)[0];fs.appendFileSync(path.join(fixture,frozen),'\n// altered\n');reject('frozen offline checker changed',()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),/frozen_evidence_drift/);
+ for(const status of ['SKIPPED','BLOCKED'])reject(status+' cannot count as PASS',()=>verifyChildEvidence([{status,exit_code:0,evidence:[path.join(root,PROFILE_PATH)]}]),/child_not_pass/);
+ reject('child nonzero cannot be ignored',()=>verifyChildEvidence([{status:'PASS',exit_code:1,evidence:[path.join(root,PROFILE_PATH)]}]),/child_exit_ignored/);
+ reject('missing evidence',()=>verifyChildEvidence([{status:'PASS',exit_code:0,evidence:[]}]),/missing_evidence/);
+ reject('actual child nonzero propagated',()=>runChild(process.execPath,['-e','process.exit(17)']),/child_failed/);
+ const offline=path.join(fixture,'offline');fs.mkdirSync(path.join(offline,'supabase/functions/_shared'),{recursive:true});
+ const rootFile='supabase/functions/_shared/root.ts';fs.writeFileSync(path.join(offline,'supabase/functions/_shared/deterministic-runtime-router.ts'),'export {};');fs.writeFileSync(path.join(offline,rootFile),'import "./deterministic-runtime-router.ts";');
+ assert.equal(verifyDeterministicClosure({root:offline,roots:[rootFile]}).mode,'DETERMINISTIC_ONLY');
+ fs.writeFileSync(path.join(offline,'supabase/functions/_shared/llm-router.ts'),'export {};');fs.writeFileSync(path.join(offline,rootFile),'import "./llm-router.ts";');reject('original offline provider exclusion retained',()=>verifyDeterministicClosure({root:offline,roots:[rootFile]}),/model_router_reachable/);
+ fs.writeFileSync(path.join(offline,rootFile),'const x="https://api.openai.com/v1";');reject('original offline remote exclusion retained',()=>verifyDeterministicClosure({root:offline,roots:[rootFile]}),/external_model_endpoint_reachable/);
+}finally{fs.rmSync(fixture,{recursive:true,force:true});}
+console.log(JSON.stringify({status:'PASS',scope:'offline source / anti-fake controls only',hosted_runtime:'NOT_TESTED',tests},null,2));

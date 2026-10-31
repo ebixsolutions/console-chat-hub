@@ -1,0 +1,141 @@
+{
+  "task": "SAME AI-ABC-C3 Task1 / PR12 / Frankie-only recovery",
+  "baseline": {
+    "head": "52b6b47fbd2744e03132494d7e0c8f487ea132c8",
+    "tree": "6b537db832226c32079f0b5d12968dc64f792a01",
+    "actual_deployed": {
+      "receive-widget-message": 38,
+      "generate-reply": 231,
+      "widget-live-ai-test": 20,
+      "kb-search-proxy": 28
+    }
+  },
+  "source_implementation": {
+    "semantic": "Tighten only the semantic producer grammar to existing canonical text/key/object/array/depth bounds, clarify native customer measurement facts, and carry fixed value-free bounds diagnostics through decode/normalize/interpreter/generate logs. No truncation, recursive guessing, retry or validator limit expansion.",
+    "old_failed_provider_field": "NOT_RETAINED. canonical_entity_bounds is proven; the unique old field or violated limit is not proven.",
+    "diagnostic": "container, entity index, fixed subcode, type, observed depth/actual count/length and limit. No field names, customer text, credentials or raw provider payload.",
+    "KB": "Default-off, separately approved Frankie-only query_embedding_attested_v1 compatibility with the existing context-search endpoint. One retrieval POST with query embedding, zero retries/generation/ingestion/reindex. It is not retrieval_only or free. No new KB/accounting endpoint.",
+    "remote_evidence": "Existing operator HMAC using the existing tenant credential; actual immutable deployment/config evidence plus a current published document/version/chunk/content-hash snapshot, pinned through a short validity interval. Live receipt authenticity still requires Director review; no ZIP hash is a runtime identity.",
+    "KB_response": "Verify content hashes, current published scope and reviewed version before passing original evidence through the existing parser/B2. Deny changed/unreviewed/foreign/superseded evidence; preserve actual no-match versus tool/admission failures.",
+    "latency": "Remove one adjacent redundant owner SELECT. Preserve control snapshot, fresh pre-dispatch owner/closed-state check, receive authorization and post-receipt revocation checks. Add admission/ownership/session timing; no reintroduction of old 12-poll waiting."
+  },
+  "source_tests": [
+    "tests/c3-widget-live-auth/semantic-bounds.test.mjs: actual canonical and interpreter regressions, multilingual 80/100/180 legal fact encodings, generic rental/service/subscription, false/zero/null/unit/correction, size negatives and diagnostics privacy",
+    "tests/c3-widget-live-auth/original-preview.test.mjs: existing original/synthetic/ordinary boundaries plus separately approved query embedding, signature/runtime/config/lineage/publishing/revocation/unknown-transport negatives and single-permit concurrency",
+    "Existing service/planner/runtime/model-accounting regressions, TypeScript/Deno/full build and exact source gate remain required; no old assertion or denominator is removed"
+  ],
+  "preserved": [
+    "Original B2",
+    "Frozen reducer and contract",
+    "R1/R2/E1/E2",
+    "human-control/suppression",
+    "CAS/atomicity/idempotency",
+    "ordinary Production",
+    "Synthetic UAT lease/quota",
+    "cross-Tenant negatives",
+    "B-O Vertex authorization",
+    "Authe account/data",
+    "all historical FAIL",
+    "Section15 through full original UAT"
+  ],
+  "KB_remaining_external_evidence": {
+    "known": "Frankie Company/Channel and canonical Tenant34",
+    "unknown_not_absent": [
+      "Current deployment artifact/control-plane receipt and immutable validity",
+      "Current embedding settings fingerprint and pinned execution limits",
+      "Current active published document/version/chunk/content snapshot and unchanged validity"
+    ],
+    "safe_operator_action": "Use tools/c3-kb-readonly-attestation.py only in the existing authorized KB server environment with its real deployment receipt. It performs SELECT-only lineage collection and local signing, zero model/embedding HTTP, no credentials exported, no new backend. Do not invent deployment/lineage pinning that the existing operator cannot verify.",
+    "if_no_verifiable_pinning": "Do not activate this alternative. Only dependent KB cases remain blocked; no claim of live bounds or KB PASS. Do not build a new accounting service as a prerequisite."
+  },
+  "Inbox_OPTIONS_403": {
+    "request": "01a1613d-f078-74d2-8a71-0bcbabdaa4ec",
+    "observed_utc": "2026-10-22T01:33:32.101Z",
+    "readback": "function_edge_logs confirms OPTIONS403. Its metadata key inventory does not include Origin or Access-Control-Request-Headers; empty projected values mean unrecorded, not an empty actual header.",
+    "required_observation": "One platform-permitted normal Director network observation: exact Origin, requested header names and safe CORS response headers/status only; no Cookie/Authorization values or HAR.",
+    "proxy_change": false
+  },
+  "release_proposal": {
+    "functions": [
+      "generate-reply complete dependency bundle (77 files including preserved import map)",
+      "widget-live-ai-test complete 10-file bundle"
+    ],
+    "rollback_preimages": {
+      "generate-reply": 231,
+      "widget-live-ai-test": 20
+    },
+    "unchanged": [
+      "receive v38",
+      "KB proxy v28",
+      "Published e30",
+      "Origin config",
+      "B-O",
+      "SQL/schema"
+    ],
+    "deployment_authorized": false,
+    "KB_paid_activation_authorized": false,
+    "config_key_proposed_only": "ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION version2; install no placeholders, preserve/compare prior config preimage and retain B-O's separate key",
+    "billing": "One embedding provider call per reviewed retrieval execution, not a cumulative USD cap. No transport replay after unknown outcome. Existing durable conversation idempotency is separate from the same-isolate capability-consumption test.",
+    "revocation": "Remove only this exact new KB grant / restore its backed-up prior value conditionally. New dispatch stops; in-flight calls cannot be retrospectively cancelled or refunded. Preserve mapping, B-O and usage."
+  },
+  "new_candidate_Hosted": "NOT_DEPLOYED_NOT_TESTED",
+  "kb_bounds_verified": false,
+  "remote_guard": "UAT_REMOTE_BOUND_UNVERIFIED",
+  "Task1": "OPEN_NOT_ACCEPTED",
+  "uat_start_allowed": false,
+  "live_metadata_contract_revision": {
+    "status": "IMPLEMENTED_DEFAULT_OFF_NOT_DEPLOYED_OR_AUTHORIZED",
+    "base": "0e5b961f25832af686c59db90761c9a3bf85d3e7",
+    "mode": "query_embedding_live_metadata_v1",
+    "settings_versions": {
+      "ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION": 3,
+      "AUTHENTICATED_INBOX_KB_AUTHORIZATION": 2,
+      "KB_QUERY_EMBEDDING_EVIDENCE_JSON": 2
+    },
+    "scope": {
+      "actor": "3bdf936e-b543-41d8-9fff-fa020a85f3f6",
+      "company": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+      "channel": "b0000000-0000-0000-0000-000000000001",
+      "Singapore_company": "34",
+      "metadata_JWT_tenant_namespace": "UNKNOWN_NOT_ASSUMED_TO_EQUAL_34"
+    },
+    "changed_conditions": [
+      {
+        "previous": "Runtime/file/lineage hashes pinned until expiring signed receipt; <=10 prelisted documents",
+        "alternative": "Exact existing HTTPS RAG authority, separate existing server-bound tenant Bearer GET metadata, batch current document/version/chunk reads, normalized content hashes, final document re-read; dynamically returned documents are verified, not statically prelisted",
+        "residual": "No live binary attestation or future publication lock; a change after final read can race. Remote runtime embedding count/retry/billing configuration is not proved by client limits."
+      },
+      {
+        "previous": "At most one hour signed evidence plus operator renewal",
+        "alternative": "Standing explicit revised risk approval, every-search fresh metadata, 60s internal non-serializable operation session, mapping/grant/evidence/key revocation rechecks before dispatch and after response",
+        "residual": "No durable cross-isolate cumulative USD cap; no cancellation/refund guarantee for dispatched/unknown requests."
+      }
+    ],
+    "credentials": {
+      "RAG": "existing KB_SINGAPORE_TENANT_API_KEYS_JSON[34], x-api-key only",
+      "metadata": "existing KB_RAG_TENANT_TOKENS_JSON[34], Bearer only; no reuse of RAG key, no JWT minting or service-role header",
+      "new_secret_authority": "NONE; if existing scoped Bearer is unavailable, stop dependent path and request exact credential-binding capability through existing administrator, never disclose a credential"
+    },
+    "metadata_api": "existing GET /api/entities/KBDocument, KBDocumentVersion, KBVectorChunk; existing q=$in and _limit, no mutation or new endpoint",
+    "preflight": "Authenticates real metadata access and one current published/indexed document before paid RAG. Failure denies without RAG. Same request cancellation budget covers preparation, RAG and metadata binding.",
+    "response_binding": "All selected docs/current versions/chunks must be same company34 and separately verified metadata tenant, published/live/indexed, active/current, full version content hash, production active generated chunks with matching normalized content. Missing version, unknown, contradictory or stale evidence denies; only actual authorized no-context is KB_NO_MATCH.",
+    "settings_admin_steps": [
+      "Read current three setting versions/digests and retain encrypted preimages/revisions inside existing control plane; report presence/versions/revision identifiers without values.",
+      "Confirm existing RAG key and separately scoped existing metadata Bearer binding work for Company34; obtain remote metadata tenant namespace from authorized GET rows; no key/token output.",
+      "Build reviewed values using preserved unrelated bindings/records; Preview v3 binding and Inbox v2 binding keep same actor/company/channel/tenant/endpoint; dynamic metadata record v2 uses actual metadata_tenant_id and explicit residual-risk acknowledgement. Do not install null/placeholder values.",
+      "Conditionally merge all three exact settings using captured revisions; reject concurrent drift. Do not reset B-O or other credential bindings. Read back exact hashes/schema/scope plus functional receipts.",
+      "Revoke only this actor/channel binding and its unique evidence record using guarded current revisions; preserve others and B-O. Observe new admission denial; preserve in-flight/unknown receipts."
+    ],
+    "required_director_decision": "One revision of incompatible B conditions plus exact new Function bytes approval; not repeat of old A/B. Until approved, no deployment/config/paid dynamic dispatch.",
+    "guards": "Original attested route and Synthetic controls unchanged. kb_bounds_verified=false; UAT_REMOTE_BOUND_UNVERIFIED preserved for original unverified route. New alternative never labels remote bounds/runtime as verified.",
+    "no_new_backend": true,
+    "FUNCTIONAL_UAT_ACCEPTED": false,
+    "VIBECODE_FUNCTIONAL_HANDOFF_READY": false,
+    "existing_python_producer_compatibility": {
+      "document_version_hash": "SHA256 of Python strip(raw_content_snapshot), matching existing hash_content. Original facts/units/false/zero/null are never removed. Chunk returned content matches Python whitespace collapse exactly.",
+      "version_labels": "Publication authority comes from current published/live/indexed document, active version ID/hash and actual generated production chunks. Existing writer does not update version.vector_status; pending/not_generated labels alone do not fabricate or invalidate a verified active version. Explicit rejected/outdated/failed versions still deny.",
+      "vector_shape": "Actual persisted vector array must be finite and match declared dimensions; labels alone do not qualify.",
+      "live_status": "Source contract only; actual Singapore metadata response remains unverified."
+    }
+  }
+}

@@ -1,3 +1,7 @@
+import { originalPreviewRequest } from "../_shared/original-widget-preview.ts";
+import { previewActorClient } from "../_shared/widget-preview-authority.ts";
+import { ORDINARY_PREVIEW_CONTRACT, ordinaryPreviewInputAllowed } from "../_shared/widget-preview-control.ts";
+import { isExplicitHandoffRequest } from "../_shared/handoff-intent.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
@@ -32,11 +36,34 @@ function attachmentType(mime: string): "image" | "video" | "file" {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method === "GET" && new URL(req.url).searchParams.get("console_preview") === ORDINARY_PREVIEW_CONTRACT) {
+    const channelId = new URL(req.url).searchParams.get("channel_id");
+    if (!isUuid(channelId)) return json({success:false,error:"invalid_channel_id"},400);
+    try {
+      const db = createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey());
+      const {data: channel,error} = await db.from("channel_config").select("id,company_id,is_active,channel_type,allowed_origins").eq("id",channelId).maybeSingle();
+      if (error) return json({success:false,error:"channel_lookup_failed"},500);
+      if (!channel || !channel.company_id || channel.is_active !== true || channel.channel_type !== "web_widget") return json({success:false,error:"widget_channel_unavailable"},403);
+      const company = await db.from("company").select("id,is_active").eq("id",channel.company_id).maybeSingle();
+      if (company.error || company.data?.is_active !== true) return json({success:false,error:"company_unavailable"},403);
+      const origin = validateWidgetOrigin(req,channel.allowed_origins);
+      if (!origin.ok) return json({success:false,error:origin.error},403);
+      const actor=await previewActorClient(req,createClient,Deno.env.get("SUPABASE_URL")!,Deno.env.get("SUPABASE_ANON_KEY")!);
+      if (!actor) return json({success:false,error:"preview_auth_required"},401);
+      const member=await db.from("company_membership").select("role,is_active").eq("user_id",actor.actorId).eq("company_id",channel.company_id).eq("is_active",true).maybeSingle();
+      if(member.error || !["admin","supervisor"].includes(member.data?.role)) return json({success:false,error:"preview_actor_role_denied"},403);
+      const schema=await db.rpc("widget_control_preview_excluded",{p_conversation_id:null});
+      if(schema.error || schema.data!==false) return json({success:false,error:"preview_safety_schema_unverified"},503);
+      return json({success:true,data:{console_preview:ORDINARY_PREVIEW_CONTRACT,server_bound:true,preview_revision:"c3-preview-ce-zero-paid-v2",actor_id:actor.actorId,paid_dispatch:false,channel_id:channel.id,company_id:channel.company_id}});
+    } catch { return json({success:false,error:"preview_contract_unavailable"},503); }
+  }
   if (req.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
 
   try {
     const requestContentType = req.headers.get("content-type") ?? "";
     const isMultipart = requestContentType.toLowerCase().startsWith("multipart/form-data");
+    let previewContract: unknown;
+    let previewContext = false;
     let conversation_id: unknown;
     let session_token: unknown;
     let content: unknown = null;
@@ -52,6 +79,8 @@ Deno.serve(async (req) => {
       if (candidate instanceof File) attachment = candidate;
     } else {
       const body = await req.json().catch(() => ({}));
+      previewContract = body.console_preview;
+      previewContext = body.action === "preview_context";
       conversation_id = body.conversation_id;
       session_token = body.session_token;
       content = body.content;
@@ -64,7 +93,7 @@ Deno.serve(async (req) => {
     if (client_message_id != null && !isUuid(client_message_id)) {
       return json({ success: false, error: "invalid_client_message_id" }, 400);
     }
-    if (!isMultipart && typeof content !== "string") return json({ success: false, error: "invalid_request" }, 400);
+    if (!isMultipart && !previewContext && typeof content !== "string") return json({ success: false, error: "invalid_request" }, 400);
     if (isMultipart && !attachment) return json({ success: false, error: "invalid_attachment" }, 400);
 
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, getSupabaseAdminKey());
@@ -78,6 +107,29 @@ Deno.serve(async (req) => {
     if (!channel || channel.is_active !== true || channel.channel_type !== "web_widget") return json({ success: false, error: "widget_channel_unavailable" }, 403);
     const originCheck = validateWidgetOrigin(req, channel.allowed_origins);
     if (!originCheck.ok) return json({ success: false, error: originCheck.error }, 403);
+
+    const scope=await supabase.from("conversations").select("id,company_id,channel_config_id,visitor_session_id,metadata_source").eq("id",conversation_id).eq("visitor_session_id",sessionScope.id).maybeSingle();
+    if(scope.error || !scope.data) return json({success:false,error:"conversation_scope_unavailable"},403);
+    if(scope.data.metadata_source?.execution_class === "authenticated_admin_preview" && !await originalPreviewRequest(req,createClient,supabase,scope.data))
+      return json({success:false,error:"original_preview_actor_or_authority_denied",message_written:false},403);
+    const previewHint=scope.data.metadata_source?.source === "ordinary_widget_control_preview";
+    if (previewHint || previewContract !== undefined) {
+      // A browser flag cannot promote a customer conversation. The protected registry and actual JWT decide.
+      const registered=await supabase.rpc("widget_control_preview_excluded",{p_conversation_id:conversation_id});
+      if(registered.error) return json({success:false,error:"preview_safety_schema_unverified"},503);
+      if(registered.data!==true || isMultipart || previewContract!==ORDINARY_PREVIEW_CONTRACT || (!previewContext && !ordinaryPreviewInputAllowed(content))) return json({success:false,error:"preview_scope_or_control_input_denied",message_written:false},403);
+      const actor=await previewActorClient(req,createClient,Deno.env.get("SUPABASE_URL")!,Deno.env.get("SUPABASE_ANON_KEY")!);
+      if(!actor) return json({success:false,error:"preview_auth_required",message_written:false},401);
+      if(previewContext){
+        const context=await actor.client.rpc("widget_control_preview_context",{p_conversation_id:conversation_id,p_session_token:session_token});
+        if(context.error || context.data?.contract!==ORDINARY_PREVIEW_CONTRACT) return json({success:false,error:"preview_actor_session_scope_denied"},403);
+        return json({success:true,data:context.data});
+      }
+      const {data,error}=await actor.client.rpc("widget_control_preview_message_tx",{p_conversation_id:conversation_id,p_session_token:session_token,p_content:content,p_client_message_id:client_message_id});
+      if(error?.code==="42501" || error?.code==="22023") return json({success:false,error:"preview_actor_scope_or_input_denied",message_written:false},403);
+      if(error || data?.preview_contract!==ORDINARY_PREVIEW_CONTRACT || !isUuid(data?.message_id)) return json({success:false,error:"preview_transaction_unconfirmed"},503);
+      return json({success:true,data});
+    }
 
     if (isMultipart && attachment) {
       if (attachment.size <= 0 || attachment.size > MAX_ATTACHMENT_BYTES) return json({ success: false, error: "file_too_large" }, 400);
@@ -116,6 +168,10 @@ Deno.serve(async (req) => {
       return json({ success: true, data: { message_id: String(txData.message_id), content_type: attachmentType(attachment.type), ai_reply_pending: false, idempotent: false } });
     }
 
+    if (previewContract !== undefined && (previewContract !== ORDINARY_PREVIEW_CONTRACT || !ordinaryPreviewInputAllowed(content))) {
+      // Definitive prewrite rejection: never route a preview business question to the model.
+      return json({success:false,error:"preview_business_dispatch_denied",message_written:false},409);
+    }
     const normalizedContent = String(content).trim();
     if (!normalizedContent) return json({ success: false, error: "invalid_content" }, 400);
     if (normalizedContent.length > 2000) return json({ success: false, error: "message_too_long" }, 400);
@@ -144,9 +200,8 @@ Deno.serve(async (req) => {
     // reach generate-reply so A3.1 multilingual semantic interpretation can resolve
     // ellipsis/referents from conversation context instead of keyword heuristics.
     if (!knownShortTopic && route.kind === "clarify") {
-      const isUnderspecified = route.kind === "underspecified";
-      const clarificationRoute = isUnderspecified ? "conversational_underspecified_clarification" : "conversational_clarification";
-      const clarificationText = isUnderspecified ? UNDERSPECIFIED_CLARIFICATION[route.language] : NOISE_CLARIFICATION[route.language];
+      const clarificationRoute = "conversational_clarification";
+      const clarificationText = NOISE_CLARIFICATION[route.language];
       const { data: commitData, error: commitError } = await supabase.rpc("commit_ai_reply_tx", {
         p_conversation_id: conversation_id,
         p_source_message_id: messageId,

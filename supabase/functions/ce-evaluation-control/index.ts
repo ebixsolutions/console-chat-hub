@@ -1,3 +1,4 @@
+import { verifyEvaluationEligibility } from "../_shared/ce-evaluation-scope.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.45.0";
 import {
   ensureCurrentMethodology,
@@ -49,11 +50,11 @@ async function authorized(
     const { data } = await admin
       .from("company_membership").select("role")
       .eq("company_id", companyId).eq("user_id", userId).eq("is_active", true);
-    return (data ?? []).some((r) => EVALUATE_ROLES.has(String(r.role).toLowerCase()));
+    return (data ?? []).some((r: { role: string }) => EVALUATE_ROLES.has(String(r.role).toLowerCase()));
   }
 
   const { data } = await admin.from("user_roles").select("role").eq("user_id", userId);
-  return (data ?? []).some((r) => EVALUATE_ROLES.has(String(r.role).toLowerCase()));
+  return (data ?? []).some((r: { role: string }) => EVALUATE_ROLES.has(String(r.role).toLowerCase()));
 }
 
 Deno.serve(async (req) => {
@@ -85,6 +86,8 @@ Deno.serve(async (req) => {
   }
 
   try {
+    const scopeError=await verifyEvaluationEligibility(admin,conversationId);
+    if(scopeError) return json(req,409,{error:"evaluation_scope_excluded_or_unavailable"});
     await ensureCurrentMethodology(admin);
     const { data: enqueue, error: enqueueErr } = await admin.rpc(
       "ce_enqueue_current_snapshot_v1",

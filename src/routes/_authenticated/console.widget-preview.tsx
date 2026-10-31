@@ -16,6 +16,7 @@ import {
   Video,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { OrdinaryWidgetPreview } from "@/components/console/OrdinaryWidgetPreview";
 import {
   Select,
   SelectContent,
@@ -29,6 +30,8 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import { useAuth } from "@/hooks/useAuth";
+import { verifiedWidgetRuntime, widgetRuntimeBlockReason, widgetSendBlockReason } from "@/lib/widget-preview-state";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import {
@@ -42,6 +45,9 @@ import {
   type WidgetLauncherIcon,
 } from "@/lib/api/config.service";
 import { supabase } from "@/integrations/supabase/client";
+import { mergeWidgetMessages } from "@/lib/widget-message-merge";
+import { widgetResponseStatus } from "@/lib/widget-response-status";
+import { deliveryConfirmedByReadback, isBusinessAdmissionFailure } from "@/lib/widget-live-recovery";
 
 export const Route = createFileRoute(
   "/_authenticated/console/widget-preview",
@@ -113,7 +119,7 @@ const PREVIEW_DEFAULT: LiveWidgetConfigRow = {
 
 const COPY = {
   en: {
-    denied: "You do not have permission to view widget preview.",
+    denied: "Widget Preview requires an active Admin or Supervisor membership. Agents should use Inbox / Tickets; accounts without membership need an authorized administrator to confirm access.",
     subtitle:
       "Configure appearance and test the Widget interaction flow. Live AI Test uses the real Singapore Knowledge Base and governed LLM with persistent test conversations that appear in the AI Chatbot Inbox while remaining clearly marked as test data.",
     preview: "Preview",
@@ -132,7 +138,7 @@ const COPY = {
     simulationBanner:
       "UI Simulation tests Widget appearance, interaction and human-handoff UI only. AI replies are simulated.",
     liveBanner:
-      "Live AI Test is active: messages are sent to the real Singapore Knowledge Base and governed Vertex LLM. Live AI Test conversations are persisted as clearly marked test conversations, kept across page changes, and visible in the AI Chatbot Inbox. They are excluded from training and are not canonical customer sessions.",
+      "Live AI Test uses the registered isolated scope. Knowledge Base access and answer grounding are checked for each request. Live AI Test conversations are persisted as clearly marked test conversations, kept across page changes, and visible in the AI Chatbot Inbox. They are excluded from training and are not canonical customer sessions.",
     embedUnavailable:
       "Embed Code becomes available only after a canonical company and active Website Widget channel are configured.",
     reply:
@@ -145,7 +151,7 @@ const COPY = {
       "The Knowledge Base returned no authoritative full-content evidence for this query.",
   },
   zh: {
-    denied: "您沒有權限查看 Widget 預覽。",
+    denied: "Widget 預覽需要有效的 Admin 或 Supervisor 成員資格。Agent 請使用 Inbox／Ticket；沒有成員資格的帳戶需由獲授權管理員核實存取權限。",
     subtitle:
       "設定 Widget 外觀並測試互動流程。Live AI Test 會使用真實 Singapore Knowledge Base 及受管控 LLM，並建立可保留的測試對話；測試對話會顯示於 AI Chatbot Inbox，但會明確標記為 test data。",
     preview: "預覽",
@@ -164,7 +170,7 @@ const COPY = {
     simulationBanner:
       "UI Simulation 只測試 Widget 外觀、互動及轉真人 UI；AI 回覆為模擬內容。",
     liveBanner:
-      "Live AI Test 已啟用：訊息會送往真實 Singapore Knowledge Base 及受管控 Vertex LLM。Live AI Test 會保留測試對話及訊息，換頁後仍可讀取，並同步顯示於 AI Chatbot Inbox；資料會標記為測試用途並排除 training，不會冒充 canonical 客戶 session。",
+      "Live AI Test 使用已登記的隔離範圍；Knowledge Base 權限與回答依據會逐次核實。Live AI Test 會保留測試對話及訊息，換頁後仍可讀取，並同步顯示於 AI Chatbot Inbox；資料會標記為測試用途並排除 training，不會冒充 canonical 客戶 session。",
     embedUnavailable:
       "只有在 canonical company 及有效 Website Widget channel 完成設定後才會提供 Embed Code。",
     reply:
@@ -177,9 +183,36 @@ const COPY = {
   },
 } as const;
 
+// Customer content remains React text nodes: no HTML injection and no rewriting persisted messages.
+function renderWidgetInlineBold(content: string) {
+  return content.split(/(\*\*[^*\n]+\*\*)/g).filter(Boolean).map((part, index) =>
+    part.startsWith("**") && part.endsWith("**")
+      ? <strong key={index} className="font-semibold">{part.slice(2, -2)}</strong>
+      : part
+  );
+}
+
+function SafeWidgetMessageContent({ content }: { content: string }) {
+  return (
+    <div className="break-words" data-widget-format="safe-markdown">
+      {content.split(/\r?\n/).map((line, index) => {
+        const bullet = /^\s*[-*]\s+(.+)$/.exec(line);
+        if (bullet) return (
+          <div key={index} className="flex items-start gap-2">
+            <span aria-hidden="true" className="shrink-0">•</span>
+            <span>{renderWidgetInlineBold(bullet[1])}</span>
+          </div>
+        );
+        if (line === "") return <div key={index} className="h-2" aria-hidden="true" />;
+        return <div key={index} className="whitespace-pre-wrap">{renderWidgetInlineBold(line)}</div>;
+      })}
+    </div>
+  );
+}
+
 type LiveAiMessage = {
   id: string;
-  role: "visitor" | "assistant";
+  role: "visitor" | "assistant" | "agent" | "system";
   content: string;
   created_at?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -191,12 +224,14 @@ type LiveAiHistoryItem = {
   updated_at: string | null;
   latest_preview: string;
   message_count: number;
+  read_only?: boolean;
 };
 
 type LiveAiResponse = {
   success: true;
   mode: "persistent_live_ai_test";
   conversation_id: string;
+  delivery_receipt?: {persisted: boolean; conversation_id: string; client_message_id: string; visitor_message_id: string};
   scope_mode: "canonical" | "pre_activation";
   grounded: boolean;
   answer: string;
@@ -226,6 +261,7 @@ type LiveAiFailure = {
   success?: false;
   error?: string;
   detail?: string;
+  retryable?: boolean;
 };
 
 function launcherSymbol(icon: WidgetLauncherIcon): string {
@@ -256,13 +292,14 @@ function safeLiveError(
 }
 
 function WidgetPreviewGuard() {
-  const { role, loading } = useCurrentRole();
+  const { role, loading, actorId, error, retry } = useCurrentRole();
   const lang = useConsoleLang();
   if (loading) return <LoadingState />;
+  if (error) return <div role="alert"><p>{lang === "zh" ? "未能核實目前帳戶的權限；請重試。" : "Current account permissions could not be verified. Please retry."}</p><Button onClick={retry}>{lang === "zh" ? "重試" : "Retry"}</Button></div>;
   if (role !== "admin" && role !== "supervisor") {
     return <PermissionDenied message={COPY[lang].denied} />;
   }
-  return <WidgetPreviewContent role={role} />;
+  return <WidgetPreviewContent key={actorId} role={role} />;
 }
 
 function WidgetPreviewContent({
@@ -279,7 +316,8 @@ function WidgetPreviewContent({
   const [widget, setWidget] =
     useState<LiveWidgetConfigRow>(PREVIEW_DEFAULT);
   const [theme, setTheme] = useState<WidgetTheme>("modern");
-  const [previewMode, setPreviewMode] = useState<PreviewMode>("live");
+  const [previewMode, setPreviewMode] = useState<PreviewMode | "ordinary">("live");
+  const { user: previewActor } = useAuth();
   const [primary, setPrimary] = useState("#6B5CE7");
   const [launcherIcon, setLauncherIcon] =
     useState<WidgetLauncherIcon>("chat");
@@ -440,7 +478,7 @@ function WidgetPreviewContent({
     <div
       className={[
         "space-y-4 transition-[padding-right] duration-200",
-        theme === "modern" && previewOpen ? "lg:pr-[420px]" : "",
+        (previewMode === "ordinary" || (theme === "modern" && previewOpen)) ? "lg:pr-[420px]" : "",
       ].join(" ")}
     >
       <div>
@@ -449,6 +487,7 @@ function WidgetPreviewContent({
       </div>
 
       <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-white p-2">
+        <button type="button" onClick={() => setPreviewMode("ordinary")} className={previewMode === "ordinary" ? "rounded-lg bg-slate-900 px-4 py-2 text-xs text-white" : "rounded-lg px-4 py-2 text-xs"}>{lang === "zh" ? "普通 Widget" : "Ordinary Widget"}</button>
         <button
           type="button"
           onClick={() => setPreviewMode("simulation")}
@@ -469,12 +508,10 @@ function WidgetPreviewContent({
               : "rounded-lg px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
           }
         >
-          {c.liveMode}
+          {lang === "zh" ? "真正 AI／KB 測試（需授權）" : "Live AI / KB test (authorization required)"}
         </button>
         <div className="ml-auto text-[11px] text-muted-foreground">
-          {previewMode === "live"
-            ? "Real KB + Vertex · isolated"
-            : "UI only"}
+          {previewMode === "ordinary" ? "Own-company visitor flow · control-only" : previewMode === "live" ? "C3 isolated test · guarded" : "UI only"}
         </div>
       </div>
 
@@ -485,9 +522,7 @@ function WidgetPreviewContent({
             : "rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800"
         }
       >
-        {previewMode === "live"
-          ? c.liveBanner
-          : c.simulationBanner}
+        {previewMode === "ordinary" ? (lang === "zh" ? "目前公司的普通 Widget 訪客流程；與 C3 隔離測試分開。" : "Ordinary visitor flow for the current company, separate from the C3 isolated test.") : previewMode === "live" ? c.liveBanner : c.simulationBanner}
         {liveError && (
           <div className="mt-1 text-xs opacity-80">
             Config: {liveError}
@@ -654,8 +689,13 @@ function WidgetPreviewContent({
         <TabsContent value="preview">
           {loadingWidget && selectedId ? (
             <LoadingState />
+          ) : previewMode === "ordinary" ? (
+            <OrdinaryWidgetPreview key={`${previewActor?.id}:${selectedId}`} actorId={previewActor?.id ?? null} channel={channels.find(row => row.id === selectedId) ?? null} lang={lang} />
           ) : (
             <PreviewWidget
+              key={selectedId}
+              scopeCompanyId={channels.find(row => row.id === selectedId)?.company_id ?? ""}
+              scopeChannelId={selectedId}
               lang={lang}
               mode={previewMode}
               theme={theme}
@@ -667,6 +707,7 @@ function WidgetPreviewContent({
               }
               open={previewOpen}
               onOpenChange={setPreviewOpen}
+              onSwitchToOrdinary={() => setPreviewMode("ordinary")}
             />
           )}
         </TabsContent>
@@ -762,13 +803,24 @@ function ThemeCard({
 
 type PreviewMessage = {
   id: string;
-  role: "visitor" | "assistant";
+  role: "visitor" | "assistant" | "agent" | "system";
   content: string;
   meta?: string;
   isError?: boolean;
 };
 
+async function invokeLiveWidget(body: Record<string, unknown>, signal?: AbortSignal) {
+  // Await Supabase's session initialization lock before invoking the protected Edge route.
+  const {data, error} = await supabase.auth.getSession();
+  if (error || !data.session?.access_token) return {data:null,error:new Error("Sign in before using Live AI Test")};
+  return supabase.functions.invoke("widget-live-ai-test", {
+    body, signal: signal ?? AbortSignal.timeout(45000), headers: {Authorization: `Bearer ${data.session.access_token}`},
+  });
+}
+
 function PreviewWidget({
+  scopeCompanyId,
+  scopeChannelId,
   lang,
   mode,
   theme,
@@ -778,7 +830,10 @@ function PreviewWidget({
   placeholder,
   open,
   onOpenChange,
+  onSwitchToOrdinary,
 }: {
+  scopeCompanyId: string;
+  scopeChannelId: string;
   lang: Lang;
   mode: PreviewMode;
   theme: WidgetTheme;
@@ -788,6 +843,7 @@ function PreviewWidget({
   placeholder: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSwitchToOrdinary?: () => void;
 }) {
   const c = COPY[lang];
   const [messages, setMessages] = useState<PreviewMessage[]>([]);
@@ -797,15 +853,84 @@ function PreviewWidget({
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<LiveAiHistoryItem[]>([]);
-  const [testConversationId, setTestConversationId] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return window.localStorage.getItem("widget_live_test_conversation_id");
-  });
+  const { user } = useAuth();
+  const storageKey = user && scopeCompanyId && scopeChannelId
+    ? `widget_live_test:${user.id}:${scopeCompanyId}:${scopeChannelId}` : null;
+  const [testConversationId, setTestConversationId] = useState<string | null>(null);
+  const [scopeVerified, setScopeReady] = useState(false);
+  const [admittedScope, setAdmittedScope] = useState<string | null>(null);
+  const scopeReady = scopeVerified && admittedScope === storageKey;
+  const [admissionLoading, setAdmissionLoading] = useState(false);
+  const admissionRequest = useRef(0);
+  const historyRequest = useRef(0);
+  const currentScope = useRef(storageKey);
+  currentScope.current = storageKey;
+  const [runtimeReady, setRuntimeReady] = useState(false);
+  const [runtimeReason, setRuntimeReason] = useState<string | null>(null);
+  const [scopeFailure, setScopeFailure] = useState<string | null>(null);
+  const [executionFailure, setExecutionFailure] = useState<string | null>(null);
+  const [conversationClosed, setConversationClosed] = useState(false);
+  const [conversationReadOnly, setConversationReadOnly] = useState(false);
+  const [conversationReadOnlyReason, setConversationReadOnlyReason] = useState<string | null>(null);
+  const [conversationVerified, setConversationVerified] = useState(false);
+  const [executionReady, setExecutionReady] = useState(false);
+  const [originalPreviewMode, setOriginalPreviewMode] = useState(false);
+  const [authorizedPreviewAvailable, setAuthorizedPreviewAvailable] = useState(false);
+  const [remoteReady, setRemoteReady] = useState(false);
+  const [liveFailure, setLiveFailure] = useState<string | null>(null);
+  const [historyFailure, setHistoryFailure] = useState(false);
+  const [conversationFailure, setConversationFailure] = useState(false);
+  const [pollRevision, setPollRevision] = useState(0);
+  const pendingSend = useRef<{id: string; text: string} | null>(null);
+
+  const [queue, setQueue] = useState<{queue_position?: number | null; estimated_wait_minutes?: number | null; estimate_deadline?: string | null; server_now?: string | null} | null>(null);
+  const [clock, setClock] = useState(Date.now());
+  const [queueClockOffset, setQueueClockOffset] = useState(0);
+  const applyQueue = (snapshot: typeof queue) => {
+    setQueue(snapshot);
+    const serverNow = Date.parse(snapshot?.server_now ?? "");
+    setQueueClockOffset(Number.isFinite(serverNow) ? serverNow - Date.now() : 0);
+  };
   const [historyLoading, setHistoryLoading] = useState(false);
   const actionAreaRef = useRef<HTMLDivElement | null>(null);
+  const conversationEpoch = useRef(0);
+  const replyInFlight = useRef(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const composing = useRef(false);
+  const emojiCaret = useRef<number | null>(null);
   const [humanState, setHumanState] = useState<
     "none" | "waiting" | "assigned"
   >("none");
+  // Scope admission controls Send, not harmless local draft composition.
+  const inputEditable = mode === "live"
+    ? Boolean(storageKey) && !conversationClosed && !conversationReadOnly && !pendingSend.current && !replyInFlight.current
+    : !typing && humanState === "none";
+  const draftKey = storageKey ? `${storageKey}:draft:${testConversationId ?? "new"}` : null;
+  const readDraft = (conversationId: string | null) => {
+    if (!storageKey) return "";
+    try { return (window.localStorage.getItem(`${storageKey}:draft:${conversationId ?? "new"}`) ?? "").slice(0, 500); }
+    catch { return ""; }
+  };
+  const updateInput = (value: string) => {
+    setInput(value);
+    if (mode === "live" && draftKey) {
+      try {
+        if (value) window.localStorage.setItem(draftKey, value);
+        else window.localStorage.removeItem(draftKey);
+      } catch { /* Storage restrictions must not prevent local typing. */ }
+    }
+  };
+  useEffect(() => {
+    if (emojiCaret.current === null) return;
+    inputRef.current?.focus();
+    inputRef.current?.setSelectionRange(emojiCaret.current, emojiCaret.current);
+    emojiCaret.current = null;
+  }, [input, emojiOpen]);
+  useEffect(() => {
+    if (mode !== "live" || humanState !== "waiting") return;
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [mode, humanState]);
   const simulationTimer =
     useRef<ReturnType<typeof setTimeout> | null>(null);
   const handoffTimer =
@@ -824,7 +949,10 @@ function PreviewWidget({
   );
 
   useEffect(() => {
-    setInput("");
+    conversationEpoch.current += 1;
+    replyInFlight.current = false;
+    composing.current = false;
+    setInput(mode === "live" ? pendingSend.current?.text ?? readDraft(testConversationId) : "");
     setTyping(false);
     setHumanState("none");
     setHistoryOpen(false);
@@ -843,73 +971,237 @@ function PreviewWidget({
     }
   }, [mode]);
 
+  useEffect(() => {
+    conversationEpoch.current += 1;
+    replyInFlight.current = false;
+    setMessages([]);
+    setHistory([]);
+    setScopeReady(false);
+    setRuntimeReady(false);
+    setScopeFailure(null);
+    setExecutionFailure(null);
+    setConversationClosed(false);
+    setConversationReadOnly(false);
+    setConversationReadOnlyReason(null);
+    setConversationVerified(false);
+    composing.current = false;
+    emojiCaret.current = null;
+    setExecutionReady(false);
+    setOriginalPreviewMode(false);
+    setAuthorizedPreviewAvailable(false);
+    setRemoteReady(false);
+    setHistoryFailure(false);
+    setConversationFailure(false);
+    setHistoryLoading(false);
+    setTyping(false);
+    setHumanState("none");
+    setLiveFailure(null);
+    const restoredConversationId = storageKey ? window.localStorage.getItem(storageKey) : null;
+    setTestConversationId(restoredConversationId);
+    pendingSend.current = null;
+    if (storageKey) {
+      try {
+        const saved = JSON.parse(window.localStorage.getItem(storageKey + ":pending") ?? "null");
+        if (saved && typeof saved.id === "string" && typeof saved.text === "string") pendingSend.current = saved;
+      } catch { window.localStorage.removeItem(storageKey + ":pending"); }
+    }
+    setInput(pendingSend.current?.text ?? readDraft(restoredConversationId));
+    return () => { conversationEpoch.current += 1; };
+  }, [storageKey]);
+
   const applyServerMessages = (rows: LiveAiMessage[] | undefined) => {
     if (!Array.isArray(rows)) return;
-    setMessages(
-      rows.map((row) => ({
+    const mapped: PreviewMessage[] = rows.map((row) => ({
         id: row.id,
         role: row.role,
         content: row.content,
         meta:
+          row.role === "agent" ? (lang === "zh" ? "真人客服" : "Human agent") : row.role === "system" ? "System" :
           row.role === "assistant" && row.metadata
             ? [
-                row.metadata.grounded === true ? "grounded" : "clarification",
+                widgetResponseStatus(row.metadata),
                 typeof row.metadata.model === "string" ? row.metadata.model : null,
                 typeof row.metadata.full_content_evidence_count === "number"
                   ? `${row.metadata.full_content_evidence_count} full-content evidence`
                   : null,
               ].filter(Boolean).join(" · ")
             : undefined,
-      })),
-    );
+      }));
+    setMessages((previous) => mergeWidgetMessages(previous, mapped));
   };
 
-  const loadLiveConversation = async (conversationId: string) => {
-    const { data, error } = await supabase.functions.invoke(
-      "widget-live-ai-test",
-      { body: { action: "load", test_conversation_id: conversationId } },
-    );
-    if (error || !data || data.success !== true) {
-      window.localStorage.removeItem("widget_live_test_conversation_id");
-      setTestConversationId(null);
-      setMessages([]);
+  const loadLiveConversation = async (conversationId: string, switching = false, signal?: AbortSignal, authorized = false) => {
+    if (authorized && (pendingSend.current || replyInFlight.current || !scopeReady || !runtimeReady || !executionReady)) return;
+    if (switching) { setConversationVerified(false); setConversationReadOnly(true); }
+    const epoch = switching ? ++conversationEpoch.current : conversationEpoch.current;
+    let result;
+    try { result = await invokeLiveWidget(authorized ? {action:"open_authorized"} : { action: "load", test_conversation_id: conversationId }, signal); }
+    catch {
+      if (epoch === conversationEpoch.current && !signal?.aborted) setConversationFailure(true);
       return;
     }
+    const { data, error } = result;
+    if (epoch !== conversationEpoch.current || signal?.aborted) return;
+    if (error || !data || data.success !== true || (authorized
+      ? !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(data.conversation_id ?? "") || data.read_only !== false
+      : data.conversation_id !== conversationId)) {
+      setConversationFailure(true);
+      return;
+    }
+    if (switching) {
+      setMessages([]);
+      setInput(pendingSend.current?.text ?? readDraft(data.conversation_id));
+      setTyping(false);
+      replyInFlight.current = false;
+    }
+    setConversationFailure(false);
+    if (switching) setPollRevision(value => value + 1);
     setTestConversationId(data.conversation_id);
-    window.localStorage.setItem("widget_live_test_conversation_id", data.conversation_id);
+    setConversationClosed(["resolved", "closed"].includes(String(data.conversation_status ?? "")));
+    setConversationReadOnly(data.read_only === true);
+    setConversationReadOnlyReason(typeof data.read_only_reason === "string" ? data.read_only_reason : null);
+    setConversationVerified(true);
+    if (storageKey) window.localStorage.setItem(storageKey, data.conversation_id);
     const underHumanControl =
       data.human_control === true ||
       ["pending", "transferred", "human_needed", "human_control"].includes(String(data.conversation_status ?? "")) ||
       Boolean(data.assigned_agent_id);
     setHumanState(underHumanControl ? (data.assigned_agent_id ? "assigned" : "waiting") : "none");
+    if (pendingSend.current && deliveryConfirmedByReadback(data.messages ?? [], pendingSend.current.id, underHumanControl)) {
+      pendingSend.current = null;
+      if (storageKey) window.localStorage.removeItem(storageKey + ":pending");
+      setLiveFailure(null);
+    }
     applyServerMessages(data.messages);
+    applyQueue(data.human_support ?? null);
+    if (!replyInFlight.current) setTyping(data.ai_generating === true);
     return { humanControl: underHumanControl };
   };
 
-  const loadLiveHistory = async () => {
-    setHistoryLoading(true);
+  const loadLiveReadiness = async (signal?: AbortSignal) => {
+    const request = ++admissionRequest.current;
+    if (!storageKey) return;
+    setAdmissionLoading(true);
+    setScopeReady(false);
+    setRuntimeReady(false);
     try {
-      const { data, error } = await supabase.functions.invoke(
-        "widget-live-ai-test",
-        { body: { action: "history" } },
-      );
-      if (!error && data?.success === true && Array.isArray(data.history)) {
-        setHistory(data.history as LiveAiHistoryItem[]);
+      const { data, error } = await invokeLiveWidget({ action: "readiness" }, signal);
+      if (request !== admissionRequest.current || currentScope.current !== storageKey || signal?.aborted) return;
+      const ready = !error && data?.success === true && data.admission_action === "readiness" && data.isolation_ready === true && data.company_id === scopeCompanyId && data.channel_id === scopeChannelId;
+      let reason: string | null = null;
+      if (error) {
+        const status = error?.context?.status;
+        reason = Number.isInteger(status) && status >= 400 && status < 600
+          ? `HTTP ${status}` : "scope_lookup_failed";
+      } else if (data?.success !== true) reason = "scope_lookup_failed";
+      else if (data.isolation_ready !== true) reason = "isolated_scope_unavailable";
+      else if (data.company_id !== scopeCompanyId || data.channel_id !== scopeChannelId) reason = "selected_scope_mismatch";
+      setScopeFailure(reason);
+      const executionCode = data?.execution_failure?.code;
+      setExecutionFailure(ready && ["ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED", "ORIGINAL_PREVIEW_PROVIDER_DENIED", "UAT_AUTHORIZATION_ABSENT", "UAT_SOURCE_OR_RUN_DENIED", "UAT_DEPENDENCY_MISSING", "UAT_ADMISSION_DENIED", "UAT_REMOTE_BOUND_UNVERIFIED", "UAT_SCOPE_DENIED", "UAT_ISOLATION_DENIED"].includes(executionCode) ? executionCode : null);
+      setAdmittedScope(storageKey);
+      setScopeReady(ready);
+      setRuntimeReady(ready && verifiedWidgetRuntime(data,user?.id));
+      setRuntimeReason(ready ? widgetRuntimeBlockReason(data,user?.id) : null);
+      setExecutionReady(ready && data?.execution_ready === true);
+      setOriginalPreviewMode(ready && verifiedWidgetRuntime(data,user?.id) && data?.execution_class === "authenticated_admin_preview");
+      setAuthorizedPreviewAvailable(ready && verifiedWidgetRuntime(data,user?.id) && data?.execution_ready === true && data?.authorized_preview_available === true);
+      setRemoteReady(ready && data?.remote_ready === true);
+    } catch {
+      if (request === admissionRequest.current && currentScope.current === storageKey && !signal?.aborted) {
+        setScopeReady(false);
+        setRuntimeReady(false);
+        setScopeFailure("scope_lookup_failed");
+        setExecutionFailure(null);
+        setExecutionReady(false);
+        setOriginalPreviewMode(false);
+        setAuthorizedPreviewAvailable(false);
+        setRemoteReady(false);
       }
     } finally {
-      setHistoryLoading(false);
+      if (request === admissionRequest.current && currentScope.current === storageKey && !signal?.aborted) setAdmissionLoading(false);
+    }
+  };
+
+  const loadLiveHistory = async () => {
+    if (!storageKey) return;
+    const request = ++historyRequest.current;
+    setHistoryLoading(true);
+    try {
+      const {data,error} = await invokeLiveWidget({action:"history"});
+      if (request !== historyRequest.current || currentScope.current !== storageKey) return;
+      const valid = !error && data?.success === true && data.isolation_ready === true &&
+        data.company_id === scopeCompanyId && data.channel_id === scopeChannelId &&
+        verifiedWidgetRuntime(data,user?.id) && Array.isArray(data.history);
+      setHistoryFailure(!valid);
+      if (valid) setHistory(data.history as LiveAiHistoryItem[]);
+    } catch {
+      if (request === historyRequest.current && currentScope.current === storageKey) setHistoryFailure(true);
+    } finally {
+      if (request === historyRequest.current && currentScope.current === storageKey) setHistoryLoading(false);
     }
   };
 
   useEffect(() => {
-    if (mode !== "live" || !testConversationId) return;
-    void loadLiveConversation(testConversationId);
-  }, [mode]);
+    if (mode !== "live" || !testConversationId || !storageKey) return;
+    let active = true;
+    let inFlight = false;
+    let pending = false;
+    let failures = 0;
+    const controller = new AbortController();
+    // Realtime is only an invalidation hint. The existing authenticated
+    // endpoint rechecks actor/tenant/ticket before anything reaches the UI.
+    const poll = async () => {
+      if (!active || failures >= 3 || currentScope.current !== storageKey || document.hidden) return;
+      pending = true;
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        while (pending && active && currentScope.current === storageKey && !document.hidden) {
+          pending = false;
+          const result = await loadLiveConversation(testConversationId, false,
+            AbortSignal.any([controller.signal, AbortSignal.timeout(45000)]));
+          if (!active) return;
+          failures = result ? 0 : failures + 1;
+          if (failures >= 3) { setConversationFailure(true); pending = false; }
+        }
+      } catch {
+        if (active) setConversationFailure(true);
+        pending = false;
+      } finally { inFlight = false; }
+    };
+    const changes = supabase.channel(`widget-live-events-${testConversationId}`)
+      .on("postgres_changes", {event:"*", schema:"public", table:"messages",
+        filter:`conversation_id=eq.${testConversationId}`}, () => { void poll(); })
+      .on("postgres_changes", {event:"UPDATE", schema:"public", table:"conversations",
+        filter:`id=eq.${testConversationId}`}, () => { void poll(); })
+      .subscribe(status => {
+        if (!active) return;
+        // A subscribed snapshot closes the initial-load/subscribe race and
+        // reconciles a real reconnect, never an every-N-seconds history read.
+        if (status === "SUBSCRIBED") { failures = 0; void poll(); }
+        if (status === "TIMED_OUT" || status === "CHANNEL_ERROR" || status === "CLOSED")
+          setConversationFailure(true);
+      });
+    const resume = () => { if (!document.hidden) { failures = 0; void poll(); } };
+    document.addEventListener("visibilitychange", resume);
+    void poll();
+    return () => {
+      active = false; pending = false; controller.abort();
+      document.removeEventListener("visibilitychange", resume);
+      void supabase.removeChannel(changes);
+    };
+  }, [mode, testConversationId, storageKey, pollRevision]);
 
   useEffect(() => {
     if (mode !== "live") return;
-    void loadLiveHistory();
-  }, [mode]);
+    const controller = new AbortController();
+    setHistory([]);
+    setHistoryFailure(false);
+    setHistoryLoading(false);
+    void loadLiveReadiness(controller.signal);
+    return () => { controller.abort(); admissionRequest.current += 1; historyRequest.current += 1; };
+  }, [mode, storageKey]);
 
   useEffect(() => {
     const closeOutside = (event: MouseEvent | PointerEvent) => {
@@ -963,41 +1255,50 @@ function PreviewWidget({
     }, 1200);
   };
 
-  const appendLiveFailure = (
-    text: string,
-    detail: string,
-  ) => {
-    setMessages((value) => [
-      ...value,
-      {
-        id: `live-error-${Date.now()}`,
-        role: "assistant",
-        content: `${c.liveError}: ${detail}`,
-        meta: text,
-        isError: true,
-      },
-    ]);
+  const appendLiveFailure = (text: string, _detail: string) => {
+    if (text) updateInput(text);
+    setLiveFailure(lang === "zh" ? "未能確認傳送結果。請重新讀取對話核實；結果未明前不會再次發送。" : "Delivery could not be confirmed. Refresh the conversation to reconcile it; it will not be sent again while the outcome is unknown.");
   };
 
   const runLiveAi = async (text: string) => {
+    if (!storageKey || !scopeReady || !runtimeReady || conversationClosed || conversationReadOnly || (testConversationId && !conversationVerified)) return;
+    if (pendingSend.current) {
+      setInput(pendingSend.current.text);
+      setLiveFailure(lang === "zh" ? "上一則訊息結果未明，請先重新讀取對話核實。" : "The previous delivery is unresolved. Refresh the conversation to reconcile it first.");
+      return;
+    }
+    const pending = pendingSend.current ?? {id: crypto.randomUUID(), text};
+    pendingSend.current = pending;
+    window.localStorage.setItem(storageKey + ":pending", JSON.stringify(pending));
+    setLiveFailure(null);
+    const epoch = conversationEpoch.current;
+    replyInFlight.current = true;
     setTyping(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke(
-        "widget-live-ai-test",
-        {
-          body: {
-            action: "send",
+      const { data, error } = await invokeLiveWidget({
+            action: originalPreviewMode ? "original_preview_send" : "send",
+            client_message_id: pending.id,
             query: text,
             ...(testConversationId
               ? { test_conversation_id: testConversationId }
               : {}),
-          },
-        },
-      );
+      });
 
-      const payload =
-        (data ?? null) as LiveAiResponse | LiveAiFailure | null;
+      if (epoch !== conversationEpoch.current) return;
+      let payload = (data ?? null) as LiveAiResponse | LiveAiFailure | null;
+      if (!payload && error && "context" in error && error.context instanceof Response) {
+        payload = await error.context.clone().json().catch(() => null);
+        if (epoch !== conversationEpoch.current) return;
+      }
+      if (isBusinessAdmissionFailure(payload)) {
+        // This rejection is before persistence. No replay or model-admission bypass.
+        pendingSend.current = null;
+        window.localStorage.removeItem(storageKey + ":pending");
+        updateInput(text);
+        setLiveFailure(lang === "zh" ? "此商業查詢尚未獲准執行；訊息未發送。你仍可詢問 AI 身份、確認在場或明確要求真人客服。" : "This business query is not admitted and was not sent. You can still ask about AI identity or presence, or explicitly request human support.");
+        return;
+      }
 
       if (
         error ||
@@ -1005,8 +1306,8 @@ function PreviewWidget({
         payload.success !== true
       ) {
         if (testConversationId) {
-          const recovered = await loadLiveConversation(testConversationId);
-          if (recovered?.humanControl) return;
+          await loadLiveConversation(testConversationId);
+          if (epoch !== conversationEpoch.current) return;
         }
         appendLiveFailure(
           text,
@@ -1019,25 +1320,36 @@ function PreviewWidget({
       }
 
       const result = payload as LiveAiResponse;
+      const receipt = result.delivery_receipt;
+      if (!receipt || receipt.persisted !== true || receipt.client_message_id !== pending.id || receipt.conversation_id !== result.conversation_id || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(receipt.visitor_message_id) || !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(result.conversation_id)) {
+        appendLiveFailure(text,"persistence_receipt_unverified"); return;
+      }
       setTestConversationId(result.conversation_id);
-      window.localStorage.setItem(
-        "widget_live_test_conversation_id",
-        result.conversation_id,
-      );
+      setConversationClosed(["resolved", "closed"].includes(String(result.conversation_status ?? "")));
+      setConversationVerified(true);
+      window.localStorage.setItem(storageKey, result.conversation_id);
+      window.localStorage.removeItem(storageKey + ":pending");
+      pendingSend.current = null;
+      setLiveFailure(null);
       const underHumanControl =
         result.human_control === true ||
         ["pending", "transferred", "human_needed", "human_control"].includes(String(result.conversation_status ?? "")) ||
         Boolean(result.assigned_agent_id) || result.handoff_persisted === true;
       setHumanState(underHumanControl ? (result.assigned_agent_id ? "assigned" : "waiting") : "none");
       applyServerMessages(result.messages);
+      applyQueue((result as LiveAiResponse & {human_support?: typeof queue}).human_support ?? null);
       void loadLiveHistory();
     } catch (error) {
+      if (epoch !== conversationEpoch.current) return;
       appendLiveFailure(
         text,
         safeLiveError(error, null),
       );
     } finally {
-      setTyping(false);
+      if (epoch === conversationEpoch.current) {
+        replyInFlight.current = false;
+        setTyping(false);
+      }
     }
   };
 
@@ -1063,11 +1375,30 @@ function PreviewWidget({
     }, 650);
   };
 
+  const sendBlockReason = mode === "live" ? widgetSendBlockReason({
+    actorScoped: Boolean(storageKey), closed: conversationClosed || conversationReadOnly, pending: Boolean(pendingSend.current),
+    inFlight: replyInFlight.current, scopeReady, runtimeReady, runtimeReason, conversationId: testConversationId,
+    conversationVerified, input,
+  }) : null;
+  const reconcilePending = async () => {
+    const pending = pendingSend.current;
+    if (!pending || !scopeReady || !runtimeReady || testConversationId) return;
+    const epoch = conversationEpoch.current;
+    try {
+      const { data, error } = await invokeLiveWidget({ action: "reconcile", client_message_id: pending.id });
+      if (epoch !== conversationEpoch.current || pendingSend.current?.id !== pending.id) return;
+      if (error || data?.success !== true || data.reconciled_client_message_id !== pending.id || typeof data.conversation_id !== "string") {
+        appendLiveFailure(pending.text, "reconciliation_unverified"); return;
+      }
+      await loadLiveConversation(data.conversation_id, true);
+    } catch { if (epoch === conversationEpoch.current) appendLiveFailure(pending.text, "reconciliation_unverified"); }
+  };
+
   const send = () => {
-    if (typing || !input.trim() || (mode === "live" && humanState !== "none")) return;
+    if (!inputEditable || composing.current || !input.trim() || (mode === "live" && Boolean(sendBlockReason))) return;
 
     const text = input.trim();
-    setInput("");
+    updateInput("");
 
     if (mode === "live") {
       void runLiveAi(text);
@@ -1086,9 +1417,22 @@ function PreviewWidget({
   };
 
   const startNewConversation = () => {
+    if (mode === "live" && pendingSend.current) { appendLiveFailure("", "unresolved_delivery"); return; }
+    conversationEpoch.current += 1;
+    replyInFlight.current = false;
     if (mode === "live") {
       setTestConversationId(null);
-      window.localStorage.removeItem("widget_live_test_conversation_id");
+      setConversationClosed(false);
+      setConversationReadOnly(false);
+    setConversationReadOnlyReason(null);
+      setConversationVerified(false);
+      if (storageKey) {
+        try { window.localStorage.removeItem(`${storageKey}:draft:new`); } catch { /* Local-only draft cleanup. */ }
+      }
+      if (storageKey) { window.localStorage.removeItem(storageKey); window.localStorage.removeItem(storageKey + ":pending"); }
+      pendingSend.current = null;
+      setLiveFailure(null);
+      setConversationFailure(false);
       setMessages([]);
       setInput("");
       setTyping(false);
@@ -1096,7 +1440,7 @@ function PreviewWidget({
       setHistoryOpen(false);
       setMenuOpen(false);
       setEmojiOpen(false);
-      void loadLiveHistory();
+      void loadLiveReadiness();
       return;
     }
 
@@ -1133,7 +1477,7 @@ function PreviewWidget({
             }
           >
             {mode === "live"
-              ? "Live AI Test · Real KB + Vertex"
+              ? "Live AI Test · Scoped retrieval"
               : "UI Simulation"}
           </div>
         </div>
@@ -1142,8 +1486,8 @@ function PreviewWidget({
           <button
             type="button"
             onClick={() => {
+              if (!historyOpen && mode === "live") void loadLiveHistory();
               setHistoryOpen((value) => !value);
-              if (mode === "live") void loadLiveHistory();
             }}
             className="rounded p-2 opacity-70 hover:bg-black/5 hover:opacity-100"
             aria-label="Conversation History"
@@ -1177,6 +1521,13 @@ function PreviewWidget({
         </button>
       </div>
 
+      {mode === "live" && humanState === "waiting" && queue && (
+        <div className="border-b bg-amber-50 px-4 py-2 text-xs" aria-live="polite">
+          {lang === "zh" ? "排隊位置" : "Queue position"}: {queue.queue_position ?? "—"}
+          {" · "}{lang === "zh" ? "預計等候分鐘" : "Estimated minutes"}: {queue.estimated_wait_minutes ?? "—"}
+          {queue.estimate_deadline && Number.isFinite(Date.parse(queue.estimate_deadline)) && <> · {Math.max(0, Math.ceil((Date.parse(queue.estimate_deadline) - clock - queueClockOffset) / 1000))}s</>}
+        </div>
+      )}
       {humanState !== "none" && (
         <div
           className={
@@ -1195,10 +1546,10 @@ function PreviewWidget({
                 : "Simulating wait for a human agent…"
             : lang === "zh"
               ? mode === "live"
-                ? "真人客服已接手；AI 回覆暫停。"
+                ? "已指派真人客服，尚未代表已接聽；AI 回覆暫停。"
                 : "已模擬真人客服接手；AI 回覆暫停。"
               : mode === "live"
-                ? "A human agent has taken over; AI replies are paused."
+                ? "A human agent is assigned; this does not confirm they have answered. AI replies are paused."
                 : "Human agent simulated as connected; AI replies are paused."}
         </div>
       )}
@@ -1219,6 +1570,7 @@ function PreviewWidget({
         {messages.map((message) => (
           <div
             key={message.id}
+            data-message-id={message.id}
             className={
               message.role === "visitor"
                 ? "ml-auto max-w-[82%] rounded-2xl rounded-br-md px-3 py-2 text-sm text-white"
@@ -1232,9 +1584,11 @@ function PreviewWidget({
                 : undefined
             }
           >
-            <div className="whitespace-pre-wrap">
-              {message.content}
-            </div>
+            {message.role === "visitor" || message.role === "system" ? (
+              <div className="whitespace-pre-wrap break-words">{message.content}</div>
+            ) : (
+              <SafeWidgetMessageContent content={message.content} />
+            )}
             {message.meta && (
               <div
                 className={
@@ -1253,13 +1607,69 @@ function PreviewWidget({
           <div className="flex max-w-[82%] items-center gap-2 rounded-2xl rounded-bl-md border bg-slate-50 px-3 py-2 text-xs text-slate-400">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
             {mode === "live"
-              ? "Searching Knowledge Base and generating answer…"
+              ? "Waiting for the server response…"
               : "Typing…"}
           </div>
         )}
       </div>
 
       <div className="border-t bg-white p-3">
+        {mode === "live" && scopeReady && runtimeReady && executionReady && authorizedPreviewAvailable && (
+          <button type="button" className="mb-2 text-xs underline" disabled={typing || Boolean(pendingSend.current)} onClick={() => void loadLiveConversation("",true,undefined,true)}>
+            {lang === "zh" ? "開啟已授權 AI 對話" : "Open authorized AI conversation"}
+          </button>
+        )}
+        {mode === "live" && conversationReadOnlyReason === "synthetic_uat_start_new_original_preview" && <p role="status" className="mb-2 text-xs text-amber-800">{lang === "zh" ? "此 Synthetic UAT 對話保留原租約規則。請按「新對話」使用已授權的原 AI Preview。" : "This Synthetic UAT conversation retains its lease rules. Select New Conversation to use your authorized original AI Preview."}</p>}
+        {mode === "live" && scopeReady && runtimeReady && (!executionReady || !remoteReady) && (
+          <p role="status" className="mb-2 text-xs text-amber-800">
+            {lang === "zh"
+              ? (!executionReady ? "AI 測試執行尚未啟用，暫不能產生商業問題回覆。歷史對話仍可查看；真人請求按既有流程處理，尚未代表已轉交。" : "模型執行已配置；遠端 KB 查詢尚未獲准。這不代表 KB 沒有資料。")
+              : (!executionReady ? "AI test execution is not activated for business replies. History remains available; human requests use the existing process and are not yet transfers." : "Model execution is configured; remote KB queries are not yet authorized. This does not mean the KB has no matching information.")}
+            {executionFailure && <span className="block">{executionFailure}</span>}
+          </p>
+        )}
+        {mode === "live" && !scopeReady && (
+          <div className="mb-2 text-xs text-slate-500">
+            <p role={admissionLoading ? "status" : "alert"}>
+              {admissionLoading
+                ? (lang === "zh" ? "正在核實隔離測試範圍；KB 存取尚未確認。" : "Verifying isolated test scope; KB access is not yet confirmed.")
+                : (lang === "zh" ? "暫時無法連接此測試 channel。請選擇獲准使用的 channel，或請管理員核對設定。KB 存取尚未確認。" : "This test channel is unavailable. Select an authorized channel or ask an administrator to check its settings. KB access is not yet confirmed.")}
+            </p>
+            {!admissionLoading && scopeFailure && <p role="status">{scopeFailure === "isolated_scope_unavailable"
+              ? (lang === "zh" ? "目前帳戶沒有此 C3 隔離測試範圍；這不代表沒有自己公司的 Widget 權限。" : "C3 isolated test scope is not available for this account. This does not deny access to your own company's ordinary Widget.")
+              : scopeFailure === "selected_scope_mismatch"
+              ? (lang === "zh" ? "所選公司／channel 與伺服器核實的測試範圍不一致；傳送已阻擋。" : "The selected company/channel does not match the server-verified test scope. Sending is blocked.")
+              : scopeFailure === "HTTP 401"
+              ? (lang === "zh" ? "HTTP 401：伺服器未能核實目前登入；請使用正常登入流程。" : "HTTP 401: the server could not authenticate this session. Use normal sign-in.")
+              : scopeFailure === "HTTP 403"
+              ? (lang === "zh" ? "HTTP 403：伺服器拒絕此測試要求；請核對目前帳戶、角色及 Origin。" : "HTTP 403: the server denied this test request. Check the current account, role and Origin.")
+              : scopeFailure === "HTTP 409"
+              ? (lang === "zh" ? "HTTP 409：測試範圍發生衝突；尚未獲准傳送。" : "HTTP 409: test scope conflict. Sending is not authorized.")
+              : scopeFailure === "HTTP 503"
+              ? (lang === "zh" ? "HTTP 503：測試 scope／channel 服務未就緒；這不是未登入的證據。" : "HTTP 503: test scope/channel service is not ready. This is not proof of being signed out.")
+              : (lang === "zh" ? "未能核實測試連線；尚未獲准傳送。" : "Test connection could not be verified. Sending is not authorized.")}</p>}
+            <p>{lang === "zh" ? "你可以先在本機編寫草稿；完成 channel 核實前不能傳送。" : "You can compose a local draft. Sending stays unavailable until this channel is verified."}</p>
+            {!admissionLoading && scopeFailure === "isolated_scope_unavailable" && onSwitchToOrdinary && <div role="status"><button type="button" className="font-medium underline text-blue-700" onClick={onSwitchToOrdinary}>{lang === "zh" ? "改用自己公司的普通 Widget（受控測試）" : "Switch to my company\'s Ordinary Widget (control-only)"}</button><p>{lang === "zh" ? "這個帳戶沒有 C3 隔離測試權限；普通 Widget 只能測試指定控制句。" : "This account has no C3 test scope. Ordinary Preview supports only four controlled messages, not real AI/KB quality tests."}</p></div>}
+            {!admissionLoading && storageKey && <button type="button" className="mt-1 underline" onClick={() => void loadLiveReadiness()}>{lang === "zh" ? "重試連線" : "Retry connection"}</button>}
+          </div>
+        )}
+        {mode === "live" && scopeReady && !runtimeReady && <p role="alert" className="mb-2 text-xs text-amber-800">{lang === "zh" ? "目前後端未證實支援受控傳送契約；歷史可讀、草稿可編輯，但不會傳送或執行商業 AI。這不代表發布版前端過時。" : "The backend has not proven the controlled-send contract. History and local drafts remain available; sending and business AI are blocked. This does not establish a stale published frontend."}</p>}
+        {mode === "live" && <details className="mb-2 text-xs"><summary>{lang === "zh" ? "傳送狀態" : "Send status"}</summary><output data-widget-send-state={sendBlockReason ?? "ready"}>{sendBlockReason ?? "ready"}</output><div>scopeReady={String(scopeReady)} · runtimeReady={String(runtimeReady)} · executionReady={runtimeReady ? String(executionReady) : "unverified"} · remoteReady={runtimeReady ? String(remoteReady) : "unverified"} · pending={String(Boolean(pendingSend.current))} · conversationVerified={String(conversationVerified)}</div></details>}
+        {mode === "live" && pendingSend.current && !testConversationId && <div role="alert" className="mb-2 text-xs">{lang === "zh" ? "上一則訊息結果未明；只可查核原訊息，不會重送或另開對話。" : "The previous outcome is unknown. Check the original message; it will not be resent or replaced with a new conversation."}<button type="button" disabled={!scopeReady || !runtimeReady} className="ml-1 underline" onClick={() => void reconcilePending()}>{lang === "zh" ? "核實原訊息送達" : "Check original delivery"}</button></div>}
+        {mode === "live" && conversationReadOnly && !conversationReadOnlyReason && <p role="status" className="mb-2 text-xs text-slate-500">{lang === "zh" ? "這是原有 Preview 的唯讀歷史對話，不能在此傳送訊息或執行 AI。" : "This original Preview conversation is read-only. Messages and AI execution are disabled for this archive."}</p>}
+        {mode === "live" && conversationClosed && !conversationReadOnly && (
+          <p role="status" className="mb-2 text-xs text-slate-500">
+            {lang === "zh" ? "此對話已結束；請使用「新對話」開始另一個問題。" : "This conversation is resolved. Use New Conversation to start another request."}
+          </p>
+        )}
+        {mode === "live" && historyFailure && <p role="alert" className="mb-2 text-xs text-red-600">{lang === "zh" ? "歷史清單未能載入；這不代表沒有歷史對話。請重新開啟對話歷史重試。" : "History could not be loaded; this does not mean the history is empty. Reopen Conversation History to retry."}</p>}
+        {mode === "live" && (conversationFailure || pendingSend.current) && testConversationId && (
+          <div className="mb-2 text-xs text-red-600">
+            {conversationFailure && <p role="alert">{lang === "zh" ? "對話讀取失敗，現有訊息已保留。" : "Conversation refresh failed. Existing messages are retained."}</p>}
+            <button type="button" className="underline" onClick={() => setPollRevision(value => value + 1)}>{lang === "zh" ? "重新讀取對話" : "Refresh conversation"}</button>
+          </div>
+        )}
+        {liveFailure && <p role="alert" className="mb-2 text-xs text-red-600">{liveFailure}</p>}
         {historyOpen && (
           <div className="mb-2 rounded-xl border bg-slate-50 p-2">
             <div className="mb-2 text-xs font-semibold">
@@ -1270,6 +1680,8 @@ function PreviewWidget({
                 <Loader2 className="h-3 w-3 animate-spin" />
                 Loading history…
               </div>
+            ) : mode === "live" && historyFailure ? (
+              <p role="alert" className="text-xs">{lang === "zh" ? "歷史清單讀取失敗，請重試連線。" : "History is unavailable. Retry the connection."}</p>
             ) : history.length === 0 ? (
               <div className="text-xs text-slate-400">
                 {mode === "live" ? "No Live AI Test history yet." : "No preview history yet."}
@@ -1281,8 +1693,11 @@ function PreviewWidget({
                   type="button"
                   onClick={() => {
                     setHistoryOpen(false);
-                    void loadLiveConversation(session.conversation_id);
+                    void loadLiveConversation(session.conversation_id, true);
                   }}
+                  data-conversation-id={session.conversation_id}
+                  aria-label={`${session.read_only ? "Preview archive" : "Live Test"} ${session.conversation_id}`}
+                  title={session.conversation_id}
                   className={
                     session.conversation_id === testConversationId
                       ? "mb-1 block w-full rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-left text-xs"
@@ -1290,7 +1705,7 @@ function PreviewWidget({
                   }
                 >
                   <div className="font-medium">
-                    Live Test {history.length - index} · {session.message_count} messages
+                    {session.read_only ? "Preview archive" : "Live Test"} · {session.conversation_id.slice(0, 8)} · {session.message_count} messages{session.read_only ? " · Read-only" : ""}
                   </div>
                   <div className="mt-1 truncate text-[10px] text-slate-500">
                     {session.latest_preview}
@@ -1304,7 +1719,7 @@ function PreviewWidget({
         {mode === "live" && (
           <div className="mb-2 flex items-start gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[10px] leading-4 text-emerald-800">
             <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            Persistent Live AI Test: real KB + Vertex; saved as test data and visible in Inbox; excluded from training.
+            Persistent Live AI Test: KB grounding requires verified retrieval; saved as test data and visible in Inbox; excluded from training.
           </div>
         )}
 
@@ -1328,9 +1743,12 @@ function PreviewWidget({
           <button
             type="button"
             onClick={() => {
+              if (!inputEditable || composing.current) return;
               setMenuOpen(false);
               setEmojiOpen((value) => !value);
             }}
+            disabled={!inputEditable}
+            onMouseDown={(e) => e.preventDefault()}
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white"
             aria-label="Emoji"
             title="Emoji"
@@ -1413,23 +1831,11 @@ function PreviewWidget({
                   if (mode === "simulation") {
                     requestHumanSimulation();
                   } else {
-                    setMessages((value) => [
-                      ...value,
-                      {
-                        id: `handoff-live-note-${Date.now()}`,
-                        role: "assistant",
-                        content:
-                          lang === "zh"
-                            ? "Live AI Test 為隔離測試，不會建立正式轉真人狀態。"
-                            : "Live AI Test is isolated and does not create production handoff state.",
-                        meta: "No production write",
-                      },
-                    ]);
+                    if (inputEditable && scopeReady && runtimeReady && (!testConversationId || conversationVerified) && humanState === "none") void runLiveAi(lang === "zh" ? "請轉真人客服" : "Please connect me to human support");
                   }
                 }}
                 disabled={
-                  mode === "simulation" &&
-                  humanState !== "none"
+                  !inputEditable || humanState !== "none" || (mode === "live" && (!scopeReady || !runtimeReady || Boolean(testConversationId && !conversationVerified)))
                 }
                 className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-50 disabled:opacity-50"
               >
@@ -1439,16 +1845,23 @@ function PreviewWidget({
             </div>
           )}
 
-          {emojiOpen && (
+          {emojiOpen && inputEditable && (
             <div className="absolute bottom-12 left-10 z-20 grid w-64 grid-cols-8 gap-1 rounded-xl border bg-white p-2 shadow-xl">
               {PREVIEW_EMOJIS.map((emoji) => (
                 <button
                   key={emoji}
                   type="button"
                   onClick={() => {
-                    setInput((value) => `${value}${emoji}`);
+                    if (!inputEditable || composing.current) return;
+                    const start = inputRef.current?.selectionStart ?? input.length;
+                    const end = inputRef.current?.selectionEnd ?? input.length;
+                    const value = input.slice(0, start) + emoji + input.slice(end);
+                    if (value.length > 500) return;
+                    emojiCaret.current = start + emoji.length;
+                    updateInput(value);
                     setEmojiOpen(false);
                   }}
+                  onMouseDown={(e) => e.preventDefault()}
                   className="flex h-8 w-8 items-center justify-center rounded-lg text-base hover:bg-slate-100"
                   aria-label={`Insert ${emoji}`}
                 >
@@ -1459,12 +1872,16 @@ function PreviewWidget({
           )}
 
           <input
+            ref={inputRef}
+            maxLength={500}
             value={input}
             onChange={(e) =>
-              setInput(e.target.value.slice(0, 500))
+              inputEditable && updateInput(e.target.value.slice(0, 500))
             }
+            onCompositionStart={() => { composing.current = true; }}
+            onCompositionEnd={() => { composing.current = false; }}
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !composing.current && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
                 e.preventDefault();
                 send();
               }
@@ -1472,18 +1889,19 @@ function PreviewWidget({
             className="min-w-0 flex-1 border-0 px-2 py-2 text-sm outline-none"
             placeholder={
               mode === "live" && humanState !== "none"
-                ? (lang === "zh" ? "真人客服處理中，AI 輸入已暫停" : "Human support is handling this conversation")
+                ? (lang === "zh" ? "你仍可傳送訊息，真人接聽狀態以對話通知為準" : "You can still send messages; assignment does not confirm an agent has answered")
                 : placeholder
             }
-            disabled={mode === "live" && humanState !== "none"}
+            disabled={!inputEditable}
           />
 
           <Button
             onClick={send}
             disabled={
-              typing ||
+              !inputEditable ||
               !input.trim() ||
-              humanState !== "none"
+              (mode === "simulation" && humanState !== "none") ||
+              (mode === "live" && Boolean(sendBlockReason))
             }
             style={{ background: primary }}
           >

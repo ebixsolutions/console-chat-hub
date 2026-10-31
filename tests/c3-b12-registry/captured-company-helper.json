@@ -1,0 +1,4 @@
+{
+  "definition": "CREATE OR REPLACE FUNCTION public.ce_runtime_conversation_company(p_conversation_id uuid)\n RETURNS uuid\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO ''\nAS $function$ SELECT COALESCE(c.company_id,cc.company_id) FROM public.conversations c LEFT JOIN public.channel_config cc ON cc.id=c.channel_config_id WHERE c.id=p_conversation_id $function$\n",
+  "definition_md5": "931eb60a83a83dc210fff263a96cbb71"
+}

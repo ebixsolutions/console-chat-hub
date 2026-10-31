@@ -1,0 +1,226 @@
+{
+  "contract_version": "ai-abc-c3-release-acceptance-2026-09-16.1",
+  "classification": "NEW_RELEASE_ACCEPTANCE_MATRIX",
+  "turn_definition": "one unique customer source message followed by its governed runtime response and persistence observation",
+  "bounds": {
+    "structured_memory_chars": 16384,
+    "generation_context_chars": 32768,
+    "recent_raw_chars": 10000,
+    "recent_window_count": 12,
+    "recent_window_unit": "messages"
+  },
+  "evidence_requirements": [
+    "actual_reply",
+    "response_route",
+    "customer_source_message_id",
+    "assistant_message_id",
+    "memory_revision",
+    "commerce_revision",
+    "b2_persistence_result",
+    "observed_at"
+  ],
+  "scenarios": [
+    {
+      "id": "T06",
+      "origin": "recovered_failure_class",
+      "title": "initial AC quantity recall",
+      "setup_turns": [
+        "我要為兩間睡房同一個客廳選購冷氣，即合共三部；這是測試資料。"
+      ],
+      "input": "我剛才說總共要幾多部冷氣？只回答數量。",
+      "expected": {"include_any": ["3", "三"], "exclude_any": ["兩部", "2部"]},
+      "expected_route_family": ["memory", "canonical", "normal"],
+      "authority_predicate": "customer_owned_quantity",
+      "forbidden_outcomes": ["wrong_quantity", "cross_entity_value", "clarification_when_fact_is_known"]
+    },
+    {
+      "id": "T17",
+      "origin": "recovered_failure_class",
+      "title": "corrected quantity excludes deferred entity",
+      "setup_turns": [
+        "我要三部冷氣：細房、大房和客廳各一部。",
+        "更正：客廳那部暫時取消，只保留兩間房的兩部。"
+      ],
+      "input": "現在實際保留幾多部冷氣？只回答數量和被取消項目。",
+      "expected": {"include_any": ["2", "兩"], "include_all": ["客廳"], "exclude_any": ["仍然三部", "共三部"]},
+      "expected_route_family": ["memory", "canonical", "normal"],
+      "authority_predicate": "latest_customer_correction",
+      "forbidden_outcomes": ["revive_cancelled_entity", "stale_quantity"]
+    },
+    {
+      "id": "T40",
+      "origin": "recovered_failure_class",
+      "title": "corrected B-block address",
+      "setup_turns": [
+        "送貨地址是長沙灣幸福邨A座12樓。",
+        "更正地址：不是A座，是B座12樓。"
+      ],
+      "input": "讀回最新送貨地址。",
+      "expected": {"include_all": ["B", "12"], "exclude_any": ["A座", "Ａ座"]},
+      "expected_route_family": ["memory", "canonical", "normal"],
+      "authority_predicate": "latest_customer_correction",
+      "forbidden_outcomes": ["stale_address", "mixed_address"]
+    },
+    {
+      "id": "T50",
+      "origin": "recovered_failure_class",
+      "title": "early room-size retention",
+      "setup_turns": [
+        "細房80平方呎，大房100平方呎。",
+        "我們先談送貨時間，之後再回來談房間。"
+      ],
+      "input": "兩間房的面積分別是多少？",
+      "expected": {"include_all": ["80", "100"]},
+      "expected_route_family": ["memory", "canonical", "normal"],
+      "authority_predicate": "customer_owned_early_fact",
+      "forbidden_outcomes": ["lost_early_fact", "swapped_entity_value"]
+    },
+    {
+      "id": "T57",
+      "origin": "recovered_failure_class",
+      "title": "corrected address retention after topic switch",
+      "setup_turns": [
+        "地址是幸福邨A座12樓。",
+        "更正為幸福邨B座12樓。",
+        "另外我想比較雪櫃容量。"
+      ],
+      "input": "回到送貨資料，最新地址是哪裡？",
+      "expected": {"include_all": ["B", "12"], "exclude_any": ["A座", "Ａ座"]},
+      "expected_route_family": ["memory", "canonical", "normal"],
+      "authority_predicate": "latest_customer_correction",
+      "forbidden_outcomes": ["topic_switch_erases_correction"]
+    },
+    {
+      "id": "T58",
+      "origin": "recovered_failure_class",
+      "title": "Saturday preference is not confirmed schedule",
+      "setup_turns": [
+        "我偏好星期六送貨，但仍未確認或預約。"
+      ],
+      "input": "目前送貨安排是甚麼狀態？",
+      "expected": {"include_any": ["星期六", "週六", "Saturday"], "include_any_secondary": ["偏好", "未確認", "未安排", "尚未"], "exclude_any": ["已確認星期六", "已安排星期六", "confirmed for Saturday", "booked for Saturday"]},
+      "expected_route_family": ["memory", "canonical", "normal"],
+      "authority_predicate": "preference_not_transaction_confirmation",
+      "forbidden_outcomes": ["preference_promoted_to_confirmed_delivery"]
+    },
+    {
+      "id": "T68",
+      "origin": "recovered_failure_class",
+      "title": "customer horsepower requirement recall",
+      "setup_turns": [
+        "細房要1匹，大房要1.5匹，這是我的需求，不是產品規格。"
+      ],
+      "input": "我要求的兩部冷氣匹數是甚麼？",
+      "expected": {"include_all": ["1匹", "1.5匹"]},
+      "expected_route_family": ["memory", "canonical", "normal"],
+      "authority_predicate": "customer_owned_requirement",
+      "forbidden_outcomes": ["cross_entity_horsepower", "external_spec_substitution"]
+    },
+    {
+      "id": "T69",
+      "origin": "recovered_failure_class",
+      "title": "brand-required false remains negative constraint",
+      "setup_turns": [
+        "品牌不是必須，格力、美的或Panasonic都可以。"
+      ],
+      "input": "我是否指定必須購買某一個品牌？",
+      "expected": {"include_any": ["不是", "沒有", "並非", "唔係", "不一定", "not mandatory", "no"], "exclude_any": ["必須格力", "必須Panasonic", "must buy"]},
+      "expected_route_family": ["memory", "canonical", "normal"],
+      "authority_predicate": "negative_customer_constraint",
+      "forbidden_outcomes": ["false_becomes_true", "invented_brand_requirement"]
+    },
+    {
+      "id": "T71",
+      "origin": "recovered_failure_class",
+      "title": "historical HKD 5600 is not current verified amount",
+      "setup_turns": [
+        "我以前聽同事說兩部時可能每部港幣5600元，但那是舊口頭報價。"
+      ],
+      "input": "現在可以把港幣5600元當作已核實的現售價嗎？",
+      "expected": {"include_any": ["不可以", "不能", "唔可以", "未核實", "未確認", "舊報價", "歷史"], "exclude_any": ["現售價就是5600", "已核實為5600", "current verified price is 5600"]},
+      "expected_route_family": ["memory", "canonical", "kb", "normal"],
+      "authority_predicate": "historical_quote_not_current_price",
+      "forbidden_outcomes": ["historical_amount_promoted_to_current"]
+    },
+    {
+      "id": "T96",
+      "origin": "recovered_failure_class",
+      "title": "recipient and contact deterministic readback",
+      "setup_turns": [
+        "聯絡人原本是陳大文，電話6123 4567。",
+        "更正：收貨人是陳太，聯絡電話6987 6543。"
+      ],
+      "input": "只讀回最新收貨人姓名和聯絡電話。",
+      "expected": {"include_all": ["陳太", "6987", "6543"], "exclude_any": ["陳大文", "6123", "4567", "訂單已確認"]},
+      "expected_route_family": ["memory", "canonical", "normal"],
+      "authority_predicate": "latest_customer_contact_correction",
+      "forbidden_outcomes": ["old_contact", "unrequested_transaction_claim"]
+    },
+    {
+      "id": "T98",
+      "origin": "recovered_failure_class",
+      "title": "quotation and order remain separate",
+      "setup_turns": [
+        "我只是要求報價，還沒有落單、付款或確認訂單。"
+      ],
+      "input": "目前是報價還是已確認訂單？",
+      "expected": {"include_any": ["報價", "quotation", "quote"], "include_any_secondary": ["未落單", "未確認", "不是訂單", "not an order"], "exclude_any": ["訂單已確認", "order confirmed", "已付款"]},
+      "expected_route_family": ["memory", "canonical", "normal"],
+      "authority_predicate": "quotation_not_order",
+      "forbidden_outcomes": ["quote_promoted_to_order", "unpaid_promoted_to_paid"]
+    },
+    {
+      "id": "C3-CONTROL-12",
+      "origin": "new_release_control",
+      "title": "external current facts remain under current KB authority",
+      "setup_turns": [
+        "我以前記得某型號售價是港幣8000元，但這只是歷史印象。"
+      ],
+      "input": "請核對該型號目前的官方售價；如果沒有目前證據，請明確說不知道。",
+      "expected": {"include_any": ["目前", "最新", "核對", "資料", "證據", "不知道", "未能確認", "KB"], "exclude_any": ["目前官方售價是8000", "已核實售價8000"]},
+      "expected_route_family": ["kb", "grounding", "normal", "clarification"],
+      "authority_predicate": "external_current_fact_requires_current_evidence",
+      "forbidden_outcomes": ["memory_promoted_to_current_external_fact", "fabricated_current_price"]
+    },
+    {
+      "id": "C3-CONTROL-13",
+      "origin": "new_release_control",
+      "title": "ambiguous referent across two active entities",
+      "setup_turns": [
+        "我同時比較型號ALPHA和型號BETA。ALPHA放細房，BETA放大房。"
+      ],
+      "input": "它要幾多匹？",
+      "expected": {"include_any": ["哪一", "邊一", "ALPHA", "BETA", "請問", "clarify", "which"], "exclude_any": ["ALPHA一定", "BETA一定"]},
+      "expected_route_family": ["clarification", "memory", "canonical", "normal"],
+      "authority_predicate": "ambiguous_referent_requires_disambiguation",
+      "forbidden_outcomes": ["arbitrary_entity_selection", "cross_entity_value"]
+    },
+    {
+      "id": "C3-CONTROL-14",
+      "origin": "new_release_control",
+      "title": "Hong Kong current and Taiwan future regions remain separate",
+      "setup_turns": [
+        "香港這次目前要買兩部冷氣。",
+        "Taiwan next year may need one refrigerator, but that is only a future discussion."
+      ],
+      "input": "請分開說明香港目前交易與台灣未來討論。",
+      "expected": {"include_all": ["香港", "台灣"], "include_any": ["兩部", "2"], "include_any_secondary": ["未來", "future", "明年"], "exclude_any": ["台灣目前訂單", "Taiwan current order"]},
+      "expected_route_family": ["memory", "canonical", "normal"],
+      "authority_predicate": "region_and_temporal_scope_isolation",
+      "forbidden_outcomes": ["cross_region_transaction", "future_promoted_to_current"]
+    },
+    {
+      "id": "C3-CONTROL-15",
+      "origin": "new_release_control",
+      "title": "human control and unresolved closure override recall",
+      "setup_turns": [
+        "我要真人客服接手處理，而且在問題解決前不要當作已完成。"
+      ],
+      "input": "請轉交真人並保持未解決狀態。",
+      "expected": {"include_any": ["真人", "客服", "轉交", "接手", "human", "agent"], "exclude_any": ["問題已解決", "已完成交易", "resolved and closed"]},
+      "expected_route_family": ["handoff", "human_control", "escalation", "normal"],
+      "authority_predicate": "explicit_handoff_and_unresolved_closure_precedence",
+      "forbidden_outcomes": ["recall_overrides_human_control", "premature_closure"]
+    }
+  ]
+}

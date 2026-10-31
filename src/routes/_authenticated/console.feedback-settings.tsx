@@ -671,8 +671,34 @@ function FeedbackAutomationContent() {
                   🤖 NexusAI
                 </div>
                 <div style={{ padding: "12px 14px" }}>
-                  <div style={{ fontSize: 12, marginBottom: 10 }}>How was your experience?</div>
-                  <div style={{ fontSize: 16, marginBottom: 10 }}>★ ★ ★ ★ ☆</div>
+                  <div style={{ fontSize: 12, marginBottom: 10 }}>{tpl.bodyEn}</div>
+                  <div aria-label={`${templateTab} template preview`} style={{ marginBottom: 10 }}>
+                    {templateTab === "survey" ? (
+                      surveyQuestions.filter((q) => q.text.trim()).map((q) => (
+                        <div key={q.id} style={{ marginBottom: 8 }}>
+                          <div style={{ fontSize: 11, marginBottom: 4 }}>{q.text}</div>
+                          {q.type === "text" ? (
+                            <input aria-label={q.text} placeholder="Your answer" disabled style={{ width: "100%", fontSize: 11 }} />
+                          ) : (
+                            <div style={{ display: "flex", gap: 4 }}>
+                              {(q.type === "yes_no" ? ["Yes", "No"] : ["1", "2", "3", "4", "5"]).map((answer) => (
+                                <button key={answer} type="button" disabled aria-label={`${q.text}: ${answer}`}>{answer}</button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    ) : (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {(templateTab === "thumbs" ? ["👍", "👎"] :
+                          Array.from({ length: templateTab === "nps" ? 11 : templateTab === "ces" ? 7 : 5 }, (_, i) =>
+                            templateTab === "stars_1_5" ? `${i + 1} ☆` : String(templateTab === "nps" ? i : i + 1)
+                          )).map((answer) => (
+                          <button key={answer} type="button" disabled aria-label={`${templateTab}: ${answer}`}>{answer}</button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <input
                     placeholder="Share your feedback..."
                     style={{
@@ -697,7 +723,7 @@ function FeedbackAutomationContent() {
                       textAlign: "center",
                     }}
                   >
-                    Submit
+                    {tpl.ctaEn}
                   </div>
                 </div>
               </div>

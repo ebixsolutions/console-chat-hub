@@ -1,4 +1,14 @@
+import { factualSubject } from "./conversation-semantic-contract.ts";
+import { classifyHandoffIntent, splitHandoffClauses } from "./handoff-intent.ts";
+import type { CommerceSemanticDemand, CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+
+/** A superseded numeric requirement is not an item cancellation. Only this
+ * mutation projection changes; durable visitor text keeps the entire correction. */
+export function requirementMutationText(text: string): string {
+  if (!/(?:更正|改做|改成|改為|改为|correct|change|replace|update)/i.test(text)) return text;
+  return text.replace(/(?<![\p{L}\p{N}_-])(?:原(?:本)?|舊|旧|old|previous)?\s*\d+(?:\.\d+)?\s*(?:港元|毫米|mm|HKD|平方呎|元)?\s*(?:已(?:經|经)?)?(?:取消|不再適用|不再适用|cancel(?:led|ed)?|no longer applies)/giu, " ");
+}
 
 export type CommerceAnswerAuthority =
   | "CONVERSATION_STATE"
@@ -43,6 +53,7 @@ export type ReferenceAuthorityClass =
   | "CANONICAL_TRANSACTION"
   | "DETERMINISTIC_CALCULATION"
   | "CURRENT_KB"
+  | "PUBLISHED_KB_SERVICE"
   | "CUSTOMER_CONTEXT"
   | "HISTORICAL"
   | "MODEL_INFERENCE";
@@ -66,6 +77,8 @@ export interface ReferenceFactClaim {
 }
 
 export interface ReferenceEvidenceCandidate {
+  /** Local full-content/customer-subject binding, separate from source taxonomy. */
+  request_subject_supported?: boolean;
   source_id: string;
   source_type: string;
   authority_class: ReferenceAuthorityClass;
@@ -85,6 +98,7 @@ export interface ReferenceEvidenceCandidate {
 }
 
 export interface ResolveReferenceAuthorityInput {
+  require_request_subject_match?: boolean;
   candidates: ReferenceEvidenceCandidate[];
   expected_tenant_id?: string | null;
   expected_entity_ids?: string[];
@@ -202,6 +216,406 @@ function questionLooksLikeCustomerState(question: string): boolean {
   );
 }
 
+function explicitCustomerMutation(question: string): boolean {
+  const text = clean(question).replace(/(?:最新|之前|先前)更正(?:嘅|的)/g, "").replace(/(?:已(?:提供(?:同|及|和))?)?更正(?:過|後|后|完)|previously corrected/gi, "").replace(/(?:不要|唔好|不需|不用|do not|don't)\s*(?:新增或更改|新增|更改|更正|改變|改变|add or change|add|change)(?:任何)?(?:要求|需求|資料|资料|anything|requirements?)?/gi, "");
+  return /(?:更正|改(?:做|成|為|为|返)|變成|变成|加多|再加|新增|另外加|唔係.+?(?:改|而係|而系)|不是.+?(?:改|而是)|(?:而家要|現在要|现在要|目前要)(?!求))\s*(?:[一二兩两三四五六七八九十]|\d{1,4})?\s*(?:部|台|件|個|个|套)?/i.test(text) ||
+    /(?:取消|移除|刪除|删除)\s*(?:其中|呢|這|这|嗰|那|一|[一二兩两三四五六七八九十]|\d)/i.test(text) ||
+    /\b(?:change|set|make)\b.{0,24}\bto\b|\badd\b(?:\s+(?:another|one|two|three|\d+))?|\b(?:please\s+)?(?:cancel|remove)\b/i.test(text);
+}
+
+function quantityRecallTarget(question: string): boolean {
+  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(
+    question,
+  );
+}
+
+export type CommerceDimensionAttribute = "width" | "height" | "depth";
+
+export interface CommerceDimensionMeasurement {
+  attribute: CommerceDimensionAttribute | null;
+  value: number;
+  unit: "mm" | "cm" | "in";
+  value_mm: number;
+}
+
+function dimensionAttributeFromText(text: string): CommerceDimensionAttribute | null {
+  if (/(?:闊|寬|宽|width)/i.test(text)) return "width";
+  if (/(?:高|高度|height)/i.test(text)) return "height";
+  if (/(?:深|深度|depth)/i.test(text)) return "depth";
+  return null;
+}
+
+export function parseCommerceDimensionMeasurement(
+  question: string,
+): CommerceDimensionMeasurement | null {
+  const text = clean(question);
+  const match = text.match(
+    /(\d{1,5}(?:\.\d+)?)\s*(mm|毫米|cm|厘米|公分|inches?|inch|吋)/i,
+  );
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const rawUnit = match[2].toLowerCase();
+  const unit: CommerceDimensionMeasurement["unit"] =
+    rawUnit === "mm" || rawUnit === "毫米"
+      ? "mm"
+      : rawUnit === "cm" || rawUnit === "厘米" || rawUnit === "公分"
+      ? "cm"
+      : "in";
+  const multiplier = unit === "mm" ? 1 : unit === "cm" ? 10 : 25.4;
+  return {
+    attribute: dimensionAttributeFromText(text),
+    value,
+    unit,
+    value_mm: Math.round(value * multiplier * 1000) / 1000,
+  };
+}
+
+export function inferCommerceDimensionAttribute(
+  question: string,
+  semantic?: { requested_facts?: string[] | null } | null,
+): CommerceDimensionAttribute | null {
+  const direct = dimensionAttributeFromText(clean(question));
+  if (direct) return direct;
+  const requested = (semantic?.requested_facts ?? []).join(" ");
+  return dimensionAttributeFromText(requested);
+}
+
+/**
+ * Shared delivery/schedule current-fact target.  This recognises bounded
+ * read-only questions about the already-authoritative delivery preference;
+ * policy, reschedule and mutation requests stay outside this contract.
+ */
+export function isDeliveryScheduleCurrentFactQuery(question: string): boolean {
+  const text = clean(question);
+  if (!text || explicitCustomerMutation(text)) return false;
+  if (/(?:改期|更改|改做|取消|政策|可唔可以改|能不能改|reschedul|change|cancel|policy)/i.test(text)) {
+    return false;
+  }
+  const interrogative = /[?？]|(?:幾時|几时|何時|何时|邊日|边日|星期幾|星期几|哪天|what|which|when)/i.test(text);
+  const deliveryAndSchedule =
+    /(?:送(?:貨|货)?|配送|派送).{0,12}(?:星期幾|星期几|邊日|边日|哪天|日期|時間|时间|幾時|几时)/i.test(text) ||
+    /(?:星期幾|星期几|邊日|边日|哪天|日期|幾時|几时).{0,12}(?:送(?:貨|货)?|配送|派送)/i.test(text) ||
+    /(?:current\s+)?delivery\s+(?:day|date|time|schedule)|when\s+(?:is|will).{0,12}(?:delivery|deliver)/i.test(text) ||
+    /(?:preferred_date|delivery_preference)/i.test(text);
+  return interrogative && deliveryAndSchedule;
+}
+
+/**
+ * Shared READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL contract. A counted noun in
+ * an interrogative/recall utterance is a fact target, never mutation authority.
+ * Explicit SET/ADD/CANCEL language remains outside this class.
+ */
+export function isReadOnlyMemoryOrCurrentStateRecall(
+  question: string,
+  semantic?: { operation?: string | null; requested_facts?: string[] | null } | null,
+): boolean {
+  const text = clean(question);
+  if (!text || explicitCustomerMutation(text)) return false;
+  const requested = (semantic?.requested_facts ?? []).join(" ");
+  const semanticRead = ["ASK_FACT", "NO_STATE_CHANGE"].includes(String(semantic?.operation ?? ""));
+  const recallLanguage = /(?:記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|還記得|頭先|头先|之前最後|之前最后|最後話|最后说|提我|提醒我|do you remember|remind me|settled on|have now)/i.test(text);
+  const interrogative = /[?？]|呢\s*$|嗎\s*$|吗\s*$|(?:幾多|几多|多少|how many|what quantity|what.*(?:have|settled))/i.test(text);
+  const deicticQuantity = recallLanguage &&
+    /(?:嗰|那|這|这|呢)\s*(?:件|個|个|部|台|套)/i.test(text);
+  const dimensionMeasurement = parseCommerceDimensionMeasurement(text);
+  const explicitQuantityFact = /(?:quantity|current_quantity)/i.test(requested) ||
+    /(?:數量|数量|quantity|how many|幾多|几多|多少)/i.test(text) ||
+    /(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚).{0,20}?(?:定|還是|还是|or)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)/i.test(text);
+  // A product article followed by a dimension (for example, "一部598mm")
+  // is not a quantity fact. It remains available to attribute-compatible
+  // entity/constraint routing instead of inheriting a known quantity.
+  const quantity = (!dimensionMeasurement || explicitQuantityFact) &&
+    (quantityRecallTarget(text) || deicticQuantity ||
+      /(?:quantity|current_quantity)/i.test(requested));
+  const status = /(?:狀態|状态|status|係咪取消|是否取消|仲要|仍然要|still active|cancelled|canceled)/i.test(text) ||
+    /(?:status|current_state)/i.test(requested);
+  const currentAttribute = isDeliveryScheduleCurrentFactQuery(text) ||
+    /(?:地址|address|收貨人|收货人|recipient|電話|电话|phone|contact|匹數|匹数|幾匹|几匹|horsepower|\bhp\b|舊機|旧机).*(?:[?？]|呢\s*$)|(?:address|recipient|recipient_phone|preferred_date|horsepower|old_machine_removal_count)/i.test(`${text} ${requested}`);
+  return (semanticRead || recallLanguage || interrogative) &&
+    (quantity || status || currentAttribute) &&
+    (recallLanguage || interrogative);
+}
+
+// A negative lookup instruction is not a request for merchant evidence. Keep
+// one grammar for clause removal and routing so ordinary wording variants do
+// not disagree. This never grants provider/KB admission.
+const EXCLUDED_LOOKUP = /(?:唔查|唔使查|唔需要查|不要查|不查|不用查|不需要查|不需查|無需查|无需查|毋須查|毋须查|do not (?:look up|check|query)|don't (?:look up|check|query)|without (?:looking up|checking|querying)|no (?:lookup|lookups))/i;
+// A declined factual deliverable need not repeat the lookup verb. Restrict
+// this to a clause-leading refusal and the existing factual vocabulary; this
+// projection never removes the original customer turn from the state writer.
+const DECLINED_FACT_DETAILS = /^\s*(?:不需要|無需|无需|不用|毋須|毋须|(?:I|we)\s+(?:do not|don't)\s+need|no need for)\s*/i;
+
+/** A question asking for the currently retained requirements supplies no new fact. */
+export function withoutExcludedLookups(question: string): string {
+  // Only discard an explicit instruction NOT to perform a lookup. A negative
+  // customer fact and an actual question about a negative condition remain data.
+  return question.split(/[，,。?？;；\n]|\bbut\b|但(?:係|是)?|\band(?=\s+(?:check|query|look up)\b)|同埋(?=查)/i).filter(clause => {
+    const excluded = EXCLUDED_LOOKUP.exec(clause) ??
+      (MERCHANT_FACT_REQUEST.test(clause) ? DECLINED_FACT_DETAILS.exec(clause) : null);
+    if (!excluded) return true;
+    // Never erase an affirmative request that shares the negative clause.
+    // E.g. "do not check models and check stock" still needs merchant evidence.
+    const before = clause.slice(0, excluded.index);
+    const after = clause.slice(excluded.index + excluded[0].length);
+    const affirmative = /(?:取消|暫緩|暂缓|先擺低|先放低|推薦|推荐|現貨|现货|你[哋們们]?有)|(?:請|请|及|並|并|再|也|亦|同埋).{0,4}(?:查|報價|报价)|\b(?:cancel|defer|pause|hold off|recommend|check|query|look up)\b/i;
+    return affirmative.test(before) || affirmative.test(after);
+  }).join("; ");
+}
+
+export function isCurrentRequirementsRecap(question: string): boolean {
+  const text = clean(question);
+  if (!text || explicitCustomerMutation(text)) return false;
+  // A summary verb can introduce new background. Actual supplied values and
+  // affirmative needs win over recap wording; enumeration of field names does not.
+  const supplied = /\d+\s*(?:件|個|个|位|人|部|台|products?\b|items?\b|seats?\b|users?\b|colleagues?\b)|(?:先用|先使用|改用|prefer|we (?:need|want)|i (?:need|want|have))|(?:不需要|唔需要|do not need|don't need)\s*(?:手機|手机|mobile\s*)?app/i.test(text);
+  if (supplied || /(?:應該|应该|取捨|取舍|選購|选购|選機|选机|考慮|考虑)|\b(?:should|consider|trade[ -]?offs?|selection criteria)\b/i.test(text)) return false;
+  // Recap operation and canonical entity scope are independent. An explicit
+  // summary speech act supplies read-only intent without ownership/time words;
+  // no full customer utterance or fixture-specific entity is a dispatch key.
+  const externalFact = /\b(?:price|cost|stock|warranty|policy|specifications?|availability)\b|售價|售价|庫存|库存|保養|保养|政策|規格|规格/i.test(withoutExcludedLookups(text));
+  if (externalFact) return false;
+  const summarize = /\b(?:recap|summary|summari[sz]e)\b|總結|总结|整理/u.test(text.toLowerCase());
+  // A request for one recorded field is a fact recall, not an overall recap.
+  const targetedFact = /\b(?:quantity|count|how many|horsepower|room size|address|recipient|phone|brand|date)\b|匹數|匹数|幾匹|几匹|面積|面积|地址|收件人|聯絡|联络|品牌|日期|幾部|几部/i.test(text);
+  if (targetedFact && !summarize) return false;
+  const recall = /\b(?:remind|remember)\b|(?:講|讲|說|说)(?:返|回)|記低|记低|記錄|记录/i.test(text);
+  const inquiry = /\bwhat\b|咩|甚麼|什么|係點|系点|是怎樣|是怎样/i.test(text);
+  const scope = /\b(?:my|our|we|i|current|currently|latest|now)\b|\bso far\b|我|而家|現在|现在|目前|最新/i.test(text);
+  const recordedState = /\b(?:requirements?|requests?|needs?|setup|noted|recorded|agreed)\b|要求|需求|需要|情況|情况|記低|记低|記錄|记录/i.test(text);
+  // Organising future selection criteria is advice, not a read of recorded
+  // requirements. A recap needs an explicit past/current conversation target;
+  // the broad verb "整理" alone cannot suppress semantic interpretation.
+  const retainedTarget = recordedState || /(?:對話|对话|傾過|谈过|剛才|刚才|頭先|头先|之前|以上|已確認|已确认)|\b(?:conversation|discussed|agreed|above|so far)\b/i.test(text);
+  const explicitSummary = /\b(?:recap|summary|summari[sz]e)\b|總結|总结|整理返/i.test(text);
+  return (summarize && (explicitSummary || retainedTarget)) || (scope && (recall || inquiry) && recordedState);
+}
+
+/** General decision support is not a request for current merchant evidence.
+ * A validated frame is required, but its free-form intent label is not lookup
+ * authority. The customer's speech act must independently request general
+ * guidance and must not ask for current merchant facts. */
+const MERCHANT_FACT_REQUEST = /\b(?:prices?|pricing|cost|stock|warranty|policy|specifications?|specs|availability|recommend.*(?:products?|options?))\b|售價|售价|報價|报价|價錢|价钱|幾錢|几钱|庫存|库存|保養|保养|政策|規格|规格|推薦|推荐|現貨|现货|你[哋們们]?有|你[哋們们]?嘅/i;
+function customerPriorityOnly(clause:string):boolean {
+  const ranking = /(?:比|多過|多于|多於).{0,36}(?:更|較|较)?(?:重要|優先|优先)|\b(?:matters? more than|more important than|prioriti[sz]e.{0,36}over|prefer.{0,36}over)\b/i.test(clause);
+  const merchantRequest = /(?:請|请|查|幾錢|几钱|多少|最新|現時|现时|目前|你[哋們们]?|店[舖铺家])|\b(?:check|query|look up|recommend|what|how much|current|latest|your|merchant|store)\b/i.test(clause);
+  return ranking && !merchantRequest;
+}
+function guidanceSpeechAct(question: string, semantic: {
+  intent: string; confidence: number; requested_facts: string[];
+  ambiguity: { is_ambiguous: boolean };
+} | null): boolean {
+  if (!semantic || semantic.confidence < 0.62) return false;
+  const lookupText = withoutExcludedLookups(clean(question));
+  // A customer's explicit priority ranking is not an assertion/request for a
+  // merchant price. Keep affirmative/current merchant requests even when they
+  // share a clause with that ranking. This is speech-act scope, not an item or
+  // industry phrase allowlist, and never supplies KB or provider authority.
+  let text = lookupText.split(/[.!！;；，,。?？\n]|\bbut\b|但(?:係|是)?/i).filter(clause => {
+    return !customerPriorityOnly(clause);
+  }).join("; ");
+  // Asking which specifications to compare requests decision criteria, not
+  // values from a merchant catalogue. Mask only that bounded speech act;
+  // additional specification/price/stock requests still require evidence.
+  // A criterion is an object of comparison/advice, not a requested catalogue
+  // value. Scope this grammar to the criterion phrase, never an entire turn.
+  let specificationCriteria = false;
+  text = text.replace(/(?:一般|通用)(?:的|嘅)?(?:規格|规格)(?:比較|比较|取捨|取舍|建議|建议)|\b(?:general|generic)\s+(?:specification|spec)\s+(?:comparison|criteria|guidance)\b/giu, () => { specificationCriteria=true; return "selection criteria"; });
+  text = text.replace(
+    /(?:比較|比较|考慮|考虑|留意)(?:哪些|甚麼|什么|邊啲|边啲|咩)(?:規格|规格)|(?:應|应|該|该|要)(?:先)?(?:比較|比较|考慮|考虑)(?:的|嘅)?(?:規格|规格)|\b(?:which|what)\s+(?:specifications?|specs)\s+(?:should|could|do)\s+(?:I|we)\s+(?:compare|consider|prioriti[sz]e|evaluate)\b/giu,
+    match => {
+      specificationCriteria = true;
+      return match.replace(/規格|规格|\b(?:specifications?|specs)\b/giu, "selection criteria");
+    },
+  );
+  if (MERCHANT_FACT_REQUEST.test(text)) return false;
+  // Selection is a speech act across products, services and rentals, not an
+  // appliance keyword or an old answer. Merchant evidence still wins above.
+  // An imperative request to compare *decision criteria* need not contain a
+  // question word ("how" / "點樣"). This covers ordinary multilingual guidance
+  // speech acts, not any particular industry or item. The merchant-evidence
+  // exclusion above still wins, including on compound turns.
+  const imperativeComparison = /(?:請|请|幫我|帮我|麻煩|麻烦|按(?:照)?|依(?:照)?|根據|根据).{0,96}?(?:比較|比较|取捨|取舍|衡量|評估|评估|分析|排序|compare|prioriti[sz]e|evaluate|weigh)/iu.test(text) ||
+    /\b(?:please|can you|could you|help me|based on|according to)\b.{0,96}\b(?:compare|prioriti[sz]e|evaluate|weigh|balance)\b/iu.test(text);
+  const deferrableDecision = /(?:哪些|哪啲|邊啲|边啲|甚麼|什么|咩).{0,36}?(?:可(?:以)?|應該|应该|值得)?.{0,16}?(?:暫緩|暂缓|延後|延后|稍後|稍后|唔使|不用|不必|先不)|\b(?:which|what).{0,48}?(?:can|could|should).{0,20}?(?:wait|defer|postpone|skip)\b/iu.test(text);
+  // A general ordering question can say "which one first / which can wait"
+  // without using a compare verb or a model-specific noun. This is an
+  // advisory speech act across industries, NOT permission to assert merchant
+  // specifications, policy, prices or stock. MERCHANT_FACT_REQUEST above
+  // still wins on affirmative evidence requests, including mixed turns.
+  const priorityTradeoffQuestion =
+    /(?:邊|边|哪)(?:一)?(?:樣|样|項|项|個|个|啲|些|種|种|類|类|方面|部分).{0,48}?(?:優先|优先|重要|先(?:升級|升级|做|處理|处理|選|选)|暫緩|暂缓|延後|延后|唔(?:使|要).{0,12}(?:升級|升级|做)|不(?:用|必).{0,12}(?:升級|升级|做))/iu.test(text) ||
+    /\b(?:which|what)\b.{0,64}\b(?:prioriti[sz]e|upgrade first|do first|can wait|could wait|defer|postpone|hold off)\b/iu.test(text);
+  const selectionQuestion = specificationCriteria || imperativeComparison || deferrableDecision || priorityTradeoffQuestion || /(?:點(?:樣)?|怎(?:樣|么)|如何).{0,6}(?:揀|選|选|比較|比较|考慮|考虑|取捨|取舍|準備|准备)|(?:從|从|按|依).{0,8}(?:哪些|甚麼|什么|咩).{0,8}(?:方面|因素|條件|条件).{0,8}(?:比較|比较|選|选)|\b(?:how|what).{0,32}(?:choose|select|compare|pick|prioriti[sz]e|balance|weigh|evaluate|assess|prepare|measure)\b/iu.test(text);
+  if (!selectionQuestion && !/(?:取捨|取舍|選購|选购|選機|选机|應(?:該)?(?:準備|補充|考虑|考慮)|應該考慮|应该考虑|先問|先问)|(?:現場|现场|量度|量測|量测|測量|测量).{0,24}(?:應|应|要|先).{0,8}(?:記低|记低|記錄|记录|留意|注意|準備|准备|量度|量測|量测)|\b(?:trade[ -]?offs?|selection criteria|what.*(?:ask|prepare|measure)|how.*(?:choose|select))\b/i.test(text)) return false;
+  // Requested targets and free labels describe a model interpretation, not
+  // merchant authority. The bounded customer speech act above owns this
+  // decision. Ambiguity constrains state binding and recommendations, not the
+  // ability to explain general trade-offs or ask for a genuinely missing fact.
+  return true;
+}
+
+export type CustomerRequestDecision = {
+  kind: "guidance" | "merchant_facts" | "mixed" | "other";
+  continuation: boolean;
+  general_request: string | null;
+  merchant_request: string | null;
+  latest_requirements: string;
+  /** Source-validated semantic scope; this does not authorize evidence reads. */
+  semantic_demands?: CommerceSemanticDemand[];
+  excluded_lookup_quotes?: string[];
+};
+type RequestHistory = {id?:string|null;role:string;content:string;metadata?:unknown;created_at?:string|null};
+/** One source-bound decision for the writer, planner, query and generation.
+ * The model proposes meaning; actual current speech and bounded clarification
+ * context decide whether any external claims are requested. No part grants KB
+ * authority, payment admission, transaction completion or state-write rights. */
+export function resolveCustomerRequestDecision(question:string, semantic: {
+  intent:string;confidence:number;requested_facts:string[];ambiguity:{is_ambiguous:boolean};
+  operation?:string;additive?:boolean;entities?:Array<{model?:string|null}>;customer_facts?:unknown[];
+  demands?:CommerceSemanticDemand[];
+} | null, history:RequestHistory[]=[]):CustomerRequestDecision {
+  const text=clean(question);
+  const empty:CustomerRequestDecision={kind:"other",continuation:false,general_request:null,merchant_request:null,latest_requirements:text};
+  if(!semantic || semantic.confidence<0.62)return empty;
+  if (semantic.demands?.length) {
+    // The provider has already decomposed meaning. Validate source ownership
+    // and explicit refusal here, rather than replacing unfamiliar demand
+    // wording with a second product/guidance keyword interpretation.
+    const normalize = (value:string) => value.normalize("NFKC").replace(/\s+/gu," ").trim().toLowerCase();
+    const demands = semantic.demands.filter(demand => clean(demand.source_quote) &&
+      normalize(text).includes(normalize(demand.source_quote)));
+    const excluded = demands.filter(demand => {
+      if (!["product","policy","unknown"].includes(demand.source_type)) return false;
+      const quote = clean(demand.source_quote);
+      if (!withoutExcludedLookups(quote).trim()) return true;
+      const lookupText = (value:string) => normalize(withoutExcludedLookups(value)
+        .replace(/[.!！。?？;；，,]+/gu," "));
+      // Quoting only "price" from "do not check price" cannot remove the
+      // customer's control instruction. Locate the quote in the permitted
+      // lookup projection as well as in the original source.
+      if (!lookupText(text).includes(lookupText(quote))) return true;
+      const refusal = /^\s*(?:不要|唔要|不想知道|(?:I\s+)?(?:do not|don't) want)\s*/iu.exec(quote);
+      if (!refusal) return false;
+      let object = quote.slice(refusal[0].length).replace(/[?？.!！。;；]+$/gu, "").trim();
+      for (const ref of demand.subject_refs) if (ref && normalize(object).includes(normalize(ref))) {
+        const escaped = ref.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+        object = object.replace(new RegExp(escaped,"giu"), " ").trim();
+      }
+      const facet = MERCHANT_FACT_REQUEST.exec(object);
+      // A field-only refusal is different from a negative product condition
+      // such as "don't want a noisy product; what options are available?".
+      return !!facet && object.replace(facet[0], "").trim() === "";
+    });
+    const active = demands.filter(demand => !excluded.includes(demand));
+    const kb = active.filter(demand => ["product","policy","unknown"].includes(demand.source_type));
+    const general = active.filter(demand => demand.source_type === "general");
+    const transactions = active.filter(demand => demand.source_type === "transaction");
+    // A human request remains control, never a side effect of interpreting a
+    // KB clause. Existing caller handoff precedence still owns its execution.
+    const handoff = classifyHandoffIntent(text).explicit_request;
+    const kind: CustomerRequestDecision["kind"] = handoff ? "other" : kb.length
+      ? general.length || transactions.length ? "mixed" : "merchant_facts"
+      : general.length && !transactions.length ? "guidance" : "other";
+    return {...empty, kind, semantic_demands: active,
+      excluded_lookup_quotes: excluded.map(demand => demand.source_quote),
+      general_request: general.length ? general.map(demand => demand.source_quote).join("; ") : null,
+      merchant_request: kb.length ? kb.map(demand => demand.source_quote).join("; ") : null};
+  }
+  const bounded=history.slice(0,12);
+  const lastAssistant=bounded.find(row=>row.role==="assistant");
+  const priorCustomer=bounded.find(row=>["visitor","user","customer"].includes(row.role) && clean(row.content)!==text);
+  const metadata=lastAssistant?.metadata as Record<string,unknown>|undefined;
+  // A brief factual correction may follow an unrelated KB/product response.
+  // Search the bounded customer-owned history rather than trusting only the
+  // very last Assistant or the first earlier Visitor as the conversation topic.
+  const priorGuidance=metadata?.response_route==="customer_guidance" ||
+    bounded.some(row => ["visitor","user","customer"].includes(row.role) &&
+      clean(row.content)!==text && guidanceSpeechAct(row.content,semantic));
+  const clarification=Boolean(lastAssistant && /[?？]/.test(lastAssistant.content) && priorGuidance);
+  const transactional=["RESERVE","REQUEST_QUOTE","CONFIRM","CANCEL_ITEM","REMOVE_ITEM","DEFER"].includes(semantic.operation ?? "") || semantic.additive===true;
+  // A direct answer need not repeat "answer" or "correction". The existing
+  // guidance question plus a validated customer-owned update provides context;
+  // actual merchant speech acts are still independently scoped below.
+  const contextAnswer=!semantic.ambiguity.is_ambiguous && semantic.requested_facts.length===0 &&
+    (semantic.intent==="customer_guidance" || Boolean(semantic.customer_facts?.length));
+  const customerUpdateContinuation=priorGuidance && semantic.operation==="UPDATE_ITEM" &&
+    semantic.intent==="customer_guidance" && Boolean(semantic.customer_facts?.length) && contextAnswer;
+  // A validated UPDATE_ITEM can change customer-owned usage/preferences without
+  // naming any product and without a new question. Do not let an unrelated
+  // historical entity or the model's free-form intent label erase this scope.
+  // Explicit merchant claims/transaction intents still take precedence below.
+  const factualCorrectionContinuation=priorGuidance && !transactional &&
+    !semantic.ambiguity.is_ambiguous && semantic.operation==="UPDATE_ITEM" &&
+    Boolean(semantic.customer_facts?.length) &&
+    /(?:更正|再改|改為|改为|其實|其实|而家|現在|现在|actually|correction|instead|change(?:d)?\s+to)/i.test(text) &&
+    !semantic.entities?.some(e => e.model && text.includes(e.model)) &&
+    !MERCHANT_FACT_REQUEST.test(withoutExcludedLookups(text));
+  const continuation=(clarification || customerUpdateContinuation || factualCorrectionContinuation) && !transactional &&
+    (contextAnswer || /(?:答|剛才|刚才|頭先|头先|更正|改為|改为)|\b(?:answer|correction|actually|instead|as requested)\b/i.test(text));
+  const clauses=withoutExcludedLookups(text).split(/[;；。!?！？]|\b(?:and|but)\b|(?:同埋|並且|并且)/i).map(s=>s.trim()).filter(Boolean);
+  const general=clauses.filter(clause=>guidanceSpeechAct(clause,semantic));
+  const wholeGeneral=guidanceSpeechAct(text,semantic);
+  // The old bounded grammar distinguishes a criteria phrase from merchant
+  // claims. A free-form requested_facts label alone is never a merchant claim.
+  const merchant=clauses.filter(clause=>{
+    if(customerPriorityOnly(clause))return false;
+    const generalClause=guidanceSpeechAct(clause,semantic);
+    // A declarative correction may locate a prior subject elsewhere, but does
+    // not itself ask for a merchant fact. Require an actual factual speech act.
+    const scopedFact=semantic.requested_facts.length>0 && (
+      semantic.entities?.some(e=>e.model && clause.includes(e.model)) ||
+      /\b(?:your|this plan|that plan|this model|that model)\b|你[哋們们]|貴公司|贵公司/i.test(clause) ||
+      !generalClause && Boolean(factualSubject(clause,false)));
+    return scopedFact || !generalClause && MERCHANT_FACT_REQUEST.test(clause);
+  });
+  const hasGeneral=wholeGeneral || general.length>0 ||
+    (continuation && !merchant.length && !semantic.requested_facts.length);
+  const kind=hasGeneral ? merchant.length ? "mixed" : "guidance" : merchant.length ? "merchant_facts" : "other";
+  return {kind,continuation,general_request:hasGeneral ? (general.length?general.join("; "):text) : null,
+    merchant_request:merchant.length?merchant.join("; "):null,latest_requirements:text};
+}
+export function isCustomerGuidanceRequest(question:string,semantic:{intent:string;confidence:number;requested_facts:string[];ambiguity:{is_ambiguous:boolean}}|null):boolean {
+  return resolveCustomerRequestDecision(question,semantic).kind==="guidance";
+}
+/** Reconcile only interpretation of a clarification, never erase a real delta.
+ * Empty ADD_ITEM is not a new transaction. Resolved existing references retain
+ * UPDATE_ITEM; genuinely additive/new entities and all lifecycle writers stay. */
+export function applyCustomerRequestDecision(frame:CommerceSemanticFrame,decision:CustomerRequestDecision):CommerceSemanticFrame {
+  if (decision.semantic_demands) {
+    return {...frame, demands: decision.semantic_demands,
+      requested_facts: decision.kind === "guidance" ? [] : [...new Set(decision.semantic_demands.flatMap(demand => demand.requested_facts))],
+      explicit_negations: [...new Set([...frame.explicit_negations, ...(decision.excluded_lookup_quotes ?? [])])],
+      ...(decision.kind === "guidance" ? {intent: "customer_guidance"} : {})};
+  }
+  if(decision.kind!=="guidance")return frame;
+  return {...frame,intent:"customer_guidance",requested_facts:[],
+    ...(decision.continuation && frame.operation==="ADD_ITEM" && !frame.entities.length && !frame.customer_facts?.length && !frame.additive ? {operation:"NO_STATE_CHANGE" as const} : {})};
+}
+
+/**
+ * READ_ONLY_CURRENT_STATE_AGGREGATE_QUERY covers questions about the already
+ * recorded set of technician/professional checks. A count/list mention is a
+ * fact target, not authority to add, cancel, or otherwise rewrite a check.
+ */
+export function isReadOnlyCurrentStateAggregateQuery(
+  question: string,
+  semantic?: { operation?: string | null; requested_facts?: string[] | null } | null,
+): boolean {
+  const text = clean(question);
+  if (!text || explicitCustomerMutation(text)) return false;
+  const requested = (semantic?.requested_facts ?? []).join(" ");
+  const semanticRead = ["ASK_FACT", "NO_STATE_CHANGE"].includes(String(semantic?.operation ?? ""));
+  const technicianDomain = /(?:師傅|师傅|技師|技师|專業人員|专业人员|technician|professional|site\s*(?:check|survey)|onsite\s*(?:check|survey)|上門(?:確認|检查|檢查)|上门(?:确认|检查))/i.test(text) ||
+    /(?:pending\s+(?:checks?|items?)|(?:checks?|items?)\s+(?:are\s+)?still\s+pending)/i.test(text) ||
+    /(?:幾多|几多|多少|邊啲|边啲|哪些).{0,20}(?:未確認|未确认|待確認|待确认)/i.test(text) ||
+    /(?:pending_(?:technician_)?checks?|professional_confirmation|installation\.pending_checks)/i.test(requested);
+  const aggregateOrList = /(?:幾多\s*(?:項|個位|個|个)|几多\s*(?:项|个位|个)|多少\s*(?:項|项|個|个)|仲有\s*(?:幾多|几多|邊啲|边啲)|還有\s*(?:多少|哪些)|还有\s*(?:多少|哪些)|邊啲|边啲|哪些|how many\s+(?:checks?|items?)|which\s+(?:checks?|items?)|what\s+(?:still\s+)?(?:needs?|requires?).{0,24}(?:confirmation|checking)|what\s+is\s+still\s+pending)/i.test(text) ||
+    /(?:pending_(?:technician_)?checks?|professional_confirmation)/i.test(requested);
+  const interrogative = /[?？]/.test(text) || aggregateOrList;
+  return technicianDomain && aggregateOrList && (semanticRead || interrogative);
+}
+
 function questionLooksLikeCalculation(question: string): boolean {
   return /(?:加埋|合共|總共幾錢|总共多少钱|一共多少|total|how much.*(?:total|altogether)|calculate|計下|算下|計算|计算)/i.test(
     question,
@@ -211,15 +625,46 @@ function questionLooksLikeCalculation(question: string): boolean {
 function questionExplicitlyAsksQuantity(question: string): boolean {
   if (/(?:價|价|price|amount|金額|金额|幾錢|几钱|多少錢|多少钱|fee|收費|收费)/i.test(question))
     return false;
-  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(
-    question,
-  );
+  return /(?:數量|数量|quantity|how many|幾多\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|多少\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)|(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚).{0,20}?(?:定|還是|还是|or)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚))/i.test(question) ||
+    (isReadOnlyMemoryOrCurrentStateRecall(question) && quantityRecallTarget(question));
+}
+
+function inferEntityStatusPath(
+  question: string,
+  state: ConversationCommerceState,
+): { path: string; value: unknown } | null {
+  if (!/(?:狀態|状态|status|已取消|取消咗|取消了|仲要|仍然要|still active|cancelled|canceled)/i.test(question)) {
+    return null;
+  }
+  const normalized = clean(question).toLowerCase();
+  const roomKeys: Array<[RegExp, string]> = [
+    [/(?:客廳|客厅|living\s*room|lounge)/i, "living_room"],
+    [/(?:睡房|臥室|卧室|bedroom)/i, "bedroom"],
+    [/(?:廚房|厨房|kitchen)/i, "kitchen"],
+  ];
+  const room = roomKeys.find(([pattern]) => pattern.test(normalized))?.[1] ?? null;
+  let matches = state.entities.filter((entity) => {
+    if (room && entity.entity_id.includes(room)) return true;
+    return [entity.entity_id, entity.category, entity.brand ?? "", entity.model ?? ""]
+      .map((value) => clean(value).toLowerCase())
+      .some((value) => value.length >= 2 && normalized.includes(value));
+  });
+  if (!matches.length && state.entities.length === 1) matches = [state.entities[0]];
+  if (matches.length !== 1) return null;
+  const index = state.entities.indexOf(matches[0]);
+  return { path: `entities.${index}.status`, value: matches[0].status };
 }
 
 function inferKnownCustomerStatePath(
   question: string,
   state: ConversationCommerceState,
 ): { path: string; value: unknown } | null {
+  if (isDeliveryScheduleCurrentFactQuery(question)) {
+    const value = getCommerceStatePath(state, "delivery.preferred_date");
+    if (isKnownValue(value)) {
+      return { path: "delivery.preferred_date", value };
+    }
+  }
   const candidates: Array<[RegExp, string]> = [
     [/(?:送貨地址|送货地址|地址|delivery address|address)/i, "delivery.address"],
     [/(?:收貨人電話|收货人电话|recipient phone|contact phone)/i, "delivery.recipient_phone"],
@@ -238,6 +683,9 @@ function inferKnownCustomerStatePath(
     const value = getCommerceStatePath(state, path);
     if (isKnownValue(value)) return { path, value };
   }
+
+  const entityStatus = inferEntityStatusPath(question, state);
+  if (entityStatus) return entityStatus;
 
   if (questionExplicitlyAsksQuantity(question)) {
     const active = state.entities.filter(
@@ -341,6 +789,7 @@ const REFERENCE_AUTHORITY_RANK: Record<ReferenceAuthorityClass, number> = {
   CANONICAL_TRANSACTION: 500,
   DETERMINISTIC_CALCULATION: 500,
   CURRENT_KB: 400,
+  PUBLISHED_KB_SERVICE: 400,
   CUSTOMER_CONTEXT: 300,
   HISTORICAL: 100,
   MODEL_INFERENCE: 0,
@@ -370,6 +819,10 @@ function normalizedPublicationState(candidate: ReferenceEvidenceCandidate): stri
 }
 
 function isCurrentPublishedReference(candidate: ReferenceEvidenceCandidate): boolean {
+  // Explicit original API service-contract authority, not an invented version
+  // or currentness assertion. The consumer attaches it only out of band after
+  // scoped authenticated RAG admission. Provenance remains unknown/null.
+  if(candidate.authority_class==="PUBLISHED_KB_SERVICE")return !!candidate.tenant_id && ["","published","live"].includes(normalizedPublicationState(candidate)) && ["unknown","current"].includes(referenceCurrentness(candidate));
   if (candidate.authority_class !== "CURRENT_KB") return true;
   const publication = normalizedPublicationState(candidate);
   const currentness = referenceCurrentness(candidate);
@@ -499,7 +952,7 @@ function decisionForClass(authorityClass: ReferenceAuthorityClass): ReferenceAut
   if (authorityClass === "DETERMINISTIC_CALCULATION") {
     return "USE_DETERMINISTIC_CALCULATION";
   }
-  if (authorityClass === "CURRENT_KB") return "USE_CURRENT_KB";
+  if (authorityClass === "CURRENT_KB" || authorityClass === "PUBLISHED_KB_SERVICE") return "USE_CURRENT_KB";
   if (authorityClass === "CUSTOMER_CONTEXT") return "USE_CUSTOMER_CONTEXT";
   if (authorityClass === "HISTORICAL") return "HISTORICAL_ONLY";
   return "INSUFFICIENT_EVIDENCE";
@@ -536,6 +989,10 @@ export function resolveReferenceAuthority(
       continue;
     }
     const topics = boundedStrings(candidate.topic_ids);
+    if (input.require_request_subject_match && candidate.request_subject_supported !== true) {
+      rejected.push({ source_id: sourceId, reason: "wrong_topic" });
+      continue;
+    }
     if (expectedTopics.length > 0 && ((requireExplicitTargetMatch && topics.length === 0) || !overlaps(expectedTopics, topics))) {
       rejected.push({ source_id: sourceId, reason: "wrong_topic" });
       continue;
@@ -584,7 +1041,7 @@ export function resolveReferenceAuthority(
         (candidate) =>
           candidate.authority_class === "CANONICAL_TRANSACTION" ||
           candidate.authority_class === "DETERMINISTIC_CALCULATION" ||
-          candidate.authority_class === "CURRENT_KB",
+          candidate.authority_class === "CURRENT_KB" || candidate.authority_class === "PUBLISHED_KB_SERVICE",
       )
     : eligible;
 
@@ -668,4 +1125,84 @@ export function resolveReferenceAuthority(
       currentness: referenceCurrentness(selected),
     },
   };
+}
+
+export function customerBusinessText(value: unknown): string {
+  const text=String(value ?? "").trim();
+  const isControl=(clause:string)=> {
+    const intent=classifyHandoffIntent(clause);
+    return intent.explicit_request || /(?:交畀|交給|交给|轉交|转交|轉接|转接|transfer|connect).{0,80}(?:客服|真人|人工|human|agent|support)/i.test(clause) || intent.category==="mention_only" &&
+      /(?:交畀|交給|交给|轉交|转交|接手|轉接|转接|transfer|connect)/i.test(clause);
+  };
+  if(!text || !isControl(text)) return text;
+  return splitHandoffClauses(text).map(clause=> {
+    clause=clause.trim();
+    if (!classifyHandoffIntent(clause).explicit_request) return clause;
+    // Remove the transfer speech act, not its customer's business prefix/suffix.
+    const request = /(?:請|请|麻煩|麻烦|幫我|帮我|我要|我想|我需要|而家|現在|现在)(?:直接)?(?:安排|轉接|转接|轉|转|接|搵|找|聯絡|联系|要)?[^，,。;；]{0,10}?(?:真人|人工|客服)(?:客服|人員|人员)?(?:接手|協助|协助)?|(?:please\s+)?(?:transfer me|connect me|put me through|i (?:want|need|would like))[^,.;]{0,16}?(?:human(?: agent| support)?|live agent|support agent|customer service agent|real person)/i.exec(clause);
+    if(!request) return "";
+    return (clause.slice(0,request.index)+" "+clause.slice(request.index+request[0].length)).trim();
+  }).filter(clause=>
+    clause && !isControl(clause) && !/(?:交給他|交给他|交畀佢|pass (?:it|them|this|on)|不要把舊|不要把旧|do not (?:use|revive) the old)/i.test(clause) && !/(?:唔好|不要|别|別|stop|do not|don't).{0,16}(?:再問|再问|問需求|问需求|ask|question)|(?:no more|不要|唔要).{0,8}(?:AI|機器人|机器人)/i.test(clause)
+  ).join("; ");
+}
+
+/** One bounded clause grammar for lifecycle validation and canonical reduction.
+ * A conjunction separates operations only before a command verb, never an
+ * enumeration of products, spaces or quantities. Decimal values remain intact.
+ */
+export function splitCustomerOperationClauses(text: string): string[] {
+  const separated=text.replace(/\.(?=\s|$)/g,"。").replace(/,(?=\s*[^\d])/g,"，")
+    .replace(/\band\s+(?=(?:change|defer|pause|cancel|return|back\s+to|give|summari[sz]e)\b)/giu,"；")
+    .replace(/(?:同埋|並且|并且)(?=(?:將|将|把|更正|改|暫緩|暂缓|取消|講返|回到|總結|总结))/gu,"；");
+  return (separated.match(/[^，；;。!?！？]+[!?！？]?/g)??[]).map(part=>part.trim()).filter(Boolean);
+}
+
+
+/** Customer-reported site observation. Questions, uncertainty and double
+ * negation remain unknown; absence is a real value, never a positive keyword. */
+export function customerSunExposure(text: string): "none" | "strong_afternoon_sun" | null {
+  const observe=(t:string):"none"|"strong_afternoon_sun"|null=>{
+  if(!/(?:西斜|西曬|西晒|下午.{0,6}(?:日照|曬|晒)|afternoon\s+sun|west[- ]?facing)/iu.test(t) || /[?？]|有冇|有沒有|有没有|唔知|不知道|不清楚|冇講|未講|(?:not sure|unknown|don't know|not said|never said|is there|does .*have)|如果|假如|假設|假设|也許|也许|可能|\b(?:if|suppose|perhaps)\b/iu.test(t))return null;
+  if(/(?:唔係|不是|并非|並非|not).{0,4}(?:冇|沒有|没有|無|无|no\b)/iu.test(t))return null;
+  return /(?:冇|沒有|没有|無|无|不受|唔會|不會|不会|no\b|not\b|without\b).{0,25}(?:西斜|西曬|西晒|下午|afternoon|west)/iu.test(t) ? "none" : "strong_afternoon_sun";
+  };
+  // A factual observation and a subsequent advice question are separate speech
+  // acts. Question/conditional guards apply to their own clause, never erase a
+  // preceding explicit observation. Conflicting observations stay unbound here;
+  // the existing scoped runtime merger handles each clause separately.
+  const values=clean(text,1600).split(/[，,。;；\n]|(?<=[.!?])\s+/u).map(observe).filter((v):v is "none"|"strong_afternoon_sun"=>v!==null);
+  return values.length && new Set(values).size===1 ? values[0] : null;
+}
+
+/** Explicit paired axes and a declared metric unit only. An unlabelled pair
+ * never invents width/height, and this parser never assigns it to a room. */
+export function customerDimensionPair(text: string): {width_mm:number;height_mm:number;reported_width:number;reported_height:number;reported_unit:string}|null {
+  const t=clean(text,1600);let m=t.match(/(?<![-\d.])(\d+(?:\.\d+)?)\s*(?:\(\s*(?:W|width|闊|寬|宽)\s*\)|(?:W|width|闊|寬|宽))\s*(mm|cm|毫米|厘米|公分)?\s*[x×*]\s*(\d+(?:\.\d+)?)\s*(?:\(\s*(?:H|height|高)\s*\)|(?:H|height|高))\s*(mm|cm|毫米|厘米|公分)/iu);
+  m ??= t.match(/(?:W|width|闊(?:度)?|寬(?:度)?|宽(?:度)?)\s*[:：=]?\s*(\d+(?:\.\d+)?)\s*(mm|cm|毫米|厘米|公分)?\s*(?:[x×*,，]|by)?\s*(?:H|height|高(?:度)?)\s*[:：=]?\s*(\d+(?:\.\d+)?)\s*(mm|cm|毫米|厘米|公分)/iu);
+  if(!m)return null;
+  const unit=m[4].toLowerCase(),first=(m[2]??m[4]).toLowerCase();
+  const w=Number(m[1]),h=Number(m[3]),ws=/cm|厘米|公分/.test(first)?10:1,hs=/cm|厘米|公分/.test(unit)?10:1;
+  return w>0&&h>0&&w*ws<=100000&&h*hs<=100000?{width_mm:w*ws,height_mm:h*hs,reported_width:w,reported_height:h,reported_unit:first===unit?unit:first+"/"+unit}:null;
+}
+
+export function isPersonalOrderStatusRequest(text:string):boolean {
+ const t=clean(text,1600);
+ return /訂單|订单|\border\b/iu.test(t) && /狀況|状况|狀態|状态|進度|进度|去到邊|去到边|到哪|出貨|出货|送貨未|送货没|\b(?:status|track|tracking|where|shipped|progress)\b/iu.test(t) && !/政策|條款|条款|一般|通常|幾日|几天|privacy|policy|terms|usually|how long/iu.test(t);
+}
+
+/** A standalone commerce subject is not permission to invent an ADD_ITEM,
+ * default quantity, order, booking or reservation. This is a multilingual
+ * schema-backed negative guard, not a product/category vocabulary list. */
+export function isBareCommerceSubjectMention(text: string, frame: CommerceSemanticFrame | null | undefined): boolean {
+  if (!frame || !["ADD_ITEM","UPDATE_ITEM","NO_STATE_CHANGE","CONFIRM"].includes(frame.operation) ||
+      frame.customer_correction || frame.additive || (frame.customer_facts?.length ?? 0) > 0 ||
+      !Array.isArray(frame.entities) || !frame.entities.length) return false;
+  const raw=text.normalize("NFKC").trim();
+  if (raw.length<2 || raw.length>160 || /[?？]/u.test(raw) ||
+      /^(?:我(?:要|想|需)|請|请|買|买|訂購|订购|下單|下单|預約|预约|租用|購買|购买|加購|加购|更正|取消|暫緩|暂缓)/u.test(raw) ||
+      /^(?:please\s+)?(?:i\s+(?:want|need|would\s+like)|buy|purchase|order|book|reserve|add|cancel|change)\b/iu.test(raw)) return false;
+  const normalize=(s:string)=>s.normalize("NFKC").toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu,"");
+  const name=normalize(raw);
+  return name.length>=2 && frame.entities.some(e=>typeof e.name==="string" && normalize(e.name)===name);
 }

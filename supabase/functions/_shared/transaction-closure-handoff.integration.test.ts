@@ -1,3 +1,4 @@
+import ts from "npm:typescript";
 import {
   buildC2HandoffPackage,
   decideTransactionClosure,
@@ -103,10 +104,18 @@ Deno.test("C2 reconciles additively with authoritative agent-assist v34", async 
     '"check_policy"',
     '"handoff_context"',
   ])assert(source.includes(marker),`agent-assist v34 behavior missing: ${marker}`);
-  const canonical=source.indexOf("parsePersistedC2Handoff(persistedEvent?.ai_summary)");
-  const fallback=source.indexOf('buildWarmHandoffPackage(history,"takeover")');
-  assert(canonical>=0&&fallback>canonical,
-    "persisted C2 truth must outrank derived warm-handoff presentation");
-  assert(source.includes("persisted.structured_package.company_id===conv.company_id"),
-    "persisted C2 tenant binding missing");
+  // Preserve the original precedence/tenant assertions as executable syntax,
+  // independent of formatting and incapable of passing on comment text.
+  const ast=ts.createSourceFile("agent-assist.ts",source,ts.ScriptTarget.Latest,true);
+  let canonical=-1,fallback=-1,tenantBound=false;
+  const visit=(node:ts.Node)=>{
+    if(ts.isCallExpression(node)&&ts.isIdentifier(node.expression)) {
+      if(node.expression.text==="parsePersistedC2Handoff"&&node.arguments[0]?.getText(ast)==="persistedEvent?.ai_summary") canonical=node.getStart(ast);
+      if(node.expression.text==="buildWarmHandoffPackage"&&node.arguments[0]?.getText(ast)==="history"&&ts.isStringLiteral(node.arguments[1])&&node.arguments[1].text==="takeover") fallback=node.getStart(ast);
+    }
+    if(ts.isBinaryExpression(node)&&node.operatorToken.kind===ts.SyntaxKind.EqualsEqualsEqualsToken&&node.left.getText(ast)==="persisted.structured_package.company_id"&&node.right.getText(ast)==="conv.company_id") tenantBound=true;
+    ts.forEachChild(node,visit);
+  };visit(ast);
+  assert(canonical>=0&&fallback>canonical,"persisted C2 truth must outrank derived warm-handoff presentation");
+  assert(tenantBound,"persisted C2 tenant binding missing");
 });
