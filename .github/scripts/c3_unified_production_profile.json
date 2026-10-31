@@ -1383,5 +1383,14 @@
     "tests/edge/task2-2-output-grounding-router.test.ts": "e4e4a1b936b9d1b1e3dfe6d45f6021287b0957568ea13d6164b1ba784e056016",
     "tests/emergency-p0/chain.test.mjs": "37469657787d098802f744a3d0b6831df7f93e30dfff18877b1486d4bf9cd982"
   },
-  "task2_evidence_deployment_authorized": false
+  "task2_evidence_deployment_authorized": false,
+  "task3_grounding_retry_deployment_authorized": false,
+  "authorized_task3_grounding_retry_sha256": {
+    "supabase/functions/_shared/factual-evidence-selection.test.ts": "1fa5194c78088d168912f8d23a2cc769cc71346be09c1dcf8eedd4b73794ac7e",
+    "supabase/functions/_shared/factual-evidence-selection.ts": "84b5927807dcb36e87dcbc69b90f556a2a99480dcdcfe21909175af9a6722392",
+    "supabase/functions/_shared/grounding-evidence.ts": "7835a07dee6b0737929898376a2589490a6e1e1dec77cca7de8af733482b62e5",
+    "supabase/functions/_shared/llm-router.ts": "5569209ef967aeb369e99887d1e0ca71c3587be34ef85843ab69a72006e49d6a",
+    "supabase/functions/generate-reply/index.ts": "8939c2b9340a653a2bafc610e8ebedeb0d1f80aadc64d682900df1db0485b15e",
+    "tests/emergency-p0/chain.test.mjs": "cca8d40a4fb3cfed23d0d297b4a17beb47a87567fc8031990ba6e110d62b44e6"
+  }
 }
