@@ -1,1 +1,0 @@
-export const PUBLIC_WIDGET_PREVIEW_SHA256 = "ad5154033f8ab0df2e3efd05cdee6f7135e823eb3fe3de3e4008b1a794d1ad0f";

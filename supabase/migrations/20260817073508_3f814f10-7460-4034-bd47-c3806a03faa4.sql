@@ -1,1 +1,0 @@
-SELECT public.ce_activate_scheduler_v1('https://hvmtoqiwdqvgnjepxwrc.supabase.co/functions/v1/ce-evaluation-worker');

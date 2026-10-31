@@ -1,2 +1,0 @@
-ALTER TABLE public.feedback_request ADD COLUMN IF NOT EXISTS recipient_email text;
-COMMENT ON COLUMN public.feedback_request.recipient_email IS 'Recipient email address for feedback request delivery. Nullable for legacy/manual requests.';
