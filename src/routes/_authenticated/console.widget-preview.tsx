@@ -1656,7 +1656,15 @@ function PreviewWidget({
         {mode === "live" && scopeReady && !runtimeReady && <p role="alert" className="mb-2 text-xs text-amber-800">{lang === "zh" ? "目前後端未證實支援受控傳送契約；歷史可讀、草稿可編輯，但不會傳送或執行商業 AI。這不代表發布版前端過時。" : "The backend has not proven the controlled-send contract. History and local drafts remain available; sending and business AI are blocked. This does not establish a stale published frontend."}</p>}
         {mode === "live" && <details className="mb-2 text-xs"><summary>{lang === "zh" ? "傳送狀態" : "Send status"}</summary><output data-widget-send-state={sendBlockReason ?? "ready"}>{sendBlockReason ?? "ready"}</output><div>scopeReady={String(scopeReady)} · runtimeReady={String(runtimeReady)} · executionReady={runtimeReady ? String(executionReady) : "unverified"} · remoteReady={runtimeReady ? String(remoteReady) : "unverified"} · pending={String(Boolean(pendingSend.current))} · conversationVerified={String(conversationVerified)}</div></details>}
         {mode === "live" && pendingSend.current && !testConversationId && <div role="alert" className="mb-2 text-xs">{lang === "zh" ? "上一則訊息結果未明；只可查核原訊息，不會重送或另開對話。" : "The previous outcome is unknown. Check the original message; it will not be resent or replaced with a new conversation."}<button type="button" disabled={!scopeReady || !runtimeReady} className="ml-1 underline" onClick={() => void reconcilePending()}>{lang === "zh" ? "核實原訊息送達" : "Check original delivery"}</button></div>}
-        {mode === "live" && conversationReadOnly && !conversationReadOnlyReason && <p role="status" className="mb-2 text-xs text-slate-500">{lang === "zh" ? "這是原有 Preview 的唯讀歷史對話，不能在此傳送訊息或執行 AI。" : "This original Preview conversation is read-only. Messages and AI execution are disabled for this archive."}</p>}
+        {mode === "live" && conversationReadOnly && conversationVerified && !conversationReadOnlyReason && <p role="status" className="mb-2 text-xs text-slate-500">{lang === "zh" ? "這是原有 Preview 的唯讀歷史對話，不能在此傳送訊息或執行 AI。" : "This original Preview conversation is read-only. Messages and AI execution are disabled for this archive."}</p>}
+
+        {mode === "live" && conversationReadOnly && !conversationVerified && <p role="status" className="mb-2 text-xs text-slate-500">{lang === "zh" ? "原對話權限正在核實；尚未確認為歷史封存，傳送仍受保護。" : "Conversation verification pending; archive status is unconfirmed and sending remains blocked."}</p>}
+        {mode === "live" && conversationReadOnly && conversationVerified && testConversationId && !conversationClosed && (
+          <button type="button" className="mb-2 text-xs underline" disabled={!scopeReady || !runtimeReady || Boolean(pendingSend.current)}
+            onClick={() => void loadLiveConversation(testConversationId, true)}>
+            {lang === "zh" ? "重新核實原 Ticket（只讀查詢，不發送訊息）" : "Recheck original ticket (read-only, no send)"}
+          </button>
+        )}
         {mode === "live" && conversationClosed && !conversationReadOnly && (
           <p role="status" className="mb-2 text-xs text-slate-500">
             {lang === "zh" ? "此對話已結束；請使用「新對話」開始另一個問題。" : "This conversation is resolved. Use New Conversation to start another request."}

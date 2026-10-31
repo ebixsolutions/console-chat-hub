@@ -44,3 +44,16 @@ test("Task1C: detail Inbox keeps scoped realtime wiring for initial and reconnec
 });
 
 import './widget-event-runtime.test.mjs';
+
+test('original ticket can be reverified with a manual read-only action and no authorization override', async () => {
+ const preview = (await import('node:fs')).readFileSync('src/routes/_authenticated/console.widget-preview.tsx','utf8');
+ for(const required of [
+   'conversationReadOnly && conversationVerified && !conversationReadOnlyReason',
+   'conversationReadOnly && !conversationVerified',
+   'onClick={() => void loadLiveConversation(testConversationId, true)}',
+   'disabled={!scopeReady || !runtimeReady || Boolean(pendingSend.current)}',
+   'setConversationReadOnly(data.read_only === true)',
+   '{ action: "load", test_conversation_id: conversationId }',
+ ])assert(preview.includes(required),'missing fail-closed revalidation: '+required);
+ assert(!preview.includes('setInterval(() => loadLiveConversation'),'repeated readback timer');
+});

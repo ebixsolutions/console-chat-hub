@@ -1392,5 +1392,10 @@
     "supabase/functions/_shared/llm-router.ts": "5569209ef967aeb369e99887d1e0ca71c3587be34ef85843ab69a72006e49d6a",
     "supabase/functions/generate-reply/index.ts": "8939c2b9340a653a2bafc610e8ebedeb0d1f80aadc64d682900df1db0485b15e",
     "tests/emergency-p0/chain.test.mjs": "cca8d40a4fb3cfed23d0d297b4a17beb47a87567fc8031990ba6e110d62b44e6"
+  },
+  "task3_widget_readback_publish_authorized": false,
+  "authorized_task3_widget_readback_sha256": {
+    "src/routes/_authenticated/console.widget-preview.tsx": "82f6973505426234de2bcc296eb189484189283f53a6e534aeb7158a69edb8fd",
+    "tests/task1-director/event-driven-widget.test.mjs": "9d06588f06703d727236a4807b2292c5ea70e2729ae92deccc5d498b5ba5643d"
   }
 }
