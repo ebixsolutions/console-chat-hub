@@ -114,9 +114,6 @@ export function verifyIdentity(root,profile,expected){
  return {head,tree,changed};
 }
 export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs.readFileSync(path.join(root,PROFILE_PATH))),expectedIdentity,sourceOnly=false}={}){
- must(profile.task3_widget_readback_publish_authorized===false,'task3_widget_readback_publish_not_authorized');
- must(JSON.stringify(profile.authorized_task3_widget_readback_sha256)===JSON.stringify(TASK3_WIDGET_READBACK_SOURCE),'task3_widget_readback_scope_drift');
- for(const [file,h] of Object.entries(TASK3_WIDGET_READBACK_SOURCE))must(fs.existsSync(path.join(root,file))&&sha(fs.readFileSync(path.join(root,file)))===h,'task3_widget_readback_hash_drift:'+file);
  must(profile.task3_grounding_retry_deployment_authorized===false,'task3_grounding_retry_deployment_not_authorized');
  must(JSON.stringify(profile.authorized_task3_grounding_retry_sha256)===JSON.stringify(TASK3_GROUNDING_RETRY_SOURCE),'task3_grounding_retry_scope_drift');
  must(profile.task2_evidence_deployment_authorized===false,'task2_evidence_deployment_not_authorized');
@@ -227,6 +224,9 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
  for(const [f,h] of Object.entries(TASK1_C4_RECOVERY_SCOPE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===(TASK3_WIDGET_READBACK_SOURCE[f]??TASK3_GROUNDING_RETRY_SOURCE[f]??TASK2_EVIDENCE_REPAIR[f]??TASK1_SEMANTIC_CONTEXT_REPAIR[f]??TASK1C_EVENT_PRICE_RECOVERY[f]??h),'task1_c4_hash_drift:'+f);
  must(JSON.stringify(profile.authorized_task1_feedback_security_sha256)===JSON.stringify(TASK1_FEEDBACK_SECURITY_SCOPE),'task1_feedback_security_scope_drift');
  for(const [f,h] of Object.entries(TASK1_FEEDBACK_SECURITY_SCOPE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task1_feedback_security_hash_drift:'+f);
+ must(profile.task3_widget_readback_publish_authorized===false,'task3_widget_readback_publish_not_authorized');
+ must(JSON.stringify(profile.authorized_task3_widget_readback_sha256)===JSON.stringify(TASK3_WIDGET_READBACK_SOURCE),'task3_widget_readback_scope_drift');
+ for(const [file,h] of Object.entries(TASK3_WIDGET_READBACK_SOURCE))must(fs.existsSync(path.join(root,file))&&sha(fs.readFileSync(path.join(root,file)))===h,'task3_widget_readback_hash_drift:'+file);
  return {status:'SOURCE_VALIDATED',mode:profile.mode,contract:profile.contract,authorization:profile.authorization,backend:profile.backend,identity,files,closure_sha256:sha(JSON.stringify(files)),hosted_runtime:'NOT_TESTED',uat_start_allowed:false};
 }
 export function verifyChildEvidence(rows){
