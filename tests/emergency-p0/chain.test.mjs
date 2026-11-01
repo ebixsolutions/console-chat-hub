@@ -1964,3 +1964,66 @@ test('Task1 semantic context: v4 restores the first customer original after 130 
  assert.equal(reply.metadata.kb_request_contract.subject_source_message_id,oldSource);
  assert(memory.factual_read_anchors.some(anchor=>anchor.source_message_id===source&&anchor.subject_source_message_ids.includes(oldSource)));
 });
+
+
+// Task3 100-turn: SOURCE-only real 100-utterance replay through existing
+// Commerce reducer / C3 long-memory. Old privileged Production script is
+// READ as phrases; never imported or executed. Not Hosted/Quality95 evidence.
+test('Task3 original 100-turn dialogue preserves corrections and not-an-order boundary',()=>{
+ const s=fs.readFileSync(path.join(root,'scripts/task9-tungyu-100turn-production-smoke.py'),'utf8');
+ const m=s.match(/turns=\[([\s\S]*?)\]\s*\nassert len\(turns\)==100/);
+ assert(m,'original 100-turn fixture unavailable');
+ const turns=m[1].split(/\r?\n/).map(s=>s.trim()).filter(Boolean).map((s,i)=>{
+   assert(/^'.*',?$/.test(s),'malformed archived turn '+(i+1));
+   return s.slice(1).replace(/',?$/,'').replace(/\\'/g,"'");
+ });
+ assert.equal(turns.length,100);assert.match(turns[87],/最後唔裝/);
+ const f=fixture('source-only, no dispatch');
+ const {createEmptyConversationCommerceState}=f.load(path.join(root,'supabase/functions/_shared/commerce-state-contract.ts'));
+ const {reduceCommerceState}=f.load(path.join(root,'supabase/functions/_shared/commerce-state-reducer.ts'));
+ const mem=f.load(path.join(root,'supabase/functions/_shared/conversation-long-memory.ts'));
+ let state=createEmptyConversationCommerceState(),memory=null;const history=[];
+ for(let turn=1;turn<=100;turn++){
+  const id=uuid(8200+turn),time=new Date(Date.parse('2026-10-14T00:00:00Z')+60000*turn).toISOString(),p={source_type:'customer',source_message_id:id,recorded_at:time};
+  const ev=[],entity=(key,category,qty,limits={})=>({entity_id:key,category,quantity:qty,status:'tentative',attributes:{quantity_basis:'customer_explicit'},constraints:limits,provenance:p});
+  if(turn===2)ev.push({type:'ENSURE_ENTITY',entity:entity('ac:rooms','air_conditioner',3)});
+  if(turn===11||turn===12)ev.push({type:'ADD_QUOTE',quote:{quote_id:'history-'+turn,entity_id:'ac:rooms',amount:turn===11?5788:5600,currency:'HKD',quote_type:'customer_reported_historical',validity_status:'historical',conditions:{merchant_verified:false},provenance:p}});
+  if([16,84,88].includes(turn))ev.push({type:'SET_ENTITY_QUANTITY',entity_id:'ac:rooms',quantity:turn===84?3:2,provenance:p},{type:'ADD_CORRECTION',correction:turn===88?'FINAL living room cancelled':'temporary AC change '+turn});
+  if(turn===21)ev.push({type:'ENSURE_ENTITY',entity:entity('fridge:home','refrigerator',1,{max_width_mm:600})});
+  if(turn===24||turn===28)ev.push({type:'SET_ENTITY_CONSTRAINT',entity_id:'fridge:home',key:'max_width_mm',value:turn===24?595:598,provenance:p});
+  if(turn===37)ev.push({type:'SET_DELIVERY',patch:{preferred_date:'Saturday',confirmed:false},provenance:p});
+  if(turn===38||turn===39)ev.push({type:'SET_DELIVERY',patch:{address:'長沙灣幸福邨'+(turn===38?'A':'B')+'座12樓',confirmed:false},provenance:p});
+  if(turn===61)ev.push({type:'ENSURE_ENTITY',entity:entity('washer:research','washing_machine',1)});
+  if(turn===63)ev.push({type:'REMOVE_ENTITY_CONSTRAINT',entity_id:'fridge:home',key:'max_width_mm',provenance:p});
+  if(turn===64)ev.push({type:'SET_ENTITY_CONSTRAINT',entity_id:'washer:research',key:'max_width_mm',value:600,provenance:p});
+  if(turn===66)ev.push({type:'SET_ENTITY_STATUS',entity_id:'washer:research',status:'deferred',provenance:p});
+  if(turn===91)ev.push({type:'SET_CONVERSION',patch:{funnel_stage:'quotation',quotation_status:'pending_verification',order_status:'none',payment_status:'none'}});
+  if(turn===95)ev.push({type:'SET_DELIVERY',patch:{recipient_name:'陳太',recipient_phone:'6987 6543',confirmed:false},provenance:p});
+  state=reduceCommerceState(state,ev);
+  history.unshift({id,role:'visitor',content:turns[turn-1],created_at:time,is_recalled:false});
+  memory=mem.buildCanonicalConversationMemory({previous:memory,conversation_id:ticket,company_id:uuid(1),source_message_id:id,commerce_state_revision:turn,commerce_state:state,newest_first:history.slice(0,12),visitor_turn_count:turn,source_created_at:time,next_memory_revision:turn});
+  assert.equal(memory.memory_revision,turn,'memory revision '+turn);
+  assert.equal(memory.updated_from_turn,turn,'turn index '+turn);
+  assert.equal(memory.source_message_id,id,'source lineage '+turn);
+  assert(mem.isCanonicalConversationMemory(memory),'invalid memory '+turn);
+  assert.equal(memory.transaction_summary.order,'none','unconfirmed order '+turn);
+  assert.equal(memory.transaction_summary.payment,'none','unconfirmed payment '+turn);
+  if(turn>=16)assert.equal(memory.active_entities.find(e=>e.entity_id==='ac:rooms')?.quantity,turn>=84&&turn<88?3:2,'stale quantity '+turn);
+  if(turn>=39)assert(memory.current_customer_facts.some(v=>/address/.test(v.key)&&String(v.value).includes('B座')&&!String(v.value).includes('A座')),'stale address '+turn);
+  if(turn>=63)assert.equal(memory.active_entities.find(e=>e.entity_id==='fridge:home')?.current_requirements?.max_width_mm,undefined,'cancelled fridge constraint '+turn);
+  if(turn>=66)assert(!memory.active_entities.some(e=>e.entity_id==='washer:research'),'deferred washer '+turn);
+ }
+ assert.equal(history.length,100);
+ assert.equal(new Set(history.map(v=>v.id)).size,100);
+ assert.equal(memory.transaction_summary.quotation,'pending_verification');
+ assert.equal(state.delivery.address,'長沙灣幸福邨B座12樓');
+ assert.equal(state.delivery.recipient_name,'陳太');
+ assert.equal(state.delivery.recipient_phone,'6987 6543');
+ assert(memory.historical_facts.some(v=>v.key==='quote:history-11'));
+ assert(memory.historical_facts.some(v=>v.key==='quote:history-12'));
+ assert(memory.latest_corrections.some(v=>v.includes('FINAL living room cancelled')));
+ const context=mem.buildBoundedConversationContext(memory,history);
+ assert(context.recent_turns<=mem.C3_RECENT_RAW_TURN_LIMIT);
+ assert(context.block.includes('ac:rooms: 2'),'last correction missing in LLM memory');
+ console.log('TASK3_100_TURNS|source=original_business_dialogue|turns=100|memory_snapshots=100|hosted=NOT_RUN|result=PASS');
+});
