@@ -180,7 +180,9 @@ test('Task3 failed history switch retries the selected ticket, never the prior o
   'stale Realtime event restored previous Ticket during failed switch');
  assert.equal(attempts,1,'stale event repeated failed new Ticket read');
  await click(r,'Refresh conversation');
- assert.equal(attempts,2,'retry loaded prior ticket rather than selected history');
+ assert(attempts===2 || attempts===3,'retry must execute once with at most one event-subscription catch-up');
+ assert.equal(calls.filter(x=>x.body.action==='load'&&x.body.test_conversation_id===conversation).length,oldReads,
+  'successful retry queried previous Ticket rather than selected target');
  assert.equal(store.get(storageKey),second,'retry did not verify and select requested ticket');
  assert.match(content(r),/Verified second Ticket/);
  assert(!content(r).includes('Conversation refresh failed'));

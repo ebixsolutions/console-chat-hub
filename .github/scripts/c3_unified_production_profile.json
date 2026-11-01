@@ -1397,6 +1397,6 @@
   "authorized_task3_widget_readback_sha256": {
     "src/routes/_authenticated/console.widget-preview.tsx": "6349d99f1638f138b44dec5629cb3f3ec690ff890a3529257ad0057674612af0",
     "tests/task1-director/event-driven-widget.test.mjs": "9d06588f06703d727236a4807b2292c5ea70e2729ae92deccc5d498b5ba5643d",
-    "tests/console-navigation/widget-recovery.test.mjs": "804805508e4d5ef744993e1a8e49b81143efbb3a719f2227e600d6a2106e5013"
+    "tests/console-navigation/widget-recovery.test.mjs": "50ea5f62f5f1ee53ef5b9b436fea7521f15043e382be18631020001a11a52f8d"
   }
 }
