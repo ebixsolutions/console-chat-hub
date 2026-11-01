@@ -1386,8 +1386,8 @@
   "task2_evidence_deployment_authorized": false,
   "task3_grounding_retry_deployment_authorized": false,
   "authorized_task3_grounding_retry_sha256": {
-    "supabase/functions/_shared/factual-evidence-selection.test.ts": "1fa5194c78088d168912f8d23a2cc769cc71346be09c1dcf8eedd4b73794ac7e",
-    "supabase/functions/_shared/factual-evidence-selection.ts": "84b5927807dcb36e87dcbc69b90f556a2a99480dcdcfe21909175af9a6722392",
+    "supabase/functions/_shared/factual-evidence-selection.test.ts": "c3cfba7c3010e8f168657f1caf8a0bcc5a57b1911f8e9a5b363977febc34c4e4",
+    "supabase/functions/_shared/factual-evidence-selection.ts": "cd3e2e289d8d94b04aec6128256ff28f0bdaf31a636b7adc9a8d6edab8af2ec9",
     "supabase/functions/_shared/grounding-evidence.ts": "7835a07dee6b0737929898376a2589490a6e1e1dec77cca7de8af733482b62e5",
     "supabase/functions/_shared/llm-router.ts": "5569209ef967aeb369e99887d1e0ca71c3587be34ef85843ab69a72006e49d6a",
     "supabase/functions/generate-reply/index.ts": "8939c2b9340a653a2bafc610e8ebedeb0d1f80aadc64d682900df1db0485b15e",

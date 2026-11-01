@@ -379,3 +379,49 @@ Deno.test("Task 3 regression: unsent Agent Assist draft preserves exact pending 
   equal(draft.citation_metadata,customer.citation_metadata);
   assert(!draft.reply.includes("7"),"recorded stock cannot become current stock in a draft");
 });
+
+Deno.test("Task3 source-recovery: same SKU CNY price and recorded stock 5 survive rejected generation without live claims",async()=>{
+  const product=document("row4-recovery","spu_code: P002\nspu_name: 轻量化户外冲锋衣\nsku_code: P002-NV-XL\nprice: 2100.0 CNY\nstock: 5","Product","Row 4");
+  product.authority!.currentness="unknown";product.authority!.entity_ids=["P002-NV-XL"];
+  await bindPublishedProduct(product);
+  const d=demand(1,"P002-NV-XL price and stock?","product",["P002-NV-XL"]);
+  d.requested_facts=["price","stock"];
+  const req=request([d]),bundle=selectFactualEvidence([product],req,options);assert(bundle.ok);
+  const recovery=resolveSourceRecordedPartialRecovery(bundle,req,{...recoveryOptions,language:"en"});
+  assert(recovery,"same-SKU source price/stock not recovered");
+  equal(recovery.recorded_facts.map(f=>[f.field,f.value,f.source_field]),[
+    ["price_amount",2100,"price"],["price_currency","CNY","price"],["stock_quantity",5,"stock"]]);
+  assert(recovery.recorded_facts.every(f=>f.document_id==="row4-recovery"&&f.chunk_id==="row4-recovery-chunk"&&
+    f.tenant_id==="34"&&f.company_id==="company"&&f.currentness==="unverified"),"source provenance lost");
+  assert(recovery.reply.includes("CNY 2,100")&&recovery.reply.includes("stock quantity of 5")&&
+    recovery.reply.includes("not a live availability guarantee"),"source facts missing or promoted to live");
+  equal(recovery.unresolved_demand_ids,["demand-1"]);
+  equal(recovery.demand_outcomes[0].answered_fields,["price_amount","price_currency","stock_quantity"]);
+  const metadata={...recovery.citation_metadata,response_route:"canonical_kb_partial_recovery",
+    recorded_kb_facts:recovery.recorded_facts,authoritative_kb_facts:[],
+    partial_recovery:{contract:"canonical-source-field-recovery-1",question_resolution:"partial",
+      demand_outcomes:recovery.demand_outcomes},unresolved_fact_fields:recovery.unresolved_demand_ids,
+    factual_grounding_required:true};
+  const verdict=evaluateB2BeforeCommit({persistence_kind:"ai_reply",proposed_response:recovery.reply,metadata,
+    snapshot:{conversation_id:"conversation",company_id:"company",source_message_id:"current-customer",
+      commerce_state_revision:0,commerce_state_source_message_id:null,state:createEmptyConversationCommerceState()}});
+  equal(verdict.decision,"allow");
+});
+Deno.test("Task3 source-recovery: stock-only zero is known without unsolicited price and without availability promise",async()=>{
+  const product=document("zero-stock-source","spu_code: P002\nspu_name: 轻量化户外冲锋衣\nsku_code: P002-NV-XL\nprice: 2100.0 CNY\nstock: 0","Product","Row 4");
+  product.authority!.currentness="unknown";product.authority!.entity_ids=["P002-NV-XL"];
+  await bindPublishedProduct(product);
+  const d=demand(1,"P002-NV-XL stock?","product",["P002-NV-XL"]);d.requested_facts=["stock"];
+  const req=request([d]),bundle=selectFactualEvidence([product],req,options);assert(bundle.ok);
+  const rec=resolveSourceRecordedPartialRecovery(bundle,req,{...recoveryOptions,language:"en"});
+  assert(rec&&rec.reply.includes("stock quantity of 0")&&!rec.reply.includes("2,100")&&
+    rec.reply.includes("not a live availability guarantee"),"stock zero became missing or live");
+  equal(rec.recorded_facts.map(f=>[f.field,f.value]),[["stock_quantity",0]]);
+  equal(rec.unresolved_demand_ids,["demand-1"]);
+  const noStock=document("absent-stock","sku_code: P002-NV-XL\nspu_name: 轻量化户外冲锋衣\nprice: 2100.0 CNY","Product","Row 4");
+  noStock.authority!.currentness="unknown";noStock.authority!.entity_ids=["P002-NV-XL"];
+  await bindPublishedProduct(noStock);
+  const no=selectFactualEvidence([noStock],req,options);assert(no.ok);
+  equal(resolveSourceRecordedPartialRecovery(no,req,recoveryOptions),null);
+  equal(resolveSourceRecordedPartialRecovery(bundle,req,{...recoveryOptions,expectedTenantId:"99"}),null);
+});

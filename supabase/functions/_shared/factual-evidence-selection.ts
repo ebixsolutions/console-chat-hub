@@ -4,7 +4,7 @@ import type {CurrentFactualRequest, CurrentFactualDemand} from "./current-factua
 import type {KBDocumentCandidate, KBFullChunk} from "./kb-client.ts";
 import {buildCitationMetadata} from "./citation-lineage.ts";
 import {currentKbSellingPrice, exactKbModelIds, resolveCanonicalKbDirectAnswer} from "./canonical-kb-direct-answer.ts";
-import {kbProductRecordPrice, parseKbProductRecord} from "./kb-product-record.ts";
+import {kbProductRecordPrice, kbProductRecordStock, parseKbProductRecord} from "./kb-product-record.ts";
 import {GROUNDING_EVIDENCE_LIMITS, groundingEvidenceText, validGroundingEvidence,
   type GroundingEvidence, type GroundingEvidenceItem, type GroundingDemand, type GroundingDemandResolution} from "./grounding-evidence.ts";
 
@@ -220,7 +220,7 @@ export interface SourceRecordedPartialRecovery {
   used_evidence_ids: string[];
   demand_outcomes: Array<{demand_id:string;status:"partial"|"unavailable";reason:string;evidence_ids:string[];answered_fields:string[]}>;
   unresolved_demand_ids: string[];
-  recorded_facts: Array<{field:"price_amount"|"price_currency";value:number|string;model:string;demand_id:string;
+  recorded_facts: Array<{field:"price_amount"|"price_currency"|"stock_quantity";value:number|string;model:string;demand_id:string;
     evidence_id:string;document_id:string;chunk_id:string;source_field:string;source_message_id:string;
     tenant_id:string;company_id:string;currentness:"unverified";source_currentness:"current"|"unknown"}>;
 }
@@ -244,7 +244,7 @@ export function resolveSourceRecordedPartialRecovery(
     const coverage = bundle.grounding.demands.find(item => item.id === demand.id);
     if (demand.source_type !== "product" || demand.ambiguity.is_ambiguous || demand.subjects.length !== 1 ||
         !demand.subject_source_message_ids.length || demand.customer_correction || demand.explicit_negations.length ||
-        Object.keys(demand.constraints).length || !demand.requested_facts.some(fact => key(fact) === "price") ||
+        Object.keys(demand.constraints).length || !demand.requested_facts.some(fact => ["price","stock","availability"].includes(key(fact))) ||
         !demand.requested_facts.every(fact => ["price","stock","availability"].includes(key(fact))) ||
         !coverage || coverage.blocked || coverage.missing_reasons.length ||
         request.missing_evidence.some(item => item.demand_id === demand.id)) continue;
@@ -264,35 +264,66 @@ export function resolveSourceRecordedPartialRecovery(
       value.source_authority.currentness === authority.provenance.currentness &&
       value.source_authority.authority_class === authority.selected_authority_class);
     if (!item) continue;
-    const price = kbProductRecordPrice(parseKbProductRecord(chunk.content));
-    if (price.reason !== "ok" || price.amount === null || !price.field ||
-        canonical.price_fact && canonical.price_fact.value !== price.amount) continue;
-    if (source.selection.catalogue_binding) {
-      const recorded = canonical.recorded_facts?.filter(fact => fact.document_id === item.document_id &&
-        fact.chunk_id === item.chunk_id && fact.currentness === "unverified") ?? [];
-      if (!recorded.some(fact => fact.field === "price_amount" && fact.value === price.amount) ||
-          price.currency && !recorded.some(fact => fact.field === "price_currency" && fact.value === price.currency)) continue;
-    } else if (exactKbModelIds(demand.subjects[0]).length === 1 && currentKbSellingPrice(chunk.content) !== price.amount) continue;
-    const subject = demand.subjects[0], amount = price.amount.toLocaleString("en-US",{maximumFractionDigits:4});
-    const display = price.currency === "HKD" ? `HK$${amount}` : price.currency ? `${price.currency} ${amount}` : amount;
-    const currencyNote = price.currency ? "" : options.language === "en" ? " (currency not specified by the source)"
-      : options.language === "zh-CN" ? "（来源未注明币别）" : "（來源未註明幣別）";
-    replies.push(options.language === "en"
-      ? `The published product record for ${subject} contains a selling-price field recording ${display}${currencyNote}. This source-recorded amount is not a formal quotation. The current price is unverified; the checkout price still needs merchant verification.`
-      : options.language === "zh-CN"
-      ? `${subject} 的已发布商品资料中，价格栏位记录 ${display}${currencyNote}。这只是来源记录，尚未核实现价，并非正式报价；实际结算价仍待商家核实。`
-      : `${subject} 嘅已發布商品資料中，價格欄位記錄 ${display}${currencyNote}。呢個只係來源記錄，未核實係現價，並非正式報價；實際結帳價仍待商家核實。`);
-    const provenance = {model:subject,demand_id:demand.id,evidence_id:item.id,document_id:item.document_id,
-      chunk_id:item.chunk_id,source_field:price.field,source_message_id:options.sourceMessageId,
-      tenant_id:options.expectedTenantId,company_id:options.companyId,currentness:"unverified" as const,
-      source_currentness:item.source_authority.currentness};
-    facts.push({...provenance,field:"price_amount",value:price.amount});
-    if (price.currency) facts.push({...provenance,field:"price_currency",value:price.currency});
-    const outcome = outcomes.find(value => value.demand_id === demand.id)!;
-    outcome.status = "partial";
-    outcome.reason = "source_recorded_price_currentness_unverified";
-    outcome.evidence_ids = [item.id];
-    outcome.answered_fields = price.currency ? ["price_amount","price_currency"] : ["price_amount"];
+
+    // Discard the rejected LLM draft. The original authenticated catalogue
+    // record and this exact demand/chunk/tenant are the ONLY recovery inputs.
+    const record=parseKbProductRecord(chunk.content);
+    const price=kbProductRecordPrice(record),stock=kbProductRecordStock(record);
+    const wanted=demand.requested_facts.map(key);
+    const wantsPrice=wanted.includes("price");
+    const wantsStock=wanted.includes("stock") || wanted.includes("availability");
+    const catalogue=Boolean(source.selection.catalogue_binding);
+    const recorded=canonical.recorded_facts?.filter(f=>f.document_id===item.document_id &&
+      f.chunk_id===item.chunk_id && f.currentness==="unverified") ?? [];
+    const priceBound=wantsPrice && price.reason==="ok" && price.amount!==null && Boolean(price.field) &&
+      (!canonical.price_fact || canonical.price_fact.value===price.amount) &&
+      (catalogue
+        ? recorded.some(f=>f.field==="price_amount" && f.value===price.amount) &&
+          (!price.currency || recorded.some(f=>f.field==="price_currency" && f.value===price.currency))
+        : exactKbModelIds(demand.subjects[0]).length!==1 || currentKbSellingPrice(chunk.content)===price.amount);
+    // A quantity is a snapshot, never proof of live sellable inventory.
+    // Accept zero. Reject legacy prose, ambiguous/missing stock and unbound SKU.
+    const stockBound=wantsStock && catalogue && stock.reason==="ok" && stock.quantity!==null &&
+      Boolean(stock.field) && recorded.some(f=>f.field==="stock_quantity" && f.value===stock.quantity);
+    if(!priceBound && !stockBound)continue;
+    const subject=demand.subjects[0],answeredFields:string[]=[];
+    if(priceBound){
+      const amount=price.amount!.toLocaleString("en-US",{maximumFractionDigits:4});
+      const display=price.currency==="HKD"?"HK$"+amount:price.currency?price.currency+" "+amount:amount;
+      const currencyNote=price.currency?"":options.language==="en"?" (currency not specified by the source)"
+        :options.language==="zh-CN"?"（来源未注明币别）":"（來源未註明幣別）";
+      replies.push(options.language==="en"
+        ?"The published product record for "+subject+" contains a selling-price field recording "+display+currencyNote+". This source-recorded amount is not a formal quotation. The current price is unverified; the checkout price still needs merchant verification."
+        :options.language==="zh-CN"
+        ?subject+" 的已发布商品资料中，价格栏位记录 "+display+currencyNote+"。这只是来源记录，尚未核实现价，并非正式报价；实际结算价仍待商家核实。"
+        :subject+" 嘅已發布商品資料中，價格欄位記錄 "+display+currencyNote+"。呢個只係來源記錄，未核實係現價，並非正式報價；實際結帳價仍待商家核實。");
+      const provenance={model:subject,demand_id:demand.id,evidence_id:item.id,document_id:item.document_id,
+        chunk_id:item.chunk_id,source_field:price.field!,source_message_id:options.sourceMessageId,
+        tenant_id:options.expectedTenantId,company_id:options.companyId,currentness:"unverified" as const,
+        source_currentness:item.source_authority.currentness};
+      facts.push({...provenance,field:"price_amount",value:price.amount!});
+      answeredFields.push("price_amount");
+      if(price.currency){facts.push({...provenance,field:"price_currency",value:price.currency});answeredFields.push("price_currency");}
+    }
+    if(stockBound){
+      const quantity=stock.quantity!;
+      replies.push(options.language==="en"
+        ?"The published source record for "+subject+" records a stock quantity of "+quantity+". This is not a live availability guarantee or an inventory reservation; the merchant must verify current availability."
+        :options.language==="zh-CN"
+        ?subject+" 的已发布资料记录库存数量："+quantity+"。这不是即时可售库存或预留证明，现货仍须商家核实。"
+        :subject+" 嘅已發布資料記錄庫存數量："+quantity+"。呢個唔代表即時可售庫存或預留商品；現貨仍須商家核實。");
+      facts.push({model:subject,demand_id:demand.id,evidence_id:item.id,document_id:item.document_id,
+        chunk_id:item.chunk_id,source_field:stock.field!,source_message_id:options.sourceMessageId,
+        tenant_id:options.expectedTenantId,company_id:options.companyId,currentness:"unverified",
+        source_currentness:item.source_authority.currentness,field:"stock_quantity",value:quantity});
+      answeredFields.push("stock_quantity");
+    }
+    const outcome=outcomes.find(value=>value.demand_id===demand.id)!;
+    outcome.status="partial";
+    outcome.reason=priceBound && stockBound?"source_recorded_price_stock_currentness_unverified":
+      priceBound?"source_recorded_price_currentness_unverified":"source_recorded_stock_availability_unverified";
+    outcome.evidence_ids=[item.id];
+    outcome.answered_fields=answeredFields;
   }
   if (!facts.length) return null;
   const used = [...new Set(outcomes.flatMap(item => item.evidence_ids))];
