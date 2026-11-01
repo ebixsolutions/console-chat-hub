@@ -894,6 +894,9 @@ function PreviewWidget({
   const [historyLoading, setHistoryLoading] = useState(false);
   const actionAreaRef = useRef<HTMLDivElement | null>(null);
   const conversationEpoch = useRef(0);
+  // Retry a failed history switch against the SELECTED ticket, not the prior ticket.
+  // This client-only hint grants no permission and never dispatches a message.
+  const failedReadbackTarget = useRef<string | null>(null);
   const replyInFlight = useRef(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const composing = useRef(false);
@@ -976,6 +979,7 @@ function PreviewWidget({
     replyInFlight.current = false;
     setMessages([]);
     setHistory([]);
+    failedReadbackTarget.current = null;
     setScopeReady(false);
     setRuntimeReady(false);
     setScopeFailure(null);
@@ -1032,7 +1036,13 @@ function PreviewWidget({
 
   const loadLiveConversation = async (conversationId: string, switching = false, signal?: AbortSignal, authorized = false) => {
     if (authorized && (pendingSend.current || replyInFlight.current || !scopeReady || !runtimeReady || !executionReady)) return;
-    if (switching) { setConversationVerified(false); setConversationReadOnly(true); }
+    if (switching) {
+      failedReadbackTarget.current = authorized ? null : conversationId;
+      setConversationVerified(false);
+      setConversationReadOnly(true);
+      setConversationReadOnlyReason(null);
+      setConversationFailure(false);
+    }
     const epoch = switching ? ++conversationEpoch.current : conversationEpoch.current;
     let result;
     try { result = await invokeLiveWidget(authorized ? {action:"open_authorized"} : { action: "load", test_conversation_id: conversationId }, signal); }
@@ -1054,6 +1064,7 @@ function PreviewWidget({
       setTyping(false);
       replyInFlight.current = false;
     }
+    failedReadbackTarget.current = null;
     setConversationFailure(false);
     if (switching) setPollRevision(value => value + 1);
     setTestConversationId(data.conversation_id);
@@ -1421,6 +1432,7 @@ function PreviewWidget({
     conversationEpoch.current += 1;
     replyInFlight.current = false;
     if (mode === "live") {
+      failedReadbackTarget.current = null;
       setTestConversationId(null);
       setConversationClosed(false);
       setConversationReadOnly(false);
@@ -1674,7 +1686,13 @@ function PreviewWidget({
         {mode === "live" && (conversationFailure || pendingSend.current) && testConversationId && (
           <div className="mb-2 text-xs text-red-600">
             {conversationFailure && <p role="alert">{lang === "zh" ? "對話讀取失敗，現有訊息已保留。" : "Conversation refresh failed. Existing messages are retained."}</p>}
-            <button type="button" className="underline" onClick={() => setPollRevision(value => value + 1)}>{lang === "zh" ? "重新讀取對話" : "Refresh conversation"}</button>
+            <button type="button" className="underline" onClick={() => {
+              const selected = failedReadbackTarget.current;
+              if (selected) {
+                if (scopeReady && runtimeReady) void loadLiveConversation(selected, true);
+                else void loadLiveReadiness();
+              } else setPollRevision(value => value + 1);
+            }}>{lang === "zh" ? "重新讀取對話" : "Refresh conversation"}</button>
           </div>
         )}
         {liveFailure && <p role="alert" className="mb-2 text-xs text-red-600">{liveFailure}</p>}

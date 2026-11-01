@@ -140,3 +140,42 @@ test('101-turn original C3 Widget source path preserves one conversation and dis
   assert.equal(sends().some(x=>x.name!=='widget-live-ai-test'),false,'no alternate backend');
   await close(r);
 });
+
+
+test('Task3 failed history switch retries the selected ticket, never the prior open ticket, without dispatch',async()=>{
+ reset();
+ const second='ac760d74-7ba8-4f86-977a-94b857e11f07';
+ fixture.historyRows=[
+  {conversation_id:conversation,message_count:1,latest_preview:'Existing request',read_only:false},
+  {conversation_id:second,message_count:1,latest_preview:'Selected history',read_only:false}
+ ];
+ let attempts=0;
+ const invoke=fixture.invoke;
+ fixture.invoke=async(name,{body})=>{
+  if(body.action==='load'&&body.test_conversation_id===second){
+   attempts++;
+   if(attempts===1)return {error:new Error('temporary scope-bound read failure'),data:null};
+   return {error:null,data:{success:true,conversation_id:second,conversation_status:'open',read_only:false,
+    messages:[{id:'second-visitor',role:'visitor',content:'Verified second Ticket'}],ai_generating:false,human_control:false}};
+  }
+  return invoke(name,{body});
+ };
+ const r=await mount();
+ await click(r,'Conversation History');
+ const row=r.root.findAllByType('button').find(b=>b.props['data-conversation-id']===second);
+ assert(row,'selected history ticket not present');
+ await act(async()=>row.props.onClick());
+ assert.equal(attempts,1);
+ assert.equal(store.get(storageKey),conversation,'failed read switched persisted ticket');
+ assert.equal(button(r,'Send').props.disabled,true,'unverified Ticket must not Send');
+ assert.match(content(r),/Conversation refresh failed/);
+ assert(!content(r).includes('This original Preview conversation is read-only'),'failed read mislabelled as archived');
+ assert.equal(sends().length,0);
+ await click(r,'Refresh conversation');
+ assert.equal(attempts,2,'retry loaded prior ticket rather than selected history');
+ assert.equal(store.get(storageKey),second,'retry did not verify and select requested ticket');
+ assert.match(content(r),/Verified second Ticket/);
+ assert(!content(r).includes('Conversation refresh failed'));
+ assert.equal(sends().length,0,'readback triggered a persisted send');
+ await close(r);
+});

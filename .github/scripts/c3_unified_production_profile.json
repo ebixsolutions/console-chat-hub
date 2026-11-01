@@ -1395,7 +1395,8 @@
   },
   "task3_widget_readback_publish_authorized": false,
   "authorized_task3_widget_readback_sha256": {
-    "src/routes/_authenticated/console.widget-preview.tsx": "82f6973505426234de2bcc296eb189484189283f53a6e534aeb7158a69edb8fd",
-    "tests/task1-director/event-driven-widget.test.mjs": "9d06588f06703d727236a4807b2292c5ea70e2729ae92deccc5d498b5ba5643d"
+    "src/routes/_authenticated/console.widget-preview.tsx": "9562469651d6cfde0772b2687b594ad5f7ede6f9866e6641323b2f7613f972ab",
+    "tests/task1-director/event-driven-widget.test.mjs": "9d06588f06703d727236a4807b2292c5ea70e2729ae92deccc5d498b5ba5643d",
+    "tests/console-navigation/widget-recovery.test.mjs": "fb7b6328b1f69572b0773cc7c4fae3f1adbba43ee9a5ea6c36238b413f08886c"
   }
 }
