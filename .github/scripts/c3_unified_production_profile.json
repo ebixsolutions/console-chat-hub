@@ -1391,7 +1391,8 @@
     "supabase/functions/_shared/grounding-evidence.ts": "7835a07dee6b0737929898376a2589490a6e1e1dec77cca7de8af733482b62e5",
     "supabase/functions/_shared/llm-router.ts": "5569209ef967aeb369e99887d1e0ca71c3587be34ef85843ab69a72006e49d6a",
     "supabase/functions/generate-reply/index.ts": "8939c2b9340a653a2bafc610e8ebedeb0d1f80aadc64d682900df1db0485b15e",
-    "tests/emergency-p0/chain.test.mjs": "00ed0472cb69adc0fc8076b456bac6660f842783625282d475afb52df30d4dea"
+    "tests/emergency-p0/chain.test.mjs": "00ed0472cb69adc0fc8076b456bac6660f842783625282d475afb52df30d4dea",
+    "tests/c3-widget-live-auth/original-preview.test.mjs": "d8dc886e185ed6ffe8f83d5da9b905a9c56643449adf86b2dde04d281fc0d63f"
   },
   "task3_widget_readback_publish_authorized": false,
   "authorized_task3_widget_readback_sha256": {

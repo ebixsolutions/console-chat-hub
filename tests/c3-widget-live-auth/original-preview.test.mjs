@@ -528,13 +528,16 @@ for(const stage of ['local_grounding','independent_verifier'])test('Task3 Inbox 
  assert(reply.includes('ITEM-Q9')&&/CNY\s*125/u.test(reply),reply);
  assert(!/9999|Rejected draft marker|guaranteed immediate availability/u.test(reply),reply);
  assert(/unverified|未核實|未核实/u.test(reply),reply);
- assert(reply.includes('Is ITEM-Q9 in stock?'),'the unavailable stock demand must be explicitly retained');
+ assert(reply.includes('Is ITEM-Q9 in stock?')&&reply.includes('stock quantity of 0')&&
+  reply.includes('not a live availability guarantee'),'stock zero must be source-recorded and live availability pending');
  assert.equal(r.data.partial_recovery.contract,'canonical-source-field-recovery-1');
  assert.equal(r.data.partial_recovery.question_resolution,'partial');
- assert.deepEqual(r.data.partial_recovery.demand_outcomes.map(item=>[item.demand_id,item.status]),[['demand-1','partial'],['demand-2','unavailable']]);
+ assert.deepEqual(r.data.partial_recovery.demand_outcomes.map(item=>[item.demand_id,item.status]),[['demand-1','partial'],['demand-2','partial']]);
  assert.deepEqual(r.data.unresolved_fact_fields,['demand-1','demand-2']);assert.deepEqual(r.data.authoritative_kb_facts,[]);
  assert(r.data.recorded_kb_facts.some(item=>item.field==='price_amount'&&item.value===125));
  assert(r.data.recorded_kb_facts.some(item=>item.field==='price_currency'&&item.value==='CNY'));
+ assert(r.data.recorded_kb_facts.some(item=>item.field==='stock_quantity'&&item.value===0&&item.source_field==='stock'));
+ assert(!/is in stock now|available now|guaranteed immediate availability/i.test(reply),'stock snapshot became live availability');
  assert(r.data.recorded_kb_facts.every(item=>item.currentness==='unverified'&&item.source_message_id===x.source&&item.company_id===x.c.company_id&&item.tenant_id==='34'));
  assert.deepEqual(r.data.citations.map(item=>item.chunk_id),['fixture-chunk-2']);
  assert.deepEqual(r.data.citation_lineage.evidence_chunk_ids,['fixture-chunk-2']);
@@ -542,11 +545,29 @@ for(const stage of ['local_grounding','independent_verifier'])test('Task3 Inbox 
  assert.equal(JSON.stringify(f.rows.messages),before,'recovered suggestion must remain unsent');
  assert.equal(JSON.stringify(x.c.metadata_source),marker);assert.equal(f.rpc.length,0);
 });
-test('Task3 Inbox source-field recovery cannot invent a missing price',async()=>{
+test('Task3 Inbox known stock 0 survives missing price without inventing a price or available inventory',async()=>{
  const x=await sourceFieldAssistFixture('local_grounding',{...inboxProductFixture,content:inboxProductFixture.content.replace('price: 125.0 CNY','price: unavailable')});
  const before=JSON.stringify(f.rows.messages),r=await x.send('suggest_reply',x.question);
+ assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.success,true);
+ assert.equal(r.data.response_route,'canonical_kb_partial_recovery');assert.equal(r.data.source_error_code,'LLM_GROUNDING_REJECTED');
+ assert(r.data.draft_only===true&&r.data.knowledge_grounded===true);
+ const reply=r.data.result.suggestions[0].content;
+ assert(reply.includes('stock quantity of 0')&&reply.includes('not a live availability guarantee'));
+ assert(!reply.includes('CNY 125')&&!reply.includes('125.0')&&!reply.includes('available now'),'missing price or live availability invented');
+ assert.deepEqual(r.data.partial_recovery.demand_outcomes.map(item=>[item.demand_id,item.status]),
+  [['demand-1','unavailable'],['demand-2','partial']]);
+ assert.deepEqual(r.data.recorded_kb_facts.map(item=>[item.field,item.value]),[['stock_quantity',0]]);
+ assert.deepEqual(r.data.unresolved_fact_fields,['demand-1','demand-2']);
+ assert.equal(x.posts(),1);assert.deepEqual(x.modelKinds(),{semantic:1,answer:1});
+ assert.equal(JSON.stringify(f.rows.messages),before);assert.equal(f.rpc.length,0);
+});
+test('Task3 Inbox missing both price and stock remains rejected, not a fabricated partial recovery',async()=>{
+ const missing={...inboxProductFixture,content:inboxProductFixture.content.replace('price: 125.0 CNY','price: unavailable').replace('stock: 0','stock: unknown')};
+ const x=await sourceFieldAssistFixture('local_grounding',missing);
+ const before=JSON.stringify(f.rows.messages),r=await x.send('suggest_reply',x.question);
  assert.equal(r.status,502,JSON.stringify(r));assert.equal(r.data.failure.code,'LLM_GROUNDING_REJECTED');
- assert(!r.data.result&&!r.data.partial_recovery);assert.equal(x.posts(),1);assert.deepEqual(x.modelKinds(),{semantic:1,answer:1});
+ assert(!r.data.result&&!r.data.partial_recovery&&!r.data.recorded_kb_facts);
+ assert.equal(x.posts(),1);assert.deepEqual(x.modelKinds(),{semantic:1,answer:1});
  assert.equal(JSON.stringify(f.rows.messages),before);assert.equal(f.rpc.length,0);
 });
 for(const tool of ['knowledge_helper','policy'])test('Task3 Inbox source-field recovery preserves '+tool+' semantics',async()=>{
