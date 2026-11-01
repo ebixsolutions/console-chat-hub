@@ -283,7 +283,7 @@ export function resolveSourceRecordedPartialRecovery(
         : exactKbModelIds(demand.subjects[0]).length!==1 || currentKbSellingPrice(chunk.content)===price.amount);
     // A quantity is a snapshot, never proof of live sellable inventory.
     // Accept zero. Reject legacy prose, ambiguous/missing stock and unbound SKU.
-    const stockBound=wantsStock && catalogue && stock.reason==="ok" && stock.quantity!==null &&
+    const stockBound=wantsStock && catalogue && record.sku_codes.length===1 && stock.reason==="ok" && stock.quantity!==null &&
       Boolean(stock.field) && recorded.some(f=>f.field==="stock_quantity" && f.value===stock.quantity);
     if(!priceBound && !stockBound)continue;
     const subject=demand.subjects[0],answeredFields:string[]=[];
