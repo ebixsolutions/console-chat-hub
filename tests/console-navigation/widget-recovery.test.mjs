@@ -171,6 +171,14 @@ test('Task3 failed history switch retries the selected ticket, never the prior o
  assert.match(content(r),/Conversation refresh failed/);
  assert(!content(r).includes('This original Preview conversation is read-only'),'failed read mislabelled as archived');
  assert.equal(sends().length,0);
+ const oldReads=calls.filter(x=>x.body.action==='load'&&x.body.test_conversation_id===conversation).length;
+ await act(async()=>{
+  for(const stream of fixture.streams)stream.callbacks[0].cb({eventType:'INSERT'});
+  await new Promise(resolve=>setImmediate(resolve));
+ });
+ assert.equal(calls.filter(x=>x.body.action==='load'&&x.body.test_conversation_id===conversation).length,oldReads,
+  'stale Realtime event restored previous Ticket during failed switch');
+ assert.equal(attempts,1,'stale event repeated failed new Ticket read');
  await click(r,'Refresh conversation');
  assert.equal(attempts,2,'retry loaded prior ticket rather than selected history');
  assert.equal(store.get(storageKey),second,'retry did not verify and select requested ticket');

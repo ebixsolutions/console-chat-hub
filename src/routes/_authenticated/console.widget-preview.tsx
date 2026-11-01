@@ -1035,6 +1035,7 @@ function PreviewWidget({
   };
 
   const loadLiveConversation = async (conversationId: string, switching = false, signal?: AbortSignal, authorized = false) => {
+    if (!switching && failedReadbackTarget.current && failedReadbackTarget.current !== conversationId) return;
     if (authorized && (pendingSend.current || replyInFlight.current || !scopeReady || !runtimeReady || !executionReady)) return;
     if (switching) {
       failedReadbackTarget.current = authorized ? null : conversationId;
@@ -1163,7 +1164,8 @@ function PreviewWidget({
     // Realtime is only an invalidation hint. The existing authenticated
     // endpoint rechecks actor/tenant/ticket before anything reaches the UI.
     const poll = async () => {
-      if (!active || failures >= 3 || currentScope.current !== storageKey || document.hidden) return;
+      if (!active || failures >= 3 || currentScope.current !== storageKey || document.hidden ||
+          failedReadbackTarget.current && failedReadbackTarget.current !== testConversationId) return;
       pending = true;
       if (inFlight) return;
       inFlight = true;
