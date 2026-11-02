@@ -425,3 +425,19 @@ Deno.test("Task3 source-recovery: stock-only zero is known without unsolicited p
   equal(resolveSourceRecordedPartialRecovery(no,req,recoveryOptions),null);
   equal(resolveSourceRecordedPartialRecovery(bundle,req,{...recoveryOptions,expectedTenantId:"99"}),null);
 });
+
+Deno.test("Task3 P0: a product-level stock question cannot inherit a single SKU's snapshot",async()=>{
+  const name="轻量化户外冲锋衣";
+  const product=document("variant-stock","spu_code: P002\\nspu_name: "+name+"\\nsku_code: P002-NV-XL\\nspec_size: XL\\nprice: 2100.0 CNY\\nstock: 5","Product","Row 4");
+  product.authority!.currentness="unknown";product.authority!.entity_ids=[name];
+  await bindPublishedProduct(product);
+  const d=demand(1,name+" price and stock?","product",[name]);d.requested_facts=["price","availability"];
+  const req=request([d]),bundle=selectFactualEvidence([product],req,options);assert(bundle.ok);
+  assert(Boolean(bundle.sources[0]?.selection.catalogue_binding),"source-bound catalogue selection missing");
+  const recovery=resolveSourceRecordedPartialRecovery(bundle,req,{...recoveryOptions,language:"en"});
+  assert(recovery,"already-recorded price should survive incomplete SKU stock scope");
+  equal(recovery.recorded_facts.map(f=>f.field),["price_amount","price_currency"]);
+  assert(recovery.reply.includes("CNY 2,100")&&recovery.reply.includes("live stock verification pending"));
+  assert(!recovery.reply.includes("stock quantity of 5"),"variant stock leaked to the whole product");
+  equal(recovery.unresolved_demand_ids,["demand-1"]);
+});

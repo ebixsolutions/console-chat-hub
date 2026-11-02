@@ -4,7 +4,7 @@ import type {CurrentFactualRequest, CurrentFactualDemand} from "./current-factua
 import type {KBDocumentCandidate, KBFullChunk} from "./kb-client.ts";
 import {buildCitationMetadata} from "./citation-lineage.ts";
 import {currentKbSellingPrice, exactKbModelIds, resolveCanonicalKbDirectAnswer} from "./canonical-kb-direct-answer.ts";
-import {kbProductRecordPrice, kbProductRecordStock, parseKbProductRecord} from "./kb-product-record.ts";
+import {kbProductRecordPrice, kbProductRecordStock, normalizeCatalogueCode, parseKbProductRecord} from "./kb-product-record.ts";
 import {GROUNDING_EVIDENCE_LIMITS, groundingEvidenceText, validGroundingEvidence,
   type GroundingEvidence, type GroundingEvidenceItem, type GroundingDemand, type GroundingDemandResolution} from "./grounding-evidence.ts";
 
@@ -283,7 +283,9 @@ export function resolveSourceRecordedPartialRecovery(
         : exactKbModelIds(demand.subjects[0]).length!==1 || currentKbSellingPrice(chunk.content)===price.amount);
     // A quantity is a snapshot, never proof of live sellable inventory.
     // Accept zero. Reject legacy prose, ambiguous/missing stock and unbound SKU.
-    const stockBound=wantsStock && catalogue && record.sku_codes.length===1 && stock.reason==="ok" && stock.quantity!==null &&
+    const stockBound=wantsStock && catalogue && record.sku_codes.length===1 &&
+      normalizeCatalogueCode(record.sku_codes[0])===normalizeCatalogueCode(demand.subjects[0]) &&
+      stock.reason==="ok" && stock.quantity!==null &&
       Boolean(stock.field) && recorded.some(f=>f.field==="stock_quantity" && f.value===stock.quantity);
     if(!priceBound && !stockBound)continue;
     const subject=demand.subjects[0],answeredFields:string[]=[];
