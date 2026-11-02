@@ -152,6 +152,19 @@ function reconcileFacets(question: string, semantic: CommerceSemanticFrame | nul
   return unique([...explicit, ...descriptive]);
 }
 type LocatedSubject = { subjects: string[]; reference: string | null };
+/** Validate a model's fact labels against the actual quoted customer words.
+ * An explicitly named current field outranks a contradictory model label, while
+ * freely described or new industry-specific facts remain intact. This is not a
+ * synonym catalogue, a source field authority, or permission for a paid read. */
+function sourceBoundRequestedFacts(sourceQuote: string, proposedFacts: string[]): string[] {
+  const explicit = currentFacets(sourceQuote);
+  if (!explicit.length) return unique(proposedFacts);
+  const retained = proposedFacts.filter(fact => {
+    const classified = currentFacets(fact.replace(/_/gu, " "));
+    return !classified.length || classified.some(field => explicit.includes(field));
+  });
+  return unique([...explicit, ...retained]);
+}
 function locateSubjects(question: string, hints: string[]): LocatedSubject {
   const text = clean(currentFacetText(question))
     .replace(/^(?:不談|不谈|唔講|forget(?: about)?|ignore)\s*[^，,;；]{1,160}[，,;；]\s*/iu, "")
@@ -418,7 +431,9 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     return {
       id, question: resolved.question, source_quote: sourceQuote, subjects,
       subject_source_message_ids: unique(located.map(binding => binding.source_message_id ?? "")),
-      source_type: demand.source_type, requested_facts: unique(demand.requested_facts),
+      source_type: demand.source_type, requested_facts: quoteBound
+        ? sourceBoundRequestedFacts(sourceQuote, demand.requested_facts)
+        : unique(demand.requested_facts),
       constraints: mergeDecisionContext(subjectConstraints(subjects, input), demand.constraints),
       customer_correction: demand.customer_correction, explicit_negations: [...demand.explicit_negations], ambiguity,
     };

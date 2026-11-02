@@ -811,3 +811,37 @@ Deno.test("a partial semantic quote cannot evade an explicit negative lookup ins
   const result = resolveCurrentFactualRequest({question, semantic});
   assert(!result.kb_required && result.query === null, JSON.stringify(result));
 });
+
+Deno.test("Task3A source-bound semantic facts correct a wrong facet without enumerating customer phrasing", () => {
+  for (const [question, bad, expected] of [
+    ["P001-BL-M 有冇貨？", "price", "stock"],
+    ["P001-BL-L 库存多少？", "price", "stock"],
+    ["Is P001-WH-M in stock?", "price", "stock"],
+    ["P001-WH-M 幾錢？", "stock", "price"],
+  ]) {
+    const semantic=demanded(demand(question,"product",[bad],[question.match(/P001-[A-Z]+-[A-Z]+/u)![0]]));
+    const result=resolveCurrentFactualRequest({question,source_message_id:"current",semantic});
+    equal(result.requested_facts,[expected]);
+    equal(result.demands[0].requested_facts,[expected]);
+    assert(result.query?.includes('"' + expected + '"'),"quoted facet absent from KB request");
+    assert(!result.query?.includes('"' + bad + '"'),"contradictory model fact reached KB");
+  }
+});
+Deno.test("Task3A two product variants retain independent demand facets and cannot cross-bind",()=>{
+  const a=demand("P001-BL-M 有冇貨？","product",["price"],["P001-BL-M"]);
+  const b=demand("P001-WH-M 有咩功能？","product",["stock"],["P001-WH-M"]);
+  const question=a.source_quote+" "+b.source_quote;
+  const result=resolveCurrentFactualRequest({question,source_message_id:"current",semantic:demanded(a,b)});
+  equal(result.demands.map(d=>d.subjects),[["P001-BL-M"],["P001-WH-M"]]);
+  equal(result.demands.map(d=>d.requested_facts),[["stock"],["features"]]);
+  assert(result.query?.includes("P001-BL-M") && result.query.includes("P001-WH-M"),"SKU separation lost");
+});
+Deno.test("Task3A open semantic meaning remains available even when no lexical stock/price match exists",()=>{
+  const q="P001-BL-L 買晒未？",semantic=demanded(demand(q,"product",["stock"],["P001-BL-L"]));
+  const result=resolveCurrentFactualRequest({question:q,source_message_id:"current",semantic});
+  equal(result.requested_facts,["stock"]);
+  assert(result.query?.includes("P001-BL-L"),"no semantic KB read for unfamiliar dialectal form");
+  const service="Can the subscription support staged seat activation?";
+  const other=resolveCurrentFactualRequest({question:service,semantic:demanded(demand(service,"product",["staged seat activation"]))});
+  equal(other.requested_facts,["staged seat activation"]);
+});
