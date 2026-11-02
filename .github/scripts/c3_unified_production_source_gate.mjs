@@ -121,7 +121,16 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
  must(profile.task3_c2_p0_authority===TASK3_C2_AUTHORITY,'c2_p0_authority_drift');
  must(profile.frozen_runtime_sha256["supabase/functions/_shared/conversation-closure.ts"]===TASK3_C2_FROZEN_PREIMAGE,'c2_frozen_preimage_drift');
  must(JSON.stringify(profile.authorized_task3_c2_p0_sha256)===JSON.stringify(TASK3_C2_P0_EXACT),'c2_p0_exact_scope_drift');
- for(const [f,h] of Object.entries(TASK3_C2_P0_EXACT))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'c2_p0_exact_source_drift:'+f);
+ // The original negative-fixture test copies runtime files, not the separate
+ // C2 Deno test source. Always validate the latter against the real checkout
+ // when absent only from that isolated sourceOnly fixture; this is NOT a bypass
+ // for a missing or changed test file in the authoritative working tree.
+ for(const [f,h] of Object.entries(TASK3_C2_P0_EXACT)){
+  const candidate=path.join(root,f);
+  const testFixtureOmitted=sourceOnly&&f==="supabase/functions/_shared/transaction-closure-handoff.test.ts"&&root!==process.cwd()&&!fs.existsSync(candidate);
+  const pinned=testFixtureOmitted?path.join(process.cwd(),f):candidate;
+  must(fs.existsSync(pinned)&&sha(fs.readFileSync(pinned))===h,'c2_p0_exact_source_drift:'+f);
+ }
  must(profile.task3_grounding_retry_deployment_authorized===false,'task3_grounding_retry_deployment_not_authorized');
  must(JSON.stringify(profile.authorized_task3_grounding_retry_sha256)===JSON.stringify(TASK3_GROUNDING_RETRY_SOURCE),'task3_grounding_retry_scope_drift');
  must(profile.task2_evidence_deployment_authorized===false,'task2_evidence_deployment_not_authorized');
