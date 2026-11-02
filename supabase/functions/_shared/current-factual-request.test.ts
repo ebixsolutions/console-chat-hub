@@ -858,8 +858,8 @@ Deno.test("Task3A does not preserve an incorrect LLM-expanded price question aft
     item.question="What is the "+incorrectFacet+" of "+sku+"?";
     const result=resolveCurrentFactualRequest({question,source_message_id:"current",semantic:demanded(item)});
     const kb=JSON.parse(result.query!);
-    equal(result.demands[0].question,question,"expanded question must be replaced by source-bound customer quote");
-    equal(kb.questions[0].question,question,"old incorrect semantic question cannot reach KB retrieval");
+    equal(result.demands[0].question,question.normalize("NFKC"),"expanded question must use the canonical source-bound customer quote");
+    equal(kb.questions[0].question,question.normalize("NFKC"),"old incorrect semantic question cannot reach KB retrieval");
     equal(kb.questions[0].requested_facts,[expectedFacet]);
     assert(!result.query?.includes("What is the "+incorrectFacet),"contradictory model question survived");
     equal(result.demands[0].subjects,[sku]);
@@ -877,6 +877,6 @@ Deno.test("Task3A rebuilds a dependent stock query with the verified recent SKU,
   equal(result.subject,sku);
   equal(result.subject_source_message_ids,["recent-product"]);
   equal(result.requested_facts,["stock"]);
-  equal(kb.questions[0].question,sku+" "+quote);
+  equal(kb.questions[0].question,sku+" "+quote.normalize("NFKC"));
   assert(!result.query?.includes("price"),"stale model fact carried into the follow-up query");
 });
