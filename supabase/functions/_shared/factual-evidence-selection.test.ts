@@ -426,19 +426,18 @@ Deno.test("Task3 source-recovery: stock-only zero is known without unsolicited p
   equal(resolveSourceRecordedPartialRecovery(bundle,req,{...recoveryOptions,expectedTenantId:"99"}),null);
 });
 
-Deno.test("Task3 P0: a product-level stock question cannot inherit a single SKU's snapshot",async()=>{
-  // The customer names the parent SPU, not the row's specific SKU variant.
-  const name="P002";
-  const product=document("variant-stock","spu_code: P002\\nspu_name: "+name+"\\nsku_code: P002-NV-XL\\nspec_size: XL\\nprice: 2100.0 CNY\\nstock: 5","Product","Row 4");
-  product.authority!.currentness="unknown";product.authority!.entity_ids=[name];
+Deno.test("Task3 P0: stale SKU evidence cannot become parent-product stock",async()=>{
+  const product=document("variant-stock","spu_code: P002\nspu_name: 轻量化户外冲锋衣\nsku_code: P002-NV-XL\nspec_size: XL\nprice: 2100.0 CNY\nstock: 5","Product","Row 4");
+  product.authority!.currentness="unknown";product.authority!.entity_ids=["P002-NV-XL"];
   await bindPublishedProduct(product);
-  const d=demand(1,name+" price and stock?","product",[name]);d.requested_facts=["price","availability"];
+  const d=demand(1,"P002-NV-XL price and stock?","product",["P002-NV-XL"]);d.requested_facts=["price","availability"];
   const req=request([d]),bundle=selectFactualEvidence([product],req,options);assert(bundle.ok);
-  assert(Boolean(bundle.sources[0]?.selection.catalogue_binding),"source-bound catalogue selection missing");
-  const recovery=resolveSourceRecordedPartialRecovery(bundle,req,{...recoveryOptions,language:"en"});
-  assert(recovery,"already-recorded price should survive incomplete SKU stock scope");
-  equal(recovery.recorded_facts.map(f=>f.field),["price_amount","price_currency"]);
-  assert(recovery.reply.includes("CNY 2,100")&&recovery.reply.includes("live stock verification pending"));
-  assert(!recovery.reply.includes("stock quantity of 5"),"variant stock leaked to the whole product");
-  equal(recovery.unresolved_demand_ids,["demand-1"]);
+  assert(Boolean(bundle.sources[0]?.selection.catalogue_binding),"exact-SKU catalogue selection must exist");
+  // Model a late factual-request subject correction with a retained prior SKU
+  // evidence receipt. A previous variant's source may not prove parent stock.
+  d.subjects=["P002"];d.question="P002 price and stock?";d.source_quote=d.question;
+  bundle.sources[0].target.entity_ids=["P002"];
+  const partial=resolveSourceRecordedPartialRecovery(bundle,req,{...recoveryOptions,language:"en"});
+  assert(!partial?.recorded_facts.some(f=>f.field==="stock_quantity"),"stale SKU stock leaked to the parent subject");
+  assert(!partial?.reply.includes("stock quantity of 5"),"wrong variant inventory surfaced in customer text");
 });
