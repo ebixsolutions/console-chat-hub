@@ -8,7 +8,13 @@ const HIGH_RISK_GUARD = /(爆炸|起火|著火|触电|觸電|漏電|受傷|受�
 // A closure phrase is authoritative only when the rest of the same message
 // contains no additional service request. Do not reinterpret "no more ... but
 // please check ..." or "no quote yet" as a customer-confirmed resolution.
-const NO_MORE = /(?:沒有了|没有了|冇喇|冇啦|(?:暫時|暂时)?(?:沒有|没有|無|无|冇)(?:其他|別的|别的)(?:問題|问题|疑問|疑问)|暫時沒有|暂时没有|不用了|唔使喇|唔使啦|就這樣|就这样|沒事了|没事了|沒有問題了|没有问题了|no more(?:\s+(?:questions?|help|issues?))?|nothing else|that['’]?s all|no thanks|all good|i['’]?m good)/i;
+const NO_MORE = /(?:沒有了|没有了|冇喇|冇啦|(?:暫時|暂时)?(?:沒有|没有|無|无|冇)(?:其他|別的|别的)(?:問題|问题|疑問|疑问)|暫時沒有|暂时没有|不用了|唔使喇|唔使啦|就這樣|就这样|沒事了|没事了|沒有問題了|没有问题了|no more(?:\s+(?:questions?|help|issues?))?|(?:i\s+)?(?:do\s+not|don['’]t)\s+have\s+any\s+more\s+questions?|nothing else|that['’]?s all|no thanks|all good|i['’]?m good)/i;
+// A language-local end-of-conversation acknowledgement is not a grant to
+// discard another service request in the same message. Fail closed unless
+// text preceding the closure phrase consists entirely of safe closure-context
+// words; this protects against "please check ...; no more questions".
+const CLOSURE_PENDING_REQUEST = /(?:仲想|還想|还想|想問|想问|要問|要问|幫我|帮我|請先|请先|麻煩|麻烦|核實|核实|查詢|查询|查下|please|could you|can you|tell me|check|confirm|show me|how much|how long|i(?: still)? need|still want|not saying|not sure|not yet|先|before|but|不過|不过)/iu;
+const CLOSURE_SAFE_PREFIX = /^(?:(?:[\s，,。.!！;；]*)?(?:係|是|好|好的|对|對|嗯|yes|yeah|okay|ok|no|多謝|謝謝|谢谢|thanks|thank\s+you|我|i(?: have)?|幫到我|帮到我)[\s，,。.!！;；]*)*(?:[^?？\n]{1,70}(?:問題|问题|issue|question)[\s，,。.!！;；]*(?:已經|已经|has been|is|was)?[\s，,。.!！;；]*(?:解決(?:了)?|解决(?:了)?|resolved|solved)[\s，,。.!！;；]*)?$/iu;
 const CLOSURE_COURTESY_SUFFIX = /^[\s，,。.!！;；]*(?:(?:多謝|謝謝|谢谢|唔該|唔该|thank\s+you|thanks|bye|goodbye|了|啦|喇)[\s，,。.!！;；]*)*$/i;
 const POSITIVE = /(滿意|满意|很好|幫到我|帮到我|解決了|解决了|多謝|謝謝|谢谢|great|good service|helpful|satisfied|resolved)/i;
 const ACK_ONLY = /^(?:謝謝|谢谢|多謝|唔該|明白|明白了|知道了|收到|好的|好|ok|okay|got it|understood|thanks|thank you)[。.!！?？\s]*$/i;
@@ -27,7 +33,8 @@ export function classifyConversationClosure(text:string): ConversationClosureCla
     // More questions or instructions in this same customer turn outrank a
     // preceding no-more/help-ended phrase. The canonical Commerce blockers
     // remain a separate mandatory server-side resolution guard.
-    if (/[?？]/u.test(before) || !CLOSURE_COURTESY_SUFFIX.test(after)) {
+    if (/[?？]/u.test(before) || CLOSURE_PENDING_REQUEST.test(before) ||
+        !CLOSURE_SAFE_PREFIX.test(before) || !CLOSURE_COURTESY_SUFFIX.test(after)) {
       return {kind:"none",language,reason:"follow_up_or_missing_fact_precedes_closure"};
     }
     return {kind:POSITIVE.test(t)?"positive_no_more_help":"no_more_help",language,reason:"customer_has_no_more_help_requests"};

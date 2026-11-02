@@ -416,6 +416,7 @@
     "supabase/functions/_shared/commerce-state-runtime-base.ts",
     "supabase/functions/_shared/complete-scoped-read.ts",
     "supabase/functions/_shared/contextual-customer-update.test.ts",
+    "supabase/functions/_shared/conversation-closure.ts",
     "supabase/functions/_shared/conversation-intelligence.ts",
     "supabase/functions/_shared/conversation-long-memory.test.ts",
     "supabase/functions/_shared/conversation-long-memory.ts",
@@ -470,6 +471,7 @@
     "supabase/functions/_shared/service-semantic-routing.test.ts",
     "supabase/functions/_shared/service-semantic-routing.ts",
     "supabase/functions/_shared/transaction-closure-handoff.integration.test.ts",
+    "supabase/functions/_shared/transaction-closure-handoff.test.ts",
     "supabase/functions/_shared/uat-execution-contract.ts",
     "supabase/functions/_shared/uat-execution-readiness.ts",
     "supabase/functions/_shared/vertex-generation-config.ts",
@@ -1401,5 +1403,13 @@
     "src/routes/_authenticated/console.widget-preview.tsx": "6349d99f1638f138b44dec5629cb3f3ec690ff890a3529257ad0057674612af0",
     "tests/task1-director/event-driven-widget.test.mjs": "9d06588f06703d727236a4807b2292c5ea70e2729ae92deccc5d498b5ba5643d",
     "tests/console-navigation/widget-recovery.test.mjs": "50ea5f62f5f1ee53ef5b9b436fea7521f15043e382be18631020001a11a52f8d"
-  }
+  },
+  "authorized_task3_c2_p0_sha256": {
+    "supabase/functions/_shared/conversation-closure.ts": "c222706856ed70721639aee8467b36383c118942055c0a41d9dde413c97655c8",
+    "supabase/functions/_shared/transaction-closure-handoff.test.ts": "13ec3db07c761f4063c8befe5034a3365b061a4306e962d09a5faccc83c9ce1b"
+  },
+  "task3_c2_p0_production_deploy_authorized": false,
+  "task3_c2_p0_authority": "DIRECTOR_ORIGINAL_TASK3_C2_RUNTIME_P0_REPAIR_20261102",
+  "task3_c2_p0_original_frozen_sha256": "12431e3c5d285f56270945e28a3e026d0d1b1544fa8dbe7484cc4fd67b1995dd",
+  "task3_c2_p0_proof": "C3 required preflight run 41443520871 FAIL exit1; original-source Node22 native 5/13 P0; targeted 30/30 before commit; untouched Frozen preimage"
 }
