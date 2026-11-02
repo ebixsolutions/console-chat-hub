@@ -1,3 +1,4 @@
+import { classifyConversationClosure } from "./conversation-closure.ts";
 import {
   buildC2HandoffPackage,
   classifyC2HandoffReason,
@@ -238,4 +239,49 @@ Deno.test("C2 package generation never mutates canonical state", () => {
   const s = state(); const before = JSON.stringify(s);
   buildC2HandoffPackage(packageInput({ commerce_state:s }));
   assert(JSON.stringify(s)===before, "canonical state mutated");
+});
+
+Deno.test("Task3 v3.1 C2 natural-language closure is not a keyword-only substring", () => {
+  const cases: Array<{ utterance: string; kind: string }> = [
+    { utterance: "係，幫到我，產品資料呢個問題已經解決。暫時無其他問題，多謝！", kind: "positive_no_more_help" },
+    { utterance: "冇啦，不過我仲想知道安裝費幾多？", kind: "none" },
+    { utterance: "沒有其他問題，但請先幫我查安裝費", kind: "none" },
+    { utterance: "I have no more questions, but can you check the delivery cost?", kind: "none" },
+    { utterance: "沒有其他問題，不過今日幾錢？", kind: "none" },
+    { utterance: "暫時沒有報價", kind: "none" },
+    { utterance: "沒有其他問題，多謝", kind: "positive_no_more_help" },
+    { utterance: "冇其他問題，多謝", kind: "positive_no_more_help" },
+    { utterance: "没有其他问题，谢谢", kind: "positive_no_more_help" },
+    { utterance: "No more questions, thanks!", kind: "no_more_help" },
+    { utterance: "多謝", kind: "closure_candidate" },
+    { utterance: "我唔使真人，但仲想問幾錢？", kind: "none" },
+    { utterance: "沒有其他問題，但請轉真人客服", kind: "none" },
+    { utterance: "冇", kind: "none" },
+    { utterance: "No more stock, can I order it?", kind: "none" },
+  ];
+  for (const {utterance, kind} of cases) {
+    const classified = classifyConversationClosure(utterance);
+    assert(classified.kind === kind, "misclassified closure: " + utterance + " => " + classified.kind);
+  }
+});
+
+Deno.test("Task3 v3.1 C2 cannot resolve follow-up questions even when empty Commerce state", () => {
+  const utterances = [
+    "冇啦，不過我仲想知道安裝費幾多？",
+    "沒有其他問題，但請先幫我查安裝費",
+    "I have no more questions, but can you check the delivery cost?",
+  ];
+  for (const utterance of utterances) {
+    const kind = classifyConversationClosure(utterance).kind;
+    const decision = decideTransactionClosure({utterance_kind:kind,commerce_state:state()});
+    assert(!decision.may_resolve, "unresolved service question marked RESOLVED: " + utterance);
+  }
+  const confirmed = classifyConversationClosure(
+    "係，幫到我，產品資料呢個問題已經解決。暫時無其他問題，多謝！",
+  );
+  assert(confirmed.kind === "positive_no_more_help", "explicit v3.1 confirmation not recognized");
+  const guarded = state();
+  guarded.unresolved_items = ["confirm merchant price"];
+  assert(!decideTransactionClosure({utterance_kind:confirmed.kind,commerce_state:guarded}).may_resolve,
+    "actual Commerce blocker removed by positive speech");
 });
