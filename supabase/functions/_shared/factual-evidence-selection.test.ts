@@ -427,7 +427,8 @@ Deno.test("Task3 source-recovery: stock-only zero is known without unsolicited p
 });
 
 Deno.test("Task3 P0: a product-level stock question cannot inherit a single SKU's snapshot",async()=>{
-  const name="轻量化户外冲锋衣";
+  // The customer names the parent SPU, not the row's specific SKU variant.
+  const name="P002";
   const product=document("variant-stock","spu_code: P002\\nspu_name: "+name+"\\nsku_code: P002-NV-XL\\nspec_size: XL\\nprice: 2100.0 CNY\\nstock: 5","Product","Row 4");
   product.authority!.currentness="unknown";product.authority!.entity_ids=[name];
   await bindPublishedProduct(product);

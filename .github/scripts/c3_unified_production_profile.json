@@ -1386,7 +1386,7 @@
   "task2_evidence_deployment_authorized": false,
   "task3_grounding_retry_deployment_authorized": false,
   "authorized_task3_grounding_retry_sha256": {
-    "supabase/functions/_shared/factual-evidence-selection.test.ts": "f5d06b1f9642154261acf983ad9161b5243ca96a5baf2e9d820208c66c007b8b",
+    "supabase/functions/_shared/factual-evidence-selection.test.ts": "e0b88f5391a4a5d24abdee3dee610df095f1edd2a57f60ee6e1f61bca700dc99",
     "supabase/functions/_shared/factual-evidence-selection.ts": "b91fe5f590184de692d0f86efdbf4c5db6c2feecf868318f1bd7aec97c0c4fb2",
     "supabase/functions/_shared/grounding-evidence.ts": "7835a07dee6b0737929898376a2589490a6e1e1dec77cca7de8af733482b62e5",
     "supabase/functions/_shared/llm-router.ts": "5569209ef967aeb369e99887d1e0ca71c3587be34ef85843ab69a72006e49d6a",
