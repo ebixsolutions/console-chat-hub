@@ -845,3 +845,38 @@ Deno.test("Task3A open semantic meaning remains available even when no lexical s
   const other=resolveCurrentFactualRequest({question:service,semantic:demanded(demand(service,"product",["staged seat activation"]))});
   equal(other.requested_facts,["staged seat activation"]);
 });
+
+Deno.test("Task3A does not preserve an incorrect LLM-expanded price question after an explicit stock quote",()=>{
+  for(const [question,incorrectFacet,expectedFacet] of [
+    ["P001-BL-M 有冇貨？","price","stock"],
+    ["P001-BL-L 库存多少？","price","stock"],
+    ["Is P001-WH-M in stock?","price","stock"],
+    ["P001-WH-M 幾錢？","stock","price"],
+  ]){
+    const sku=/P001-[A-Z]+-[A-Z]+/u.exec(question)![0];
+    const item=demand(question,"product",[incorrectFacet],[sku]);
+    item.question="What is the "+incorrectFacet+" of "+sku+"?";
+    const result=resolveCurrentFactualRequest({question,source_message_id:"current",semantic:demanded(item)});
+    const kb=JSON.parse(result.query!);
+    equal(result.demands[0].question,question,"expanded question must be replaced by source-bound customer quote");
+    equal(kb.questions[0].question,question,"old incorrect semantic question cannot reach KB retrieval");
+    equal(kb.questions[0].requested_facts,[expectedFacet]);
+    assert(!result.query?.includes("What is the "+incorrectFacet),"contradictory model question survived");
+    equal(result.demands[0].subjects,[sku]);
+  }
+});
+Deno.test("Task3A rebuilds a dependent stock query with the verified recent SKU, not an invented price question",()=>{
+  const quote="有冇貨？",sku="P001-BL-M";
+  const item=demand(quote,"product",["price"],[sku]);
+  item.question="What is the price of "+sku+"?";
+  const semantic=demanded(item);
+  semantic.referents=[{ref:sku,source:"prior_turn",confidence:.97}];
+  const result=resolveCurrentFactualRequest({question:quote,source_message_id:"current",semantic,
+    history:[{id:"recent-product",role:"visitor",content:sku+" 功能？"}]});
+  const kb=JSON.parse(result.query!);
+  equal(result.subject,sku);
+  equal(result.subject_source_message_ids,["recent-product"]);
+  equal(result.requested_facts,["stock"]);
+  equal(kb.questions[0].question,sku+" "+quote);
+  assert(!result.query?.includes("price"),"stale model fact carried into the follow-up query");
+});

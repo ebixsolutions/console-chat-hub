@@ -428,12 +428,27 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     bindings.push(...located.map(binding => ({...binding, demand_id: id})));
     if (["product", "policy", "unknown"].includes(demand.source_type)) contexts.push(...located.filter(binding => !binding.current && binding.customer_text).map(binding => clean(binding.customer_text)));
     const subjects = unique(located.map(binding => binding.subject));
+    const correctedFacts = quoteBound
+      ? sourceBoundRequestedFacts(sourceQuote, demand.requested_facts)
+      : unique(demand.requested_facts);
+    const quotedFacets = currentFacets(sourceQuote);
+    const modelFacets = unique(demand.requested_facts.flatMap(fact =>
+      currentFacets(fact.replace(/_/gu, " "))));
+    const factConflict = quoteBound && !ambiguity.is_ambiguous && quotedFacets.length > 0 &&
+      (quotedFacets.some(fact => !modelFacets.includes(fact)) ||
+        modelFacets.some(fact => !quotedFacets.includes(fact)));
+    // Once the actual customer quote disproves a model's fact type, never
+    // retain the model's stale expanded question (e.g. price vs stock). Only
+    // add source-validated subjects absent from the original quote; a second
+    // synthetic question must not be allowed to revive an older SKU or field.
+    const answerQuestion = factConflict
+      ? [subjects.filter(subject => !norm(sourceQuote).includes(norm(subject))).join("; "), sourceQuote]
+          .filter(Boolean).join(" ")
+      : resolved.question;
     return {
-      id, question: resolved.question, source_quote: sourceQuote, subjects,
+      id, question: answerQuestion, source_quote: sourceQuote, subjects,
       subject_source_message_ids: unique(located.map(binding => binding.source_message_id ?? "")),
-      source_type: demand.source_type, requested_facts: quoteBound
-        ? sourceBoundRequestedFacts(sourceQuote, demand.requested_facts)
-        : unique(demand.requested_facts),
+      source_type: demand.source_type, requested_facts: correctedFacts,
       constraints: mergeDecisionContext(subjectConstraints(subjects, input), demand.constraints),
       customer_correction: demand.customer_correction, explicit_negations: [...demand.explicit_negations], ambiguity,
     };

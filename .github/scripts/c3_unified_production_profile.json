@@ -1393,8 +1393,8 @@
     "supabase/functions/generate-reply/index.ts": "8939c2b9340a653a2bafc610e8ebedeb0d1f80aadc64d682900df1db0485b15e",
     "tests/emergency-p0/chain.test.mjs": "00ed0472cb69adc0fc8076b456bac6660f842783625282d475afb52df30d4dea",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "d8dc886e185ed6ffe8f83d5da9b905a9c56643449adf86b2dde04d281fc0d63f",
-    "supabase/functions/_shared/current-factual-request.ts": "1b35d9f5e15381cab50180074ff6b647fbf78aace8dbac4d0450228a5c526a60",
-    "supabase/functions/_shared/current-factual-request.test.ts": "be89909f07172a72084d73ba5170969db10d430a6c9e2252eb3fd814c1b43577"
+    "supabase/functions/_shared/current-factual-request.ts": "f40d9235404fb0def3abf9b9654be4f58ecbbc326147dff523ee616b8ef88a24",
+    "supabase/functions/_shared/current-factual-request.test.ts": "c2c2daee1b4a5c6738124073db6dbbe238040cd023868b1e13054c1891a2b031"
   },
   "task3_widget_readback_publish_authorized": false,
   "authorized_task3_widget_readback_sha256": {
