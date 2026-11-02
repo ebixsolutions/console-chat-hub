@@ -285,3 +285,29 @@ Deno.test("Task3 v3.1 C2 cannot resolve follow-up questions even when empty Comm
   assert(!decideTransactionClosure({utterance_kind:confirmed.kind,commerce_state:guarded}).may_resolve,
     "actual Commerce blocker removed by positive speech");
 });
+
+Deno.test("Task3 v3.1 frozen C2 source regression: unresolved prefix must not close Ticket", () => {
+  const cases: Array<{ utterance: string; expected: "none" | "no_more_help" | "positive_no_more_help" }> = [
+    { utterance: "我仲想問埋保養期，冇其他問題", expected: "none" },
+    { utterance: "麻煩先幫我核實安裝費，我冇其他問題", expected: "none" },
+    { utterance: "Could you check the delivery charge, no more questions", expected: "none" },
+    { utterance: "I am not saying I have no more questions", expected: "none" },
+    { utterance: "Please confirm the stock first; that is all", expected: "none" },
+    { utterance: "係，幫到我，產品資料呢個問題已經解決。暫時無其他問題，多謝！", expected: "positive_no_more_help" },
+    { utterance: "Thanks, no more questions", expected: "no_more_help" },
+    { utterance: "冇其他問題，多謝", expected: "positive_no_more_help" },
+    { utterance: "我冇其他問題", expected: "no_more_help" },
+    { utterance: "I have no more questions", expected: "no_more_help" },
+    { utterance: "I don't have any more questions", expected: "no_more_help" },
+    { utterance: "No, that's all", expected: "no_more_help" },
+    { utterance: "No, please check the stock first, that is all", expected: "none" },
+  ];
+  for (const {utterance,expected} of cases) {
+    const classified = classifyConversationClosure(utterance);
+    assert(classified.kind === expected, "C2 source P0 mismatch: " + JSON.stringify({utterance,expected,actual:classified.kind}));
+    const decision = decideTransactionClosure({utterance_kind:classified.kind,commerce_state:state()});
+    if (expected === "none") {
+      assert(!decision.may_resolve, "C2 wrongly resolved active customer question: " + utterance);
+    }
+  }
+});
