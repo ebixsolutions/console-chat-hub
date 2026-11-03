@@ -1048,3 +1048,29 @@ Deno.test("Task3 P0-1 multilingual semantic re-query never revives a cited produ
    trusted_company_id:company,history:cited,semantic:demanded(demand(switched,"product",["availability"],[]))});
  assert(changed.subject!==subject,"explicit topic switch inherited a previous cited product");
 });
+
+
+Deno.test("Task3C cross-industry open-ended fact rejection identifies the actual customer question without inventing an answer",()=>{
+  const existing=resolveCurrentFactualRequest({question:"CW-SUL70BA 有冇貨？",semantic:frame(["stock"])});
+  assert(existing.applicable&&existing.subject==="CW-SUL70BA"&&existing.demands.length===1,"setup not source-bound");
+  const query="佢連續運作六小時時嘅恆溫噪音會達到幾多分貝？";
+  const request={...existing,question:query,original_question:query,requested_facts:["continuous operating acoustic rating"],
+    demands:[{...existing.demands[0],source_quote:query,question:query,requested_facts:["continuous operating acoustic rating"]}]};
+  for(const language of ["zh-TW","zh-CN","en"] as const){
+    const reply=renderUnverifiedFactualNextStep(request,language);
+    assert(!!reply&&reply.includes(query)&&reply.includes("CW-SUL70BA"),"open-domain question fell into generic no-answer: "+language);
+    assert(!/已核實|已確認|has been transferred|已轉交|已转接|HK\$[0-9]|[0-9]+\s*(?:dB|分貝)/u.test(reply),"unsupported fact or action promoted");
+  }
+  const policyQuestion="Is there weekend cancellation coverage for this service?";
+  const policy={...request,subject:null,subjects:[],question:policyQuestion,original_question:policyQuestion,
+    requested_facts:["weekend cancellation coverage"],demands:[{...request.demands[0],source_type:"policy" as const,
+      source_quote:policyQuestion,question:policyQuestion,subjects:[],requested_facts:["weekend cancellation coverage"]}]};
+  const policyReply=renderUnverifiedFactualNextStep(policy,"en");
+  assert(!!policyReply&&policyReply.includes(policyQuestion)&&!policyReply.includes("CW-SUL70BA"),"merchant-wide policy reused old product");
+  const sensitive={...request,question:"Order #123456 status?",original_question:"Order #123456 status?",
+    demands:[{...request.demands[0],source_quote:"Order #123456 status?"}]};
+  assert(renderUnverifiedFactualNextStep(sensitive,"en")===null,"sensitive/private source locator repeated");
+  assert(renderUnverifiedFactualNextStep({...request,transaction_required:true},"en")===null,"transaction outcome implied from KB");
+  assert(renderUnverifiedFactualNextStep({...request,demands:[...request.demands,...request.demands]},"en")===null,
+    "multiple independent unanswered demands collapsed into one false-complete response");
+});

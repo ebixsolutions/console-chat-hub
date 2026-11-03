@@ -134,7 +134,34 @@ export function renderUnverifiedFactualNextStep(
     {pattern:/policy|terms|政策|條款|条款/iu,en:"applicable policy",tw:"適用政策",cn:"适用政策"},
   ];
   const details = dimensions.filter(item => wants(item.pattern));
-  if (!stock && !price && details.length === 0) return null;
+  if (!stock && !price && details.length === 0) {
+    // Open-ended, cross-industry semantic facts cannot be forced into a fixed
+    // price/stock/feature vocabulary. Use ONLY the actual customer source
+    // quote to identify the unresolved question after evidence was rejected.
+    // Neither a model-proposed fact label nor a past KB answer is authority.
+    const demand = request.demands.length === 1 ? request.demands[0] : null;
+    if (!demand || request.transaction_required || demand.ambiguity.is_ambiguous ||
+        !["product", "policy", "unknown"].includes(demand.source_type) ||
+        demand.subjects.length > 1) return null;
+    const quote = demand.source_quote.normalize("NFKC").replace(/\s+/gu, " ").trim();
+    if (!quote || quote.length < 4 || quote.length > 110 ||
+        !request.original_question.normalize("NFKC").includes(quote) ||
+        /[\u0000-\u001F\u007F<>@]/u.test(quote) ||
+        /https?:\/\/|(?:\b\d[\d-]{4,}\b)|\b(?:order|ticket|account|booking)\s*(?:number|no\.?|id|#)?\s*[a-z0-9-]{6,}/iu.test(quote)) return null;
+    const subjectName = (request.subject ?? "").normalize("NFKC").trim();
+    const subject = subjectName.length >= 2 && subjectName.length <= 90 &&
+      !/[\u0000-\u001F\u007F<>@]/u.test(subjectName) ? subjectName : null;
+    const enTarget = subject ? ' about "' + subject + '"' : "";
+    const zhTarget = subject ? "關於「" + subject + "」，" : "";
+    if (language === "en") return 'I could not verify the specific question "' + quote + '"' + enTarget +
+      " from the available evidence. I won't assume the answer or a completed action. " +
+      "You can ask for human support to check; no transfer has been made.";
+    if (language === "zh-CN") return (subject ? "关于「" + subject + "」，" : "") +
+      "你问的「" + quote + "」暂时未能从可靠资料核实，我不会自行推断，也没有进行任何交易或转接。" +
+      "如需进一步确认，可选择「转人工客服」。";
+    return zhTarget + "你問嘅「" + quote + "」暫時未能從可靠資料核實，我唔會自行推斷，亦未有執行交易或轉交。" +
+      "如需進一步確認，你可以選擇「轉真人客服」。";
+  }
   const rawSubject = (request.subject ?? (request.subjects.length === 1 ? request.subjects[0] : "")).normalize("NFKC").trim();
   // Only source-validated, short, non-control-bearing subject labels may be
   // repeated; this is still a customer subject, not merchant identity proof.
