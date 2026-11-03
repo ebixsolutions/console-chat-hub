@@ -245,7 +245,7 @@ Deno.test("Task3B v3.1 document-only, indexed-API-only, mixed conflict remain se
  const first=answer("CW-SUL70BA 幾錢？",[documentOnly]);
  const second=answer("CW-SUL70BA price and stock?",[apiOnly],"en");
  assert(first.result?.reply.includes("5,680")&&!first.result.reply.includes("HK$5,680")&&
-   !first.result.price_fact&&b2(first,"CW-SUL70BA 幾錢？").decision==="allow","document-only missing-currentness, currency or model-bound B2 denial: ${JSON.stringify({reply:first.result?.reply,b2:first.result?b2(first,"CW-SUL70BA 幾錢？").code:null})}");
+   !first.result.price_fact&&b2(first,"CW-SUL70BA 幾錢？").decision==="allow",`document-only price/currency/target B2 mismatch: ${JSON.stringify({reply:first.result?.reply,code:first.result?b2(first,"CW-SUL70BA 幾錢？").code:null})}`);
  assert(second.result?.reply.includes("HK$4,238")&&second.result.reply.includes("Recorded stock quantity: 2")&&
    !second.result.price_fact&&b2(second,"CW-SUL70BA price and stock?").decision==="allow","indexed-only facts not retained as recorded-only");
  const mixed=answer("CW-SUL70BA price and stock?",[documentOnly,apiOnly],"en");
