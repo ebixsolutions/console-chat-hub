@@ -376,8 +376,15 @@ function resolveDemandSubjects(
   // Empty refs can mean deliberate category discovery. Only a genuinely
   // subject-less facet or a pronoun gains a missing referent from history;
   // do not promote a grammar-derived discovery phrase into a named product.
+  // A trusted, source-quoted factual demand can express a previously cited
+  // product follow-up in any language, even when no fixed price/stock word
+  // appears. This locates a NEW read only; it never reuses old seller facts.
+  const semanticFactualFollowup = demand.source_type === "product" &&
+    trustedFrame(input.semantic)?.operation === "ASK_FACT" &&
+    demand.requested_facts.length > 0;
+  const subjectlessFactualFollowup = currentFacets(quote).length > 0 || semanticFactualFollowup;
   const dependent = refs.length > 0 || POINTER.test(quote) ||
-    demand.source_type !== "policy" && currentFacets(quote).length > 0 && !mentioned.length;
+    demand.source_type !== "policy" && subjectlessFactualFollowup && !mentioned.length;
   if (!dependent) return unchanged();
   if (mentioned.length && !explicit.length) return {bindings: [], question: quote, unresolved: true};
   if (!explicit.length && (EXPLICIT_HISTORY_REFERENCE.test(quote) ||
@@ -386,7 +393,7 @@ function resolveDemandSubjects(
   // The prior cited recommendation is a locator for a fresh price/stock
   // query, not evidence that the current merchant amount or inventory is valid.
   if(demand.source_type==="product"&&!explicit.length&&!currentSubjects.length&&
-     currentFacets(quote).length>0&&!TOPIC_BOUNDARY.test(quote)&&
+     subjectlessFactualFollowup&&!TOPIC_BOUNDARY.test(quote)&&
      !EXPLICIT_HISTORY_REFERENCE.test(quote)&&!LIFECYCLE_BOUNDARY.test(quote)&&
      !PLURAL_POINTER.test(quote)&&!demand.customer_correction&&
      !demand.explicit_negations.length&&!Object.keys(demand.constraints).length&&refs.length<=1){
