@@ -114,7 +114,11 @@ export function renderUnverifiedFactualNextStep(
   // Never infer a missing price or inventory level from a published snapshot.
   const facts = (request.requested_facts ?? []).map(fact => fact.normalize("NFKC").toLowerCase());
   const wants = (pattern: RegExp) => facts.some(fact => pattern.test(fact));
-  const stock = wants(/stock|inventory|availab|庫存|库存|現貨|现货/iu);
+  // Booking/appointment availability is not physical stock availability.
+  // Explicit inventory facts remain independent of reservation time slots.
+  const stock = wants(/stock|inventory|庫存|库存|現貨|现货/iu) ||
+    facts.some(fact => /availab/iu.test(fact) &&
+      !/booking|reservation|appointment|time\s*slots?|預約|预约|訂位|订位|訂房|订房/iu.test(fact));
   const price = wants(/price|pricing|cost|售價|售价|價格|价格|價錢|价钱/iu);
   // General business facts must not collapse into a vague "related data"
   // fallback. Keep these capability/fact labels cross-industry; none imply

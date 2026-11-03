@@ -927,6 +927,8 @@ Deno.test("Task3C: missing warranty, delivery, refund, booking, subscription and
    const traditional=renderUnverifiedFactualNextStep(request,"zh-TW");
    const english=renderUnverifiedFactualNextStep(request,"en");
    assert(!!traditional&&traditional.includes("CW-SUL70BA")&&traditional.includes(zh),JSON.stringify({fact,traditional}));
+   if(fact==="booking availability") assert(!traditional.includes("即時現貨")&&!traditional.includes("即時售價"),
+     "appointment availability was conflated with sellable inventory");
    assert(!!english&&english.includes(en)&&english.includes("no transfer has been made"),JSON.stringify({fact,english}));
    assert(!/已轉交|已退款|已預約|已核實|已付款|HK\$[0-9]/u.test(traditional),"unknown business state promoted");
  }
