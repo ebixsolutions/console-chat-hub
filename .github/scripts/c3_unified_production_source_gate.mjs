@@ -118,9 +118,6 @@ export function verifyIdentity(root,profile,expected){
  return {head,tree,changed};
 }
 export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs.readFileSync(path.join(root,PROFILE_PATH))),expectedIdentity,sourceOnly=false}={}){
- must(profile.task3c_unverified_reply_production_deploy_authorized===false,'task3c_production_not_authorized');
-  must(JSON.stringify(profile.authorized_task3c_unverified_reply_sha256)===JSON.stringify(TASK3C_UNVERIFIED_REPLY_SOURCE),'task3c_exact_scope_drift');
-  for(const [f,h] of Object.entries(TASK3C_UNVERIFIED_REPLY_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task3c_source_hash_drift:'+f);
   must(profile.task3_c2_p0_production_deploy_authorized===false,'c2_p0_deployment_not_authorized');
  must(profile.task3_c2_p0_authority===TASK3_C2_AUTHORITY,'c2_p0_authority_drift');
  must(profile.frozen_runtime_sha256["supabase/functions/_shared/conversation-closure.ts"]===TASK3_C2_FROZEN_PREIMAGE,'c2_frozen_preimage_drift');
@@ -248,7 +245,11 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
  must(profile.task3_widget_readback_publish_authorized===false,'task3_widget_readback_publish_not_authorized');
  must(JSON.stringify(profile.authorized_task3_widget_readback_sha256)===JSON.stringify(TASK3_WIDGET_READBACK_SOURCE),'task3_widget_readback_scope_drift');
  for(const [file,h] of Object.entries(TASK3_WIDGET_READBACK_SOURCE))must(fs.existsSync(path.join(root,file))&&sha(fs.readFileSync(path.join(root,file)))===(TASK3C_UNVERIFIED_REPLY_SOURCE[file]??h),'task3_widget_readback_hash_drift:'+file);
- return {status:'SOURCE_VALIDATED',mode:profile.mode,contract:profile.contract,authorization:profile.authorization,backend:profile.backend,identity,files,closure_sha256:sha(JSON.stringify(files)),hosted_runtime:'NOT_TESTED',uat_start_allowed:false};
+   // Original anti-tamper negative-fixture error identities execute first.
+  must(profile.task3c_unverified_reply_production_deploy_authorized===false,'task3c_production_not_authorized');
+  must(JSON.stringify(profile.authorized_task3c_unverified_reply_sha256)===JSON.stringify(TASK3C_UNVERIFIED_REPLY_SOURCE),'task3c_exact_scope_drift');
+  for(const [f,h] of Object.entries(TASK3C_UNVERIFIED_REPLY_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task3c_source_hash_drift:'+f);
+  return {status:'SOURCE_VALIDATED',mode:profile.mode,contract:profile.contract,authorization:profile.authorization,backend:profile.backend,identity,files,closure_sha256:sha(JSON.stringify(files)),hosted_runtime:'NOT_TESTED',uat_start_allowed:false};
 }
 export function verifyChildEvidence(rows){
  must(Array.isArray(rows)&&rows.length>0,'missing_evidence');
