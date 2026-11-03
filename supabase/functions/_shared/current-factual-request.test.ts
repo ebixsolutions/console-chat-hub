@@ -907,6 +907,31 @@ Deno.test("Task3C: no source-owned current fact, ambiguous product, or private t
 });
 
 
+
+Deno.test("Task3C: missing warranty, delivery, refund, booking, subscription and entitlement use specific truthful language",()=>{
+ const original=resolveCurrentFactualRequest({question:"CW-SUL70BA 有冇貨？",semantic:frame(["stock"])});
+ assert(original.applicable&&original.subject==="CW-SUL70BA","source subject missing");
+ const samples:[
+  string,string,string
+ ][]=[
+  ["warranty","保養條款","warranty terms"],
+  ["delivery eligibility and schedule","送貨安排","delivery terms"],
+  ["refund","退換貨／退款條款","return or refund terms"],
+  ["booking availability","預約安排","booking availability"],
+  ["subscription renewal","訂閱條款","subscription terms"],
+  ["membership entitlement","會員權益","membership entitlement"],
+  ["features","產品／服務功能","product or service features"],
+ ];
+ for(const [fact,zh,en] of samples){
+   const request={...original,requested_facts:[fact]};
+   const traditional=renderUnverifiedFactualNextStep(request,"zh-TW");
+   const english=renderUnverifiedFactualNextStep(request,"en");
+   assert(!!traditional&&traditional.includes("CW-SUL70BA")&&traditional.includes(zh),JSON.stringify({fact,traditional}));
+   assert(!!english&&english.includes(en)&&english.includes("no transfer has been made"),JSON.stringify({fact,english}));
+   assert(!/已轉交|已退款|已預約|已核實|已付款|HK\$[0-9]/u.test(traditional),"unknown business state promoted");
+ }
+});
+
 // Task3C v3.1 test-plan projection only: verifies source-bound new KB target,
 // not a successful network request or paid dispatch receipt.
 Deno.test("Task3C v3.1 T05 accepted exact model replaces the near-model candidate for the next KB request",()=>{

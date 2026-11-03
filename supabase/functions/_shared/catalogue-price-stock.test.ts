@@ -278,3 +278,15 @@ Deno.test("Task3B v3.1 independently identity-bound same-SKU price conflicts fai
  assert(!conflict.result&&!conflict.question&&(!conflict.selection.ok||!conflict.selection.document),
    "two identity-bound same-SKU prices silently selected a winner instead of retaining conflict");
 });
+
+Deno.test("Task3B v3.1 identity-bound document-only SKU provides recorded USD price and zero stock, never cost or current quote",async()=>{
+ const manual="spu_code: JK-101\nspu_name: Trail jacket\nsku_code: JK-101-M\nprice: USD 85\nspecial_price: USD 72\ncost_price: USD 20\nstock: 0";
+ const source=await document(manual,"task3b-identity-bound-document",{entity_ids:["JK-101-M"]});
+ const result=answer("JK-101-M price and stock?",[source],"en");
+ assert(result.selection.ok&&result.selection.document?.document_id===source.document_id&&
+   result.result?.reply.includes("USD 85")&&result.result.reply.includes("quantity: 0"),
+   "authorized document-only exact SKU not usable as a recorded-only partial answer");
+ assert(!result.result?.reply.includes("USD 72")&&!result.result?.reply.includes("USD 20")&&
+   !result.result?.price_fact&&b2(result,"JK-101-M price and stock?").decision==="allow",
+   "document-only source promoted a special/cost price or current merchant offer");
+});

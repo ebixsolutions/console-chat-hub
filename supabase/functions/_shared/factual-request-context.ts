@@ -66,7 +66,7 @@ export function currentFactualFollowupContext(
 
 const FACT_CLASSES = new Set([
   "price", "stock", "features", "horsepower", "suitability", "specification",
-  "policy", "model_info", "availability", "warranty", "delivery", "refund",
+  "policy", "model_info", "availability", "warranty", "delivery", "refund", "return", "booking", "appointment", "entitlement", "subscription",
 ]);
 
 /** Safe correlation data only. Full prompts, arbitrary subject names and customer
@@ -109,29 +109,59 @@ export function renderUnverifiedFactualNextStep(
 ): string | null {
   if (!request?.applicable || request.needs_subject_clarification ||
       request.subjects.length > 1 || request.transaction_required && !request.kb_required) return null;
+  // Read the canonical current demand's fact labels. These labels locate the
+  // missing answer, NOT an entitlement, current merchant fact or permission.
+  // Never infer a missing price or inventory level from a published snapshot.
   const facts = (request.requested_facts ?? []).map(fact => fact.normalize("NFKC").toLowerCase());
-  const stock = facts.some(fact => /stock|inventory|availab|庫存|库存|現貨|现货/iu.test(fact));
-  const price = facts.some(fact => /price|pricing|cost|售價|售价|價格|价格|價錢|价钱/iu.test(fact));
-  const other = facts.some(fact => /features?|specifications?|warranty|policy|delivery|refund|功能|規格|规格|保養|保修|政策|退貨|退货/iu.test(fact));
-  if (!stock && !price && !other) return null;
+  const wants = (pattern: RegExp) => facts.some(fact => pattern.test(fact));
+  const stock = wants(/stock|inventory|availab|庫存|库存|現貨|现货/iu);
+  const price = wants(/price|pricing|cost|售價|售价|價格|价格|價錢|价钱/iu);
+  // General business facts must not collapse into a vague "related data"
+  // fallback. Keep these capability/fact labels cross-industry; none imply
+  // that an order, booking, refund or entitlement actually exists.
+  const dimensions = [
+    {pattern:/warranty|guarantee|保養|保修|質保|质保/iu,en:"warranty terms",tw:"保養條款",cn:"保修条款"},
+    {pattern:/deliver|shipping|dispatch|freight|送貨|送货|配送|運送|运送|物流/iu,en:"delivery terms",tw:"送貨安排",cn:"配送安排"},
+    {pattern:/refund|return|退貨|退货|退款|退換|退换/iu,en:"return or refund terms",tw:"退換貨／退款條款",cn:"退换货／退款条款"},
+    {pattern:/booking|reservation|appointment|預約|预约|訂位|订位/iu,en:"booking availability",tw:"預約安排",cn:"预约安排"},
+    {pattern:/entitlement|membership|benefit|會員權益|会员权益|會籍|会籍/iu,en:"membership entitlement",tw:"會員權益",cn:"会员权益"},
+    {pattern:/subscription|renewal|訂閱|订阅|續訂|续订/iu,en:"subscription terms",tw:"訂閱條款",cn:"订阅条款"},
+    {pattern:/feature|specification|specs|功能|規格|规格/iu,en:"product or service features",tw:"產品／服務功能",cn:"商品／服务功能"},
+    {pattern:/policy|terms|政策|條款|条款/iu,en:"applicable policy",tw:"適用政策",cn:"适用政策"},
+  ];
+  const details = dimensions.filter(item => wants(item.pattern));
+  if (!stock && !price && details.length === 0) return null;
   const rawSubject = (request.subject ?? (request.subjects.length === 1 ? request.subjects[0] : "")).normalize("NFKC").trim();
-  // A long, control-bearing or ambiguous customer label is never repeated as
-  // a purported verified product identity. Customer wording remains non-authoritative.
+  // Only source-validated, short, non-control-bearing subject labels may be
+  // repeated; this is still a customer subject, not merchant identity proof.
   const subject = rawSubject && rawSubject.length <= 90 && !/[\u0000-\u001F\u007F<>]/u.test(rawSubject)
     ? rawSubject : null;
   if (!subject && (stock || price) && !request.subjects.length) return null;
-  const zhTarget = subject ? "「" + subject + "」" : "相關項目";
   const enTarget = subject ? '"' + subject + '"' : "the requested item";
-  const enFact = stock && price ? "current price or live stock" : stock ? "live stock" : price ? "current selling price" : "requested current facts";
-  const zhFact = stock && price ? "即時售價同現貨" : stock ? "即時現貨" : price ? "即時售價" : "相關資料";
-  const cnFact = stock && price ? "当前售价和实时库存" : stock ? "实时库存" : price ? "当前售价" : "相关资料";
+  const zhTarget = subject ? "「" + subject + "」" : "相關項目";
+  const enParts = [...(price ? ["current selling price"] : []), ...(stock ? ["live stock"] : []),
+    ...details.slice(0, 3).map(item => item.en)];
+  const twParts = [...(price ? ["即時售價"] : []), ...(stock ? ["即時現貨"] : []),
+    ...details.slice(0, 3).map(item => item.tw)];
+  const cnParts = [...(price ? ["当前售价"] : []), ...(stock ? ["实时库存"] : []),
+    ...details.slice(0, 3).map(item => item.cn)];
+  const enFact = [...new Set(enParts)].join(" or ");
+  const twFact = [...new Set(twParts)].join("、");
+  const cnFact = [...new Set(cnParts)].join("、");
+  const numericCaveat = stock || price;
   if (language === "en") return "I can't reliably verify " + enFact + " for " + enTarget +
-    " from the available evidence. A source-recorded figure is not a verified live offer or stock level. " +
+    (numericCaveat
+      ? " from the available evidence. A source-recorded figure is not a verified live offer or stock level. "
+      : " from the available evidence. A general or historical source does not confirm that these terms apply to this request. ") +
     "You can request human support to check; no transfer has been made.";
   if (language === "zh-CN") return "目前未能可靠核实" + zhTarget + "的" + cnFact +
-    "。即使资料有标示数字，也不代表已核实的当前报价或实时库存；我不会猜测。" +
+    (numericCaveat
+      ? "。即使资料有标示数字，也不代表已核实的当前报价或实时库存；我不会猜测。"
+      : "。一般或历史资料不能直接证明对这次请求适用，我不会猜测。") +
     "如需进一步确认，可选择「转人工客服」；目前尚未转接。";
-  return "我而家未能可靠核實" + zhTarget + "嘅" + zhFact +
-    "。即使資料有標示數字，都唔等於已核實嘅現價或即時可售庫存；我唔會估。" +
+  return "我而家未能可靠核實" + zhTarget + "嘅" + twFact +
+    (numericCaveat
+      ? "。即使資料有標示數字，都唔等於已核實嘅現價或即時可售庫存；我唔會估。"
+      : "。一般或歷史資料未必適用於今次要求，我唔會估。") +
     "如需進一步確認，你可以選擇「轉真人客服」；目前未有轉交。";
 }
