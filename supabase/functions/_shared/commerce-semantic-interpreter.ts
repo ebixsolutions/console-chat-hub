@@ -13,6 +13,7 @@ import {
   decodeCommerceSemanticWire,
   normalizeCommerceSemanticFrame,
   recoverSourceQuotedReadOnlyFactualFrame,
+  rebindSourceQuotedReadOnlyDemand,
 } from "./commerce-semantic-frame.ts";
 
 export const SEMANTIC_CONTEXT_CHAR_LIMIT = 12_000;
@@ -441,6 +442,16 @@ export async function interpretCommerceSemantics(
     };
   }
   if ((frame.demands ?? []).some(demand => !latest.includes(demand.source_quote))) {
+    // Default remains strict rejection. An independently complete factual
+    // read can use actual source text, not a translated/model-only quote.
+    const rebound = rebindSourceQuotedReadOnlyDemand(frame, latest);
+    if (rebound) {
+      console.warn(JSON.stringify({event:"semantic_read_only_source_quote_rebound",
+        source_message_id:input.source_message_id,request_id:result.request_id,
+        original_stage:"semantic_source_binding",demand_count:1,
+        state_mutation:false,extra_model_attempts:0}));
+      return {frame:rebound,source:"semantic_model",failure_code:null};
+    }
     return {
       frame:null,source:"none",failure_code:"LLM_INVALID_OUTPUT",failure_stage:"semantic_source_binding",
       contract_rejection:"canonical_demand_source_quote",

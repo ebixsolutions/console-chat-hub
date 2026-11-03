@@ -1203,6 +1203,41 @@ export function recoverSourceQuotedReadOnlyFactualFrame(
   return frame;
 }
 
+
+/** Recover a model-paraphrased source quote only as a fresh, full-source,
+ * independent READ-ONLY factual query. Strict source-quote validation remains
+ * mandatory for all mixed, transactional, modifying and ambiguous turns.
+ * No history, alleged SKU, merchant price or customer mutation is trusted. */
+export function rebindSourceQuotedReadOnlyDemand(
+  frame: CommerceSemanticFrame, latestCustomerMessage: string,
+): CommerceSemanticFrame | null {
+  const source = typeof latestCustomerMessage === "string"
+    ? latestCustomerMessage.normalize("NFKC").replace(/\s+/gu, " ").trim() : "";
+  if (!source || source.length > 1600 ||
+      /[\u0000-\u001F\u007F<>]/u.test(source) ||
+      /[;；]|\?[^?]*\?/u.test(source) ||
+      /(?:取消|撤回|暫緩|暂缓|退款|改單|改单|更正|不要|唔要|不需要|轉真人|转人工|\b(?:cancel|refund|defer|correct|revise|handoff)\b)/iu.test(source)) return null;
+  if (frame.operation !== "ASK_FACT" || frame.confidence < 0.62 ||
+      frame.ambiguity.is_ambiguous || frame.customer_correction ||
+      frame.additive || (frame.customer_facts?.length ?? 0) > 0 ||
+      frame.explicit_negations.length || frame.demands?.length !== 1 ||
+      !["none","unknown"].includes(frame.transaction_state) ||
+      !["none","unknown"].includes(frame.payment_state) ||
+      !["none","unknown"].includes(frame.booking_state) ||
+      !["none","unknown"].includes(frame.fulfillment_state)) return null;
+  const demand = frame.demands[0];
+  if (!["product","policy","unknown"].includes(demand.source_type) ||
+      demand.customer_correction || demand.explicit_negations.length ||
+      demand.ambiguity.is_ambiguous || Object.keys(demand.constraints).length ||
+      !demand.requested_facts.length ||
+      demand.requested_facts.some(fact => !fact || fact.length > 200) ||
+      !demand.source_quote ||
+      source.includes(demand.source_quote.normalize("NFKC").replace(/\s+/gu," ").trim())) return null;
+  return {...frame, topic:null, entities:[], referents:[],
+    requested_facts:[...demand.requested_facts],
+    demands:[{...demand,question:source,source_quote:source,subject_refs:[],constraints:{}}]};
+}
+
 function clean(value: unknown, max = 300): string {
   return typeof value === "string"
     ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max)

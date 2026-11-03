@@ -4,7 +4,7 @@ import { scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
 import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state-core.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CommerceSemanticDemand, CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
-import { decodeCommerceSemanticWire, recoverSourceQuotedReadOnlyFactualFrame, COMMERCE_SEMANTIC_SYSTEM_PROMPT } from "./commerce-semantic-frame.ts";
+import { decodeCommerceSemanticWire, recoverSourceQuotedReadOnlyFactualFrame, rebindSourceQuotedReadOnlyDemand, COMMERCE_SEMANTIC_SYSTEM_PROMPT } from "./commerce-semantic-frame.ts";
 import { DecisionContextLimitError } from "./bounded-decision-context.ts";
 import { planConversationService, renderServicePlanReply } from "./conversation-service-planner.ts";
 import { applyCustomerRequestDecision, resolveCustomerRequestDecision } from "./commerce-state-authority.ts";
@@ -1151,4 +1151,49 @@ Deno.test("Task3A source-only semantic contract: open-domain factual questions p
  assert(prompt.includes("do not create or repeat optional entities")&&prompt.includes("Source quote must be an exact contiguous substring"),
   "semantic provider has no guidance to prevent the observed malformed entity / paraphrased source quote");
  assert(prompt.includes("independently answerable requests"),"general multi-clause demand preservation was lost");
+});
+
+
+Deno.test("Task3A generic source-quote mismatch only rebuilds a complete read from authentic multilingual customer text",()=>{
+ for(const [customer,model] of [
+  ["我想買衫，有冇介紹","我想买衣服，有推荐吗"],
+  ["大金2匹有咩型號？","请列出大金 2 匹的冷气型号"],
+  ["Could you recommend a rental option?","What rental options do you offer?"],
+  ["Quels modèles sont proposés ?","Quel modèle recommandez-vous ?"]
+ ]){
+  const semantic=frame(["published merchant options"],null);semantic.operation="ASK_FACT";semantic.intent="recommend_options";
+  semantic.demands=[demand(model,"product",["published merchant options"],["old-unbound-SKU"])];
+  const original=structuredClone(semantic);
+  const safe=rebindSourceQuotedReadOnlyDemand(semantic,customer);
+  assert(!!safe&&safe.operation==="ASK_FACT"&&safe.demands?.length===1,"safe read was not projected");
+  equal(safe.demands[0].source_quote,customer.normalize("NFKC"));
+  equal(safe.demands[0].question,customer.normalize("NFKC"));
+  equal(safe.demands[0].subject_refs,[]);equal(safe.entities,[]);equal(safe.referents,[]);
+  const current=resolveCurrentFactualRequest({question:customer,semantic:safe,source_message_id:"new-source",
+   trusted_company_id:"own-company",history:[]});
+  assert(current.kb_required&&!!current.query&&current.query.includes(customer.normalize("NFKC"))&&
+   !current.query.includes("old-unbound-SKU"),"stale subject reached retrieval");
+  equal(semantic,original,"semantic frame was mutated");
+ }
+});
+Deno.test("Task3A generic source-quote recovery fails closed on mixed, uncertain and stateful cases",()=>{
+ const source="我想買衫，有冇介紹";
+ const build=()=>{const v=frame(["product options"],null);v.operation="ASK_FACT";
+   v.demands=[demand("我想买衣服，有推荐吗","product",["product options"],[])];return v;};
+ const check=(edit:(v:CommerceSemanticFrame)=>void,q=source)=>{const v=build();edit(v);return rebindSourceQuotedReadOnlyDemand(v,q);};
+ assert(check(v=>v.demands!.push(demand("refund policy","policy",["refund"])))===null,"independent demand lost");
+ assert(check(v=>v.customer_facts=[{key:"quantity",value:2}])===null,"customer-owned fact lost");
+ assert(check(v=>v.customer_correction=true)===null,"correction lost");
+ assert(check(v=>v.explicit_negations=["do not buy"])===null,"negation lost");
+ assert(check(v=>v.transaction_state="confirmed")===null,"order promoted");
+ assert(check(v=>v.payment_state="paid")===null,"payment promoted");
+ assert(check(v=>v.booking_state="booked")===null,"booking promoted");
+ assert(check(v=>v.demands![0].source_type="transaction")===null,"private transaction forwarded");
+ assert(check(v=>v.demands![0].constraints={district:"Kowloon"})===null,"scope constraints dropped");
+ assert(check(v=>v.ambiguity.is_ambiguous=true)===null,"ambiguous demand promoted");
+ assert(check(v=>v.confidence=.2)===null,"low-confidence demand promoted");
+ assert(check(v=>{},"請取消上一個訂單，想買衫")===null,"cancel intent ignored");
+ assert(check(v=>{},"我想買衫；另一件查退款")===null,"multiple sentences collapsed");
+ const exact=build();exact.demands![0].source_quote=source;
+ assert(rebindSourceQuotedReadOnlyDemand(exact,source)===null,"already correct source quote rewritten");
 });
