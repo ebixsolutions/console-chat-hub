@@ -27,7 +27,7 @@ export function exactKbModelIds(text: string): string[] {
 // Adjacent fields in exported product rows can omit separators altogether.
 // Keep this vocabulary for that case; separated fields also use the generic
 // label boundary below, so new exported columns cannot run into known values.
-const ADJACENT_KB_LABELS = /商品型號|商品型号|產品型號|产品型号|商品圖片|商品图片|銷售價|销售价|售價|售价|特價|特价|成本|品牌|描述|產品描述|产品描述|附加項目|附加项目|新增日期|标签|標籤|功能|匹數|匹数|氣體|气体|風數|风数|庫存|库存|selling\s*price|list\s*price|product\s*(?:name|model)|description|brand|stock|price|dimension|weight|power|voltage|capacity|尺寸|重量|功率|電壓|电压|噪音|容量|退貨政策|退货政策|保養政策|保修政策|return\s+policy|warranty\s+policy/i;
+const ADJACENT_KB_LABELS = /商品型號|商品型号|產品型號|产品型号|商品圖片|商品图片|銷售價|销售价|售價|售价|特價|特价|成本|品牌|描述|產品描述|产品描述|附加項目|附加项目|新增日期|标签|標籤|功能|匹數|匹数|氣體|气体|風數|风数|庫存|库存|selling[ _-]*price|list[ _-]*price|(?:cost|special|sale|discount|promo)[ _-]*price|product\s*(?:name|model)|description|brand|stock|price|dimension|weight|power|voltage|capacity|尺寸|重量|功率|電壓|电压|噪音|容量|退貨政策|退货政策|保養政策|保修政策|return\s+policy|warranty\s+policy/i;
 const SEPARATED_KB_LABEL = /^([\p{Script=Han}]{1,12}(?:\s*\([^)]{1,30}\))?|[a-z][a-z ]{0,25})\s*[:=]/iu;
 const ADJACENT_KB_FIELD = new RegExp(`^(?:${ADJACENT_KB_LABELS.source})\\s*[:=]`, "iu");
 const KNOWN_KB_LABEL_IN_TEXT = new RegExp(ADJACENT_KB_LABELS.source, "iu");
@@ -82,7 +82,7 @@ function labelledValue(content: string, labels: RegExp, policy = false, money = 
     : null;
 }
 
-const SELLING_PRICE_LABEL = /銷售價|销售价|售價|售价|selling\s*price|list\s*price|price/i;
+const SELLING_PRICE_LABEL = /銷售價|销售价|售價|售价|selling[ _-]*price|list[ _-]*price|price/i;
 
 function kbSellingPriceFields(content: string): { has_field: boolean; price: number | null } {
   const line = content.normalize("NFKC");
@@ -90,9 +90,9 @@ function kbSellingPriceFields(content: string): { has_field: boolean; price: num
   let hasField = false;
   // Consume qualified non-selling labels whole so their trailing "price"
   // cannot masquerade as an ordinary price field.
-  const labels = new RegExp(`(?:cost\\s*price|special\\s*price|${SELLING_PRICE_LABEL.source})\\s*[:=]\\s*`, "giu");
+  const labels = new RegExp(`(?:cost[\\s_-]*price|special[\\s_-]*price|sale[\\s_-]*price|discount[\\s_-]*price|promo[\\s_-]*price|${SELLING_PRICE_LABEL.source})\\s*[:=]\\s*`, "giu");
   for (const match of line.matchAll(labels)) {
-    if (/^(?:cost|special)\s*price/i.test(match[0])) continue;
+    if (/^(?:cost|special|sale|discount|promo)[\s_-]*price/i.test(match[0])) continue;
     const prefix = line.slice(0, match.index);
     if (prefix && !/[\s|;,]$/u.test(prefix) &&
       !new RegExp(`(?:^|[\\s|;,])(?:${ADJACENT_KB_LABELS.source})\\s*[:=]`, "iu").test(prefix)) continue;

@@ -28,7 +28,9 @@ const VARIANT_KEYS: Record<string, string> = {
 };
 const STOCK_KEYS = new Set(["stock", "stockqty", "stockquantity", "inventory", "inventoryqty", "inventoryquantity",
   "quantityavailable", "availablequantity", "availableqty", "庫存", "库存", "庫存量", "库存量", "庫存數量", "库存数量"]);
-const PRICE_KEYS = new Set(["price", "sellingprice", "saleprice", "salesprice", "listprice", "retailprice", "unitprice",
+// A sale_price / salePrice is promotional, not a regular selling-price proof.
+// Keep explicit selling_price / sales_price, without using discount or internal cost.
+const PRICE_KEYS = new Set(["price", "sellingprice", "salesprice", "listprice", "retailprice", "unitprice",
   "銷售價", "销售价", "售價", "售价", "價格", "价格", "價錢", "价钱", "單價", "单价"]);
 const CURRENCY_KEYS = new Set(["currency", "currencycode", "pricecurrency", "幣別", "币别", "貨幣", "货币", "貨幣代碼", "货币代码"]);
 const normalized = (v: string) => v.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();

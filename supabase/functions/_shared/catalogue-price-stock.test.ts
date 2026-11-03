@@ -1,7 +1,7 @@
 import {parseKbProductRecord,kbProductRecordPrice,kbProductRecordStock,catalogueFactRequest,matchCatalogueRecord} from './kb-product-record.ts';
 import {parseAggregationResponse} from './kb-aggregation-response.ts';
 import {selectCanonicalGrounding,deriveCurrentGroundingTarget} from './canonical-grounding.ts';
-import {resolveCanonicalKbDirectAnswer,catalogueVariantClarification} from './canonical-kb-direct-answer.ts';
+import {resolveCanonicalKbDirectAnswer,catalogueVariantClarification,currentKbSellingPrice} from './canonical-kb-direct-answer.ts';
 import {buildCitationMetadata} from './citation-lineage.ts';
 import {bindRagApiResponse,bindRagServiceDocument,ORIGINAL_RAG_ACTIVATION} from './preview-kb-query-embedding.ts';
 import {evaluateB2BeforeCommit} from './pre-send-conversion-supervisor.ts';
@@ -112,6 +112,24 @@ Deno.test('Catalogue currencies preserve explicit ISO and marker, no conversion'
  }
  const missing=kbProductRecordPrice(parseKbProductRecord('name: Example Shirt\nprice: 2100'));assert(missing.amount===2100&&missing.currency===null,'missing currency became default');
 });
+
+Deno.test('Task3B v3.1 promotional, discount and cost columns cannot masquerade as merchant selling price',()=>{
+ for(const field of ['sale_price','salePrice','sale price','discount_price','promo_price','special_price','cost_price']){
+  const row='spu_code: CW-SUL70BA\nspu_name: CW-SUL70BA\nsku_code: CW-SUL70BA\n'+field+': HKD 4038';
+  const parsed=kbProductRecordPrice(parseKbProductRecord(row));
+  assert(parsed.amount===null,'promotional source amount was classified as selling price: '+field);
+  const direct='商品型號: CW-SUL70BA | '+field+': HKD 4038';
+  assert(currentKbSellingPrice(direct)===null,'direct KB price accepted a non-selling field: '+field);
+ }
+ const product='spu_code: CW-SUL70BA\nspu_name: CW-SUL70BA\nsku_code: CW-SUL70BA\nselling_price: HKD 5680\nsale_price: HKD 4038\ncost_price: HKD 3750';
+ const selling=kbProductRecordPrice(parseKbProductRecord(product));
+ assert(selling.amount===5680&&selling.currency==='HKD'&&selling.field==='selling_price','real selling price swallowed by promotional fields');
+ const text='商品型號: CW-SUL70BA | selling price: HKD 5680 | sale_price: HKD 4038 | cost_price: HKD 3750';
+ assert(currentKbSellingPrice(text)===5680,'bound selling price lost beside a distinct promotion');
+ assert(currentKbSellingPrice('商品型號:CW-SUL70BA銷售價:5680sale_price:4038')===5680,
+  'adjacent sale_price field contaminated genuine selling amount');
+});
+
 Deno.test('Catalogue stock aliases and duplicate protections do not use generic order quantity',()=>{
  for(const key of ['stock','stock_quantity','inventory_qty','available_quantity','庫存','库存数量'])assert(kbProductRecordStock(parseKbProductRecord(`name: Example Shirt\n${key}: 0`)).quantity===0,key);
  for(const raw of ['quantity: 5','reserved_stock: 5','description: stock: 5','stock: 5\nstock_2: 7'])assert(kbProductRecordStock(parseKbProductRecord(`name: Example Shirt\n${raw}`)).quantity===null,raw);

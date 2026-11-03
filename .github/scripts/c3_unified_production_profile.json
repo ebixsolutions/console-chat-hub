@@ -1405,10 +1405,12 @@
     "tests/console-navigation/widget-recovery.test.mjs": "50ea5f62f5f1ee53ef5b9b436fea7521f15043e382be18631020001a11a52f8d"
   },
   "authorized_task3bc_nonpaid_sha256": {
-    "supabase/functions/_shared/catalogue-price-stock.test.ts": "fdd718ce1148f0acbfbcc21cf5b346f9f8f0454a6d95081180da81ba32c537f2",
+    "supabase/functions/_shared/catalogue-price-stock.test.ts": "781490467715094bf2886df440dc97cc6b14aa492cfc6ae2e70b3839b4ae3a15",
     "supabase/functions/_shared/current-factual-request.test.ts": "96bf9e1213f537be033e677c32311ee33475675c6ecbdff2f807244028175dfb",
     "supabase/functions/_shared/factual-evidence-selection.test.ts": "fc281cffa63584fc9b11ff71e6f7dd8dd5e5857667b24aae85e022596b9e5a33",
-    "supabase/functions/_shared/transaction-closure-handoff.integration.test.ts": "8b1da5f018419a6aedff2ba70835421b35b63f7f368c4b3376d9b6b6ad37851b"
+    "supabase/functions/_shared/transaction-closure-handoff.integration.test.ts": "8b1da5f018419a6aedff2ba70835421b35b63f7f368c4b3376d9b6b6ad37851b",
+    "supabase/functions/_shared/kb-product-record.ts": "d6a7d856c19d5b9e8b38830634afc24ad6e57f7aeb8f393ceccb95370fd7766f",
+    "supabase/functions/_shared/canonical-kb-direct-answer.ts": "2c6b209f352457e050034d78350fe76025ba58fcc258d1bff26ba1b4e7d7168c"
   },
   "task3bc_nonpaid_production_deploy_authorized": false,
   "authorized_task3c_unverified_reply_sha256": {
