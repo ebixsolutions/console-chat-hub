@@ -119,3 +119,35 @@ Deno.test("C2 reconciles additively with authoritative agent-assist v34", async 
   assert(canonical>=0&&fallback>canonical,"persisted C2 truth must outrank derived warm-handoff presentation");
   assert(tenantBound,"persisted C2 tenant binding missing");
 });
+
+
+// Task3C v3.1 B ending: this is an isolated state-machine counterexample,
+// not a production CAS update or proof of a completed Hosted solved ticket.
+Deno.test("Task3C v3.1 T16B-T18B needs explicit withdrawal readback, no blockers, and latest-source CAS",()=>{
+ const pending=createEmptyConversationCommerceState();
+ pending.unresolved_items=["checkout price not verified","Saturday delivery unconfirmed"];
+ pending.installation.pending_checks=["site installation and electrical safety pending"];
+ const thanks=decideTransactionClosure({utterance_kind:"closure_candidate",commerce_state:pending});
+ const premature=decideTransactionClosure({utterance_kind:"positive_no_more_help",commerce_state:pending});
+ assert(!thanks.may_resolve&&thanks.state==="WAITING_FOR_CUSTOMER","acknowledgement closed ticket");
+ assert(!premature.may_resolve&&premature.state==="TRANSACTION_PENDING"&&
+   premature.blockers.some(x=>x.includes("Saturday delivery")),"pending merchant issues silently cleared");
+ // Only a separately authenticated canonical CAS commit could produce this
+ // post-withdrawal snapshot. Local assignment simulates that *after-state*.
+ const withdrawn=structuredClone(pending);
+ withdrawn.unresolved_items=[];withdrawn.installation.pending_checks=[];
+ const stale=validateC2CommitSnapshot({conversation_id:IDS.conversation,company_id:IDS.company,
+   source_message_id:IDS.source,commerce_state_revision:4},
+   {conversation_id:IDS.conversation,company_id:IDS.company,latest_source_message_id:"newer-customer-source",
+    commerce_state_revision:5,handoff_authority_valid:true});
+ const fresh=validateC2CommitSnapshot({conversation_id:IDS.conversation,company_id:IDS.company,
+   source_message_id:IDS.source,commerce_state_revision:5},
+   {conversation_id:IDS.conversation,company_id:IDS.company,latest_source_message_id:IDS.source,
+    commerce_state_revision:5,handoff_authority_valid:true});
+ assert(!stale.ok&&fresh.ok,"source revision CAS allowed stale closure or denied fresh snapshot");
+ const eligible=decideTransactionClosure({utterance_kind:"positive_no_more_help",commerce_state:withdrawn});
+ assert(eligible.may_resolve&&eligible.state==="RESOLVED",
+   "explicitly resolved knowledge-only enquiry cannot close after verified post-withdrawal state");
+ assert(!decideTransactionClosure({utterance_kind:"positive_no_more_help",commerce_state:withdrawn,
+   handoff_active:true}).may_resolve,"active human takeover was auto-resolved");
+});

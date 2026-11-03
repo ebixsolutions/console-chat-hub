@@ -1404,6 +1404,13 @@
     "tests/task1-director/event-driven-widget.test.mjs": "9d06588f06703d727236a4807b2292c5ea70e2729ae92deccc5d498b5ba5643d",
     "tests/console-navigation/widget-recovery.test.mjs": "50ea5f62f5f1ee53ef5b9b436fea7521f15043e382be18631020001a11a52f8d"
   },
+  "authorized_task3bc_nonpaid_sha256": {
+    "supabase/functions/_shared/catalogue-price-stock.test.ts": "d70985cddd99b4623072f89ca39eea238f80474935ffc042dc03dfcef3ecb852",
+    "supabase/functions/_shared/current-factual-request.test.ts": "e75887d441beed3fab0c31c71e0c7eb5e8aaaced8dd7a4e792180d7b9fd3f772",
+    "supabase/functions/_shared/factual-evidence-selection.test.ts": "fc281cffa63584fc9b11ff71e6f7dd8dd5e5857667b24aae85e022596b9e5a33",
+    "supabase/functions/_shared/transaction-closure-handoff.integration.test.ts": "8b1da5f018419a6aedff2ba70835421b35b63f7f368c4b3376d9b6b6ad37851b"
+  },
+  "task3bc_nonpaid_production_deploy_authorized": false,
   "authorized_task3c_unverified_reply_sha256": {
     "src/lib/widget-message-merge.test.mjs": "40307f64fa91980dbcd4611395101b76dcfce08c7e0cec485d66e2fb7cfca0ac",
     "src/lib/widget-response-status.ts": "eca87cebc89e1f5047414c1ee5ef823b69d2dae46416060e57ab3665d3ca9f81",

@@ -905,3 +905,51 @@ Deno.test("Task3C: no source-owned current fact, ambiguous product, or private t
   const order=resolveCurrentFactualRequest({question:"Check my order status, reference AB-12345",semantic:frame()});
   assert(renderUnverifiedFactualNextStep(order,"en")===null,"private order status guessed");
 });
+
+
+// Task3C v3.1 test-plan projection only: verifies source-bound new KB target,
+// not a successful network request or paid dispatch receipt.
+Deno.test("Task3C v3.1 T05 accepted exact model replaces the near-model candidate for the next KB request",()=>{
+ const question="係，就係 CW-SUL70BA，我再睇清楚喇。佢有獨立抽濕功能嗎？";
+ const item=demand(question,"product",["independent dehumidification feature"],["CW-SUL70BA"]);
+ item.customer_correction=true;
+ const originalHistory=[
+   {id:"t04-customer",role:"visitor",content:"我上網見到 CWSUL70C，嗰部係咪就係你講嗰部？"},
+   {id:"t01-customer",role:"visitor",content:"細房候選係 CW-SUL70BA，有冇變頻？"},
+ ];
+ const before=JSON.stringify({item,originalHistory});
+ const resolved=resolveCurrentFactualRequest({question,source_message_id:"t05-customer",semantic:demanded(item),history:originalHistory});
+ assert(resolved.kb_required&&!resolved.needs_subject_clarification&&resolved.query,"T05 confirmed subject was not eligible for fresh factual retrieval");
+ const wire=JSON.parse(resolved.query!);
+ equal(wire.questions.length,1);
+ equal(wire.questions[0].subjects,["CW-SUL70BA"]);
+ assert(wire.questions[0].question.includes("獨立抽濕")&&wire.questions[0].requested_facts.includes("independent dehumidification feature"),
+   "new requested feature did not reach query projection");
+ assert(!JSON.stringify(wire).includes("CWSUL70C"),"unconfirmed near-model leaked into new KB request");
+ equal(JSON.stringify({item,originalHistory}),before,"T05 source changed during read resolution");
+});
+Deno.test("Task3C v3.1 T14 new delivery location/lift/weekend conditions produce a new source-bound KB query",()=>{
+ const question="唔去門市喇，送去長沙灣，屋企有lift。最好星期六，唔得星期日都可以。";
+ const item=demand(question,"policy",["delivery eligibility and schedule"],["CW-SUL70BA"]);
+ item.constraints={district:"長沙灣",elevator:true,preferred_day:"Saturday",fallback_day:"Sunday",pickup:false};
+ const semantic=demanded(item);
+ semantic.referents=[{ref:"CW-SUL70BA",source:"prior_turn",confidence:0.99}];
+ const history=[{id:"t13-customer",role:"visitor",content:"CW-SUL70BA 來源話有2件存貨，星期六之前可以攞到嗎？"}];
+ const result=resolveCurrentFactualRequest({question,source_message_id:"t14-customer",semantic,history});
+ assert(result.kb_required&&result.query&&!result.needs_subject_clarification,
+   "T14 new decision-relevant delivery terms did not produce a KB read target");
+ const wire=JSON.parse(result.query!);
+ equal(wire.questions.length,1);
+ assert(wire.questions[0].question.includes("長沙灣")&&wire.questions[0].question.includes("星期六")&&wire.questions[0].question.includes("星期日"),
+   "latest new district/weekend preference dropped from query");
+ assert(wire.questions[0].constraints?.elevator===true&&wire.questions[0].constraints?.pickup===false&&
+   wire.questions[0].constraints?.fallback_day==="Sunday","delivery conditions/pickup negation missing");
+ assert(!JSON.stringify(wire).includes("2件存貨"),"old stock snapshot promoted into new delivery query");
+});
+Deno.test("Task3C v3.1 T16-A recap-only customer request cannot itself authorize a new paid KB lookup",()=>{
+ const question="可唔可以幫我整理已講清楚同仲未核實嘅資料？";
+ const result=resolveCurrentFactualRequest({question,semantic:frame(["summary"],null),
+   request_decision:{kind:"guidance",continuation:false,general_request:question,merchant_request:null,latest_requirements:question}});
+ assert(!result.kb_required&&result.query===null&&result.transaction_required===false,
+   "read-only recap was incorrectly promoted to a paid KB query");
+});

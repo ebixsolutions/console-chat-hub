@@ -224,3 +224,33 @@ Deno.test('Catalogue variant question passes real B2 without authorizing any SKU
   metadata:{response_route:'canonical_kb_direct_answer',answer_kind:'catalogue_variant_clarification',service_action:'targeted_clarification',unresolved_fact_fields:['variant'],catalogue_options:x.question.options,catalogue_requested_facts:x.question.requested_facts,factual_grounding_required:true,grounding_state:'source_variants_require_choice',rag_api_status:'success'}});
  assert(result.decision==='allow','B2 rejected bound variant question '+result.code);
 });
+
+
+// Task3B v3.1 nonpaid synthetic price-source modes. These documents model
+// separately admitted published/legitimate-indexed RAG evidence; they are NOT
+// a live Singapore KB response or proof of current merchant price/inventory.
+Deno.test("Task3B v3.1 document-only, indexed-API-only, mixed conflict remain separate and do not expose cost",async()=>{
+ const manual="商品型號: CW-SUL70BA\n銷售價: 5680\n特價: 4038\n成本: 3750";
+ const indexed="商品型號: CW-SUL70BA\nprice: HKD 4238\nstock: 2";
+ const m=parseKbProductRecord(manual),api=parseKbProductRecord(indexed);
+ const documented=kbProductRecordPrice(m),apiPrice=kbProductRecordPrice(api);
+ assert(documented.amount===5680&&documented.currency===null&&documented.field==="銷售價",
+   "document selling price/currency must retain literal source role");
+ assert(m.fields.some(f=>f.key==="特價"&&f.value==="4038")&&m.fields.some(f=>f.key==="成本"&&f.value==="3750"),
+   "manual source role fields lost or silently overwritten");
+ assert(apiPrice.amount===4238&&apiPrice.currency==="HKD"&&kbProductRecordStock(api).quantity===2,
+   "indexed API fields/stock lost their own source identity");
+ const documentOnly=await document(manual,"task3b-document-only");
+ const apiOnly=await document(indexed,"task3b-index-only");
+ const first=answer("CW-SUL70BA 幾錢？",[documentOnly]);
+ const second=answer("CW-SUL70BA price and stock?",[apiOnly],"en");
+ assert(first.result?.reply.includes("5,680")&&!first.result.reply.includes("HK$5,680")&&
+   !first.result.price_fact&&b2(first).decision==="allow","document-only amount misrepresented as a verified HKD offer");
+ assert(second.result?.reply.includes("HK$4,238")&&second.result.reply.includes("Recorded stock quantity: 2")&&
+   !second.result.price_fact&&b2(second).decision==="allow","indexed-only facts not retained as recorded-only");
+ const mixed=answer("CW-SUL70BA price and stock?",[documentOnly,apiOnly],"en");
+ assert(!mixed.result,"mixed conflicting records silently selected a current price or merged source roles");
+ const presented=[first.result?.reply,second.result?.reply,mixed.result?.reply].filter(Boolean).join(" ");
+ assert(!presented.includes("3,750")&&!presented.includes("3750"),"internal cost escaped to visitor reply");
+ assert(!presented.includes("HK$5,680")&&!presented.includes("HK$4,038"),"currency invented for file-only records");
+});

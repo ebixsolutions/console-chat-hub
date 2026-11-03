@@ -441,3 +441,21 @@ Deno.test("Task3 P0: stale SKU evidence cannot become parent-product stock",asyn
   assert(!partial?.recorded_facts.some(f=>f.field==="stock_quantity"),"stale SKU stock leaked to the parent subject");
   assert(!partial?.reply.includes("stock quantity of 5"),"wrong variant inventory surfaced in customer text");
 });
+
+
+// Task3B v3.1 explicit bounded-candidate coverage. Five returned documents
+// cannot establish completeness of a larger remote index; missing SKU must
+// remain a demand gap, not a success fabricated from adjacent product evidence.
+Deno.test("Task3B v3.1 bounded top-K cannot imply missing SKU or sixth document was searched",()=>{
+ const requested=demand(1,"Compare AC-100 and AC-200 selling prices","product",["AC-100","AC-200"]);
+ const product=document("only-ac100","sku_code: AC-100\nspu_name: Instrument\nprice: 100 CNY","product","Instrument");
+ product.authority!.entity_ids=["AC-100"];
+ const extras=Array.from({length:4},(_,i)=>document("policy-extra-"+i,"A published policy detail "+i));
+ const five=selectFactualEvidence([product,...extras],request([requested]),options);
+ assert(five.ok,"five source candidates unexpectedly rejected");
+ assert(!canUseSingleDemandDirectAnswer(request([requested])),"comparison collapsed into one-product answer");
+ assert(five.grounding.demands[0].missing_reasons.includes("subject_evidence_missing"),
+   "not-returned AC-200 incorrectly treated as proved absent or sourced");
+ const six=selectFactualEvidence([product,...extras,document("sixth","sku_code: AC-200\nprice: 200 CNY","product","AC-200")],request([requested]),options);
+ assert(!six.ok&&six.error==="KB_DOCUMENT_EVIDENCE_MISMATCH","over-limit remote corpus falsely treated as complete");
+});
