@@ -237,10 +237,10 @@ function citedAssistantReadTarget(input: ResolveCurrentFactualRequestInput): Sub
        !Array.isArray(chunks)||chunks.length!==1||typeof chunks[0]!=="string"||
        !Array.isArray(binds)||binds.length!==1)return null;
     const bound=obj(binds[0]),target=obj(bound?.current_target);
-    if(bound?.selected_document_id!==source||
+    if(!bound||bound.selected_document_id!==source||
        !Array.isArray(bound.evidence_chunk_ids)||bound.evidence_chunk_ids.length!==1||
        bound.evidence_chunk_ids[0]!==chunks[0]||
-       !Array.isArray(target?.entity_ids)||target.entity_ids.length!==1||
+       !target||!Array.isArray(target.entity_ids)||target.entity_ids.length!==1||
        norm(target.entity_ids[0])!==norm(name))return null;
     const first=rows.slice(i+1).find(item=>CUSTOMER.has(String(item.role??"").toLowerCase()));
     if(first?.id!==m.source_message_id)return null;

@@ -1411,7 +1411,7 @@
     "supabase/functions/_shared/transaction-closure-handoff.integration.test.ts": "8b1da5f018419a6aedff2ba70835421b35b63f7f368c4b3376d9b6b6ad37851b",
     "supabase/functions/_shared/kb-product-record.ts": "735a1b6835520335221f52c4831e1c9c16bac202d7294a65ef782ba9a73146a4",
     "supabase/functions/_shared/canonical-kb-direct-answer.ts": "2c6b209f352457e050034d78350fe76025ba58fcc258d1bff26ba1b4e7d7168c",
-    "supabase/functions/_shared/current-factual-request.ts": "fb9062525a9ab14d8d7acf659ac18f5380a043836554f4b4a29187a805cc0eaf",
+    "supabase/functions/_shared/current-factual-request.ts": "de56ecad1c063b706408799b560da593396009e536ab80cfa7447b61f698d988",
     "supabase/functions/generate-reply/index.ts": "5dea0da12ece9b1f8c3a1679fdfe5223a304fd581a15a0b3e2504128f0215e01"
   },
   "task3bc_nonpaid_production_deploy_authorized": false,
