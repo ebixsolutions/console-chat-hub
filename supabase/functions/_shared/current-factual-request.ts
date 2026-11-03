@@ -70,6 +70,7 @@ export type FactualRequestHistoryRow = {
 export interface ResolveCurrentFactualRequestInput {
   question: string;
   source_message_id?: string | null;
+  trusted_company_id?: string | null;
   history?: FactualRequestHistoryRow[];
   semantic?: CommerceSemanticFrame | null;
   commerce?: ConversationCommerceState | null;
@@ -82,7 +83,7 @@ const INACTIVE = new Set(["cancelled", "deferred", "superseded"]);
 const clean = (value: unknown): string => typeof value === "string" ? value.normalize("NFKC").replace(/\s+/gu, " ").trim() : "";
 const norm = (value: unknown): string => clean(value).toLowerCase();
 const unique = (values: string[]) => [...new Map(values.filter(Boolean).map(value => [norm(value), value])).values()];
-const STOCK = /(?:庫存|库存|現貨|现货|有冇貨|有無貨|有沒有貨|有没有货|有貨|有货|剩幾多|剩多少|\b(?:stock|inventory|availability|available)\b|how many.+left)/iu;
+const STOCK = /(?:庫存|库存|現貨|现货|有冇貨|有無貨|有无货|有沒有貨|有没有货|有貨|有货|剩幾多|剩多少|\b(?:stock|inventory|availability|available)\b|how many.+left)/iu;
 const POINTER = /(?:嗰|呢|這|这|那)(?:一)?(?:款|部|個|个|件|項|项)|佢|它|^其|\b(?:it|its|this|that|these|those|same|previous|earlier)\b/iu;
 const PLURAL_POINTER = /(?:嗰|呢|這|这|那)(?:兩|两|幾|几)(?:款|部|個|个|件|項|项)|\b(?:(?:these|those)\s+(?:models?|products?|items?|options?|services?)|both|all of them)\b/iu;
 const TOPIC_BOUNDARY = /(?:換個話題|换个话题|轉個話題|转个话题|不談|不谈|改問|改问|轉去|转去)|\b(?:different topic|another topic|switch(?:ing)? to|mov(?:e|ing) to|forget that)\b/iu;
@@ -200,6 +201,54 @@ function locateSubjects(question: string, hints: string[]): LocatedSubject {
 }
 
 type SubjectBinding = {subject: string; source_message_id: string | null; customer_text: string | null; current: boolean};
+
+/** A same-company, committed, single-source cited AI recommendation may be
+ * used only to locate a new KB read. No old seller facts are retained. */
+function citedAssistantReadTarget(input: ResolveCurrentFactualRequestInput): SubjectBinding | null {
+  const company=clean(input.trusted_company_id);
+  if(!company||!input.source_message_id)return null;
+  const rows=(input.history??[]).slice(0,12);
+  const obj=(v:unknown):Record<string,unknown>|null =>
+    v&&typeof v==="object"&&!Array.isArray(v)?v as Record<string,unknown>:null;
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i],role=String(r.role??"").toLowerCase();
+    if(r.id===input.source_message_id||r.content==="__THINKING__")continue;
+    if(CUSTOMER.has(role)){
+      const message=clean(r.content);
+      if(message&&currentFacets(message).length>0&&!TOPIC_BOUNDARY.test(message)&&
+         !LIFECYCLE_BOUNDARY.test(message)&&!EXPLICIT_HISTORY_REFERENCE.test(message)&&
+         !locateSubjects(message,literalHints(input)).subjects.length)continue;
+      return null;
+    }
+    if(role!=="assistant"||!r.id)return null;
+    const m=obj(r.metadata);
+    if(!m||m.control_commit!=="ai"||m.b2_expected_company_id!==company||
+       !m.source_message_id||m.source_message_id!==m.b2_source_message_id)return null;
+    if(m.response_route==="kb_no_current_evidence"&&m.rag_api_status==="success"&&!m.factual_request_subject)continue;
+    const name=clean(m.factual_request_subject),auth=obj(m.reference_authority),lineage=obj(m.citation_lineage);
+    const prov=obj(auth?.provenance),ids=lineage?.selected_document_ids,chunks=lineage?.evidence_chunk_ids;
+    const binds=lineage?.source_bindings,source=auth?.selected_source_id;
+    if(m.rag_api_status!=="success"||!validSubject(name)||!literalFactualSubject(clean(r.content),[name])||
+       /[<>\r\n|;；]/u.test(name)||auth?.decision!=="USE_CURRENT_KB"||
+       !["CURRENT_KB","PUBLISHED_KB_SERVICE"].includes(String(auth.selected_authority_class))||
+       !/product|商品|產品|产品/iu.test(String(prov?.source_type??""))||
+       !source||source!==lineage?.selected_document_id||
+       !Array.isArray(ids)||ids.length!==1||ids[0]!==source||
+       !Array.isArray(chunks)||chunks.length!==1||typeof chunks[0]!=="string"||
+       !Array.isArray(binds)||binds.length!==1)return null;
+    const bound=obj(binds[0]),target=obj(bound?.current_target);
+    if(bound?.selected_document_id!==source||
+       !Array.isArray(bound.evidence_chunk_ids)||bound.evidence_chunk_ids.length!==1||
+       bound.evidence_chunk_ids[0]!==chunks[0]||
+       !Array.isArray(target?.entity_ids)||target.entity_ids.length!==1||
+       norm(target.entity_ids[0])!==norm(name))return null;
+    const first=rows.slice(i+1).find(item=>CUSTOMER.has(String(item.role??"").toLowerCase()));
+    if(first?.id!==m.source_message_id)return null;
+    return {subject:name,source_message_id:r.id,customer_text:null,current:false};
+  }
+  return null;
+}
+
 const clearAmbiguity = (): CommerceSemanticAmbiguity => ({is_ambiguous: false, reasons: [], clarification_question: null});
 function explicitlyNegatesSubject(text: string, subject: string): boolean {
   const escaped = subject.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -333,6 +382,17 @@ function resolveDemandSubjects(
   if (mentioned.length && !explicit.length) return {bindings: [], question: quote, unresolved: true};
   if (!explicit.length && (EXPLICIT_HISTORY_REFERENCE.test(quote) ||
     refs.length > 1 && (PLURAL_POINTER.test(quote) || EXPLICIT_COMPARISON.test(quote)))) return unchanged();
+
+  // The prior cited recommendation is a locator for a fresh price/stock
+  // query, not evidence that the current merchant amount or inventory is valid.
+  if(demand.source_type==="product"&&!explicit.length&&!currentSubjects.length&&
+     currentFacets(quote).length>0&&!TOPIC_BOUNDARY.test(quote)&&
+     !EXPLICIT_HISTORY_REFERENCE.test(quote)&&!LIFECYCLE_BOUNDARY.test(quote)&&
+     !PLURAL_POINTER.test(quote)&&!demand.customer_correction&&
+     !demand.explicit_negations.length&&!Object.keys(demand.constraints).length&&refs.length<=1){
+    const prior=citedAssistantReadTarget(input);
+    if(prior)return {bindings:[prior],question:prior.subject+" "+quote,unresolved:false};
+  }
   // A cancelled, negated or invented semantic identity remains invalid. Focus
   // repair corrects a stale but source-proven reference, never grants a new
   // meaning to an unbound identity or revives its lifecycle authority.
@@ -684,6 +744,16 @@ function resolveLegacyCurrentFactualRequest(input: ResolveCurrentFactualRequestI
       // Skip only another subject-less factual follow-up, never an unrelated
       // customer topic or unknown statement to reach a convenient old item.
       if (!currentFacets(text).length && !POINTER.test(text)) { historyBoundary = true; break; }
+    }
+  }
+  if(needsSubject&&!request.subject&&!topicChanged&&currentFacets(merchant).length>0&&
+     !TOPIC_BOUNDARY.test(merchant)&&!LIFECYCLE_BOUNDARY.test(merchant)&&
+     !EXPLICIT_HISTORY_REFERENCE.test(merchant)){
+    const prior=citedAssistantReadTarget(input);
+    if(prior){
+      request.subject=prior.subject;request.subjects=[prior.subject];
+      request.subject_source_message_id=prior.source_message_id;
+      request.resolution="follow_up";request.answer_request=prior.subject+" "+merchant;
     }
   }
   request.needs_subject_clarification = needsSubject && !request.subject;

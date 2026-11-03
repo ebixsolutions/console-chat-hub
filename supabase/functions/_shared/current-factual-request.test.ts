@@ -980,3 +980,36 @@ Deno.test("Task3C v3.1 T16-A recap-only customer request cannot itself authorize
  assert(!result.kb_required&&result.query===null&&result.transaction_required===false,
    "read-only recap was incorrectly promoted to a paid KB query");
 });
+
+
+Deno.test("Task3: grounded AI recommendation stays a read target for elliptical price and stock, never cached merchant facts",()=>{
+ const company="demo-company",subject="Harbor Trail Jacket",doc="published-document";
+ const prior:FactualRequestHistoryRow[]=[
+  {id:"grounded-ai",role:"assistant",content:"We recommend Harbor Trail Jacket for walking.",metadata:{
+   control_commit:"ai",b2_expected_company_id:company,b2_source_message_id:"prior-visitor",
+   source_message_id:"prior-visitor",rag_api_status:"success",factual_request_subject:subject,
+   reference_authority:{decision:"USE_CURRENT_KB",selected_source_id:doc,
+    selected_authority_class:"PUBLISHED_KB_SERVICE",provenance:{source_type:"Product",tenant_id:"34"}},
+   citation_lineage:{selected_document_id:doc,selected_document_ids:[doc],evidence_chunk_ids:["chunk-1"],
+    source_bindings:[{selected_document_id:doc,evidence_chunk_ids:["chunk-1"],
+     current_target:{entity_ids:[subject]}}]}}},
+  {id:"prior-visitor",role:"visitor",content:"Can you recommend a jacket?"}];
+ for(const [question,facet] of [["How much?","price"],["In stock?","stock"]] as const){
+  const result=resolveCurrentFactualRequest({question,source_message_id:"now",trusted_company_id:company,
+   history:prior,semantic:demanded(demand(question,"product",[facet],[]))});
+  assert(result.subject===subject&&result.subject_source_message_id==="grounded-ai",JSON.stringify(result));
+  const retrieval=JSON.parse(result.query!);
+  equal(retrieval.questions[0].subjects,[subject]);
+  assert(retrieval.questions[0].requested_facts.includes(facet),"new KB query lost the requested facet");
+ }
+ for(const error of ["company","source","citation","human"]){
+  const history=structuredClone(prior),meta=history[0].metadata as Record<string,any>;
+  if(error==="source")meta.source_message_id="other-visitor";
+  if(error==="citation")meta.citation_lineage.selected_document_ids=["unrelated-document"];
+  if(error==="human")history.unshift({id:"agent",role:"agent",content:"I have taken over."});
+  const x=resolveCurrentFactualRequest({question:"How much?",source_message_id:"now",
+   trusted_company_id:error==="company"?"other-company":company,history,
+   semantic:demanded(demand("How much?","product",["price"],[]))});
+  assert(x.subject!==subject,"cross-scope historical assistant content trusted: "+error);
+ }
+});

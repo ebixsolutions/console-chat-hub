@@ -4664,6 +4664,7 @@ async function orchestrationGenerateReply(
         _currentFactualRequest = resolveCurrentFactualRequest({
           question: _semanticRequestQuestion,
           source_message_id: _h1SourceMessageId,
+          trusted_company_id: _criticalE2ExpectedTenantId,
           history: _semanticHistory,
           memory: _semanticPrepared?.memory ?? null,
           semantic: _a3SemanticFrame,

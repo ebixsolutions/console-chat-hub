@@ -130,6 +130,10 @@ Deno.test('Task3B v3.1 promotional, discount and cost columns cannot masquerade 
   'adjacent sale_price field contaminated genuine selling amount');
 });
 
+Deno.test('Catalogue Chinese simplified stock follow-up preserves the product name',()=>{
+ const q=catalogueFactRequest('轻量化户外冲锋衣 有无货？');
+ assert(q?.stock===true&&q.label==='轻量化户外冲锋衣','source product identity lost to the dialect stock word');
+});
 Deno.test('Catalogue stock aliases and duplicate protections do not use generic order quantity',()=>{
  for(const key of ['stock','stock_quantity','inventory_qty','available_quantity','庫存','库存数量'])assert(kbProductRecordStock(parseKbProductRecord(`name: Example Shirt\n${key}: 0`)).quantity===0,key);
  for(const raw of ['quantity: 5','reserved_stock: 5','description: stock: 5','stock: 5\nstock_2: 7'])assert(kbProductRecordStock(parseKbProductRecord(`name: Example Shirt\n${raw}`)).quantity===null,raw);

@@ -203,7 +203,7 @@ export function catalogueFactRequest(request: string): CatalogueRequest | null {
   const text=request.normalize("NFKC").trim();
   if(!text || text.length>800 || /(?:維修|维修|故障|broken|repair|refund|退款|取消|cancel|不要查|唔查|don't check|do not check)/iu.test(text))return null;
   const price=/(?:售價|售价|價錢|价钱|價格|价格|幾錢|几钱|多少錢|多少钱|\bprice\b|\bcost\b|how\s+much)/iu.test(text);
-  const stock=/(?:庫存|库存|現貨|现货|有冇貨|有沒有貨|有没有货|剩幾多|剩多少|\bstock\b|\binventory\b|\bavailability\b|\bavailable\b|how many.+left)/iu.test(text);
+  const stock=/(?:庫存|库存|現貨|现货|有冇貨|有無貨|有无货|有沒有貨|有没有货|剩幾多|剩多少|\bstock\b|\binventory\b|\bavailability\b|\bavailable\b|how many.+left)/iu.test(text);
   const specification=/(?:規格|规格|\bspecs?\b|顏色|颜色|尺碼|尺码|\bsize\b|\bcolou?r\b)/iu.test(text);
   if(!price&&!stock&&!specification)return null;
   const upper=normalizeCatalogueCode(text);
@@ -227,7 +227,7 @@ export function catalogueFactRequest(request: string): CatalogueRequest | null {
   if(colorField)label=label.replace(colorField[0]," ");
   label=label
     .replace(/^(?:how much (?:is|for|does) (?:the )?|what(?:'s| is) the (?:price|cost|stock|inventory|availability) (?:of|for) (?:the )?|(?:price|stock|inventory) (?:of|for) (?:the )?)/iu,"")
-    .replace(/(?:嘅|的)?(?:售價|售价|價錢|价钱|價格|价格|幾錢|几钱|多少錢|多少钱|庫存|库存|現貨|现货|規格|规格|有冇貨|有沒有貨|有没有货|price|cost|stock|inventory|availability|in stock|available|specs?)(?:係幾多|是多少|有幾多|几多|幾多|多少|how many|please)?/giu," ")
+    .replace(/(?:嘅|的)?(?:售價|售价|價錢|价钱|價格|价格|幾錢|几钱|多少錢|多少钱|庫存|库存|現貨|现货|規格|规格|有冇貨|有無貨|有无货|有沒有貨|有没有货|price|cost|stock|inventory|availability|in stock|available|specs?)(?:係幾多|是多少|有幾多|几多|幾多|多少|how many|please)?/giu," ")
     .replace(/^(?:is|are|do you have)\s+(?:the\s+)?/iu,"")
     .replace(/(?:^|\s)(?:and|or|for|please)(?=\s|$)/giu," ")
     .replace(/[?？!！。.,，;；:：&]/gu," ").replace(/(?:同埋|以及|及|同|有冇|有沒有|有没有|係幾多|仲有幾多|剩多少|多少件|多少|幾多|几多)/gu," ");
