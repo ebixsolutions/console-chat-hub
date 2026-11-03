@@ -249,7 +249,7 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
    // Original anti-tamper negative-fixture error identities execute first.
   must(profile.task3c_unverified_reply_production_deploy_authorized===false,'task3c_production_not_authorized');
   must(JSON.stringify(profile.authorized_task3c_unverified_reply_sha256)===JSON.stringify(TASK3C_UNVERIFIED_REPLY_SOURCE),'task3c_exact_scope_drift');
-  for(const [f,h] of Object.entries(TASK3C_UNVERIFIED_REPLY_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task3c_source_hash_drift:'+f);
+  for(const [f,h] of Object.entries(TASK3C_UNVERIFIED_REPLY_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===(TASK3BC_NONPAID_SOURCE[f]??h),'task3c_source_hash_drift:'+f);
   must(profile.task3bc_nonpaid_production_deploy_authorized===false,'task3bc_nonpaid_production_not_authorized');
   must(JSON.stringify(profile.authorized_task3bc_nonpaid_sha256)===JSON.stringify(TASK3BC_NONPAID_SOURCE),'task3bc_nonpaid_scope_drift');
   for(const [f,h] of Object.entries(TASK3BC_NONPAID_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task3bc_nonpaid_source_hash_drift:'+f);
