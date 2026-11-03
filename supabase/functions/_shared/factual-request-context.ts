@@ -99,3 +99,39 @@ export async function currentFactualRequestReceipt(
     retrieval_attempt: 1,
   };
 }
+
+/** Task3C: source-bound, non-paid fallback only after the grounded model draft
+ * was rejected. This text is NOT a merchant quote, a verified availability
+ * assertion, a successful handoff, or a new KB lookup. */
+export function renderUnverifiedFactualNextStep(
+  request: CurrentFactualRequest | null | undefined,
+  language: "zh-TW" | "zh-CN" | "en",
+): string | null {
+  if (!request?.applicable || request.needs_subject_clarification ||
+      request.subjects.length > 1 || request.transaction_required && !request.kb_required) return null;
+  const facts = (request.requested_facts ?? []).map(fact => fact.normalize("NFKC").toLowerCase());
+  const stock = facts.some(fact => /stock|inventory|availab|庫存|库存|現貨|现货/iu.test(fact));
+  const price = facts.some(fact => /price|pricing|cost|售價|售价|價格|价格|價錢|价钱/iu.test(fact));
+  const other = facts.some(fact => /features?|specifications?|warranty|policy|delivery|refund|功能|規格|规格|保養|保修|政策|退貨|退货/iu.test(fact));
+  if (!stock && !price && !other) return null;
+  const rawSubject = (request.subject ?? (request.subjects.length === 1 ? request.subjects[0] : "")).normalize("NFKC").trim();
+  // A long, control-bearing or ambiguous customer label is never repeated as
+  // a purported verified product identity. Customer wording remains non-authoritative.
+  const subject = rawSubject && rawSubject.length <= 90 && !/[\u0000-\u001F\u007F<>]/u.test(rawSubject)
+    ? rawSubject : null;
+  if (!subject && (stock || price) && !request.subjects.length) return null;
+  const zhTarget = subject ? "「" + subject + "」" : "相關項目";
+  const enTarget = subject ? '"' + subject + '"' : "the requested item";
+  const enFact = stock && price ? "current price or live stock" : stock ? "live stock" : price ? "current selling price" : "requested current facts";
+  const zhFact = stock && price ? "即時售價同現貨" : stock ? "即時現貨" : price ? "即時售價" : "相關資料";
+  const cnFact = stock && price ? "当前售价和实时库存" : stock ? "实时库存" : price ? "当前售价" : "相关资料";
+  if (language === "en") return "I can't reliably verify " + enFact + " for " + enTarget +
+    " from the available evidence. A source-recorded figure is not a verified live offer or stock level. " +
+    "You can request human support to check; no transfer has been made.";
+  if (language === "zh-CN") return "目前未能可靠核实" + zhTarget + "的" + cnFact +
+    "。即使资料有标示数字，也不代表已核实的当前报价或实时库存；我不会猜测。" +
+    "如需进一步确认，可选择「转人工客服」；目前尚未转接。";
+  return "我而家未能可靠核實" + zhTarget + "嘅" + zhFact +
+    "。即使資料有標示數字，都唔等於已核實嘅現價或即時可售庫存；我唔會估。" +
+    "如需進一步確認，你可以選擇「轉真人客服」；目前未有轉交。";
+}

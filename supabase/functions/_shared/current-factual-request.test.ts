@@ -1,4 +1,5 @@
 import { resolveCurrentFactualRequest, assertFactualQueryBudget, type FactualRequestHistoryRow } from "./current-factual-request.ts";
+import { renderUnverifiedFactualNextStep } from "./factual-request-context.ts";
 import { scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
 import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state-core.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
@@ -879,4 +880,28 @@ Deno.test("Task3A rebuilds a dependent stock query with the verified recent SKU,
   equal(result.requested_facts,["stock"]);
   equal(kb.questions[0].question,sku+" "+quote.normalize("NFKC"));
   assert(!result.query?.includes("price"),"stale model fact carried into the follow-up query");
+});
+
+
+Deno.test("Task3C: refused grounding gives the current stock question a bounded next step, no fabricated stock or handoff", () => {
+  const request = resolveCurrentFactualRequest({question:"CW-SUL70BA 有冇貨？",semantic:frame(["price"])});
+  const answer = renderUnverifiedFactualNextStep(request,"zh-TW");
+  assert(!!answer && answer.includes("CW-SUL70BA") && answer.includes("即時現貨"),JSON.stringify(answer));
+  assert(!/已轉交|有現貨|已核實有貨|售價為|HK\$[0-9]/u.test(answer),"unverified fact promoted");
+  assert(!answer.includes("再次提供型號"),"known subject re-asked");
+});
+Deno.test("Task3C: current price and stock stay separate from recorded figures in three languages", () => {
+  const request=resolveCurrentFactualRequest({question:"Harbor field pack price and stock?",semantic:frame(["features"])});
+  for(const lang of ["zh-TW","zh-CN","en"] as const){
+    const reply=renderUnverifiedFactualNextStep(request,lang);
+    assert(!!reply && reply.includes("Harbor field pack"),JSON.stringify(reply));
+    assert(!/\b(?:paid|confirmed order|in stock)\b|已付款|已轉交|已转接/iu.test(reply),"unverified lifecycle claim");
+  }
+});
+Deno.test("Task3C: no source-owned current fact, ambiguous product, or private transaction gets no fabricated answer", () => {
+  assert(renderUnverifiedFactualNextStep(undefined,"zh-TW")===null,"absence invented");
+  const ambiguous=resolveCurrentFactualRequest({question:"Compare AX-QZ81 and BR-998 price and stock",semantic:frame()});
+  assert(renderUnverifiedFactualNextStep(ambiguous,"en")===null,"multiple products conflated");
+  const order=resolveCurrentFactualRequest({question:"Check my order status, reference AB-12345",semantic:frame()});
+  assert(renderUnverifiedFactualNextStep(order,"en")===null,"private order status guessed");
 });

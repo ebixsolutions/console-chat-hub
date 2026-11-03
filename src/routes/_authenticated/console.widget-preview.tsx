@@ -46,7 +46,7 @@ import {
 } from "@/lib/api/config.service";
 import { supabase } from "@/integrations/supabase/client";
 import { mergeWidgetMessages } from "@/lib/widget-message-merge";
-import { widgetResponseStatus } from "@/lib/widget-response-status";
+import { widgetResponseStatus, hasTrustedHumanSupportOffer } from "@/lib/widget-response-status";
 import { deliveryConfirmedByReadback, isBusinessAdmissionFailure } from "@/lib/widget-live-recovery";
 
 export const Route = createFileRoute(
@@ -806,6 +806,7 @@ type PreviewMessage = {
   role: "visitor" | "assistant" | "agent" | "system";
   content: string;
   meta?: string;
+  humanSupportOffer?: boolean;
   isError?: boolean;
 };
 
@@ -1019,6 +1020,7 @@ function PreviewWidget({
         id: row.id,
         role: row.role,
         content: row.content,
+        humanSupportOffer: hasTrustedHumanSupportOffer(row.role, row.metadata),
         meta:
           row.role === "agent" ? (lang === "zh" ? "真人客服" : "Human agent") : row.role === "system" ? "System" :
           row.role === "assistant" && row.metadata
@@ -1602,6 +1604,19 @@ function PreviewWidget({
               <div className="whitespace-pre-wrap break-words">{message.content}</div>
             ) : (
               <SafeWidgetMessageContent content={message.content} />
+            )}
+            {mode === "live" && message.role === "assistant" && message.humanSupportOffer && (
+              <button type="button" aria-label={lang === "zh" ? "轉真人客服" : "Talk to human support"}
+                className="mt-2 block text-xs font-medium text-blue-700 underline disabled:cursor-not-allowed disabled:text-slate-400"
+                disabled={!inputEditable || !scopeReady || !runtimeReady || !testConversationId ||
+                  !conversationVerified || humanState !== "none" || Boolean(pendingSend.current) || replyInFlight.current}
+                onClick={() => {
+                  // No automatic transfer or duplicate send: the existing
+                  // authenticated visitor R1 path rechecks live Ticket control.
+                  if (!inputEditable || !scopeReady || !runtimeReady || !testConversationId ||
+                      !conversationVerified || humanState !== "none" || pendingSend.current || replyInFlight.current) return;
+                  void runLiveAi(lang === "zh" ? "請轉真人客服" : "Please connect me to human support");
+                }}>{lang === "zh" ? "轉真人客服" : "Talk to human support"}</button>
             )}
             {message.meta && (
               <div

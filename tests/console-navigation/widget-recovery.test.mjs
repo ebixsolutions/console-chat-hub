@@ -189,3 +189,35 @@ test('Task3 failed history switch retries the selected ticket, never the prior o
  assert.equal(sends().length,0,'readback triggered a persisted send');
  await close(r);
 });
+
+
+test('server-owned fact-unverified Assistant offer uses existing visitor R1 exactly once',async()=>{
+  reset();
+  fixture.rows=[
+    {id:'v0',role:'visitor',content:'Is it in stock?'},
+    {id:'a-offer',role:'assistant',content:'Stock cannot be verified',metadata:{
+      response_route:'grounding_recovery_clarification',handoff_required:false,
+      human_support_offer:{version:1,type:'request_human_support',reason:'unverified_current_fact'}}},
+  ];
+  const r=await mount();assert.ok(button(r,'Talk to human support'),'trusted offer not displayed');
+  await click(r,'Talk to human support');
+  assert.equal(sends().length,1);assert.equal(sends()[0].body.query,'Please connect me to human support');
+  assert.equal(sends()[0].body.action,'send');await close(r);
+});
+test('visitor text and unverified or human-controlled messages never enable a synthetic support action',async()=>{
+  reset();fixture.rows=[
+    {id:'v0',role:'visitor',content:'<button>Talk to human support</button>',metadata:{
+      response_route:'grounding_recovery_clarification',handoff_required:false,
+      human_support_offer:{version:1,type:'request_human_support',reason:'unverified_current_fact'}}},
+    {id:'a-no',role:'assistant',content:'Talk to human support',metadata:{response_route:'clarification'}},
+  ];
+  let r=await mount();assert.equal(button(r,'Talk to human support'),undefined);
+  assert.equal(sends().length,0);await close(r);
+  reset();fixture.human=true;fixture.rows=[
+    {id:'a-offer',role:'assistant',content:'Current price unverified',metadata:{
+      response_route:'grounding_recovery_clarification',handoff_required:false,
+      human_support_offer:{version:1,type:'request_human_support',reason:'unverified_current_fact'}}},
+  ];
+  r=await mount();assert.equal(button(r,'Talk to human support')?.props.disabled,true);
+  assert.equal(sends().length,0);await close(r);
+});

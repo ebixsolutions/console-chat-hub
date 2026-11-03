@@ -1404,6 +1404,16 @@
     "tests/task1-director/event-driven-widget.test.mjs": "9d06588f06703d727236a4807b2292c5ea70e2729ae92deccc5d498b5ba5643d",
     "tests/console-navigation/widget-recovery.test.mjs": "50ea5f62f5f1ee53ef5b9b436fea7521f15043e382be18631020001a11a52f8d"
   },
+  "authorized_task3c_unverified_reply_sha256": {
+    "src/lib/widget-message-merge.test.mjs": "40307f64fa91980dbcd4611395101b76dcfce08c7e0cec485d66e2fb7cfca0ac",
+    "src/lib/widget-response-status.ts": "eca87cebc89e1f5047414c1ee5ef823b69d2dae46416060e57ab3665d3ca9f81",
+    "src/routes/_authenticated/console.widget-preview.tsx": "9aa4718cbf8907d076f90ef92de8f600b60907038b39b4d0ddd01ad8edccc121",
+    "supabase/functions/_shared/current-factual-request.test.ts": "5b277c74a7a95c3a83df7bd63fbe80397681dd2b666945f0a826b2d290372815",
+    "supabase/functions/_shared/factual-request-context.ts": "1e3280ae673aa6bcf2842e78421932a2c1f87c293b9b9d4a46bda197e7213058",
+    "supabase/functions/generate-reply/index.ts": "ec3aeac8e6c33700780dc072aaec03f13e8fba4a6b6046119ee0b42c4b706707",
+    "tests/console-navigation/widget-recovery.test.mjs": "430aabbf202b6843ccada8af4605deae20f84959f977cb1b2d8b54e08d1ec345"
+  },
+  "task3c_unverified_reply_production_deploy_authorized": false,
   "authorized_task3_c2_p0_sha256": {
     "supabase/functions/_shared/conversation-closure.ts": "c222706856ed70721639aee8467b36383c118942055c0a41d9dde413c97655c8",
     "supabase/functions/_shared/transaction-closure-handoff.test.ts": "13ec3db07c761f4063c8befe5034a3365b061a4306e962d09a5faccc83c9ce1b"

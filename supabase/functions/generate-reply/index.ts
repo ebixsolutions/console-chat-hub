@@ -74,7 +74,7 @@ import {
 } from "../_shared/natural-customer-response.ts";
 import { productKbSemanticContract } from "../_shared/product-kb-semantic-contract.ts";
 import { resolveCurrentFactualRequest, type CurrentFactualRequest } from "../_shared/current-factual-request.ts";
-import { buildCurrentFactualRequestPrompt, currentFactualFollowupContext, currentFactualRequestContext, currentFactualRequestReceipt } from "../_shared/factual-request-context.ts";
+import { buildCurrentFactualRequestPrompt, currentFactualFollowupContext, currentFactualRequestContext, currentFactualRequestReceipt, renderUnverifiedFactualNextStep } from "../_shared/factual-request-context.ts";
 import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer, resolveSourceRecordedPartialRecovery, type FactualEvidenceBundle} from "../_shared/factual-evidence-selection.ts";
 import {buildGroundingEvidencePrompt, type GroundingEvidence} from "../_shared/grounding-evidence.ts";
 import {buildFactualKbPriceClaims} from "../_shared/factual-kb-price-proof.ts";
@@ -7001,6 +7001,10 @@ Latest applicable corrections replace old values; an answered clarification is n
         ? resolveSourceRecordedPartialRecovery(_factualEvidenceBundle,_currentFactualRequest,{
           language:_visitorLang,companyId:_generationCompanyId,sourceMessageId:source_message_id,expectedTenantId:_canonicalKbTenantId,
         }) : null;
+      // A rejected draft cannot turn unknown source data into a present-day offer.
+      // Use the current source-bound factual request to explain the unresolved fact.
+      const unverifiedReply = renderUnverifiedFactualNextStep(_currentFactualRequest, _visitorLang);
+      const humanSupportOffer = unverifiedReply ? {version:1,type:"request_human_support",reason:"unverified_current_fact"} : null;
       const recoveryTrace = {
         source_error_code:"LLM_GROUNDING_REJECTED",
         failed_generation_request_id:llm.request_id,
@@ -7017,9 +7021,10 @@ Latest applicable corrections replace old values; an answered clarification is n
         supabaseAdmin,
         conversation_id,
         source_message_id,
-        partial?.reply ?? clarificationReply,
+        partial?.reply ?? unverifiedReply ?? clarificationReply,
         {
           ...recoveryTrace,
+          ...(!partial && humanSupportOffer ? {human_support_offer:humanSupportOffer} : {}),
           ...(partial ? {...partial.citation_metadata,recorded_kb_facts:partial.recorded_facts,
             authoritative_kb_facts:[],partial_recovery:{contract:"canonical-source-field-recovery-1",
               question_resolution:"partial",demand_outcomes:partial.demand_outcomes},rag_api_status:"success"} : {}),
@@ -7033,8 +7038,8 @@ Latest applicable corrections replace old values; an answered clarification is n
       // clarification. Human control, supersession and unknown outcomes never retry.
       if (partial && !committed.ok && committed.result === "b2_block") {
         responseRoute = "grounding_recovery_clarification";
-        committed = await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,source_message_id,clarificationReply,{
-          ...recoveryTrace,response_route:responseRoute,handoff_required:false,factual_grounding_required:false,
+        committed = await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,source_message_id,unverifiedReply ?? clarificationReply,{
+          ...recoveryTrace,...(humanSupportOffer ? {human_support_offer:humanSupportOffer} : {}),response_route:responseRoute,handoff_required:false,factual_grounding_required:false,
           unresolved_fact_fields:unresolved,partial_recovery_b2_rejection:safeB2FailureCode(committed.b2_code),
         });
       }

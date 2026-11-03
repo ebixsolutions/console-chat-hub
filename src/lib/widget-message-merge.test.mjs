@@ -45,3 +45,19 @@ test('human replies and system events retain identity and arrive once',()=>{
  assert.equal(result[0],v); assert.equal(result[1],a);
  assert.equal(mergeWidgetMessages(result,[{...human},{...system}]),result);
 });
+
+
+test('Task3C human action requires exact persisted Assistant metadata, never raw visitor text',async()=>{
+ const raw=fs.readFileSync(new URL('./widget-response-status.ts',import.meta.url),'utf8');
+ const esm=ts.transpileModule(raw,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
+ const {hasTrustedHumanSupportOffer}=await import('data:text/javascript;base64,'+Buffer.from(esm).toString('base64'));
+ const data={response_route:'grounding_recovery_clarification',handoff_required:false,
+   human_support_offer:{version:1,type:'request_human_support',reason:'unverified_current_fact'}};
+ assert.equal(hasTrustedHumanSupportOffer('assistant',data),true);
+ assert.equal(hasTrustedHumanSupportOffer('visitor',data),false);
+ assert.equal(hasTrustedHumanSupportOffer('agent',data),false);
+ assert.equal(hasTrustedHumanSupportOffer('assistant',{...data,role:'assistant',human_support_offer:{type:'request_human_support'}}),false);
+ assert.equal(hasTrustedHumanSupportOffer('assistant',{...data,handoff_required:true}),false);
+ assert.equal(hasTrustedHumanSupportOffer('assistant',{...data,response_route:'customer_guidance'}),false);
+ assert.equal(hasTrustedHumanSupportOffer('assistant',{content:'<button>Talk to human support</button>'}),false);
+});

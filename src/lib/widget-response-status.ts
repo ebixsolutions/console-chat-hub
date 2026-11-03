@@ -16,3 +16,21 @@ export function widgetResponseStatus(metadata: Record<string, unknown>): string 
   if (route.includes("clarification")) return "clarification";
   return "response";
 }
+
+
+/** Only a server-persisted Assistant outcome can offer a customer-initiated
+ * human-support action. Message text, visitor/agent metadata and a generic
+ * handoff keyword never create this option. The click still uses original R1. */
+export function hasTrustedHumanSupportOffer(
+  role: string, metadata: Record<string, unknown> | null | undefined,
+): boolean {
+  if (role !== "assistant" || !metadata ||
+      metadata.response_route !== "grounding_recovery_clarification" ||
+      metadata.handoff_required !== false) return false;
+  const action = metadata.human_support_offer;
+  return !!action && typeof action === "object" && !Array.isArray(action) &&
+    Object.keys(action).length === 3 &&
+    (action as Record<string, unknown>).version === 1 &&
+    (action as Record<string, unknown>).type === "request_human_support" &&
+    (action as Record<string, unknown>).reason === "unverified_current_fact";
+}
