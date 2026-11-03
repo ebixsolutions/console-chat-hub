@@ -300,6 +300,8 @@ Deno.test("Task3B v3.1 independently identity-bound same-SKU price conflicts fai
 Deno.test("Task3B v3.1 identity-bound document-only SKU provides recorded USD price and zero stock, never cost or current quote",async()=>{
  const manual="spu_code: JK-101\nspu_name: Trail jacket\nsku_code: JK-101-M\nprice: USD 85\nspecial_price: USD 72\ncost_price: USD 20\nstock: 0";
  const source=await document(manual,"task3b-identity-bound-document",{entity_ids:["JK-101-M"]});
+ assert(catalogueFactRequest("JK-101-M price and stock?")?.size===null,
+   "exact SKU suffix incorrectly forced an independent size qualifier");
  const result=answer("JK-101-M price and stock?",[source],"en");
  assert(result.selection.ok&&result.selection.document?.document_id===source.document_id&&
    result.result?.reply.includes("USD 85")&&result.result.reply.includes("quantity: 0"),

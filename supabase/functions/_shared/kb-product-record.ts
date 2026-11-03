@@ -210,7 +210,12 @@ export function catalogueFactRequest(request: string): CatalogueRequest | null {
   const codes=[...new Set((upper.match(/\b(?:[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+|[A-Z]{1,8}\d{2,}[A-Z0-9]*)\b/gu)??[]).filter(code=>/\d/u.test(code)))];
   const sizeField=/(?:尺碼|尺码|size)\s*[:=]\s*(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|[2-9]XL)\b/iu.exec(text);
   const colorField=/(?:顏色|颜色|colou?r)\s*[:=]\s*([^\s,，?？;；]{1,20})/iu.exec(text);
-  const size=sizeField?.[1]?.toUpperCase()??/\b(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|[2-9]XL)\b/u.exec(upper)?.[1]??null;
+  // A suffix inside an exact SKU (JK-101-M or P002-NV-XL) is part of
+  // the SKU identity, not independent evidence of a size constraint.
+  // Explicit 'size: M' still takes precedence; a separate free-standing
+  // size token remains a genuine qualifier.
+  const withoutCodes=codes.reduce((remaining,code)=>remaining.replaceAll(code," "),upper);
+  const size=sizeField?.[1]?.toUpperCase()??/\b(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|[2-9]XL)\b/u.exec(withoutCodes)?.[1]??null;
   const color=colorField?.[1]??
     /(?:^|[\s,，])([\p{Script=Han}]{1,5}色)(?=$|[\s,，?？])/u.exec(text)?.[1]??null;
   // Conversational topic markers and explicit variant field names locate the
