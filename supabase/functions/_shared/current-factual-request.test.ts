@@ -1058,7 +1058,7 @@ Deno.test("Task3C cross-industry open-ended fact rejection identifies the actual
     demands:[{...existing.demands[0],source_quote:query,question:query,requested_facts:["continuous operating acoustic rating"]}]};
   for(const language of ["zh-TW","zh-CN","en"] as const){
     const reply=renderUnverifiedFactualNextStep(request,language);
-    assert(!!reply&&reply.includes(query)&&reply.includes("CW-SUL70BA"),"open-domain question fell into generic no-answer: "+language);
+    assert(!!reply&&reply.includes(query.normalize("NFKC"))&&reply.includes("CW-SUL70BA"),"open-domain question fell into generic no-answer: "+language);
     assert(!/已核實|已確認|has been transferred|已轉交|已转接|HK\$[0-9]|[0-9]+\s*(?:dB|分貝)/u.test(reply),"unsupported fact or action promoted");
   }
   const policyQuestion="Is there weekend cancellation coverage for this service?";
