@@ -4,7 +4,7 @@ import { scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
 import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state-core.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CommerceSemanticDemand, CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
-import { decodeCommerceSemanticWire, recoverSourceQuotedReadOnlyFactualFrame } from "./commerce-semantic-frame.ts";
+import { decodeCommerceSemanticWire, recoverSourceQuotedReadOnlyFactualFrame, COMMERCE_SEMANTIC_SYSTEM_PROMPT } from "./commerce-semantic-frame.ts";
 import { DecisionContextLimitError } from "./bounded-decision-context.ts";
 import { planConversationService, renderServicePlanReply } from "./conversation-service-planner.ts";
 import { applyCustomerRequestDecision, resolveCustomerRequestDecision } from "./commerce-state-authority.ts";
@@ -1144,4 +1144,11 @@ Deno.test("Task3A P0-0 v5 read-only recovery rejects missing clauses, mutation, 
  assert(admit(task3V5MalformedEntity(q,"ASK_FACT",{demands:[]}))===null,"missing customer demand inferred");
  const ambiguous=task3V5MalformedEntity(q,"ASK_FACT",{ambiguity:{is_ambiguous:true,reasons:["unclear"],clarification_question:"Which one?"}});
  assert(admit(ambiguous)===null,"model uncertainty dropped to force a KB call");
+});
+
+Deno.test("Task3A source-only semantic contract: open-domain factual questions prefer full sourced demands over dummy entities",()=>{
+ const prompt=COMMERCE_SEMANTIC_SYSTEM_PROMPT;
+ assert(prompt.includes("do not create or repeat optional entities")&&prompt.includes("Source quote must be an exact contiguous substring"),
+  "semantic provider has no guidance to prevent the observed malformed entity / paraphrased source quote");
+ assert(prompt.includes("independently answerable requests"),"general multi-clause demand preservation was lost");
 });

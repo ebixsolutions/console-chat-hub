@@ -1149,8 +1149,8 @@ export function recoverSourceQuotedReadOnlyFactualFrame(
   if (!diagnostic || !("field_class" in diagnostic) ||
       diagnostic.container !== "wire_nodes" ||
       diagnostic.stage !== "canonical_vocabulary" ||
-      !diagnostic.field_class.startsWith("entity") ||
-      !["required","type","enum","range"].includes(diagnostic.reason)) return null;
+      (typeof diagnostic.field_class !== "string" || !diagnostic.field_class.startsWith("entity")) ||
+      !["required","type","enum","range"].includes(diagnostic.reason ?? "")) return null;
   if (!isRecord(wire) || wire.context_encoding !== "semantic_values_v5" ||
       wire.operation !== "ASK_FACT" || typeof wire.confidence !== "number" ||
       !Number.isFinite(wire.confidence) || wire.confidence < 0.62 || wire.confidence > 1 ||
@@ -1425,7 +1425,8 @@ Wire contract: context_encoding=semantic_values_v5. Follow the supplied typed tr
 Lifecycle scope: delaying a lookup, quotation search, comparison, or choice of model is not cancelling or deferring the product/service requirement. An undecided model is not a deferred item. Use CANCEL_ITEM/REMOVE_ITEM/DEFER only when the customer explicitly cancels/removes/pauses the item or purchase/service itself; preserve real item cancellation and deferral. A request for general guidance without external research keeps the stated need current and does not create a quote, order or payment state.
 Newly supplied or changed customer_facts require UPDATE_ITEM rather than NO_STATE_CHANGE; read-only recap must not re-emit unchanged facts.
 customer_facts contains at most 16 named keys for newly asserted CUSTOMER background/needs, not merchant evidence; attach each actual value with paths under customer_facts/index/value. Keep meaningful field names, quantities with units, false, zero, null/unknown, exclusions and nested constraints. Reuse the exact retained key from persistent current_customer_facts when correcting the same field; never emit an old value as a second current fact under a synonym. Never include a fact solely recalled from prior context. A background catalogue count/team/market/interface is a customer fact, not an item to buy or cancel. Control/handoff/recap instructions are not facts or entities.
-An entity needs name, kind and confidence; omit unspecified optional fields, or use the canonical nullable/unknown value when needed. Add attributes/constraints paths only for actually supplied/needed context. Set capability flags true ONLY for requested capabilities, never merchant support. Retain explicit customer-authored false in attributes/constraints/customer_facts.
+An entity needs name, kind and confidence; omit unspecified optional fields, or use the canonical nullable/unknown value when needed.
+For fact-only questions and option discovery, fully represent independently answerable requests under demands; do not create or repeat optional entities simply to mention a merchant product or brand. Source quote must be an exact contiguous substring of the latest customer input after Unicode NFKC and whitespace normalization, never a rewritten question. Supply entity confidence only when proposing a genuine typed entity; otherwise omit the entity and keep the complete sourced demand. Uncertain merchant details belong in ambiguity, not invented SKUs, prices, stock, bookings or state. Add attributes/constraints paths only for actually supplied/needed context. Set capability flags true ONLY for requested capabilities, never merchant support. Retain explicit customer-authored false in attributes/constraints/customer_facts.
 Use only the operation/kind/lifecycle values in the supplied canonical semantic grammar. Unchanged lifecycle fields are omitted or unknown; customer evidence never grants merchant authority.
 When a meaning remains unresolved, set ambiguity.is_ambiguous=true with concise reasons and a clarification_question. Otherwise use false, an empty reasons list and a null clarification_question. Do not repeat complete history/state, unchanged entities or resolved fields. Never make up provenance; the server binds the actual latest visitor message.
 Core rules:
