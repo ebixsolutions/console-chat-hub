@@ -261,7 +261,7 @@ Deno.test("Task3B v3.1 document-only, indexed-API-only, mixed conflict remain se
  // answer as recorded-only, but must not inherit any file-only fields.
  assert(mixed.selection.ok&&mixed.selection.document?.document_id===apiOnly.document_id&&
    mixed.result?.reply===second.result?.reply&&mixed.result?.price_fact===undefined&&
-   mixed.result.recorded_facts?.every(f=>f.document_id===apiOnly.document_id)&&
+   mixed.result?.recorded_facts?.every(f=>f.document_id===apiOnly.document_id)&&
    b2(mixed,"CW-SUL70BA price and stock?").decision==="allow",
    "weak file source overrode the admitted indexed record or mixed source roles");
  const presented=[first.result?.reply,second.result?.reply,mixed.result?.reply].filter(Boolean).join(" ");

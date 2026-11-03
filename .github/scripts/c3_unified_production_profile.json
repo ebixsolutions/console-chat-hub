@@ -1405,7 +1405,7 @@
     "tests/console-navigation/widget-recovery.test.mjs": "50ea5f62f5f1ee53ef5b9b436fea7521f15043e382be18631020001a11a52f8d"
   },
   "authorized_task3bc_nonpaid_sha256": {
-    "supabase/functions/_shared/catalogue-price-stock.test.ts": "cdcc5dfedb1d873ba30ff1527ea195cceeb59f8954e28b5854abbdaf71e0c6a7",
+    "supabase/functions/_shared/catalogue-price-stock.test.ts": "04f105ed3731d2873a5930acb9924e066e24c5b7913651f07ece82118a1603cb",
     "supabase/functions/_shared/current-factual-request.test.ts": "e75887d441beed3fab0c31c71e0c7eb5e8aaaced8dd7a4e792180d7b9fd3f772",
     "supabase/functions/_shared/factual-evidence-selection.test.ts": "fc281cffa63584fc9b11ff71e6f7dd8dd5e5857667b24aae85e022596b9e5a33",
     "supabase/functions/_shared/transaction-closure-handoff.integration.test.ts": "8b1da5f018419a6aedff2ba70835421b35b63f7f368c4b3376d9b6b6ad37851b"
