@@ -1204,7 +1204,7 @@ export function recoverSourceQuotedReadOnlyFactualFrame(
 }
 
 
-/** Recover a model-paraphrased source quote only as a fresh, full-source,
+/** Recover only a Unicode/punctuation-equivalent source quote as a fresh, full-source,
  * independent READ-ONLY factual query. Strict source-quote validation remains
  * mandatory for all mixed, transactional, modifying and ambiguous turns.
  * No history, alleged SKU, merchant price or customer mutation is trusted. */
@@ -1231,8 +1231,13 @@ export function rebindSourceQuotedReadOnlyDemand(
       demand.ambiguity.is_ambiguous || Object.keys(demand.constraints).length ||
       !demand.requested_facts.length ||
       demand.requested_facts.some(fact => !fact || fact.length > 200) ||
-      !demand.source_quote ||
-      source.includes(demand.source_quote.normalize("NFKC").replace(/\s+/gu," ").trim())) return null;
+      !demand.source_quote) return null;
+  // Model-proposed paraphrases are not customer-source evidence. A complete
+  // source quote can be rebound only if NFKC/whitespace and terminal punctuation
+  // are the sole differences. Never heal an invented or translated demand.
+  const quoted = demand.source_quote.normalize("NFKC").replace(/\s+/gu," ").trim();
+  const unpunctuated = (value: string) => value.replace(/[?!.。．]+$/gu,"").trim();
+  if (!quoted || source.includes(quoted) || unpunctuated(source) !== unpunctuated(quoted)) return null;
   return {...frame, topic:null, entities:[], referents:[],
     requested_facts:[...demand.requested_facts],
     demands:[{...demand,question:source,source_quote:source,subject_refs:[],constraints:{}}]};

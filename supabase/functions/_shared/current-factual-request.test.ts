@@ -1156,10 +1156,10 @@ Deno.test("Task3A source-only semantic contract: open-domain factual questions p
 
 Deno.test("Task3A generic source-quote mismatch only rebuilds a complete read from authentic multilingual customer text",()=>{
  for(const [customer,model] of [
-  ["我想買衫，有冇介紹","我想买衣服，有推荐吗"],
-  ["大金2匹有咩型號？","请列出大金 2 匹的冷气型号"],
-  ["Could you recommend a rental option?","What rental options do you offer?"],
-  ["Quels modèles sont proposés ?","Quel modèle recommandez-vous ?"]
+  ["我想買衫，有冇介紹","我想買衫，有冇介紹？"],
+  ["大金2匹有咩型號？","大金2匹有咩型號?"],
+  ["Could you recommend a rental option?","Could you recommend a rental option"],
+  ["Quels modèles sont proposés ?","Quels modèles sont proposés?"]
  ]){
   const semantic=frame(["published merchant options"],null);semantic.operation="ASK_FACT";semantic.intent="recommend_options";
   semantic.demands=[demand(model,"product",["published merchant options"],["old-unbound-SKU"])];
@@ -1179,8 +1179,13 @@ Deno.test("Task3A generic source-quote mismatch only rebuilds a complete read fr
 Deno.test("Task3A generic source-quote recovery fails closed on mixed, uncertain and stateful cases",()=>{
  const source="我想買衫，有冇介紹";
  const build=()=>{const v=frame(["product options"],null);v.operation="ASK_FACT";
-   v.demands=[demand("我想买衣服，有推荐吗","product",["product options"],[])];return v;};
+   v.demands=[demand(source+"?","product",["product options"],[])];return v;};
  const check=(edit:(v:CommerceSemanticFrame)=>void,q=source)=>{const v=build();edit(v);return rebindSourceQuotedReadOnlyDemand(v,q);};
+ assert(rebindSourceQuotedReadOnlyDemand(build(),source)!==null,"equivalent punctuation must remain eligible for a safe factual read");
+ assert(check(v=>{v.demands![0].source_quote="PRIVATE-INVENTED-CUSTOMER-CLAUSE";})===null,
+   "invented model source quote was silently replaced by customer text");
+ assert(check(v=>{v.demands![0].source_quote="我想买衣服，有推荐吗";})===null,
+   "unproved cross-language paraphrase became source authority");
  assert(check(v=>v.demands!.push(demand("refund policy","policy",["refund"])))===null,"independent demand lost");
  assert(check(v=>v.customer_facts=[{key:"quantity",value:2}])===null,"customer-owned fact lost");
  assert(check(v=>v.customer_correction=true)===null,"correction lost");
