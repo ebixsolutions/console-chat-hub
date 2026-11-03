@@ -1061,6 +1061,7 @@ Deno.test("Task3C cross-industry open-ended fact rejection identifies the actual
     const reply=renderUnverifiedFactualNextStep(request,language);
     assert(!!reply&&reply.includes("continuous operating acoustic rating")&&reply.includes("CW-SUL70BA"),"open-domain question fell into generic no-answer: "+language);
     assert(!/已核實|已確認|has been transferred|已轉交|已转接|HK\$[0-9]|[0-9]+\s*(?:dB|分貝)/u.test(reply),"unsupported fact or action promoted");
+    if(language==="en") assert(!/(?:completed|processed|executed|done|finished).{0,24}(?:action|request|operation|process|booking|reservation)/iu.test(reply),"B2 treats negated completed action as a completion claim");
   }
   const policyQuestion="Is there weekend cancellation coverage for this service?";
   const policy={...request,subject:null,subjects:[],question:policyQuestion,original_question:policyQuestion,

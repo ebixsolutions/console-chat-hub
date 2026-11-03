@@ -165,7 +165,7 @@ export function renderUnverifiedFactualNextStep(
     const enTarget = subject ? ' for "' + subject + '"' : "";
     const zhTarget = subject ? "「" + subject + "」嘅" : "";
     if (language === "en") return 'I could not verify "' + factLabel + '"' + enTarget +
-      " from the available evidence. This is not a confirmed business fact or completed action. " +
+      " from the available evidence. I have not confirmed any merchant fact or carried out any transaction. " +
       "You can request human support to check; no transfer has been made.";
     if (language === "zh-CN") return (subject ? "「" + subject + "」的" : "") +
       "「" + factLabel + "」暂时未能从可靠资料核实；这不代表资料不存在，也没有进行任何交易或转接。" +
