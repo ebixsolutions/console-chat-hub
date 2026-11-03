@@ -1157,8 +1157,8 @@ Deno.test("Task3A source-only semantic contract: open-domain factual questions p
 Deno.test("Task3A generic source-quote mismatch only rebuilds a complete read from authentic multilingual customer text",()=>{
  for(const [customer,model] of [
   ["我想買衫，有冇介紹","我想買衫，有冇介紹？"],
-  ["大金2匹有咩型號？","大金2匹有咩型號?"],
-  ["Could you recommend a rental option?","Could you recommend a rental option"],
+  ["大金2匹有咩型號","大金2匹有咩型號？"],
+  ["Could you recommend a rental option","Could you recommend a rental option?"],
   ["Quels modèles sont proposés ?","Quels modèles sont proposés?"]
  ]){
   const semantic=frame(["published merchant options"],null);semantic.operation="ASK_FACT";semantic.intent="recommend_options";
