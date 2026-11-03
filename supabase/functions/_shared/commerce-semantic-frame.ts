@@ -1134,6 +1134,75 @@ export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSema
   }
 }
 
+
+/** Recover an independently complete READ-ONLY customer fact request when an
+ * otherwise schema-valid v5 output contains malformed optional entity data.
+ * This does not fix, default, or authorize that entity. The original strict
+ * decoder still rejects the original response, and state mutations never use
+ * this path. The full verbatim current source quote must independently cover
+ * the one demand; omitted/mixed/transactional clauses fail closed.
+ */
+export function recoverSourceQuotedReadOnlyFactualFrame(
+  wire: unknown, latestCustomerMessage: string,
+  diagnostic?: SemanticContractDiagnostic,
+): CommerceSemanticFrame | null {
+  if (!diagnostic || !("field_class" in diagnostic) ||
+      diagnostic.container !== "wire_nodes" ||
+      diagnostic.stage !== "canonical_vocabulary" ||
+      !diagnostic.field_class.startsWith("entity") ||
+      !["required","type","enum","range"].includes(diagnostic.reason)) return null;
+  if (!isRecord(wire) || wire.context_encoding !== "semantic_values_v5" ||
+      wire.operation !== "ASK_FACT" || typeof wire.confidence !== "number" ||
+      !Number.isFinite(wire.confidence) || wire.confidence < 0.62 || wire.confidence > 1 ||
+      Object.keys(wire).some(key => !["context_encoding","operation","confidence","containers","strings","numbers","booleans"].includes(key))) return null;
+  const source = latestCustomerMessage.normalize("NFKC").replace(/\s+/gu," ").trim();
+  if (!source || source.length > 1600) return null;
+  const collections = ["containers","strings","numbers","booleans"] as const;
+  let nodeCount = 1, hadEntity = false;
+  const projected: Record<string,unknown> = {};
+  for (const collection of collections) {
+    const rows = wire[collection];
+    if (!Array.isArray(rows)) return null;
+    nodeCount += rows.length;
+    if (nodeCount > 32768) return null;
+    const allowed: unknown[] = [];
+    for (const row of rows) {
+      if (!isRecord(row) || !Array.isArray(row.path) || !row.path.length ||
+          row.path.length > 6 || row.path.some(segment => typeof segment !== "string")) return null;
+      if (row.path[0] === "entities") {
+        hadEntity = true;
+      } else {
+        // All non-entity fields, including fact and lifecycle information,
+        // must survive UNCHANGED and pass the original closed decoder.
+        allowed.push(row);
+      }
+    }
+    projected[collection] = allowed;
+  }
+  if (!hadEntity) return null;
+  // Reusing the original strict decoder/normalizer keeps demand schemas,
+  // typed constraints, source vocabulary and scope checks unchanged.
+  const frame = normalizeCommerceSemanticFrame(decodeCommerceSemanticWire({
+    context_encoding: "semantic_values_v5",
+    operation: wire.operation, confidence: wire.confidence, ...projected,
+  }));
+  if (!frame || frame.operation !== "ASK_FACT" || frame.entities.length ||
+      frame.customer_correction || frame.additive ||
+      (frame.customer_facts?.length ?? 0) || frame.explicit_negations.length ||
+      frame.ambiguity.is_ambiguous ||
+      !["none","unknown"].includes(frame.transaction_state) ||
+      !["none","unknown"].includes(frame.payment_state) ||
+      !["none","unknown"].includes(frame.booking_state) ||
+      !["none","unknown"].includes(frame.fulfillment_state) ||
+      frame.demands?.length !== 1) return null;
+  const demand = frame.demands[0];
+  if (demand.source_quote !== source || demand.customer_correction ||
+      demand.explicit_negations.length || demand.ambiguity.is_ambiguous ||
+      !demand.requested_facts.length ||
+      !["product","policy","unknown"].includes(demand.source_type)) return null;
+  return frame;
+}
+
 function clean(value: unknown, max = 300): string {
   return typeof value === "string"
     ? value.normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, max)

@@ -4,6 +4,7 @@ import { scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
 import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state-core.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CommerceSemanticDemand, CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
+import { decodeCommerceSemanticWire, recoverSourceQuotedReadOnlyFactualFrame } from "./commerce-semantic-frame.ts";
 import { DecisionContextLimitError } from "./bounded-decision-context.ts";
 import { planConversationService, renderServicePlanReply } from "./conversation-service-planner.ts";
 import { applyCustomerRequestDecision, resolveCustomerRequestDecision } from "./commerce-state-authority.ts";
@@ -1058,7 +1059,7 @@ Deno.test("Task3C cross-industry open-ended fact rejection identifies the actual
     demands:[{...existing.demands[0],source_quote:query,question:query,requested_facts:["continuous operating acoustic rating"]}]};
   for(const language of ["zh-TW","zh-CN","en"] as const){
     const reply=renderUnverifiedFactualNextStep(request,language);
-    assert(!!reply&&reply.includes(query.normalize("NFKC"))&&reply.includes("CW-SUL70BA"),"open-domain question fell into generic no-answer: "+language);
+    assert(!!reply&&reply.includes("continuous operating acoustic rating")&&reply.includes("CW-SUL70BA"),"open-domain question fell into generic no-answer: "+language);
     assert(!/已核實|已確認|has been transferred|已轉交|已转接|HK\$[0-9]|[0-9]+\s*(?:dB|分貝)/u.test(reply),"unsupported fact or action promoted");
   }
   const policyQuestion="Is there weekend cancellation coverage for this service?";
@@ -1066,11 +1067,80 @@ Deno.test("Task3C cross-industry open-ended fact rejection identifies the actual
     requested_facts:["weekend cancellation coverage"],demands:[{...request.demands[0],source_type:"policy" as const,
       source_quote:policyQuestion,question:policyQuestion,subjects:[],requested_facts:["weekend cancellation coverage"]}]};
   const policyReply=renderUnverifiedFactualNextStep(policy,"en");
-  assert(!!policyReply&&policyReply.includes(policyQuestion)&&!policyReply.includes("CW-SUL70BA"),"merchant-wide policy reused old product");
+  assert(!!policyReply&&policyReply.includes("weekend cancellation coverage")&&!policyReply.includes("CW-SUL70BA"),"merchant-wide policy reused old product");
   const sensitive={...request,question:"Order #123456 status?",original_question:"Order #123456 status?",
     demands:[{...request.demands[0],source_quote:"Order #123456 status?"}]};
   assert(renderUnverifiedFactualNextStep(sensitive,"en")===null,"sensitive/private source locator repeated");
   assert(renderUnverifiedFactualNextStep({...request,transaction_required:true},"en")===null,"transaction outcome implied from KB");
   assert(renderUnverifiedFactualNextStep({...request,demands:[...request.demands,...request.demands]},"en")===null,
     "multiple independent unanswered demands collapsed into one false-complete response");
+});
+
+
+// P0-0: the genuine Hosted v270 failure was entity_confidence REQUIRED after a
+// successful v5 model response. The original decoder must continue rejecting
+// that wire. Only a separately complete, single source-quoted read-only demand
+// may be projected into a FRESH authenticated KB read; never a state update.
+function task3V5MalformedEntity(question: string, mode: "ASK_FACT" | "UPDATE_ITEM" = "ASK_FACT",
+  extra: Record<string,unknown> = {}): Record<string,unknown> {
+  const sem = {demands:[{question,source_quote:question,subject_refs:[],
+      source_type:"product",requested_facts:["merchant model selection and rated capacity"],constraints:{},
+      customer_correction:false,explicit_negations:[],
+      ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}],
+    entities:[{name:"current customer model candidate",kind:"physical_product"}],...extra};
+  const walk = (value:unknown,path:string[]=[]):Array<Record<string,unknown>> => {
+    const kind = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+    return [{path,kind,...(kind === "string" ? {text:value} :
+      kind === "number" ? {number:value} : kind === "boolean" ? {boolean:value} : {})},
+      ...(["object","array"].includes(kind)
+        ? Object.entries(value as object).flatMap(([k,v])=>walk(v,[...path,k])) : [])];
+  };
+  const nodes=walk(sem).filter(node=>(node.path as string[]).length>0);
+  return {context_encoding:"semantic_values_v5",operation:mode,confidence:0.96,
+    containers:nodes.filter(n=>["object","array","null"].includes(n.kind)).map(n=>({path:n.path,kind:n.kind})),
+    strings:nodes.filter(n=>n.kind==="string").map(n=>({path:n.path,text:n.text})),
+    numbers:nodes.filter(n=>n.kind==="number").map(n=>({path:n.path,number:n.number})),
+    booleans:nodes.filter(n=>n.kind==="boolean").map(n=>({path:n.path,boolean:n.boolean}))};
+}
+
+Deno.test("Task3A P0-0 generic v5 missing optional entity confidence permits only a new read of the full customer question",()=>{
+ for(const q of ["大金2匹有咩型號？","What 2 HP air conditioner models are offered?",
+   "有沒有適合兩位的預約服務項目？","Quels sont les modèles disponibles ?"]){
+  const proposed=task3V5MalformedEntity(q);
+  let diagnostic: any, code: unknown;
+  const rejected=decodeCommerceSemanticWire(proposed,(r,d)=>{code=r;diagnostic=d;});
+  assert(rejected===null&&code==="wire_context_nodes"&&
+    diagnostic?.field_class==="entity_confidence"&&diagnostic?.reason==="required",
+    "the existing strict decoder must still reject the model's invalid entity");
+  const recovered=recoverSourceQuotedReadOnlyFactualFrame(proposed,q,diagnostic);
+  assert(!!recovered&&recovered.operation==="ASK_FACT"&&recovered.entities.length===0 &&
+    (recovered.customer_facts?.length ?? 0)===0&&recovered.demands?.length===1,
+    "read-only recovery changed state or lost the exact demand");
+  const actual=resolveCurrentFactualRequest({question:q,semantic:recovered,source_message_id:"source-current",
+    trusted_company_id:"company-actual",history:[]});
+  assert(actual.kb_required&&!!actual.query&&actual.query.includes(q.normalize("NFKC")) &&
+    actual.demands.length===1,"source-quoted factual demand did not reach the original KB query builder");
+  assert(recovered.demands![0].source_quote===q.normalize("NFKC"),"source quoted demand was changed");
+ }
+});
+Deno.test("Task3A P0-0 v5 read-only recovery rejects missing clauses, mutation, contradiction, ambiguous and private action",()=>{
+ const q="大金2匹有咩型號？";
+ const baseline=task3V5MalformedEntity(q);
+ let diagnostic: any;
+ decodeCommerceSemanticWire(baseline,(_r,d)=>{diagnostic=d;});
+ const admit=(wire:Record<string,unknown>,source=q)=>
+   recoverSourceQuotedReadOnlyFactualFrame(wire,source,diagnostic);
+ assert(admit(baseline)!==null,"known original diagnostic did not enable bounded recovery");
+ assert(admit(baseline,q+"另外收費呢？")===null,"source quote did not cover all independently requested clauses");
+ assert(admit(task3V5MalformedEntity(q,"UPDATE_ITEM"))===null,"state mutation accepted as read only");
+ assert(admit(task3V5MalformedEntity(q,"ASK_FACT",{customer_facts:[{key:"quantity",value:2}]}))===null,"new customer state silently lost");
+ assert(admit(task3V5MalformedEntity(q,"ASK_FACT",{customer_correction:true}))===null,"correction silently ignored");
+ assert(admit(task3V5MalformedEntity(q,"ASK_FACT",{transaction_state:"confirmed"}))===null,"transaction confirmation ignored");
+ assert(admit(task3V5MalformedEntity(q,"ASK_FACT",{explicit_negations:["do not book"]}))===null,"negation silently dropped");
+ assert(admit(task3V5MalformedEntity(q,"ASK_FACT",{demands:[{question:q,source_quote:q,subject_refs:[],source_type:"transaction",
+   requested_facts:["order status"],constraints:{},customer_correction:false,explicit_negations:[],
+   ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]}))===null,"private transaction routed to merchant KB");
+ assert(admit(task3V5MalformedEntity(q,"ASK_FACT",{demands:[]}))===null,"missing customer demand inferred");
+ const ambiguous=task3V5MalformedEntity(q,"ASK_FACT",{ambiguity:{is_ambiguous:true,reasons:["unclear"],clarification_question:"Which one?"}});
+ assert(admit(ambiguous)===null,"model uncertainty dropped to force a KB call");
 });

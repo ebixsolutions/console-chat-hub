@@ -12,6 +12,7 @@ import {
   type CommerceSemanticFrame,
   decodeCommerceSemanticWire,
   normalizeCommerceSemanticFrame,
+  recoverSourceQuotedReadOnlyFactualFrame,
 } from "./commerce-semantic-frame.ts";
 
 export const SEMANTIC_CONTEXT_CHAR_LIMIT = 12_000;
@@ -412,6 +413,22 @@ export async function interpretCommerceSemantics(
     decodeCommerceSemanticWire(parsed, rejected), rejected,
   );
   if (!frame) {
+    // A malformed optional entity must not suppress a complete independent
+    // merchant-fact question. Only the exact full current customer quote and
+    // separately well-typed, non-mutating demand may locate a fresh KB read.
+    // Invalid entity/transaction/correction data stays rejected; no paid retry.
+    const readOnly = recoverSourceQuotedReadOnlyFactualFrame(parsed, latest, contractDiagnostic);
+    if (readOnly && contractRejection === "wire_context_nodes") {
+      console.warn(JSON.stringify({
+        event:"semantic_source_quoted_read_only_recovery",request_id:result.request_id,
+        source_message_id:input.source_message_id,
+        original_rejection:contractRejection,
+        field_class: "field_class" in (contractDiagnostic ?? {}) ? (contractDiagnostic as {field_class?:string}).field_class : null,
+        original_stage:"canonical_validation",demand_count:readOnly.demands?.length ?? 0,
+        state_mutation:false,additional_model_attempts:0,
+      }));
+      return {frame:readOnly,source:"semantic_model",failure_code:null};
+    }
     return {
       frame: null,
       source: "none",

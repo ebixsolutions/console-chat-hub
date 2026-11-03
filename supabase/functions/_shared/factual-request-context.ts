@@ -151,15 +151,26 @@ export function renderUnverifiedFactualNextStep(
     const subjectName = (request.subject ?? "").normalize("NFKC").trim();
     const subject = subjectName.length >= 2 && subjectName.length <= 90 &&
       !/[\u0000-\u001F\u007F<>@]/u.test(subjectName) ? subjectName : null;
-    const enTarget = subject ? ' about "' + subject + '"' : "";
-    const zhTarget = subject ? "關於「" + subject + "」，" : "";
-    if (language === "en") return 'I could not verify the specific question "' + quote + '"' + enTarget +
-      " from the available evidence. I won't assume the answer or a completed action. " +
-      "You can ask for human support to check; no transfer has been made.";
-    if (language === "zh-CN") return (subject ? "关于「" + subject + "」，" : "") +
-      "你问的「" + quote + "」暂时未能从可靠资料核实，我不会自行推断，也没有进行任何交易或转接。" +
+    // Verbatim customer questions cannot be echoed as new assistant questions:
+    // the unchanged B2 known-context guard correctly blocks re-asking known
+    // facts. Use the demand's validated semantic FACT name as an unverified
+    // subject label, never as merchant evidence or an implied completed action.
+    const facts = demand.requested_facts.map(value => value.normalize("NFKC").replace(/\s+/gu," ").trim())
+      .filter(value => value.length >= 2 && value.length <= 110 &&
+        !/[?？<>\u0000-\u001F\u007F]/u.test(value) &&
+        !/\b(?:what|which|when|where|who|how)\b|請問|请问|請確認|请确认|幾多|几多|多少|是否|係咪|是不是/iu.test(value))
+      .slice(0,2);
+    if (!facts.length) return null;
+    const factLabel = facts.join("、");
+    const enTarget = subject ? ' for "' + subject + '"' : "";
+    const zhTarget = subject ? "「" + subject + "」嘅" : "";
+    if (language === "en") return 'I could not verify "' + factLabel + '"' + enTarget +
+      " from the available evidence. This is not a confirmed business fact or completed action. " +
+      "You can request human support to check; no transfer has been made.";
+    if (language === "zh-CN") return (subject ? "「" + subject + "」的" : "") +
+      "「" + factLabel + "」暂时未能从可靠资料核实；这不代表资料不存在，也没有进行任何交易或转接。" +
       "如需进一步确认，可选择「转人工客服」。";
-    return zhTarget + "你問嘅「" + quote + "」暫時未能從可靠資料核實，我唔會自行推斷，亦未有執行交易或轉交。" +
+    return zhTarget + "「" + factLabel + "」暫時未能從可靠資料核實；呢個唔代表資料不存在，亦未有執行交易或轉交。" +
       "如需進一步確認，你可以選擇「轉真人客服」。";
   }
   const rawSubject = (request.subject ?? (request.subjects.length === 1 ? request.subjects[0] : "")).normalize("NFKC").trim();
