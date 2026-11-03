@@ -25,9 +25,9 @@ function answer(q:string,docs:KBDocumentCandidate[],language:'zh-TW'|'zh-CN'|'en
  const selection=selectCanonicalGrounding(docs,{requestText:q,currentTurnText:q,minScore:0.45,expectedTenantId:'34',requirePublished:true,requiresCurrentKb:true});
  return {selection,result:resolveCanonicalKbDirectAnswer({request:q,selection,language}),question:catalogueVariantClarification(selection,language)};
 }
-function b2(x:ReturnType<typeof answer>){
+function b2(x:ReturnType<typeof answer>, targetRequest=full+' 幾錢？'){
  assert(x.selection.ok&&x.result,'answer absent');if(!x.selection.ok||!x.result)throw Error('missing');
- const citation=buildCitationMetadata(x.result.evidence_chunks,x.selection.document!.document_id,{authorityDecision:x.selection.authority_decision,currentTarget:deriveCurrentGroundingTarget(full+' 幾錢？')});
+ const citation=buildCitationMetadata(x.result.evidence_chunks,x.selection.document!.document_id,{authorityDecision:x.selection.authority_decision,currentTarget:deriveCurrentGroundingTarget(targetRequest)});
  assert(citation,'lineage missing');
  return evaluateB2BeforeCommit({proposed_response:x.result.reply,persistence_kind:'ai_reply',snapshot:{conversation_id:'example',company_id:'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493',source_message_id:'example',commerce_state_revision:0,commerce_state_source_message_id:null,state:createEmptyConversationCommerceState()},metadata:{...citation,reference_authority:x.selection.authority_decision,response_route:'canonical_kb_direct_answer',answer_kind:x.result.kind,recorded_kb_facts:x.result.recorded_facts}});
 }
@@ -245,9 +245,9 @@ Deno.test("Task3B v3.1 document-only, indexed-API-only, mixed conflict remain se
  const first=answer("CW-SUL70BA 幾錢？",[documentOnly]);
  const second=answer("CW-SUL70BA price and stock?",[apiOnly],"en");
  assert(first.result?.reply.includes("5,680")&&!first.result.reply.includes("HK$5,680")&&
-   !first.result.price_fact&&b2(first).decision==="allow","document-only amount misrepresented as a verified HKD offer");
+   !first.result.price_fact&&b2(first,"CW-SUL70BA 幾錢？").decision==="allow","document-only missing-currentness, currency or model-bound B2 denial: ${JSON.stringify({reply:first.result?.reply,b2:first.result?b2(first,"CW-SUL70BA 幾錢？").code:null})}");
  assert(second.result?.reply.includes("HK$4,238")&&second.result.reply.includes("Recorded stock quantity: 2")&&
-   !second.result.price_fact&&b2(second).decision==="allow","indexed-only facts not retained as recorded-only");
+   !second.result.price_fact&&b2(second,"CW-SUL70BA price and stock?").decision==="allow","indexed-only facts not retained as recorded-only");
  const mixed=answer("CW-SUL70BA price and stock?",[documentOnly,apiOnly],"en");
  assert(!mixed.result,"mixed conflicting records silently selected a current price or merged source roles");
  const presented=[first.result?.reply,second.result?.reply,mixed.result?.reply].filter(Boolean).join(" ");
