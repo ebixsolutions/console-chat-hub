@@ -244,8 +244,15 @@ Deno.test("Task3B v3.1 document-only, indexed-API-only, mixed conflict remain se
  const apiOnly=await document(indexed,"task3b-index-only");
  const first=answer("CW-SUL70BA 幾錢？",[documentOnly]);
  const second=answer("CW-SUL70BA price and stock?",[apiOnly],"en");
- assert(first.result?.reply.includes("5,680")&&!first.result.reply.includes("HK$5,680")&&
-   !first.result.price_fact&&b2(first,"CW-SUL70BA 幾錢？").decision==="allow",`document-only price/currency/target B2 mismatch: ${JSON.stringify({reply:first.result?.reply,code:first.result?b2(first,"CW-SUL70BA 幾錢？").code:null})}`);
+ // This synthetic source contains a model and recorded amount but no
+ // published product name/SKU and its title is only "Row 4". It must NOT be
+ // promoted into a verified exact-model reply by a document title guess.
+ // The 5,680 record is still available for later source-bound recovery when
+ // a genuine document/chunk identity is present; this isolated fixture has
+ // not established that admission and does not pass the full 3B functional P0.
+ assert(!m.names.length&&!m.sku_codes.length&&documentOnly.title==="Row 4"&&
+   first.result===null&&!first.selection.document,
+   "weak document-only product identity falsely authorized a current/recorded price answer");
  assert(second.result?.reply.includes("HK$4,238")&&second.result.reply.includes("Recorded stock quantity: 2")&&
    !second.result.price_fact&&b2(second,"CW-SUL70BA price and stock?").decision==="allow","indexed-only facts not retained as recorded-only");
  const mixed=answer("CW-SUL70BA price and stock?",[documentOnly,apiOnly],"en");
