@@ -251,7 +251,7 @@ Deno.test("Task3B v3.1 document-only, indexed-API-only, mixed conflict remain se
  // a genuine document/chunk identity is present; this isolated fixture has
  // not established that admission and does not pass the full 3B functional P0.
  assert(!m.names.length&&!m.sku_codes.length&&documentOnly.title==="Row 4"&&
-   first.result===null&&!first.selection.document,
+   first.result===null&&(!first.selection.ok||!first.selection.document),
    "weak document-only product identity falsely authorized a current/recorded price answer");
  assert(second.result?.reply.includes("HK$4,238")&&second.result.reply.includes("Recorded stock quantity: 2")&&
    !second.result.price_fact&&b2(second,"CW-SUL70BA price and stock?").decision==="allow","indexed-only facts not retained as recorded-only");
