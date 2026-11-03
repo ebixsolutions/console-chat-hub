@@ -256,8 +256,25 @@ Deno.test("Task3B v3.1 document-only, indexed-API-only, mixed conflict remain se
  assert(second.result?.reply.includes("HK$4,238")&&second.result.reply.includes("Recorded stock quantity: 2")&&
    !second.result.price_fact&&b2(second,"CW-SUL70BA price and stock?").decision==="allow","indexed-only facts not retained as recorded-only");
  const mixed=answer("CW-SUL70BA price and stock?",[documentOnly,apiOnly],"en");
- assert(!mixed.result,"mixed conflicting records silently selected a current price or merged source roles");
+ // The weak Row 4 record lacks a unique published product identity, so it
+ // cannot become a competing quote. The separately bound indexed record may
+ // answer as recorded-only, but must not inherit any file-only fields.
+ assert(mixed.selection.ok&&mixed.selection.document?.document_id===apiOnly.document_id&&
+   mixed.result?.reply===second.result?.reply&&mixed.result?.price_fact===undefined&&
+   mixed.result.recorded_facts?.every(f=>f.document_id===apiOnly.document_id)&&
+   b2(mixed,"CW-SUL70BA price and stock?").decision==="allow",
+   "weak file source overrode the admitted indexed record or mixed source roles");
  const presented=[first.result?.reply,second.result?.reply,mixed.result?.reply].filter(Boolean).join(" ");
  assert(!presented.includes("3,750")&&!presented.includes("3750"),"internal cost escaped to visitor reply");
  assert(!presented.includes("HK$5,680")&&!presented.includes("HK$4,038"),"currency invented for file-only records");
+});
+
+Deno.test("Task3B v3.1 independently identity-bound same-SKU price conflicts fail closed",async()=>{
+ const first="spu_code: CW-SUL70BA\\nspu_name: CW-SUL70BA\\nsku_code: CW-SUL70BA\\nprice: HKD 5680\\ncost: HKD 3750";
+ const second="spu_code: CW-SUL70BA\\nspu_name: CW-SUL70BA\\nsku_code: CW-SUL70BA\\nprice: HKD 4238\\nstock: 2";
+ const file=await document(first,"task3b-verified-manual");
+ const api=await document(second,"task3b-verified-api");
+ const conflict=answer("CW-SUL70BA price and stock?",[file,api],"en");
+ assert(!conflict.result&&!conflict.question&&(!conflict.selection.ok||!conflict.selection.document),
+   "two identity-bound same-SKU prices silently selected a winner instead of retaining conflict");
 });
