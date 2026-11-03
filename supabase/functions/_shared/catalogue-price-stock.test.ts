@@ -270,8 +270,8 @@ Deno.test("Task3B v3.1 document-only, indexed-API-only, mixed conflict remain se
 });
 
 Deno.test("Task3B v3.1 independently identity-bound same-SKU price conflicts fail closed",async()=>{
- const first="spu_code: CW-SUL70BA\\nspu_name: CW-SUL70BA\\nsku_code: CW-SUL70BA\\nprice: HKD 5680\\ncost: HKD 3750";
- const second="spu_code: CW-SUL70BA\\nspu_name: CW-SUL70BA\\nsku_code: CW-SUL70BA\\nprice: HKD 4238\\nstock: 2";
+ const first="spu_code: CW-SUL70BA\nspu_name: CW-SUL70BA\nsku_code: CW-SUL70BA\nprice: HKD 5680\ncost: HKD 3750";
+ const second="spu_code: CW-SUL70BA\nspu_name: CW-SUL70BA\nsku_code: CW-SUL70BA\nprice: HKD 4238\nstock: 2";
  const file=await document(first,"task3b-verified-manual");
  const api=await document(second,"task3b-verified-api");
  const conflict=answer("CW-SUL70BA price and stock?",[file,api],"en");
