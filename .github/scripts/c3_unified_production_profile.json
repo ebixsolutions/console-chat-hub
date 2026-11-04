@@ -1444,11 +1444,11 @@
   "authorized_task3_admin_conversation_evidence_sha256": {
     "supabase/functions/_shared/kb-client.ts": "84a098bfd5021dbfa6a0e4b54cbe630ca84db7ae95d44e5b6eea7647c77813df",
     "supabase/functions/generate-reply/index.ts": "05e6749479f79af166adbcb895ed3fa3bb22ec3a5c90f185c6b387bb96da3e6c",
-    "src/lib/api/evidence-log-scope.ts": "ae104de009eefebf7f2df476412430a99c48ebacd14f8cb7775554f10353a86d",
+    "src/lib/api/evidence-log-scope.ts": "918254feba4da613fb9f20278ffb57a03a842d4cc4314e6d0b24216088799d42",
     "src/lib/api/llmRuntime.service.ts": "13765eb8e79ed43d9c4012ad08eab59f85485ad7f42b1011c1be8a281b73080c",
     "src/routes/_authenticated/console.settings.llm-runtime.tsx": "56eb9d62d4b15f29a161beff672628204789875ace42665e4617a1db327165b5",
     "src/routes/_authenticated/console.tsx": "4e69a2de8ab338390c97636955d5000bbaffcb5fb93354a321d3b25e70fafda0",
-    "tests/console-navigation/admin-evidence-log.test.mjs": "cab74deb7c2e798584978d382ea3535a0c06582fb29ec5e01ba7659248c32c9f"
+    "tests/console-navigation/admin-evidence-log.test.mjs": "9262ff4d75c58f4b65c7ae5a3b80c72f2ece47bb23318fe62b5a5e51d934e99b"
   },
   "task3_admin_conversation_evidence_production_authorized": false
 }

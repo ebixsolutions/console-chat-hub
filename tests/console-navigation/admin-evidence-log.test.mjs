@@ -38,7 +38,8 @@ test("Original response is only linked to exact source message, not inferred",()
  assert.equal(output.turns[0].evidence[0].rawResponse,'{"raw":"yes"}');
  assert.equal(output.turns[0].answers[0].text,"Human reply");
 });
-\ntest("Full exact Conversation ID search accepts older tickets without accepting prefixes",()=>{
+
+test("Full exact Conversation ID search accepts older tickets without accepting prefixes",()=>{
  const id="fd9a4ebb-1e26-5dc7-a6e4-42b791860716";
  assert.equal(isEvidenceConversationId(id),true);
  assert.equal(isEvidenceConversationId(id.toUpperCase()),true);

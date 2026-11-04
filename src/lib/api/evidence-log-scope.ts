@@ -11,16 +11,13 @@ export function redactEvidenceSensitiveText(value:string):string{
   .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,"[EMAIL_REDACTED]")
   .replace(/(?:\+?852[- ]?)?[569]\d{3}[- ]?\d{4}/g,"[PHONE_REDACTED]");
 }
-export function redactEvidenceValue(value:unknown,depth=0):unknown{
- if(depth>6)return "[WITHHELD_DEPTH_LIMIT]";
- if(typeof value==="string")return redactEvidenceSensitiveText(value);
- if(Array.isArray(value))return value.slice(0,100).map(x=>redactEvidenceValue(x,depth+1));
- if(value&&typeof value==="object"){
-  return Object.fromEntries(Object.entries(value as Record<string,unknown>).slice(0,100).map(([key,item])=>[
-   key,PRIVATE_EVIDENCE_KEY.test(key)?"[REDACTED]":redactEvidenceValue(item,depth+1)
-  ]));
- }
- return value??null;
+/** Serialize a bounded redacted snapshot for the existing authenticated TanStack server function. */
+export function redactEvidenceValue(value:unknown):string|null{
+ if(value===null||value===undefined)return null;
+ try{
+  const encoded=JSON.stringify(value,(key,item)=>PRIVATE_EVIDENCE_KEY.test(key)?"[REDACTED]":item);
+  return typeof encoded==="string"?redactEvidenceSensitiveText(encoded):null;
+ }catch{return "[WITHHELD_UNSERIALIZABLE]";}
 }
 export type EvidenceAdminScope={ok:true;companyId:string}|{ok:false;error:string};
 export async function resolveEvidenceAdminScope(db:any,userId:string):Promise<EvidenceAdminScope>{
@@ -73,7 +70,7 @@ export function linkConversationEvidenceTurns(messages:EvidenceMessage[],traces:
    return{id:t.id,createdAt:t.created_at,exactQuery:t.query_sent?redactEvidenceSensitiveText(t.query_sent):null,
     requestJson:typeof d.request_json==="string"?redactEvidenceSensitiveText(d.request_json):null,
     sourceContext:redactEvidenceValue(d.source_context??null),queryContract:redactEvidenceValue(d.query_contract??null),
-    requestDispatchState:d.request_dispatch_state??"NOT_VERIFIED",
+    requestDispatchState:typeof d.request_dispatch_state==="string"?d.request_dispatch_state:"NOT_VERIFIED",
     rawCaptureState:raw!==null&&safeRaw!==raw?"REDACTED":typeof r.capture_state==="string"?r.capture_state:"NOT_CAPTURED",
     rawResponse:safeRaw,
     rawSha256:typeof r.response_sha256==="string"?r.response_sha256:null,
