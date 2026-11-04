@@ -35,8 +35,8 @@ function recoverMissingDemandOptionDiscovery(
       !Number.isFinite(raw.confidence) || raw.confidence < 0.85 || raw.confidence > 1 ||
       Object.keys(raw).some(k => !["context_encoding","operation","confidence","containers","strings","numbers","booleans"].includes(k))) return null;
   const source=clean(latest,501);
-  if (!source || source.length>500 || /[\\u0000-\\u001f\\u007f<>;；]/u.test(source) ||
-      /(?:取消|撤回|退款|更正|改單|改单|暫緩|暂缓|轉真人|转人工|\\b(?:cancel|refund|defer|revise|handoff)\\b)/iu.test(source) ||
+  if (!source || source.length>500 || /[\u0000-\u001f\u007f<>;；]/u.test(source) ||
+      /(?:取消|撤回|退款|更正|改單|改单|暫緩|暂缓|轉真人|转人工|\b(?:cancel|refund|defer|revise|handoff)\b)/iu.test(source) ||
       !sourceOwnedOptionWording(source)) return null;
   const collections=["containers","strings","numbers","booleans"] as const;
   let count=1;

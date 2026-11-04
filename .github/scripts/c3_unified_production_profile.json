@@ -1450,7 +1450,7 @@
     "src/routes/_authenticated/console.tsx": "4e69a2de8ab338390c97636955d5000bbaffcb5fb93354a321d3b25e70fafda0",
     "tests/console-navigation/admin-evidence-log.test.mjs": "529fa6085d954917f5bc52dc7a70ee04dd66b98a183afbfae528e2c61dba10fc",
     "supabase/functions/_shared/current-factual-request.ts": "69bc9e424bfc2e3bf17c9a2f1ca5bd882057006b93f088102b999ba25d648263",
-    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "f1934aed83f269074c1a62f81b22ef0b5f2be4743d50bae67f8f6f9181478877",
+    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "b2fdc17d799ce65741d3c647e666b70b9a0fdfaadc57a8d06c05d5aeea4c1b22",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "e885685300f6dbf860a53ac2db16d57c103e696f5bb2688683929921073803d1",
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "c848a649e1ed97c9d39e02a9879893ebba73df47f98d9ecb4a988c4d8b67ef2e"
   },
