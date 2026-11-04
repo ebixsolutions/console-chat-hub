@@ -1438,7 +1438,7 @@
   "authorized_task3_live_option_repair_sha256": {
     "supabase/functions/_shared/current-factual-request.ts": "0fc1e00dc824b738e1aace1d00d76cbf314ddb7915cc2c5fa6ae20e7b67f6120",
     "supabase/functions/_shared/factual-request-context.ts": "8c5c06a9f08d27dd39937bf7e29d72b0175c861059694b3c8d3d20af1fff9be4",
-    "supabase/functions/_shared/current-factual-request.test.ts": "89dfda5cead0d5fc494ca10fbad50fecac725f81d7cceb8403c1f4008c34988c"
+    "supabase/functions/_shared/current-factual-request.test.ts": "a81a06fc3680aef5280e1115de3eb277aaa67f79a09a1518de8a1f2ee94f451f"
   },
   "task3_live_option_repair_production_authorized": false
 }

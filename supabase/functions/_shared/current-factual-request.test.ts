@@ -1360,7 +1360,7 @@ Deno.test("Task3 same ticket clarification can continue the original generic cho
   {id:source,role:"visitor",content:original}];
  const semantic=frame(["model_info"],null);semantic.operation="NO_STATE_CHANGE";
  const r=resolveCurrentFactualRequest({question:latest,semantic,history,source_message_id:"current",trusted_company_id:company});
- assert(r.kb_required&&!r.needs_subject_clarification&&r.query?.includes(original)&&r.query.includes(latest),
+ assert(r.kb_required&&!r.needs_subject_clarification&&r.query?.includes(original.normalize("NFKC"))&&r.query.includes(latest),
   "source-owned clarification did not trigger a fresh contextual KB query");
 });
 Deno.test("Task3 customer-visible missing-options response never leaks semantic snake-case identifiers",()=>{
