@@ -1340,3 +1340,36 @@ Deno.test("Task3 B2-scoped followup does not convert competing specific model ch
  assert(result.context_turns.length===0&&!result.query?.includes(original.normalize("NFKC")),
    "multi-candidate actual ambiguity was silently replaced with category discovery");
 });
+
+Deno.test("Task3 real failure: generic category selection without an exact SKU reaches KB",()=>{
+ for(const q of ["大金2匹有什麼選擇？","有什麼2匹窗口機選擇？","有哪些租車方案選擇？","想了解有哪些訂閱選擇？"]){
+  const proposed=demanded(demand(q,"product",["model_info","published merchant options matching customer criteria"],["invented-SKU"]));
+  proposed.intent="ask_product_facts";
+  proposed.demands![0].ambiguity={is_ambiguous:true,reasons:["SKU not supplied"],clarification_question:"Which model?"};
+  const r=resolveCurrentFactualRequest({question:q,semantic:proposed,source_message_id:"fresh",trusted_company_id:"own-tenant",history:[]});
+  assert(r.kb_required&&!r.needs_subject_clarification&&r.subject===null&&
+   !!r.query&&r.query.includes(q.normalize("NFKC"))&&!r.query.includes("invented-SKU"),
+   "open category options incorrectly demand an exact model before KB: "+JSON.stringify({q,r}));
+ }
+});
+Deno.test("Task3 same ticket clarification can continue the original generic choice request",()=>{
+ const source="original-visitor",company="same-tenant",original="有什麼2匹變頻冷氣選擇？",latest="大金2匹機";
+ const history:FactualRequestHistoryRow[]=[{id:"assistant",role:"assistant",content:"你指邊個現行產品或型號？",
+  metadata:{response_route:"product_referent_clarification",product_referent_candidates:[],
+  control_commit:"ai",b2_expected_company_id:company,b2_source_message_id:source,source_message_id:source}},
+  {id:source,role:"visitor",content:original}];
+ const semantic=frame(["model_info"],null);semantic.operation="NO_STATE_CHANGE";
+ const r=resolveCurrentFactualRequest({question:latest,semantic,history,source_message_id:"current",trusted_company_id:company});
+ assert(r.kb_required&&!r.needs_subject_clarification&&r.query?.includes(original)&&r.query.includes(latest),
+  "source-owned clarification did not trigger a fresh contextual KB query");
+});
+Deno.test("Task3 customer-visible missing-options response never leaks semantic snake-case identifiers",()=>{
+ const q="給我2匹機的型號介紹";
+ const semantic=demanded(demand(q,"product",["model_info","published merchant options matching customer criteria"],[]));
+ const request=resolveCurrentFactualRequest({question:q,semantic,source_message_id:"visitor",history:[]});
+ const text=renderUnverifiedFactualNextStep(request,"zh-TW");
+ assert(typeof text==="string"&&text.length>15&&
+  !/(?:model_info|published[\s_]+merchant[\s_]+options|[a-z][a-z0-9]*_[a-z0-9]+)/iu.test(text),
+  "internal semantic labels reached customer response: "+text);
+ assert(!/已轉交|有現貨|已下單/u.test(text),"unsupported merchant or handoff claim was invented");
+});

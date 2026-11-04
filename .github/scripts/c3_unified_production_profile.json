@@ -1434,5 +1434,11 @@
   "task3_c2_p0_production_deploy_authorized": false,
   "task3_c2_p0_authority": "DIRECTOR_ORIGINAL_TASK3_C2_RUNTIME_P0_REPAIR_20261102",
   "task3_c2_p0_original_frozen_sha256": "12431e3c5d285f56270945e28a3e026d0d1b1544fa8dbe7484cc4fd67b1995dd",
-  "task3_c2_p0_proof": "C3 required preflight run 41443520871 FAIL exit1; original-source Node22 native 5/13 P0; targeted 30/30 before commit; untouched Frozen preimage"
+  "task3_c2_p0_proof": "C3 required preflight run 41443520871 FAIL exit1; original-source Node22 native 5/13 P0; targeted 30/30 before commit; untouched Frozen preimage",
+  "authorized_task3_live_option_repair_sha256": {
+    "supabase/functions/_shared/current-factual-request.ts": "0fc1e00dc824b738e1aace1d00d76cbf314ddb7915cc2c5fa6ae20e7b67f6120",
+    "supabase/functions/_shared/factual-request-context.ts": "8c5c06a9f08d27dd39937bf7e29d72b0175c861059694b3c8d3d20af1fff9be4",
+    "supabase/functions/_shared/current-factual-request.test.ts": "89dfda5cead0d5fc494ca10fbad50fecac725f81d7cceb8403c1f4008c34988c"
+  },
+  "task3_live_option_repair_production_authorized": false
 }

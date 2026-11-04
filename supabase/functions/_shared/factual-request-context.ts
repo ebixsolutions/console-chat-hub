@@ -124,6 +124,8 @@ export function renderUnverifiedFactualNextStep(
   // fallback. Keep these capability/fact labels cross-industry; none imply
   // that an order, booking, refund or entitlement actually exists.
   const dimensions = [
+    {pattern:/\bmodel_info\b|\bmodel\s+information\b|型號資料|型号资料/iu,en:"model information",tw:"型號資料",cn:"型号资料"},
+    {pattern:/published[\s_]+merchant[\s_]+options|available[\s_]+merchant[\s_]+options|published[\s_]+product[\s_]+options/iu,en:"published merchant options",tw:"已發布的可選產品／服務",cn:"已发布的可选商品／服务"},
     {pattern:/warranty|guarantee|保養|保修|質保|质保/iu,en:"warranty terms",tw:"保養條款",cn:"保修条款"},
     {pattern:/deliver|shipping|dispatch|freight|送貨|送货|配送|運送|运送|物流/iu,en:"delivery terms",tw:"送貨安排",cn:"配送安排"},
     {pattern:/refund|return|退貨|退货|退款|退換|退换/iu,en:"return or refund terms",tw:"退換貨／退款條款",cn:"退换货／退款条款"},
@@ -158,6 +160,7 @@ export function renderUnverifiedFactualNextStep(
     const facts = demand.requested_facts.map(value => value.normalize("NFKC").replace(/\s+/gu," ").trim())
       .filter(value => value.length >= 2 && value.length <= 110 &&
         !/[?？<>\u0000-\u001F\u007F]/u.test(value) &&
+        !/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/iu.test(value) &&
         !/\b(?:what|which|when|where|who|how)\b|請問|请问|請確認|请确认|幾多|几多|多少|是否|係咪|是不是/iu.test(value))
       .slice(0,2);
     if (!facts.length) return null;
