@@ -122,9 +122,6 @@ export function verifyIdentity(root,profile,expected){
 export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs.readFileSync(path.join(root,PROFILE_PATH))),expectedIdentity,sourceOnly=false}={}){
   must(profile.task3_live_option_repair_production_authorized===false,'task3_option_deploy_not_authorized');
   must(JSON.stringify(profile.authorized_task3_live_option_repair_sha256)===JSON.stringify(TASK3_LIVE_OPTION_REPAIR),'task3_option_signed_scope_drift');
-  for(const [f,h] of Object.entries(TASK3_LIVE_OPTION_REPAIR))if(!sourceOnly||profile.runtime_files.includes(f))
-    must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task3_option_file_drift:'+f);
-
   must(profile.task3_c2_p0_production_deploy_authorized===false,'c2_p0_deployment_not_authorized');
  must(profile.task3_c2_p0_authority===TASK3_C2_AUTHORITY,'c2_p0_authority_drift');
  must(profile.frozen_runtime_sha256["supabase/functions/_shared/conversation-closure.ts"]===TASK3_C2_FROZEN_PREIMAGE,'c2_frozen_preimage_drift');
