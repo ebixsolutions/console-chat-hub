@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 import Ajv from 'ajv';
 import {build} from 'esbuild';
@@ -339,4 +340,24 @@ test('same-Task3 P0: missing demands remain rejected for mutations, unclear/mixe
   });
   assert.equal(last.frame,null,'provider-created entities cannot enter read-only demand recovery');
  }finally{previous===undefined?delete globalThis.__semanticContextModel:globalThis.__semanticContextModel=previous;}
+});
+
+test('Task3 P0: actual Vertex grounding JSON budget is explicit and truncated HTTP200 remains rejected',async()=>{
+ const source=readFileSync('supabase/functions/_shared/llm-router.ts','utf8');
+ assert(source.includes('=== "uat" ? UAT_THINKING : 0,'),
+   'UAT 1024-token admission must stay unchanged; ordinary verifier must explicitly disable default reasoning');
+ assert(source.includes('event: "grounding_verifier_output_incomplete"'));
+ assert(source.includes('reason === "verifier_output_truncated"'));
+ assert(source.includes('"GROUNDING_VERIFIER_OUTPUT_TRUNCATED"'));
+ assert(source.includes('failure:executionFailure("LLM_INVALID_OUTPUT"'));
+ const compiled=await build({stdin:{contents:"export {buildVertexGenerationConfig} from './supabase/functions/_shared/vertex-generation-config.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
+ const {buildVertexGenerationConfig}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+ const schema={type:'OBJECT',properties:{grounded:{type:'BOOLEAN'}},required:['grounded']};
+ const ordinary=buildVertexGenerationConfig(2048,true,schema,0,'gemini-2.5-flash');
+ const uat=buildVertexGenerationConfig(2048,true,schema,1024,'gemini-2.5-flash');
+ assert.equal(ordinary.maxOutputTokens,2048);
+ assert.equal(ordinary.thinkingConfig.thinkingBudget,0);
+ assert.equal(uat.thinkingConfig.thinkingBudget,1024);
+ assert.equal(ordinary.responseMimeType,'application/json');
+ assert.equal(uat.responseMimeType,'application/json');
 });

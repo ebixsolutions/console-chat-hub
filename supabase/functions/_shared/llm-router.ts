@@ -713,7 +713,10 @@ async function verifyGroundedGeneration(
         },
         required: ["grounded", "unsupported_claims", "evidence_chunk_ids", ...(call.factualEvidenceAvailable || grounding.bound_evidence ? ["question_resolution"] : []), ...(grounding.bound_evidence ? ["demand_resolutions"] : [])],
       },
-      (await trustedDispatchScope(serviceClient(),call.companyId,call.conversationId,call.legacyAuthority)) === "uat" ? UAT_THINKING : undefined,
+      // Preserve the UAT 1024-token admission contract; ordinary production
+      // verifier JSON must not consume its 2048-token response budget in
+      // implicit Gemini 2.5 Flash reasoning (observed 2034/2048, HTTP 200).
+      (await trustedDispatchScope(serviceClient(),call.companyId,call.conversationId,call.legacyAuthority)) === "uat" ? UAT_THINKING : 0,
     );
   } else {
     const key = Deno.env.get("ANTHROPIC_API_KEY");
@@ -787,7 +790,32 @@ async function verifyGroundedGeneration(
       verifierUsage.input_tokens = parsed.input_tokens;
       verifierUsage.output_tokens = parsed.output_tokens;
       verifierUsage.latency_ms = Date.now() - verifierStarted;
-      if (!parsed.text || parsed.finish_reason === "MAX_TOKENS") break;
+      if (!parsed.text || parsed.finish_reason === "MAX_TOKENS") {
+        // HTTP 200 with a truncated verifier response is NOT verified grounding
+        // and must never be silently classified as network unavailability.
+        // No content or credentials enter logs, and no extra paid retry occurs.
+        const reason = parsed.finish_reason === "MAX_TOKENS"
+          ? "verifier_output_truncated" : "verifier_empty_output";
+        log(call.tag, {
+          event: "grounding_verifier_output_incomplete",
+          request_id: call.operationId,
+          reason,
+          finish_reason: parsed.finish_reason ?? "UNSPECIFIED",
+          output_tokens: parsed.output_tokens,
+          verifier_max_tokens: GROUNDING_VERIFIER_MAX_TOKENS,
+        });
+        await recordUsage(
+          verifierCall, verifierAdapter.id, verifierAdapter.model,
+          "failed", res.status, verifierUsage,
+          reason === "verifier_output_truncated"
+            ? "GROUNDING_VERIFIER_OUTPUT_TRUNCATED"
+            : "GROUNDING_VERIFIER_EMPTY_OUTPUT",
+        );
+        return {ok:false,reason,
+          failure:executionFailure("LLM_INVALID_OUTPUT",{
+            stage:"decode",request_id:call.operationId,http_status:res.status,
+          })};
+      }
 
       const decision = parseGroundingVerifierDecision(
         parsed.text,
