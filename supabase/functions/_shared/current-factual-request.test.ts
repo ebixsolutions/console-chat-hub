@@ -1288,3 +1288,55 @@ Deno.test("Task3A/3B/3C protected specific subjects, mixed transactions and unce
  assert(out.transaction_required && !out.query?.includes("AB-12345"),
   "a live transaction identifier entered discovery KB");
 });
+
+
+Deno.test("Task3 generic B2-anchored post-clarification requery spans non-appliance industries and languages",()=>{
+ const company="tenant-same",priorQuestions=[
+  "Which rental plans do you currently offer?",
+  "What subscription packages can I choose?",
+  "Quels modèles sont proposés ?",
+  "¿Qué planes de suscripción tienen?",
+  "你哋有咩訂閱方案提供？",
+  "どのプランがありますか？",
+  "我想買衫，有推薦嗎？",
+ ];
+ for(const [index,original] of priorQuestions.entries()){
+  const visitorId="original-"+index;
+  const history:FactualRequestHistoryRow[]=[
+   {id:"assistant-"+index,role:"assistant",content:"Which current product or model?",
+    metadata:{response_route:"product_referent_clarification",product_referent_candidates:[],
+      control_commit:"ai",b2_expected_company_id:company,
+      b2_source_message_id:visitorId,source_message_id:visitorId}},
+   {id:visitorId,role:"visitor",content:original}
+  ];
+  const semantic=frame(["available options"],null);
+  semantic.operation="NO_STATE_CHANGE";
+  semantic.ambiguity={is_ambiguous:true,reasons:["no single SKU specified"],clarification_question:"Which model?"};
+  const latest="Current options";
+  const result=resolveCurrentFactualRequest({question:latest,source_message_id:"current",
+    trusted_company_id:company,history,semantic});
+  assert(result.kb_required&&!result.needs_subject_clarification&&
+    result.context_turns.includes(original.normalize("NFKC"))&&
+    result.query?.includes(original.normalize("NFKC"))&&
+    !result.query.includes("assistant-"+index)&&
+    result.subjects.length===0&&result.transaction_required===false,
+    "valid source-scoped category followup repeated clarification or adopted fake SKU: "+JSON.stringify({original,result}));
+  const plan=planConversationService({question:result.answer_request!,factual_request:result,
+    semantic_frame:semantic,language:"en",memory:null,commerce:null,recall:{handled:false}});
+  assert(plan.knowledge_state==="lookup_required"&&plan.kb_query===result.query,
+    "post-clarification request never reached the shared KB adapter for "+original);
+ }
+});
+Deno.test("Task3 B2-scoped followup does not convert competing specific model choices into category discovery",()=>{
+ const original="Which rental plans are offered?";
+ const company="same-tenant",source="original-visitor";
+ const assistant:FactualRequestHistoryRow={id:"assisted",role:"assistant",content:"Which option?",
+   metadata:{response_route:"product_referent_clarification",
+     product_referent_candidates:["Premium","Standard"],control_commit:"ai",
+     b2_expected_company_id:company,b2_source_message_id:source,source_message_id:source}};
+ const question="Current plans",semantic=frame(["plans"],null);
+ const result=resolveCurrentFactualRequest({question,source_message_id:"now",semantic,
+   trusted_company_id:company,history:[assistant,{id:source,role:"visitor",content:original}]});
+ assert(result.context_turns.length===0&&!result.query?.includes(original.normalize("NFKC")),
+   "multi-candidate actual ambiguity was silently replaced with category discovery");
+});

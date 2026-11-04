@@ -451,6 +451,20 @@ function isKbDemand(demand: CurrentFactualDemand): boolean {
  * quotes/references and preserves every demand; it does not classify them a
  * second time using product words or give any demand evidence authority. */
 
+/** A bounded source-only safety recognizer, not an industry taxonomy. It
+ * recognizes the SPEECH ACT of asking for a merchant selection, never decides
+ * what the merchant sells or what any particular product is. The multilingual
+ * semantic frame remains authoritative for other valid languages and intents.
+ * This also permits recovering a historical visitor question for which no
+ * accepted semantic or KB evidence receipt was previously persisted. */
+function sourceOwnedOptionWording(quote: string): boolean {
+  const q=clean(quote);
+  if(!q||q.length>500||exactProductIdentifiers(q).length>0||
+     LIFECYCLE_BOUNDARY.test(q)||isPersonalOrderStatusRequest(q))return false;
+  return /(?:\b(?:what|which|show|list|recommend|suggest|any)\b.{0,90}\b(?:models?|products?|items?|options?|choices?|plans?|packages?|services?|categories?|types?|tiers?|variants?)\b)|(?:\b(?:models?|products?|options?|plans?|packages?|services?|tiers?|variants?)\b.{0,80}\b(?:available|offered|carry|choose|recommend|provide|listed)\b)|(?:有咩|有啲咩|有什麼|有什么|有哪些|邊款|边款|哪款|什麼|什么|推薦|推荐|介紹|介绍|推介|建議|建议).{0,75}(?:型號|型号|款式|選項|选项|方案|服務|服务|產品|产品|套餐|計劃|计划)|(?:型號|型号|款式|選項|选项|方案|服務|服务|產品|产品|套餐|計劃|计划).{0,75}(?:有咩|有什么|有哪些|哪款|可選|可选|提供|推薦|推荐|介紹|介绍)|(?:\b(?:quels?|quelles?|qué|cuáles?)\b).{0,80}(?:modèles?|produits?|options?|services?|abonnements?|forfaits?|modelos?|productos?|opciones?|servicios?|planes?)|(?:どの|どんな|何の).{0,65}(?:モデル|商品|プラン|サービス)/iu.test(q)||
+    /(?:想|需要|希望|想買|想买).{0,75}(?:推薦|推荐|推介|介紹|介绍|建議|建议)/iu.test(q);
+}
+
 /** Product/plan/service OPTION DISCOVERY is a read of a category with customer
  * constraints, not a demand for an already-known SKU. Trust the exact current
  * customer quote and the bounded semantic request, never a model-created
@@ -475,9 +489,7 @@ function sourceBoundOptionDiscovery(input: ResolveCurrentFactualRequestInput, de
   // This is a CLASS of facts, never an industry- or brand-specific whitelist.
   const intent=norm(f.intent);
   const fromSemantic=["explore_options","recommend_options"].includes(intent);
-  const fromSource=productFactualFacets(quote).includes("model_info") &&
-    /(?:型號|型号|models?|款式|產品|产品|options?|choices?|plans?|services?)/iu.test(quote) &&
-    /(?:有咩|有什么|有啲咩|有哪些|咩|什麼|什么|邊款|边款|哪款|which|what|available|offer|carry|sell|list|show|recommend)/iu.test(quote);
+  const fromSource=sourceOwnedOptionWording(quote);
   const fromDemand=demand.requested_facts.some(fact =>
     /(?:available|offered|current|listed|recommend|select|compare).{0,35}(?:models?|products?|items?|options?|services?|plans?)|(?:models?|products?|items?|options?|services?|plans?).{0,35}(?:available|offered|listed|selection|recommendation)/iu.test(fact));
   return fromSemantic || fromSource || fromDemand;
@@ -494,7 +506,7 @@ function resolveVerifiedClarificationContinuation(input: ResolveCurrentFactualRe
      TOPIC_BOUNDARY.test(latest)||LIFECYCLE_BOUNDARY.test(latest)||
      isPersonalOrderStatusRequest(latest)||exactProductIdentifiers(latest).length>0||
      currentFacets(latest).length>0||CONTROL_ONLY.test(latest)||
-     !frame||frame.confidence<.62||frame.ambiguity.is_ambiguous||
+     !frame||frame.confidence<.62||
      !["NO_STATE_CHANGE","ASK_FACT"].includes(frame.operation)||
      frame.customer_correction||frame.additive||(frame.customer_facts?.length??0)>0||
      frame.explicit_negations.length>0||
@@ -503,7 +515,7 @@ function resolveVerifiedClarificationContinuation(input: ResolveCurrentFactualRe
      !["none","unknown"].includes(frame.booking_state)||
      !["none","unknown"].includes(frame.fulfillment_state)||
      (frame.demands??[]).some(d=>d.source_type==="transaction"||d.customer_correction||d.explicit_negations.length>0||
-       d.ambiguity.is_ambiguous||Object.keys(d.constraints).length>0))return null;
+       Object.keys(d.constraints).length>0))return null;
   let origin:FactualRequestHistoryRow|null=null,cycles=0;
   for(let i=0;i+1<rows.length&&cycles<4;i+=2){
     const assistant=rows[i],visitor=rows[i+1];
