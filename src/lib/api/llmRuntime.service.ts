@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { resolveEvidenceAdminScope, linkConversationEvidenceTurns } from "./evidence-log-scope";
+import { resolveEvidenceAdminScope, linkConversationEvidenceTurns, isEvidenceConversationId } from "./evidence-log-scope";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 /**
@@ -189,17 +189,21 @@ export interface EvidenceTurnsResult{ok:boolean;error?:string;conversationId?:st
  turns?:ReturnType<typeof linkConversationEvidenceTurns>["turns"];
  unlinkedReplies?:ReturnType<typeof linkConversationEvidenceTurns>["unlinkedReplies"];
  nextOffset?:number|null;}
+const evidenceListInput=z.object({conversationId:z.string().refine(isEvidenceConversationId).optional()});
 export const getAdminEvidenceConversationsFn=createServerFn({method:"GET"})
- .middleware([requireSupabaseAuth])
- .handler(async({context}):Promise<EvidenceListResult>=>{
+ .middleware([requireSupabaseAuth]).inputValidator(evidenceListInput)
+ .handler(async({context,data}):Promise<EvidenceListResult>=>{
   const db=context.supabase as any;
   const scope=await resolveEvidenceAdminScope(db,String(context.userId));
   if(!scope.ok)return{ok:false,error:scope.error};
-  const {data,error}=await db.from("conversations")
+  let query=db.from("conversations")
    .select("id,status,channel_config_id,created_at,updated_at")
-   .eq("company_id",scope.companyId).order("updated_at",{ascending:false}).limit(40);
+   .eq("company_id",scope.companyId);
+  // Full-ID lookups must work for old tickets, without exposing other companies.
+  if(data.conversationId)query=query.eq("id",data.conversationId);
+  const {data:rows,error}=await query.order("updated_at",{ascending:false}).limit(data.conversationId?1:40);
   if(error)return{ok:false,error:"evidence_conversations_unavailable"};
-  return{ok:true,rows:(data??[]).map((r:any)=>({id:String(r.id),status:String(r.status??"unknown"),
+  return{ok:true,rows:(rows??[]).map((r:any)=>({id:String(r.id),status:String(r.status??"unknown"),
     channelId:r.channel_config_id?String(r.channel_config_id):null,
     createdAt:String(r.created_at),updatedAt:String(r.updated_at)}))};
  });

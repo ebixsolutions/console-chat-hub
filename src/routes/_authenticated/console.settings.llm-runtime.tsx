@@ -10,6 +10,7 @@ import {
   PageHeader,
 } from "@/components/console/PageStates";
 import { useServerFn } from "@tanstack/react-start";
+import { isEvidenceConversationId } from "@/lib/api/evidence-log-scope";
 import {
   getLlmRuntimeTelemetryFn,
   type LlmRuntimeLogRow,
@@ -345,12 +346,14 @@ function AdminConversationEvidenceLog(){
  const [rows,setRows]=useState<EvidenceConversation[]>([]);
  const [error,setError]=useState("");
  const [search,setSearch]=useState("");
+ const [searching,setSearching]=useState(false);
+ const [searchError,setSearchError]=useState("");
  const [selected,setSelected]=useState<string|null>(null);
  const [loaded,setLoaded]=useState<Record<string,EvidenceTurnsResult>>({});
  const [busy,setBusy]=useState<string|null>(null);
  useEffect(()=>{
   let active=true;
-  void listFn().then(result=>{
+  void listFn({data:{}}).then(result=>{
    if(!active)return;
    if(!result.ok){setError(result.error??"evidence_list_unavailable");setState("error");return;}
    setRows(result.rows??[]);setState("ready");
@@ -378,16 +381,45 @@ function AdminConversationEvidenceLog(){
   }catch{setLoaded(prev=>({...prev,[id]:{ok:false,error:"evidence_detail_unavailable"}}));}
   finally{setBusy(null);}
  };
+ const findExactTicket=async()=>{
+  const id=search.trim();
+  if(!isEvidenceConversationId(id)){setSearchError("Enter the complete Conversation ID.");return;}
+  setSearching(true);setSearchError("");
+  try{
+   const result=await listFn({data:{conversationId:id}});
+   if(!result.ok){setSearchError(result.error??"evidence_list_unavailable");return;}
+   setRows(result.rows??[]);setSelected(null);setLoaded({});
+   if(!result.rows?.length)setSearchError("No matching tenant-scoped Conversation ID.");
+  }catch{setSearchError("evidence_list_unavailable");}
+  finally{setSearching(false);}
+ };
+ const showRecentTickets=async()=>{
+  setSearching(true);setSearchError("");
+  try{
+   const result=await listFn({data:{}});
+   if(!result.ok){setSearchError(result.error??"evidence_list_unavailable");return;}
+   setRows(result.rows??[]);setSearch("");setSelected(null);setLoaded({});
+  }catch{setSearchError("evidence_list_unavailable");}
+  finally{setSearching(false);}
+ };
  const showJson=(value:unknown)=>value==null?"NOT_CAPTURED":typeof value==="string"?value:JSON.stringify(value,null,2);
  const filtered=rows.filter(r=>r.id.toLowerCase().includes(search.trim().toLowerCase()));
  return <div className="space-y-4">
   <PageHeader title="Conversation Evidence Log" description="Admin-only · same-company original customer → KB request/response → grounded reply · read only"/>
   <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
    Missing historical KB evidence is NOT_CAPTURED. Query hashes and HTTP 200 do not prove relevant answers.
-   This read-only view never dispatches Provider/KB requests or reconstructs missing raw.
+   This read-only view never dispatches Provider/KB requests or reconstructs missing raw. Sensitive keys/contact data are masked in this display; SHA256 and byte counts refer to the original captured response.
   </div>
-  <input aria-label="Search conversation ID" placeholder="Search Conversation ID"
-   value={search} onChange={e=>setSearch(e.target.value)} className="w-full rounded-md border bg-white p-2 text-sm"/>
+  <div className="flex flex-wrap items-center gap-2">
+   <input aria-label="Search conversation ID" placeholder="Enter full Conversation ID (or filter recent tickets)"
+    value={search} onChange={e=>{setSearch(e.target.value);setSearchError("");}}
+    className="min-w-[250px] flex-1 rounded-md border bg-white p-2 text-sm"/>
+   <button type="button" disabled={searching} onClick={()=>void findExactTicket()}
+    className="rounded border px-3 py-2 text-sm">Find ID</button>
+   <button type="button" disabled={searching} onClick={()=>void showRecentTickets()}
+    className="rounded border px-3 py-2 text-sm">Recent</button>
+  </div>
+  {searchError&&<div role="alert" className="text-sm text-red-700">{searchError}</div>}
   {state==="loading"&&<LoadingState/>}
   {state==="error"&&<div role="alert" className="text-sm text-red-700">{error}</div>}
   {state==="ready"&&<div className="overflow-x-auto rounded-md border bg-white">

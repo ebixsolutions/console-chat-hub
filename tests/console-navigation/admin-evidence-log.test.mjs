@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {resolveEvidenceAdminScope,linkConversationEvidenceTurns} from "../../src/lib/api/evidence-log-scope.ts";
+import {resolveEvidenceAdminScope,linkConversationEvidenceTurns,isEvidenceConversationId,redactEvidenceSensitiveText} from "../../src/lib/api/evidence-log-scope.ts";
 function db(rows,companyActive=true){
  return{from(name){
   if(name==="company_membership")return{select(){return{eq(){return Promise.resolve({data:rows,error:null})}}}};
@@ -37,4 +37,30 @@ test("Original response is only linked to exact source message, not inferred",()
  assert.equal(output.turns[0].evidence[0].exactQuery,"exact Query");
  assert.equal(output.turns[0].evidence[0].rawResponse,'{"raw":"yes"}');
  assert.equal(output.turns[0].answers[0].text,"Human reply");
+});
+\ntest("Full exact Conversation ID search accepts older tickets without accepting prefixes",()=>{
+ const id="fd9a4ebb-1e26-5dc7-a6e4-42b791860716";
+ assert.equal(isEvidenceConversationId(id),true);
+ assert.equal(isEvidenceConversationId(id.toUpperCase()),true);
+ for(const bad of ["fd9a4ebb","",id+"-other","../../conversations",id.slice(0,-1)]){
+  assert.equal(isEvidenceConversationId(bad),false);
+ }
+});
+test("Admin evidence display masks secret values and customer contacts without changing original trace",()=>{
+ const secret='{"api_key":"dont-show","query":"Email alice@example.com","phone":"91234567"}';
+ const redacted=redactEvidenceSensitiveText(secret);
+ assert.equal(redacted.includes("dont-show"),false);
+ assert.equal(redacted.includes("alice@example.com"),false);
+ assert.equal(redacted.includes("91234567"),false);
+ const src=[{id:"v",role:"visitor",content:"Contact alice@example.com",created_at:"2026-01-01"},
+  {id:"a",role:"assistant",content:"Email alice@example.com",created_at:"2026-01-02",metadata:{source_message_id:"v"}}];
+ const trace=[{id:"t",message_id:"v",query_sent:"Query alice@example.com",retrieved_chunks:{
+  request_json:secret,response:{capture_state:"CAPTURED",response_json_raw:secret,response_sha256:"originalhash",response_bytes:secret.length},
+  source_context:{access_token:"hidden",intent:"lookup"}},created_at:"2026-01-01",top_score:null,kb_source:"singapore_context_search"}];
+ const linked=linkConversationEvidenceTurns(src,trace);
+ assert.equal(linked.turns[0].evidence[0].rawCaptureState,"REDACTED");
+ assert.equal(linked.turns[0].evidence[0].rawSha256,"originalhash");
+ assert.equal(JSON.stringify(linked).includes("dont-show"),false);
+ assert.equal(JSON.stringify(linked).includes("alice@example.com"),false);
+ assert.equal(JSON.stringify(linked).includes("hidden"),false);
 });
