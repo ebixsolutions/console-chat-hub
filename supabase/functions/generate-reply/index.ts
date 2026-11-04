@@ -5939,15 +5939,22 @@ Latest applicable corrections replace old values; an answered clarification is n
         subjects:[],subject_source_message_ids:[],context_turns:[],resolution:"not_resolved"};
       try{
         const evidence={
-          contract:"c3-admin-conversation-evidence-v1",source_message_id,
+contract:"c3-admin-conversation-evidence-v2",source_message_id,
+ operation_id:actual?.operation_id??null,
           query_contract:_kbRequestContract,source_context:ctx,
-          request_dispatch_state:actual?"HTTP_RECEIVED":"NOT_VERIFIED",
-          request_json:actual?.request_body??null,
-          response:actual?{capture_state:actual.capture_state,http_status:actual.http_status,
-            response_sha256:actual.response_sha256,response_bytes:actual.response_bytes,
-            response_json_raw:actual.response_json_raw}:
-            {capture_state:"NOT_CAPTURED",http_status:null,response_sha256:null,response_bytes:null,
-              response_json_raw:null,reason:ragResult?.failure?.code??"no_http_receipt"},
+request_dispatch_state:actual?"HTTP_RECEIVED":
+   ragResult?.failure?.stage==="admission"?"PRE_DISPATCH_DENIED":
+   ragResult?.failure?.stage==="config"?"CONFIG_DENIED":"NOT_VERIFIED",
+ request_json:actual?.request_body||null,
+ response:actual?{capture_state:actual.capture_state,http_status:actual.http_status,
+   capture_origin:actual.capture_origin??"UNKNOWN",body_complete:actual.body_complete??null,
+   response_sha256:actual.response_sha256,response_bytes:actual.response_bytes,
+   normalized_response_sha256:actual.normalized_response_sha256??null,
+   normalized_response_bytes:actual.normalized_response_bytes??null,
+   response_json_raw:actual.response_json_raw}:
+   {capture_state:"NOT_CAPTURED",http_status:null,response_sha256:null,response_bytes:null,
+     response_json_raw:null,reason:ragResult?.failure?.code??"no_http_receipt"},
+ execution_failure:ragResult?.failure?{code:ragResult.failure.code,stage:ragResult.failure.stage}:null,
           lineage:(ragResult?.documents??[]).slice(0,5).map(doc=>({
             document_id:doc.document_id,title:doc.title,source_type:doc.source_type,
             document_score:doc.document_score,authority:doc.authority??null,
@@ -7054,8 +7061,12 @@ Latest applicable corrections replace old values; an answered clarification is n
       const unverifiedReply = renderUnverifiedFactualNextStep(_currentFactualRequest, _visitorLang);
       const humanSupportOffer = unverifiedReply ? {version:1,type:"request_human_support",reason:"unverified_current_fact"} : null;
       const recoveryTrace = {
-        source_error_code:"LLM_GROUNDING_REJECTED",
-        failed_generation_request_id:llm.request_id,
+source_error_code:"LLM_GROUNDING_REJECTED",
+ grounding_rejection_reason:typeof llm.grounding_rejection_reason==="string"&&
+   /^[a-z_]{1,80}$/u.test(llm.grounding_rejection_reason)?llm.grounding_rejection_reason:null,
+ grounding_verifier_failure:llm.failure?
+   {code:llm.failure.code,stage:llm.failure.stage,http_status:llm.failure.http_status??null}:null,
+ failed_generation_request_id:llm.request_id,
         kb_retrieval_request:ragResult?.query_text_preview ?? null,
         kb_request_contract:ragResult?.trace_metadata?.kb_request_contract ?? null,
         ...(_currentFactualRequest?.subject ? {factual_request_subject:_currentFactualRequest.subject} : {}),
@@ -7816,7 +7827,8 @@ async function callKBAdapter(
     { timeoutMs: 15000, signal, uatContext: { conversationId: _conversation_id, operationId: `kb:generate-reply:${sourceMessageId ?? _conversation_id}:${crypto.randomUUID()}`, sourceMessageId } },
   );
   if (!result.success) {
-    return { success: false, no_answer: true, retrieval_quality: "failed", failure:result.failure ?? executionFailure("KB_TOOL_FAILURE") };
+return { success: false, no_answer: true, retrieval_quality: "failed",
+   audit_receipt:result.audit_receipt,failure:result.failure ?? executionFailure("KB_TOOL_FAILURE") };
   }
   if (result.chunks.length === 0) {
     return {

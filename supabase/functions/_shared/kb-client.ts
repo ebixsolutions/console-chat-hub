@@ -145,8 +145,11 @@ export interface KBDocumentCandidate {
 
 export type KBRawEvidenceCapture={
  request_body:string;http_status:number;
- capture_state:"CAPTURED"|"WITHHELD_OVERSIZED"|"WITHHELD_SENSITIVE";
- response_sha256:string;response_bytes:number;response_json_raw:string|null;
+ capture_state:"CAPTURED"|"WITHHELD_OVERSIZED"|"WITHHELD_SENSITIVE"|"WITHHELD_UNVERIFIED"|"INCOMPLETE_BODY";
+ response_sha256:string|null;response_bytes:number|null;response_json_raw:string|null;
+ capture_origin?:"UPSTREAM_HTTP"|"BOUND_RESPONSE";
+ body_complete?:boolean;operation_id?:string|null;
+ normalized_response_sha256?:string|null;normalized_response_bytes?:number|null;
 };
 const MAX_ADMIN_KB_RAW_BYTES=65536;
 /** Original KB HTTP response body (not headers or reconstructed evidence). No extra upstream call. */
@@ -155,9 +158,36 @@ export async function captureKBRawEvidence(requestBody:string,rawText:string,htt
  const hash=Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,"0")).join("");
  const oversized=bytes.length>MAX_ADMIN_KB_RAW_BYTES;
  const sensitive=/-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----|"(?:private_key|api_key|access_token|refresh_token|service_role_key|password|authorization)"\s*:|\bBearer\s+[A-Za-z0-9._~-]{20,}/iu.test(rawText);
- return {request_body:requestBody,http_status:httpStatus,
-   capture_state:oversized?"WITHHELD_OVERSIZED":sensitive?"WITHHELD_SENSITIVE":"CAPTURED",
-   response_sha256:hash,response_bytes:bytes.length,response_json_raw:oversized||sensitive?null:rawText};
+return {request_body:requestBody,http_status:httpStatus,
+ capture_state:oversized?"WITHHELD_OVERSIZED":sensitive?"WITHHELD_SENSITIVE":"CAPTURED",
+ capture_origin:"BOUND_RESPONSE",body_complete:true,
+ response_sha256:hash,response_bytes:bytes.length,response_json_raw:oversized||sensitive?null:rawText};
+}
+/** Capture exactly one upstream RAG response before any binder reconstruction.
+ * Reading a clone preserves Response identity and server-only provenance.
+ * There is no new upstream call and no await before the original I/O. */
+export async function captureKBTransportResponse(response:Response,requestBody:string):Promise<KBRawEvidenceCapture>{
+ const incomplete=():KBRawEvidenceCapture=>({request_body:requestBody,http_status:response.status,
+   capture_state:"INCOMPLETE_BODY",capture_origin:"UPSTREAM_HTTP",body_complete:false,
+   response_sha256:null,response_bytes:null,response_json_raw:null});
+ let reader:ReadableStreamDefaultReader<Uint8Array>|undefined;
+ try{
+   reader=response.clone().body?.getReader();if(!reader)return incomplete();
+   const parts:Uint8Array[]=[];let n=0;
+   for(;;){const part=await reader.read();if(part.done)break;n+=part.value.byteLength;
+     if(n>2_000_000){void reader.cancel().catch(()=>undefined);return incomplete();}
+     parts.push(part.value);}
+   const bytes=new Uint8Array(n);let pos=0;for(const part of parts){bytes.set(part,pos);pos+=part.byteLength;}
+   const digest=await crypto.subtle.digest("SHA-256",bytes);
+   const hash=Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,"0")).join("");
+   let raw:string;try{raw=new TextDecoder("utf-8",{fatal:true}).decode(bytes);}
+   catch{return {request_body:requestBody,http_status:response.status,
+     capture_state:"WITHHELD_SENSITIVE",capture_origin:"UPSTREAM_HTTP",body_complete:true,
+     response_sha256:hash,response_bytes:n,response_json_raw:null};}
+   const safe=await captureKBRawEvidence(requestBody,raw,response.status);
+   return {...safe,capture_origin:"UPSTREAM_HTTP",body_complete:true,response_sha256:hash,response_bytes:n};
+ }catch{return incomplete();}
+ finally{try{reader?.releaseLock();}catch{/* cancelled clone */}}
 }
 
 export interface KBRagResponse {
@@ -627,8 +657,16 @@ export async function fetchKBRag(
       ...(typeof reason==="string" && ["KB_RAG_RESPONSE_INVALID","KB_RAG_AUTHORITY_MISSING","KB_RAG_TENANT_CONFLICT","KB_RAG_AUTHORITY_CONFLICT","KB_RAG_CHUNK_INVALID","KB_RAG_CONTENT_MISMATCH"].includes(reason)?{authority_reason:reason}:{})}));
   };
   trace("kb_scope_resolved");
-  let response: Response;
-  let networkCalls = 0, admissionStarted = Date.now(), bindingStarted = 0, admissionOpen = true;
+let response: Response;
+ let observedTransport:Promise<KBRawEvidenceCapture>|null=null;
+ const transportReceipt=async(allowBody:boolean):Promise<KBRawEvidenceCapture|undefined>=>{
+   if(!observedTransport)return undefined;
+   const r=await observedTransport;
+   const bound={...r,operation_id:opts?.uatContext?.operationId??null};
+   return allowBody?bound:{...bound,response_json_raw:null,
+     capture_state:bound.capture_state==="INCOMPLETE_BODY"?"INCOMPLETE_BODY" as const:"WITHHELD_UNVERIFIED" as const};
+ };
+ let networkCalls = 0, admissionStarted = Date.now(), bindingStarted = 0, admissionOpen = true;
   const finishAdmission = () => {
     if (admissionOpen) diagnostic.event("accounting_admission", "complete", { duration_ms: Date.now() - admissionStarted });
     admissionOpen = false;
@@ -643,8 +681,10 @@ export async function fetchKBRag(
     diagnostic.event(networkStage, "start", { call: ++networkCalls });
     const start = Date.now();
     try {
-      const result = await fetch(input, init);
-      diagnostic.event(networkStage, "complete", { duration_ms: Date.now() - start, http_status: result.status, call: networkCalls });
+const result = await fetch(input, init);
+ // Only the exact Singapore context-search call, never preparation GETs.
+ if(rag)observedTransport=captureKBTransportResponse(result,typeof init?.body==="string"?init.body:"");
+ diagnostic.event(networkStage, "complete", { duration_ms: Date.now() - start, http_status: result.status, call: networkCalls });
       if (rag) { phase = "response_binding"; bindingStarted = Date.now(); diagnostic.event(phase, "start"); }
       return result;
     } catch (error) { diagnostic.event(networkStage, "error", { duration_ms: Date.now() - start, code: kbDiagnosticCode(error) }); throw error; }
@@ -688,11 +728,12 @@ export async function fetchKBRag(
     diagnostic.event(phase, "error", { code: failure.code });
     const observedStatus = error && typeof error === "object" && "remote_http_status" in error && typeof error.remote_http_status === "number" && error.remote_http_status >= 200 && error.remote_http_status < 300 ? error.remote_http_status : undefined;
     if (reason) diagnostic.event(reason.startsWith("KB_RESPONSE_") ? "response_decode" : "authority_validation", "error", { code: failure.code, http_status: observedStatus });
-    trace("kb_admission_or_transport_result",failure,observedStatus,error && typeof error==="object" && "reason" in error ? error.reason : undefined,ragValidationRule(error));
-
-    return {
-      success:false,chunks:[],citations:[],documents:[],
-      // Preserve transport labels; propagate actual closed admission failures
+trace("kb_admission_or_transport_result",failure,observedStatus,error && typeof error==="object" && "reason" in error ? error.reason : undefined,ragValidationRule(error));
+ const deniedReceipt=await transportReceipt(false);
+ return {
+success:false,chunks:[],citations:[],documents:[],
+ ...(deniedReceipt?{audit_receipt:deniedReceipt}:{}),
+ // Preserve transport labels; propagate actual closed admission failures
       // rather than hiding a provider/remote-scope denial as a generic fetch error.
       ...(error && typeof error==="object" && "code" in error && !(error instanceof DOMException)
         ? {error_code:failure.code,failure,...(reason ? {diagnostic_code:reason} : {})}
@@ -709,8 +750,8 @@ export async function fetchKBRag(
       chunks: [],
       citations: [],
       documents: [],
-      error_code: `KB_HTTP_${response.status}`,
-      failure: executionFailure("KB_TOOL_FAILURE",{stage:"provider_http",http_status:response.status}),
+error_code: `KB_HTTP_${response.status}`,audit_receipt:await transportReceipt(false),
+ failure: executionFailure("KB_TOOL_FAILURE",{stage:"provider_http",http_status:response.status}),
     };
   }
 
@@ -727,8 +768,8 @@ export async function fetchKBRag(
       chunks: [],
       citations: [],
       documents: [],
-      error_code: "KB_INVALID_JSON",
-      failure: executionFailure("KB_TOOL_FAILURE",{stage:"decode"}),
+error_code: "KB_INVALID_JSON",audit_receipt:await transportReceipt(false),
+ failure: executionFailure("KB_TOOL_FAILURE",{stage:"decode"}),
     };
   }
 
@@ -741,14 +782,17 @@ export async function fetchKBRag(
       chunks: [],
       citations: [],
       documents: [],
-      error_code: parsed.error_code,
-      failure: executionFailure("KB_TOOL_FAILURE",{stage:"canonical_validation"}),
+error_code: parsed.error_code,audit_receipt:await transportReceipt(false),
+ failure: executionFailure("KB_TOOL_FAILURE",{stage:"canonical_validation"}),
     };
   }
   if (!parsed.contextFound) {
     diagnostic.event("authority_validation", "complete", { code: "KB_NO_MATCH" });
-    return { success: true, chunks: [], citations: [], documents: [], failure:executionFailure("KB_NO_MATCH"),
-      audit_receipt: await captureKBRawEvidence(requestBody,rawResponseBody,response.status) };
+const normalized=await captureKBRawEvidence(requestBody,rawResponseBody,response.status);
+ const original=await transportReceipt(true);
+ return { success: true, chunks: [], citations: [], documents: [], failure:executionFailure("KB_NO_MATCH"),
+   audit_receipt:original?{...original,normalized_response_sha256:normalized.response_sha256,
+     normalized_response_bytes:normalized.response_bytes}:normalized };
   }
 
   // A tenant mismatch returned by the remote service is an integrity failure.
@@ -764,12 +808,15 @@ export async function fetchKBRag(
       chunks: [],
       citations: [],
       documents: [],
-      error_code: "KB_AUTH_TENANT_MISMATCH",
-    };
+error_code: "KB_AUTH_TENANT_MISMATCH",audit_receipt:await transportReceipt(false),
+ };
   }
 
-  const auditReceipt = await captureKBRawEvidence(requestBody,rawResponseBody,response.status);
-  const documents = parsed.documents.map((candidate)=>{
+const normalizedReceipt=await captureKBRawEvidence(requestBody,rawResponseBody,response.status);
+ const originalReceipt=await transportReceipt(true);
+ const auditReceipt=originalReceipt?{...originalReceipt,normalized_response_sha256:normalizedReceipt.response_sha256,
+   normalized_response_bytes:normalizedReceipt.response_bytes}:normalizedReceipt;
+ const documents = parsed.documents.map((candidate)=>{
     const document=mapDocumentCandidate(candidate);
     bindRagServiceDocument(response,document);
     const service=ragServiceDocument(document);

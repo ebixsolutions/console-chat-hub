@@ -1455,5 +1455,11 @@
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "21d7cd3d17fb470db0ebf90f2c31f2175dfa52457f8965c6805ebf263ea8ee5b",
     "supabase/functions/_shared/llm-router.ts": "697fdf5636ac8bd7ea5562b6c9a9c477dab3b22b37a44954990daa010cd87929"
   },
-  "task3_admin_conversation_evidence_production_authorized": false
+  "task3_admin_conversation_evidence_production_authorized": false,
+  "task3c_capture_repair_production_authorized": false,
+  "authorized_task3c_capture_repair_sha256": {
+    "supabase/functions/_shared/kb-client.ts": "4e4de1a82883acdd18a6f289bde3d5f84355577bf081e7fad205420a8a5d7edd",
+    "supabase/functions/generate-reply/index.ts": "f8768b6fdaacef4d426d9782fae64a087aef7d3c6656f3e0302611b154710ada",
+    "src/lib/api/evidence-log-scope.ts": "007a4c719df4057393d62432a071995329e319db72933b965f1e656b2738b0de"
+  }
 }
