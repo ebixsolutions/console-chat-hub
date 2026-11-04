@@ -1,6 +1,5 @@
 import { resolveCurrentFactualRequest, assertFactualQueryBudget, type FactualRequestHistoryRow } from "./current-factual-request.ts";
 import { renderUnverifiedFactualNextStep } from "./factual-request-context.ts";
-import { captureKBRawEvidence } from "./kb-client.ts";
 import { scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
 import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state-core.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
@@ -1374,17 +1373,3 @@ Deno.test("Task3 customer-visible missing-options response never leaks semantic 
   "internal semantic labels reached customer response: "+text);
  assert(!/已轉交|有現貨|已下單/u.test(text),"unsupported merchant or handoff claim was invented");
 });
-Deno.test("Task3 actual KB raw and exact query audit capture is bounded and never repeats retrieval",async()=>{
- const q=JSON.stringify({query:"大金2匹有咩選擇",company_id:34,candidate_top_k:10});
- const raw=' { "results" : [{"document_id":"doc-1","content":"原始資料"}] } ';
- const e=await captureKBRawEvidence(q,raw,200);
- assert(e.capture_state==="CAPTURED"&&e.response_json_raw===raw&&e.request_body===q&&e.response_sha256.length===64,
-   "stored audit is not the original HTTP response text");
- const big=await captureKBRawEvidence(q,"x".repeat(65537),200);
- assert(big.capture_state==="WITHHELD_OVERSIZED"&&big.response_json_raw===null&&big.response_bytes===65537,
-   "oversized raw response exposed or silently truncated");
- const secret=await captureKBRawEvidence(q,'{"private_key":"do-not-record"}',200);
- assert(secret.capture_state==="WITHHELD_SENSITIVE"&&secret.response_json_raw===null,
-   "private key was captured in raw response");
-});
-

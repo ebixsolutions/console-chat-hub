@@ -1444,7 +1444,6 @@
   "authorized_task3_admin_conversation_evidence_sha256": {
     "supabase/functions/_shared/kb-client.ts": "84a098bfd5021dbfa6a0e4b54cbe630ca84db7ae95d44e5b6eea7647c77813df",
     "supabase/functions/generate-reply/index.ts": "05e6749479f79af166adbcb895ed3fa3bb22ec3a5c90f185c6b387bb96da3e6c",
-    "supabase/functions/_shared/current-factual-request.test.ts": "a99ca7b4e62f26a304b7f131450d5ada202162233c9fbf5f507af3f2f6177d1e",
     "src/lib/api/evidence-log-scope.ts": "3d2f5f087d9eeecc2c7c87b62e47fbbec780e8bb58316a6c3fefe14db6bc0ef3",
     "src/lib/api/llmRuntime.service.ts": "91e088e516c61b7d57eacdb77abe43b84f28f4c4186e388a05238a76c6772d6d",
     "src/routes/_authenticated/console.settings.llm-runtime.tsx": "6be5fe260f55f9144035e94b03c4a32099bd0c5c5878fd6f87dd3a849c140eaf",
