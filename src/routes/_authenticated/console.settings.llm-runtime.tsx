@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useRouterState } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { Activity, AlertCircle, Clock3, Cpu, Gauge, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -13,6 +13,8 @@ import { useServerFn } from "@tanstack/react-start";
 import {
   getLlmRuntimeTelemetryFn,
   type LlmRuntimeLogRow,
+  getAdminEvidenceConversationsFn,getAdminEvidenceTurnsFn,
+  type EvidenceConversation,type EvidenceTurnsResult,
 } from "@/lib/api/llmRuntime.service";
 
 export const Route = createFileRoute(
@@ -87,13 +89,11 @@ function parseCall(row: LlmLogRow): ParsedLlmCall {
 
 function LlmRuntimePage() {
   const { role: productionRole, loading } = useCurrentRole();
-
+  const evidenceLog = useRouterState({select:s=>String((s.location.search as Record<string,unknown>)?.view??"")==="log"});
   if (loading) return <LoadingState />;
-
-  const canView =
-    productionRole === "admin" || productionRole === "supervisor";
+  if (evidenceLog) return productionRole==="admin"?<AdminConversationEvidenceLog/>:<PermissionDenied/>;
+  const canView = productionRole === "admin" || productionRole === "supervisor";
   if (!canView) return <PermissionDenied />;
-
   return <LlmRuntimeTelemetry />;
 }
 
@@ -336,4 +336,118 @@ function MetricCard({
       </CardContent>
     </Card>
   );
+}
+
+function AdminConversationEvidenceLog(){
+ const listFn=useServerFn(getAdminEvidenceConversationsFn);
+ const detailFn=useServerFn(getAdminEvidenceTurnsFn);
+ const [state,setState]=useState<RuntimeState>("loading");
+ const [rows,setRows]=useState<EvidenceConversation[]>([]);
+ const [error,setError]=useState("");
+ const [search,setSearch]=useState("");
+ const [selected,setSelected]=useState<string|null>(null);
+ const [loaded,setLoaded]=useState<Record<string,EvidenceTurnsResult>>({});
+ const [busy,setBusy]=useState<string|null>(null);
+ useEffect(()=>{
+  let active=true;
+  void listFn().then(result=>{
+   if(!active)return;
+   if(!result.ok){setError(result.error??"evidence_list_unavailable");setState("error");return;}
+   setRows(result.rows??[]);setState("ready");
+  }).catch(()=>{if(active){setError("evidence_list_unavailable");setState("error");}});
+  return()=>{active=false;};
+ },[listFn]);
+ const toggle=async(id:string)=>{
+  if(selected===id){setSelected(null);return;}
+  setSelected(id);
+  if(loaded[id])return;
+  setBusy(id);
+  try{const value=await detailFn({data:{conversationId:id,offset:0}});setLoaded(prev=>({...prev,[id]:value}));}
+  catch{setLoaded(prev=>({...prev,[id]:{ok:false,error:"evidence_detail_unavailable"}]}));}
+  finally{setBusy(null);}
+ };
+ const loadMore=async(id:string,offset:number)=>{
+  if(busy)return;
+  setBusy(id);
+  try{
+   const page=await detailFn({data:{conversationId:id,offset}});
+   if(!page.ok){setLoaded(prev=>({...prev,[id]:page}));return;}
+   setLoaded(prev=>({...prev,[id]:{...page,
+    turns:[...(prev[id]?.turns??[]),...(page.turns??[])],
+    unlinkedReplies:[...(prev[id]?.unlinkedReplies??[]),...(page.unlinkedReplies??[])]}]}));
+  }catch{setLoaded(prev=>({...prev,[id]:{ok:false,error:"evidence_detail_unavailable"}]}));}
+  finally{setBusy(null);}
+ };
+ const showJson=(value:unknown)=>value==null?"NOT_CAPTURED":typeof value==="string"?value:JSON.stringify(value,null,2);
+ const filtered=rows.filter(r=>r.id.toLowerCase().includes(search.trim().toLowerCase()));
+ return <div className="space-y-4">
+  <PageHeader title="Conversation Evidence Log" description="Admin-only · same-company original customer → KB request/response → grounded reply · read only"/>
+  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+   Missing historical KB evidence is NOT_CAPTURED. Query hashes and HTTP 200 do not prove relevant answers.
+   This read-only view never dispatches Provider/KB requests or reconstructs missing raw.
+  </div>
+  <input aria-label="Search conversation ID" placeholder="Search Conversation ID"
+   value={search} onChange={e=>setSearch(e.target.value)} className="w-full rounded-md border bg-white p-2 text-sm"/>
+  {state==="loading"&&<LoadingState/>}
+  {state==="error"&&<div role="alert" className="text-sm text-red-700">{error}</div>}
+  {state==="ready"&&<div className="overflow-x-auto rounded-md border bg-white">
+    <table className="w-full min-w-[740px] text-left text-xs">
+     <thead className="bg-slate-50"><tr><th className="p-2">Conversation ID</th><th className="p-2">Created</th>
+      <th className="p-2">Status</th><th className="p-2">Channel</th></tr></thead>
+     <tbody>{filtered.map(c=><tr key={c.id} className="border-t align-top">
+      <td className="p-3 font-mono">
+       <button type="button" aria-expanded={selected===c.id} onClick={()=>void toggle(c.id)}
+        className="text-left text-blue-700 underline">{selected===c.id?"▾":"▸"} {c.id}</button>
+       {selected===c.id&&<div className="mt-3 max-w-[86vw]">
+        {busy===c.id&&!loaded[c.id]&&<div>Reading actual evidence…</div>}
+        {loaded[c.id]&&!loaded[c.id].ok&&<div role="alert" className="text-red-700">{loaded[c.id].error}</div>}
+        {loaded[c.id]?.ok&&<div className="overflow-x-auto rounded-md border">
+         <table className="w-full min-w-[1130px] text-left text-xs">
+          <thead className="bg-slate-50"><tr>
+           <th className="p-2">Turn</th><th className="p-2">客人實際問題</th>
+           <th className="p-2">上下文理解／完整 KB Query</th><th className="p-2">KB 原始返回證據</th>
+           <th className="p-2">最終人話回答／Grounding</th></tr></thead>
+          <tbody>{(loaded[c.id].turns??[]).map(t=><tr key={t.messageId} className="border-t align-top">
+           <td className="p-2">{t.index}<div className="font-mono text-[10px]">{t.messageId.slice(0,8)}</div></td>
+           <td className="max-w-[220px] whitespace-pre-wrap break-words p-2">{t.customerQuestion}</td>
+           <td className="max-w-[270px] p-2">{!t.evidence.length?<span className="text-amber-700">NOT_CAPTURED</span>:
+            t.evidence.map((ev,i)=><details key={ev.id} className="mb-2">
+             <summary className="cursor-pointer">KB Call {i+1} · {String(ev.requestDispatchState)}</summary>
+             <p>完整 Query</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.exactQuery)}</pre>
+             <p>HTTP Request JSON</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.requestJson)}</pre>
+             <p>意圖及上下文</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.sourceContext)}</pre>
+            </details>)}</td>
+           <td className="max-w-[340px] p-2">{!t.evidence.length?<span className="text-amber-700">NOT_CAPTURED</span>:
+            t.evidence.map(ev=><details key={ev.id} className="mb-2">
+             <summary className="cursor-pointer">{ev.rawCaptureState} · HTTP {ev.responseStatus??"—"}</summary>
+             <div>SHA256 {ev.rawSha256??"NOT_CAPTURED"} · Bytes {ev.responseBytes??"—"}</div>
+             <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{ev.rawResponse??"NOT_CAPTURED / WITHHELD"}</pre>
+             <p>Document / Chunk lineage</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.lineage)}</pre>
+            </details>)}</td>
+           <td className="max-w-[270px] p-2">{t.answers.length?t.answers.map(a=><div key={a.id} className="mb-2">
+            <div className="whitespace-pre-wrap break-words">{a.text}</div>
+            <details><summary className="cursor-pointer text-slate-500">Evidence decision／Grounding</summary>
+             <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(a.metadata)}</pre>
+            </details>
+           </div>):<span className="text-amber-700">REPLY_NOT_LINKED</span>}</td>
+          </tr>)}</tbody>
+         </table>
+         {(loaded[c.id].unlinkedReplies?.length??0)>0&&<details className="border-t p-3">
+          <summary className="cursor-pointer">Assistant/Agent replies without verified source linkage</summary>
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all">{showJson(loaded[c.id].unlinkedReplies)}</pre>
+         </details>}
+         {loaded[c.id].nextOffset!=null&&
+          <button type="button" disabled={busy===c.id} onClick={()=>void loadMore(c.id,loaded[c.id].nextOffset!)}
+           className="m-3 rounded border px-3 py-1">Load more messages</button>}
+        </div>}
+       </div>}
+      </td>
+      <td className="p-3">{new Date(c.createdAt).toLocaleString()}</td>
+      <td className="p-3">{c.status}</td>
+      <td className="p-3 font-mono">{c.channelId?.slice(0,8)??"—"}</td>
+     </tr>)}</tbody>
+    </table>
+    {filtered.length===0&&<div className="p-6 text-sm text-slate-500">No matching tenant-scoped conversations</div>}
+   </div>}
+ </div>;
 }

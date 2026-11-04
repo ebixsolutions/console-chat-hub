@@ -34,6 +34,7 @@ const translations: Record<string, Record<string, string>> = {
     navCustomer360: "Customer 360",
     navVisitorAnalytics: "Visitor Analytics",
     navLLMRuntime: "LLM Runtime",
+    navEvidenceLog: "Log",
     navWidgetPreview: "Widget Preview",
     navFeedbackResponses: "Feedback Responses",
     navKbHelper: "Knowledge Helper",
@@ -53,6 +54,7 @@ const translations: Record<string, Record<string, string>> = {
     navCustomer360: "客戶全景",
     navVisitorAnalytics: "訪客分析",
     navLLMRuntime: "LLM 模型設定",
+    navEvidenceLog: "Log（對話證據）",
     navWidgetPreview: "Widget 預覽",
     navFeedbackResponses: "客戶回饋",
     navKbHelper: "知識庫搜尋",
@@ -209,6 +211,7 @@ type HealthStatus = "checking" | "reachable" | "unavailable";
 function ConsoleLayout() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const evidenceLogView=useRouterState({select:s=>String((s.location.search as Record<string,unknown>)?.view??"")==="log"});
   const { role, loading: roleLoading, error: roleError, retry: retryRole } = useCurrentRole();
   const { name: userDisplayName, initials: userInitials } = useConsoleIdentity();
 
@@ -283,7 +286,9 @@ function ConsoleLayout() {
   const noPaddingRoutes = ["/console", "/console/conversations"];
   const noPadding = noPaddingRoutes.includes(pathname) || isConvDetail;
 
-  const meta = pageMeta[pathname] || (isConvDetail ? pageMeta["/console"] : null);
+  const meta=evidenceLogView&&pathname==="/console/settings/llm-runtime"
+    ? {zh:"對話證據 Log",en:"Conversation Evidence Log",sub:{zh:"僅 Admin · 逐句 KB 與回答證據",en:"Admin only · per-turn KB and reply evidence"}}
+    : pageMeta[pathname] || (isConvDetail ? pageMeta["/console"] : null);
   const badgePath = Object.keys(GROUP_BADGE)
     .sort((a, b) => b.length - a.length)
     .find((k) => pathname === k || pathname.startsWith(k + "/"));
@@ -623,6 +628,18 @@ function ConsoleLayout() {
             </Link>
           </div>
 
+          {sidebarRole==="admin"&&(
+            <div style={{padding:collapsed?"6px 4px":"6px 10px",borderTop:"1px solid #e8e6e0"}}>
+              <Link to={"/console/settings/llm-runtime" as any} search={{view:"log"} as any}
+                title="Admin Conversation Evidence Log"
+                style={{display:"flex",alignItems:"center",gap:8,padding:"8px 9px",
+                 borderRadius:8,fontSize:12.5,textDecoration:"none",
+                 background:evidenceLogView&&pathname==="/console/settings/llm-runtime"?"#1a1a1a":"transparent",
+                 color:evidenceLogView&&pathname==="/console/settings/llm-runtime"?"#fff":"#555"}}>
+                <span aria-hidden="true">🧾</span>{!collapsed&&<span>{t("navEvidenceLog")}</span>}
+              </Link>
+            </div>
+          )}
           <div style={{ padding: "8px 10px", borderTop: "0.5px solid #e8e6e0", flexShrink: 0 }}>
             <button
               onClick={handleSignOut}

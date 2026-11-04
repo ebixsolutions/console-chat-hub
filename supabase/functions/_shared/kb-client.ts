@@ -142,8 +142,27 @@ export interface KBDocumentCandidate {
   // Singapore aggregation parser always supplies this object.
   authority?: AggregationAuthorityMetadata;
 }
+
+export type KBRawEvidenceCapture={
+ request_body:string;http_status:number;
+ capture_state:"CAPTURED"|"WITHHELD_OVERSIZED"|"WITHHELD_SENSITIVE";
+ response_sha256:string;response_bytes:number;response_json_raw:string|null;
+};
+const MAX_ADMIN_KB_RAW_BYTES=65536;
+/** Original KB HTTP response body (not headers or reconstructed evidence). No extra upstream call. */
+export async function captureKBRawEvidence(requestBody:string,rawText:string,httpStatus:number):Promise<KBRawEvidenceCapture>{
+ const bytes=new TextEncoder().encode(rawText),digest=await crypto.subtle.digest("SHA-256",bytes);
+ const hash=Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,"0")).join("");
+ const oversized=bytes.length>MAX_ADMIN_KB_RAW_BYTES;
+ const sensitive=/-----BEGIN\s+(?:RSA\s+)?PRIVATE\s+KEY-----|"(?:private_key|api_key|access_token|refresh_token|service_role_key|password|authorization)"\s*:|\bBearer\s+[A-Za-z0-9._~-]{20,}/iu.test(rawText);
+ return {request_body:requestBody,http_status:httpStatus,
+   capture_state:oversized?"WITHHELD_OVERSIZED":sensitive?"WITHHELD_SENSITIVE":"CAPTURED",
+   response_sha256:hash,response_bytes:bytes.length,response_json_raw:oversized||sensitive?null:rawText};
+}
+
 export interface KBRagResponse {
   success: boolean;
+  audit_receipt?: KBRawEvidenceCapture;
   chunks: KBFullChunk[];
   citations: KBCitationChunk[];
   documents: KBDocumentCandidate[];
@@ -696,8 +715,12 @@ export async function fetchKBRag(
   }
 
   let data: unknown;
+  let rawResponseBody = "";
   try {
-    data = await diagnostic.run("response_decode", () => response.json());
+    data = await diagnostic.run("response_decode", async () => {
+      rawResponseBody = await response.text();
+      return JSON.parse(rawResponseBody) as unknown;
+    });
   } catch {
     return {
       success: false,
@@ -724,7 +747,8 @@ export async function fetchKBRag(
   }
   if (!parsed.contextFound) {
     diagnostic.event("authority_validation", "complete", { code: "KB_NO_MATCH" });
-    return { success: true, chunks: [], citations: [], documents: [], failure:executionFailure("KB_NO_MATCH") };
+    return { success: true, chunks: [], citations: [], documents: [], failure:executionFailure("KB_NO_MATCH"),
+      audit_receipt: await captureKBRawEvidence(requestBody,rawResponseBody,response.status) };
   }
 
   // A tenant mismatch returned by the remote service is an integrity failure.
@@ -744,6 +768,7 @@ export async function fetchKBRag(
     };
   }
 
+  const auditReceipt = await captureKBRawEvidence(requestBody,rawResponseBody,response.status);
   const documents = parsed.documents.map((candidate)=>{
     const document=mapDocumentCandidate(candidate);
     bindRagServiceDocument(response,document);
@@ -761,6 +786,7 @@ export async function fetchKBRag(
   const single = documents.length === 1 ? documents[0] : undefined;
   return {
     success: true,
+    audit_receipt: auditReceipt,
     chunks: documents.flatMap((d) => d.chunks),
     citations: documents.flatMap((d) => d.citations),
     documents,

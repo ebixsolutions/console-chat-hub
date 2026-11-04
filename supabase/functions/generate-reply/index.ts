@@ -52,6 +52,7 @@ import {
   type KBFullChunk,
   type KBPreActivationActor,
   type KBResolvedScope,
+  type KBRawEvidenceCapture,
   resolveKBEndpoint,
   resolveTenantScope,
 } from "../_shared/kb-client.ts";
@@ -5842,6 +5843,7 @@ Latest applicable corrections replace old values; an answered clarification is n
     };
     query_text_preview?: string;
     trace_metadata?: Record<string, unknown>;
+    audit_receipt?: KBRawEvidenceCapture;
   } | null = null;
 
   const _boundedNoCurrentEvidenceDecision = classifyCurrentFactEvidence({
@@ -5923,6 +5925,51 @@ Latest applicable corrections replace old values; an answered clarification is n
         requestSignal,
         source_message_id ?? undefined,
       );
+
+    // Same source/tenant; audit uses existing admin-RLS rag_trace, not a new API.
+    // No additional KB/LLM calls. Historical absence is never reconstructed.
+    if(userQuery&&source_message_id){
+      const actual=ragResult?.audit_receipt??null;
+      const ctx=_currentFactualRequest?{
+        original_question:_h1LastMsg,answer_request:_currentFactualRequest.answer_request,
+        requested_facts:_currentFactualRequest.requested_facts,subjects:_currentFactualRequest.subjects,
+        subject_source_message_ids:_currentFactualRequest.subject_source_message_ids,
+        context_turns:_currentFactualRequest.context_turns,resolution:_currentFactualRequest.resolution,
+      }:{original_question:_h1LastMsg,answer_request:_productFactualRequest,requested_facts:[],
+        subjects:[],subject_source_message_ids:[],context_turns:[],resolution:"not_resolved"};
+      try{
+        const evidence={
+          contract:"c3-admin-conversation-evidence-v1",source_message_id,
+          query_contract:_kbRequestContract,source_context:ctx,
+          request_dispatch_state:actual?"HTTP_RECEIVED":"NOT_VERIFIED",
+          request_json:actual?.request_body??null,
+          response:actual?{capture_state:actual.capture_state,http_status:actual.http_status,
+            response_sha256:actual.response_sha256,response_bytes:actual.response_bytes,
+            response_json_raw:actual.response_json_raw}:
+            {capture_state:"NOT_CAPTURED",http_status:null,response_sha256:null,response_bytes:null,
+              response_json_raw:null,reason:ragResult?.failure?.code??"no_http_receipt"},
+          lineage:(ragResult?.documents??[]).slice(0,5).map(doc=>({
+            document_id:doc.document_id,title:doc.title,source_type:doc.source_type,
+            document_score:doc.document_score,authority:doc.authority??null,
+            chunks:doc.chunks.slice(0,3).map(chunk=>({
+              document_id:chunk.document_id,chunk_id:chunk.chunk_id,
+              score:chunk.score,chunk_type:chunk.chunk_type,status:chunk.status,
+            })),
+          })),
+          result_chunk_count:ragResult?.chunks?.length??0,
+        };
+        const topScore=(ragResult?.chunks??[]).reduce<number|null>((best,chunk)=>
+          typeof chunk.score==="number"&&Number.isFinite(chunk.score)
+            ?best===null?chunk.score:Math.max(best,chunk.score):best,null);
+        const {error:evidenceError}=await supabaseAdmin.from("rag_trace").insert({
+          id:crypto.randomUUID(),conversation_id,message_id:source_message_id,
+          query_sent:userQuery,retrieved_chunks:evidence,top_score:topScore,kb_source:"singapore_context_search",
+        });
+        if(evidenceError)console.warn(JSON.stringify({event:"c3_admin_evidence_write_failed",
+          conversation_id,source_message_id,code:"TRACE_INSERT_FAILED"}));
+      }catch{console.warn(JSON.stringify({event:"c3_admin_evidence_write_failed",
+        conversation_id,source_message_id,code:"TRACE_INSERT_FAILED"}));}
+    }
     if (!ragResult || !ragResult.success) {
       const failure=ragResult?.failure ?? executionFailure("KB_TOOL_FAILURE");
       if (["admission","config"].includes(failure.stage)) {
@@ -7756,6 +7803,7 @@ async function callKBAdapter(
     dropped_without_content: number;
   };
   query_text_preview?: string;
+  audit_receipt?: KBRawEvidenceCapture;
 }> {
   const endpointCfg = resolveKBEndpoint();
   if (!endpointCfg) {
@@ -7776,6 +7824,7 @@ async function callKBAdapter(
       no_answer: true,
       retrieval_quality: "failed",
       chunks: [],
+      audit_receipt:result.audit_receipt,
       query_text_preview: userMessage.slice(0, 100),
     };
   }
@@ -7785,6 +7834,7 @@ async function callKBAdapter(
     retrieval_quality: "high",
     chunks: result.chunks,
     documents: result.documents,
+    audit_receipt:result.audit_receipt,
     ...(result.llm_context ? { llm_context: result.llm_context } : {}),
     ...(result.meta ? { meta: result.meta } : {}),
     query_text_preview: userMessage.slice(0, 100),
