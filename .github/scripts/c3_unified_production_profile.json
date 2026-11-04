@@ -1446,7 +1446,7 @@
     "supabase/functions/generate-reply/index.ts": "05e6749479f79af166adbcb895ed3fa3bb22ec3a5c90f185c6b387bb96da3e6c",
     "src/lib/api/evidence-log-scope.ts": "3d2f5f087d9eeecc2c7c87b62e47fbbec780e8bb58316a6c3fefe14db6bc0ef3",
     "src/lib/api/llmRuntime.service.ts": "91e088e516c61b7d57eacdb77abe43b84f28f4c4186e388a05238a76c6772d6d",
-    "src/routes/_authenticated/console.settings.llm-runtime.tsx": "6be5fe260f55f9144035e94b03c4a32099bd0c5c5878fd6f87dd3a849c140eaf",
+    "src/routes/_authenticated/console.settings.llm-runtime.tsx": "3ceb21a85ca8731415679cb3bdc51741da11930e57ab0df2e0971b263d964f3b",
     "src/routes/_authenticated/console.tsx": "4e69a2de8ab338390c97636955d5000bbaffcb5fb93354a321d3b25e70fafda0",
     "tests/console-navigation/admin-evidence-log.test.mjs": "75e98015fced7840113c6f5d0b721012cf9328cb9debf5ae3ff6acbc25c2919b"
   },

@@ -363,7 +363,7 @@ function AdminConversationEvidenceLog(){
   if(loaded[id])return;
   setBusy(id);
   try{const value=await detailFn({data:{conversationId:id,offset:0}});setLoaded(prev=>({...prev,[id]:value}));}
-  catch{setLoaded(prev=>({...prev,[id]:{ok:false,error:"evidence_detail_unavailable"}]}));}
+  catch{setLoaded(prev=>({...prev,[id]:{ok:false,error:"evidence_detail_unavailable"}}));}
   finally{setBusy(null);}
  };
  const loadMore=async(id:string,offset:number)=>{
@@ -374,8 +374,8 @@ function AdminConversationEvidenceLog(){
    if(!page.ok){setLoaded(prev=>({...prev,[id]:page}));return;}
    setLoaded(prev=>({...prev,[id]:{...page,
     turns:[...(prev[id]?.turns??[]),...(page.turns??[])],
-    unlinkedReplies:[...(prev[id]?.unlinkedReplies??[]),...(page.unlinkedReplies??[])]}]}));
-  }catch{setLoaded(prev=>({...prev,[id]:{ok:false,error:"evidence_detail_unavailable"}]}));}
+    unlinkedReplies:[...(prev[id]?.unlinkedReplies??[]),...(page.unlinkedReplies??[])]}}));
+  }catch{setLoaded(prev=>({...prev,[id]:{ok:false,error:"evidence_detail_unavailable"}}));}
   finally{setBusy(null);}
  };
  const showJson=(value:unknown)=>value==null?"NOT_CAPTURED":typeof value==="string"?value:JSON.stringify(value,null,2);
