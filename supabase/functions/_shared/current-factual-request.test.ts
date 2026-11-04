@@ -1202,3 +1202,89 @@ Deno.test("Task3A generic source-quote recovery fails closed on mixed, uncertain
  const exact=build();exact.demands![0].source_quote=source;
  assert(rebindSourceQuotedReadOnlyDemand(exact,source)===null,"already correct source quote rewritten");
 });
+
+
+Deno.test("Task3A/3B/3C generic category discovery never requires an already-known SKU before KB",()=>{
+ for(const [question,facet,intent] of [
+  ["大金2匹有咩型號？","available 2HP product models","ask_product_facts"],
+  ["Which rental plans do you currently offer?","available rental plans","explore_options"],
+  ["推薦適合家庭用嘅空氣淨化產品","recommended catalogue choices","recommend_options"],
+  ["Quels modèles sont proposés ?","offered models","explore_options"],
+  ["What subscription packages can I choose?","available subscription packages","explore_options"],
+ ] as const){
+  const proposal=demanded(demand(question,"product",[facet],["model-suggested-without-source"]));
+  proposal.intent=intent;proposal.demands![0].ambiguity={is_ambiguous:true,reasons:["no specific SKU"],clarification_question:"Which SKU?"};
+  const result=resolveCurrentFactualRequest({question,source_message_id:"current",
+    trusted_company_id:"merchant",semantic:proposal,history:[]});
+  assert(result.kb_required&&!result.needs_subject_clarification&&result.subject===null &&
+   result.demands.length===1&&!result.demands[0].ambiguity.is_ambiguous,JSON.stringify(result));
+  const query=JSON.parse(result.query!);
+  assert(query.questions.length===1&&query.questions[0].question===question.normalize("NFKC") &&
+   query.questions[0].subjects.length===0&&!result.query!.includes("model-suggested-without-source"),
+   "merchant discovery incorrectly demands model/forwards invented SKU");
+ }
+});
+Deno.test("Task3A/3B/3C B2-scoped clarification carries an original unresolved option request to NEW KB read",()=>{
+ const company="own-tenant", original="大金2匹有咩型號？";
+ const clarification=(visitorId:string):FactualRequestHistoryRow=>({
+   id:"reply-"+visitorId,role:"assistant",content:"Which current product or model?",
+   metadata:{response_route:"product_referent_clarification",
+      product_referent_candidates:[],control_commit:"ai",b2_expected_company_id:company,
+      b2_source_message_id:visitorId,source_message_id:visitorId},
+ });
+ const originalVisitor:FactualRequestHistoryRow={id:"customer-original",role:"visitor",content:original};
+ const read=(question:string,history:FactualRequestHistoryRow[],tenant=company,semantic=frame(["product options"],null))=>
+   resolveCurrentFactualRequest({question,source_message_id:"current",trusted_company_id:tenant,
+     semantic,history});
+ const initial=read("現行產品",[clarification("customer-original"),originalVisitor]);
+ assert(initial.kb_required&&initial.resolution==="follow_up"&&!initial.needs_subject_clarification &&
+  initial.query?.includes(original.normalize("NFKC"))&&initial.query.includes("現行產品"),
+  JSON.stringify(initial));
+ const plan=planConversationService({question:initial.answer_request!,factual_request:initial,
+  semantic_frame:frame(["product options"]),language:"zh-TW",memory:null,commerce:null,recall:{handled:false}});
+ assert(plan.knowledge_state==="lookup_required"&&plan.kb_query===initial.query,
+  "a resolved clarification failed to trigger the actual new KB adapter route");
+ const history=[clarification("customer-intermediate"),{id:"customer-intermediate",role:"visitor",content:"現行產品"},
+  clarification("customer-original"),originalVisitor];
+ const second=read("上面已經講咗係大金",history);
+ assert(second.kb_required&&!second.needs_subject_clarification &&
+  second.query?.includes(original.normalize("NFKC")) &&
+  !second.query.includes("Which current product or model"),
+  "clarification loop failed to restore original user-owned question");
+ for(const variant of ["現行產品","Current offerings","只查現有款式"]){
+  const a=read(variant,[clarification("customer-original"),originalVisitor]);
+  assert(a.kb_required&&!a.needs_subject_clarification,"cross-language non-mutating clarification lost the source");
+ }
+ // Only B2-committed same-tenant assistant receipts, linked to an actual
+ // visitor source, can reopen historical reads. Other origins stay closed.
+ for(const mutation of ["tenant","source","control","human","topic","transaction"]){
+  const rows=structuredClone([clarification("customer-original"),originalVisitor]);
+  if(mutation==="tenant")(rows[0].metadata as Record<string,any>).b2_expected_company_id="other";
+  if(mutation==="source")(rows[0].metadata as Record<string,any>).b2_source_message_id="wrong";
+  if(mutation==="control")(rows[0].metadata as Record<string,any>).control_commit="human";
+  if(mutation==="human")rows.unshift({id:"agent",role:"agent",content:"I took over"});
+  const q=mutation==="topic"?"Different topic: the return policy":mutation==="transaction"?"Cancel that booking":"現行產品";
+  const a=read(q,rows);
+  assert(a.interpretation_source!=="semantic_demands"||a.context_turns.length===0 ||
+      !a.context_turns.includes(original.normalize("NFKC")),
+      "invalid or different-source clarification inherited old query: "+mutation);
+ }
+});
+Deno.test("Task3A/3B/3C protected specific subjects, mixed transactions and uncertain comparative selections",()=>{
+ for(const [question,subject] of [
+  ["AX-QZ81 有咩型號？","AX-QZ81"],
+  ["Compare AX-QZ81 and BR-998 available models","AX-QZ81"],
+ ] as const){
+  const sem=demanded(demand(question,"product",["models"],[subject]));sem.intent="explore_options";
+  const r=resolveCurrentFactualRequest({question,source_message_id:"current",semantic:sem});
+  assert(!(r.kb_required&&r.subjects.length===0&&!r.needs_subject_clarification),
+    "exact item/comparison identity was silently converted to category discovery");
+ }
+ const q="Where is order AB-12345 and what products are available?";
+ const trans=demand(q,"transaction",["order status"],["AB-12345"]);
+ const other=demand(q,"product",["available products"],[]);
+ const mixed=demanded(trans,other);mixed.intent="explore_options";
+ const out=resolveCurrentFactualRequest({question:q,semantic:mixed});
+ assert(out.transaction_required && !out.query?.includes("AB-12345"),
+  "a live transaction identifier entered discovery KB");
+});
