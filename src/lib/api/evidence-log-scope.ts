@@ -78,7 +78,14 @@ export function linkConversationEvidenceTurns(messages:EvidenceMessage[],traces:
     responseStatus:typeof r.http_status==="number"?r.http_status:null,
     lineage:redactEvidenceValue(d.lineage??null)};
   }),
-  evidenceStatus:traces.some(t=>t.message_id===m.id)?"TRACE_RECORDED":"NOT_CAPTURED",
+  evidenceStatus:traces.some(t=>t.message_id===m.id)?"TRACE_RECORDED":
+   (replies.get(m.id)??[]).some(reply=>{
+     const meta=asRecord(reply.metadata),failure=asRecord(meta.execution_failure);
+     return meta.response_route==="terminal_failure_recovery" &&
+       meta.source_error_code==="LLM_INVALID_OUTPUT" &&
+       failure.stage==="canonical_validation" &&
+       (meta.rag_api_status===null||meta.rag_api_status===undefined);
+   })?"KB_NOT_DISPATCHED_SEMANTIC_FAILURE":"NOT_CAPTURED",
  }));
  return {turns,unlinkedReplies:unlinked.map(m=>({id:m.id,role:m.role,
   text:m.is_recalled?"[RECALLED]":redactEvidenceSensitiveText(m.content),createdAt:m.created_at}))};

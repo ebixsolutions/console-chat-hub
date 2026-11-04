@@ -1444,11 +1444,15 @@
   "authorized_task3_admin_conversation_evidence_sha256": {
     "supabase/functions/_shared/kb-client.ts": "84a098bfd5021dbfa6a0e4b54cbe630ca84db7ae95d44e5b6eea7647c77813df",
     "supabase/functions/generate-reply/index.ts": "05e6749479f79af166adbcb895ed3fa3bb22ec3a5c90f185c6b387bb96da3e6c",
-    "src/lib/api/evidence-log-scope.ts": "918254feba4da613fb9f20278ffb57a03a842d4cc4314e6d0b24216088799d42",
+    "src/lib/api/evidence-log-scope.ts": "e9f8f210dbf6f4073138e456f8f87183e1b7980d2abba937d1ffce5c41f05908",
     "src/lib/api/llmRuntime.service.ts": "13765eb8e79ed43d9c4012ad08eab59f85485ad7f42b1011c1be8a281b73080c",
-    "src/routes/_authenticated/console.settings.llm-runtime.tsx": "56eb9d62d4b15f29a161beff672628204789875ace42665e4617a1db327165b5",
+    "src/routes/_authenticated/console.settings.llm-runtime.tsx": "f76864f282adf0e979d00e558167a017009a5561f99f81f6ed3c176046a56727",
     "src/routes/_authenticated/console.tsx": "4e69a2de8ab338390c97636955d5000bbaffcb5fb93354a321d3b25e70fafda0",
-    "tests/console-navigation/admin-evidence-log.test.mjs": "9262ff4d75c58f4b65c7ae5a3b80c72f2ece47bb23318fe62b5a5e51d934e99b"
+    "tests/console-navigation/admin-evidence-log.test.mjs": "529fa6085d954917f5bc52dc7a70ee04dd66b98a183afbfae528e2c61dba10fc",
+    "supabase/functions/_shared/current-factual-request.ts": "69bc9e424bfc2e3bf17c9a2f1ca5bd882057006b93f088102b999ba25d648263",
+    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "f1934aed83f269074c1a62f81b22ef0b5f2be4743d50bae67f8f6f9181478877",
+    "supabase/functions/_shared/commerce-semantic-frame.ts": "e885685300f6dbf860a53ac2db16d57c103e696f5bb2688683929921073803d1",
+    "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "c848a649e1ed97c9d39e02a9879893ebba73df47f98d9ecb4a988c4d8b67ef2e"
   },
   "task3_admin_conversation_evidence_production_authorized": false
 }

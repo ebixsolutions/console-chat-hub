@@ -457,7 +457,7 @@ function isKbDemand(demand: CurrentFactualDemand): boolean {
  * semantic frame remains authoritative for other valid languages and intents.
  * This also permits recovering a historical visitor question for which no
  * accepted semantic or KB evidence receipt was previously persisted. */
-function sourceOwnedOptionWording(quote: string): boolean {
+export function sourceOwnedOptionWording(quote: string): boolean {
   const q=clean(quote);
   if(!q||q.length>500||exactProductIdentifiers(q).length>0||
      LIFECYCLE_BOUNDARY.test(q)||isPersonalOrderStatusRequest(q))return false;

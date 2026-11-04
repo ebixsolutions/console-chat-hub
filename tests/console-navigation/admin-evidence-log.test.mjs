@@ -65,3 +65,12 @@ test("Admin evidence display masks secret values and customer contacts without c
  assert.equal(JSON.stringify(linked).includes("alice@example.com"),false);
  assert.equal(JSON.stringify(linked).includes("hidden"),false);
 });
+
+test('Pre-KB semantic failure is not mislabeled as historical KB raw capture',()=>{
+ const visitor={id:'a3571189',role:'visitor',content:'給我有關大金 2匹機的型號介紹',created_at:'2026-11-04'};
+ const assistant={id:'answer',role:'assistant',content:'請求失敗',created_at:'2026-11-04',metadata:{source_message_id:'a3571189',response_route:'terminal_failure_recovery',source_error_code:'LLM_INVALID_OUTPUT',execution_failure:{stage:'canonical_validation'},rag_api_status:null}};
+ const explicit=linkConversationEvidenceTurns([visitor,assistant],[]);
+ assert.equal(explicit.turns[0].evidenceStatus,'KB_NOT_DISPATCHED_SEMANTIC_FAILURE');
+ assert.equal(explicit.turns[0].evidence.length,0);
+ assert.equal(linkConversationEvidenceTurns([visitor],[]).turns[0].evidenceStatus,'NOT_CAPTURED');
+});

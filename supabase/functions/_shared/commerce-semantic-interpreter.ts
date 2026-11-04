@@ -3,6 +3,7 @@ import { callModel } from "./llm-router.ts";
 import { sha256 } from "./model-attempt-accounting.ts";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { requirementMutationText } from "./commerce-state-authority.ts";
+import { sourceOwnedOptionWording } from "./current-factual-request.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
   COMMERCE_SEMANTIC_SYSTEM_PROMPT,
@@ -15,6 +16,77 @@ import {
   recoverSourceQuotedReadOnlyFactualFrame,
   rebindSourceQuotedReadOnlyDemand,
 } from "./commerce-semantic-frame.ts";
+
+/** A missing provider-demand list is not a valid semantic response. For an
+ * independently source-verifiable, single-turn *option discovery* only,
+ * preserve the original rejection but recover one non-mutating KB read target.
+ * No proposed entity, SKU, price, history, transaction or customer state is
+ * accepted. The original strict wire decoder and canonical validator run again
+ * on the bounded candidate. All other missing-demand outputs fail closed. */
+function recoverMissingDemandOptionDiscovery(
+  raw: unknown, latest: string, diagnostic?: SemanticContractDiagnostic,
+): CommerceSemanticFrame | null {
+  if (!diagnostic || !("field_class" in diagnostic) ||
+      diagnostic.container !== "wire_nodes" ||
+      diagnostic.stage !== "canonical_vocabulary" ||
+      diagnostic.field_class !== "demands" || diagnostic.reason !== "required" ||
+      !isRecord(raw) || raw.context_encoding !== "semantic_values_v5" ||
+      raw.operation !== "ASK_FACT" || typeof raw.confidence !== "number" ||
+      !Number.isFinite(raw.confidence) || raw.confidence < 0.85 || raw.confidence > 1 ||
+      Object.keys(raw).some(k => !["context_encoding","operation","confidence","containers","strings","numbers","booleans"].includes(k))) return null;
+  const source=clean(latest,501);
+  if (!source || source.length>500 || /[\\u0000-\\u001f\\u007f<>;；]/u.test(source) ||
+      /(?:取消|撤回|退款|更正|改單|改单|暫緩|暂缓|轉真人|转人工|\\b(?:cancel|refund|defer|revise|handoff)\\b)/iu.test(source) ||
+      !sourceOwnedOptionWording(source)) return null;
+  const collections=["containers","strings","numbers","booleans"] as const;
+  let count=1;
+  // Do not silently erase a malformed or potentially state-mutating model
+  // proposal. Only benign descriptive labels and option-facet hints are allowed.
+  for (const key of collections) {
+    const rows=raw[key];
+    if (!Array.isArray(rows)) return null;
+    count+=rows.length;
+    if(count>128)return null;
+    for(const row of rows) {
+      if(!isRecord(row)||!Array.isArray(row.path)||row.path.length<1||
+         row.path.length>6||row.path.some(s=>typeof s!=="string")||
+         !["language","intent","topic","requested_facts"].includes(row.path[0]))return null;
+    }
+  }
+  const fact="published merchant options matching customer criteria";
+  const reconstructed={
+    ...raw,
+    containers:[...(raw.containers as unknown[]),
+      {path:["demands"],kind:"array"},{path:["demands","0"],kind:"object"},
+      {path:["demands","0","subject_refs"],kind:"array"},
+      {path:["demands","0","requested_facts"],kind:"array"},
+      {path:["demands","0","constraints"],kind:"object"},
+      {path:["demands","0","explicit_negations"],kind:"array"},
+      {path:["demands","0","ambiguity"],kind:"object"},
+      {path:["demands","0","ambiguity","reasons"],kind:"array"},
+      {path:["demands","0","ambiguity","clarification_question"],kind:"null"}],
+    strings:[...(raw.strings as unknown[]),
+      {path:["demands","0","question"],text:source},
+      {path:["demands","0","source_quote"],text:source},
+      {path:["demands","0","source_type"],text:"product"},
+      {path:["demands","0","requested_facts","0"],text:fact}],
+    booleans:[...(raw.booleans as unknown[]),
+      {path:["demands","0","customer_correction"],boolean:false},
+      {path:["demands","0","ambiguity","is_ambiguous"],boolean:false}],
+  };
+  const frame=normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(reconstructed));
+  if (!frame || frame.operation!=="ASK_FACT" || frame.demands?.length!==1 ||
+      frame.entities.length || frame.referents.length || (frame.customer_facts?.length??0) ||
+      frame.explicit_negations.length || frame.customer_correction || frame.additive ||
+      frame.ambiguity.is_ambiguous || frame.demands[0].source_quote!==source ||
+      frame.demands[0].requested_facts.length!==1 ||
+      frame.demands[0].requested_facts[0]!==fact ||
+      [frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state].some(s=>s!=="none"&&s!=="unknown") ||
+      frame.requested_facts.some(f=>!/(?:model|option|choice|product|plan|service|variant|selection|information|型號|型号|選擇|选择|方案|款式)/iu.test(f)))return null;
+  return {...frame,topic:null,entities:[],referents:[],
+    requested_facts:[fact],demands:[{...frame.demands[0],question:source,
+      source_quote:source,subject_refs:[],requested_facts:[fact],constraints:{}}]};
+}
 
 export const SEMANTIC_CONTEXT_CHAR_LIMIT = 12_000;
 export const SEMANTIC_HISTORY_CHAR_LIMIT = 24_000;
@@ -429,6 +501,18 @@ export async function interpretCommerceSemantics(
         state_mutation:false,additional_model_attempts:0,
       }));
       return {frame:readOnly,source:"semantic_model",failure_code:null};
+    }
+    const recoveredOptions = contractRejection === "wire_context_nodes"
+      ? recoverMissingDemandOptionDiscovery(parsed,latest,contractDiagnostic) : null;
+    if (recoveredOptions) {
+      console.warn(JSON.stringify({
+        event:"semantic_missing_demand_option_read_only_recovery",
+        request_id:result.request_id,source_message_id:input.source_message_id,
+        original_rejection:contractRejection,field_class:"demands",
+        source_quote_bound:true,demand_count:1,
+        state_mutation:false,additional_model_attempts:0,merchant_evidence_granted:false,
+      }));
+      return {frame:recoveredOptions,source:"semantic_model",failure_code:null};
     }
     return {
       frame: null,

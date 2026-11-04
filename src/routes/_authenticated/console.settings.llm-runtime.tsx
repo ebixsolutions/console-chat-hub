@@ -407,7 +407,7 @@ function AdminConversationEvidenceLog(){
  return <div className="space-y-4">
   <PageHeader title="Conversation Evidence Log" description="Admin-only · same-company original customer → KB request/response → grounded reply · read only"/>
   <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-   Missing historical KB evidence is NOT_CAPTURED. Query hashes and HTTP 200 do not prove relevant answers.
+   Historical missing evidence is NOT_CAPTURED. A verified pre-KB Semantic failure is KB_NOT_DISPATCHED_SEMANTIC_FAILURE; no original HTTP Query/Raw Response exists for that turn. HTTP 200 does not prove relevant evidence.
    This read-only view never dispatches Provider/KB requests or reconstructs missing raw. Sensitive keys/contact data are masked in this display; SHA256 and byte counts refer to the original captured response.
   </div>
   <div className="flex flex-wrap items-center gap-2">
@@ -442,14 +442,14 @@ function AdminConversationEvidenceLog(){
           <tbody>{(loaded[c.id].turns??[]).map(t=><tr key={t.messageId} className="border-t align-top">
            <td className="p-2">{t.index}<div className="font-mono text-[10px]">{t.messageId.slice(0,8)}</div></td>
            <td className="max-w-[220px] whitespace-pre-wrap break-words p-2">{t.customerQuestion}</td>
-           <td className="max-w-[270px] p-2">{!t.evidence.length?<span className="text-amber-700">NOT_CAPTURED</span>:
+           <td className="max-w-[270px] p-2">{!t.evidence.length?<span className="text-amber-700">{t.evidenceStatus==="KB_NOT_DISPATCHED_SEMANTIC_FAILURE"?"KB_NOT_DISPATCHED_SEMANTIC_FAILURE":"NOT_CAPTURED"}</span>:
             t.evidence.map((ev,i)=><details key={ev.id} className="mb-2">
              <summary className="cursor-pointer">KB Call {i+1} · {String(ev.requestDispatchState)}</summary>
              <p>完整 Query</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.exactQuery)}</pre>
              <p>HTTP Request JSON</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.requestJson)}</pre>
              <p>意圖及上下文</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.sourceContext)}</pre>
             </details>)}</td>
-           <td className="max-w-[340px] p-2">{!t.evidence.length?<span className="text-amber-700">NOT_CAPTURED</span>:
+           <td className="max-w-[340px] p-2">{!t.evidence.length?<span className="text-amber-700">{t.evidenceStatus==="KB_NOT_DISPATCHED_SEMANTIC_FAILURE"?"KB_NOT_DISPATCHED_SEMANTIC_FAILURE":"NOT_CAPTURED"}</span>:
             t.evidence.map(ev=><details key={ev.id} className="mb-2">
              <summary className="cursor-pointer">{ev.rawCaptureState} · HTTP {ev.responseStatus??"—"}</summary>
              <div>SHA256 {ev.rawSha256??"NOT_CAPTURED"} · Bytes {ev.responseBytes??"—"}</div>

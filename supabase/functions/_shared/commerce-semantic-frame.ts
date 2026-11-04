@@ -731,6 +731,7 @@ export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5 = COMMERCE_SEMANTIC_PROV
   .replace("context_encoding=semantic_values_v4", "context_encoding=semantic_values_v5")
   .replace("Declare exactly one object root at path [] in containers, and every object/array parent of a value.",
     "The server supplies the one object root. Every provider path must be nonempty; never emit path []. Declare every descendant object/array parent of a value.") +
+  "\nMANDATORY for every response, including greetings and short queries: include the containers node {path:[demands],kind:array}; use an empty demands array only when the current customer requested no answer. For any product/plan/service option discovery or factual question, include one complete, exact-source-quoted demand with source type, requested facts and all neutral structural children. Missing demands rejects the entire proposal; do not substitute an intent label for the demand." +
   '\nComplete wire example for the latest customer turn "What is the price of product Q9?"; no merchant facts are supplied: ' + JSON.stringify({
     context_encoding:"semantic_values_v5",operation:"ASK_FACT",confidence:0.98,
     containers:[{path:["demands"],kind:"array"},{path:["demands","0"],kind:"object"},

@@ -293,3 +293,50 @@ test('provider typed transport does not loosen canonical field/leaf/text limits 
  }
  assert.equal(decodeCommerceSemanticWire(typed({entities:[{name:'generic',kind:'service',confidence:0.9,attributes_nodes:nodes({ok:true}),attributes:{ok:true}}]})),null);
 });
+
+
+test('same-Task3 P0: missing demands may recover one exact-source, cross-industry READ-ONLY option query without retry',async()=>{
+ const previous=globalThis.__semanticContextModel;
+ let calls=0;
+ globalThis.__semanticContextModel=async()=>{calls++;const output=activeSemanticResponse({language:'zh-HK',intent:'explore_options',requested_facts:['model_info']});
+  output.containers=output.containers.filter(row=>row.path[0]!=='demands');
+  output.strings=output.strings.filter(row=>row.path[0]!=='demands');
+  output.booleans=output.booleans.filter(row=>row.path[0]!=='demands');
+  return {ok:true,request_id:'isolated-source',text:JSON.stringify(output)};};
+ try{
+  for(const question of ['給我有關大金 2匹機的型號介紹','What subscription plans are available?']){
+   const result=await contextInterpreter.interpretCommerceSemantics({
+    company_id:'own-company',conversation_id:'same-ticket',source_message_id:'source',latest:question,
+    persistent_state_summary:'{}',
+   });
+   assert.equal(result.failure_code,null);assert.equal(result.frame.operation,'ASK_FACT');
+   assert.equal(result.frame.demands.length,1);assert.equal(result.frame.demands[0].source_quote,question);
+   assert.deepEqual(result.frame.demands[0].subject_refs,[]);
+   assert.deepEqual(result.frame.demands[0].requested_facts,['published merchant options matching customer criteria']);
+   assert.deepEqual(result.frame.entities,[]);assert.equal(result.frame.customer_correction,false);
+  }
+  assert.equal(calls,2,'one existing provider attempt per distinct source, never an extra retry');
+ }finally{previous===undefined?delete globalThis.__semanticContextModel:globalThis.__semanticContextModel=previous;}
+});
+test('same-Task3 P0: missing demands remain rejected for mutations, unclear/mixed requests, specific prices and malicious state proposals',async()=>{
+ const previous=globalThis.__semanticContextModel;
+ try{
+  for(const question of ['取消現有訂單，還有哪些方案？','CW-SUL70BA 幾錢？','Give me a refund and list other plans']){
+   globalThis.__semanticContextModel=async()=>{const w=activeSemanticResponse({requested_facts:['price']});w.containers=w.containers.filter(n=>n.path[0]!=='demands');
+    return {ok:true,request_id:'isolated-source',text:JSON.stringify(w)};};
+   const result=await contextInterpreter.interpretCommerceSemantics({
+    company_id:'own-company',conversation_id:'same-ticket',source_message_id:'source',latest:question,persistent_state_summary:'{}',
+   });
+   assert.equal(result.frame,null,question);assert.equal(result.contract_rejection,'wire_context_nodes');
+   assert.equal(result.contract_diagnostic?.field_class,'demands');assert.equal(result.failure_code,'LLM_INVALID_OUTPUT');
+  }
+  globalThis.__semanticContextModel=async()=>{const w=activeSemanticResponse({entities:[{name:'invented',kind:'physical_product',confidence:.9}]});
+   w.containers=w.containers.filter(n=>n.path[0]!=='demands');
+   return {ok:true,request_id:'isolated-source',text:JSON.stringify(w)};};
+  const last=await contextInterpreter.interpretCommerceSemantics({
+   company_id:'own-company',conversation_id:'same-ticket',source_message_id:'source',
+   latest:'Which subscription plans are available?',persistent_state_summary:'{}',
+  });
+  assert.equal(last.frame,null,'provider-created entities cannot enter read-only demand recovery');
+ }finally{previous===undefined?delete globalThis.__semanticContextModel:globalThis.__semanticContextModel=previous;}
+});
