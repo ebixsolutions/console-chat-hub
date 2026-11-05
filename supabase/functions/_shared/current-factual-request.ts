@@ -552,7 +552,7 @@ if(/[?？;；\n]/u.test(original)||currentFacets(original).length>0||
    intermediate.unshift({id:visitor.id,text:original});
    cycles++;
   }
-  if(!origin)return null;
+  if(!origin?.id)return null;
   const original=clean(origin.content);
 const requested=unique([...currentFacets(original),"published merchant options matching customer criteria"]);
  // The middle B2-confirmed customer answers are part of the current need.

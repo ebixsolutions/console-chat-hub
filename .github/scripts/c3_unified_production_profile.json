@@ -1482,5 +1482,9 @@
   "task3c_raw_transport_test_deploy_authorized": false,
   "authorized_task3c_raw_transport_test_sha256": {
     "supabase/functions/_shared/catalogue-price-stock.test.ts": "10d305365b8caeffa04ca096a93178390c400986b3a2ff5dee005d209e89e742"
+  },
+  "task3c_source_id_bound_deploy_authorized": false,
+  "authorized_task3c_source_id_bound_sha256": {
+    "supabase/functions/_shared/current-factual-request.ts": "2110255502da9388f2b67fe8e4c90555f3861c44780eda86c4e3e279dd43c4e5"
   }
 }
