@@ -144,17 +144,17 @@ for(const account of ORIGINAL_PREVIEW_ACCOUNTS)test(account.email+': admitted Ve
  c.company_id=ORIGINAL_PREVIEW_ACCOUNTS.find(a=>a!==account).company;await assert.rejects(()=>accountedModelFetch(f.db,meta,f.url,{method:'POST',body},up,undefined,async()=>{prepared++;return {};}));assert.equal(prepared,1);
 });
 
-test('ordinary Frankie KB dispatch retains its canonical request and credential headers without a synthetic lease',async()=>{
+test('ordinary customer KB retains canonical RAG parameters and dynamic candidate depth without a synthetic lease',async()=>{
  setup(ORIGINAL_PREVIEW_ACCOUNTS[0]);const {c}=await start();c.metadata_source={source:'ordinary_customer'};const key='isolated-existing-key-never-live';f.env.KB_SINGAPORE_TENANT_MAP_JSON=JSON.stringify({[c.company_id]:'101'});f.env.KB_SINGAPORE_TENANT_API_KEYS_JSON=JSON.stringify({'101':key});
- const scope=await resolveTenantScope(c.id,undefined,c.company_id);assert.equal(scope.resolved,true);const cfg=resolveKBEndpoint();let requests=0;const previous=globalThis.fetch;globalThis.fetch=async(url,init)=>{requests++;assert.equal(String(url),cfg.ragUrl);assert.equal(init.method,'POST');assert.equal(new Headers(init.headers).get('x-api-key'),key);assert.equal(new Headers(init.headers).get('x-ai-company-id'),null);assert.equal(JSON.parse(init.body).company_id,101);return Response.json({success:true,context_found:false,selected_documents:[],citations:[],meta:{}});};
- try{const result=await fetchKBRag({query:'ordinary published policy',top_k:3},scope.scope,cfg,{uatContext:{conversationId:c.id,operationId:'kb:'+crypto.randomUUID()}});assert.equal(result.success,true,JSON.stringify(result));assert.equal(result.failure.code,'KB_NO_MATCH');assert.equal(requests,1);assert.equal(f.provider,1);assert.equal(f.rpc.length,0);}finally{globalThis.fetch=previous;}
+ const scope=await resolveTenantScope(c.id,undefined,c.company_id);assert.equal(scope.resolved,true);const cfg=resolveKBEndpoint();let requests=0,topK=3;const previous=globalThis.fetch;globalThis.fetch=async(url,init)=>{requests++;assert.equal(String(url),cfg.ragUrl);assert.equal(init.method,'POST');assert.equal(new Headers(init.headers).get('x-api-key'),key);assert.equal(new Headers(init.headers).get('x-ai-company-id'),null);assert.deepEqual(JSON.parse(init.body),{query:'ordinary published policy',company_id:101,candidate_top_k:Math.max(topK,10),max_documents:10,max_summary_chunks:1,max_full_content_chunks:3,score_threshold:0.6});return Response.json({success:true,context_found:false,selected_documents:[],citations:[],meta:{}});};
+ try{for(topK of [3,23]){const result=await fetchKBRag({query:'ordinary published policy',top_k:topK},scope.scope,cfg,{uatContext:{conversationId:c.id,operationId:'kb:'+crypto.randomUUID()}});assert.equal(result.success,true,JSON.stringify(result));assert.equal(result.failure.code,'KB_NO_MATCH');}assert.equal(requests,2);assert.equal(f.provider,1);assert.equal(f.rpc.length,0);}finally{globalThis.fetch=previous;}
 });
 
 for(const account of ORIGINAL_PREVIEW_ACCOUNTS)for(const fault of ['none','grant-absent','wrong-actor','foreign-tenant','runtime','signature','shared-atomic','proof-bypass','forged-permit','revoked'])test(account.email+': conditional KB compatibility retains independent permission and request-bound remote proof: '+fault,async()=>{
  setup(account);const {c}=await start();const tenant=account===ORIGINAL_PREVIEW_ACCOUNTS[0]?'101':'202';const endpoint='https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search';const secret='isolated-existing-tenant-secret';const runtime='a'.repeat(64);f.env.KB_SINGAPORE_TENANT_MAP_JSON=JSON.stringify({[account.company]:tenant});
  const binding={actor_id:fault==='wrong-actor'?crypto.randomUUID():f.user.id,company_id:account.company,channel_id:account.channel,tenant_id:tenant,endpoint,provider:'singapore-kb',purpose:'kb_embedding',remote_mode:'retrieval_only',allow_remote_embedding:false,remote_runtime_sha256:runtime};
  if(fault!=='grant-absent')f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION=JSON.stringify({version:1,bindings:[binding]});
- const request=JSON.stringify({query:'published product facts',company_id:fault==='foreign-tenant'?999:Number(tenant),candidate_top_k:10,max_documents:5,max_summary_chunks:1,max_full_content_chunks:3,score_threshold:0.05});let get=0,post=0;
+ const request=JSON.stringify({query:'published product facts',company_id:fault==='foreign-tenant'?999:Number(tenant),candidate_top_k:10,max_documents:10,max_summary_chunks:1,max_full_content_chunks:3,score_threshold:0.6});let get=0,post=0;
  const up=async(url,init)=>{
   if(String(url).endsWith('/model-accounting-contract')){get++;assert.equal(init.method,'GET');const scope=JSON.parse(new Headers(init.headers).get('x-c3-accounting-scope'));assert.equal(scope.tenant,tenant);assert.equal(scope.company,account.company);const body=JSON.stringify({...scope,protocol:'c3-shared-attempt-v1',mode:fault==='shared-atomic'?'shared_atomic_attempts':'retrieval_only',runtime_sha256:fault==='runtime'?'b'.repeat(64):runtime});if(fault==='revoked')delete f.env.ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION;return new Response(body,{headers:{'x-c3-accounting-signature':fault==='signature'?'0'.repeat(64):await signRemote(body,secret)}});}
   assert.equal(String(url),endpoint);assert.equal(init.method,'POST');post++;return Response.json({success:true});
@@ -206,7 +206,7 @@ async function embeddingFixture(fault='none',documentFixture={}) {
  if(fault==='assigned-agent')c.assigned_agent_id=crypto.randomUUID();
  f.env.KB_SINGAPORE_TENANT_MAP_JSON=JSON.stringify({[c.company_id]:fault==='mapping'?'35':'34'});
  f.env.KB_SINGAPORE_TENANT_API_KEYS_JSON=JSON.stringify({'34':secret});
- const request=JSON.stringify({query:'What is the published subscription policy?',company_id:34,candidate_top_k:10,max_documents:5,max_summary_chunks:1,max_full_content_chunks:3,score_threshold:0.05});
+ const request=JSON.stringify({query:'What is the published subscription policy?',company_id:34,candidate_top_k:10,max_documents:10,max_summary_chunks:1,max_full_content_chunks:3,score_threshold:0.6});
  const meta={companyId:c.company_id,conversationId:c.id,operationId:'kb:'+crypto.randomUUID(),provider:'singapore-kb',purpose:'kb_embedding',slot:'context-search',attempt:fault==='attempt'?2:1,request};
  let posts=0;const queries=[];
  const upstream=async(url,init)=>{
@@ -333,6 +333,26 @@ async function setupInbox(fault='none',documentFixture={},semanticFixture=null,o
  };
  return {...x,send:request,model:()=>model,modelKinds:()=>({...modelKinds}),prompts,modelRequests};
 }
+// Exercise both independent admission guards through the real dispatcher.
+// Authority, DB and transport values below are isolated fixtures, never live grants.
+const ragParameterCases=[
+ ['current',{},true],['dynamic-depth',{candidate_top_k:23},true],['legacy-pair',{max_documents:5,score_threshold:0.05},false],
+ ['old-document-count',{max_documents:5},false],['lower-document-count',{max_documents:9},false],['higher-document-count',{max_documents:11},false],['missing-document-count',{max_documents:undefined},false],
+ ['old-threshold',{score_threshold:0.05},false],['lower-threshold',{score_threshold:0.59},false],['higher-threshold',{score_threshold:0.61},false],['missing-threshold',{score_threshold:undefined},false],
+ ['candidate-zero',{candidate_top_k:0},false],['candidate-over-limit',{candidate_top_k:51},false],['candidate-fraction',{candidate_top_k:10.5},false],
+ ['summary-limit',{max_summary_chunks:2},false],['full-content-limit',{max_full_content_chunks:4},false],['foreign-tenant',{company_id:35},false],['extra-field',{unapproved:true},false],
+];
+for(const channel of ['preview','inbox'])for(const [name,patch,allowed] of ragParameterCases)test(`RAG parameter admission ${channel}: ${name}`,async()=>{
+ const x=channel==='inbox'?await setupInbox():await embeddingFixture();
+ const request=JSON.stringify({...JSON.parse(x.request),...patch});
+ const legacyAuthority=channel==='inbox'?await authenticatedInboxAuthority(f.db,f.user.id,x.c.company_id,x.c.id,'knowledge'):undefined;
+ const meta={...x.meta,request,legacyAuthority};let prepared=0;
+ const prepare=(mode,permit)=>{prepared++;return prepareRemoteRetrieval(x.c.company_id,'34',x.secret,x.endpoint,x.upstream,undefined,'kb',request,mode,permit);};
+ const execute=()=>accountedModelFetch(f.db,meta,x.endpoint,{method:'POST',body:request},x.upstream,undefined,prepare);
+ if(allowed){const result=await execute();assert.equal(result.status,200);assert.equal(prepared,1);assert.equal(x.posts(),1);}
+ else {await assert.rejects(execute(),e=>e.code===(channel==='inbox'?'INBOX_PAID_SCOPE_DENIED':'ORIGINAL_PREVIEW_PROVIDER_DENIED'));assert.equal(prepared,0);assert.equal(x.posts(),0);}
+ assert.equal(f.provider,1,'parameter admission adds no Vertex attempt');assert.equal(f.rpc.length,0,'parameter admission adds no accounting backend');
+});
 for(const fault of ['none','BO-revoked','no-preview-grant','human-control','no-inbox-grant','role','inactive-membership','foreign-ticket','synthetic','wrong-channel','signature','expired','foreign-response','changed-content','tool-failure','no-match','revoke-on-return'])test('actual Inbox Knowledge handler preserves ticket and separates staff authority/paid scope: '+fault,async()=>{
  const x=await setupInbox(fault);const marker=JSON.stringify(x.c.metadata_source),before=f.rows.messages.length;
  const r=await x.send('knowledge');

@@ -289,7 +289,7 @@ Deno.test("Phase-1 synthetic run excludes Phase-2 Coach regardless of global fla
 });
 
 Deno.test("conditional original KB preparation requires signed request-bound retrieval-only evidence; it is not paid authority",async()=>{
- const secret='isolated-contract-key-not-production',endpoint='https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search',request=JSON.stringify({query:'fixture only',company_id:101,candidate_top_k:10,max_documents:5,max_summary_chunks:1,max_full_content_chunks:3,score_threshold:0.05});
+ const secret='isolated-contract-key-not-production',endpoint='https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search',request=JSON.stringify({query:'fixture only',company_id:101,candidate_top_k:10,max_documents:10,max_summary_chunks:1,max_full_content_chunks:3,score_threshold:0.6});
  const savedGrant=Deno.env.get('ORIGINAL_WIDGET_PREVIEW_KB_AUTHORIZATION'),savedMap=Deno.env.get('KB_SINGAPORE_TENANT_MAP_JSON');try {
  for(const company of ['3d6e17b5-ec79-4f75-aa7f-eaa824ff8493','4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec']) {
   for(const fault of ['none','tenant','company','nonce','request','runtime','signature','shared','malformed']) {

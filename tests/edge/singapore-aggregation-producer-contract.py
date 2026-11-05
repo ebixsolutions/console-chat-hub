@@ -35,7 +35,7 @@ class DB:
     def query(self, model): return Query(rows if model is Chunk else docs)
 namespace = dict(Session=object, Any=Any, math=math, KBVectorChunk=Chunk, KBDocument=Document, embed_text=lambda text:([1,0],None,None))
 exec(compile(ast.Module(body=nodes,type_ignores=[]),str(source),'exec'), namespace)
-result = namespace['kb_context_search'](DB(),'What is Harbor Care?',company_id=34,max_documents=5,score_threshold=0.05)
+result = namespace['kb_context_search'](DB(),'What is Harbor Care?',company_id=34,max_documents=10,score_threshold=0.6)
 assert result['context_found'] is True and result['selected_documents'][0]['evidence']==[]
 assert result['selected_documents'][0]['summary']['chunk_type']=='rag_summary'
 assert result['selected_documents'][1]['evidence'][0]['chunk_type']=='full_content'

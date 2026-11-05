@@ -227,7 +227,7 @@ const SINGAPORE_KB_DEFAULT_BASE_URL =
   "https://py.ebixmall.com/py-knowledge-base";
 const SINGAPORE_RAG_PATH = "/api/v1/rag/context-search";
 const KB_DEFAULT_TIMEOUT_MS = 12000;
-const KB_MAX_DOCUMENT_CANDIDATES = 5;
+const KB_MAX_DOCUMENT_CANDIDATES = 10;
 const PREACTIVATION_ROLES = new Set(["admin", "supervisor"]);
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -640,7 +640,7 @@ export async function fetchKBRag(
     max_documents: KB_MAX_DOCUMENT_CANDIDATES,
     max_summary_chunks: 1,
     max_full_content_chunks: 3,
-    score_threshold: 0.05,
+    score_threshold: 0.6,
   });
   const controller = {signal:admissionBudget.signal};
   const started=Date.now();

@@ -1184,12 +1184,12 @@
     "tests/console-navigation/ticket-detail-readback.test.mjs": "d164517e32b7ecd6fc64069af9fc03aae194b257dabbacfaaf1a95b855da3832",
     "tests/console-navigation/widget-input-dom.test.mjs": "bd0b57c54423cc2e48e0c5866a078dab1a3680f832bd1b26e18ffaeb95eb1e6e",
     "tests/console-navigation/widget-recovery.test.mjs": "3d2a6e691363497f9883d1d6be658aed7fa3f3c6ba0754f9a94d3f8ca9b8be6d",
-    "tests/edge/singapore-aggregation-producer-contract.py": "d75a470e9bb531476f6c1a36c602fdfcaf97d1e7ad5b4e878aed366a9ced1e61",
+    "tests/edge/singapore-aggregation-producer-contract.py": "b6178c6ba9b746c98b2fdeac671de2100e86d4f2e32ebd0217e1bbaa8e01e7b7",
     "tests/edge/task2-2-output-grounding-router.test.ts": "50313a0707e25a0a798a3ee98756c353798dce54ac1abc4644968fa8a8ec4819",
     "tests/emergency-p0/chain.test.mjs": "21851a464372fafdc26700ed9b3a088ec13337045193e9e0cf49495829b6f83e",
     "tests/emergency-p0/provider-request.test.ts": "5c3bd6231e6518ebfb6414fa6c889833c0a1fc57d2cc71a928ae374c35bf75f1",
     "tests/inbox-read.test.mjs": "830557dd1006e458e0554931fe2904355e37a2770610e49a86d21bff5660a5c9",
-    "tests/model-accounting/router.test.ts": "d9cc20a4541c5e4275e008838ae5a887a6ca2391829e5e87acd23d37c0612f26",
+    "tests/model-accounting/router.test.ts": "9564ea37f981361a1da29ef80e4e775c481bd0c1cdf2c42b7ba30e4265c8a36e",
     "tests/model-accounting/source-coverage.test.mjs": "c7c64663d50444b4691e725cbccdb96fa3c8addb40349c1ff7257ad4fd331bda",
     "tests/ordinary-preview-safety/cas.py": "2dc91fe44f3e6fa1170299e5733108d5e20c3abbd4d2d3ea8dd9a8b837984479",
     "tests/ordinary-preview-safety/cases.py": "c94341923ccf5ba87e5b19181bac9d040a606381b99c54562e8b13649fa8f941",
@@ -1347,7 +1347,7 @@
     "supabase/functions/_shared/f13-runtime-recovery.test.ts": "0d68778b8ae4f49aed7c5a08e9210a69c6b216b5bb71fd56b8af9de55e72c190",
     "supabase/functions/_shared/factual-request-context.ts": "9344e6b1b13097313258478ff85ce3cc91dd0781f7f4cd37c5ccb24951b49b7d",
     "supabase/functions/_shared/llm-router.ts": "1a30080d15c932ce4cac00757b9f5e39ec17a4020dac381e20ac461c6c747407",
-    "supabase/functions/_shared/model-attempt-accounting.ts": "8291e2714ae93230413ad2a81c030fbb4f4d4d270446289f8764c53763681d9c",
+    "supabase/functions/_shared/model-attempt-accounting.ts": "0d9774dbb67396ad18c92a787bd81e1aea70767fd3e778bae9d85736ba458c62",
     "supabase/functions/_shared/prepare-semantic-request.ts": "13490f692caa7761a723f5011d214df6d49ec24ae1a1c70cce8b380f68a0e592",
     "supabase/functions/_shared/semantic-history-recovery.test.ts": "af5fd4e1a9b25304827ed1fb5f66279cb1324a8fcaa2627bf63454c9ce369ca8",
     "supabase/functions/_shared/semantic-history-recovery.ts": "172b33e98a90416fd5bdc151d9b0eb650486b2589978b24258f1c5230c8bb0e6",
@@ -1394,7 +1394,7 @@
     "supabase/functions/_shared/llm-router.ts": "5569209ef967aeb369e99887d1e0ca71c3587be34ef85843ab69a72006e49d6a",
     "supabase/functions/generate-reply/index.ts": "8939c2b9340a653a2bafc610e8ebedeb0d1f80aadc64d682900df1db0485b15e",
     "tests/emergency-p0/chain.test.mjs": "00ed0472cb69adc0fc8076b456bac6660f842783625282d475afb52df30d4dea",
-    "tests/c3-widget-live-auth/original-preview.test.mjs": "d8dc886e185ed6ffe8f83d5da9b905a9c56643449adf86b2dde04d281fc0d63f",
+    "tests/c3-widget-live-auth/original-preview.test.mjs": "676562d5ebf4c6f06c9ce4c79666ec194ae4fbe114cd78277242c3b4e7d72a51",
     "supabase/functions/_shared/current-factual-request.ts": "f40d9235404fb0def3abf9b9654be4f58ecbbc326147dff523ee616b8ef88a24",
     "supabase/functions/_shared/current-factual-request.test.ts": "6f670512a6e6dbab5db07f7a27b8bc65de53f88e11abc26b286c5abcecf77b14"
   },
@@ -1458,7 +1458,7 @@
   "task3_admin_conversation_evidence_production_authorized": false,
   "task3c_capture_repair_production_authorized": false,
   "authorized_task3c_capture_repair_sha256": {
-    "supabase/functions/_shared/kb-client.ts": "4e4de1a82883acdd18a6f289bde3d5f84355577bf081e7fad205420a8a5d7edd",
+    "supabase/functions/_shared/kb-client.ts": "c7fd983694d06fbb1eabf0d00c872b0545d6c525b9fb0c3c51a4122d37ecce88",
     "supabase/functions/generate-reply/index.ts": "f8768b6fdaacef4d426d9782fae64a087aef7d3c6656f3e0302611b154710ada",
     "src/lib/api/evidence-log-scope.ts": "007a4c719df4057393d62432a071995329e319db72933b965f1e656b2738b0de"
   },
@@ -1489,7 +1489,7 @@
   },
   "task3c_native_audit_parity_deploy_authorized": false,
   "authorized_task3c_native_audit_parity_sha256": {
-    "tests/uat-runtime/native-compatibility.ts": "a191620227c77212a6b0d4a225ac7d52764010602c5860e39f047e87d183112d"
+    "tests/uat-runtime/native-compatibility.ts": "1c7ad8a6b3d603c36d93f77da2bf60a40105ab842ae2db8f3380f4601a442c99"
   },
   "task3c_postman_spec_gap_deploy_authorized": false,
   "authorized_task3c_postman_spec_gap_sha256": {
