@@ -1491,6 +1491,11 @@
   "authorized_task3c_native_audit_parity_sha256": {
     "tests/uat-runtime/native-compatibility.ts": "1c7ad8a6b3d603c36d93f77da2bf60a40105ab842ae2db8f3380f4601a442c99"
   },
+  "task3c_lineage_display_deploy_authorized": false,
+  "authorized_task3c_lineage_display_sha256": {
+    "src/lib/api/evidence-log-scope.ts": "1d50fe57237faa825a0a91d52f335c00a14c2f202a7718e02e37b044a3fcf5e2",
+    "tests/console-navigation/admin-evidence-log.test.mjs": "10b8c25522b617063df27f2f87787584eb776387923ebf5a1331937bee293f1a"
+  },
   "task3c_postman_spec_gap_deploy_authorized": false,
   "authorized_task3c_postman_spec_gap_sha256": {
     "supabase/functions/_shared/factual-evidence-selection.ts": "72d6c0e57456326e58a50e9e512126c781143250d877f244baba84fc9d7bad6e",

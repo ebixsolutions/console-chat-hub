@@ -2,22 +2,32 @@
 const EVIDENCE_UUID=/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 export function isEvidenceConversationId(id:string):boolean{return EVIDENCE_UUID.test(id);}
 const PRIVATE_EVIDENCE_KEY=/^(?:authorization|x-api-key|api_key|access_token|refresh_token|password|private_key|client_secret|service_role_key|email|phone|mobile)$/i;
+const PHONE_OR_UUID=/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b|(?:\+?852[- ]?)?[569]\d{3}[- ]?\d{4}/gi;
+const LINEAGE_ID=String.raw`(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|(?=[0-9a-f]{0,31}[a-f])[0-9a-f]{32})`;
+// Only exact lineage fields in serialized structured receipts can contain opaque IDs.
+const STRUCTURED_LINEAGE_OR_PHONE=new RegExp(
+ String.raw`(?<=[{,])(?:"(?:document_id|chunk_id|selected_document_id|selected_source_id)":"${LINEAGE_ID}"|"(?:evidence_chunk_ids|selected_document_ids)":\["${LINEAGE_ID}"(?:,"${LINEAGE_ID}")*\])(?=[,}])|${PHONE_OR_UUID.source}`,
+ "gi",
+);
 /** The original raw-response hash remains independent of the redacted Admin display. */
 export function redactEvidenceSensitiveText(value:string):string{
+ return redactEvidenceText(value,false);
+}
+function redactEvidenceText(value:string,preserveStructuredLineage:boolean):string{
  if(value.length>65536)return "[WITHHELD_OVERSIZED]";
  return value
   .replace(/("(?:authorization|x-api-key|api_key|access_token|refresh_token|password|private_key|client_secret|service_role_key|email|phone|mobile)"\s*:\s*)"(?:\\.|[^"\\])*"/gi,'$1"[REDACTED]"')
   .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{8,}/gi,"Bearer [REDACTED]")
   .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,"[EMAIL_REDACTED]")
-  .replace(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b|(?:\+?852[- ]?)?[569]\d{3}[- ]?\d{4}/gi,
-   value=>EVIDENCE_UUID.test(value)?value:"[PHONE_REDACTED]");
+  .replace(preserveStructuredLineage?STRUCTURED_LINEAGE_OR_PHONE:PHONE_OR_UUID,
+   value=>value.startsWith('"')||EVIDENCE_UUID.test(value)?value:"[PHONE_REDACTED]");
 }
 /** Serialize a bounded redacted snapshot for the existing authenticated TanStack server function. */
-export function redactEvidenceValue(value:unknown):string|null{
+export function redactEvidenceValue(value:unknown,preserveStructuredLineage=false):string|null{
  if(value===null||value===undefined)return null;
  try{
   const encoded=JSON.stringify(value,(key,item)=>PRIVATE_EVIDENCE_KEY.test(key)?"[REDACTED]":item);
-  return typeof encoded==="string"?redactEvidenceSensitiveText(encoded):null;
+  return typeof encoded==="string"?redactEvidenceText(encoded,preserveStructuredLineage):null;
  }catch{return "[WITHHELD_UNSERIALIZABLE]";}
 }
 export type EvidenceAdminScope={ok:true;companyId:string}|{ok:false;error:string};
@@ -78,7 +88,7 @@ grounding_verification:meta.grounding_verification??null,
      b2_expected_revision:meta.b2_expected_revision??null,b2_source_message_id:meta.b2_source_message_id??null,
      b2_expected_company_id:meta.b2_expected_company_id??null,control_commit:meta.control_commit??null,
      citations:meta.citations??null,unresolved_fact_fields:meta.unresolved_fact_fields??null,
-    })};
+    },true)};
   }),
   evidence:traces.filter(t=>t.message_id===m.id).map(t=>{
    const d=asRecord(t.retrieved_chunks),r=asRecord(d.response);
@@ -100,7 +110,7 @@ rawCaptureState:raw!==null&&safeRaw!==raw?"REDACTED":
  normalizedBytes:typeof r.normalized_response_bytes==="number"?r.normalized_response_bytes:null,
  executionFailure:redactEvidenceValue(d.execution_failure??null),
     responseStatus:typeof r.http_status==="number"?r.http_status:null,
-    lineage:redactEvidenceValue(d.lineage??null)};
+    lineage:redactEvidenceValue(d.lineage??null,true)};
   }),
   evidenceStatus:traces.some(t=>t.message_id===m.id)?"TRACE_RECORDED":
    (replies.get(m.id)??[]).some(reply=>{

@@ -125,3 +125,39 @@ test("New semantic and grounding receipts link exact IDs and preserve redaction"
  assert.equal(receipt.factual_evidence_selection[0].evidence_id,"E1");
  assert.equal(receipt.grounding_rejection_reason,"unsupported_claims");
 });
+
+test("Structured evidence keeps exact lineage IDs without exposing contacts or raw content",()=>{
+ const chunkId="aabbccddee1122ff91234567aabbccdd";
+ const contact="61234567";
+ const visitor={id:"visitor",role:"visitor",content:"Models?",created_at:"2026-11-05"};
+ const assistant={id:"answer",role:"assistant",content:"Reply",created_at:"2026-11-05",metadata:{
+  source_message_id:visitor.id,
+  factual_evidence_selection:[{chunk_id:chunkId,document_id:contact}],
+  citation_lineage:{evidence_chunk_ids:[chunkId],selected_document_ids:[chunkId]},
+  grounding_rejection_reason:`Call ${contact} or email test@example.com`,
+ }};
+ const raw=JSON.stringify({chunk_id:chunkId,phone:contact});
+ const trace={id:"trace",message_id:visitor.id,query_sent:"q",created_at:"2026-11-05",
+  kb_source:"singapore_context_search",top_score:null,retrieved_chunks:{
+   response:{capture_state:"CAPTURED",response_json_raw:raw,response_sha256:"original"},
+   lineage:[{document_id:chunkId,chunks:[{chunk_id:chunkId,title:`Call ${contact}`,api_key:"secret"}]}],
+  }};
+ const turn=linkConversationEvidenceTurns([visitor,assistant],[trace]).turns[0];
+ const evidence=turn.evidence[0];
+ const [document]=JSON.parse(evidence.lineage);
+ assert.equal(document.document_id,chunkId);
+ assert.equal(document.chunks[0].chunk_id,chunkId);
+ assert.equal(document.chunks[0].title,"Call [PHONE_REDACTED]");
+ assert.equal(document.chunks[0].api_key,"[REDACTED]");
+ const meta=JSON.parse(turn.answers[0].metadata);
+ assert.equal(meta.factual_evidence_selection[0].chunk_id,chunkId);
+ assert.equal(meta.factual_evidence_selection[0].document_id,"[PHONE_REDACTED]");
+ assert.deepEqual(meta.citation_lineage.evidence_chunk_ids,[chunkId]);
+ assert.deepEqual(meta.citation_lineage.selected_document_ids,[chunkId]);
+ assert.equal(meta.grounding_rejection_reason,"Call [PHONE_REDACTED] or email [EMAIL_REDACTED]");
+ assert.equal(evidence.rawCaptureState,"REDACTED");
+ assert.equal(evidence.rawSha256,"original");
+ assert.equal(evidence.rawCaptureOrigin,"LEGACY_ORIGIN_UNVERIFIED");
+ assert(!evidence.rawResponse.includes(chunkId));
+ assert(!evidence.rawResponse.includes(contact));
+});
