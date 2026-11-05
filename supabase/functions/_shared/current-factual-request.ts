@@ -60,8 +60,9 @@ export interface CurrentFactualRequest {
   unresolved_demand_ids: string[];
   missing_evidence: FactualRequestMissingEvidence[];
   topic_changed: boolean;
-  context_turns: string[];
-  needs_subject_clarification: boolean;
+context_turns: string[];
+ clarification_source_message_ids?:string[];
+ needs_subject_clarification: boolean;
 }
 export type FactualRequestHistoryRow = {
   id?: string | null; role?: string; content?: string | null;
@@ -516,8 +517,9 @@ function resolveVerifiedClarificationContinuation(input: ResolveCurrentFactualRe
      !["none","unknown"].includes(frame.fulfillment_state)||
      (frame.demands??[]).some(d=>d.source_type==="transaction"||d.customer_correction||d.explicit_negations.length>0||
        Object.keys(d.constraints).length>0))return null;
-  let origin:FactualRequestHistoryRow|null=null,cycles=0;
-  for(let i=0;i+1<rows.length&&cycles<4;i+=2){
+let origin:FactualRequestHistoryRow|null=null,cycles=0;
+ const intermediate:Array<{id:string;text:string}>=[];
+ for(let i=0;i+1<rows.length&&cycles<4;i+=2){
     const assistant=rows[i],visitor=rows[i+1];
     if(String(assistant.role??"").toLowerCase()!=="assistant"||!CUSTOMER.has(String(visitor.role??"").toLowerCase())||
        !assistant.id||!visitor.id)break;
@@ -545,14 +547,17 @@ function resolveVerifiedClarificationContinuation(input: ResolveCurrentFactualRe
     if(discovery){origin=visitor;break;}
     // An answer to an earlier clarification may precede the original query;
     // never tunnel through an unrelated question, real transaction or topic.
-    if(/[?？;；\n]/u.test(original)||currentFacets(original).length>0||
-       exactProductIdentifiers(original).length>0||original.length>160)break;
-    cycles++;
+if(/[?？;；\n]/u.test(original)||currentFacets(original).length>0||
+     exactProductIdentifiers(original).length>0||original.length>160)break;
+   intermediate.unshift({id:visitor.id,text:original});
+   cycles++;
   }
   if(!origin)return null;
   const original=clean(origin.content);
-  const requested=unique([...currentFacets(original),"published merchant options matching customer criteria"]);
-  const full=[original,latest].join("\n");
+const requested=unique([...currentFacets(original),"published merchant options matching customer criteria"]);
+ // The middle B2-confirmed customer answers are part of the current need.
+ // Retain all or reject using the existing bounded-query guard.
+ const full=[original,...intermediate.map(x=>x.text),latest].join("\n");
   const demand:CurrentFactualDemand={id:"demand-1",question:full,source_quote:latest,
     subjects:[],subject_source_message_ids:[],source_type:"product",
     requested_facts:requested,constraints:{},customer_correction:false,
@@ -561,9 +566,11 @@ function resolveVerifiedClarificationContinuation(input: ResolveCurrentFactualRe
     original_question:input.question,interpretation_source:"semantic_demands",
     applicable:true,question:latest,merchant_request:latest,subject:null,subjects:[],
     requested_facts:requested,query:null,answer_request:full,resolution:"follow_up",
-    subject_source_message_id:null,subject_source_message_ids:[],demands:[demand],
-    kb_required:true,transaction_required:false,unresolved_demand_ids:[],missing_evidence:[],
-    topic_changed:false,context_turns:[original],needs_subject_clarification:false};
+subject_source_message_id:null,subject_source_message_ids:[],demands:[demand],
+   kb_required:true,transaction_required:false,unresolved_demand_ids:[],missing_evidence:[],
+   topic_changed:false,context_turns:[original,...intermediate.map(x=>x.text)],
+   clarification_source_message_ids:[origin.id,...intermediate.map(x=>x.id),source],
+   needs_subject_clarification:false};
   request.query=serializeCurrentFactualQuery(input,request);
   return request;
 }

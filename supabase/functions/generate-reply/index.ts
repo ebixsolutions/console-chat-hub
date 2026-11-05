@@ -5934,7 +5934,9 @@ Latest applicable corrections replace old values; an answered clarification is n
         original_question:_h1LastMsg,answer_request:_currentFactualRequest.answer_request,
         requested_facts:_currentFactualRequest.requested_facts,subjects:_currentFactualRequest.subjects,
         subject_source_message_ids:_currentFactualRequest.subject_source_message_ids,
-        context_turns:_currentFactualRequest.context_turns,resolution:_currentFactualRequest.resolution,
+context_turns:_currentFactualRequest.context_turns,
+         clarification_source_message_ids:_currentFactualRequest.clarification_source_message_ids??null,
+         resolution:_currentFactualRequest.resolution,
       }:{original_question:_h1LastMsg,answer_request:_productFactualRequest,requested_facts:[],
         subjects:[],subject_source_message_ids:[],context_turns:[],resolution:"not_resolved"};
       try{

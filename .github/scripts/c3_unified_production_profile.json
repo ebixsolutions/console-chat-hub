@@ -1465,5 +1465,11 @@
   "task3c_hash_compat_deployment_authorized": false,
   "authorized_task3c_hash_compat_sha256": {
     "src/lib/api/evidence-log-scope.ts": "786a77d1789e375de1e9f3c590fb8fda0b3a0717f3c15a8130dcac8b7db66a7d"
+  },
+  "task3c_clarification_deployment_authorized": false,
+  "authorized_task3c_clarification_sha256": {
+    "supabase/functions/_shared/current-factual-request.ts": "a1c5e56c0fb51819feb01095f753e0361533de0a62478cb5344afbec5a2d1be2",
+    "supabase/functions/_shared/current-factual-request.test.ts": "135b7d35fbfb3887dd53ace0a037bee377b4484f3a42cab5dfcd065d43b62bc2",
+    "supabase/functions/generate-reply/index.ts": "ed458cae5d2fd5ebc6c60cee01ae0dc99af774c88f3ec7fe4ca6e3c3a8543ac1"
   }
 }

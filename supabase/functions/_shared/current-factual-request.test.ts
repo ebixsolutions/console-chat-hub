@@ -1373,3 +1373,26 @@ Deno.test("Task3 customer-visible missing-options response never leaks semantic 
   "internal semantic labels reached customer response: "+text);
  assert(!/已轉交|有現貨|已下單/u.test(text),"unsupported merchant or handoff claim was invented");
 });
+
+Deno.test("Task3C keeps every B2-confirmed intermediate option criterion in the KB requery",()=>{
+ const company="same-company",original="Which rental plans do you currently offer?";
+ const pair=(id:string,text:string):FactualRequestHistoryRow[]=>[
+  {id:"reply-"+id,role:"assistant",content:"Which current plan?",metadata:{
+    response_route:"product_referent_clarification",product_referent_candidates:[],
+    control_commit:"ai",b2_expected_company_id:company,b2_source_message_id:id,source_message_id:id}},
+  {id,role:"visitor",content:text},
+ ];
+ const history=[...pair("step2","Current plans"),...pair("step1","For small teams"),...pair("first",original)];
+ const latest="For Hong Kong customers";
+ const input={question:latest,source_message_id:"latest",trusted_company_id:company,
+    history,semantic:frame(["plan options"],null)};
+ const result=resolveCurrentFactualRequest(input);
+ assert(result.kb_required&&!!result.query,"verified followup did not reach KB request");
+ equal(JSON.parse(result.query!).questions[0].question,[original,"For small teams","Current plans",latest].join("\n"));
+ equal(result.clarification_source_message_ids,["first","step1","step2","latest"]);
+ equal(result.context_turns,[original,"For small teams","Current plans"]);
+ assert(!result.query?.includes("Which current plan?"),"assistant question contaminated KB");
+ const wrong=structuredClone(history);(wrong[0].metadata as Record<string,unknown>).b2_expected_company_id="other";
+ const noTrust=resolveCurrentFactualRequest({...input,history:wrong});
+ assert(!noTrust.query?.includes(original),"unverified cross-tenant step inherited original");
+});
