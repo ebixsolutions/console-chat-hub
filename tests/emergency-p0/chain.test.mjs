@@ -178,6 +178,7 @@ function fixture(text,options={}) {
  const tables={ce_evaluation_state:[],handoff_event:[],conversation_commerce_state_event:[],company:[{id:company,is_active:true}],conversations:[conversation],messages:[visitor],conversation_commerce_state:[],conversation_memory_state:[],conversation_memory_state_event:[],c3_memory_reply_lifecycle_receipt:[]};
  let generationIndex=0, previewInitialization;
  const claimReaders=[];
+ if(options.captureEvidence)tables.rag_trace=[];
  if(options.previous)for(const name of ['conversation_commerce_state','conversation_memory_state','conversation_commerce_state_event','conversation_memory_state_event'])tables[name]=structuredClone(options.previous[name]);
  if(options.history)tables.messages.push(...structuredClone(options.history));
  if(options.retainedMemory)tables.conversation_memory_state.push({conversation_id:ticket,company_id:company,revision:7,memory:{current_customer_facts:[{key:'subscription_seats',value:17,source_message_id:uuid(30)}]}});
@@ -268,6 +269,7 @@ function fixture(text,options={}) {
   }
   const table=url.pathname.split('/').at(-1);
   if(table==='upstream_call_log'&&method==='POST'){logs.push(body);return new Response(null,{status:201});}
+  if(table==='rag_trace'&&method==='POST'&&options.captureEvidence){tables.rag_trace.push(body);return new Response(null,{status:201});}
   if(method==='DELETE')return new Response(null,{status:204});
   assert(method==='GET'||method==='HEAD'||(table==='messages'&&method==='PATCH'),'unexpected mutation '+table);
   assert(table in tables,'unhandled isolated table '+table);
@@ -361,7 +363,13 @@ for(const mode of ['400','malformed','timeout'])test('full handler provider '+mo
  assert.equal(r.status,200);assert.equal(r.body.degraded,true);assert.equal(r.body.generation_success,false);assert.match(r.body.reply,/problem/);
  assert.doesNotMatch(r.body.reply,/verify|knowledge|KB/i);assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.source_error_code,mode==='400'?'LLM_NON_2XX':mode==='timeout'?'LLM_TIMEOUT':'LLM_INVALID_OUTPUT');
  assert.equal(f.commits[0].metadata.execution_failure.source_message_id,source);assert.equal(f.commits[0].metadata.retryable,mode==='timeout');
- if(mode==='malformed')assert(JSON.stringify(f.events).includes('semantic_json'));
+ if(mode==='malformed'){
+  assert(JSON.stringify(f.events).includes('semantic_json'));
+  const receipt=f.commits[0].metadata.semantic_failure_receipt;
+  assert.equal(receipt.stage,'semantic_json');assert.equal(receipt.input.source_message_id,source);
+  assert.match(receipt.input.user_sha256,/^[a-f0-9]{64}$/u);
+  assert(!JSON.stringify(r.body).includes('semantic_failure_receipt'));
+ }
  else assert(f.logs.some(x=>x.request_payload.error_code===(mode==='400'?'LLM_NON_2XX':'LLM_TIMEOUT')));
  assert(!JSON.stringify(f.logs).includes('PRIVATE-SECRET'));if(mode==='400')assert.equal(f.logs[0].request_payload.provider_diagnostic.provider_error_class,'schema_complexity');
  assert(!f.requests.some(x=>/rag|context-search|rpc\/.*(?:memory|commerce)/.test(x.url)));
@@ -2026,4 +2034,62 @@ test('Task3 original 100-turn dialogue preserves corrections and not-an-order bo
  assert(context.recent_turns<=mem.C3_RECENT_RAW_TURN_LIMIT);
  assert(context.block.includes('ac:rooms: 2'),'last correction missing in LLM memory');
  console.log('TASK3_100_TURNS|source=original_business_dialogue|turns=100|memory_snapshots=100|hosted=NOT_RUN|result=PASS');
+});
+
+test('Task3 source-bound T9–T12 handler shares the request, verifies a late match, and retains full trace lineage',async()=>{
+ const history=[];
+ const row=(n,role,content)=>({id:uuid(9000+n),conversation_id:ticket,role,content,
+  created_at:new Date(Date.UTC(2026,9,13,0,0,n)).toISOString(),is_recalled:false,metadata:{}});
+ history.push(row(1,'visitor','你哋有冇冷氣機賣？'),row(2,'visitor','大金2匹有什麼選擇？'));
+ for(const [turn,question,spec,model,constraints] of [
+  [9,'Panasonic 3/4匹 有什麼選擇?', '0.75匹','CW-SUL70BA',{horsepower:[{unit:'匹',value:'3/4'}]}],
+  [10,'咁有冇 1匹?', '1.0匹','CW-SUL90BA',{horsepower:{value:'1'}}],
+  [11,'咁有冇 1匹?', '1.0匹','CW-SUL90BA',{}],
+  [12,'Panasonic 1匹 有什麼選擇?', '1.0匹','CW-SUL90BA',{brand:['Panasonic'],horsepower:['1匹']}],
+ ]){
+  const answer='Panasonic '+model+' 是 '+spec+' 的冷氣機。';
+  const product=(brand,model,i)=>{
+   const id='task3-option-'+i;
+   const chunk=(k,chunk_type)=>({document_id:id,chunk_id:id+'-'+k,chunk_type,score:.95,
+    content:'Brand: '+brand+'\nCategory: 冷氣機\nSize: '+spec+'\nModel: '+model+'\nFeature: Fixture'});
+   return {document_id:id,title:brand+' '+model,source_type:'Product',document_score:.95,
+    authority:{tenant_id:'34',version_id:'version-'+i,publication_state:'published',currentness:'unknown'},
+    summary:chunk(0,'rag_summary'),evidence:[1,2,3].map(k=>chunk(k,'full_content'))};
+  };
+  const matching=product('Panasonic',model,9);
+  const documents=[...Array.from({length:9},(_,i)=>product('AeroHome','FAKE-'+(100+i),i)),matching];
+  const sourceId=uuid(9200+turn);
+  const f=fixture(question,{source:sourceId,history,originalPreview:true,fullChain:true,captureEvidence:true,
+   semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{requested_facts:['options'],constraints})]),
+   originalRagResponse:task1cRagDocuments(...documents),answer,
+   verifierIds:['E1'],verifierResolution:turn===10?'unsupported':'supported',
+   verifierDemandResolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']}]});
+  const result=await f.run();
+  assert.equal(result.status,200,JSON.stringify({turn,result,events:f.events.slice(-6)}));
+  const kb=f.requests.filter(r=>r.url.includes('context-search'));assert.equal(kb.length,1);
+  assert.match(kb[0].body.query,/Panasonic/u);assert.match(kb[0].body.query,/冷氣機/u);
+  assert.doesNotMatch(kb[0].body.query,/大金|9999|CW-SUL70BA/u);
+  if(turn!==9)assert.doesNotMatch(kb[0].body.query,/3\/4匹/u);
+  const {calls,drafts,verifiers}=v2RetryCalls(f);
+  assert.equal(calls.length,3,JSON.stringify({turn,route:result.body.response_route}));
+  assert.equal(drafts.length,1);assert.equal(verifiers.length,1);
+  assert.match(JSON.stringify(verifiers[0].body),/Panasonic/u);
+  assert.equal(f.commits.length,1);
+  const committed=f.commits[0];
+  assert.equal(committed.metadata.b2_source_message_id,sourceId);
+  assert.equal(committed.metadata.factual_evidence_selection[0].document_id,matching.document_id);
+  if(turn===10){
+   assert.equal(committed.metadata.source_error_code,'LLM_GROUNDING_REJECTED');
+   assert.match(committed.content,/Panasonic.*1匹/u);
+   assert.doesNotMatch(committed.content,/options|model_info|CW-SUL90BA/u);
+  }else assert.equal(committed.content,answer);
+  assert.equal(f.tables.rag_trace.length,1);
+  const trace=f.tables.rag_trace[0].retrieved_chunks;
+  assert.equal(f.tables.rag_trace[0].message_id,sourceId);
+  assert.equal(trace.lineage.length,10);assert.equal(trace.lineage.flatMap(d=>d.chunks).length,40);
+  assert.equal(trace.source_context.semantic_input.source_message_id,sourceId);
+  assert.equal(trace.response.capture_origin,'UPSTREAM_HTTP');
+  assert.equal(JSON.parse(trace.request_json).query,kb[0].body.query);
+  history.push(row(turn*2,'visitor',question),row(turn*2+1,'assistant',committed.content));
+ }
 });

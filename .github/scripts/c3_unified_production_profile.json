@@ -1393,7 +1393,7 @@
     "supabase/functions/_shared/grounding-evidence.ts": "7835a07dee6b0737929898376a2589490a6e1e1dec77cca7de8af733482b62e5",
     "supabase/functions/_shared/llm-router.ts": "5569209ef967aeb369e99887d1e0ca71c3587be34ef85843ab69a72006e49d6a",
     "supabase/functions/generate-reply/index.ts": "8939c2b9340a653a2bafc610e8ebedeb0d1f80aadc64d682900df1db0485b15e",
-    "tests/emergency-p0/chain.test.mjs": "00ed0472cb69adc0fc8076b456bac6660f842783625282d475afb52df30d4dea",
+    "tests/emergency-p0/chain.test.mjs": "63b4b0d6264ab46f6f920a91f14bfa5b44fcc838c77067eec637b812b19445d6",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "c569c01e3c8ca549ed70a10bc4bafb0c784dcd60713bd0ec4779ea2a9cdd3db7",
     "supabase/functions/_shared/current-factual-request.ts": "f40d9235404fb0def3abf9b9654be4f58ecbbc326147dff523ee616b8ef88a24",
     "supabase/functions/_shared/current-factual-request.test.ts": "6f670512a6e6dbab5db07f7a27b8bc65de53f88e11abc26b286c5abcecf77b14"
@@ -1474,10 +1474,10 @@
   },
   "task3c_paging_deployment_authorized": false,
   "authorized_task3c_paging_sha256": {
-    "src/lib/api/evidence-log-scope.ts": "e703f43da0fba040ad0b476cbbf4b94bf1b559d19c29c2f11c4f4e399f2a2dd7",
+    "src/lib/api/evidence-log-scope.ts": "7693509db6db87b5977af8a8576d120c256dc9f6cbc3175494f5ac61bf0dbf9a",
     "src/lib/api/llmRuntime.service.ts": "248d6fb819be50a8d5519964c9b037a4f1af5304f82555be0aa0b82043bc3ae0",
-    "src/routes/_authenticated/console.settings.llm-runtime.tsx": "2133b86d5c464428afeb921a17112b3676f6200e784761bd15a82b6edfdfd12f",
-    "tests/console-navigation/admin-evidence-log.test.mjs": "f2a5ea20ed3dc09787e13d4a07b4a335089ed67962f717af8fb8e4f8b3ff1c19"
+    "src/routes/_authenticated/console.settings.llm-runtime.tsx": "9e37530845958523ea598b72183b8339cbc9234379ee988d395ca7f8389717bb",
+    "tests/console-navigation/admin-evidence-log.test.mjs": "2a3ef3399a2e32846955bb52fb4b3de326fb81adea0b458b042889bdfb620dd0"
   },
   "task3c_raw_transport_test_deploy_authorized": false,
   "authorized_task3c_raw_transport_test_sha256": {
@@ -1497,6 +1497,6 @@
     "supabase/functions/_shared/factual-evidence-selection.test.ts": "3ed33f8b756d7f7ea820cfed879c4d5cc93c3fa4b145e2fb64f121faf499de71",
     "supabase/functions/_shared/factual-request-context.ts": "76876db8b3cb46346249264fbb20823dd81f81a02e369a5878d7449fe254f5da",
     "supabase/functions/_shared/current-factual-request.test.ts": "88da3639efb7637d8657762c26ffae66e434f514896e310ae9bb859fc9329d86",
-    "supabase/functions/generate-reply/index.ts": "e39185a92f52e3a08957e0f6b8dfe01d2b29430d23ae7afc9e14c2f1cf0241a5"
+    "supabase/functions/generate-reply/index.ts": "187b084f0c26730154481b1a7e5dd3e61a871321375910779cb37b6309f4ea80"
   }
 }

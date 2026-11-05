@@ -2303,6 +2303,16 @@ async function responseErrorCode(response: Response): Promise<string | null> {
   }
 }
 
+// Keep rejected semantic input provenance in-process until the existing
+// terminal B2 commit. No separate KB trace or externally visible body field.
+const semanticFailureReceipts = new WeakMap<Response, {
+  input: NonNullable<PreparedSemanticRequest["semantic"]["input_receipt"]>;
+  input_state: PreparedSemanticRequest["input_state"];
+  stage: string | null;
+  request_id: string | null;
+  contract_rejection: string | null;
+}>();
+
 async function recoverTerminalResponseIfNeeded(
   response: Response,
   conversationId: string,
@@ -2379,6 +2389,7 @@ async function persistTerminalRecovery(
       b2_code: b2Code,
     });
     const reply = terminalRecoveryReply(language, diagnostic);
+    const semanticReceipt = originalResponse ? semanticFailureReceipts.get(originalResponse) : undefined;
     const committed = await commitAiReplyWithControlGate(
       admin,
       conversationId,
@@ -2396,6 +2407,8 @@ async function persistTerminalRecovery(
         generation_success: false,
         transaction_mutation: "NONE",
         source_error_http_status: originalResponse?.status ?? null,
+        ...(semanticReceipt?.input.source_message_id === sourceMessageId
+          ? {semantic_failure_receipt:semanticReceipt} : {}),
       },
     );
     await cleanupThinking(admin, conversationId, sourceMessageId);
@@ -4509,35 +4522,18 @@ async function orchestrationGenerateReply(
   }
 
   if (_semanticFailure) {
-    if (_semanticFailure === "LLM_INVALID_OUTPUT" && source_message_id && _semanticPrepared?.semantic.input_receipt) {
-      // This is a private diagnostic receipt for an actual failed semantic
-      // attempt. No KB request, raw body or accepted frame exists on this path.
-      try {
-        const {error}=await supabaseAdmin.from("rag_trace").insert({
-          id:crypto.randomUUID(),conversation_id,message_id:source_message_id,query_sent:null,
-          top_score:null,kb_source:"singapore_context_search",
-          retrieved_chunks:{
-            contract:"c3-admin-conversation-evidence-v2",source_message_id,
-            request_dispatch_state:"KB_NOT_DISPATCHED_SEMANTIC_FAILURE",
-            request_json:null,response:{capture_state:"NOT_CAPTURED"},
-            source_context:{semantic_input:_semanticPrepared.semantic.input_receipt,
-              semantic_input_state:_semanticPrepared.input_state??null,accepted_semantic_frame:null},
-            execution_failure:{code:_semanticFailure,stage:_semanticPrepared.semantic.failure_stage??null,
-              request_id:_semanticPrepared.semantic.request_id??null,
-              contract_rejection:_semanticPrepared.semantic.contract_rejection??null},
-          },
-        });
-        if(error)throw error;
-      } catch {
-        console.warn(JSON.stringify({event:"c3_admin_evidence_write_failed",
-          conversation_id,source_message_id,code:"TRACE_INSERT_FAILED"}));
-      }
-    }
-    // Reject before every Commerce/Memory mutation and R1 enrichment. The visitor
-    // message remains durable; never claim its facts were saved after truncation.
+    // Reject before every Commerce/Memory mutation and R1 enrichment.
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
-    return new Response(JSON.stringify({success:false,error:"semantic_interpretation_failed",code:_semanticFailure,failure:_semanticDiagnostic,retryable:_semanticDiagnostic?.retryable === true}),
+    const response = new Response(JSON.stringify({success:false,error:"semantic_interpretation_failed",code:_semanticFailure,failure:_semanticDiagnostic,retryable:_semanticDiagnostic?.retryable === true}),
       {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    const input = _semanticPrepared?.semantic.input_receipt;
+    if (input && _semanticPrepared) semanticFailureReceipts.set(response,{
+      input,input_state:_semanticPrepared.input_state,
+      stage:_semanticPrepared.semantic.failure_stage??null,
+      request_id:_semanticPrepared.semantic.request_id??null,
+      contract_rejection:_semanticPrepared.semantic.contract_rejection??null,
+    });
+    return response;
   }
   const _semanticRoutingHistory = _semanticHistory.map(row => ({...row, role:String(row.role ?? ""), content:String(row.content ?? "")}));
   const _catalogueFollowup = _criticalE2ExpectedTenantId && source_message_id

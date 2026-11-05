@@ -450,8 +450,7 @@ if(!page.ok){setLoaded(prev=>({...prev,[id]:{
            <td className="max-w-[220px] whitespace-pre-wrap break-words p-2">{t.customerQuestion}</td>
            <td className="max-w-[270px] p-2">{!t.evidence.length?<span className="text-amber-700">{t.evidenceStatus==="KB_NOT_DISPATCHED_SEMANTIC_FAILURE"?"KB_NOT_DISPATCHED_SEMANTIC_FAILURE":"NOT_CAPTURED"}</span>:
             t.evidence.map((ev,i)=><details key={ev.id} className="mb-2">
-             <summary className="cursor-pointer">{ev.requestDispatchState==="KB_NOT_DISPATCHED_SEMANTIC_FAILURE"
-               ?"Semantic · KB_NOT_DISPATCHED_SEMANTIC_FAILURE":`KB Call ${i+1} · ${ev.requestDispatchState}`}</summary>
+             <summary className="cursor-pointer">KB Call {i+1} · {String(ev.requestDispatchState)}</summary>
              <p>完整 Query</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.exactQuery)}</pre>
              <p>HTTP Request JSON</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.requestJson)}</pre>
              <p>意圖及上下文</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.sourceContext)}</pre>

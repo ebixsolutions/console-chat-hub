@@ -68,10 +68,11 @@ test("Admin evidence display masks secret values and customer contacts without c
 
 test('Pre-KB semantic failure is not mislabeled as historical KB raw capture',()=>{
  const visitor={id:'a3571189',role:'visitor',content:'給我有關大金 2匹機的型號介紹',created_at:'2026-11-04'};
- const assistant={id:'answer',role:'assistant',content:'請求失敗',created_at:'2026-11-04',metadata:{source_message_id:'a3571189',response_route:'terminal_failure_recovery',source_error_code:'LLM_INVALID_OUTPUT',execution_failure:{stage:'canonical_validation'},rag_api_status:null}};
+ const assistant={id:'answer',role:'assistant',content:'請求失敗',created_at:'2026-11-04',metadata:{source_message_id:'a3571189',response_route:'terminal_failure_recovery',source_error_code:'LLM_INVALID_OUTPUT',execution_failure:{stage:'canonical_validation'},rag_api_status:null,semantic_failure_receipt:{input:{source_message_id:"a3571189",user_sha256:"fixture-hash"},stage:"semantic_contract"}}};
  const explicit=linkConversationEvidenceTurns([visitor,assistant],[]);
  assert.equal(explicit.turns[0].evidenceStatus,'KB_NOT_DISPATCHED_SEMANTIC_FAILURE');
  assert.equal(explicit.turns[0].evidence.length,0);
+ assert.equal(JSON.parse(explicit.turns[0].answers[0].metadata).semantic_failure_receipt.stage,'semantic_contract');
  assert.equal(linkConversationEvidenceTurns([visitor],[]).turns[0].evidenceStatus,'NOT_CAPTURED');
 });
 
@@ -105,14 +106,14 @@ test("New semantic and grounding receipts link exact IDs and preserve redaction"
   factual_evidence_candidates:[{document_id:"doc",chunk_id:"chunk",demand_ids:["demand-1"]}],
   factual_evidence_selection:[{evidence_id:"E1",document_id:"doc",chunk_id:"chunk",demand_ids:["demand-1"]}],
  }};
- const trace={id:"t",message_id:v.id,query_sent:null,created_at:"2026-11-05",top_score:null,kb_source:"singapore_context_search",
-  retrieved_chunks:{request_dispatch_state:"KB_NOT_DISPATCHED_SEMANTIC_FAILURE",
-   source_context:{semantic_input:{source_message_id:v.id},accepted_semantic_frame:null,phone:"91234567"},
-   response:{capture_state:"NOT_CAPTURED"}}};
+ const trace={id:"t",message_id:v.id,query_sent:"q",created_at:"2026-11-05",top_score:null,kb_source:"singapore_context_search",
+  retrieved_chunks:{request_dispatch_state:"HTTP_RECEIVED",request_json:'{"query":"q"}',
+   source_context:{semantic_input:{source_message_id:v.id},accepted_semantic_frame:{operation:"ASK_FACT"},phone:"91234567"},
+   response:{capture_state:"CAPTURED",capture_origin:"UPSTREAM_HTTP",response_json_raw:"{}"}}};
  const turn=linkConversationEvidenceTurns([v,a],[trace]).turns[0];
- assert.equal(turn.evidence[0].requestDispatchState,"KB_NOT_DISPATCHED_SEMANTIC_FAILURE");
- assert.equal(turn.evidence[0].rawCaptureState,"NOT_CAPTURED");
- assert.equal(turn.evidence[0].requestJson,null);
+ assert.equal(turn.evidence[0].requestDispatchState,"HTTP_RECEIVED");
+ assert.equal(turn.evidence[0].rawCaptureState,"CAPTURED");
+ assert.equal(JSON.parse(turn.evidence[0].requestJson).query,"q");
  assert.equal(JSON.parse(turn.evidence[0].sourceContext).semantic_input.source_message_id,v.id);
  assert(!turn.evidence[0].sourceContext.includes("91234567"));
  const receipt=JSON.parse(turn.answers[0].metadata);
