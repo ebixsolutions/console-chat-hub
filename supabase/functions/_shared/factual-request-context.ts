@@ -1,3 +1,4 @@
+import { customerOptionSpecifications } from "./current-factual-request.ts";
 import type { CurrentFactualRequest } from "./current-factual-request.ts";
 import type { FactualFollowupContext, SemanticHistoryRow } from "./conversation-semantic-contract.ts";
 
@@ -128,13 +129,11 @@ export function renderUnverifiedFactualNextStep(
   if(option && option.source_type==="product" && option.subjects.length===0 &&
      !option.ambiguity.is_ambiguous && !request.transaction_required &&
      !price && !stock &&
-     option.requested_facts.some(fact=>/model_info|(?:merchant|product)[\s_]+options|available[\s_]+models?/iu.test(fact))){
-    const quote=option.source_quote.normalize("NFKC").replace(/\s+/gu,"").toLowerCase();
-    const criteria=[...new Set(Object.values(option.constraints).flatMap(value=>{
-      if(typeof value!=="string")return [];
-      const token=value.normalize("NFKC").replace(/\s+/gu,"").toLowerCase();
-      return /^\d+(?:\.\d+)?[\p{L}%°]{1,12}$/u.test(token)&&quote.includes(token)?[token]:[];
-    }))].slice(0,2);
+     option.requested_facts.some(fact=>/model_info|\boptions\b|available[\s_]+models?/iu.test(fact))){
+    const criteria = [...new Set([
+      ...(option.option_criteria?.scope ?? []).map(item=>item.label),
+      ...customerOptionSpecifications(option).map(spec=>spec.value+spec.unit),
+    ])].slice(0,3);
     if(criteria.length){
       const criteriaText=criteria.map(value=>"「"+value+"」").join("、");
       if(language==="en")return "The retrieved information does not reliably establish a product model meeting "+criteria.join(", ")+
@@ -150,7 +149,7 @@ export function renderUnverifiedFactualNextStep(
   // that an order, booking, refund or entitlement actually exists.
   const dimensions = [
     {pattern:/\bmodel_info\b|\bmodel\s+information\b|型號資料|型号资料/iu,en:"model information",tw:"型號資料",cn:"型号资料"},
-    {pattern:/published[\s_]+merchant[\s_]+options|available[\s_]+merchant[\s_]+options|published[\s_]+product[\s_]+options/iu,en:"published merchant options",tw:"已發布的可選產品／服務",cn:"已发布的可选商品／服务"},
+    {pattern:/\boptions\b/iu,en:"matching products or services",tw:"符合條件的產品／服務",cn:"符合条件的商品／服务"},
     {pattern:/warranty|guarantee|保養|保修|質保|质保/iu,en:"warranty terms",tw:"保養條款",cn:"保修条款"},
     {pattern:/deliver|shipping|dispatch|freight|送貨|送货|配送|運送|运送|物流/iu,en:"delivery terms",tw:"送貨安排",cn:"配送安排"},
     {pattern:/refund|return|退貨|退货|退款|退換|退换/iu,en:"return or refund terms",tw:"退換貨／退款條款",cn:"退换货／退款条款"},

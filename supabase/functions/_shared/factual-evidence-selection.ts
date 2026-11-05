@@ -1,10 +1,12 @@
 import {selectCanonicalGrounding, fullContentSubjectMatch, deriveCurrentGroundingTarget,
   type CanonicalGroundingOptions, type CanonicalGroundingResult, type CurrentGroundingTarget} from "./canonical-grounding.ts";
-import type {CurrentFactualRequest, CurrentFactualDemand} from "./current-factual-request.ts";
+import {customerOptionSpecifications, optionSpecificationMatches,
+  type CurrentFactualRequest, type CurrentFactualDemand} from "./current-factual-request.ts";
+import {literalFactualSubject} from "./conversation-semantic-contract.ts";
 import type {KBDocumentCandidate, KBFullChunk} from "./kb-client.ts";
 import {buildCitationMetadata} from "./citation-lineage.ts";
 import {currentKbSellingPrice, exactKbModelIds, resolveCanonicalKbDirectAnswer} from "./canonical-kb-direct-answer.ts";
-import {kbProductRecordPrice, kbProductRecordStock, normalizeCatalogueCode, parseKbProductRecord} from "./kb-product-record.ts";
+import {kbProductFieldKey, kbProductRecordPrice, kbProductRecordStock, normalizeCatalogueCode, parseKbProductRecord} from "./kb-product-record.ts";
 import {GROUNDING_EVIDENCE_LIMITS, groundingEvidenceText, validGroundingEvidence,
   type GroundingEvidence, type GroundingEvidenceItem, type GroundingDemand, type GroundingDemandResolution} from "./grounding-evidence.ts";
 
@@ -26,30 +28,38 @@ export type FactualEvidenceBundle = {
 const key = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
 const sourceKey = (document: string, chunk: string) => JSON.stringify([document, chunk]);
 
-/** A customer-stated numerical specification is an applicability condition,
- * not an embedding relevance score. Only source-quoted units may constrain
- * product-option discovery, across industries; no brand/HP whitelist. */
-function customerStatedUnitConstraints(demand: CurrentFactualDemand): string[] {
- const quote=demand.source_quote.normalize("NFKC").replace(/\s+/gu,"").toLowerCase();
- return [...new Set(Object.values(demand.constraints).flatMap(value=>{
-  if(typeof value!=="string")return [];
-  const token=value.normalize("NFKC").replace(/\s+/gu,"").toLowerCase();
-  return /^\d+(?:\.\d+)?[\p{L}%°]{1,12}$/u.test(token)&&quote.includes(token)?[token]:[];
- }))];
-}
-function exactSourceUnit(text:string,token:string):boolean {
- const s=text.normalize("NFKC").replace(/\s+/gu,"").toLowerCase();
- let index=-1;
- while((index=s.indexOf(token,index+1))!==-1){
-  const prev=index>0?s[index-1]:"",next=s[index+token.length]??"";
-  if(!/[\d.]/u.test(prev)&&!/[\d.]/u.test(next))return true;
- }
- return false;
-}
-function productCandidateMeetsStatedUnits(document:KBDocumentCandidate,units:string[]):boolean {
- if(!/product|商品|產品|产品/iu.test(document.source_type))return false;
- return document.chunks.some(chunk=>chunk.chunk_type==="full_content"&&!!chunk.chunk_id&&
-  units.every(unit=>exactSourceUnit(chunk.content,unit)));
+/** Inspect the same full chunk later offered to the verifier. A related
+ * title, FAQ, low-scoring sibling or different SKU cannot prove applicability. */
+function applicableOptionChunk(chunk: KBFullChunk, demand: CurrentFactualDemand,
+  units: ReturnType<typeof customerOptionSpecifications>): boolean {
+  if (chunk.chunk_type !== "full_content" || !chunk.chunk_id) return false;
+  const record = parseKbProductRecord(chunk.content);
+  if (record.ambiguous) return false;
+  const brandFields = record.fields.filter(field => /^(?:brand|manufacturer|品牌|製造商|制造商)$/iu.test(kbProductFieldKey(field.key)));
+  const categoryFields = record.fields.filter(field => /^(?:category|productcategory|類別|类别|商品類別|商品类别|分類|分类)$/iu.test(kbProductFieldKey(field.key)));
+  const contains = (text: string, label: string) => Boolean(literalFactualSubject(text,[label]));
+  const customerLabels = (key: string) => [demand.constraints[key]].flat().filter(
+    (label): label is string => typeof label === "string" && contains(demand.source_quote,label));
+  const scope = demand.option_criteria?.scope ?? [];
+  const brand = customerLabels("brand");
+  const category = [...new Set([...customerLabels("category"), ...scope.slice(1).map(item=>item.label)])];
+  const anchor = scope[0]?.label;
+  const identityFields = [...record.names,...brandFields.map(field=>field.value),...categoryFields.map(field=>field.value)];
+  if (anchor && !(identityFields.length ? identityFields.some(value=>contains(value,anchor)) : contains(chunk.content,anchor))) return false;
+  if (!brand.every(label => brandFields.length
+    ? brandFields.every(field => contains(field.value,label))
+    : contains(chunk.content,label))) return false;
+  if (!category.every(label => categoryFields.length
+    ? categoryFields.every(field => contains(field.value,label))
+    : contains(chunk.content,label))) return false;
+  // Product identity and labelled scalar attributes own numeric facts. A
+  // mention in a description or related-product recommendation cannot prove
+  // the specification of this SKU.
+  const scalarFields = record.fields.filter(field =>
+    /^[\d.]+(?:\/\d+)?\s*[\p{L}%°]{1,12}$/u.test(field.value));
+  const specificationText = [...record.names,...scalarFields.map(field=>field.value)];
+  if (record.format === "unsupported") specificationText.push(chunk.content);
+  return units.every(unit => specificationText.some(text=>optionSpecificationMatches(text,unit)));
 }
 
 const kbDemand = (demand: CurrentFactualDemand) => ["product", "policy", "unknown"].includes(demand.source_type);
@@ -62,7 +72,7 @@ export function selectFactualEvidence(
 ): FactualEvidenceBundle {
   const empty = selectCanonicalGrounding([], options);
   if (!empty.ok) return empty;
-  if (request.interpretation_source !== "semantic_demands" || request.demands.length > 12 || documents.length > 5) {
+  if (request.interpretation_source !== "semantic_demands" || request.demands.length > 12 || documents.length > 10) {
     return {ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH"};
   }
   // Never repair mismatched content by copying another chunk's identity.
@@ -90,13 +100,23 @@ export function selectFactualEvidence(
     const coverage: GroundingDemand = {id: demand.id, source_type: demand.source_type, evidence_ids: [], missing_reasons: [...missing], blocked};
     demands.push(coverage);
     if (!kbDemand(demand) || blocked) continue;
-    const current = [demand.source_quote, ...demand.subjects, JSON.stringify(demand.constraints)].join("\n");
+    const current = [demand.question, ...demand.subjects, JSON.stringify(demand.constraints)].join("\n");
     // The legacy caller's expectedRegion describes the whole turn. A region
     // mentioned by another demand must not re-scope this demand's product.
     const region = deriveCurrentGroundingTarget(current).region;
     const policy = demand.source_type === "policy";
     const discovery = demand.subjects.length === 0;
-    const literalUnits = discovery && demand.source_type === "product" ? customerStatedUnitConstraints(demand) : [];
+    const productOptions = discovery && demand.source_type === "product";
+    const literalUnits = productOptions ? customerOptionSpecifications(demand) : [];
+    const unboundNumeric = productOptions && !literalUnits.length && Object.values(demand.constraints).flat().some(
+      value => value && typeof value === "object" && !Array.isArray(value) &&
+        (typeof value.value === "number" || typeof value.value === "string" && /^\d+(?:[./]\d+)?$/u.test(value.value.trim())));
+    if (unboundNumeric) {
+      coverage.missing_reasons.push("requested_specification_not_supported_by_returned_products");
+      continue;
+    }
+    const constrainedOptions = productOptions && (literalUnits.length > 0 ||
+      Boolean(demand.option_criteria?.scope.length) || "brand" in demand.constraints || "category" in demand.constraints);
     const base: CanonicalGroundingOptions = {...options, minScore: options.minScore ?? 0.45,
       requestText: current, currentTurnText: current, expectedSubject: undefined,
       expectedEntityIds: [], expectedTopicIds: [], semanticFactDescriptions: [],
@@ -106,7 +126,7 @@ export function selectFactualEvidence(
       const candidates: Selection[] = [];
       for (const document of documents) {
         // Candidate similarity is not a proof of the customer's literal size/capacity.
-        if(literalUnits.length&&!productCandidateMeetsStatedUnits(document,literalUnits))continue;
+        if (constrainedOptions && !/product|商品|產品|产品/iu.test(document.source_type)) continue;
         // A product record cannot stand in for a merchant-wide policy about an
         // unnamed/different item. Full-content identity remains necessary.
         if (policy && /product|商品|產品|产品/iu.test(document.source_type) &&
@@ -116,14 +136,21 @@ export function selectFactualEvidence(
         const selected = selectCanonicalGrounding([document], {...base, evidenceScope: scope});
         if (!selected.ok) return selected;
         if (selected.authority_decision.decision === "CONFLICT_UNRESOLVED") coverage.missing_reasons.push("source_conflict");
-        if (selected.document) candidates.push(selected);
+        if (!selected.document) continue;
+        if (!constrainedOptions) {
+          candidates.push(selected);
+          continue;
+        }
+        const matching = selected.chunks.filter(chunk => applicableOptionChunk(chunk,demand,literalUnits));
+        if (matching.length) candidates.push({...selected, chunks:matching,
+          evidence:selected.evidence.filter(item=>matching.some(chunk=>chunk.chunk_id===item.chunk_id && chunk.content===item.content))});
       }
       // A shared title/claim key/region/version rank does not establish the
       // same applicability scope or a supersession relationship. For example,
       // stock and pre-order delivery periods can legitimately differ. Preserve
       // each eligible policy's full text for the existing semantic verifier to
       // distinguish conditions, exceptions and genuine unresolved conflicts.
-      if(literalUnits.length&&!candidates.length)coverage.missing_reasons.push("requested_specification_not_supported_by_returned_products");
+      if(constrainedOptions&&!candidates.length)coverage.missing_reasons.push("requested_specification_not_supported_by_returned_products");
       for (const selected of candidates) {
         const target: CurrentGroundingTarget = {entity_ids: [], topic_ids: [], region,
           explicit_entity: false, explicit_topic: false, target_changed: false};

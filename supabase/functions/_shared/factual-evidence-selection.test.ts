@@ -446,7 +446,7 @@ Deno.test("Task3 P0: stale SKU evidence cannot become parent-product stock",asyn
 // Task3B v3.1 explicit bounded-candidate coverage. Five returned documents
 // cannot establish completeness of a larger remote index; missing SKU must
 // remain a demand gap, not a success fabricated from adjacent product evidence.
-Deno.test("Task3B v3.1 bounded top-K cannot imply missing SKU or sixth document was searched",()=>{
+Deno.test("Task3B v3.1 bounded top-K cannot imply missing SKU or an unreturned document was searched",()=>{
  const requested=demand(1,"Compare AC-100 and AC-200 selling prices","product",["AC-100","AC-200"]);
  const product=document("only-ac100","sku_code: AC-100\nspu_name: Instrument\nprice: 100 CNY","product","Instrument");
  product.authority!.entity_ids=["AC-100"];
@@ -456,8 +456,16 @@ Deno.test("Task3B v3.1 bounded top-K cannot imply missing SKU or sixth document 
  assert(!canUseSingleDemandDirectAnswer(request([requested])),"comparison collapsed into one-product answer");
  assert(five.grounding.demands[0].missing_reasons.includes("subject_evidence_missing"),
    "not-returned AC-200 incorrectly treated as proved absent or sourced");
- const six=selectFactualEvidence([product,...extras,document("sixth","sku_code: AC-200\nprice: 200 CNY","product","AC-200")],request([requested]),options);
- assert(!six.ok&&six.error==="KB_DOCUMENT_EVIDENCE_MISMATCH","over-limit remote corpus falsely treated as complete");
+ const match=document("returned-ac200","sku_code: AC-200\nprice: 200 CNY","product","AC-200");
+ for (const count of [6,10]) {
+   const tail=Array.from({length:count-6},(_,i)=>document("late-policy-"+i,"Published policy "+i));
+   const result=selectFactualEvidence([product,...extras,...tail,match],request([requested]),options);
+   assert(result.ok && result.grounding.items.some(item=>item.document_id==="returned-ac200"),
+     "a legal late document was rejected or lost");
+ }
+ const excess=Array.from({length:5},(_,i)=>document("excess-"+i,"Published policy "+i));
+ const eleven=selectFactualEvidence([product,...extras,...excess,match],request([requested]),options);
+ assert(!eleven.ok&&eleven.error==="KB_DOCUMENT_EVIDENCE_MISMATCH","over-limit remote corpus falsely treated as complete");
 });
 
 
@@ -492,4 +500,34 @@ Deno.test("Task3C generic numeric unit boundaries reject 12匹/2.5匹; accept li
  tenant.authority!.tenant_id="99";
  const denied=selectFactualEvidence([tenant],request([storage]),options);
  assert(denied.ok&&denied.grounding.items.length===0);
+});
+
+Deno.test("Task3 actual numeric shapes bind equivalent same-unit values and exclude unsuitable chunks", () => {
+  const scenarios: Array<{quote:string; constraint:CurrentFactualDemand["constraints"][string]; match:string; wrong:string}> = [
+    {quote:"2匹機型號",constraint:"2匹",match:"2匹",wrong:"12匹"},
+    {quote:"Panasonic 1匹 options",constraint:["1匹"],match:"1.0匹",wrong:"1匹+2匹"},
+    {quote:"咁有冇 1匹?",constraint:{value:"1"},match:"1匹",wrong:"11匹"},
+    {quote:"Panasonic 3/4匹 options",constraint:[{unit:"匹",value:"3/4"}],match:"0.75匹",wrong:"1.75匹"},
+  ];
+  for (const {quote,constraint,match,wrong} of scenarios) {
+    const d=demand(1,quote,"product");d.requested_facts=["options"];d.constraints={size:constraint};
+    const result=select([d],[document("wrong","Size: "+wrong,"Product"),document("right","Size: "+match,"Product")]);
+    equal(result.grounding.items.map(item=>item.document_id),["right"]);
+  }
+});
+
+Deno.test("Task3 bound product options reject cross-brand, cross-category, cross-tenant and unitless applicability",()=>{
+  const d=demand(1,"Panasonic 冷氣機 1匹 options","product");
+  d.requested_facts=["options"];d.constraints={brand:["Panasonic"],category:["冷氣機"],size:{value:"1"}};
+  const right=document("right","Brand: Panasonic\nCategory: 冷氣機\nSize: 1.0匹\nModel: MODEL-1","Product");
+  const foreign=structuredClone(right);foreign.authority!.tenant_id="35";
+  const candidates=[
+    document("brand","Brand: AeroHome\nCategory: 冷氣機\nSize: 1匹\nDescription: Compare Panasonic","Product"),
+    document("category","Brand: Panasonic\nCategory: 洗衣機\nSize: 1匹\nDescription: Similar to 冷氣機","Product"),
+    document("numeric","Brand: Panasonic\nCategory: 冷氣機\nSize: 2.5匹\nDescription: Alternative 1匹","Product"),
+    document("faq","Panasonic 冷氣機 1匹","Other"),foreign,
+  ];
+  equal(select([d],[...candidates,right]).grounding.items.map(i=>i.document_id),["right"]);
+  d.source_quote="Panasonic 冷氣機 size 1 options";
+  equal(select([d],[right]).grounding.items.length,0);
 });

@@ -95,3 +95,32 @@ test("Legacy captured hash is still shown, without falsely claiming upstream ori
  assert.equal(result.turns[0].evidence[0].rawSha256,"originalhash");
  assert.equal(result.turns[0].evidence[0].rawCaptureState,"LEGACY_ORIGIN_UNVERIFIED");
 });
+
+test("New semantic and grounding receipts link exact IDs and preserve redaction",()=>{
+ const v={id:"54f4abea-09cc-4b53-86be-bd8c3a93a820",role:"visitor",content:"1匹?",created_at:"2026-11-05"};
+ const a={id:"2d695f37-7409-4ef3-9bbb-63cb4c130124",role:"assistant",content:"Unverified model",created_at:"2026-11-05",metadata:{
+  source_message_id:v.id,b2_source_message_id:v.id,b2_expected_company_id:"3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+  b2_expected_revision:1,b2_gate_contract:"executeB2PersistenceGate:allow_after_revalidation",
+  b2_commit_source:"commit_ai_reply_tx",grounding_rejection_reason:"unsupported_claims",
+  factual_evidence_candidates:[{document_id:"doc",chunk_id:"chunk",demand_ids:["demand-1"]}],
+  factual_evidence_selection:[{evidence_id:"E1",document_id:"doc",chunk_id:"chunk",demand_ids:["demand-1"]}],
+ }};
+ const trace={id:"t",message_id:v.id,query_sent:null,created_at:"2026-11-05",top_score:null,kb_source:"singapore_context_search",
+  retrieved_chunks:{request_dispatch_state:"KB_NOT_DISPATCHED_SEMANTIC_FAILURE",
+   source_context:{semantic_input:{source_message_id:v.id},accepted_semantic_frame:null,phone:"91234567"},
+   response:{capture_state:"NOT_CAPTURED"}}};
+ const turn=linkConversationEvidenceTurns([v,a],[trace]).turns[0];
+ assert.equal(turn.evidence[0].requestDispatchState,"KB_NOT_DISPATCHED_SEMANTIC_FAILURE");
+ assert.equal(turn.evidence[0].rawCaptureState,"NOT_CAPTURED");
+ assert.equal(turn.evidence[0].requestJson,null);
+ assert.equal(JSON.parse(turn.evidence[0].sourceContext).semantic_input.source_message_id,v.id);
+ assert(!turn.evidence[0].sourceContext.includes("91234567"));
+ const receipt=JSON.parse(turn.answers[0].metadata);
+ assert.equal(receipt.assistant_message_id,a.id);
+ assert.equal(receipt.b2_source_message_id,v.id);
+ assert.equal(receipt.b2_expected_company_id,a.metadata.b2_expected_company_id);
+ assert.equal(receipt.b2_expected_revision,1);
+ assert.equal(receipt.factual_evidence_candidates[0].chunk_id,"chunk");
+ assert.equal(receipt.factual_evidence_selection[0].evidence_id,"E1");
+ assert.equal(receipt.grounding_rejection_reason,"unsupported_claims");
+});

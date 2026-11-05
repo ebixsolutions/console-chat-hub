@@ -109,7 +109,7 @@ export type ParsedAggregationResponse =
   | { ok: false; error_code: string };
 
 type Obj = Record<string, unknown>;
-const MAX_SELECTED_DOCUMENTS = 5;
+const MAX_SELECTED_DOCUMENTS = 10;
 const MAX_SUMMARY_CHUNKS_PER_DOCUMENT = 1;
 const MAX_FULL_CONTENT_CHUNKS_PER_DOCUMENT = 3;
 

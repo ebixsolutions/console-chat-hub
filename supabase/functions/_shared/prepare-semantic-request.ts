@@ -37,6 +37,10 @@ export interface PreparedSemanticRequest {
   memory: CanonicalConversationMemory | null;
   commerce: ConversationCommerceState | null;
   recovery: Awaited<ReturnType<typeof recoverSemanticHistory>>;
+  input_state?: {
+    commerce: {revision: number; source_message_id: string} | null;
+    memory: {revision: number; source_message_id: string} | null;
+  };
 }
 
 /** One read-only entrance for generation and conversation-mode Assist. The
@@ -127,5 +131,8 @@ export async function prepareSemanticRequest(
     legacy_authority: input.legacy_authority,
     signal: input.signal,
   });
-  return {semantic, history, memory, commerce, recovery};
+  return {semantic, history, memory, commerce, recovery, input_state:{
+    commerce:commerce ? {revision:commerceRow.revision,source_message_id:commerceRow.source_message_id} : null,
+    memory:memory ? {revision:memoryRow.revision,source_message_id:memoryRow.source_message_id} : null,
+  }};
 }

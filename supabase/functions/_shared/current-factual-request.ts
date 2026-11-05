@@ -25,6 +25,8 @@ export interface CurrentFactualDemand {
   source_type: FactualDemandSourceType;
   requested_facts: string[];
   constraints: Record<string, DecisionValue>;
+  option_criteria?: {scope: Array<{label: string; source_message_id: string}>;
+    specification: {value: string; unit: string; source_message_id: string} | null};
   customer_correction: boolean;
   explicit_negations: string[];
   ambiguity: CommerceSemanticAmbiguity;
@@ -466,6 +468,189 @@ export function sourceOwnedOptionWording(quote: string): boolean {
     /(?:想|需要|希望|想買|想买).{0,75}(?:推薦|推荐|推介|介紹|介绍|建議|建议)/iu.test(q);
 }
 
+// These patterns describe how customers ask for an alternative, not what a
+// merchant sells. A bare specification can continue only a single scoped read.
+const OPTION_NUMBER = String.raw`(?:\d{1,8}/\d{1,8}|\d{1,8}(?:\.\d{1,8})?)`;
+const OPTION_UNIT = String.raw`(?:[\p{Script=Han}%°]|[a-z]{1,12})`;
+const OPTION_SPEC = new RegExp(String.raw`(?<![\d./])(${OPTION_NUMBER})\s*(${OPTION_UNIT})(?![a-z\d])`, "giu");
+const ALTERNATIVE_PREFIX = /^(?:咁\s*(?:有冇|有無|有無得)|那(?:有沒有|有没有|有無|有吗)|(?:and|what about|how about|any)\s+)/iu;
+const NO_SPECIFIC_MODEL = /^(.*?)\s*[,，]\s*(?:沒有|没有|冇|無|无)(?:指定|特定)?(?:型號|型号|款式)[,，]\s*(?:你)?(?:有咩|有甚麼|有什么)(?:介紹|介绍|推薦|推荐)[?？.!！。]*$/iu;
+const CATEGORY_QUESTION = /^(?:你哋|你們|你们)?\s*(?:有冇|有沒有|有没有)([\p{L}][\p{L}\s]{1,60})(?:賣|卖)[?？.!！。]*$|^(?:do you (?:sell|offer|carry|provide))\s+([\p{L}][\p{L}\s-]{1,60})[?!.]*$/iu;
+
+function numericRatio(value: string): [bigint, bigint] | null {
+  if (!new RegExp(`^${OPTION_NUMBER}$`, "u").test(value)) return null;
+  if (value.includes("/")) {
+    const [numerator, denominator] = value.split("/").map(BigInt);
+    return denominator ? [numerator, denominator] : null;
+  }
+  const [integer, fractional = ""] = value.split(".");
+  return [BigInt(integer + fractional), 10n ** BigInt(fractional.length)];
+}
+
+function sameOptionNumber(a: string, b: string): boolean {
+  const x = numericRatio(a), y = numericRatio(b);
+  return Boolean(x && y && x[0] * y[1] === y[0] * x[1]);
+}
+
+/** Look for an exact numerical value in the same literal unit, with boundaries
+ * that exclude part numbers, other fractions, and multi-unit combinations. */
+export function optionSpecificationMatches(text: string, spec: {value: string; unit: string}): boolean {
+  const unit = spec.unit.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const pattern = new RegExp(String.raw`(?<![\w./])(${OPTION_NUMBER})\s*${unit}(?![a-z\d])`, "giu");
+  const source = clean(text);
+  return [...source.matchAll(pattern)].some(match => {
+    const start = match.index!, end = start + match[0].length;
+    return !/(?:[+×*]|(?<=[\d\p{Script=Han}])x)\s*$/iu.test(source.slice(0, start)) &&
+      !/^\s*(?:[+×*]|x\s*\d)/iu.test(source.slice(end)) &&
+      sameOptionNumber(spec.value, match[1]);
+  });
+}
+
+function literalOptionSpecifications(text: string) {
+  return [...clean(text).matchAll(OPTION_SPEC)].filter(match => numericRatio(match[1]) !== null &&
+    optionSpecificationMatches(match[0], {value:match[1], unit:match[2]}));
+}
+
+/** Structured constraints identify which source-quoted number is material.
+ * A unitless object can bind only when the source states one unambiguous unit. */
+export function customerOptionSpecifications(demand: Pick<CurrentFactualDemand,"constraints"|"source_quote"|"option_criteria">): Array<{value: string; unit: string}> {
+  if (demand.option_criteria?.specification) return [demand.option_criteria.specification];
+  const result = new Map<string, {value: string; unit: string}>();
+  const add = (candidate: DecisionValue) => {
+    if (Array.isArray(candidate)) {
+      for (const value of candidate) add(value);
+      return;
+    }
+    if (candidate && typeof candidate === "object") {
+      const value = typeof candidate.value === "number" ? String(candidate.value) : clean(candidate.value);
+      const unit = clean(candidate.unit);
+      if (!numericRatio(value)) return;
+      if (unit && /^[\p{L}%°]{1,12}$/u.test(unit) && optionSpecificationMatches(demand.source_quote, {value, unit})) {
+        result.set(norm(value + unit), {value, unit});
+      } else if (!unit) {
+        const matches = literalOptionSpecifications(demand.source_quote).filter(match => sameOptionNumber(value, match[1]));
+        if (matches.length === 1) result.set(norm(value + matches[0][2]), {value, unit:matches[0][2]});
+      }
+      return;
+    }
+    if (typeof candidate !== "string") return;
+    const match = literalOptionSpecifications(candidate)[0];
+    if (match?.[0] === clean(candidate) &&
+        optionSpecificationMatches(demand.source_quote,{value:match[1],unit:match[2]})) {
+      result.set(norm(match[1]+match[2]), {value:match[1],unit:match[2]});
+    }
+  };
+  for (const value of Object.values(demand.constraints)) add(value);
+  return [...result.values()];
+}
+
+function alternativeSpecification(text: string): RegExpMatchArray | null {
+  const rest = text.replace(ALTERNATIVE_PREFIX, "").replace(/[?？.!！。]+$/u,"").trim();
+  if (rest === text || !ALTERNATIVE_PREFIX.test(text)) return null;
+  const [spec, ...others] = literalOptionSpecifications(rest);
+  return spec && !others.length && spec[0] === rest ? spec : null;
+}
+
+function namedOptionSpecification(text: string) {
+  const [spec, ...others] = literalOptionSpecifications(text);
+  if (!spec || others.length || !sourceOwnedOptionWording(text) && !/^[^\d,;?？]{2,65}\d/u.test(text)) return null;
+  const label = text.slice(0, spec.index).replace(/^(?:給我有關|给我有关|請介紹|请介绍|想了解|show me|tell me about)\s*/iu,"").trim();
+  if (!validSubject(label) || label.length > 64 || /[,;?？<>@]/u.test(label) || POINTER.test(label) ||
+      /^(?:what|which|any|need|want|compare|show|有咩|有什麼|有什么|有哪些|想要)(?:\b|\s|$)/iu.test(label) ||
+      /\b(?:or|versus)\b|(?:或者|還是|还是|以及)/iu.test(label)) return null;
+  const suffix = text.slice(spec.index! + spec[0].length);
+  const category = /^\s+([\p{L}][\p{L}\s-]{1,60})\s*:/u.exec(suffix)?.[1].trim();
+  return {label, category, value:spec[1], unit:spec[2]};
+}
+
+/** Extend the existing factual request with customer-owned criteria. The
+ * nearest named exploration owns focus; intervening replies are never inputs.
+ * A prior category opener can scope the thread only across compatible option
+ * reads in the same literal unit. Ambiguous, transactional and lifecycle
+ * boundaries stop that scan. */
+function resolveOptionCriteria(input: ResolveCurrentFactualRequestInput, demand: CommerceSemanticDemand) {
+  const frame = input.semantic!, text = clean(demand.source_quote), source = clean(input.source_message_id);
+  if (!input.trusted_company_id || !source || clean(input.question) !== text ||
+      (frame.demands?.length ?? 0) !== 1 || demand.source_type !== "product" ||
+      !["ASK_FACT","NO_STATE_CHANGE"].includes(frame.operation) ||
+      frame.additive || frame.customer_correction || demand.customer_correction ||
+      (frame.customer_facts?.length ?? 0) || frame.explicit_negations.length || demand.explicit_negations.length ||
+      [frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state].some(value => value !== "none" && value !== "unknown") ||
+      TOPIC_BOUNDARY.test(text) || LIFECYCLE_BOUNDARY.test(text) || EXPLICIT_COMPARISON.test(text) ||
+      POINTER.test(text) || EXPLICIT_HISTORY_REFERENCE.test(text) ||
+      isPersonalOrderStatusRequest(text) || exactProductIdentifiers(text).length) return null;
+  if ([frame.ambiguity, demand.ambiguity].some(ambiguity => ambiguity.is_ambiguous &&
+      (!ambiguity.reasons.length || ambiguity.reasons.some(reason =>
+        !/^(?:(?:no (?:specific|single|exact) (?:sku|model)(?: specified)?)|(?:(?:sku|model) not supplied)|(?:missing (?:sku|model)))$/iu.test(reason))))) return null;
+
+  const alternative = alternativeSpecification(text);
+  const named = namedOptionSpecification(text);
+  const noModel = NO_SPECIFIC_MODEL.exec(text);
+  if (!alternative && !named && !noModel) return null;
+  if (noModel && !validSubject(noModel[1].trim())) return null;
+
+  const scope: NonNullable<CurrentFactualDemand["option_criteria"]>["scope"] = [];
+  let specification: NonNullable<CurrentFactualDemand["option_criteria"]>["specification"] = null;
+  if (named && !alternative) {
+    scope.push({label:named.label, source_message_id:source});
+    if (named.category) scope.push({label:named.category,source_message_id:source});
+    specification = {value:named.value, unit:named.unit, source_message_id:source};
+  } else if (alternative) {
+    specification = {value:alternative[1], unit:alternative[2], source_message_id:source};
+  } else if (noModel) {
+    scope.push({label:noModel[1].trim(), source_message_id:source});
+  }
+  const context: string[] = [];
+  let anchored = Boolean(named && sourceOwnedOptionWording(text));
+  let lastHistoricalLabel = "";
+  for (const row of (input.history ?? []).slice(0, 32)) {
+    if (!CUSTOMER.has(String(row.role ?? "").toLowerCase()) || row.id === source) continue;
+    const prior = clean(row.content);
+    if (!row.id || !prior || prior.length > 500 ||
+        TOPIC_BOUNDARY.test(prior) || LIFECYCLE_BOUNDARY.test(prior) ||
+        EXPLICIT_COMPARISON.test(prior) || EXPLICIT_HISTORY_REFERENCE.test(prior) ||
+        isPersonalOrderStatusRequest(prior) || exactProductIdentifiers(prior).length ||
+        /^(?:not\b|唔係|不是|並非|并非)/iu.test(prior)) break;
+    if (alternativeSpecification(prior)) continue;
+    const previous = namedOptionSpecification(prior);
+    const previousNoModel = NO_SPECIFIC_MODEL.exec(prior);
+    if (previous && (!specification || norm(previous.unit) === norm(specification.unit))) {
+      if (!anchored) {
+        if (scope.length && norm(scope[0].label) !== norm(previous.label)) break;
+        if (!scope.length) scope.push({label:previous.label, source_message_id:row.id});
+        if (previous.category && scope.length === 1) scope.push({label:previous.category,source_message_id:row.id});
+        if (!specification) specification = {value:previous.value,unit:previous.unit,source_message_id:row.id};
+        anchored = sourceOwnedOptionWording(prior);
+        context.push(prior);
+      }
+      lastHistoricalLabel = norm(previous.label);
+      continue;
+    }
+    if (previousNoModel && [norm(scope[0]?.label),lastHistoricalLabel].includes(norm(previousNoModel[1]))) continue;
+    const category = CATEGORY_QUESTION.exec(prior);
+    if (category && anchored && scope.length === 1) {
+      scope.push({label:(category[1] ?? category[2]).trim(),source_message_id:row.id});
+      context.push(prior);
+    }
+    break;
+  }
+  if (!anchored || !scope.length || !specification) return null;
+  // A cancelled/deferred customer state cannot be reactivated by a bare
+  // follow-up. Exact newly named alternatives still use normal routing.
+  if ((alternative || noModel) && (input.commerce?.entities ?? []).some(entity =>
+      INACTIVE.has(entity.status) && scope.some(item =>
+        [...entityNames(entity), entity.category].some(label => norm(label) === norm(item.label))))) return null;
+  const constraints = {...demand.constraints};
+  const typed = customerOptionSpecifications({constraints,source_quote:text});
+  if (!typed.some(item => norm(item.unit) === norm(specification.unit) && sameOptionNumber(item.value,specification.value))) {
+    constraints.specification = specification.value + specification.unit;
+  }
+  const labels = scope.map(item => item.label).filter(label => !literalFactualSubject(text,[label]));
+  const spec = specification.value + specification.unit;
+  return {criteria:{scope,specification}, constraints, context,
+    question:[...labels, specification.source_message_id !== source ? spec : "", text].filter(Boolean).join(" ")};
+}
+
 /** Product/plan/service OPTION DISCOVERY is a read of a category with customer
  * constraints, not a demand for an already-known SKU. Trust the exact current
  * customer quote and the bounded semantic request, never a model-created
@@ -592,7 +777,9 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     const id = `demand-${index + 1}`;
     const sourceQuote = clean(demand.source_quote);
     const quoteBound = !!sourceQuote && norm(question).includes(norm(sourceQuote));
-    const optionDiscovery = quoteBound && sourceBoundOptionDiscovery(input,demand);
+    const criteria = quoteBound ? resolveOptionCriteria(input,demand) : null;
+    const optionDiscovery = quoteBound && (Boolean(criteria) || sourceBoundOptionDiscovery(input,demand));
+    if (criteria) contexts.push(...criteria.context);
     const ambiguity: CommerceSemanticAmbiguity = optionDiscovery ? clearAmbiguity() : {
       is_ambiguous: demand.ambiguity.is_ambiguous,
       reasons: [...demand.ambiguity.reasons], clarification_question: demand.ambiguity.clarification_question,
@@ -606,7 +793,7 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     if (quoteBound && demand.source_type === "transaction") privateLocators.set(id,
       refs.filter(ref => norm(sourceQuote).includes(norm(ref))));
     const resolved = optionDiscovery
-      ? {bindings: [], question: sourceQuote, unresolved: false}
+      ? {bindings: [], question: criteria?.question ?? sourceQuote, unresolved: false}
       : quoteBound && !demand.ambiguity.is_ambiguous
       ? resolveDemandSubjects(input, demand, refs, explicitCurrentSubjects)
       : {bindings: [], question: clean(demand.question), unresolved: false};
@@ -640,15 +827,18 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     // retain the model's stale expanded question (e.g. price vs stock). Only
     // add source-validated subjects absent from the original quote; a second
     // synthetic question must not be allowed to revive an older SKU or field.
-    const answerQuestion = factConflict
+    const answerQuestion = !criteria && factConflict
       ? [subjects.filter(subject => !norm(sourceQuote).includes(norm(subject))).join("; "), sourceQuote]
           .filter(Boolean).join(" ")
       : resolved.question;
     return {
       id, question: answerQuestion, source_quote: sourceQuote, subjects,
-      subject_source_message_ids: unique(located.map(binding => binding.source_message_id ?? "")),
+      subject_source_message_ids: criteria
+        ? unique([...criteria.criteria.scope.map(item => item.source_message_id), criteria.criteria.specification.source_message_id, input.source_message_id ?? ""])
+        : unique(located.map(binding => binding.source_message_id ?? "")),
       source_type: demand.source_type, requested_facts: correctedFacts,
-      constraints: mergeDecisionContext(subjectConstraints(subjects, input), demand.constraints),
+      constraints: mergeDecisionContext(subjectConstraints(subjects, input), criteria?.constraints ?? demand.constraints),
+      ...(criteria ? {option_criteria:criteria.criteria} : {}),
       customer_correction: demand.customer_correction, explicit_negations: [...demand.explicit_negations], ambiguity,
     };
   });
@@ -684,15 +874,17 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
   // Preserve the entire original request for answer generation/verification;
   // only the retrieval projection excludes guidance and private transactions.
   const resolvedContext = unique(priorSubjects.map(binding => binding.subject));
+  const optionRequest = kbDemands.find(demand => demand.option_criteria);
+  const optionFollowup = optionRequest?.subject_source_message_ids.some(id => id !== input.source_message_id);
   const answerRequest = kbDemands.length
-    ? [question, resolvedContext.length ? `[Resolved subjects: ${resolvedContext.join("; ")}]` : null].filter(Boolean).join("\n") : null;
+    ? [optionRequest?.question ?? question, resolvedContext.length ? `[Resolved subjects: ${resolvedContext.join("; ")}]` : null].filter(Boolean).join("\n") : null;
   const request: CurrentFactualRequest = {
     version: "current-factual-request-1", source_message_id: input.source_message_id ?? null,
     original_question: input.question, interpretation_source: "semantic_demands",
     applicable: kbDemands.length > 0, question, merchant_request: kbDemands.map(demand => demand.source_quote).join("; ") || null,
     subject: subjects.length === 1 ? subjects[0] : null, subjects,
     requested_facts: unique(kbDemands.flatMap(demand => demand.requested_facts)), query: null, answer_request: answerRequest,
-    resolution: subjects.length ? currentSubjects.length ? "explicit" : "follow_up" : needsSubject ? "unresolved" : "none",
+    resolution: subjects.length ? currentSubjects.length ? "explicit" : "follow_up" : needsSubject ? "unresolved" : optionFollowup ? "follow_up" : optionRequest ? "explicit" : "none",
     subject_source_message_id: priorSubjects.length === 1 ? priorSubjects[0].source_message_id : currentSubjects.length === 1 ? currentSubjects[0].source_message_id : null,
     subject_source_message_ids: allSourceIds, demands,
     kb_required: kbDemands.length > 0, transaction_required: boundDemands.some(demand => demand.source_type === "transaction"),

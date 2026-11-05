@@ -9,7 +9,8 @@ export function redactEvidenceSensitiveText(value:string):string{
   .replace(/("(?:authorization|x-api-key|api_key|access_token|refresh_token|password|private_key|client_secret|service_role_key|email|phone|mobile)"\s*:\s*)"(?:\\.|[^"\\])*"/gi,'$1"[REDACTED]"')
   .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]{8,}/gi,"Bearer [REDACTED]")
   .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,"[EMAIL_REDACTED]")
-  .replace(/(?:\+?852[- ]?)?[569]\d{3}[- ]?\d{4}/g,"[PHONE_REDACTED]");
+  .replace(/\b[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\b|(?:\+?852[- ]?)?[569]\d{3}[- ]?\d{4}/gi,
+   value=>EVIDENCE_UUID.test(value)?value:"[PHONE_REDACTED]");
 }
 /** Serialize a bounded redacted snapshot for the existing authenticated TanStack server function. */
 export function redactEvidenceValue(value:unknown):string|null{
@@ -68,6 +69,13 @@ grounding_verification:meta.grounding_verification??null,
  grounding_verifier_failure:meta.grounding_verifier_failure??null,
  failed_generation_request_id:meta.failed_generation_request_id??null,
  factual_evidence_coverage:meta.factual_evidence_coverage??null,
+     factual_evidence_candidates:meta.factual_evidence_candidates??null,
+     factual_evidence_selection:meta.factual_evidence_selection??null,
+     citation_lineage:meta.citation_lineage??null,
+     assistant_message_id:a.id,source_message_id:m.id,
+     b2_gate_contract:meta.b2_gate_contract??null,b2_commit_source:meta.b2_commit_source??null,
+     b2_expected_revision:meta.b2_expected_revision??null,b2_source_message_id:meta.b2_source_message_id??null,
+     b2_expected_company_id:meta.b2_expected_company_id??null,control_commit:meta.control_commit??null,
      citations:meta.citations??null,unresolved_fact_fields:meta.unresolved_fact_fields??null,
     })};
   }),

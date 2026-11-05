@@ -125,6 +125,13 @@ export interface CommerceSemanticInterpretResult {
   request_id?: string;
   contract_rejection?: SemanticContractRejection;
   contract_diagnostic?: SemanticContractDiagnostic;
+  input_receipt?: {
+    source_message_id: string;
+    recent_source_message_ids: (string | null)[];
+    recovered_source_message_ids: string[];
+    user_sha256: string;
+    system_sha256: string;
+  };
 }
 
 function clean(value: unknown, max = 3000): string {
@@ -352,7 +359,7 @@ export function selectSemanticRecentHistory(
 function buildUser(
   input: CommerceSemanticInterpretInput,
   persistentStateSummary: string | null,
-): string | null {
+) {
   const fullText = fullSemanticText;
   const latest = fullText(input.latest);
   const prior = selectSemanticRecentHistory(input)
@@ -376,7 +383,7 @@ function buildUser(
   // 800. Oversized context is an observable input failure before model dispatch,
   // never a silently clipped customer requirement or a copied partial message.
   if (priorText.length + recoveredText.length > SEMANTIC_HISTORY_CHAR_LIMIT) return null;
-  return [
+  const user = [
     `Semantic frame version: ${COMMERCE_SEMANTIC_FRAME_VERSION}`,
     `Latest customer turn: ${latest}`,
     prior.length
@@ -398,6 +405,7 @@ function buildUser(
       : "Persistent commerce state summary: none",
     "Return one compact current-turn delta, not a state snapshot.",
   ].join("\n\n");
+  return {user,recentIds:prior.map(row=>row.message_id),recoveredIds:recovered.map(row=>row.message_id)};
 }
 
 export async function interpretCommerceSemantics(
@@ -420,8 +428,13 @@ export async function interpretCommerceSemantics(
   const persistentStateSummary = await loadPersistentCommerceStateSummary(
     input,
   );
-  const user = buildUser(input,persistentStateSummary);
-  if (user === null) return {frame:null,source:"none",failure_code:"SEMANTIC_INPUT_LIMIT",failure_stage:"input_context"};
+  const projection = buildUser(input,persistentStateSummary);
+  if (projection === null) return {frame:null,source:"none",failure_code:"SEMANTIC_INPUT_LIMIT",failure_stage:"input_context"};
+  const {user,recentIds,recoveredIds} = projection;
+  const [userSha,systemSha] = await Promise.all([sha256(user),sha256(COMMERCE_SEMANTIC_SYSTEM_PROMPT)]);
+  const input_receipt = {source_message_id:input.source_message_id,
+    recent_source_message_ids:recentIds,recovered_source_message_ids:recoveredIds,
+    user_sha256:userSha,system_sha256:systemSha};
   const operationId = input.operation_id ?? `commerce-semantic:${input.source_message_id}`;
 
   // Hosted 21745026: outer schema-valid JSON contained an invalid delta_json
@@ -449,12 +462,12 @@ export async function interpretCommerceSemantics(
     signal: input.signal,
   }); } catch (error) {
     const failure = failureFromError(error,{request_id:operationId,source_message_id:input.source_message_id});
-    return {frame:null,source:"none",failure_code:failure.code,failure_stage:failure.stage,failure};
+    return {input_receipt,frame:null,source:"none",failure_code:failure.code,failure_stage:failure.stage,failure};
   }
 
   if (!result.ok) {
     return {
-      frame: null,
+      input_receipt,frame: null,
       source: "none",
       failure_code: result.failure?.code ?? result.code,
       failure_stage: result.invalid_output_reason ?? result.failure?.stage ?? executionFailure(result.code).stage,
@@ -468,7 +481,7 @@ export async function interpretCommerceSemantics(
     parsed = JSON.parse(result.text);
   } catch {
     return {
-      frame: null,
+      input_receipt,frame: null,
       source: "none",
       failure_code: "LLM_INVALID_OUTPUT",
       failure_stage: "semantic_json",
@@ -500,7 +513,7 @@ export async function interpretCommerceSemantics(
         original_stage:"canonical_validation",demand_count:readOnly.demands?.length ?? 0,
         state_mutation:false,additional_model_attempts:0,
       }));
-      return {frame:readOnly,source:"semantic_model",failure_code:null};
+      return {input_receipt,frame:readOnly,source:"semantic_model",failure_code:null,request_id:result.request_id};
     }
     const recoveredOptions = contractRejection === "wire_context_nodes"
       ? recoverMissingDemandOptionDiscovery(parsed,latest,contractDiagnostic) : null;
@@ -512,10 +525,10 @@ export async function interpretCommerceSemantics(
         source_quote_bound:true,demand_count:1,
         state_mutation:false,additional_model_attempts:0,merchant_evidence_granted:false,
       }));
-      return {frame:recoveredOptions,source:"semantic_model",failure_code:null};
+      return {input_receipt,frame:recoveredOptions,source:"semantic_model",failure_code:null,request_id:result.request_id};
     }
     return {
-      frame: null,
+      input_receipt,frame: null,
       source: "none",
       failure_code: "LLM_INVALID_OUTPUT",
       failure_stage: "semantic_contract",
@@ -534,10 +547,10 @@ export async function interpretCommerceSemantics(
         source_message_id:input.source_message_id,request_id:result.request_id,
         original_stage:"semantic_source_binding",demand_count:1,
         state_mutation:false,extra_model_attempts:0}));
-      return {frame:rebound,source:"semantic_model",failure_code:null};
+      return {input_receipt,frame:rebound,source:"semantic_model",failure_code:null,request_id:result.request_id};
     }
     return {
-      frame:null,source:"none",failure_code:"LLM_INVALID_OUTPUT",failure_stage:"semantic_source_binding",
+      input_receipt,frame:null,source:"none",failure_code:"LLM_INVALID_OUTPUT",failure_stage:"semantic_source_binding",
       contract_rejection:"canonical_demand_source_quote",
       contract_diagnostic:{container:"wire_nodes",stage:"canonical_vocabulary",node_count:0,field_class:"demand_source_quote",reason:"field"},
       failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"canonical_validation",request_id:result.request_id,source_message_id:input.source_message_id}),
@@ -551,7 +564,7 @@ export async function interpretCommerceSemantics(
     requirementMutationText(input.latest) !== input.latest
   ) {
     return {
-      frame: null,
+      input_receipt,frame: null,
       source: "none",
       failure_code: "LLM_INVALID_OUTPUT",
       failure_stage: "requirement_lifecycle_conflict",
@@ -559,5 +572,5 @@ export async function interpretCommerceSemantics(
       request_id: result.request_id,
     };
   }
-  return { frame, source: "semantic_model", failure_code: null };
+  return { input_receipt,frame,source:"semantic_model",failure_code:null,request_id:result.request_id };
 }

@@ -1138,7 +1138,7 @@
     "supabase/functions/_shared/original-widget-preview.ts": "e8e379a148da8e31eec2dcd6ccff6c5e65777afaef3e0038f205004ac639ab3c",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "fd9081d40238e1c8a215abcc80b79a9175a7056bc8a059980802ad36b924735d",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "0ffc3bf59f6708b5308fd38c04a7ca7aba73290d9e66eb41182924773896ed31",
-    "supabase/functions/_shared/preview-kb-query-embedding.ts": "b8dbd55f37fde9af48548148a4624cae97a4812c45433e3a30e6b3c10c2eeee6",
+    "supabase/functions/_shared/preview-kb-query-embedding.ts": "889e2080f0510d8918a29d7f43b651236f998f64b224b014008e5af42b188850",
     "supabase/functions/_shared/prior-grounded-transform-core.ts": "d2f12698e06629f7a6c71637a4d522dc834ad30590b7e1d0210cf03b44d19f0b",
     "supabase/functions/_shared/remote-model-accounting.ts": "fd6c0157bc527ac38f3430d997ec8ec6142ed31bc4565e1920f3632c84207b95",
     "supabase/functions/_shared/service-semantic-routing.ts": "4d3dc9cffcda7f09c751511d9d851c96f6d8388bc162eaa676e096f38be26724",
@@ -1348,7 +1348,7 @@
     "supabase/functions/_shared/factual-request-context.ts": "9344e6b1b13097313258478ff85ce3cc91dd0781f7f4cd37c5ccb24951b49b7d",
     "supabase/functions/_shared/llm-router.ts": "1a30080d15c932ce4cac00757b9f5e39ec17a4020dac381e20ac461c6c747407",
     "supabase/functions/_shared/model-attempt-accounting.ts": "0d9774dbb67396ad18c92a787bd81e1aea70767fd3e778bae9d85736ba458c62",
-    "supabase/functions/_shared/prepare-semantic-request.ts": "13490f692caa7761a723f5011d214df6d49ec24ae1a1c70cce8b380f68a0e592",
+    "supabase/functions/_shared/prepare-semantic-request.ts": "0ae03b0d052f4ce8bd12d4ae34abf325594e3169a4b9063a0db53af3c857c670",
     "supabase/functions/_shared/semantic-history-recovery.test.ts": "af5fd4e1a9b25304827ed1fb5f66279cb1324a8fcaa2627bf63454c9ce369ca8",
     "supabase/functions/_shared/semantic-history-recovery.ts": "172b33e98a90416fd5bdc151d9b0eb650486b2589978b24258f1c5230c8bb0e6",
     "supabase/functions/_shared/service-semantic-routing.test.ts": "928690ce30b3c0dee868942843f440f82e14f8ee6f331688afd655eb019f277e",
@@ -1375,7 +1375,7 @@
     "supabase/functions/_shared/factual-kb-price-proof.ts": "cf91428060d416fdce0985eecdefef0a0f75bacac90223b237399378f6d3732d",
     "supabase/functions/_shared/factual-request-context.ts": "74c91de2d6a33761afcc574571c7cb50cfb0bd2e0ce19e23c531eb7caef3b2d9",
     "supabase/functions/_shared/grounding-evidence.ts": "afacfba6048be141d678addd33c0f7ba8af49d7179995a533181e713ba984c6b",
-    "supabase/functions/_shared/kb-aggregation-response.ts": "53901716c6365a06fb9f8cff5cd870543e74b13093d13212d4166bfb82ab7d51",
+    "supabase/functions/_shared/kb-aggregation-response.ts": "3b98eeeab8770c858e7456cadf8b4a6de9b6eafdacc3c48d8198ac0da1b23802",
     "supabase/functions/_shared/kb-client.ts": "d5c726dde6aa89a1eacd21a876d5637c266b08798e19c6b3c3537c488d842030",
     "supabase/functions/_shared/llm-router.ts": "7030594a8207971d263a61ce474a00031dcc6772bff22c5d92149f015b425d7b",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "bfab5a3a3ea2cb17c099dfeff2b4fbef034c29676b1119c0053afbba1cbd5742",
@@ -1394,7 +1394,7 @@
     "supabase/functions/_shared/llm-router.ts": "5569209ef967aeb369e99887d1e0ca71c3587be34ef85843ab69a72006e49d6a",
     "supabase/functions/generate-reply/index.ts": "8939c2b9340a653a2bafc610e8ebedeb0d1f80aadc64d682900df1db0485b15e",
     "tests/emergency-p0/chain.test.mjs": "00ed0472cb69adc0fc8076b456bac6660f842783625282d475afb52df30d4dea",
-    "tests/c3-widget-live-auth/original-preview.test.mjs": "676562d5ebf4c6f06c9ce4c79666ec194ae4fbe114cd78277242c3b4e7d72a51",
+    "tests/c3-widget-live-auth/original-preview.test.mjs": "c569c01e3c8ca549ed70a10bc4bafb0c784dcd60713bd0ec4779ea2a9cdd3db7",
     "supabase/functions/_shared/current-factual-request.ts": "f40d9235404fb0def3abf9b9654be4f58ecbbc326147dff523ee616b8ef88a24",
     "supabase/functions/_shared/current-factual-request.test.ts": "6f670512a6e6dbab5db07f7a27b8bc65de53f88e11abc26b286c5abcecf77b14"
   },
@@ -1450,7 +1450,7 @@
     "src/routes/_authenticated/console.tsx": "4e69a2de8ab338390c97636955d5000bbaffcb5fb93354a321d3b25e70fafda0",
     "tests/console-navigation/admin-evidence-log.test.mjs": "529fa6085d954917f5bc52dc7a70ee04dd66b98a183afbfae528e2c61dba10fc",
     "supabase/functions/_shared/current-factual-request.ts": "69bc9e424bfc2e3bf17c9a2f1ca5bd882057006b93f088102b999ba25d648263",
-    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "b2fdc17d799ce65741d3c647e666b70b9a0fdfaadc57a8d06c05d5aeea4c1b22",
+    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "75b6bc9fdb1e1063406efa6bc0609544992801fb595d68087e32c0079279a1b0",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "e885685300f6dbf860a53ac2db16d57c103e696f5bb2688683929921073803d1",
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "21d7cd3d17fb470db0ebf90f2c31f2175dfa52457f8965c6805ebf263ea8ee5b",
     "supabase/functions/_shared/llm-router.ts": "697fdf5636ac8bd7ea5562b6c9a9c477dab3b22b37a44954990daa010cd87929"
@@ -1474,10 +1474,10 @@
   },
   "task3c_paging_deployment_authorized": false,
   "authorized_task3c_paging_sha256": {
-    "src/lib/api/evidence-log-scope.ts": "1ce8d8f3ada273a592cd595bd09c0e0ebba20c8f8f3b977f45b94b1978d9d266",
+    "src/lib/api/evidence-log-scope.ts": "e703f43da0fba040ad0b476cbbf4b94bf1b559d19c29c2f11c4f4e399f2a2dd7",
     "src/lib/api/llmRuntime.service.ts": "248d6fb819be50a8d5519964c9b037a4f1af5304f82555be0aa0b82043bc3ae0",
-    "src/routes/_authenticated/console.settings.llm-runtime.tsx": "9e37530845958523ea598b72183b8339cbc9234379ee988d395ca7f8389717bb",
-    "tests/console-navigation/admin-evidence-log.test.mjs": "54f9880ccec42930841bee237e34fa6664c5720f862108a3e4314410c8ea8bb3"
+    "src/routes/_authenticated/console.settings.llm-runtime.tsx": "2133b86d5c464428afeb921a17112b3676f6200e784761bd15a82b6edfdfd12f",
+    "tests/console-navigation/admin-evidence-log.test.mjs": "f2a5ea20ed3dc09787e13d4a07b4a335089ed67962f717af8fb8e4f8b3ff1c19"
   },
   "task3c_raw_transport_test_deploy_authorized": false,
   "authorized_task3c_raw_transport_test_sha256": {
@@ -1485,7 +1485,7 @@
   },
   "task3c_source_id_bound_deploy_authorized": false,
   "authorized_task3c_source_id_bound_sha256": {
-    "supabase/functions/_shared/current-factual-request.ts": "2110255502da9388f2b67fe8e4c90555f3861c44780eda86c4e3e279dd43c4e5"
+    "supabase/functions/_shared/current-factual-request.ts": "bb28a37e933065208d714fdaa98bac10a710decf47615c6ff81b47ce5c9a2733"
   },
   "task3c_native_audit_parity_deploy_authorized": false,
   "authorized_task3c_native_audit_parity_sha256": {
@@ -1493,10 +1493,10 @@
   },
   "task3c_postman_spec_gap_deploy_authorized": false,
   "authorized_task3c_postman_spec_gap_sha256": {
-    "supabase/functions/_shared/factual-evidence-selection.ts": "44662b5199c4566d267fc793e4679af83f811e1048624840a440710a857c1680",
-    "supabase/functions/_shared/factual-evidence-selection.test.ts": "f28688eb9feed28d9084e2751c41053ec4b830763a8c5e22ae65c49e59e78814",
-    "supabase/functions/_shared/factual-request-context.ts": "bfde206bb7490e0a8cf90f30d52402064a1853597268c8377fe8cd30bca99851",
-    "supabase/functions/_shared/current-factual-request.test.ts": "dfefcadf4a5fabaac144d3f10ba66ee60d23a54984a16c559dccc7b824f0f2de",
-    "supabase/functions/generate-reply/index.ts": "6d43bf5b98d8bc01f44606c63f619de6b850c20e6fc6205bb683e11e296dac5c"
+    "supabase/functions/_shared/factual-evidence-selection.ts": "72d6c0e57456326e58a50e9e512126c781143250d877f244baba84fc9d7bad6e",
+    "supabase/functions/_shared/factual-evidence-selection.test.ts": "3ed33f8b756d7f7ea820cfed879c4d5cc93c3fa4b145e2fb64f121faf499de71",
+    "supabase/functions/_shared/factual-request-context.ts": "76876db8b3cb46346249264fbb20823dd81f81a02e369a5878d7449fe254f5da",
+    "supabase/functions/_shared/current-factual-request.test.ts": "88da3639efb7637d8657762c26ffae66e434f514896e310ae9bb859fc9329d86",
+    "supabase/functions/generate-reply/index.ts": "e39185a92f52e3a08957e0f6b8dfe01d2b29430d23ae7afc9e14c2f1cf0241a5"
   }
 }

@@ -183,8 +183,8 @@ async function embeddingFixture(fault='none',documentFixture={}) {
   observed_at:Math.floor(Date.now()/1000)-1,expires:Math.floor(Date.now()/1000)+600,
   deployment_pinned_until_expiry:true,lineage_pinned_until_expiry:true,query_embedding_calls:1,embedding_retries:0,generation_calls:0,ingestion_allowed:false,reindex_allowed:false,max_query_bytes:2048,
   documents:[{document_id:'fixture-published-policy',version_id:'fixture-version-2',chunks:[{chunk_id:'fixture-chunk-2',chunk_type:'full_content',content_sha256:await fixtureDigest(content)}]}]};
- if(documentFixture.documents)a.documents=await Promise.all(documentFixture.documents.map(async doc=>({document_id:doc.document_id,version_id:doc.version_id,
-  chunks:await Promise.all(doc.evidence.map(async chunk=>({chunk_id:chunk.chunk_id,chunk_type:chunk.chunk_type,content_sha256:await fixtureDigest(chunk.content)})))})));
+ if(documentFixture.documents)a.documents=await Promise.all(documentFixture.documents.slice(0,10).map(async doc=>({document_id:doc.document_id,version_id:doc.version_id,
+  chunks:await Promise.all([...(doc.summary?[doc.summary]:[]),...doc.evidence].map(async chunk=>({chunk_id:chunk.chunk_id,chunk_type:chunk.chunk_type,content_sha256:await fixtureDigest(chunk.content)})))})));
  if(fault==='expired')a.expires=a.observed_at-1;
  if(fault==='future')a.observed_at=Math.floor(Date.now()/1000)+100;
  if(fault==='retries')a.embedding_retries=1;
@@ -1390,4 +1390,99 @@ for(const [label,options,stage,attempts] of [
 });
 for(const fault of ['foreign-ticket','foreign-response','inactive-membership','no-match'])test('Director Policy authority boundary: '+fault,async()=>{
  const x=await setupInbox(fault);try{const r=await x.send('policy');if(fault==='no-match'){assert.equal(r.status,200);assert.equal(r.data.result.status,'insufficient_evidence');assert.equal(x.model(),0);}else{assert(r.status>=400);assert.notEqual(r.data.result?.status,'compliant');}}finally{globalThis.fetch=realFetch;}
+});
+
+function task3BoundedDocuments(count) {
+ return Array.from({length:count},(_,i)=>{
+  const document_id='task3-document-'+i,version_id='task3-version-'+i;
+  const chunk=(n,chunk_type)=>({document_id,version_id,chunk_id:document_id+'-chunk-'+n,
+    chunk_type,content:'Isolated subscription option '+i+' evidence '+n,score:.9});
+  return {document_id,version_id,title:'Isolated subscription option '+i,source_type:'Product',
+    document_score:.9,summary:chunk(0,'rag_summary'),evidence:[1,2,3].map(n=>chunk(n,'full_content'))};
+ });
+}
+
+for(const count of [5,6,10,11])test('Task3 exact '+count+' returned documents through attested and original RAG API binders and parser',async()=>{
+ const documents=task3BoundedDocuments(count);
+ const assertCanonical=async search=>{
+  const r=await search();
+  assert.equal(r.success,count<=10,JSON.stringify(r.failure??r.error_code));
+  if(count<=10){
+   assert.equal(r.documents.length,count);
+   assert.deepEqual(r.documents.flatMap(d=>d.chunks.map(c=>c.chunk_id)),
+    documents.flatMap(d=>[d.summary,...d.evidence].map(c=>c.chunk_id)));
+  }else assert.equal(r.chunks?.length??0,0);
+ };
+ const attested=await embeddingFixture('none',{documents});
+ globalThis.fetch=attested.upstream;
+ try{
+  const scoped=await resolveTenantScope(attested.c.id,undefined,attested.c.company_id);
+  await assertCanonical(()=>fetchKBRag({query:'subscription options',top_k:3},scoped.scope,resolveKBEndpoint(),
+    {uatContext:{conversationId:attested.c.id,operationId:crypto.randomUUID()}}));
+  assert.equal(attested.posts(),1);
+ }finally{globalThis.fetch=realFetch;}
+ const original=await originalAggregationFixture('none',false,{success:true,context_found:true,selected_documents:documents,citations:[]});
+ try{await assertCanonical(()=>original.search('subscription options'));assert.equal(original.posts(),1);}
+ finally{globalThis.fetch=realFetch;}
+});
+
+for(const [count,fault] of [[5,'none'],[6,'none'],[10,'none'],[11,'overflow'],
+ [10,'missing'],[10,'duplicate'],[10,'cross-batch-duplicate'],[10,'foreign'],[10,'version'],
+ [10,'owner'],[10,'content'],[10,'timeout'],[10,'revoked'],[10,'http']])test('Task3 live metadata '+count+' documents / '+fault,async()=>{
+ const x=await liveMetadataFixture(),docs=task3BoundedDocuments(count),all=new Map(),versions=new Map(),chunks=new Map();
+ const tenant={company_id:34,tenant_id:'fixture-remote-tenant'};
+ const chunkBatches=[],docBatches=[];let posts=0;
+ for(const d of docs){
+  const snapshot=[d.summary,...d.evidence].map(chunk=>chunk.content).join(' ');
+  const hash=await fixtureDigest(snapshot);
+  all.set(d.document_id,{...tenant,id:d.document_id,name:d.title,source_type:d.source_type,status:'published',
+    available_to_live_console:true,production_vector_status:'indexed',active_version_id:d.version_id,content_hash:hash});
+  versions.set(d.version_id,{...tenant,id:d.version_id,document_id:d.document_id,review_status:'approved',
+    vector_status:'generated',content_hash:hash,raw_content_snapshot:snapshot});
+  for(const c of [d.summary,...d.evidence])chunks.set(c.chunk_id,{...tenant,id:c.chunk_id,document_id:d.document_id,
+    version_id:d.version_id,chunk_type:c.chunk_type,chunk_text:c.content,environment:'production',status:'active',
+    embedding_status:'generated',embedding_dimensions:1,embedding_vector:[.1]});
+ }
+ const transport=async(url,init)=>{
+  if(init.method==='POST'){
+   posts++;assert.equal(String(url),x.endpoint);
+   return Response.json({success:true,context_found:true,selected_documents:docs,citations:[]});
+  }
+  assert.equal(init.method,'GET');
+  assert.equal(new Headers(init.headers).get('authorization'),'Bearer isolated-existing-metadata-bearer');
+  const u=new URL(url),entity=u.pathname.split('/').at(-1);
+  if(!u.searchParams.has('q'))return Response.json([[...all.values()][0]]);
+  const query=JSON.parse(u.searchParams.get('q')),ids=query.id.$in;
+  assert.equal(query.company_id,34);assert(ids.length<=20);assert.equal(+u.searchParams.get('_limit'),ids.length);
+  if(entity==='KBDocument'){docBatches.push(ids.length);return Response.json(ids.map(id=>all.get(id)));}
+  if(entity==='KBDocumentVersion')return Response.json(ids.map(id=>versions.get(id)));
+  assert.equal(entity,'KBVectorChunk');
+  chunkBatches.push(ids.length);
+  const rows=ids.map(id=>({...chunks.get(id)}));
+  if(chunkBatches.length===2){
+   if(fault==='missing')rows.pop();
+   if(fault==='duplicate')rows[1]=rows[0];
+   if(fault==='cross-batch-duplicate')rows[0]=[...chunks.values()][0];
+   if(fault==='foreign')rows[0].tenant_id='foreign';
+   if(fault==='version')rows[0].version_id='other-version';
+   if(fault==='owner')rows[0].document_id='foreign-document';
+   if(fault==='content')rows[0].chunk_text='Changed source';
+   if(fault==='revoked')delete f.env.KB_RAG_TENANT_TOKENS_JSON;
+   if(fault==='timeout')throw new DOMException('isolated second-batch timeout','TimeoutError');
+   if(fault==='http')return Response.json({}, {status:403});
+  }
+  return Response.json(rows);
+ };
+ globalThis.fetch=transport;
+ try{
+  const scoped=await resolveTenantScope(x.c.id,undefined,x.c.company_id);
+  const r=await fetchKBRag({query:'subscription options',top_k:3},scoped.scope,resolveKBEndpoint(),
+    {uatContext:{conversationId:x.c.id,operationId:crypto.randomUUID()}});
+  assert.equal(r.success,fault==='none',JSON.stringify(r.failure??r.error_code));assert.equal(posts,1);
+  if(fault==='none'){
+   assert.equal(r.documents.length,count);assert.equal(r.documents.flatMap(d=>d.chunks).length,count*4);
+   assert.deepEqual(docBatches,[count,count]);
+  }else{assert.equal(r.documents?.length??0,0);assert.equal(r.chunks?.length??0,0);}
+  assert.deepEqual(chunkBatches,count===11?[]:count===5?[20]:[20,count*4-20]);
+ }finally{globalThis.fetch=realFetch;}
 });

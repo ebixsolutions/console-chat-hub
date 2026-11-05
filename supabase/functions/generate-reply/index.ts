@@ -4509,6 +4509,30 @@ async function orchestrationGenerateReply(
   }
 
   if (_semanticFailure) {
+    if (_semanticFailure === "LLM_INVALID_OUTPUT" && source_message_id && _semanticPrepared?.semantic.input_receipt) {
+      // This is a private diagnostic receipt for an actual failed semantic
+      // attempt. No KB request, raw body or accepted frame exists on this path.
+      try {
+        const {error}=await supabaseAdmin.from("rag_trace").insert({
+          id:crypto.randomUUID(),conversation_id,message_id:source_message_id,query_sent:null,
+          top_score:null,kb_source:"singapore_context_search",
+          retrieved_chunks:{
+            contract:"c3-admin-conversation-evidence-v2",source_message_id,
+            request_dispatch_state:"KB_NOT_DISPATCHED_SEMANTIC_FAILURE",
+            request_json:null,response:{capture_state:"NOT_CAPTURED"},
+            source_context:{semantic_input:_semanticPrepared.semantic.input_receipt,
+              semantic_input_state:_semanticPrepared.input_state??null,accepted_semantic_frame:null},
+            execution_failure:{code:_semanticFailure,stage:_semanticPrepared.semantic.failure_stage??null,
+              request_id:_semanticPrepared.semantic.request_id??null,
+              contract_rejection:_semanticPrepared.semantic.contract_rejection??null},
+          },
+        });
+        if(error)throw error;
+      } catch {
+        console.warn(JSON.stringify({event:"c3_admin_evidence_write_failed",
+          conversation_id,source_message_id,code:"TRACE_INSERT_FAILED"}));
+      }
+    }
     // Reject before every Commerce/Memory mutation and R1 enrichment. The visitor
     // message remains durable; never claim its facts were saved after truncation.
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
@@ -5939,13 +5963,23 @@ Latest applicable corrections replace old values; an answered clarification is n
 context_turns:_currentFactualRequest.context_turns,
          clarification_source_message_ids:_currentFactualRequest.clarification_source_message_ids??null,
          resolution:_currentFactualRequest.resolution,
+        factual_request:_currentFactualRequest,
       }:{original_question:_h1LastMsg,answer_request:_productFactualRequest,requested_facts:[],
         subjects:[],subject_source_message_ids:[],context_turns:[],resolution:"not_resolved"};
       try{
         const evidence={
 contract:"c3-admin-conversation-evidence-v2",source_message_id,
  operation_id:actual?.operation_id??null,
-          query_contract:_kbRequestContract,source_context:ctx,
+          query_contract:_kbRequestContract,source_context:{
+            ...ctx,
+            semantic_input:_semanticPrepared?.semantic.input_receipt??null,
+            semantic_request_id:_semanticPrepared?.semantic.request_id??null,
+            accepted_semantic_frame:_semanticPrepared?.semantic.frame??null,
+            semantic_input_state:_semanticPrepared?.input_state??null,
+            factual_request_state:_c3CommerceSnapshot?{
+              revision:_c3CommerceSnapshot.revision,source_message_id:_c3CommerceSnapshot.source_message_id,
+            }:null,
+          },
 request_dispatch_state:actual?"HTTP_RECEIVED":
    ragResult?.failure?.stage==="admission"?"PRE_DISPATCH_DENIED":
    ragResult?.failure?.stage==="config"?"CONFIG_DENIED":"NOT_VERIFIED",
@@ -5959,10 +5993,10 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
    {capture_state:"NOT_CAPTURED",http_status:null,response_sha256:null,response_bytes:null,
      response_json_raw:null,reason:ragResult?.failure?.code??"no_http_receipt"},
  execution_failure:ragResult?.failure?{code:ragResult.failure.code,stage:ragResult.failure.stage}:null,
-          lineage:(ragResult?.documents??[]).slice(0,5).map(doc=>({
+          lineage:(ragResult?.documents??[]).map(doc=>({
             document_id:doc.document_id,title:doc.title,source_type:doc.source_type,
             document_score:doc.document_score,authority:doc.authority??null,
-            chunks:doc.chunks.slice(0,3).map(chunk=>({
+            chunks:doc.chunks.map(chunk=>({
               document_id:chunk.document_id,chunk_id:chunk.chunk_id,
               score:chunk.score,chunk_type:chunk.chunk_type,status:chunk.status,
             })),
@@ -7047,6 +7081,22 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
     });
   }
 
+  // Correlate budget-eligible sources and selected E IDs without storing
+  // raw evidence content or commercial fields in message metadata.
+  const factualEvidenceCandidates = new Map<string,{document_id:string;chunk_id:string;demand_ids:string[]}>();
+  for (const source of _factualEvidenceBundle?.sources ?? []) {
+    for (const chunk of source.selection.chunks) {
+      if (chunk.chunk_type !== "full_content" || !chunk.chunk_id) continue;
+      const key = JSON.stringify([chunk.document_id,chunk.chunk_id]);
+      const prior = factualEvidenceCandidates.get(key);
+      factualEvidenceCandidates.set(key,{document_id:chunk.document_id,chunk_id:chunk.chunk_id,
+        demand_ids:[...new Set([...(prior?.demand_ids??[]),...source.demand_ids])]});
+    }
+  }
+  const factualEvidenceSelection = _factualEvidenceBundle?.grounding.items.map(item=>({
+    evidence_id:item.id,document_id:item.document_id,chunk_id:item.chunk_id,
+    demand_ids:item.demand_ids,demand_scopes:item.demand_scopes,source_authority:item.source_authority,
+  }))??null;
   if (!llm.ok) {
     const failure=llm.failure ?? executionFailure(llm.code,{request_id:llm.request_id,source_message_id,http_status:llm.status});
     if (["admission","config"].includes(failure.stage) || failure.code.startsWith("UAT_")) {
@@ -7073,6 +7123,8 @@ source_error_code:"LLM_GROUNDING_REJECTED",
  grounding_verifier_failure:llm.failure?
    {code:llm.failure.code,stage:llm.failure.stage,http_status:llm.failure.http_status??null}:null,
  failed_generation_request_id:llm.request_id,
+        factual_evidence_candidates:[...factualEvidenceCandidates.values()],
+        factual_evidence_selection:factualEvidenceSelection,
         kb_retrieval_request:ragResult?.query_text_preview ?? null,
         kb_request_contract:ragResult?.trace_metadata?.kb_request_contract ?? null,
         ...(_currentFactualRequest?.subject ? {factual_request_subject:_currentFactualRequest.subject} : {}),
@@ -7187,6 +7239,8 @@ source_error_code:"LLM_GROUNDING_REJECTED",
       rag_api_status:"success", factual_grounding_required:true,
       ...(_currentFactualRequest?.subject ? {factual_request_subject:_currentFactualRequest.subject} : {}),
       grounding_verification: llm.grounding_verification,
+      factual_evidence_candidates:[...factualEvidenceCandidates.values()],
+      factual_evidence_selection:factualEvidenceSelection,
       factual_evidence_coverage: _factualEvidenceBundle.grounding.demands,
       unresolved_fact_fields: llm.grounding_verification.demand_resolutions.filter(item => item.status !== "supported").map(item => item.demand_id),
       evidence_selection_limited: _factualEvidenceBundle.grounding.selection_limited,

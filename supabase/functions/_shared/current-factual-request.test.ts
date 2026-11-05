@@ -1414,3 +1414,59 @@ Deno.test("Task3C Postman: a source-bound option request responds to 2匹 withou
  const untrusted={...r,demands:[{...r.demands[0],constraints:{horsepower:"2匹<script>"}}]};
  assert(!renderUnverifiedFactualNextStep(untrusted,"zh-TW")?.includes("<script>"),"untrusted spec leaked");
 });
+
+Deno.test("Task3 original T9–T12 preserve active Panasonic criteria through failed replies", () => {
+  const row = (id: string, content: string, role = "visitor") => ({id, content, role});
+  const history = [
+    row("T9-reply", "CW-SUL70BA，售價 HK$9999", "assistant"),
+    row("T9", "Panasonic 3/4匹 有什麼選擇?"),
+    row("T8", "給我有關大金 2匹機的型號介紹"),
+    ...["T7","T6","T5"].flatMap(id=>[row(id+"-reply","未能核實","assistant"),row(id,"給我有關大金 2匹機的型號介紹")]),
+    row("T4","大金2匹機"),
+    row("T3","大金，沒有指定型號，你有咩介紹"),
+    row("T2","大金 2匹 有什麼選擇？"),
+    row("T1", "你哋有冇冷氣機賣？"),
+  ];
+  for (const [id, q, constraints] of [
+    ["T10", "咁有冇 1匹?", {horsepower: {value: "1"}}],
+    ["T11", "咁有冇 1匹?", {}],
+    ["T12", "Panasonic 1匹 有什麼選擇?", {brand: ["Panasonic"], horsepower: ["1匹"]}],
+  ] as const) {
+    const semantic = demanded({...demand(q, "product", ["options"], []), constraints: structuredClone(constraints) as CommerceSemanticDemand["constraints"]});
+    const result = resolveCurrentFactualRequest({question:q, source_message_id:id, trusted_company_id:"company", history, semantic});
+    assert(result.kb_required && !result.needs_subject_clarification && result.subjects.length === 0 &&
+      /Panasonic/u.test(result.query ?? "") && /冷氣機/u.test(result.query ?? "") &&
+      !/大金|3\/4匹|CW-SUL70BA|9999/u.test(result.query ?? ""), JSON.stringify(result));
+    assert(result.subject_source_message_ids.includes(id === "T12" ? id : "T9"), "customer scope lost source");
+    assert(result.subject_source_message_ids.includes(id), "latest specification lost source");
+    assert(renderUnverifiedFactualNextStep(result, "zh-TW")?.includes("Panasonic"), "fallback lost the resolved customer criteria");
+    history.unshift(row(id+"-reply","options 未能核實", "assistant"), row(id,q));
+  }
+});
+
+Deno.test("Task3 original T2–T4 discover options without demanding a model or reasking 2匹", () => {
+  const history: FactualRequestHistoryRow[] = [{id:"T1", role:"visitor", content:"你哋有冇冷氣機賣？"}];
+  for (const [id, q] of [["T2", "大金 2匹 有什麼選擇？"], ["T3", "大金，沒有指定型號，你有咩介紹"], ["T4", "大金2匹機"]]) {
+    const d = demand(q, "product", ["model_info"], []);
+    d.ambiguity = {is_ambiguous:true, reasons:["SKU not supplied"], clarification_question:"Which model?"};
+    const result = resolveCurrentFactualRequest({question:q, source_message_id:id, trusted_company_id:"company", history, semantic:demanded(d)});
+    assert(result.kb_required && !result.needs_subject_clarification && result.subjects.length === 0 &&
+      /大金/u.test(result.query ?? "") && /2匹/u.test(result.query ?? ""), JSON.stringify(result));
+    history.unshift({id:id+"-reply",role:"assistant",content:"你指邊個現行產品或型號？"}, {id,role:"visitor",content:q});
+  }
+});
+
+Deno.test("Task3 numeric exploration preserves a different industry and fails closed at barriers", () => {
+  const q = "What about 12 GB?";
+  const anchor = {id:"old",role:"visitor",content:"Harbor 8 GB cloud plans: which options are offered?"};
+  const input = {question:q,source_message_id:"new",trusted_company_id:"company",
+    semantic:demanded(demand(q,"product",["options"],[]))};
+  const active = resolveCurrentFactualRequest({...input,history:[anchor]});
+  assert(active.query?.includes("Harbor") && active.query.includes("cloud plans") && !active.query?.includes("8 GB"), JSON.stringify(active));
+  for (const content of ["Cancel that", "Defer it", "Switch to insurance", "Compare both plans", "Not Harbor"]) {
+    const result = resolveCurrentFactualRequest({...input,history:[{id:"boundary",role:"visitor",content},anchor]});
+    assert(!result.query?.includes("Harbor"), "barrier was ignored: "+content);
+  }
+  const untrusted = resolveCurrentFactualRequest({...input,trusted_company_id:null,history:[anchor]});
+  assert(!untrusted.query?.includes("Harbor"),"unscoped history became customer evidence");
+});

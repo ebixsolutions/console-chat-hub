@@ -108,14 +108,14 @@ export async function bindQueryEmbeddingResponse(response:Response,a:QueryEmbedd
   const bytes=new Uint8Array(length);let offset=0;for(const p of parts){bytes.set(p,offset);offset+=p.length;}
   let data:any;try {data=JSON.parse(new TextDecoder().decode(bytes));}catch{return deny("KB_TOOL_FAILURE");}
   if(!active(a))return deny();
-  if(data?.success!==true || typeof data.context_found!=="boolean" || !Array.isArray(data.selected_documents) || data.selected_documents.length>5)return deny("KB_TOOL_FAILURE");
+  if(data?.success!==true || typeof data.context_found!=="boolean" || !Array.isArray(data.selected_documents) || data.selected_documents.length>10)return deny("KB_TOOL_FAILURE");
   if(data.company_id!==undefined && String(data.company_id)!==a.tenant || data.tenant_id!==undefined && String(data.tenant_id)!==a.tenant)return deny();
   if(!data.context_found) {
     if(data.selected_documents.length)return deny("KB_TOOL_FAILURE");
     return Response.json({success:true,context_found:false,selected_documents:[],citations:[]},{headers:{"Cache-Control":"no-store"}});
   }
   if(!data.selected_documents.length)return deny("KB_TOOL_FAILURE");
-  const seen=new Set<string>();
+  const seen=new Set<string>(),seenChunks=new Set<string>();
   for(const d of data.selected_documents) {
     const reviewed=a.documents.find(v=>v.document_id===d?.document_id);
     if(!reviewed || seen.has(d.document_id) || !Array.isArray(d.evidence) || d.evidence.length>3)return deny();
@@ -128,11 +128,19 @@ export async function bindQueryEmbeddingResponse(response:Response,a:QueryEmbedd
     }
     for(const c of [...(d.summary?[d.summary]:[]),...d.evidence]) {
       const known=reviewed.chunks.find(v=>v.chunk_id===c?.chunk_id);
-      if(!known || c.chunk_type!==known.chunk_type || typeof c.content!=="string" || await digest(c.content)!==known.content_sha256)return deny();
+      if(!known || seenChunks.has(c.chunk_id) ||
+        c.document_id!==undefined && c.document_id!==d.document_id ||
+        c.version_id!==undefined && c.version_id!==reviewed.version_id ||
+        c.company_id!==undefined && String(c.company_id)!==a.tenant ||
+        c.tenant_id!==undefined && String(c.tenant_id)!==a.tenant ||
+        c.chunk_type!==known.chunk_type || typeof c.content!=="string" ||
+        await digest(c.content)!==known.content_sha256)return deny();
+      seenChunks.add(c.chunk_id);
     }
     d.authority={...(object(d.metadata)?d.metadata:{}),...(object(d.authority)?d.authority:{}),
       tenant_id:a.tenant,version_id:reviewed.version_id,publication_state:"published",currentness:"current"};
   }
+  if(!active(a))return deny();
   // Only selected, attested document evidence is consumed by the existing parser.
   return Response.json({success:true,context_found:true,selected_documents:data.selected_documents,citations:[]},{headers:{"Cache-Control":"no-store"}});
 }
@@ -224,7 +232,7 @@ export async function bindRagApiResponse(response:Response,policy:RagApiPolicy):
   if(!response.ok)return {response,grounded:false};
   try {
   const data=await boundedJson(response);
-  if(!object(data) || data.success!==true || typeof data.context_found!=="boolean" || !Array.isArray(data.selected_documents) || data.selected_documents.length>5)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","envelope");
+  if(!object(data) || data.success!==true || typeof data.context_found!=="boolean" || !Array.isArray(data.selected_documents) || data.selected_documents.length>10)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","envelope");
   if(policy.rag_api_contract==="singapore_rag_aggregation_v1")return await bindOriginalAggregation(data);
   if(data.authority_contract!==policy.rag_api_contract || data.company_id===undefined)return ragAuthorityFailure("KB_RAG_AUTHORITY_MISSING");
   if(String(data.company_id)!==FRANKIE_KB_SCOPE.tenant || data.tenant_id!==undefined && String(data.tenant_id)!==FRANKIE_KB_SCOPE.tenant)return ragAuthorityFailure("KB_RAG_TENANT_CONFLICT");
@@ -358,7 +366,7 @@ export async function bindLiveMetadataResponse(response:Response,session:object,
   if(!currentLiveMetadataSession(session))return deny();
   if(!response.ok)return response;
   const s=liveSessions.get(session)!,data=await boundedJson(response);
-  if(data?.success!==true || typeof data.context_found!=="boolean" || !Array.isArray(data.selected_documents) || data.selected_documents.length>5)return deny("KB_TOOL_FAILURE");
+  if(data?.success!==true || typeof data.context_found!=="boolean" || !Array.isArray(data.selected_documents) || data.selected_documents.length>10)return deny("KB_TOOL_FAILURE");
   if(data.company_id!==undefined && String(data.company_id)!==FRANKIE_KB_SCOPE.tenant || data.tenant_id!==undefined && String(data.tenant_id)!==FRANKIE_KB_SCOPE.tenant)return deny();
   if(!data.context_found){if(data.selected_documents.length)return deny("KB_TOOL_FAILURE");return Response.json({success:true,context_found:false,selected_documents:[],citations:[]});}
   if(!data.selected_documents.length)return deny("KB_TOOL_FAILURE");
@@ -373,7 +381,13 @@ export async function bindLiveMetadataResponse(response:Response,session:object,
     if(!Array.isArray(d?.evidence) || d.evidence.length>3)return deny();
     return [...(d.summary?[d.summary]:[]),...d.evidence].map((c:any)=>c?.chunk_id);
   });
-  const chunks=await metadataSet(session,"KBVectorChunk",chunkIds,upstream,signal);
+  if(!chunkIds.length || chunkIds.length>40 || new Set(chunkIds).size!==chunkIds.length ||
+    chunkIds.some((value:unknown)=>!safeId(value)))return deny();
+  const chunks=await metadataSet(session,"KBVectorChunk",chunkIds.slice(0,20),upstream,signal);
+  if(chunkIds.length>20){
+    const remainder=await metadataSet(session,"KBVectorChunk",chunkIds.slice(20),upstream,signal);
+    for(const [id,chunk] of remainder)chunks.set(id,chunk);
+  }
   const seenDocs=new Set<string>(),seenChunks=new Set<string>(),checks:Array<{id:string;fingerprint:string}>=[];
   const fingerprint=(d:any)=>canonicalJson([d.id,d.company_id,d.tenant_id,d.status,d.available_to_live_console,d.production_vector_status,d.active_version_id,d.content_hash,d.name,d.source_type]);
   for(const hit of data.selected_documents){
@@ -391,7 +405,12 @@ export async function bindLiveMetadataResponse(response:Response,session:object,
     }
     const evidence=[...(hit.summary?[hit.summary]:[]),...hit.evidence];if(!evidence.length)return deny();
     for(const part of evidence){
-      if(!safeId(part?.chunk_id) || seenChunks.has(part.chunk_id) || !["rag_summary","full_content","faq_pair","section"].includes(part.chunk_type) || typeof part.content!=="string" || !part.content.trim())return deny();
+      if(!safeId(part?.chunk_id) || seenChunks.has(part.chunk_id) ||
+        part.document_id!==undefined && part.document_id!==doc.id ||
+        part.version_id!==undefined && part.version_id!==doc.active_version_id ||
+        part.company_id!==undefined && String(part.company_id)!==FRANKIE_KB_SCOPE.tenant ||
+        part.tenant_id!==undefined && String(part.tenant_id)!==FRANKIE_KB_SCOPE.tenant ||
+        !["rag_summary","full_content","faq_pair","section"].includes(part.chunk_type) || typeof part.content!=="string" || !part.content.trim())return deny();
       seenChunks.add(part.chunk_id);
       const chunk=chunks.get(part.chunk_id);
       const vector=Array.isArray(chunk?.embedding_vector)?chunk.embedding_vector:chunk?.embedding_vector?.values;
