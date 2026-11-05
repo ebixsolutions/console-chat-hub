@@ -80,7 +80,7 @@ rawCaptureState:raw!==null&&safeRaw!==raw?"REDACTED":
  rawCaptureOrigin:typeof r.capture_origin==="string"?r.capture_origin:"LEGACY_ORIGIN_UNVERIFIED",
  bodyComplete:r.body_complete===true,operationId:typeof d.operation_id==="string"?d.operation_id:null,
  rawResponse:safeRaw,
- rawSha256:typeof r.response_sha256==="string"&&/^[a-f0-9]{64}$/i.test(r.response_sha256)?r.response_sha256:null,
+ rawSha256:typeof r.response_sha256==="string"?r.response_sha256:null,
  responseBytes:typeof r.response_bytes==="number"?r.response_bytes:null,
  normalizedSha256:typeof r.normalized_response_sha256==="string"?r.normalized_response_sha256:null,
  normalizedBytes:typeof r.normalized_response_bytes==="number"?r.normalized_response_bytes:null,

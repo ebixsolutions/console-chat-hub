@@ -1461,5 +1461,9 @@
     "supabase/functions/_shared/kb-client.ts": "4e4de1a82883acdd18a6f289bde3d5f84355577bf081e7fad205420a8a5d7edd",
     "supabase/functions/generate-reply/index.ts": "f8768b6fdaacef4d426d9782fae64a087aef7d3c6656f3e0302611b154710ada",
     "src/lib/api/evidence-log-scope.ts": "007a4c719df4057393d62432a071995329e319db72933b965f1e656b2738b0de"
+  },
+  "task3c_hash_compat_deployment_authorized": false,
+  "authorized_task3c_hash_compat_sha256": {
+    "src/lib/api/evidence-log-scope.ts": "786a77d1789e375de1e9f3c590fb8fda0b3a0717f3c15a8130dcac8b7db66a7d"
   }
 }
