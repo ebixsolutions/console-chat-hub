@@ -3371,8 +3371,10 @@ async function persistBoundedNoCurrentEvidence(
   language: "zh-TW" | "zh-CN" | "en",
   traceMetadata: Record<string, unknown>,
   naturalIntent: NaturalCustomerIntent = { kind: "none", product: null },
+  factualRequest?: CurrentFactualRequest | null,
 ): Promise<Response> {
-  const content = renderNaturalNoCurrentEvidence(naturalIntent, language) ??
+  const content = (factualRequest ? renderUnverifiedFactualNextStep(factualRequest,language) : null) ??
+    renderNaturalNoCurrentEvidence(naturalIntent, language) ??
     renderBoundedNoCurrentEvidence(language);
   const metadata = {
     ...traceMetadata,
@@ -6284,6 +6286,8 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
             evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
           },
           _effectiveNaturalCustomerIntent,
+          _factualEvidenceBundle?.grounding.demands.some(demand=>demand.missing_reasons.includes(
+            "requested_specification_not_supported_by_returned_products")) ? _currentFactualRequest : null,
         );
       }
       if (_c1AuthorityDecision?.decision === "CONFLICT_UNRESOLVED") {

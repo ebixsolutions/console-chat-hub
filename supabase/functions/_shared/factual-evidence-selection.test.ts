@@ -459,3 +459,37 @@ Deno.test("Task3B v3.1 bounded top-K cannot imply missing SKU or sixth document 
  const six=selectFactualEvidence([product,...extras,document("sixth","sku_code: AC-200\nprice: 200 CNY","product","AC-200")],request([requested]),options);
  assert(!six.ok&&six.error==="KB_DOCUMENT_EVIDENCE_MISMATCH","over-limit remote corpus falsely treated as complete");
 });
+
+
+Deno.test("Task3C Postman same-class: FAQ and different-capacity product cannot prove a 2匹 option",()=>{
+ const d=demand(1,"給我有關大金 2匹機的型號介紹","product");
+ d.requested_facts=["model_info","published merchant options matching customer criteria"];
+ d.constraints={horsepower:"2匹"};
+ const unrelated=document("quiet-faq","如果重視安靜，同級產品分體式通常較安靜","Other","安靜 FAQ");
+ const multi=document("other-multisplit","品牌: DAIKIN 大金\n商品型號: 5MXM100RVMA\n匹數: 1匹+1.5匹+1.5匹","Product","DAIKIN 大金 一拖三");
+ const found=selectFactualEvidence([unrelated,multi],request([d]),options);
+ assert(found.ok,JSON.stringify(found));
+ equal(found.sources.length,0);
+ equal(found.grounding.items.length,0);
+ assert(found.grounding.demands[0].missing_reasons.includes("requested_specification_not_supported_by_returned_products"),
+  "mismatched specs were incorrectly counted as answer evidence");
+ const correct=document("matching","品牌: DAIKIN 大金\n商品型號: D-200\n匹數: 2匹","Product","DAIKIN 大金 2匹");
+ const actual=selectFactualEvidence([unrelated,correct],request([d]),options);
+ assert(actual.ok&&actual.sources.length===1&&actual.grounding.items.length===1);
+ equal(actual.grounding.items[0].document_id,"matching");
+});
+Deno.test("Task3C generic numeric unit boundaries reject 12匹/2.5匹; accept literal 2匹 and other industries",()=>{
+ const d=demand(1,"Need a 2匹 model","product");d.requested_facts=["model_info"];d.constraints={size:"2匹"};
+ const wrong=document("wrong","Size: 12匹; alternative 2.5匹","Product","wrong model");
+ const nope=selectFactualEvidence([wrong],request([d]),options);
+ assert(nope.ok&&!nope.grounding.items.length);
+ const storage=demand(1,"Show 500GB storage plans","product");storage.requested_facts=["model_info"];storage.constraints={storage:"500GB"};
+ const exact=document("storage-ok","plan: XYZ\nstorage: 500GB","Product","XYZ 500GB");
+ const yes=selectFactualEvidence([exact],request([storage]),options);
+ assert(yes.ok&&yes.grounding.items.length===1);
+ // Neither numerical source criteria nor model-proposed constraints confer tenant authority.
+ const tenant=document("other-tenant","plan: ABC\nstorage: 500GB","Product","ABC");
+ tenant.authority!.tenant_id="99";
+ const denied=selectFactualEvidence([tenant],request([storage]),options);
+ assert(denied.ok&&denied.grounding.items.length===0);
+});

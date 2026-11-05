@@ -120,6 +120,31 @@ export function renderUnverifiedFactualNextStep(
     facts.some(fact => /availab/iu.test(fact) &&
       !/booking|reservation|appointment|time\s*slots?|預約|预约|訂位|订位|訂房|订房/iu.test(fact));
   const price = wants(/price|pricing|cost|售價|售价|價格|价格|價錢|价钱/iu);
+
+  // A model/plan discovery request with a customer-stated numeric requirement
+  // must explain which exact requirement remains unverified. No source record
+  // is promoted to a matching item or a complete merchant inventory search.
+  const option = request.demands.length===1 ? request.demands[0] : null;
+  if(option && option.source_type==="product" && option.subjects.length===0 &&
+     !option.ambiguity.is_ambiguous && !request.transaction_required &&
+     !price && !stock &&
+     option.requested_facts.some(fact=>/model_info|(?:merchant|product)[\s_]+options|available[\s_]+models?/iu.test(fact))){
+    const quote=option.source_quote.normalize("NFKC").replace(/\s+/gu,"").toLowerCase();
+    const criteria=[...new Set(Object.values(option.constraints).flatMap(value=>{
+      if(typeof value!=="string")return [];
+      const token=value.normalize("NFKC").replace(/\s+/gu,"").toLowerCase();
+      return /^\d+(?:\.\d+)?[\p{L}%°]{1,12}$/u.test(token)&&quote.includes(token)?[token]:[];
+    }))].slice(0,2);
+    if(criteria.length){
+      const criteriaText=criteria.map(value=>"「"+value+"」").join("、");
+      if(language==="en")return "The retrieved information does not reliably establish a product model meeting "+criteria.join(", ")+
+        ". Different sizes or multi-unit configurations must not be presented as matching models. If this requirement is essential, the merchant needs to verify suitable options; other specifications can be compared if acceptable. No handoff has been made.";
+      if(language==="zh-CN")return "这次检索到的资料未能可靠确认符合"+criteriaText+
+        "要求的具体型号。其他规格或组合不能当作符合条件的商品。如果这个规格必须满足，目前不能提供已核实型号；可考虑其他规格，或请人工客服协助核实，目前尚未转接。";
+      return "今次檢索到嘅資料未能可靠確認符合"+criteriaText+
+        "要求嘅具體型號。其他匹數、規格或套裝唔可以當成符合要求。如果呢個規格係必須，目前未能提供已核實型號；可以考慮其他規格，或請真人客服協助核實，目前未有轉交。";
+    }
+  }
   // General business facts must not collapse into a vague "related data"
   // fallback. Keep these capability/fact labels cross-industry; none imply
   // that an order, booking, refund or entitlement actually exists.

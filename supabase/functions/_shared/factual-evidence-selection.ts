@@ -25,6 +25,33 @@ export type FactualEvidenceBundle = {
 
 const key = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
 const sourceKey = (document: string, chunk: string) => JSON.stringify([document, chunk]);
+
+/** A customer-stated numerical specification is an applicability condition,
+ * not an embedding relevance score. Only source-quoted units may constrain
+ * product-option discovery, across industries; no brand/HP whitelist. */
+function customerStatedUnitConstraints(demand: CurrentFactualDemand): string[] {
+ const quote=demand.source_quote.normalize("NFKC").replace(/\s+/gu,"").toLowerCase();
+ return [...new Set(Object.values(demand.constraints).flatMap(value=>{
+  if(typeof value!=="string")return [];
+  const token=value.normalize("NFKC").replace(/\s+/gu,"").toLowerCase();
+  return /^\d+(?:\.\d+)?[\p{L}%°]{1,12}$/u.test(token)&&quote.includes(token)?[token]:[];
+ }))];
+}
+function exactSourceUnit(text:string,token:string):boolean {
+ const s=text.normalize("NFKC").replace(/\s+/gu,"").toLowerCase();
+ let index=-1;
+ while((index=s.indexOf(token,index+1))!==-1){
+  const prev=index>0?s[index-1]:"",next=s[index+token.length]??"";
+  if(!/[\d.]/u.test(prev)&&!/[\d.]/u.test(next))return true;
+ }
+ return false;
+}
+function productCandidateMeetsStatedUnits(document:KBDocumentCandidate,units:string[]):boolean {
+ if(!/product|商品|產品|产品/iu.test(document.source_type))return false;
+ return document.chunks.some(chunk=>chunk.chunk_type==="full_content"&&!!chunk.chunk_id&&
+  units.every(unit=>exactSourceUnit(chunk.content,unit)));
+}
+
 const kbDemand = (demand: CurrentFactualDemand) => ["product", "policy", "unknown"].includes(demand.source_type);
 
 /** Source provenance still uses the existing authority gate. A merchant policy
@@ -69,6 +96,7 @@ export function selectFactualEvidence(
     const region = deriveCurrentGroundingTarget(current).region;
     const policy = demand.source_type === "policy";
     const discovery = demand.subjects.length === 0;
+    const literalUnits = discovery && demand.source_type === "product" ? customerStatedUnitConstraints(demand) : [];
     const base: CanonicalGroundingOptions = {...options, minScore: options.minScore ?? 0.45,
       requestText: current, currentTurnText: current, expectedSubject: undefined,
       expectedEntityIds: [], expectedTopicIds: [], semanticFactDescriptions: [],
@@ -77,6 +105,8 @@ export function selectFactualEvidence(
       const scope = policy ? "policy_candidate" as const : "discovery_candidate" as const;
       const candidates: Selection[] = [];
       for (const document of documents) {
+        // Candidate similarity is not a proof of the customer's literal size/capacity.
+        if(literalUnits.length&&!productCandidateMeetsStatedUnits(document,literalUnits))continue;
         // A product record cannot stand in for a merchant-wide policy about an
         // unnamed/different item. Full-content identity remains necessary.
         if (policy && /product|商品|產品|产品/iu.test(document.source_type) &&
@@ -93,6 +123,7 @@ export function selectFactualEvidence(
       // stock and pre-order delivery periods can legitimately differ. Preserve
       // each eligible policy's full text for the existing semantic verifier to
       // distinguish conditions, exceptions and genuine unresolved conflicts.
+      if(literalUnits.length&&!candidates.length)coverage.missing_reasons.push("requested_specification_not_supported_by_returned_products");
       for (const selected of candidates) {
         const target: CurrentGroundingTarget = {entity_ids: [], topic_ids: [], region,
           explicit_entity: false, explicit_topic: false, target_changed: false};

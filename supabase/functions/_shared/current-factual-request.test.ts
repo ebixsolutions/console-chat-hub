@@ -1396,3 +1396,21 @@ Deno.test("Task3C keeps every B2-confirmed intermediate option criterion in the 
  const noTrust=resolveCurrentFactualRequest({...input,history:wrong});
  assert(!noTrust.query?.includes(original),"unverified cross-tenant step inherited original");
 });
+
+
+Deno.test("Task3C Postman: a source-bound option request responds to 2匹 without inventing a matching Daikin model",()=>{
+ const q="給我有關大金 2匹機的型號介紹";
+ const semantic=demanded(demand(q,"product",["model_info","published merchant options matching customer criteria"],[]));
+ const r=resolveCurrentFactualRequest({question:q,semantic,source_message_id:"visitor",history:[]});
+ assert(r.applicable&&r.demands.length===1,"original product discovery was lost");
+ r.demands[0].constraints={horsepower:"2匹"};
+ for(const lang of ["zh-TW","zh-CN","en"] as const){
+  const reply=renderUnverifiedFactualNextStep(r,lang);
+  assert(!!reply&&reply.includes("2匹"),"missing customer-constraint next step");
+  assert(!/5MXM100RVMA|2匹型號有貨|2匹现货|verified current price|已轉交|已转接|paid|HK\$[0-9]/iu.test(reply),
+   "unverified catalog or transaction claim was invented: "+reply);
+  assert(!/model_info|published merchant options/i.test(reply),"internal ontology leaked");
+ }
+ const untrusted={...r,demands:[{...r.demands[0],constraints:{horsepower:"2匹<script>"}}]};
+ assert(!renderUnverifiedFactualNextStep(untrusted,"zh-TW")?.includes("<script>"),"untrusted spec leaked");
+});
