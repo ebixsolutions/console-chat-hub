@@ -1478,5 +1478,9 @@
     "src/lib/api/llmRuntime.service.ts": "248d6fb819be50a8d5519964c9b037a4f1af5304f82555be0aa0b82043bc3ae0",
     "src/routes/_authenticated/console.settings.llm-runtime.tsx": "9e37530845958523ea598b72183b8339cbc9234379ee988d395ca7f8389717bb",
     "tests/console-navigation/admin-evidence-log.test.mjs": "54f9880ccec42930841bee237e34fa6664c5720f862108a3e4314410c8ea8bb3"
+  },
+  "task3c_raw_transport_test_deploy_authorized": false,
+  "authorized_task3c_raw_transport_test_sha256": {
+    "supabase/functions/_shared/catalogue-price-stock.test.ts": "10d305365b8caeffa04ca096a93178390c400986b3a2ff5dee005d209e89e742"
   }
 }

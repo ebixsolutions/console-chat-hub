@@ -6,7 +6,7 @@ import {buildCitationMetadata} from './citation-lineage.ts';
 import {bindRagApiResponse,bindRagServiceDocument,ORIGINAL_RAG_ACTIVATION} from './preview-kb-query-embedding.ts';
 import {evaluateB2BeforeCommit} from './pre-send-conversion-supervisor.ts';
 import {createEmptyConversationCommerceState} from './commerce-state-contract.ts';
-import type {KBDocumentCandidate} from './kb-client.ts';
+import {captureKBTransportResponse,captureKBRawEvidence,type KBDocumentCandidate} from './kb-client.ts';
 const assert=(v:unknown,msg:string)=>{if(!v)throw Error(msg)};
 // Verbatim field transcription of the user-provided 2026-10-29 Row 4 screenshot.
 // This is NOT a captured RAG response nor proof of current price/live inventory.
@@ -313,4 +313,30 @@ Deno.test("Task3B v3.1 identity-bound document-only SKU provides recorded USD pr
  assert(!result.result?.reply.includes("USD 72")&&!result.result?.reply.includes("USD 20")&&
    !result.result?.price_fact&&b2(result,"JK-101-M price and stock?").decision==="allow",
    "document-only source promoted a special/cost price or current merchant offer");
+});
+
+Deno.test("Task3C captures exact upstream HTTP bytes before binder JSON reconstruction",async()=>{
+ const raw=' { "success" : true, "selected_documents" : [], "context_found" : false } ';
+ const request='{"query":"models","company_id":34}';
+ const upstream=new Response(raw,{status:200,headers:{"Content-Type":"application/json"}});
+ const receipt=await captureKBTransportResponse(upstream,request);
+ const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(raw));
+ const expected=Array.from(new Uint8Array(digest),v=>v.toString(16).padStart(2,"0")).join("");
+ assert(receipt.capture_origin==="UPSTREAM_HTTP"&&receipt.capture_state==="CAPTURED"&&
+   receipt.body_complete===true&&receipt.response_sha256===expected&&
+   receipt.response_json_raw===raw&&receipt.response_bytes===new TextEncoder().encode(raw).length&&
+   receipt.http_status===200&&receipt.request_body===request,"original transport receipt mismatch");
+ // Original Response remains unconsumed, preserving downstream authority binding.
+ assert(await upstream.text()===raw,"transport capture consumed original response identity");
+ const normalized=await captureKBRawEvidence(request,JSON.stringify(JSON.parse(raw)),200);
+ assert(normalized.capture_origin==="BOUND_RESPONSE"&&normalized.response_sha256!==expected,
+   "normalized body was misidentified as original KB bytes");
+});
+Deno.test("Task3C oversize upstream evidence is bounded without pretending no HTTP received",async()=>{
+ const response=new Response("x".repeat(65_537),{status:200});
+ const receipt=await captureKBTransportResponse(response,"{}");
+ assert(receipt.capture_origin==="UPSTREAM_HTTP"&&receipt.body_complete===true&&
+   receipt.capture_state==="WITHHELD_OVERSIZED"&&receipt.response_json_raw===null&&
+   typeof receipt.response_sha256==="string"&&receipt.response_sha256.length===64&&
+   receipt.response_bytes===65_537,"oversize body was inaccurately captured");
 });
