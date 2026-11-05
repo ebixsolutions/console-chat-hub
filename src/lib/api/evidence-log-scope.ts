@@ -44,9 +44,14 @@ export function linkConversationEvidenceTurns(messages:EvidenceMessage[],traces:
  for(const m of messages){
   if(!["assistant","agent"].includes(m.role)||m.content==="__THINKING__")continue;
   const meta=asRecord(m.metadata);
-  const source=[meta.source_message_id,meta.b2_source_message_id].find(x=>typeof x==="string"&&visitorIds.has(x)) as string|undefined;
-  if(!source){unlinked.push(m);continue;}
-  replies.set(source,[...(replies.get(source)??[]),m]);
+const declared=[meta.source_message_id,meta.b2_source_message_id]
+     .filter((value):value is string=>typeof value==="string"&&value.length>0);
+   const distinct=[...new Set(declared)];
+   if(distinct.length>1){unlinked.push(m);continue;} // Conflicting source pointers are never guessed.
+   const source=distinct[0];
+   if(source&&!visitorIds.has(source))continue; // A source on another message page.
+   if(!source){unlinked.push(m);continue;}
+   replies.set(source,[...(replies.get(source)??[]),m]);
  }
  const turns=visitors.map((m,index)=>({
   index:index+1,messageId:m.id,createdAt:m.created_at,
@@ -97,6 +102,8 @@ rawCaptureState:raw!==null&&safeRaw!==raw?"REDACTED":
        (meta.rag_api_status===null||meta.rag_api_status===undefined);
    })?"KB_NOT_DISPATCHED_SEMANTIC_FAILURE":"NOT_CAPTURED",
  }));
- return {turns,unlinkedReplies:unlinked.map(m=>({id:m.id,role:m.role,
-  text:m.is_recalled?"[RECALLED]":redactEvidenceSensitiveText(m.content),createdAt:m.created_at}))};
+return {turns,unlinkedReplies:unlinked.map(m=>({id:m.id,role:m.role,
+   text:m.is_recalled?"[RECALLED]":redactEvidenceSensitiveText(m.content),createdAt:m.created_at,
+   linkageStatus:new Set([asRecord(m.metadata).source_message_id,asRecord(m.metadata).b2_source_message_id]
+     .filter(v=>typeof v==="string"&&v.length>0)).size>1?"CONFLICTING_SOURCE_IDS":"NO_SOURCE_ID"}))};
 }

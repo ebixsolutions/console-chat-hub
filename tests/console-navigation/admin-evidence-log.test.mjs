@@ -74,3 +74,24 @@ test('Pre-KB semantic failure is not mislabeled as historical KB raw capture',()
  assert.equal(explicit.turns[0].evidence.length,0);
  assert.equal(linkConversationEvidenceTurns([visitor],[]).turns[0].evidenceStatus,'NOT_CAPTURED');
 });
+
+test("Cross-page replies are bound by exact source and conflicting IDs are not guessed",()=>{
+ const v={id:"visitor",role:"visitor",content:"Which models?",created_at:"2026-11-04T10:00:00Z"};
+ const a={id:"answer",role:"assistant",content:"Exact answer",created_at:"2026-11-04T10:01:00Z",metadata:{source_message_id:"visitor"}};
+ const other={id:"other",role:"assistant",content:"Another page",created_at:"2026-11-04T10:02:00Z",metadata:{source_message_id:"visitor-other"}};
+ const conflict={id:"bad",role:"assistant",content:"Conflicting sources",created_at:"2026-11-04T10:03:00Z",
+   metadata:{source_message_id:"visitor",b2_source_message_id:"visitor-other"}};
+ const linked=linkConversationEvidenceTurns([v,a,other,conflict],[]);
+ assert.equal(linked.turns[0].answers.length,1);assert.equal(linked.turns[0].answers[0].id,"answer");
+ assert.equal(linked.unlinkedReplies.length,1);
+ assert.equal(linked.unlinkedReplies[0].linkageStatus,"CONFLICTING_SOURCE_IDS");
+});
+test("Legacy captured hash is still shown, without falsely claiming upstream origin",()=>{
+ const v={id:"v",role:"visitor",content:"Models?",created_at:"2026-11-04T10:00:00Z"};
+ const t={id:"t",message_id:"v",query_sent:"q",retrieved_chunks:{
+  response:{capture_state:"CAPTURED",response_sha256:"originalhash",response_json_raw:"{}"}},
+  created_at:"2026-11-04T10:00:01Z",kb_source:"singapore_context_search",top_score:null};
+ const result=linkConversationEvidenceTurns([v],[t]);
+ assert.equal(result.turns[0].evidence[0].rawSha256,"originalhash");
+ assert.equal(result.turns[0].evidence[0].rawCaptureState,"LEGACY_ORIGIN_UNVERIFIED");
+});

@@ -374,11 +374,17 @@ function AdminConversationEvidenceLog(){
   setBusy(id);
   try{
    const page=await detailFn({data:{conversationId:id,offset}});
-   if(!page.ok){setLoaded(prev=>({...prev,[id]:page}));return;}
-   setLoaded(prev=>({...prev,[id]:{...page,
-    turns:[...(prev[id]?.turns??[]),...(page.turns??[])],
-    unlinkedReplies:[...(prev[id]?.unlinkedReplies??[]),...(page.unlinkedReplies??[])]}}));
-  }catch{setLoaded(prev=>({...prev,[id]:{ok:false,error:"evidence_detail_unavailable"}}));}
+if(!page.ok){setLoaded(prev=>({...prev,[id]:{
+     ...prev[id],pageError:page.error??"evidence_detail_unavailable"}}));return;}
+   setLoaded(prev=>{
+     const turns=[...new Map([...(prev[id]?.turns??[]),...(page.turns??[])]
+       .map(t=>[t.messageId,t])).values()].map((t,index)=>({...t,index:index+1}));
+     const orphans=[...new Map([...(prev[id]?.unlinkedReplies??[]),...(page.unlinkedReplies??[])]
+       .map(t=>[t.id,t])).values()];
+     return {...prev,[id]:{...page,turns,unlinkedReplies:orphans,pageError:undefined}};
+   });
+  }catch{setLoaded(prev=>({...prev,[id]:{
+    ...prev[id],pageError:"evidence_detail_unavailable"}}));}
   finally{setBusy(null);}
  };
  const findExactTicket=async()=>{
@@ -452,7 +458,12 @@ function AdminConversationEvidenceLog(){
            <td className="max-w-[340px] p-2">{!t.evidence.length?<span className="text-amber-700">{t.evidenceStatus==="KB_NOT_DISPATCHED_SEMANTIC_FAILURE"?"KB_NOT_DISPATCHED_SEMANTIC_FAILURE":"NOT_CAPTURED"}</span>:
             t.evidence.map(ev=><details key={ev.id} className="mb-2">
              <summary className="cursor-pointer">{ev.rawCaptureState} · HTTP {ev.responseStatus??"—"}</summary>
-             <div>SHA256 {ev.rawSha256??"NOT_CAPTURED"} · Bytes {ev.responseBytes??"—"}</div>
+<div>SHA256 {ev.rawSha256??"NOT_CAPTURED"} · Bytes {ev.responseBytes??"—"}</div>
+             <div className="text-xs text-slate-600">Origin: {ev.rawCaptureOrigin} · Complete: {ev.bodyComplete?"yes":"not verified"}
+              · Operation: {ev.operationId??"NOT_CAPTURED"}</div>
+             <div className="text-xs text-slate-600">Normalized SHA: {ev.normalizedSha256??"NOT_CAPTURED"}
+              · Normalized bytes: {ev.normalizedBytes??"—"}</div>
+             {ev.executionFailure&&<pre className="max-h-24 overflow-auto break-all bg-slate-100 p-2">{ev.executionFailure}</pre>}
              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{ev.rawResponse??"NOT_CAPTURED / WITHHELD"}</pre>
              <p>Document / Chunk lineage</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.lineage)}</pre>
             </details>)}</td>
@@ -468,6 +479,9 @@ function AdminConversationEvidenceLog(){
           <summary className="cursor-pointer">Assistant/Agent replies without verified source linkage</summary>
           <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all">{showJson(loaded[c.id].unlinkedReplies)}</pre>
          </details>}
+{loaded[c.id].pageError&&<p role="alert" className="p-3 text-amber-700">
+           Load more failed: {loaded[c.id].pageError}; earlier evidence remains available.
+         </p>}
          {loaded[c.id].nextOffset!=null&&
           <button type="button" disabled={busy===c.id} onClick={()=>void loadMore(c.id,loaded[c.id].nextOffset!)}
            className="m-3 rounded border px-3 py-1">Load more messages</button>}

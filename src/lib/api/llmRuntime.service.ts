@@ -187,8 +187,8 @@ export interface EvidenceConversation{id:string;status:string;channelId:string|n
 export interface EvidenceListResult{ok:boolean;error?:string;rows?:EvidenceConversation[];}
 export interface EvidenceTurnsResult{ok:boolean;error?:string;conversationId?:string;
  turns?:ReturnType<typeof linkConversationEvidenceTurns>["turns"];
- unlinkedReplies?:ReturnType<typeof linkConversationEvidenceTurns>["unlinkedReplies"];
- nextOffset?:number|null;}
+unlinkedReplies?:ReturnType<typeof linkConversationEvidenceTurns>["unlinkedReplies"];
+ pageError?:string;nextOffset?:number|null;}
 const evidenceListInput=z.object({conversationId:z.string().refine(isEvidenceConversationId).optional()});
 export const getAdminEvidenceConversationsFn=createServerFn({method:"GET"})
  .middleware([requireSupabaseAuth]).inputValidator(evidenceListInput)
@@ -227,18 +227,32 @@ export const getAdminEvidenceTurnsFn=createServerFn({method:"GET"})
    .range(data.offset,data.offset+pageLimit);
   if(messageError)return{ok:false,error:"evidence_messages_unavailable"};
   const page=(messages??[]) as Array<{id:string;role:string;content:string;created_at:string;metadata:unknown;is_recalled:boolean}>;
-  const hasMore=page.length>pageLimit,selected=page.slice(0,pageLimit);
-  const ids=selected.filter(m=>["visitor","customer","user"].includes(m.role)).map(m=>m.id);
-  let traces:any[]=[];
-  if(ids.length){
+const hasMore=page.length>pageLimit,selected=page.slice(0,pageLimit);
+ const ids=selected.filter(m=>["visitor","customer","user"].includes(m.role)).map(m=>m.id);
+ let linkedReplies:any[]=[];
+ let traces:any[]=[];
+ if(ids.length){
+   // Same authenticated company/ticket. Read source-linked replies even when
+   // their message position is on a later page. Fail explicitly if truncated.
+   const keys=["source_message_id","b2_source_message_id"] as const;
+   const replyReads=await Promise.all(keys.map(key=>db.from("messages")
+     .select("id,role,content,created_at,metadata,is_recalled")
+     .eq("conversation_id",data.conversationId)
+     .in("role",["assistant","agent"])
+     .in(`metadata->>${key}`,ids).limit(301)));
+   if(replyReads.some(x=>x.error))return{ok:false,error:"evidence_reply_linkage_unavailable"};
+   if(replyReads.some(x=>(x.data??[]).length>300))return{ok:false,error:"evidence_reply_linkage_incomplete"};
+   linkedReplies=replyReads.flatMap(x=>x.data??[]);
    const read=await db.from("rag_trace")
     .select("id,message_id,query_sent,retrieved_chunks,top_score,kb_source,created_at")
     .eq("conversation_id",data.conversationId).in("message_id",ids)
-    .order("created_at",{ascending:true}).limit(300);
+.order("created_at",{ascending:true}).limit(301);
    if(read.error)return{ok:false,error:"evidence_trace_unavailable"};
+   if((read.data??[]).length>300)return{ok:false,error:"evidence_trace_incomplete"};
    traces=read.data??[];
-  }
-  const evidence=linkConversationEvidenceTurns(selected,traces);
+ }
+ const combined=[...new Map([...selected,...linkedReplies].map(row=>[row.id,row])).values()];
+ const evidence=linkConversationEvidenceTurns(combined,traces);
   return{ok:true,conversationId:data.conversationId,turns:evidence.turns,
     unlinkedReplies:evidence.unlinkedReplies,nextOffset:hasMore?data.offset+pageLimit:null};
  });
