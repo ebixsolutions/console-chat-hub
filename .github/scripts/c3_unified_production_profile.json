@@ -1486,5 +1486,9 @@
   "task3c_source_id_bound_deploy_authorized": false,
   "authorized_task3c_source_id_bound_sha256": {
     "supabase/functions/_shared/current-factual-request.ts": "2110255502da9388f2b67fe8e4c90555f3861c44780eda86c4e3e279dd43c4e5"
+  },
+  "task3c_native_audit_parity_deploy_authorized": false,
+  "authorized_task3c_native_audit_parity_sha256": {
+    "tests/uat-runtime/native-compatibility.ts": "a191620227c77212a6b0d4a225ac7d52764010602c5860e39f047e87d183112d"
   }
 }

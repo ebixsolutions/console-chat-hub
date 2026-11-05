@@ -102,7 +102,19 @@ for(const slug of ['generate-reply','agent-assist','kb-search-proxy','conversati
 });
 nativeTest('live KB POST and legacy result stay equal with typed canonical diagnostics; opaque owner authority cannot be forged',async()=>{
  const original=await import('file://'+dir+'/kb-search-proxy/_shared/kb-client.ts');const scope={mode:'canonical' as const,aiCompanyId:company,singaporeTenantId:'34'};const cfg={baseUrl:'https://py.ebixmall.com/py-knowledge-base',ragUrl:'https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search',jwtTtlSec:60,tenantTokens:{},tenantApiKeys:{},apiKeyHeaderMode:'x-api-key' as const,localProjectAuth:true};
- for(const id of [undefined,'invalid-run']){if(id)Deno.env.set('C3_TEMP_UAT_RUN_ID',id);else Deno.env.delete('C3_TEMP_UAT_RUN_ID');providerRequests=[];const before=await original.fetchKBRag({query:'published policy',top_k:3},scope,cfg);const requests=JSON.stringify(providerRequests);providerRequests=[];const after=await fetchKBRag({query:'published policy',top_k:3},scope,cfg);equal(providerRequests,JSON.parse(requests));const {failure,...legacyResult}=after;equal(legacyResult,before);equal(before.error_code,'KB_SCHEMA_INVALID');equal(failure,{code:'KB_TOOL_FAILURE',stage:'canonical_validation',retryable:false})}
+ for(const id of [undefined,'invalid-run']){if(id)Deno.env.set('C3_TEMP_UAT_RUN_ID',id);else Deno.env.delete('C3_TEMP_UAT_RUN_ID');providerRequests=[];const before=await original.fetchKBRag({query:'published policy',top_k:3},scope,cfg);const requests=JSON.stringify(providerRequests);providerRequests=[];const after=await fetchKBRag({query:'published policy',top_k:3},scope,cfg);equal(providerRequests,JSON.parse(requests));const {failure,audit_receipt,...legacyResult}=after;
+   // Functional baseline remains byte-for-byte equal after removing ONLY the
+   // additive, private receipt. Explicitly require fail-closed audit semantics.
+   equal(legacyResult,before);
+   equal(before.error_code,'KB_SCHEMA_INVALID');
+   equal(failure,{code:'KB_TOOL_FAILURE',stage:'canonical_validation',retryable:false});
+   assert(audit_receipt?.capture_origin==='UPSTREAM_HTTP' &&
+     audit_receipt?.capture_state==='WITHHELD_UNVERIFIED' &&
+     audit_receipt?.http_status===200 && audit_receipt?.body_complete===true &&
+     audit_receipt?.response_json_raw===null &&
+     typeof audit_receipt?.response_bytes==='number' && audit_receipt.response_bytes>0 &&
+     /^[a-f0-9]{64}$/.test(audit_receipt.response_sha256??''),
+     'KB invalid-authority response must have upstream hash and no exposed body');}
  Deno.env.set('KB_PREACTIVATION_ENABLED','true');Deno.env.set('KB_PREACTIVATION_TENANT_ID','34');const db=createClient('http://native.invalid','native-fixture-key');const authority=await legacyPreactivationAuthority(db,'12345678-1234-4234-8234-123456789012','34',null);const c={...call,purpose:'assist' as const,companyId:null,conversationId:null,legacyAuthority:authority,tag:'kb-query-expansion'};providerRequests=[];const before=await baseline.callModel(c);const request=JSON.stringify(providerRequests);providerRequests=[];const after=await callModel(c);assert(before.ok&&after.ok);equal(providerRequests,JSON.parse(request));equal(after.text,before.text);
  await sql("insert into public.conversations(id,company_id) values('88888888-8888-4888-8888-888888888888',null)");const bound=await legacyPreactivationAuthority(db,'12345678-1234-4234-8234-123456789012','34','88888888-8888-4888-8888-888888888888');await sql(`update public.conversations set company_id=${q(UAT_COMPANY)}::uuid where id='88888888-8888-4888-8888-888888888888'`);providerRequests=[];const moved=await callModel({...c,conversationId:'88888888-8888-4888-8888-888888888888',legacyAuthority:bound});assert(!moved.ok);equal(providerRequests.length,0);
  providerRequests=[];const forged=await callModel({...c,legacyAuthority:{uat:true,user_id:'12345678-1234-4234-8234-123456789012'}});assert(!forged.ok);equal(providerRequests.length,0);const cross=await callModel({...c,companyId:UAT_COMPANY,conversationId:uatConv});assert(!cross.ok);equal(providerRequests.length,0);equal(permanentCalls,0);
