@@ -1495,7 +1495,7 @@
   "authorized_task3c_postman_spec_gap_sha256": {
     "supabase/functions/_shared/factual-evidence-selection.ts": "44662b5199c4566d267fc793e4679af83f811e1048624840a440710a857c1680",
     "supabase/functions/_shared/factual-evidence-selection.test.ts": "f28688eb9feed28d9084e2751c41053ec4b830763a8c5e22ae65c49e59e78814",
-    "supabase/functions/_shared/factual-request-context.ts": "ef6fa8921878e992faa6dabf162ff31a17c09dc313895cf92a671fd7aaa5d2ed",
+    "supabase/functions/_shared/factual-request-context.ts": "bfde206bb7490e0a8cf90f30d52402064a1853597268c8377fe8cd30bca99851",
     "supabase/functions/_shared/current-factual-request.test.ts": "dfefcadf4a5fabaac144d3f10ba66ee60d23a54984a16c559dccc7b824f0f2de",
     "supabase/functions/generate-reply/index.ts": "6d43bf5b98d8bc01f44606c63f619de6b850c20e6fc6205bb683e11e296dac5c"
   }

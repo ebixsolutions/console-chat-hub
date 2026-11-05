@@ -142,7 +142,7 @@ export function renderUnverifiedFactualNextStep(
       if(language==="zh-CN")return "这次检索到的资料未能可靠确认符合"+criteriaText+
         "要求的具体型号。其他规格或组合不能当作符合条件的商品。如果这个规格必须满足，目前不能提供已核实型号；可考虑其他规格，或请人工客服协助核实，目前尚未转接。";
       return "今次檢索到嘅資料未能可靠確認符合"+criteriaText+
-        "要求嘅具體型號。其他匹數、規格或套裝唔可以當成符合要求。如果呢個規格係必須，目前未能提供已核實型號；可以考慮其他規格，或請真人客服協助核實，目前未有轉交。";
+        "要求嘅具體型號。其他規格或組合唔可以當成符合要求。如果呢個規格係必須，目前未能提供已核實型號；可以考慮其他規格，或請真人客服協助核實，目前未有轉交。";
     }
   }
   // General business facts must not collapse into a vague "related data"
