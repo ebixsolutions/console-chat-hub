@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import Ajv from 'ajv';
 import {build} from 'esbuild';
 const compiled=await build({stdin:{contents:"export * from './supabase/functions/_shared/commerce-semantic-frame.ts'; export * from './supabase/functions/_shared/vertex-generation-config.ts'; export {resolveCustomerRequestDecision} from './supabase/functions/_shared/commerce-state-authority.ts'; export {sourceOwnedOptionWording,resolveCurrentFactualRequest} from './supabase/functions/_shared/current-factual-request.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
-const {resolveCustomerRequestDecision,resolveCurrentFactualRequest,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V5_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V6,COMMERCE_SEMANTIC_SYSTEM_PROMPT,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,recoverSourceOwnedOptionAfterEntityTypeFailure,sourceOwnedOptionWording,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const {resolveCustomerRequestDecision,resolveCurrentFactualRequest,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V5_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V6,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V7,COMMERCE_SEMANTIC_SYSTEM_PROMPT,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,recoverSourceOwnedOptionAfterEntityTypeFailure,sourceOwnedOptionWording,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 function nodes(value,path=[]){const kind=value===null?'null':Array.isArray(value)?'array':typeof value;return [{path,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},...(['object','array'].includes(kind)?Object.entries(value).flatMap(([k,v])=>nodes(v,[...path,k])):[])];}
 const wire=(delta={},operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:0.98,nodes:nodes(delta)});
 const canonical=v=>normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(v));
@@ -397,7 +397,7 @@ function providerV6Accepts(value) {
 const v6DemandFields=['question','source_quote','subject_refs','source_type','requested_facts',
  'customer_correction','explicit_negations','ambiguity'];
 test('v6 active provider owns every fixed demand field while constraints retain typed native values',()=>{
- assert.equal(COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA);
+ assert.notEqual(COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA);
  const config=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA,0,'gemini-2.5-flash');
  assert.deepEqual(config.responseSchema.required,['context_encoding','operation','confidence','demands','containers','strings','numbers','booleans']);
  assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_demands_v6']);
@@ -419,7 +419,7 @@ test('v6 active provider owns every fixed demand field while constraints retain 
  assert(providerV6Accepts(raw));assert(canonical(raw));
 });
 test('v6 prompt and active schema describe one transport without a second native demand vocabulary',()=>{
- assert(COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V6));
+ assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V6));assert(COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V7));
  assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5));
  assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes('semantic_values_v4'));
  assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes('Declare exactly one object root at path []'));
@@ -703,4 +703,63 @@ test('semantic failure evidence does not attach input or model bodies to a succe
   const result=await interpretCommerceSemantics(diagnosticInput());assert.equal(calls,1);
   assert.equal(result.failure_code,null);assert(result.frame);assert(!Object.hasOwn(result,'failure_evidence'));
  }finally{previous===undefined?delete globalThis.__semanticTransportModel:globalThis.__semanticTransportModel=previous;}
+});
+
+
+// Same P0-1 B-T02: real V7 module schema and decoder; no new model/KB calls.
+// Prior V6 missing-root FAIL remains a negative, not an accepted repair.
+function v7(delta={},operation='ASK_FACT'){
+ const {demands=[],...rest}=delta;
+ const local=ctx=>{const ns=nodes(ctx).filter(x=>x.path.length);return {
+  containers:ns.filter(x=>['object','array','null'].includes(x.kind)).map(({path,kind})=>({path,kind})),
+  strings:ns.filter(x=>x.kind==='string').map(({path,text})=>({path,text})),
+  numbers:ns.filter(x=>x.kind==='number').map(({path,number})=>({path,number})),
+  booleans:ns.filter(x=>x.kind==='boolean').map(({path,boolean})=>({path,boolean}))}};
+ return {context_encoding:'semantic_demands_v7',operation,confidence:.98,
+  demands:demands.map(({constraints,...fixed})=>({...structuredClone(fixed),constraints:local(constraints)})),
+  ...local(rest)};
+}
+const acceptsV7=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA);
+test('v7 active provider has explicit required constraints owned by each demand',()=>{
+ assert.equal(COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA);
+ const s=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash').responseSchema;
+ assert.deepEqual(s.properties.context_encoding.enum,['semantic_demands_v7']);
+ assert.deepEqual(s.properties.demands.items.required,[...v6DemandFields,'constraints']);
+ assert.deepEqual(s.properties.demands.items.properties.constraints.required,['containers','strings','numbers','booleans']);
+ assert.equal(vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_SCHEMA).transport,'semantic_demands_v7');
+});
+for(const n of [0,1,2,12])test('v7 '+n+' demands preserve explicit empty contexts, not omitted fields',()=>{
+ const w=v7({demands:Array.from({length:n},()=>demand())});assert(acceptsV7(w),JSON.stringify(acceptsV7.errors));
+ const result=canonical(w);assert(result);assert.equal(result.demands.length,n);
+ result.demands.forEach(x=>assert.deepEqual(x.constraints,{}));
+ if(n){const bad=structuredClone(w);delete bad.demands[0].constraints;assert(!acceptsV7(bad));assert.equal(canonical(bad),null);
+ const bad2=structuredClone(w);delete bad2.demands[0].constraints.containers;assert(!acceptsV7(bad2));assert.equal(canonical(bad2),null);}
+});
+test('v7 independent product/general/transaction constraints, booleans, zero, null',()=>{
+ const w=v7({customer_correction:true,explicit_negations:['not paid'],demands:[
+  demand({question:'Which plan?',source_quote:'Which plan?',constraints:{seats:0,auto_renew:false,area:{amount:80,unit:'sq_ft'},exclusions:[],date:null}}),
+  demand({question:'What should I consider?',source_quote:'consider?',source_type:'general',constraints:{guests:2}}),
+  demand({question:'Where is my order?',source_quote:'my order?',source_type:'transaction',constraints:{}})]});
+ assert(acceptsV7(w));const f=canonical(w);assert(f);assert.equal(f.demands.length,3);
+ assert.deepEqual(f.demands[0].constraints,{area:{amount:80,unit:'sq_ft'},auto_renew:false,date:null,exclusions:[],seats:0});
+ assert.deepEqual(f.demands[1].constraints,{guests:2});assert.deepEqual(f.demands[2].constraints,{});
+ assert.deepEqual(f.explicit_negations,['not paid']);
+});
+test('v7 rejects cross-demand path injection and corrupt/duplicated/local roots',()=>{
+ const w=v7({demands:[demand(),demand({source_type:'general',constraints:{team:5}})]});
+ for(const apply of [
+  x=>x.containers.push({path:['demands'],kind:'array'}),
+  x=>x.demands[0].constraints.containers.push({path:[],kind:'object'}),
+  x=>x.demands[0].constraints.strings.push({path:['missing','child'],text:'forged'}),
+  x=>x.demands[0].constraints.containers.push({path:['__proto__'],kind:'object'}),
+  x=>x.demands[0].constraints.containers.push({path:['a'],kind:'object'},{path:['a'],kind:'object'}),
+  x=>x.demands[0].constraints.injected=true,
+  x=>x.demands[1].constraints.numbers.push({path:['team'],number:5})
+ ]){const bad=structuredClone(w);apply(bad);assert.equal(canonical(bad),null);}
+});
+test('historical V6 B-T02 two-demand missing constraints roots remains FAIL',()=>{
+ const w=v6({demands:[demand(),demand({source_type:'general'})]});w.containers=[];
+ let diagnostic;assert.equal(decodeCommerceSemanticWire(w,(_,d)=>{diagnostic=d}),null);
+ assert.equal(diagnostic.field_class,'demand_constraints');assert.equal(diagnostic.reason,'required');
+ assert.equal(canonical({...w,context_encoding:'semantic_demands_v7'}),null);
 });

@@ -1537,5 +1537,11 @@
     "supabase/functions/_shared/factual-evidence-selection.test.ts": "9058bf25b2287aeeda16afa09a68ab540c299ea1da76ed68c2afe8a09b38c488",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "bf3ad5c2a8cd627bbd7f44081e4500196830dd3937ca834fd92751fdf3cded6c"
   }
-
+,
+  "task3c_p01_v7_production_authorized": false,
+  "authorized_task3c_p01_v7_sha256": {
+    "supabase/functions/_shared/commerce-semantic-frame.ts": "fb2763dd2baa5b4c3a8e11df0da8470dadae7bd121510e725af455d54c1fcbb0",
+    "supabase/functions/_shared/vertex-generation-config.ts": "e2fd795c820e03b13ff3160fede32414aca708b6b50db5a6dddab7e6c7e50dbe",
+    "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "6f3931c8b27e49d1222155bd0e479ed11543ecfb2f4a2fc011bdaa374513fa11"
+  }
 }
