@@ -2311,6 +2311,11 @@ const semanticFailureReceipts = new WeakMap<Response, {
   stage: string | null;
   request_id: string | null;
   contract_rejection: string | null;
+  // Closed server diagnostic only; never raw model payload or customer path.
+  contract_diagnostic: {
+    container: "wire_nodes"; stage: string; node_count: number;
+    node_index?: number; field_class?: string; reason?: string;
+  } | null;
 }>();
 
 async function recoverTerminalResponseIfNeeded(
@@ -4532,6 +4537,13 @@ async function orchestrationGenerateReply(
       stage:_semanticPrepared.semantic.failure_stage??null,
       request_id:_semanticPrepared.semantic.request_id??null,
       contract_rejection:_semanticPrepared.semantic.contract_rejection??null,
+      contract_diagnostic: (() => {
+        const d = _semanticPrepared.semantic.contract_diagnostic;
+        if (d?.container !== "wire_nodes") return null;
+        return {container:"wire_nodes" as const,stage:d.stage,node_count:d.node_count,
+          ...(typeof d.node_index === "number" ? {node_index:d.node_index} : {}),
+          ...("field_class" in d ? {field_class:d.field_class,reason:d.reason} : {})};
+      })(),
     });
     return response;
   }

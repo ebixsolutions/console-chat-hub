@@ -14,6 +14,7 @@ import {
   decodeCommerceSemanticWire,
   normalizeCommerceSemanticFrame,
   recoverSourceQuotedReadOnlyFactualFrame,
+  recoverSourceOwnedOptionAfterEntityTypeFailure,
   rebindSourceQuotedReadOnlyDemand,
 } from "./commerce-semantic-frame.ts";
 
@@ -514,6 +515,27 @@ export async function interpretCommerceSemantics(
         state_mutation:false,additional_model_attempts:0,
       }));
       return {input_receipt,frame:readOnly,source:"semantic_model",failure_code:null,request_id:result.request_id};
+    }
+    // Never coerce the malformed entity or accept its business state. A
+    // source-verifiable first-turn option request may read KB using only the
+    // full customer text, with the original wire rejection still recorded.
+    const sourceOptionRecovery = contractRejection === "wire_context_nodes"
+      ? recoverSourceOwnedOptionAfterEntityTypeFailure(
+          parsed, latest, contractDiagnostic, sourceOwnedOptionWording(latest),
+          recentIds.length === 0 && recoveredIds.length === 0 && !persistentStateSummary,
+        )
+      : null;
+    if (sourceOptionRecovery) {
+      console.warn(JSON.stringify({
+        event:"semantic_entity_type_source_owned_option_recovery",
+        request_id:result.request_id,source_message_id:input.source_message_id,
+        original_rejection:contractRejection,original_field_class:"entity_confidence",
+        original_reason:"type",source_quote_bound:true,demand_count:1,
+        state_mutation:false,additional_model_attempts:0,
+        merchant_evidence_granted:false,
+      }));
+      return {input_receipt,frame:sourceOptionRecovery,source:"semantic_model",
+        failure_code:null,request_id:result.request_id};
     }
     const recoveredOptions = contractRejection === "wire_context_nodes"
       ? recoverMissingDemandOptionDiscovery(parsed,latest,contractDiagnostic) : null;

@@ -732,6 +732,7 @@ export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5 = COMMERCE_SEMANTIC_PROV
   .replace("Declare exactly one object root at path [] in containers, and every object/array parent of a value.",
     "The server supplies the one object root. Every provider path must be nonempty; never emit path []. Declare every descendant object/array parent of a value.") +
   "\nMANDATORY for every response, including greetings and short queries: include the containers node {path:[demands],kind:array}; use an empty demands array only when the current customer requested no answer. For any product/plan/service option discovery or factual question, include one complete, exact-source-quoted demand with source type, requested facts and all neutral structural children. Missing demands rejects the entire proposal; do not substitute an intent label for the demand." +
+  "\nEntity confidence and referent confidence MUST use numeric nodes in the numbers array, never strings/booleans/containers. For broad unnamed category/option discovery, create a demand but do not invent a concrete entity; rooms, budgets and background requirements are not merchandise entities. Keep every source-owned customer condition in the actual demand. " +
   '\nComplete wire example for the latest customer turn "What is the price of product Q9?"; no merchant facts are supplied: ' + JSON.stringify({
     context_encoding:"semantic_values_v5",operation:"ASK_FACT",confidence:0.98,
     containers:[{path:["demands"],kind:"array"},{path:["demands","0"],kind:"object"},
@@ -1204,6 +1205,75 @@ export function recoverSourceQuotedReadOnlyFactualFrame(
   return frame;
 }
 
+
+/** The model's malformed entity confidence stays INVALID. For a first-turn,
+ * independently source-verifiable option enquiry, discard the ENTIRE model
+ * proposal and build one READ-ONLY lookup from the exact current customer text.
+ * Neither business facts nor state changes can come from the rejected entity. */
+export function recoverSourceOwnedOptionAfterEntityTypeFailure(
+  wire: unknown, latestCustomerMessage: string,
+  diagnostic: SemanticContractDiagnostic | undefined,
+  sourceOptionSpeechAct: boolean, noPriorContext: boolean,
+): CommerceSemanticFrame | null {
+  if(!sourceOptionSpeechAct||!noPriorContext||!diagnostic||
+     !("field_class" in diagnostic)||diagnostic.container!=="wire_nodes"||
+     diagnostic.stage!=="canonical_vocabulary"||
+     diagnostic.field_class!=="entity_confidence"||diagnostic.reason!=="type")return null;
+  if(!isRecord(wire)||wire.context_encoding!=="semantic_values_v5"||
+     wire.operation!=="ASK_FACT"||typeof wire.confidence!=="number"||
+     !Number.isFinite(wire.confidence)||wire.confidence<0.62||wire.confidence>1||
+     Object.keys(wire).some(k=>!["context_encoding","operation","confidence","containers","strings","numbers","booleans"].includes(k)))return null;
+  let count=1;
+  for(const k of ["containers","strings","numbers","booleans"]){
+    if(!Array.isArray(wire[k]))return null;
+    count+=wire[k].length;
+    if(count>128)return null;
+  }
+  const source=typeof latestCustomerMessage==="string"
+    ? latestCustomerMessage.normalize("NFKC").replace(/\s+/gu," ").trim():"";
+  if(!source||source.length>500||/[\u0000-\u001f\u007f<>;；]/u.test(source)||
+     (source.match(/[?？]/gu)??[]).length>1||
+     /(?:取消|撤回|退款|更正|改單|改单|暫緩|暂缓|退貨|退货|轉真人|转人工|\b(?:cancel|refund|defer|revise|handoff|checkout)\b)/iu.test(source))return null;
+  // Preserve every original requirement in the full literal lookup question;
+  // it is not an inferred customer fact, transaction or merchant evidence.
+  const fact="published merchant options matching customer criteria";
+  const proposal={
+    context_encoding:"semantic_values_v5",operation:"ASK_FACT",confidence:wire.confidence,
+    containers:[
+      {path:["demands"],kind:"array"},{path:["demands","0"],kind:"object"},
+      {path:["demands","0","subject_refs"],kind:"array"},
+      {path:["demands","0","requested_facts"],kind:"array"},
+      {path:["demands","0","constraints"],kind:"object"},
+      {path:["demands","0","explicit_negations"],kind:"array"},
+      {path:["demands","0","ambiguity"],kind:"object"},
+      {path:["demands","0","ambiguity","reasons"],kind:"array"},
+      {path:["demands","0","ambiguity","clarification_question"],kind:"null"},
+    ],
+    strings:[
+      {path:["demands","0","question"],text:source},
+      {path:["demands","0","source_quote"],text:source},
+      {path:["demands","0","source_type"],text:"product"},
+      {path:["demands","0","requested_facts","0"],text:fact},
+    ],
+    numbers:[],
+    booleans:[
+      {path:["demands","0","customer_correction"],boolean:false},
+      {path:["demands","0","ambiguity","is_ambiguous"],boolean:false},
+    ],
+  };
+  const frame=normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(proposal));
+  if(!frame||frame.operation!=="ASK_FACT"||frame.demands?.length!==1||
+     frame.entities.length||frame.referents.length||(frame.customer_facts?.length??0)||
+     frame.customer_correction||frame.additive||frame.explicit_negations.length||
+     frame.ambiguity.is_ambiguous||frame.demands[0].source_quote!==source||
+     frame.demands[0].requested_facts.length!==1||
+     frame.demands[0].requested_facts[0]!==fact||
+     [frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state].some(
+       state=>state!=="none"&&state!=="unknown"))return null;
+  return {...frame,topic:null,entities:[],referents:[],requested_facts:[fact],
+    demands:[{...frame.demands[0],question:source,source_quote:source,
+      subject_refs:[],requested_facts:[fact],constraints:{}}]};
+}
 
 /** Recover only a Unicode/punctuation-equivalent source quote as a fresh, full-source,
  * independent READ-ONLY factual query. Strict source-quote validation remains

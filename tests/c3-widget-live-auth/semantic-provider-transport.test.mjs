@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import Ajv from 'ajv';
 import {build} from 'esbuild';
-const compiled=await build({stdin:{contents:"export * from './supabase/functions/_shared/commerce-semantic-frame.ts'; export * from './supabase/functions/_shared/vertex-generation-config.ts'; export {resolveCustomerRequestDecision} from './supabase/functions/_shared/commerce-state-authority.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
-const {resolveCustomerRequestDecision,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5,COMMERCE_SEMANTIC_SYSTEM_PROMPT,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const compiled=await build({stdin:{contents:"export * from './supabase/functions/_shared/commerce-semantic-frame.ts'; export * from './supabase/functions/_shared/vertex-generation-config.ts'; export {resolveCustomerRequestDecision} from './supabase/functions/_shared/commerce-state-authority.ts'; export {sourceOwnedOptionWording} from './supabase/functions/_shared/current-factual-request.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
+const {resolveCustomerRequestDecision,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5,COMMERCE_SEMANTIC_SYSTEM_PROMPT,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,recoverSourceOwnedOptionAfterEntityTypeFailure,sourceOwnedOptionWording,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 function nodes(value,path=[]){const kind=value===null?'null':Array.isArray(value)?'array':typeof value;return [{path,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},...(['object','array'].includes(kind)?Object.entries(value).flatMap(([k,v])=>nodes(v,[...path,k])):[])];}
 const wire=(delta={},operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:0.98,nodes:nodes(delta)});
 const canonical=v=>normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(v));
@@ -121,6 +121,51 @@ test('v5 guidance includes a complete source-bound current-turn demand without m
  assert.deepEqual(frame.demands,[demand({question:'What is the price of product Q9?',source_quote:'What is the price of product Q9?'})]);
  assert.deepEqual(frame.entities,[]);assert.deepEqual(frame.customer_facts,[]);
 });
+test('v5 malformed entity confidence: first-turn option lookup uses exact customer text, not entity state',()=>{
+ const original='Hi，想換細房窗口冷氣，80呎又西斜，預算唔多，但驚買細咗唔夠凍。有冇慳電嘅變頻款可以睇？';
+ const subscription='有冇啲適合小團隊嘅訂閱方案可以睇？';
+ const fact='published merchant options matching customer criteria';
+ assert.equal(sourceOwnedOptionWording(original),true);
+ assert.equal(sourceOwnedOptionWording(subscription),true);
+ for(const bad of ['0.95',null,false,{value:0.95}]){
+  const w=v5({entities:[{name:'PRIVATE-UNBOUND-ENTITY',kind:'physical_product',confidence:bad}],
+   demands:[demand({question:'PRIVATE-UNTRUSTED',source_quote:'PRIVATE-UNTRUSTED'})]},'ASK_FACT');
+  let reason,diagnostic;
+  assert.equal(decodeCommerceSemanticWire(w,(code,d)=>{reason=code;diagnostic=d;}),null);
+  assert.equal(reason,'wire_context_nodes');
+  assert.equal(diagnostic.field_class,'entity_confidence');
+  assert.equal(diagnostic.reason,'type');
+  for(const text of [original,subscription]){
+   const recovered=recoverSourceOwnedOptionAfterEntityTypeFailure(w,text,diagnostic,sourceOwnedOptionWording(text),true);
+   assert(recovered,JSON.stringify(diagnostic));
+   assert.equal(recovered.operation,'ASK_FACT');
+   assert.equal(recovered.entities.length,0);
+   assert.equal(recovered.referents.length,0);
+   assert.equal(recovered.customer_facts.length,0);
+   assert.deepEqual(recovered.requested_facts,[fact]);
+   assert.equal(recovered.demands.length,1);
+   assert.equal(recovered.demands[0].source_quote,text);
+   assert.equal(recovered.demands[0].question,text);
+   assert.deepEqual(recovered.demands[0].subject_refs,[]);
+   assert.deepEqual(recovered.demands[0].requested_facts,[fact]);
+   assert.equal(recovered.demands[0].source_type,'product');
+   assert(!JSON.stringify(recovered).includes('PRIVATE-'));
+  }
+  assert.equal(recoverSourceOwnedOptionAfterEntityTypeFailure(w,original,diagnostic,true,false),null);
+  assert.equal(recoverSourceOwnedOptionAfterEntityTypeFailure(w,original,diagnostic,false,true),null);
+  assert.equal(recoverSourceOwnedOptionAfterEntityTypeFailure({...w,operation:'UPDATE_ITEM'},original,diagnostic,true,true),null);
+  for(const text of ['請取消訂單，有冇款可以睇？','請退款，有冇方案可以睇？',
+     '有冇啲方案可以睇？另外幾錢？']){
+   assert.equal(recoverSourceOwnedOptionAfterEntityTypeFailure(w,text,diagnostic,
+     sourceOwnedOptionWording(text),true),null);
+  }
+ }
+ const good=v5({entities:[{name:'specific named service',kind:'service',confidence:0.95}],demands:[demand()]},'ASK_FACT');
+ assert(normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(good)));
+ assert.equal(recoverSourceOwnedOptionAfterEntityTypeFailure(good,original,
+   {container:'wire_nodes',stage:'canonical_vocabulary',node_count:3,field_class:'entity_confidence',reason:'range'},true,true),null);
+});
+
 // Independent check of the documented provider schema subset. This reproduces
 // a source-contract mismatch, NOT the unavailable historical malformed node.
 function providerAccepts(s,v){
