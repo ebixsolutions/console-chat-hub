@@ -1544,6 +1544,7 @@
     "supabase/functions/_shared/vertex-generation-config.ts": "e2fd795c820e03b13ff3160fede32414aca708b6b50db5a6dddab7e6c7e50dbe",
     "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "6f3931c8b27e49d1222155bd0e479ed11543ecfb2f4a2fc011bdaa374513fa11",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "4edba0c677d4414b08a8b288ad246ac8a1eaea008e295a6b427ad0e8489508be",
-    "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "c5122bd6ac566a12b758975447fe9142de5ebf11edc1cbc5f3b900e07edf1a23"
+    "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "c5122bd6ac566a12b758975447fe9142de5ebf11edc1cbc5f3b900e07edf1a23",
+    "tests/emergency-p0/chain.test.mjs": "28f2f54701a49f1143e72d317f909fb96b73b181e6943518e215f8fa8ffd8fd9"
   }
 }

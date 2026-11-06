@@ -22,7 +22,7 @@ function typedContextNodes(value,at=[]) {
  return [{path:at,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},
   ...((kind==='object'||kind==='array')?Object.entries(value).flatMap(([k,v])=>typedContextNodes(v,[...at,k])):[])];
 }
-// Retained v2/v5 fixtures exercise decoder compatibility; the active provider request uses v6.
+// Retained v2/v5/V6 fixtures exercise decoder compatibility; the active provider request uses v7.
 const providerWire=(delta,operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:.98,nodes:typedContextNodes(delta)});
 const providerWireV5=(delta,operation='UPDATE_ITEM')=>{
  const nodes=typedContextNodes(delta).filter(node=>node.path.length);
@@ -202,7 +202,7 @@ function fixture(text,options={}) {
    }
    assert.equal(body.generationConfig.responseMimeType,'application/json');
    const semanticSchema=body.generationConfig.responseSchema;
-   assert.deepEqual(semanticSchema.properties.context_encoding.enum,['semantic_demands_v6']);
+   assert.deepEqual(semanticSchema.properties.context_encoding.enum,['semantic_demands_v7']);
    for(const [list,field] of [['containers','kind'],['strings','text'],['numbers','number'],['booleans','boolean']]){
     const item=semanticSchema.properties[list].items;
     assert.deepEqual(Object.keys(item.properties),['path',field]);assert.deepEqual(item.required,['path',field]);
@@ -210,7 +210,7 @@ function fixture(text,options={}) {
    }
    assert(!JSON.stringify(semanticSchema).includes('"anyOf"'),'typed transport must not reintroduce union branch growth');
    assert(body.systemInstruction.parts[0].text.includes('Follow the supplied typed transport schema'));
-   assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_demands_v6'));
+   assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_demands_v7'));
    assert(!body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_paths_v2'));
    if(options.enforceSmallTransport){
     assert(Buffer.byteLength(JSON.stringify(semanticSchema))<3000);
@@ -440,7 +440,7 @@ for(const traceInsertFailure of [false,true])test('actual handler v6 demand-fiel
  assert.equal(routerInput.purpose,'evaluation');assert.equal(routerInput.tag,'commerce-semantic-interpreter');
  assert.equal(routerInput.response_format,'json');assert.equal(routerInput.max_provider_attempts,1);
  assert.equal(routerInput.max_tokens,4096);assert.equal(routerInput.thinking_budget,0);
- assert.deepEqual(routerInput.response_schema.properties.context_encoding.enum,['semantic_demands_v6']);
+ assert.deepEqual(routerInput.response_schema.properties.context_encoding.enum,['semantic_demands_v7']);
  assert.equal(hash(routerInput.system),protectedEvidence.semantic_input.system_sha256);
  assert.equal(hash(routerInput.user),protectedEvidence.semantic_input.user_sha256);
  assert(routerInput.user.includes(question));assert(routerInput.user.includes(priorCustomer),'retained customer history is part of the captured router input');
