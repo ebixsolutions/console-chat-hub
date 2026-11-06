@@ -1508,7 +1508,7 @@
     "supabase/functions/_shared/current-factual-request.ts": "27d142dedc832435e7f678eff5c692e0c87d2d1c4785edeff44e5395cc9a352a",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "a306b9ed9a7e82b8202e31171d2005ac589167adb17395eaa3360ea24f7d2342",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "2bbb52749d62d21a9325a8fef4f83ca6403d5a29c7062013b49ffd34a3a69857",
-    "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "055c8eff8afe84e6db953fb8e2308e8fdf81363d1c1f75bda0797145fbb9bcbf",
+    "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "3d00b38d708719ff267601d18e9acce0d7fcc500645fd881c8eeb92344e24e19",
     "supabase/functions/generate-reply/index.ts": "9b96a3de8aa849ed4d457a994b8de7722819794887723c834e9163dbbf6691d8",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "ae99b07db729baa2467f07bbf6d8b15c4638ba50422ee47b285b2f331af6104d"
   },

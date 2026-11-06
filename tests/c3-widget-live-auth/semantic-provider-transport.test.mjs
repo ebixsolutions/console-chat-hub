@@ -144,8 +144,11 @@ test('v5 malformed entity confidence: first-turn option lookup uses exact custom
    assert.equal(recovered.customer_facts.length,0);
    assert.deepEqual(recovered.requested_facts,[fact]);
    assert.equal(recovered.demands.length,1);
-   assert.equal(recovered.demands[0].source_quote,text);
-   assert.equal(recovered.demands[0].question,text);
+   // The canonical semantic layer NFKC-normalizes punctuation while retaining
+   // complete customer conditions; the original Visitor text remains persisted.
+   const normalized=text.normalize("NFKC").trim();
+   assert.equal(recovered.demands[0].source_quote,normalized);
+   assert.equal(recovered.demands[0].question,normalized);
    assert.deepEqual(recovered.demands[0].subject_refs,[]);
    assert.deepEqual(recovered.demands[0].requested_facts,[fact]);
    assert.equal(recovered.demands[0].source_type,'product');
