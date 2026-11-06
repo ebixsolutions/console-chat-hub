@@ -852,7 +852,7 @@ export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V7 =
  "Outer containers,strings,numbers,booleans encode only OTHER current-turn fields, never the native demands or their fixed fields. Preserve original type, lifecycle enum, tenant and source authority; no model value grants a business state write. " +
  "Do not invent an entity or a previous merchant recommendation. An unresolved dependent subject stays ambiguous but cannot suppress a separately answerable demand. " +
  "Do not copy historical state, drop clauses or facts for convenience, invent data, hallucinate a SKU, or encode nested JSON as a string. No extra/unrecognized fields, duplicate/conflicting paths, orphan parents or unsafe prototype keys. " +
- "Limit to 12 demands, 40 fields per context object, 12 array items, 96 leaves, depth3, 80-character keys and 300-character context strings. No provider retry; invalid output remains rejected by strict canonical validation.";
+ "Limit to 12 demands, 40 fields per context object, 12 array items, 96 scalar leaves, depth3, 80 characters per key and 300 normalized characters per context string. No provider retry; invalid output remains rejected by strict canonical validation.";
 
 // Diagnostic labels come only from this fixed vocabulary, never from a model's
 // customer-authored keys, text, paths, enum values or Error.message.

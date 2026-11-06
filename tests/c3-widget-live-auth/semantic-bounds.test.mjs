@@ -161,7 +161,7 @@ test('actual interpreter presents recovered originals independently of the recen
   calls++;assert.equal(request.operationId,'assist:isolated-semantic');assert.equal(request.legacyAuthority,authority);
   assert(request.user.includes(fullOriginal));assert(request.user.includes('original-turn'));assert(request.user.includes('2026-10-01T00:00:00Z'));
   assert(request.user.includes('recent-119'));assert(request.user.includes('recent-108'));assert(!request.user.includes('recent-107'));
-  assert(request.user.includes('context_incomplete=true'));assert(request.system.includes('semantic_demands_v6'));
+  assert(request.user.includes('context_incomplete=true'));assert(request.system.includes('semantic_demands_v7'));
   return {ok:true,request_id:'isolated',text:JSON.stringify(activeSemanticResponse({requested_facts:['delivery_time'],demands:[demandFixture({constraints:{stairs:false,floor:2}})]}))};
  };
  try {

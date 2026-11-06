@@ -1540,8 +1540,10 @@
 ,
   "task3c_p01_v7_production_authorized": false,
   "authorized_task3c_p01_v7_sha256": {
-    "supabase/functions/_shared/commerce-semantic-frame.ts": "fb2763dd2baa5b4c3a8e11df0da8470dadae7bd121510e725af455d54c1fcbb0",
+    "supabase/functions/_shared/commerce-semantic-frame.ts": "8a0ae57358075722610db07b02acb4699cf097d73018ca3e1a3db84036b4434d",
     "supabase/functions/_shared/vertex-generation-config.ts": "e2fd795c820e03b13ff3160fede32414aca708b6b50db5a6dddab7e6c7e50dbe",
-    "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "6f3931c8b27e49d1222155bd0e479ed11543ecfb2f4a2fc011bdaa374513fa11"
+    "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "6f3931c8b27e49d1222155bd0e479ed11543ecfb2f4a2fc011bdaa374513fa11",
+    "tests/c3-widget-live-auth/original-preview.test.mjs": "4edba0c677d4414b08a8b288ad246ac8a1eaea008e295a6b427ad0e8489508be",
+    "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "c5122bd6ac566a12b758975447fe9142de5ebf11edc1cbc5f3b900e07edf1a23"
   }
 }
