@@ -92,6 +92,48 @@ function recoverMissingDemandOptionDiscovery(
 export const SEMANTIC_CONTEXT_CHAR_LIMIT = 12_000;
 export const SEMANTIC_HISTORY_CHAR_LIMIT = 24_000;
 
+export interface SemanticDiagnosticText {
+  capture_origin: "SEMANTIC_ROUTER_INPUT" | "SEMANTIC_MODEL_TEXT";
+  capture_state: "CAPTURED" | "WITHHELD_OVERSIZED" | "WITHHELD_SENSITIVE";
+  sha256: string;
+  bytes: number;
+  body: string | null;
+}
+
+/** A complete, bounded snapshot for the existing Admin/Tenant evidence sink.
+ * Hashes describe the original bytes even when the body must be withheld.
+ * This is router input/model text, never a claim to capture provider HTTP raw.
+ * Do not put this object in public logs, reply bodies or message metadata. */
+export async function captureSemanticDiagnosticText(
+  value: string,
+  origin: SemanticDiagnosticText["capture_origin"],
+): Promise<SemanticDiagnosticText> {
+  const bytes = new TextEncoder().encode(value).byteLength;
+  const hash = await sha256(value);
+  // Whole-body withholding avoids retaining a partially scrubbed credential or
+  // reporting truncated data as the actual complete model response.
+  let inspected = value;
+  // Inspect escaped JSON strings too, without changing the captured bytes.
+  try { inspected += "\n" + JSON.stringify(JSON.parse(value)); } catch { /* Preserve malformed model text as received. */ }
+  const sensitive = /\bBearer\s+\S+|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|-----BEGIN [^-]*(?:PRIVATE KEY|CERTIFICATE)-----|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b|(?<![A-Za-z0-9])(?:\+?852[- .]?)?[23569]\d{3}[- .]?\d{4}(?![A-Za-z0-9])|(?<![A-Za-z0-9])\+\d{1,3}(?:[ .()-]?\d){7,14}(?![A-Za-z0-9])|\b(?:sk-[A-Za-z0-9_-]{12,}|AIza[A-Za-z0-9_-]{20,})|\b(?:password|authorization|x-api-key|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|private[_ -]?key|client[_ -]?secret|service[_ -]?role[_ -]?key)\b/i.test(inspected.normalize("NFKC"));
+  const state = bytes > 65_536 ? "WITHHELD_OVERSIZED" : sensitive ? "WITHHELD_SENSITIVE" : "CAPTURED";
+  return {capture_origin: origin, capture_state: state, sha256: hash, bytes,
+    body: state === "CAPTURED" ? value : null};
+}
+
+export interface SemanticFailureEvidence {
+  contract: "c3-semantic-failure-evidence-v1";
+  source_message_id: string;
+  request_id: string;
+  request: SemanticDiagnosticText;
+  response: SemanticDiagnosticText;
+  recovery_outcomes: {
+    source_quoted_read_only: "NOT_RUN" | "NOT_APPLICABLE";
+    source_owned_option: "NOT_RUN" | "NOT_APPLICABLE";
+    missing_demand_option: "NOT_RUN" | "NOT_APPLICABLE";
+  };
+}
+
 export interface CommerceSemanticHistoryTurn {
   role: string;
   content: string;
@@ -126,6 +168,9 @@ export interface CommerceSemanticInterpretResult {
   request_id?: string;
   contract_rejection?: SemanticContractRejection;
   contract_diagnostic?: SemanticContractDiagnostic;
+  /** Sensitive in-process evidence: only the existing Admin/Tenant trace writer
+   * may persist it. Never spread this result into a public response or metadata. */
+  failure_evidence?: SemanticFailureEvidence;
   input_receipt?: {
     source_message_id: string;
     recent_source_message_ids: (string | null)[];
@@ -477,6 +522,34 @@ export async function interpretCommerceSemantics(
     };
   }
 
+  const resultText = result.text;
+  const resultRequestId = result.request_id ?? operationId;
+  const captureFailure = async (recoveryAttempted = false): Promise<SemanticFailureEvidence> => {
+    // The system/schema are fixed Source and legitimately discuss authorization.
+    // Scan the complete untrusted customer/history/state projection, then retain
+    // or withhold the complete router snapshot. Never exempt any customer text.
+    const [userCapture, response] = await Promise.all([
+      captureSemanticDiagnosticText(user, "SEMANTIC_ROUTER_INPUT"),
+      captureSemanticDiagnosticText(resultText, "SEMANTIC_MODEL_TEXT"),
+    ]);
+    const requestBody = JSON.stringify({
+      purpose: "evaluation", tag: "commerce-semantic-interpreter",
+      system: COMMERCE_SEMANTIC_SYSTEM_PROMPT, user,
+      response_format: "json", response_schema: COMMERCE_SEMANTIC_PROVIDER_SCHEMA,
+      max_tokens: 4096, max_provider_attempts: 1, thinking_budget: 0,
+    });
+    const requestBytes = new TextEncoder().encode(requestBody).byteLength;
+    const requestState = requestBytes > 65_536 ? "WITHHELD_OVERSIZED" : userCapture.capture_state;
+    const request: SemanticDiagnosticText = {capture_origin: "SEMANTIC_ROUTER_INPUT",
+      capture_state: requestState, sha256: await sha256(requestBody), bytes: requestBytes,
+      body: requestState === "CAPTURED" ? requestBody : null};
+    const outcome = recoveryAttempted ? "NOT_APPLICABLE" as const : "NOT_RUN" as const;
+    return {contract: "c3-semantic-failure-evidence-v1", source_message_id: input.source_message_id,
+      request_id: resultRequestId, request, response,
+      recovery_outcomes: {source_quoted_read_only: outcome, source_owned_option: outcome,
+        missing_demand_option: outcome}};
+  };
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(result.text);
@@ -486,6 +559,7 @@ export async function interpretCommerceSemantics(
       source: "none",
       failure_code: "LLM_INVALID_OUTPUT",
       failure_stage: "semantic_json",
+      failure_evidence: await captureFailure(),
       failure: executionFailure("LLM_INVALID_OUTPUT",{stage:"decode",request_id:result.request_id,source_message_id:input.source_message_id}),
       request_id: result.request_id,
     };
@@ -556,6 +630,7 @@ export async function interpretCommerceSemantics(
       failure_stage: "semantic_contract",
       contract_rejection: contractRejection,
       contract_diagnostic: contractDiagnostic,
+      failure_evidence: await captureFailure(true),
       failure: executionFailure("LLM_INVALID_OUTPUT",{stage:"canonical_validation",request_id:result.request_id,source_message_id:input.source_message_id}),
       request_id: result.request_id,
     };
@@ -574,6 +649,7 @@ export async function interpretCommerceSemantics(
     return {
       input_receipt,frame:null,source:"none",failure_code:"LLM_INVALID_OUTPUT",failure_stage:"semantic_source_binding",
       contract_rejection:"canonical_demand_source_quote",
+      failure_evidence:await captureFailure(),
       contract_diagnostic:{container:"wire_nodes",stage:"canonical_vocabulary",node_count:0,field_class:"demand_source_quote",reason:"field"},
       failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"canonical_validation",request_id:result.request_id,source_message_id:input.source_message_id}),
       request_id:result.request_id,

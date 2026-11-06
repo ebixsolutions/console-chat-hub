@@ -161,7 +161,7 @@ test('actual interpreter presents recovered originals independently of the recen
   calls++;assert.equal(request.operationId,'assist:isolated-semantic');assert.equal(request.legacyAuthority,authority);
   assert(request.user.includes(fullOriginal));assert(request.user.includes('original-turn'));assert(request.user.includes('2026-10-01T00:00:00Z'));
   assert(request.user.includes('recent-119'));assert(request.user.includes('recent-108'));assert(!request.user.includes('recent-107'));
-  assert(request.user.includes('context_incomplete=true'));assert(request.system.includes('semantic_values_v5'));
+  assert(request.user.includes('context_incomplete=true'));assert(request.system.includes('semantic_demands_v6'));
   return {ok:true,request_id:'isolated',text:JSON.stringify(activeSemanticResponse({requested_facts:['delivery_time'],demands:[demandFixture({constraints:{stairs:false,floor:2}})]}))};
  };
  try {
@@ -178,7 +178,12 @@ test('invented demand source quote is rejected with redacted diagnostics before 
  try {
   const result=await contextInterpreter.interpretCommerceSemantics({company_id:'company',conversation_id:'ticket',source_message_id:'current',latest:'幾時可送貨？',persistent_state_summary:'{}'});
   assert.equal(calls,1);assert.equal(result.frame,null);assert.equal(result.contract_rejection,'canonical_demand_source_quote');
-  assert.equal(result.contract_diagnostic.field_class,'demand_source_quote');assert(!JSON.stringify(result).includes('PRIVATE-'));
+  assert.equal(result.contract_diagnostic.field_class,'demand_source_quote');
+  const {failure_evidence,...publicResult}=result;
+  assert(!JSON.stringify(publicResult).includes('PRIVATE-'));
+  assert.equal(failure_evidence.response.capture_origin,'SEMANTIC_MODEL_TEXT');
+  assert.equal(failure_evidence.response.capture_state,'CAPTURED');
+  assert(failure_evidence.response.body.includes('PRIVATE-INVENTED-CUSTOMER-CLAUSE'));
  } finally {previous===undefined?delete globalThis.__semanticContextModel:globalThis.__semanticContextModel=previous;}
 });
 test('same source ID with a business projection or staff query preserves the complete actual customer turn',async()=>{

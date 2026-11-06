@@ -409,12 +409,18 @@ if(!page.ok){setLoaded(prev=>({...prev,[id]:{
   finally{setSearching(false);}
  };
  const showJson=(value:unknown)=>value==null?"NOT_CAPTURED":typeof value==="string"?value:JSON.stringify(value,null,2);
+ const showSemanticCapture=(label:string,capture:NonNullable<EvidenceTurnsResult["turns"]>[number]["semanticEvidence"][number]["request"])=><div className="mt-2">
+  <p>{label} · {capture.displayState}</p>
+  <div className="break-all text-[10px]">Origin: {capture.captureOrigin??"NOT_VERIFIED"} · Original capture: {capture.captureState??"NOT_VERIFIED"}</div>
+  <div className="break-all text-[10px]">SHA256 {capture.sha256??"NOT_CAPTURED"} · Bytes {capture.bytes??"—"}</div>
+  <pre className="max-h-52 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{capture.body??capture.displayState}</pre>
+ </div>;
  const filtered=rows.filter(r=>r.id.toLowerCase().includes(search.trim().toLowerCase()));
  return <div className="space-y-4">
   <PageHeader title="Conversation Evidence Log" description="Admin-only · same-company original customer → KB request/response → grounded reply · read only"/>
   <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
    Historical missing evidence is NOT_CAPTURED. A verified pre-KB Semantic failure is KB_NOT_DISPATCHED_SEMANTIC_FAILURE; no original HTTP Query/Raw Response exists for that turn. HTTP 200 does not prove relevant evidence.
-   This read-only view never dispatches Provider/KB requests or reconstructs missing raw. Sensitive keys/contact data are masked in this display; SHA256 and byte counts refer to the original captured response.
+   This read-only view never dispatches Provider/KB requests or reconstructs missing raw. Semantic input/model text is shown separately from KB HTTP evidence. Sensitive keys/contact data are masked in this display; SHA256 and byte counts refer to the complete original captured bytes, not the redacted display.
   </div>
   <div className="flex flex-wrap items-center gap-2">
    <input aria-label="Search conversation ID" placeholder="Enter full Conversation ID (or filter recent tickets)"
@@ -448,7 +454,20 @@ if(!page.ok){setLoaded(prev=>({...prev,[id]:{
           <tbody>{(loaded[c.id].turns??[]).map(t=><tr key={t.messageId} className="border-t align-top">
            <td className="p-2">{t.index}<div className="font-mono text-[10px]">{t.messageId.slice(0,8)}</div></td>
            <td className="max-w-[220px] whitespace-pre-wrap break-words p-2">{t.customerQuestion}</td>
-           <td className="max-w-[270px] p-2">{!t.evidence.length?<span className="text-amber-700">{t.evidenceStatus==="KB_NOT_DISPATCHED_SEMANTIC_FAILURE"?"KB_NOT_DISPATCHED_SEMANTIC_FAILURE":"NOT_CAPTURED"}</span>:
+           <td className="max-w-[270px] p-2">
+            {t.semanticEvidence.map(ev=><details key={ev.id} className="mb-2 rounded border p-2">
+             <summary className="cursor-pointer">語意解析失敗 · {ev.linkageStatus}</summary>
+             {ev.linkageStatus!=="MATCH"?<p className="text-amber-700">Semantic evidence withheld: exact source/request binding was not verified.</p>:<>
+              <p className="break-all">{ev.requestDispatchState}</p>
+              <p className="break-all text-[10px]">Source: {ev.sourceMessageId} · Request: {ev.requestId}</p>
+              {showSemanticCapture("Semantic request (router input)",ev.request)}
+              {showSemanticCapture("Semantic model output",ev.response)}
+              <div className="mt-2 break-all text-[10px]">Input user SHA256: {ev.inputUserSha256??"NOT_CAPTURED"}</div>
+              <div className="break-all text-[10px]">Input system SHA256: {ev.inputSystemSha256??"NOT_CAPTURED"}</div>
+              <p>契約拒絕／Recovery</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.diagnostics)}</pre>
+             </>}
+            </details>)}
+            {!t.evidence.length?<span className="text-amber-700">{t.evidenceStatus==="KB_NOT_DISPATCHED_SEMANTIC_FAILURE"?"KB_NOT_DISPATCHED_SEMANTIC_FAILURE":"NOT_CAPTURED"}</span>:
             t.evidence.map((ev,i)=><details key={ev.id} className="mb-2">
              <summary className="cursor-pointer">KB Call {i+1} · {String(ev.requestDispatchState)}</summary>
              <p>完整 Query</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.exactQuery)}</pre>

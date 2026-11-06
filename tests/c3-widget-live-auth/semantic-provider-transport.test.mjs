@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import Ajv from 'ajv';
 import {build} from 'esbuild';
-const compiled=await build({stdin:{contents:"export * from './supabase/functions/_shared/commerce-semantic-frame.ts'; export * from './supabase/functions/_shared/vertex-generation-config.ts'; export {resolveCustomerRequestDecision} from './supabase/functions/_shared/commerce-state-authority.ts'; export {sourceOwnedOptionWording} from './supabase/functions/_shared/current-factual-request.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
-const {resolveCustomerRequestDecision,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5,COMMERCE_SEMANTIC_SYSTEM_PROMPT,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,recoverSourceOwnedOptionAfterEntityTypeFailure,sourceOwnedOptionWording,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const compiled=await build({stdin:{contents:"export * from './supabase/functions/_shared/commerce-semantic-frame.ts'; export * from './supabase/functions/_shared/vertex-generation-config.ts'; export {resolveCustomerRequestDecision} from './supabase/functions/_shared/commerce-state-authority.ts'; export {sourceOwnedOptionWording,resolveCurrentFactualRequest} from './supabase/functions/_shared/current-factual-request.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
+const {resolveCustomerRequestDecision,resolveCurrentFactualRequest,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V5_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V6,COMMERCE_SEMANTIC_SYSTEM_PROMPT,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,recoverSourceOwnedOptionAfterEntityTypeFailure,sourceOwnedOptionWording,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 function nodes(value,path=[]){const kind=value===null?'null':Array.isArray(value)?'array':typeof value;return [{path,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},...(['object','array'].includes(kind)?Object.entries(value).flatMap(([k,v])=>nodes(v,[...path,k])):[])];}
 const wire=(delta={},operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:0.98,nodes:nodes(delta)});
 const canonical=v=>normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(v));
@@ -25,8 +26,8 @@ const demand=(patch={})=>({question:'What is the current price of model Q9?',sou
  source_type:'product',requested_facts:['price'],constraints:{},customer_correction:false,explicit_negations:[],
  ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},...patch});
 const providerV4Accepts=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA);
-const providerV5Accepts=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_PROVIDER_SCHEMA);
-const valueTransports=[['v4',v4,providerV4Accepts,COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA],['v5',v5,providerV5Accepts,COMMERCE_SEMANTIC_PROVIDER_SCHEMA]];
+const providerV5Accepts=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_PROVIDER_V5_SCHEMA);
+const valueTransports=[['v4',v4,providerV4Accepts,COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA],['v5',v5,providerV5Accepts,COMMERCE_SEMANTIC_PROVIDER_V5_SCHEMA]];
 for(const [version,encode,accepts,schema] of valueTransports)test(version+' keeps provider grammar small and typed while semantic vocabulary is validated independently',()=>{
  const config=buildVertexGenerationConfig(4096,true,schema,0,'gemini-2.5-flash');
  assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_values_'+version]);
@@ -114,9 +115,8 @@ test('v5 guidance includes a complete source-bound current-turn demand without m
  const marker='no merchant facts are supplied: ';
  const example=JSON.parse(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5.slice(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5.indexOf(marker)+marker.length));
  assert(providerV5Accepts(example),JSON.stringify(providerV5Accepts.errors));
- assert(COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5));
- assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes('semantic_values_v4'));
- assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes('Declare exactly one object root at path []'));
+ // This retained fixture validates the historical V5 instruction/decoder pair;
+ // the active provider instruction is separately verified for V6 below.
  const frame=canonical(example);assert(frame);
  assert.deepEqual(frame.demands,[demand({question:'What is the price of product Q9?',source_quote:'What is the price of product Q9?'})]);
  assert.deepEqual(frame.entities,[]);assert.deepEqual(frame.customer_facts,[]);
@@ -372,4 +372,335 @@ for (const [question,key,value] of [
  assert.equal(decision.kind,'guidance');assert.equal(decision.continuation,true);
  assert.equal(resolveCustomerRequestDecision(question,{...semantic,operation:'CANCEL_ITEM'},history).continuation,false);
  assert.equal(resolveCustomerRequestDecision(question,{...semantic,ambiguity:{is_ambiguous:true}},history).continuation,false);
+});
+
+// Same Task3C B-T01 repair. These independently authored fixtures exercise the
+// provider/decoder contract, not a reconstructed historical model response or
+// fresh Hosted business holdout. The unavailable B-T01 raw remains unavailable.
+function v6(delta={},operation='ASK_FACT') {
+ const {demands=[],...other}=delta;
+ const list=[...nodes(other).filter(n=>n.path.length),
+  ...demands.flatMap((d,index)=>nodes(d.constraints,['demands',String(index),'constraints']))];
+ return {context_encoding:'semantic_demands_v6',operation,confidence:0.98,
+  demands:demands.map(({constraints,...fixed})=>structuredClone(fixed)),
+  containers:list.filter(n=>['object','array','null'].includes(n.kind)).map(({path,kind})=>({path,kind})),
+  strings:list.filter(n=>n.kind==='string').map(({path,text})=>({path,text})),
+  numbers:list.filter(n=>n.kind==='number').map(({path,number})=>({path,number})),
+  booleans:list.filter(n=>n.kind==='boolean').map(({path,boolean})=>({path,boolean}))};
+}
+let acceptsV6;
+function providerV6Accepts(value) {
+ assert(COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA,'V6 schema export is required');
+ acceptsV6??=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA);
+ return acceptsV6(value);
+}
+const v6DemandFields=['question','source_quote','subject_refs','source_type','requested_facts',
+ 'customer_correction','explicit_negations','ambiguity'];
+test('v6 active provider owns every fixed demand field while constraints retain typed native values',()=>{
+ assert.equal(COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA);
+ const config=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA,0,'gemini-2.5-flash');
+ assert.deepEqual(config.responseSchema.required,['context_encoding','operation','confidence','demands','containers','strings','numbers','booleans']);
+ assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_demands_v6']);
+ const fixed=config.responseSchema.properties.demands.items;
+ assert.deepEqual(fixed.required,v6DemandFields);
+ assert.deepEqual(Object.keys(fixed.properties),v6DemandFields);
+ assert.deepEqual(fixed.properties.source_type.enum,['product','policy','transaction','general','unknown']);
+ assert.deepEqual(fixed.properties.ambiguity.required,['is_ambiguous','reasons','clarification_question']);
+ assert(!Object.hasOwn(fixed.properties,'constraints'));
+ const inspect=s=>{assert(!s.anyOf);if(s.properties){assert.deepEqual(s.required,Object.keys(s.properties));assert.deepEqual(s.propertyOrdering,Object.keys(s.properties));Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);};
+ inspect(config.responseSchema);
+ const diagnostic=vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA);
+ assert.equal(diagnostic.transport,'semantic_demands_v6');
+ assert(diagnostic.schema_bytes<vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA).schema_bytes);
+ assert(!/anyOf|additionalProperties|delta_json|value_json/.test(JSON.stringify(config.responseSchema)));
+ assert.equal(config.thinkingConfig.thinkingBudget,0);
+ // Grammar structure alone is not evidence of real provider acceptance.
+ const raw=v6({demands:[demand({constraints:{budget:{amount:0,currency:null},renewal:false,excluded:[]}})]});
+ assert(providerV6Accepts(raw));assert(canonical(raw));
+});
+test('v6 prompt and active schema describe one transport without a second native demand vocabulary',()=>{
+ assert(COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V6));
+ assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5));
+ assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes('semantic_values_v4'));
+ assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes('Declare exactly one object root at path []'));
+ assert(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V6.includes('semantic_demands_v6'));
+ assert(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V6.includes('constraints'));
+});
+for(const [business,delta] of [
+ ['Cantonese option requirements',{language:'zh-HK',intent:'product_information',
+  demands:[demand({question:'有冇慳電嘅變頻窗口款可以睇？',source_quote:'80呎又西斜，預算唔多',subject_refs:[],
+   requested_facts:['published inverter window options'],constraints:{room:{area:80,unit:'sq_ft'},west_facing:true,budget:'limited'}})]}],
+ ['simplified subscription correction',{language:'zh-CN',intent:'product_information',customer_correction:true,
+  entities:[{name:'团队标准方案',kind:'subscription',confidence:0.96,constraints:{seats:6,auto_renew:false}}],
+  demands:[demand({question:'团队标准方案有哪些功能？',source_quote:'其实只需六个席位，不要自动续订',subject_refs:['团队标准方案'],
+   requested_facts:['features'],customer_correction:true,explicit_negations:['不要自动续订'],constraints:{seats:6,auto_renew:false,deferred_add_ons:['analytics']}})]}],
+ ['traditional service and rental constraints',{language:'zh-TW',intent:'merchant_policy',
+  demands:[demand({question:'租用望遠鏡兩天的歸還規則？',source_quote:'租用兩天，先不預約配送',subject_refs:['望遠鏡'],
+   source_type:'policy',requested_facts:['rental return rules'],explicit_negations:['先不預約配送'],
+   constraints:{duration:{amount:2,unit:'days'},delivery:false,return_date:null,access:[]}})]}],
+ ['English mixed transaction and merchant policy',{language:'en',intent:'order_and_policy',
+  demands:[demand({question:'Where is my order 12354?',source_quote:'Where is my order 12354?',subject_refs:['12354'],
+   source_type:'transaction',requested_facts:['delivery_progress'],constraints:{}}),
+   demand({question:'What are your return rules for Q9?',source_quote:'What are your return rules for Q9?',subject_refs:['Q9'],
+    source_type:'policy',requested_facts:['return_policy'],constraints:{opened:false}}),
+   demand({question:'How should I compare return options?',source_quote:'How should I compare return options?',subject_refs:[],
+    source_type:'general',requested_facts:['general tradeoffs'],constraints:{}})]}],
+ ['code-switch multiple entities and unanswered clause',{language:'zh-HK',customer_correction:true,
+  entities:[{name:'Atlas plan',kind:'subscription',confidence:0.94,constraints:{users:6}},{name:'Orion cover',kind:'service',confidence:0.96,constraints:{users:0}}],
+  demands:[demand({question:'Atlas plan for six users, no add-on?',source_quote:'Atlas plan 改六個人，no add-on',subject_refs:['Atlas plan'],
+   requested_facts:['subscription features'],constraints:{users:6,add_ons:[]},customer_correction:true,explicit_negations:['no add-on']}),
+   demand({question:'Orion cover applies to which location?',source_quote:'Orion cover 嗰邊點？',subject_refs:['Orion cover'],
+    requested_facts:['service eligibility'],constraints:{users:0,date:null},
+    ambiguity:{is_ambiguous:true,reasons:['location_not_supplied'],clarification_question:'Which service location?'}})]}],
+])test('v6 preserves complete independent semantics without defaults or lost clauses: '+business,()=>{
+ const input=v6(delta,'UPDATE_ITEM');
+ assert(providerV6Accepts(input));
+ const actual=canonical(input),expected=normalizeCommerceSemanticFrame({operation:'UPDATE_ITEM',confidence:0.98,...delta});
+ assert(actual);assert(expected);assert.deepEqual(actual,expected);
+ assert.equal(actual.demands.length,delta.demands.length);
+ assert.deepEqual(canonical({...input,containers:input.containers.toReversed(),strings:input.strings.toReversed(),
+  numbers:input.numbers.toReversed(),booleans:input.booleans.toReversed()}),actual,'context graph ordering cannot change meaning');
+});
+for(const field of v6DemandFields)test('v6 missing native demand field cannot be guessed: '+field,()=>{
+ const raw=v6({demands:[demand()]});delete raw.demands[0][field];
+ assert.equal(providerV6Accepts(raw),false);
+ assert.equal(canonical(raw),null);
+});
+for(const [label,mutate] of [
+ ['native demand is a string',w=>w.demands[0]='PRIVATE-JSON-IN-STRING'],
+ ['native demands absent',w=>delete w.demands],
+ ['native demands wrong type',w=>w.demands={}],
+ ['numeric question',w=>w.demands[0].question=17],
+ ['boolean source quote',w=>w.demands[0].source_quote=false],
+ ['numeric subject reference',w=>w.demands[0].subject_refs=[17]],
+ ['unknown source type',w=>w.demands[0].source_type='PRIVATE-ROUTE'],
+ ['numeric requested fact',w=>w.demands[0].requested_facts=[17]],
+ ['string correction flag',w=>w.demands[0].customer_correction='false'],
+ ['boolean explicit negation',w=>w.demands[0].explicit_negations=[false]],
+ ['nonobject ambiguity',w=>w.demands[0].ambiguity=false],
+ ['string ambiguity flag',w=>w.demands[0].ambiguity.is_ambiguous='false'],
+ ['numeric ambiguity reason',w=>w.demands[0].ambiguity.reasons=[17]],
+ ['numeric clarification question',w=>w.demands[0].ambiguity.clarification_question=17],
+])test('v6 typed demand producer and strict decoder reject without coercion: '+label,()=>{
+ const raw=v6({demands:[demand()]});mutate(raw);
+ assert.equal(providerV6Accepts(raw),false);
+ let diagnostic;assert.equal(decodeCommerceSemanticWire(raw,(_code,d)=>{diagnostic=d;}),null);
+ assert(!JSON.stringify(diagnostic??{}).includes('PRIVATE-'));
+});
+for(const [label,mutate] of [
+ ['unknown direct demand field',w=>w.demands[0].PRIVATE_EXTRA='PRIVATE-VALUE'],
+ ['invented message provenance',w=>w.demands[0].source_message_id='PRIVATE-SOURCE-ID'],
+ ['question alias',w=>w.demands[0].query='PRIVATE-VALUE'],
+ ['unknown ambiguity field',w=>w.demands[0].ambiguity.PRIVATE_EXTRA='PRIVATE-VALUE'],
+ ['direct native constraints',w=>w.demands[0].constraints={PRIVATE_DYNAMIC:'PRIVATE-VALUE'}],
+ ['unknown envelope field',w=>w.PRIVATE_EXTRA='PRIVATE-VALUE'],
+])test('v6 rejects unknown fixed keys rather than stripping them: '+label,()=>{
+ const raw=v6({demands:[demand()]});mutate(raw);
+ let diagnostic;assert.equal(decodeCommerceSemanticWire(raw,(code,d)=>{assert.equal(code,'wire_context_nodes');diagnostic=d;}),null);
+ assert(diagnostic);assert(!JSON.stringify(diagnostic).includes('PRIVATE'));
+ assert.equal(recoverSourceOwnedOptionAfterEntityTypeFailure(raw,'有冇啲適合小團隊嘅訂閱方案可以睇？',diagnostic,true,true),null);
+});
+for(const [label,mutate] of [
+ ['native demands list overwrite',w=>w.containers.push({path:['demands'],kind:'array'})],
+ ['native demand object overwrite',w=>w.containers.push({path:['demands','0'],kind:'object'})],
+ ['native question overwrite',w=>w.strings.push({path:['demands','0','question'],text:'PRIVATE-OVERRIDE'})],
+ ['native source quote overwrite',w=>w.strings.push({path:['demands','0','source_quote'],text:'PRIVATE-OVERRIDE'})],
+ ['native source type overwrite',w=>w.strings.push({path:['demands','0','source_type'],text:'general'})],
+ ['native correction overwrite',w=>w.booleans.push({path:['demands','0','customer_correction'],boolean:true})],
+ ['native requested fact overwrite',w=>w.strings.push({path:['demands','0','requested_facts','0'],text:'PRIVATE-OVERRIDE'})],
+ ['native ambiguity overwrite',w=>w.booleans.push({path:['demands','0','ambiguity','is_ambiguous'],boolean:true})],
+ ['undeclared demand',w=>w.containers.push({path:['demands','1','constraints'],kind:'object'})],
+ ['noncanonical demand index',w=>w.containers[0].path[1]='00'],
+ ['huge demand index',w=>w.containers[0].path[1]='999999999'],
+ ['missing constraints root',w=>w.containers=[]],
+ ['constraints root null',w=>w.containers[0].kind='null'],
+ ['constraints root array',w=>w.containers[0].kind='array'],
+ ['constraints root string',w=>{w.containers=[];w.strings.push({path:['demands','0','constraints'],text:'{}'});}],
+ ['duplicate constraints root',w=>w.containers.push({...w.containers[0]})],
+ ['cross-collection duplicate context leaf',w=>{w.numbers.push({path:['demands','0','constraints','users'],number:0});w.booleans.push({path:['demands','0','constraints','users'],boolean:false});}],
+ ['missing nested context parent',w=>w.strings.push({path:['demands','0','constraints','location','area'],text:'PRIVATE-VALUE'})],
+ ['sparse context array',w=>{w.containers.push({path:['demands','0','constraints','excluded'],kind:'array'});w.strings.push({path:['demands','0','constraints','excluded','1'],text:'PRIVATE-VALUE'});}],
+ ['prototype context path',w=>w.strings.push({path:['demands','0','constraints','constructor'],text:'PRIVATE-VALUE'})],
+ ['frame root injection',w=>w.containers.push({path:[],kind:'object'})],
+ ['inactive scalar slot',w=>w.containers[0].text='PRIVATE-VALUE'],
+])test('v6 fences dynamic context from native demand authority and rejects damaged graphs: '+label,()=>{
+ const raw=v6({demands:[demand()]});mutate(raw);
+ let diagnostic;assert.equal(decodeCommerceSemanticWire(raw,(code,d)=>{assert.equal(code,'wire_context_nodes');diagnostic=d;}),null);
+ assert(diagnostic);assert(!JSON.stringify(diagnostic).includes('PRIVATE'));
+ assert.equal(recoverSourceOwnedOptionAfterEntityTypeFailure(raw,'有冇啲適合小團隊嘅訂閱方案可以睇？',diagnostic,true,true),null);
+});
+for(const [label,delta] of [
+ ['13 demands',{demands:Array.from({length:13},()=>demand())}],
+ ['empty source quote',{demands:[demand({source_quote:'  '})]}],
+ ['oversized source quote',{demands:[demand({source_quote:'x'.repeat(1601)})]}],
+ ['NFKC-expanded quote',{demands:[demand({source_quote:'㍿'.repeat(401)})]}],
+ ['13 subject references',{demands:[demand({subject_refs:Array.from({length:13},(_,i)=>'Q'+i)})]}],
+ ['21 requested facts',{demands:[demand({requested_facts:Array(21).fill('feature')})]}],
+ ['21 explicit negations',{demands:[demand({explicit_negations:Array(21).fill('no extra')})]}],
+ ['13 ambiguity reasons',{demands:[demand({ambiguity:{is_ambiguous:true,reasons:Array(13).fill('missing'),clarification_question:null}})]}],
+ ['oversized dynamic text',{demands:[demand({constraints:{description:'x'.repeat(301)}})]}],
+ ['excess dynamic depth',{demands:[demand({constraints:{one:{two:{three:{value:0}}}}})]}],
+ ['41 dynamic fields',{demands:[demand({constraints:Object.fromEntries(Array.from({length:41},(_,i)=>['key'+i,i]))})]}],
+ ['13 dynamic array items',{demands:[demand({constraints:{excluded:Array(13).fill(false)}})]}],
+ ['first malformed clause cannot disappear beside a valid clause',{demands:[demand({source_quote:''}),demand({question:'What is the return policy?',source_type:'policy'})]}],
+])test('v6 retains canonical bounds and rejects the complete proposal without truncation: '+label,()=>{
+ assert.equal(canonical(v6(delta)),null);
+});
+test('v6 keeps numeric entity confidence strict and the prior source-owned recovery narrowly bounded',()=>{
+ const latest='有冇啲適合小團隊嘅訂閱方案可以睇？';
+ for(const confidence of ['0.95',null,false,{value:0.95}]){
+  const raw=v6({entities:[{name:'PRIVATE-UNBOUND',kind:'subscription',confidence}],
+   demands:[demand({question:latest,source_quote:latest,subject_refs:[],requested_facts:['published options'],constraints:{}})]});
+  let diagnostic;assert.equal(decodeCommerceSemanticWire(raw,(_code,d)=>{diagnostic=d;}),null);
+  assert.equal(diagnostic.field_class,'entity_confidence');assert.equal(diagnostic.reason,'type');
+  const recovered=recoverSourceOwnedOptionAfterEntityTypeFailure(raw,latest,diagnostic,true,true);
+  assert(recovered);assert.equal(recovered.entities.length,0);assert.equal(recovered.customer_facts.length,0);
+  assert.equal(recovered.demands.length,1);assert.equal(recovered.demands[0].source_quote,latest.normalize('NFKC'));
+  assert(!JSON.stringify(recovered).includes('PRIVATE-'));
+  assert.equal(recoverSourceOwnedOptionAfterEntityTypeFailure(raw,latest,diagnostic,true,false),null);
+  assert.equal(recoverSourceOwnedOptionAfterEntityTypeFailure({...raw,operation:'CANCEL_ITEM'},latest,diagnostic,true,true),null);
+ }
+ const raw=v6({entities:[{name:'Atlas plan',kind:'subscription',confidence:0.95}],demands:[demand()]});
+ assert.equal(canonical(raw).entities[0].confidence,0.95);
+});
+test('v6 demand source identity stays server bound and unquoted clauses never enter the KB projection',()=>{
+ const latest='What is the current price of Q9?';
+ const valid=demand({question:latest,source_quote:latest});
+ const good=canonical(v6({demands:[valid]}));assert(good);
+ const request=resolveCurrentFactualRequest({question:latest,source_message_id:'test-current-visitor',semantic:good});
+ assert.equal(request.source_message_id,'test-current-visitor');
+ assert.equal(request.demands[0].source_quote,latest);
+ assert.deepEqual(request.demands[0].subject_source_message_ids,['test-current-visitor']);
+ const invalid=demand({question:'PRIVATE-UNBOUND requested price',source_quote:'PRIVATE-UNBOUND customer source',subject_refs:['PRIVATE-UNBOUND']});
+ const mixed=canonical(v6({demands:[valid,invalid]}));assert(mixed);
+ const filtered=resolveCurrentFactualRequest({question:latest,source_message_id:'test-current-visitor',semantic:mixed});
+ assert.equal(filtered.demands.length,2,'the failed clause remains visible as unresolved');
+ assert(filtered.missing_evidence.some(item=>item.reason==='source_quote_unbound'));
+ assert(!String(filtered.query).includes('PRIVATE-UNBOUND'));
+ assert(String(filtered.query).includes('Q9'));
+});
+
+// Exercise the actual interpreter and actual SHA-256 helper. Only the provider
+// boundary is replaced; a test cannot dispatch a model, database or KB request.
+let diagnosticInterpreterPromise;
+const diagnosticInterpreter=()=>diagnosticInterpreterPromise??=(async()=>{
+ const built=await build({stdin:{contents:"export * from './supabase/functions/_shared/commerce-semantic-interpreter.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'isolated-diagnostic-provider',setup(b){
+  b.onResolve({filter:/^\.\/llm-router\.ts$/},()=>({path:'isolated-diagnostic-model',namespace:'provider'}));
+  b.onLoad({filter:/.*/,namespace:'provider'},()=>({contents:"export const callModel=(...args)=>{if(typeof globalThis.__semanticTransportModel!=='function')throw new Error('provider dispatch forbidden in semantic transport tests');return globalThis.__semanticTransportModel(...args);};"}));
+ }}]});
+ return import('data:text/javascript;base64,'+Buffer.from(built.outputFiles[0].text).toString('base64'));
+})();
+function assertDiagnosticReceipt(receipt,body,origin,state){
+ assert.deepEqual(receipt,{capture_origin:origin,capture_state:state,
+  sha256:createHash('sha256').update(body,'utf8').digest('hex'),
+  bytes:Buffer.byteLength(body,'utf8'),body:state==='CAPTURED'?body:null});
+}
+test('semantic failure capture retains the complete original UTF8 bytes and hash without normalizing the body',async()=>{
+ const {captureSemanticDiagnosticText}=await diagnosticInterpreter();
+ assert.equal(typeof captureSemanticDiagnosticText,'function');
+ const raw='  香港 Q9\n🙂 e\u0301 ㍿\r\n"quoted"\t80 / 100 / 180 sq ft; false, 0, null, [], {}  ';
+ for(const origin of ['SEMANTIC_ROUTER_INPUT','SEMANTIC_MODEL_TEXT']){
+  assertDiagnosticReceipt(await captureSemanticDiagnosticText(raw,origin),raw,origin,'CAPTURED');
+  assertDiagnosticReceipt(await captureSemanticDiagnosticText('',origin),'',origin,'CAPTURED');
+ }
+});
+test('semantic failure capture counts UTF8 bytes at the exact bound and withholds the whole oversized body',async()=>{
+ const {captureSemanticDiagnosticText}=await diagnosticInterpreter();
+ const exact='資'.repeat(21_845)+'x';
+ assert.equal(Buffer.byteLength(exact,'utf8'),65_536);assert(exact.length<65_536);
+ assertDiagnosticReceipt(await captureSemanticDiagnosticText(exact,'SEMANTIC_MODEL_TEXT'),exact,'SEMANTIC_MODEL_TEXT','CAPTURED');
+ for(const raw of [exact+'y','🙂'.repeat(16_385),'x'.repeat(65_537)]){
+  const receipt=await captureSemanticDiagnosticText(raw,'SEMANTIC_MODEL_TEXT');
+  assertDiagnosticReceipt(receipt,raw,'SEMANTIC_MODEL_TEXT','WITHHELD_OVERSIZED');
+  assert.equal(receipt.body,null,'a prefix must not masquerade as a complete model response');
+  assert(!JSON.stringify(receipt).includes(raw.slice(0,64)));
+ }
+});
+for(const [label,raw] of [
+ ['email','Please send to synthetic.person@example.invalid'],
+ ['international HK phone','The callback number is +852 6123 4567.'],
+ ['local HK phone','The callback number is 91234567.'],
+ ['HK landline','The contact number is +852 2123 4567.'],
+ ['US international phone','The contact number is +1 202 555 0123.'],
+ ['UK international phone','The contact number is +44 20 7946 0958.'],
+ ['Bearer credential','Authorization: Bearer synthetic-token-for-test-only'],
+ ['JWT-shaped credential','eyJhbGciOiJub25lIn0.eyJ0ZXN0Ijp0cnVlfQ.dGVzdA'],
+ ['private key block','-----BEGIN PRIVATE KEY-----\nsynthetic-test-only\n-----END PRIVATE KEY-----'],
+ ['API credential prefix','sk-syntheticCredentialForTestOnly'],
+ ['provider credential prefix','AIzaSyntheticCredentialForTestsOnly'],
+ ['password literal',JSON.stringify({password:'synthetic-opaque-test-value'})],
+ ['client secret literal',JSON.stringify({client_secret:'synthetic-opaque-test-value'})],
+ ['secret-bearing typed path',JSON.stringify(v6({demands:[demand({constraints:{api_key:'synthetic-opaque-test-value'}})]}))],
+])test('semantic failure capture withholds the entire sensitive body: '+label,async()=>{
+ const {captureSemanticDiagnosticText}=await diagnosticInterpreter();
+ for(const origin of ['SEMANTIC_ROUTER_INPUT','SEMANTIC_MODEL_TEXT']){
+  const receipt=await captureSemanticDiagnosticText(raw,origin);
+  assertDiagnosticReceipt(receipt,raw,origin,'WITHHELD_SENSITIVE');
+  assert.equal(receipt.body,null);assert(!JSON.stringify(receipt).includes(raw));
+ }
+});
+
+const diagnosticLatest='What is the current price of Q9?';
+const diagnosticInput=(latest=diagnosticLatest)=>({company_id:'isolated-company',conversation_id:'isolated-ticket',
+ source_message_id:'isolated-current-visitor',latest,persistent_state_summary:'{}'});
+function rejectedDemandResponse(latest=diagnosticLatest){
+ const response=v6({demands:[demand({question:latest,source_quote:latest})]});
+ response.demands[0].PRIVATE_UNKNOWN_FIELD='PRIVATE-CONTRACT-MARKER';
+ return JSON.stringify(response);
+}
+function expectedDiagnosticRequest(request){
+ return JSON.stringify({purpose:request.purpose,tag:request.tag,system:request.system,user:request.user,response_format:request.responseFormat,
+  response_schema:request.responseSchema,max_tokens:request.maxTokens,
+  max_provider_attempts:request.maxProviderAttempts,thinking_budget:request.thinkingBudget});
+}
+for(const [label,raw,stage,outcome] of [
+ ['malformed JSON','{"PRIVATE-CONTRACT-MARKER":','semantic_json','NOT_RUN'],
+ ['unknown direct demand field',rejectedDemandResponse(),'semantic_contract','NOT_APPLICABLE'],
+ ['unbound customer quotation',JSON.stringify(v6({demands:[demand({question:diagnosticLatest,source_quote:'PRIVATE-CONTRACT-MARKER'})]})),'semantic_source_binding','NOT_RUN'],
+])test('semantic failure evidence binds exact request and response with fixed recovery outcomes: '+label,async()=>{
+ const {interpretCommerceSemantics}=await diagnosticInterpreter();
+ const previous=globalThis.__semanticTransportModel;
+ let calls=0,request;
+ globalThis.__semanticTransportModel=async input=>{calls++;request=input;return {ok:true,request_id:'isolated-router-request',text:raw};};
+ try {
+  const result=await interpretCommerceSemantics(diagnosticInput());
+  assert.equal(calls,1);assert.equal(request.maxProviderAttempts,1);
+  assert.equal(request.operationId,'commerce-semantic:isolated-current-visitor');
+  assert.equal(result.frame,null);assert.equal(result.failure_code,'LLM_INVALID_OUTPUT');assert.equal(result.failure_stage,stage);
+  const {failure_evidence:evidence,...publicResult}=result;
+  assert.equal(evidence.contract,'c3-semantic-failure-evidence-v1');
+  assert.equal(evidence.source_message_id,'isolated-current-visitor');assert.equal(evidence.request_id,'isolated-router-request');
+  assert.deepEqual(evidence.recovery_outcomes,{source_quoted_read_only:outcome,source_owned_option:outcome,missing_demand_option:outcome});
+  assertDiagnosticReceipt(evidence.request,expectedDiagnosticRequest(request),'SEMANTIC_ROUTER_INPUT','CAPTURED');
+  assertDiagnosticReceipt(evidence.response,raw,'SEMANTIC_MODEL_TEXT','CAPTURED');
+  const snapshot=JSON.parse(evidence.request.body);
+  assert.equal(snapshot.system,COMMERCE_SEMANTIC_SYSTEM_PROMPT);assert.deepEqual(snapshot.response_schema,COMMERCE_SEMANTIC_PROVIDER_SCHEMA);
+  assert(snapshot.user.includes(diagnosticLatest));assert(!JSON.stringify(publicResult).includes('PRIVATE-CONTRACT-MARKER'));
+ }finally{previous===undefined?delete globalThis.__semanticTransportModel:globalThis.__semanticTransportModel=previous;}
+});
+test('semantic failure evidence withholds the full router input for sensitive customer text while retaining exact hash and source',async()=>{
+ const {interpretCommerceSemantics}=await diagnosticInterpreter();
+ const latest=diagnosticLatest+' Contact synthetic.person@example.invalid';
+ const raw=rejectedDemandResponse();
+ const previous=globalThis.__semanticTransportModel;let request,calls=0;
+ globalThis.__semanticTransportModel=async input=>{calls++;request=input;return {ok:true,request_id:'isolated-sensitive-request',text:raw};};
+ try{
+  const result=await interpretCommerceSemantics(diagnosticInput(latest));assert.equal(calls,1);
+  const {failure_evidence:evidence,...publicResult}=result;
+  assert.equal(evidence.source_message_id,'isolated-current-visitor');assert.equal(evidence.request_id,'isolated-sensitive-request');
+  assertDiagnosticReceipt(evidence.request,expectedDiagnosticRequest(request),'SEMANTIC_ROUTER_INPUT','WITHHELD_SENSITIVE');
+  assertDiagnosticReceipt(evidence.response,raw,'SEMANTIC_MODEL_TEXT','CAPTURED');
+  assert(!JSON.stringify(result).includes('synthetic.person@example.invalid'));
+  assert(!JSON.stringify(publicResult).includes('PRIVATE-CONTRACT-MARKER'));
+ }finally{previous===undefined?delete globalThis.__semanticTransportModel:globalThis.__semanticTransportModel=previous;}
+});
+test('semantic failure evidence does not attach input or model bodies to a successful semantic result',async()=>{
+ const {interpretCommerceSemantics}=await diagnosticInterpreter();
+ const previous=globalThis.__semanticTransportModel;let calls=0;
+ const raw=JSON.stringify(v6({demands:[demand({question:diagnosticLatest,source_quote:diagnosticLatest})]}));
+ globalThis.__semanticTransportModel=async()=>{calls++;return {ok:true,request_id:'isolated-valid-request',text:raw};};
+ try{
+  const result=await interpretCommerceSemantics(diagnosticInput());assert.equal(calls,1);
+  assert.equal(result.failure_code,null);assert(result.frame);assert(!Object.hasOwn(result,'failure_evidence'));
+ }finally{previous===undefined?delete globalThis.__semanticTransportModel:globalThis.__semanticTransportModel=previous;}
 });

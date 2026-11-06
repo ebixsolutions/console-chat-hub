@@ -4528,6 +4528,32 @@ async function orchestrationGenerateReply(
 
   if (_semanticFailure) {
     // Reject before every Commerce/Memory mutation and R1 enrichment.
+    // Preserve only this same-call failure in the existing Admin/Tenant trace
+    // table. A semantic trace is explicitly NOT a dispatched KB request. Raw
+    // input/output stays out of message metadata, public replies and Edge logs.
+    const semanticEvidence = _semanticPrepared?.semantic.failure_evidence;
+    if (semanticEvidence && semanticEvidence.source_message_id === _h1SourceMessageId &&
+        _criticalE2ExpectedTenantId && _semanticPrepared) {
+      try {
+        const {error: captureError} = await supabaseAdmin.from("rag_trace").insert({
+          id: crypto.randomUUID(), conversation_id, message_id: _h1SourceMessageId,
+          query_sent: null, top_score: null, kb_source: "semantic_contract_failure",
+          retrieved_chunks: {
+            contract: "c3-admin-semantic-failure-v1", source_message_id: _h1SourceMessageId,
+            operation_id: semanticEvidence.request_id, request_dispatch_state: "KB_NOT_DISPATCHED_SEMANTIC_FAILURE",
+            semantic: semanticEvidence, semantic_input: _semanticPrepared.semantic.input_receipt ?? null,
+            stage: _semanticPrepared.semantic.failure_stage ?? null,
+            contract_rejection: _semanticPrepared.semantic.contract_rejection ?? null,
+            contract_diagnostic: _semanticPrepared.semantic.contract_diagnostic ?? null,
+          },
+        });
+        if (captureError) console.warn(JSON.stringify({event:"c3_semantic_evidence_write_failed",
+          source_message_id:_h1SourceMessageId,code:"TRACE_INSERT_FAILED"}));
+      } catch {
+        console.warn(JSON.stringify({event:"c3_semantic_evidence_write_failed",
+          source_message_id:_h1SourceMessageId,code:"TRACE_INSERT_FAILED"}));
+      }
+    }
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     const response = new Response(JSON.stringify({success:false,error:"semantic_interpretation_failed",code:_semanticFailure,failure:_semanticDiagnostic,retryable:_semanticDiagnostic?.retryable === true}),
       {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});

@@ -3,6 +3,10 @@ import {verifyProductionSource,verifyIdentity,verifyChildEvidence,runChild,impor
 import {resolveAuthoritativeSupabaseBinding} from '../../src/integrations/supabase/runtime-authority.mjs';
 import {verifyDeterministicClosure} from './c3_deterministic_runtime_closure.mjs';
 const root=process.cwd(),profile=JSON.parse(fs.readFileSync(PROFILE_PATH));const tests=[];
+// Same Task3C B-T01 demand-contract repair pins current bytes only. Historical
+// A/Frozen receipts and production permissions remain independent and intact.
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,task3c_b_t01_demand_repair_production_authorized:true},sourceOnly:true}),/task3c_b_t01_demand_deployment_not_authorized/);
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_task3c_b_t01_demand_repair_sha256:{}},sourceOnly:true}),/task3c_b_t01_demand_scope_drift/);
 // Same Task3C real Hosted A-T01 P0 repair: exact byte-scoped source-only amendment.
 // This does NOT authorize backend activation or modify historical Frozen maps.
 assert.throws(()=>verifyProductionSource({root,profile:{...profile,task3c_a_t01_semantic_repair_production_authorized:true},sourceOnly:true}),/task3c_a_t01_semantic_deployment_not_authorized/);
@@ -47,7 +51,23 @@ reject('stale identity',()=>verifyIdentity(root,profile,{head:'0'.repeat(40),tre
 reject('unresolved dynamic import',()=>imports('await import(pathFromRequest);','unsafe.ts'),/dynamic_import_unresolved/);
 const fixture=fs.mkdtempSync(path.join(os.tmpdir(),'c3-production-controls-'));
 try{
+ // Every current pinned map must exist before negative cases run. Omitting a
+ // late guard's fixture could otherwise disguise an unrelated missing file as
+ // the intended drift rejection. These copies grant no mutation authority.
+ const pinnedSourcePaths=[...new Set(Object.entries(profile).filter(([name,value])=>name.endsWith('_sha256')&&value&&typeof value==='object'&&!Array.isArray(value)).flatMap(([,value])=>Object.keys(value)))];
+ for(const f of pinnedSourcePaths){const dest=path.join(fixture,f);fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(path.join(root,f),dest);}
  for(const f of [...Object.keys(profile.authorized_task3c_a_t01_semantic_repair_sha256 ?? {}),...Object.keys(profile.authorized_task2_evidence_sha256 ?? {}),...Object.keys(profile.authorized_task1_semantic_context_sha256 ?? {}),...Object.keys(profile.authorized_task1c_event_price_sha256 ?? {}),...Object.keys(profile.authorized_task1_c4_recovery_sha256 ?? {}),...Object.keys(profile.authorized_task1_cross_topic_sha256 ?? {}),...Object.keys(profile.authorized_task1_director_repair_sha256 ?? {}),...Object.keys(profile.authorized_live_execution_sha256 ?? {}),...Object.keys(profile.authorized_director_functional_repair_sha256 ?? {}),...Object.keys(profile.authorized_uat_runtime_sha256 ?? {}),...Object.keys(profile.authorized_uat_compatibility_sha256 ?? {}),...Object.keys(profile.authorized_compound_dialogue_repair_sha256),...Object.keys(profile.authorized_w19_compatibility_repair_sha256),...Object.keys(profile.authorized_section15_reference_repair_sha256),...Object.keys(profile.authorized_nonproduction_preview_repair_sha256),...Object.keys(profile.authorized_kb_accounting_repair_sha256),...Object.keys(profile.authorized_model_accounting_repair_sha256),...Object.keys(profile.authorized_quality95_failure_repair_sha256),...profile.runtime_files,...Object.keys(profile.frozen_evidence_sha256),...Object.keys(profile.normalized_preview_sha256),...Object.keys(profile.widget_reply_stability_sha256),...Object.keys(profile.authorized_widget_auth_repair_sha256),...Object.keys(profile.authorized_unified_generic_service_repair_sha256),...Object.keys(profile.authorized_f13_f14_repair_sha256),...Object.keys(profile.authorized_b12_registry_repair_sha256),...Object.keys(profile.authorized_memory_reply_repair_sha256),...Object.keys(profile.authorized_preview_activation_sha256),...Object.keys(profile.accepted_demo_env_sha256),...Object.keys(profile.authorized_section15_repair_sha256)]){const dest=path.join(fixture,f);fs.mkdirSync(path.dirname(dest),{recursive:true});fs.copyFileSync(path.join(root,f),dest);}
+ assert.equal(verifyProductionSource({root:fixture,profile,sourceOnly:true}).status,'SOURCE_VALIDATED');
+ tests.push({name:'complete isolated source fixture passes before anti-tamper mutations',result:'PASS'});
+ for(const f of Object.keys(profile.authorized_task3c_b_t01_demand_repair_sha256)){
+  const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized B-T01 demand repair drift');
+  // Earlier historical guards retain their exact error identity. No unrelated
+  // rejection may stand in for checking the current B repair bytes.
+  const prefix=profile.authorized_task2_evidence_sha256[f]?'task2_evidence_source_hash_drift':
+   profile.authorized_task1_semantic_context_sha256[f]?'task1c_source_hash_drift':'task3c_b_t01_demand_source_hash_drift';
+  assert.throws(()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),error=>error.message===prefix+':'+f);
+  tests.push({name:'B-T01 demand repair exact source bytes '+f,result:'PASS',rejected:true});fs.writeFileSync(path.join(fixture,f),original);
+ }
  for(const f of Object.keys(profile.authorized_task2_evidence_sha256)){
   const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized Task 2 source drift');
   assert.throws(()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),new RegExp('task2_evidence_source_hash_drift:'+f.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));

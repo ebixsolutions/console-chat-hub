@@ -1,5 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
+import {createHash} from "node:crypto";
 import {resolveEvidenceAdminScope,linkConversationEvidenceTurns,isEvidenceConversationId,redactEvidenceSensitiveText} from "../../src/lib/api/evidence-log-scope.ts";
 function db(rows,companyActive=true){
  return{from(name){
@@ -72,6 +73,7 @@ test('Pre-KB semantic failure is not mislabeled as historical KB raw capture',()
  const explicit=linkConversationEvidenceTurns([visitor,assistant],[]);
  assert.equal(explicit.turns[0].evidenceStatus,'KB_NOT_DISPATCHED_SEMANTIC_FAILURE');
  assert.equal(explicit.turns[0].evidence.length,0);
+ assert.deepEqual(explicit.turns[0].semanticEvidence,[]); // Old missing provider text is never backfilled from receipt hashes.
  assert.equal(JSON.parse(explicit.turns[0].answers[0].metadata).semantic_failure_receipt.stage,'semantic_contract');
  assert.equal(linkConversationEvidenceTurns([visitor],[]).turns[0].evidenceStatus,'NOT_CAPTURED');
 });
@@ -160,4 +162,148 @@ test("Structured evidence keeps exact lineage IDs without exposing contacts or r
  assert.equal(evidence.rawCaptureOrigin,"LEGACY_ORIGIN_UNVERIFIED");
  assert(!evidence.rawResponse.includes(chunkId));
  assert(!evidence.rawResponse.includes(contact));
+});
+
+// Synthetic future capture fixtures, not reconstructed A/B-T01 provider output.
+const semanticVisitor={id:"13caab89-1fe5-42b2-8335-28122574ed5d",role:"visitor",content:"A source-owned question",created_at:"2026-11-06T02:43:28Z"};
+const semanticRequestId=`commerce-semantic:${semanticVisitor.id}`;
+function semanticBody(body,capture_origin){return{capture_origin,capture_state:"CAPTURED",body,
+ sha256:createHash("sha256").update(body).digest("hex"),bytes:Buffer.byteLength(body,"utf8")};}
+function semanticTrace(){return{id:"semantic-trace",message_id:semanticVisitor.id,query_sent:null,top_score:null,
+ kb_source:"semantic_contract_failure",created_at:"2026-11-06T02:43:40Z",retrieved_chunks:{
+  contract:"c3-admin-semantic-failure-v1",source_message_id:semanticVisitor.id,operation_id:semanticRequestId,
+  request_dispatch_state:"KB_NOT_DISPATCHED_SEMANTIC_FAILURE",
+  semantic_input:{source_message_id:semanticVisitor.id,user_sha256:"636fab1cbeb1a9840abc44c09b3a2a8ec7cd2c91fd0ffcddf206ab92e576e6ea",
+   system_sha256:"5e68b7fc2b0b3bf5cf32b60510bdf6659d2797795645a0ab452561e5a670de8f"},
+  stage:"semantic_contract",contract_rejection:"wire_context_nodes",
+  contract_diagnostic:{container:"wire_nodes",stage:"canonical_vocabulary",field_class:"demand",reason:"field",node_count:29},
+  semantic:{contract:"c3-semantic-failure-evidence-v1",source_message_id:semanticVisitor.id,request_id:semanticRequestId,
+   request:semanticBody('{"user":"A source-owned question"}',"SEMANTIC_ROUTER_INPUT"),
+   response:semanticBody('{"synthetic":"unsupported demand field"}',"SEMANTIC_MODEL_TEXT"),
+   recovery_outcomes:{entity_read_only:"NOT_APPLICABLE"}},
+ }};}
+test("Semantic failure capture is separate from KB dispatch and preserves exact original hashes",()=>{
+ const trace=semanticTrace(),original=structuredClone(trace);
+ const turn=linkConversationEvidenceTurns([semanticVisitor],[trace]).turns[0];
+ assert.equal(turn.evidenceStatus,"KB_NOT_DISPATCHED_SEMANTIC_FAILURE");
+ assert.equal(turn.evidence.length,0);
+ assert.equal(turn.semanticEvidence.length,1);
+ const evidence=turn.semanticEvidence[0];
+ assert.equal(evidence.linkageStatus,"MATCH");
+ assert.equal(evidence.requestId,semanticRequestId);
+ assert.equal(evidence.request.captureOrigin,"SEMANTIC_ROUTER_INPUT");
+ assert.equal(evidence.response.captureOrigin,"SEMANTIC_MODEL_TEXT");
+ for(const name of ["request","response"]){
+  assert.equal(evidence[name].captureState,"CAPTURED");
+  assert.equal(evidence[name].displayState,"CAPTURED");
+  assert.equal(evidence[name].body,trace.retrieved_chunks.semantic[name].body);
+  assert.equal(evidence[name].sha256,trace.retrieved_chunks.semantic[name].sha256);
+  assert.equal(evidence[name].bytes,trace.retrieved_chunks.semantic[name].bytes);
+ }
+ assert.equal(evidence.inputSystemSha256,trace.retrieved_chunks.semantic_input.system_sha256);
+ assert.equal(evidence.inputUserSha256,trace.retrieved_chunks.semantic_input.user_sha256);
+ assert.deepEqual(trace,original);
+});
+test("Existing KB evidence stays independent when a semantic trace is also present",()=>{
+ const kb={id:"kb-trace",message_id:semanticVisitor.id,query_sent:"Actual separate KB query",top_score:null,
+  kb_source:"singapore_context_search",created_at:"2026-11-06T02:45:00Z",retrieved_chunks:{
+   request_dispatch_state:"HTTP_RECEIVED",response:{capture_origin:"UPSTREAM_HTTP",capture_state:"CAPTURED",response_json_raw:"{}",http_status:200}}};
+ const turn=linkConversationEvidenceTurns([semanticVisitor],[semanticTrace(),kb]).turns[0];
+ assert.equal(turn.evidenceStatus,"TRACE_RECORDED");
+ assert.equal(turn.evidence.length,1);assert.equal(turn.evidence[0].id,"kb-trace");
+ assert.equal(turn.semanticEvidence.length,1);
+ assert.equal(turn.evidence[0].responseStatus,200);
+});
+test("Semantic body is withheld on any source/request/input binding mismatch",()=>{
+ const changes=[
+  t=>{t.retrieved_chunks.source_message_id="another-source";},
+  t=>{t.retrieved_chunks.semantic.source_message_id="another-source";},
+  t=>{t.retrieved_chunks.operation_id="commerce-semantic:another-source";},
+  t=>{t.retrieved_chunks.semantic.request_id="commerce-semantic:another-source";},
+  t=>{t.retrieved_chunks.semantic_input.source_message_id="another-source";},
+  t=>{delete t.retrieved_chunks.semantic_input;},
+  t=>{t.retrieved_chunks.request_dispatch_state="HTTP_RECEIVED";},
+  t=>{t.query_sent="Not a KB query";},t=>{t.top_score=0.9;},
+  t=>{t.retrieved_chunks.source_message_id=semanticVisitor.id+"\napi_key=should-not-appear";},
+ ];
+ for(const change of changes){
+  const trace=semanticTrace();change(trace);
+  const turn=linkConversationEvidenceTurns([semanticVisitor],[trace]).turns[0];
+  assert.equal(turn.evidence.length,0);
+  assert.equal(turn.evidenceStatus,"NOT_CAPTURED");
+  const evidence=turn.semanticEvidence[0];
+  assert.equal(evidence.linkageStatus,"WITHHELD_INVALID_BINDING");
+  assert.equal(evidence.request.body,null);assert.equal(evidence.response.body,null);
+  assert.equal(evidence.request.sha256,null);assert.equal(evidence.requestId,null);
+  assert.equal(evidence.diagnostics,null);
+  assert(!JSON.stringify(evidence).includes("should-not-appear"));
+ }
+ const wrongMessage=semanticTrace();wrongMessage.message_id="another-source";
+ assert.deepEqual(linkConversationEvidenceTurns([semanticVisitor],[wrongMessage]).turns[0].semanticEvidence,[]);
+ const maliciousSource={...semanticVisitor,id:"source\napi_key=should-not-appear"};
+ const trace=semanticTrace();trace.message_id=maliciousSource.id;
+ trace.retrieved_chunks.source_message_id=maliciousSource.id;
+ trace.retrieved_chunks.semantic.source_message_id=maliciousSource.id;
+ trace.retrieved_chunks.semantic_input.source_message_id=maliciousSource.id;
+ trace.retrieved_chunks.operation_id=trace.retrieved_chunks.semantic.request_id=`commerce-semantic:${maliciousSource.id}`;
+ const view=linkConversationEvidenceTurns([maliciousSource],[trace]).turns[0].semanticEvidence[0];
+ assert.equal(view.linkageStatus,"WITHHELD_INVALID_BINDING");assert.equal(view.response.body,null);
+});
+test("Invalid semantic tags cannot be promoted into KB raw or KB call counts",()=>{
+ for(const change of [
+  t=>{t.retrieved_chunks.contract="unknown-contract";},
+  t=>{t.retrieved_chunks.semantic.contract="unknown-contract";},
+  t=>{t.kb_source="singapore_context_search";},
+  t=>{t.kb_source="singapore_context_search";t.retrieved_chunks.contract="unknown-contract";},
+  t=>{t.kb_source="semantic_contract_failure_v2";t.retrieved_chunks.contract="c3-admin-semantic-failure-v2";
+   t.retrieved_chunks.semantic.contract="c3-semantic-failure-evidence-v2";},
+  t=>{t.kb_source="singapore_context_search";t.retrieved_chunks.contract="unknown-contract";
+   t.retrieved_chunks.semantic.contract="unknown-contract";},
+ ]){
+  const trace=semanticTrace();change(trace);
+  trace.retrieved_chunks.response={capture_origin:"UPSTREAM_HTTP",capture_state:"CAPTURED",response_json_raw:"must-not-become-KB-raw"};
+  const turn=linkConversationEvidenceTurns([semanticVisitor],[trace]).turns[0];
+  assert.equal(turn.evidence.length,0);assert.equal(turn.semanticEvidence.length,1);
+  assert.equal(turn.semanticEvidence[0].linkageStatus,"WITHHELD_INVALID_BINDING");
+  assert(!JSON.stringify(turn).includes("must-not-become-KB-raw"));
+ }
+});
+test("Semantic display redacts bodies without modifying original hashes or input evidence",()=>{
+ const trace=semanticTrace(),body='{"api_key":"dont-display","contact":"alice@example.com","phone":"91234567"}';
+ trace.retrieved_chunks.semantic.response=semanticBody(body,"SEMANTIC_MODEL_TEXT");
+ // A valid digest-shaped receipt may include phone-like digits; display must not transform it.
+ trace.retrieved_chunks.semantic.response.sha256="aabbccdd91234567".repeat(4);
+ const original=structuredClone(trace),evidence=linkConversationEvidenceTurns([semanticVisitor],[trace]).turns[0].semanticEvidence[0];
+ assert.equal(evidence.response.captureState,"CAPTURED");assert.equal(evidence.response.displayState,"REDACTED");
+ assert.equal(evidence.response.sha256,original.retrieved_chunks.semantic.response.sha256);
+ assert.equal(evidence.response.bytes,Buffer.byteLength(body,"utf8"));
+ for(const secret of ["dont-display","alice@example.com","91234567"])assert(!evidence.response.body.includes(secret));
+ assert.equal(evidence.inputSystemSha256,original.retrieved_chunks.semantic_input.system_sha256);
+ assert.deepEqual(trace,original);
+});
+test("Semantic withheld captures keep exact hashes/counts with no body and no truncation",()=>{
+ for(const state of ["WITHHELD_OVERSIZED","WITHHELD_SENSITIVE"]){
+  const trace=semanticTrace(),receipt=trace.retrieved_chunks.semantic.response;
+  receipt.capture_state=state;receipt.body=null;receipt.bytes=state==="WITHHELD_OVERSIZED"?70000:receipt.bytes;
+  const response=linkConversationEvidenceTurns([semanticVisitor],[trace]).turns[0].semanticEvidence[0].response;
+  assert.equal(response.captureState,state);assert.equal(response.displayState,state);assert.equal(response.body,null);
+  assert.equal(response.sha256,receipt.sha256);assert.equal(response.bytes,receipt.bytes);
+ }
+ // Character count alone is insufficient: complete UTF-8 bytes exceed the bound.
+ const trace=semanticTrace();trace.retrieved_chunks.semantic.response=semanticBody("字".repeat(22000),"SEMANTIC_MODEL_TEXT");
+ const response=linkConversationEvidenceTurns([semanticVisitor],[trace]).turns[0].semanticEvidence[0].response;
+ assert.equal(response.displayState,"WITHHELD_OVERSIZED");assert.equal(response.body,null);assert.equal(response.bytes,66000);
+});
+test("Malformed semantic capture receipts are withheld without exposing body or invented HTTP origin",()=>{
+ for(const change of [
+  r=>{r.capture_origin="UPSTREAM_HTTP";},r=>{r.capture_origin="SEMANTIC_MODEL_TEXT\nsecret";},
+  r=>{r.capture_state="HTTP_200";},r=>{r.sha256="invalid-secret-hash";},
+  r=>{r.bytes=-1;},r=>{r.bytes+=1;},r=>{delete r.body;},
+  r=>{r.capture_state="WITHHELD_SENSITIVE";},
+ ]){
+  const trace=semanticTrace();change(trace.retrieved_chunks.semantic.response);
+  const response=linkConversationEvidenceTurns([semanticVisitor],[trace]).turns[0].semanticEvidence[0].response;
+  assert.equal(response.displayState,"WITHHELD_INVALID_RECEIPT");
+  assert.equal(response.body,null);assert.equal(response.sha256,null);assert.equal(response.captureOrigin,null);
+ }
 });

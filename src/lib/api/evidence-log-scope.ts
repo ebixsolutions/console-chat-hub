@@ -48,6 +48,58 @@ export async function resolveEvidenceAdminScope(db:any,userId:string):Promise<Ev
 type EvidenceMessage={id:string;role:string;content:string;created_at:string;metadata?:unknown;is_recalled?:boolean|null};
 type EvidenceTrace={id:string;message_id:string|null;query_sent:string|null;retrieved_chunks:unknown;top_score:number|null;kb_source:string|null;created_at:string};
 function asRecord(x:unknown):Record<string,unknown>{return x&&typeof x==="object"&&!Array.isArray(x)?x as Record<string,unknown>:{};}
+const SEMANTIC_TRACE_CONTRACT="c3-admin-semantic-failure-v1";
+const SEMANTIC_CAPTURE_CONTRACT="c3-semantic-failure-evidence-v1";
+const SEMANTIC_NOT_DISPATCHED="KB_NOT_DISPATCHED_SEMANTIC_FAILURE";
+const SEMANTIC_CAPTURE_LIMIT=65536;
+const evidenceHash=(value:unknown):string|null=>typeof value==="string"&&/^[0-9a-f]{64}$/i.test(value)?value:null;
+type SemanticCaptureView={
+ captureState:string|null;displayState:string;captureOrigin:string|null;sha256:string|null;bytes:number|null;body:string|null;
+};
+function withheldSemanticCapture():SemanticCaptureView{
+ return{captureState:null,displayState:"WITHHELD_INVALID_RECEIPT",captureOrigin:null,sha256:null,bytes:null,body:null};
+}
+/** These hashes describe the original complete bytes, never the redacted display. */
+function semanticCaptureView(value:unknown,origin:"SEMANTIC_ROUTER_INPUT"|"SEMANTIC_MODEL_TEXT"):SemanticCaptureView{
+ const receipt=asRecord(value),sha256=evidenceHash(receipt.sha256),bytes=receipt.bytes;
+ if(receipt.capture_origin!==origin||!sha256||typeof bytes!=="number"||!Number.isSafeInteger(bytes)||bytes<0||
+   !["CAPTURED","WITHHELD_OVERSIZED","WITHHELD_SENSITIVE"].includes(String(receipt.capture_state)))return withheldSemanticCapture();
+ const captureState=String(receipt.capture_state);
+ if(captureState!=="CAPTURED"){
+  if(receipt.body!==null)return withheldSemanticCapture();
+  return{captureState,displayState:captureState,captureOrigin:origin,sha256,bytes,body:null};
+ }
+ if(typeof receipt.body!=="string"||new TextEncoder().encode(receipt.body).byteLength!==bytes)return withheldSemanticCapture();
+ if(bytes>SEMANTIC_CAPTURE_LIMIT)return{captureState,displayState:"WITHHELD_OVERSIZED",captureOrigin:origin,sha256,bytes,body:null};
+ const body=redactEvidenceSensitiveText(receipt.body);
+ return{captureState,displayState:body===receipt.body?"CAPTURED":"REDACTED",captureOrigin:origin,sha256,bytes,body};
+}
+/** Any semantic marker reserves the row for this decoder. Invalid rows cannot
+ * fall through into the KB call list or masquerade as upstream HTTP evidence. */
+function isSemanticTrace(trace:EvidenceTrace):boolean{
+ const data=asRecord(trace.retrieved_chunks),semantic=asRecord(data.semantic);
+ return trace.kb_source?.startsWith("semantic_")===true||
+  typeof data.contract==="string"&&data.contract.startsWith("c3-admin-semantic-")||
+  typeof semantic.contract==="string"&&semantic.contract.startsWith("c3-semantic-")||Object.hasOwn(data,"semantic");
+}
+function semanticTraceView(trace:EvidenceTrace,sourceId:string){
+ const data=asRecord(trace.retrieved_chunks),semantic=asRecord(data.semantic),input=asRecord(data.semantic_input);
+ const expectedRequest=`commerce-semantic:${sourceId}`;
+ const linked=EVIDENCE_UUID.test(sourceId)&&trace.message_id===sourceId&&trace.kb_source==="semantic_contract_failure"&&
+  data.contract===SEMANTIC_TRACE_CONTRACT&&data.source_message_id===sourceId&&
+  semantic.contract===SEMANTIC_CAPTURE_CONTRACT&&semantic.source_message_id===sourceId&&
+  data.operation_id===expectedRequest&&semantic.request_id===expectedRequest&&
+  input.source_message_id===sourceId&&data.request_dispatch_state===SEMANTIC_NOT_DISPATCHED&&trace.query_sent===null&&trace.top_score===null;
+ return{id:trace.id,createdAt:trace.created_at,linkageStatus:linked?"MATCH":"WITHHELD_INVALID_BINDING",
+  sourceMessageId:linked?sourceId:null,requestId:linked?expectedRequest:null,
+  requestDispatchState:linked?SEMANTIC_NOT_DISPATCHED:"NOT_VERIFIED",
+  request:linked?semanticCaptureView(semantic.request,"SEMANTIC_ROUTER_INPUT"):withheldSemanticCapture(),
+  response:linked?semanticCaptureView(semantic.response,"SEMANTIC_MODEL_TEXT"):withheldSemanticCapture(),
+  inputUserSha256:linked?evidenceHash(input.user_sha256):null,
+  inputSystemSha256:linked?evidenceHash(input.system_sha256):null,
+  diagnostics:linked?redactEvidenceValue({stage:data.stage??null,contract_rejection:data.contract_rejection??null,
+   contract_diagnostic:data.contract_diagnostic??null,recovery_outcomes:semantic.recovery_outcomes??null}):null};
+}
 export function linkConversationEvidenceTurns(messages:EvidenceMessage[],traces:EvidenceTrace[]){
  const visitors=messages.filter(m=>["visitor","customer","user"].includes(m.role));
  const visitorIds=new Set(visitors.map(x=>x.id));
@@ -64,7 +116,10 @@ const declared=[meta.source_message_id,meta.b2_source_message_id]
    if(!source){unlinked.push(m);continue;}
    replies.set(source,[...(replies.get(source)??[]),m]);
  }
- const turns=visitors.map((m,index)=>({
+ const turns=visitors.map((m,index)=>{
+  const sourceTraces=traces.filter(t=>t.message_id===m.id),kbTraces=sourceTraces.filter(t=>!isSemanticTrace(t));
+  const semanticEvidence=sourceTraces.filter(isSemanticTrace).map(t=>semanticTraceView(t,m.id));
+  return{
   index:index+1,messageId:m.id,createdAt:m.created_at,
   customerQuestion:m.is_recalled?"[RECALLED]":redactEvidenceSensitiveText(m.content),
   answers:(replies.get(m.id)??[]).map(a=>{
@@ -90,7 +145,8 @@ grounding_verification:meta.grounding_verification??null,
      citations:meta.citations??null,unresolved_fact_fields:meta.unresolved_fact_fields??null,
     },true)};
   }),
-  evidence:traces.filter(t=>t.message_id===m.id).map(t=>{
+  semanticEvidence,
+  evidence:kbTraces.map(t=>{
    const d=asRecord(t.retrieved_chunks),r=asRecord(d.response);
    const raw=typeof r.response_json_raw==="string"?r.response_json_raw:null;
    const safeRaw=raw===null?null:redactEvidenceSensitiveText(raw);
@@ -112,15 +168,15 @@ rawCaptureState:raw!==null&&safeRaw!==raw?"REDACTED":
     responseStatus:typeof r.http_status==="number"?r.http_status:null,
     lineage:redactEvidenceValue(d.lineage??null,true)};
   }),
-  evidenceStatus:traces.some(t=>t.message_id===m.id)?"TRACE_RECORDED":
-   (replies.get(m.id)??[]).some(reply=>{
+  evidenceStatus:kbTraces.length?"TRACE_RECORDED":
+   semanticEvidence.some(trace=>trace.linkageStatus==="MATCH")||(replies.get(m.id)??[]).some(reply=>{
      const meta=asRecord(reply.metadata),failure=asRecord(meta.execution_failure);
      return meta.response_route==="terminal_failure_recovery" &&
        meta.source_error_code==="LLM_INVALID_OUTPUT" &&
        failure.stage==="canonical_validation" &&
        (meta.rag_api_status===null||meta.rag_api_status===undefined);
    })?"KB_NOT_DISPATCHED_SEMANTIC_FAILURE":"NOT_CAPTURED",
- }));
+ };});
 return {turns,unlinkedReplies:unlinked.map(m=>({id:m.id,role:m.role,
    text:m.is_recalled?"[RECALLED]":redactEvidenceSensitiveText(m.content),createdAt:m.created_at,
    linkageStatus:new Set([asRecord(m.metadata).source_message_id,asRecord(m.metadata).b2_source_message_id]

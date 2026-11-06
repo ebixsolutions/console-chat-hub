@@ -22,7 +22,7 @@ function typedContextNodes(value,at=[]) {
  return [{path:at,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},
   ...((kind==='object'||kind==='array')?Object.entries(value).flatMap(([k,v])=>typedContextNodes(v,[...at,k])):[])];
 }
-// Retained fixtures exercise decoder compatibility; new demand cases use the active v5 transport.
+// Retained v2/v5 fixtures exercise decoder compatibility; the active provider request uses v6.
 const providerWire=(delta,operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:.98,nodes:typedContextNodes(delta)});
 const providerWireV5=(delta,operation='UPDATE_ITEM')=>{
  const nodes=typedContextNodes(delta).filter(node=>node.path.length);
@@ -202,7 +202,7 @@ function fixture(text,options={}) {
    }
    assert.equal(body.generationConfig.responseMimeType,'application/json');
    const semanticSchema=body.generationConfig.responseSchema;
-   assert.deepEqual(semanticSchema.properties.context_encoding.enum,['semantic_values_v5']);
+   assert.deepEqual(semanticSchema.properties.context_encoding.enum,['semantic_demands_v6']);
    for(const [list,field] of [['containers','kind'],['strings','text'],['numbers','number'],['booleans','boolean']]){
     const item=semanticSchema.properties[list].items;
     assert.deepEqual(Object.keys(item.properties),['path',field]);assert.deepEqual(item.required,['path',field]);
@@ -210,11 +210,11 @@ function fixture(text,options={}) {
    }
    assert(!JSON.stringify(semanticSchema).includes('"anyOf"'),'typed transport must not reintroduce union branch growth');
    assert(body.systemInstruction.parts[0].text.includes('Follow the supplied typed transport schema'));
-   assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_values_v5'));
+   assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_demands_v6'));
    assert(!body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_paths_v2'));
    if(options.enforceSmallTransport){
-    assert(Buffer.byteLength(JSON.stringify(semanticSchema))<2000);
-    assert.deepEqual(Object.keys(semanticSchema.properties),['context_encoding','operation','confidence','containers','strings','numbers','booleans']);
+    assert(Buffer.byteLength(JSON.stringify(semanticSchema))<3000);
+    assert.deepEqual(Object.keys(semanticSchema.properties),['context_encoding','operation','confidence','demands','containers','strings','numbers','booleans']);
    }
    if(options.enforceSchemaBranchBudget){
     const inspect=s=>{if(s.properties){assert.deepEqual(s.required,Object.keys(s.properties),'typed transport objects have no optional field branches');Object.values(s.properties).forEach(inspect);}if(s.items)inspect(s.items);assert.equal(s.anyOf,undefined);};
@@ -269,7 +269,11 @@ function fixture(text,options={}) {
   }
   const table=url.pathname.split('/').at(-1);
   if(table==='upstream_call_log'&&method==='POST'){logs.push(body);return new Response(null,{status:201});}
-  if(table==='rag_trace'&&method==='POST'&&options.captureEvidence){tables.rag_trace.push(body);return new Response(null,{status:201});}
+  if(table==='rag_trace'&&method==='POST'&&(options.captureEvidence||body.kb_source==='semantic_contract_failure')){
+   if(options.traceInsertFailure)return Response.json({code:'XX000',message:'PRIVATE-TRACE-ERROR'},{status:503});
+   if(options.captureEvidence)tables.rag_trace.push(body);
+   return new Response(null,{status:201});
+  }
   if(method==='DELETE')return new Response(null,{status:204});
   assert(method==='GET'||method==='HEAD'||(table==='messages'&&method==='PATCH'),'unexpected mutation '+table);
   assert(table in tables,'unhandled isolated table '+table);
@@ -372,8 +376,89 @@ for(const mode of ['400','malformed','timeout'])test('full handler provider '+mo
  }
  else assert(f.logs.some(x=>x.request_payload.error_code===(mode==='400'?'LLM_NON_2XX':'LLM_TIMEOUT')));
  assert(!JSON.stringify(f.logs).includes('PRIVATE-SECRET'));if(mode==='400')assert.equal(f.logs[0].request_payload.provider_diagnostic.provider_error_class,'schema_complexity');
- assert(!f.requests.some(x=>/rag|context-search|rpc\/.*(?:memory|commerce)/.test(x.url)));
+ assert(!f.requests.some(x=>/context-search|rpc\/.*(?:memory|commerce)/.test(x.url)));
+ const traces=f.requests.filter(x=>x.url.includes('/rag_trace'));
+ assert.equal(traces.length,mode==='malformed'?1:0);
+ if(traces.length)assert.equal(traces[0].body.kb_source,'semantic_contract_failure','failure evidence is not KB dispatch');
  await f.run();assert.equal(f.commits.length,1);
+});
+for(const traceInsertFailure of [false,true])test('actual handler v6 demand-field rejection keeps protected capture '+(traceInsertFailure?'failure isolated':'source-bound')+' and one terminal reply',async()=>{
+ const question='What are the published delivery options?';
+ const marker='isolated-unrecognized-demand-value-c3b01';
+ // An independent malformed native-demand fixture, not an encoder output or a
+ // claim to reproduce the historical uncaptured B-T01 field/value.
+ const semantic={context_encoding:'semantic_demands_v6',operation:'ASK_FACT',confidence:.98,
+  demands:[{question,source_quote:question,subject_refs:[],source_type:'policy',requested_facts:['delivery options'],
+   customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+   unrecognized_demand_field:marker}],
+  containers:[{path:['demands','0','constraints'],kind:'object'}],
+  strings:[{path:['language'],text:'en'},{path:['intent'],text:'merchant_policy'}],numbers:[],booleans:[]};
+ const sourceId=uuid(traceInsertFailure?9301:9300);
+ const priorCustomer='Our delivery needs include step-free access.';
+ const history=[{id:uuid(9302),conversation_id:ticket,role:'visitor',content:priorCustomer,created_at:'2026-10-14T00:59:00.000Z',is_recalled:false,metadata:{}}];
+ const f=fixture(question,{source:sourceId,semantic,history,originalPreview:true,retainedMemory:true,captureEvidence:true,traceInsertFailure});
+ const before=structuredClone({commerce:f.tables.conversation_commerce_state,memory:f.tables.conversation_memory_state});
+ const r=await f.run();
+ assert.equal(r.status,200);assert.equal(r.body.response_route,'terminal_failure_recovery');
+ assert.equal(r.body.degraded,true);assert.equal(r.body.generation_success,false);
+ assert.equal(r.body.failure.code,'LLM_INVALID_OUTPUT');assert.equal(r.body.failure.stage,'canonical_validation');
+ assert.equal(f.commits.length,1);
+ const meta=f.commits[0].metadata;
+ assert.equal(meta.source_error_code,'LLM_INVALID_OUTPUT');assert.equal(meta.transaction_mutation,'NONE');
+ assert.equal(meta.b2_source_message_id,sourceId);assert.equal(meta.b2_expected_company_id,'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493');
+ assert.equal(meta.b2_gate_contract,'executeB2PersistenceGate:allow_after_revalidation');assert.equal(meta.b2_commit_source,'commit_ai_reply_tx');
+ assert.equal(meta.semantic_failure_receipt.stage,'semantic_contract');
+ assert.equal(meta.semantic_failure_receipt.contract_rejection,'wire_context_nodes');
+ assert.equal(meta.semantic_failure_receipt.input.source_message_id,sourceId);
+ const diagnostic=meta.semantic_failure_receipt.contract_diagnostic;
+ assert.equal(diagnostic.stage,'canonical_vocabulary');assert.equal(diagnostic.field_class,'demand');assert.equal(diagnostic.reason,'field');
+ const models=f.requests.filter(x=>x.url.endsWith(':generateContent'));
+ assert.equal(models.length,1,'capture must not redispatch a semantic or repair model');
+ assert.equal(f.requests.filter(x=>x.url.includes('context-search')).length,0);
+ assert(!f.requests.some(x=>x.method==='POST'&&/rpc\/.*(?:memory|commerce)/.test(x.url)));
+ assert.deepEqual({commerce:f.tables.conversation_commerce_state,memory:f.tables.conversation_memory_state},before);
+ const writes=f.requests.filter(x=>x.url.includes('/rag_trace')&&x.method==='POST');
+ assert.equal(writes.length,1,'only the existing protected trace sink receives semantic text');
+ const trace=writes[0].body,protectedEvidence=trace.retrieved_chunks;
+ assert.equal(trace.conversation_id,ticket);assert.equal(trace.message_id,sourceId);
+ assert.equal(trace.kb_source,'semantic_contract_failure');assert.equal(trace.query_sent,null);assert.equal(trace.top_score,null);
+ assert.equal(protectedEvidence.contract,'c3-admin-semantic-failure-v1');assert.equal(protectedEvidence.source_message_id,sourceId);
+ assert.equal(protectedEvidence.operation_id,`commerce-semantic:${sourceId}`);
+ assert.equal(protectedEvidence.request_dispatch_state,'KB_NOT_DISPATCHED_SEMANTIC_FAILURE');
+ assert.deepEqual(protectedEvidence.contract_diagnostic,diagnostic);
+ assert.equal(protectedEvidence.semantic_input.source_message_id,sourceId);
+ const evidence=protectedEvidence.semantic;
+ assert.equal(evidence.contract,'c3-semantic-failure-evidence-v1');assert.equal(evidence.source_message_id,sourceId);
+ assert.equal(evidence.request_id,protectedEvidence.operation_id);
+ assert.deepEqual(evidence.recovery_outcomes,{source_quoted_read_only:'NOT_APPLICABLE',source_owned_option:'NOT_APPLICABLE',missing_demand_option:'NOT_APPLICABLE'});
+ for(const [name,origin] of [['request','SEMANTIC_ROUTER_INPUT'],['response','SEMANTIC_MODEL_TEXT']]){
+  const captured=evidence[name];assert.equal(captured.capture_origin,origin);assert.equal(captured.capture_state,'CAPTURED');
+  assert.equal(captured.sha256,hash(captured.body));assert.equal(captured.bytes,Buffer.byteLength(captured.body));assert(captured.bytes<=65536);
+ }
+ assert.equal(evidence.response.body,JSON.stringify(semantic));
+ const routerInput=JSON.parse(evidence.request.body);
+ assert.equal(routerInput.purpose,'evaluation');assert.equal(routerInput.tag,'commerce-semantic-interpreter');
+ assert.equal(routerInput.response_format,'json');assert.equal(routerInput.max_provider_attempts,1);
+ assert.equal(routerInput.max_tokens,4096);assert.equal(routerInput.thinking_budget,0);
+ assert.deepEqual(routerInput.response_schema.properties.context_encoding.enum,['semantic_demands_v6']);
+ assert.equal(hash(routerInput.system),protectedEvidence.semantic_input.system_sha256);
+ assert.equal(hash(routerInput.user),protectedEvidence.semantic_input.user_sha256);
+ assert(routerInput.user.includes(question));assert(routerInput.user.includes(priorCustomer),'retained customer history is part of the captured router input');
+ // This receipt is the input to callModel. Its existing sensitive-data
+ // redaction may subsequently transform the provider HTTP prompt.
+ assert(routerInput.user.includes(uuid(9302)));
+ assert(models[0].body.contents[0].parts[0].text.includes(question));
+ assert(models[0].body.contents[0].parts[0].text.includes(priorCustomer));
+ assert.equal(f.tables.rag_trace.length,traceInsertFailure?0:1);
+ if(!traceInsertFailure)assert.deepEqual(f.tables.rag_trace[0],trace);
+ const captureErrors=f.events.flat().filter(x=>typeof x==='string').flatMap(x=>{try{return [JSON.parse(x)]}catch{return []}}).filter(x=>x.event==='c3_semantic_evidence_write_failed');
+ assert.deepEqual(captureErrors,traceInsertFailure?[{event:'c3_semantic_evidence_write_failed',source_message_id:sourceId,code:'TRACE_INSERT_FAILED'}]:[]);
+ const ordinaryOutputs=JSON.stringify({response:r.body,commits:f.commits,events:f.events,logs:f.logs});
+ for(const privateText of [marker,'unrecognized_demand_field','PRIVATE-TRACE-ERROR',evidence.request.body,evidence.response.body])assert(!ordinaryOutputs.includes(privateText),'raw semantic input/output escaped the protected trace');
+ assert(!ordinaryOutputs.includes('failure_evidence'));
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+ assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1);
+ assert.equal(f.requests.filter(x=>x.url.includes('/rag_trace')&&x.method==='POST').length,1,'an existing terminal reply must not duplicate capture');
 });
 test('wrong source/Tenant and human-control deny before provider or reply',async()=>{
  const f=fixture('hello');f.setForeign();assert.equal((await f.run()).status,400);assert.equal(f.commits.length,0);assert(!f.requests.some(x=>x.url.includes('aiplatform')));
@@ -590,7 +675,7 @@ for(const alias of ['lifecycle','correction','negations'])test('prompt/decoder i
  const r=await f.load(path.join(root,'supabase/functions/_shared/commerce-semantic-interpreter.ts')).interpretCommerceSemantics({company_id:company,conversation_id:ticket,source_message_id:source,latest:'Please correct my requirements',persistent_state_summary:'{}'});
  assert.equal(r.frame,null);assert.equal(r.contract_rejection,'wire_delta_fields');assert(!JSON.stringify(r).includes('PRIVATE-SECRET'));
  const request=f.requests.find(x=>x.url.includes('aiplatform')).body.systemInstruction.parts[0].text;
- assert(request.includes('customer_correction'));assert(request.includes('semantic_values_v5'));assert(request.includes('customer_facts'));assert(request.includes('strict canonical vocabulary still applies'));assert(request.includes('containers'));assert(request.includes('numbers'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
+ assert(request.includes('customer_correction'));assert(request.includes('semantic_demands_v6'));assert(request.includes('customer_facts'));assert(request.includes('Strict canonical vocabulary still applies'));assert(request.includes('containers'));assert(request.includes('numbers'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
 });
 
 test('Hosted Frankie correction then same-ticket Summary retains latest canonical Memory and passes unchanged B2',async()=>{
@@ -790,7 +875,7 @@ for(const [business,latest,values] of [
  assert.equal(r.status,200,JSON.stringify(r));
  const requests=f.requests.filter(x=>x.url.endsWith(':generateContent')&&x.body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.'));
  assert.equal(requests.length,1);const config=requests[0].body.generationConfig;
- assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_values_v5']);
+ assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_demands_v6']);
  for(const list of ['containers','strings','numbers','booleans'])assert.equal(config.responseSchema.properties[list].items.properties.path.maxItems,'6');
  assert(!JSON.stringify(f.events).includes('canonical_entity_bounds'));assert(!f.requests.some(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered')));
  const memory=f.tables.conversation_memory_state.at(-1)?.memory;assert(memory,JSON.stringify({r,events:f.events.slice(-8)}));
