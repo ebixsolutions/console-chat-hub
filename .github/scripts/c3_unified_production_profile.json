@@ -1534,7 +1534,7 @@
     "supabase/functions/_shared/current-factual-request.ts": "25353706c52f72406bde1a487f6af470ff14c0b0effcbbfd012ab3f79fbfcbd4",
     "supabase/functions/_shared/factual-evidence-selection.ts": "f874bd23ca6cf992c43a65bd52e7c822bbbb521624ea1f3af83e3c6cea560364",
     "supabase/functions/_shared/current-factual-request.test.ts": "7bd3b7d942578ed26b02d6bc047945e9976295178bc169493a7ae20482180ca3",
-    "supabase/functions/_shared/factual-evidence-selection.test.ts": "2df0860e873a977b269be4462fc3bc416ce969830c04e11d5d4d88b8244c026e",
+    "supabase/functions/_shared/factual-evidence-selection.test.ts": "9058bf25b2287aeeda16afa09a68ab540c299ea1da76ed68c2afe8a09b38c488",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "bf3ad5c2a8cd627bbd7f44081e4500196830dd3937ca834fd92751fdf3cded6c"
   }
 

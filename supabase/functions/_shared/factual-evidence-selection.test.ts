@@ -545,10 +545,11 @@ Deno.test("Task3C V6 B19: customer room area never pre-rejects actual returned p
   assert(result.grounding.items.some(item=>item.document_id==="product"),"valid product full-content returned yet rejected");
 });
 Deno.test("Task3C V6 generic SaaS/team and accommodation/guest contextual counts",()=>{
-  for(const item of [
+  const examples: Array<{quote:string;constraints:CurrentFactualDemand["constraints"];text:string}> = [
     {quote:"有冇入門訂閱方案可以睇?",constraints:{team_size:{value:5,unit:"people"}},text:"Plan: START-TEAM\nSubscription for small teams"},
     {quote:"有冇家庭住宿套餐可以睇?",constraints:{guest_count:{value:3,unit:"people"}},text:"Plan: ROOM-FAMILY\nAccommodation for families"},
-  ]) {
+  ];
+  for (const item of examples) {
     const d=demand(1,item.quote,"product");d.requested_facts=["published merchant options matching customer criteria"];d.constraints=item.constraints;
     const found=select([d],[document("option",item.text,"Product","Merchant plan")]);
     assert(!found.grounding.demands[0].missing_reasons.includes("requested_specification_not_supported_by_returned_products"),"buyer headcount became exact package spec");
