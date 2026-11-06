@@ -213,7 +213,9 @@ function fixture(text,options={}) {
    assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_demands_v7'));
    assert(!body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_paths_v2'));
    if(options.enforceSmallTransport){
-    assert(Buffer.byteLength(JSON.stringify(semanticSchema))<3000);
+    assert(Buffer.byteLength(JSON.stringify(semanticSchema))<4500,'V7 demand-owned constraints schema must remain bounded');
+     assert.deepEqual(semanticSchema.properties.demands.items.properties.constraints.required,['containers','strings','numbers','booleans']);
+     for(const list of ['containers','strings','numbers','booleans'])assert.equal(semanticSchema.properties.demands.items.properties.constraints.properties[list].items.properties.path.maxItems,'3');
     assert.deepEqual(Object.keys(semanticSchema.properties),['context_encoding','operation','confidence','demands','containers','strings','numbers','booleans']);
    }
    if(options.enforceSchemaBranchBudget){
@@ -675,7 +677,7 @@ for(const alias of ['lifecycle','correction','negations'])test('prompt/decoder i
  const r=await f.load(path.join(root,'supabase/functions/_shared/commerce-semantic-interpreter.ts')).interpretCommerceSemantics({company_id:company,conversation_id:ticket,source_message_id:source,latest:'Please correct my requirements',persistent_state_summary:'{}'});
  assert.equal(r.frame,null);assert.equal(r.contract_rejection,'wire_delta_fields');assert(!JSON.stringify(r).includes('PRIVATE-SECRET'));
  const request=f.requests.find(x=>x.url.includes('aiplatform')).body.systemInstruction.parts[0].text;
- assert(request.includes('customer_correction'));assert(request.includes('semantic_demands_v6'));assert(request.includes('customer_facts'));assert(request.includes('Strict canonical vocabulary still applies'));assert(request.includes('containers'));assert(request.includes('numbers'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
+ assert(request.includes('customer_correction'));assert(request.includes('semantic_demands_v7'));assert(request.includes('customer_facts'));assert(request.includes('Strict canonical vocabulary still applies'));assert(request.includes('containers'));assert(request.includes('numbers'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
 });
 
 test('Hosted Frankie correction then same-ticket Summary retains latest canonical Memory and passes unchanged B2',async()=>{
@@ -875,7 +877,7 @@ for(const [business,latest,values] of [
  assert.equal(r.status,200,JSON.stringify(r));
  const requests=f.requests.filter(x=>x.url.endsWith(':generateContent')&&x.body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.'));
  assert.equal(requests.length,1);const config=requests[0].body.generationConfig;
- assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_demands_v6']);
+ assert.equal(config.responseMimeType,'application/json');assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_demands_v7']);
  for(const list of ['containers','strings','numbers','booleans'])assert.equal(config.responseSchema.properties[list].items.properties.path.maxItems,'6');
  assert(!JSON.stringify(f.events).includes('canonical_entity_bounds'));assert(!f.requests.some(x=>x.body?.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered')));
  const memory=f.tables.conversation_memory_state.at(-1)?.memory;assert(memory,JSON.stringify({r,events:f.events.slice(-8)}));
