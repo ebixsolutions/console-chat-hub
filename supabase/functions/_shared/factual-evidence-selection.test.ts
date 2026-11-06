@@ -554,3 +554,19 @@ Deno.test("Task3C V6 generic SaaS/team and accommodation/guest contextual counts
     assert(!found.grounding.demands[0].missing_reasons.includes("requested_specification_not_supported_by_returned_products"),"buyer headcount became exact package spec");
   }
 });
+
+
+Deno.test("Task3C V6 strict product specification: unquoted numeric SKU field must fail closed, unlike buyer context",()=>{
+  const d=demand(1,"Show entry subscription plans","product");
+  d.requested_facts=["published merchant options matching customer criteria"];
+  d.constraints={storage:{value:500,unit:"GB"}};
+  const doc=document("plan","Plan: STORAGE-500\nStorage: 500GB","Product","Storage plan");
+  const result=select([d],[doc]);
+  assert(result.grounding.items.length===0 &&
+    result.grounding.demands[0].missing_reasons.includes("requested_specification_not_supported_by_returned_products"),
+    "unbound model-proposed SKU number bypassed fail-closed evidence selection");
+  d.constraints={team_size:{value:5,unit:"people"}};
+  const buyer=select([d],[doc]);
+  assert(!buyer.grounding.demands[0].missing_reasons.includes("requested_specification_not_supported_by_returned_products"),
+    "a customer team size was reclassified as an exact plan spec");
+});

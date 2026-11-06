@@ -522,9 +522,10 @@ function customerContextConstraintKey(key: string): boolean {
   return /(?:^|_)(?:customer|room|space|site|team|staff|employee|guest|visitor|people|person|user|budget|usage|environment|location|orientation|household|audience|intended|existing)(?:_|$)/iu.test(key);
 }
 
-/** Reject unbound unitless SKU dimensions only when the customer's own
- * source quote literally names the item-attribute field AND its number.
- * An unrelated typed buyer count must never pre-reject every KB document. */
+/** Reject every unbound product-side numeric dimension while excluding typed
+ * customer-environment fields. This restores the original strict spec guard:
+ * a model-proposed SKU quantity cannot become evidence merely by omitting it
+ * from source_quote. Buyer room/team counts cannot pre-reject all documents. */
 export function hasUnboundSourceOwnedOptionSpecification(
   demand: Pick<CurrentFactualDemand,"constraints"|"source_quote"|"option_criteria">,
 ): boolean {
@@ -533,17 +534,15 @@ export function hasUnboundSourceOwnedOptionSpecification(
   if (!quote) return false;
   return Object.entries(demand.constraints).some(([field,raw]) => {
     if (customerContextConstraintKey(field)) return false;
-    const label=field.replace(/[_-]+/gu," ").trim();
-    if (!/^[a-z][a-z0-9 ]{0,79}$/iu.test(label) ||
-        !new RegExp("(?<![\\p{L}\\p{N}])"+label+"(?![\\p{L}\\p{N}])","iu").test(quote)) return false;
+    // Keep the historical fail-closed rule for EVERY unbound numerical
+    // merchant product/variant requirement, including model-proposed values
+    // not quoted by the customer. Only independently source-owned buyer
+    // environment fields may bypass exact product specification matching.
     return (Array.isArray(raw)?raw:[raw]).some(candidate => {
       if (!candidate || typeof candidate!=="object" || Array.isArray(candidate)) return false;
       const v=candidate.value;
-      const number=typeof v==="number" && Number.isFinite(v) ? String(v) :
-        typeof v==="string" && /^\d+(?:[./]\d+)?$/u.test(v.trim()) ? v.trim() : "";
-      if (!number) return false;
-      const escaped=number.replaceAll(".","\\.").replaceAll("/","\\/");
-      return new RegExp("(?<![\\d./])"+escaped+"(?![\\d./])","u").test(quote);
+      return typeof v==="number" && Number.isFinite(v) ||
+        typeof v==="string" && /^\d+(?:[./]\d+)?$/u.test(v.trim());
     });
   });
 }
