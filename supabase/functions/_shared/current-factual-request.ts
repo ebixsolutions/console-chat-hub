@@ -514,6 +514,40 @@ function literalOptionSpecifications(text: string) {
     optionSpecificationMatches(match[0], {value:match[1], unit:match[2]}));
 }
 
+
+/** Buyer-side environmental numbers are requirements for suitability, not
+ * exact product variant attributes. Explicit trusted option_criteria still
+ * carries an actual product specification with its own provenance. */
+function customerContextConstraintKey(key: string): boolean {
+  return /(?:^|_)(?:customer|room|space|site|team|staff|employee|guest|visitor|people|person|user|budget|usage|environment|location|orientation|household|audience|intended|existing)(?:_|$)/iu.test(key);
+}
+
+/** Reject unbound unitless SKU dimensions only when the customer's own
+ * source quote literally names the item-attribute field AND its number.
+ * An unrelated typed buyer count must never pre-reject every KB document. */
+export function hasUnboundSourceOwnedOptionSpecification(
+  demand: Pick<CurrentFactualDemand,"constraints"|"source_quote"|"option_criteria">,
+): boolean {
+  if (demand.option_criteria?.specification) return false;
+  const quote=clean(demand.source_quote);
+  if (!quote) return false;
+  return Object.entries(demand.constraints).some(([field,raw]) => {
+    if (customerContextConstraintKey(field)) return false;
+    const label=field.replace(/[_-]+/gu," ").trim();
+    if (!/^[a-z][a-z0-9 ]{0,79}$/iu.test(label) ||
+        !new RegExp("(?<![\\p{L}\\p{N}])"+label+"(?![\\p{L}\\p{N}])","iu").test(quote)) return false;
+    return (Array.isArray(raw)?raw:[raw]).some(candidate => {
+      if (!candidate || typeof candidate!=="object" || Array.isArray(candidate)) return false;
+      const v=candidate.value;
+      const number=typeof v==="number" && Number.isFinite(v) ? String(v) :
+        typeof v==="string" && /^\d+(?:[./]\d+)?$/u.test(v.trim()) ? v.trim() : "";
+      if (!number) return false;
+      const escaped=number.replaceAll(".","\\.").replaceAll("/","\\/");
+      return new RegExp("(?<![\\d./])"+escaped+"(?![\\d./])","u").test(quote);
+    });
+  });
+}
+
 /** Structured constraints identify which source-quoted number is material.
  * A unitless object can bind only when the source states one unambiguous unit. */
 export function customerOptionSpecifications(demand: Pick<CurrentFactualDemand,"constraints"|"source_quote"|"option_criteria">): Array<{value: string; unit: string}> {
@@ -543,7 +577,9 @@ export function customerOptionSpecifications(demand: Pick<CurrentFactualDemand,"
       result.set(norm(match[1]+match[2]), {value:match[1],unit:match[2]});
     }
   };
-  for (const value of Object.values(demand.constraints)) add(value);
+  for (const [field,value] of Object.entries(demand.constraints)) {
+    if (!customerContextConstraintKey(field)) add(value);
+  }
   return [...result.values()];
 }
 
@@ -684,6 +720,25 @@ function sourceBoundOptionDiscovery(input: ResolveCurrentFactualRequestInput, de
   return fromSemantic || fromSource || fromDemand;
 }
 
+
+/** Only a SINGLE source-owned option request can inherit its own customer
+ * category and usage context from the current utterance. A model's expanded
+ * question is never used as merchant authority. Private/other demand prefixes
+ * cannot enter retrieval; source_quote remains the exact customer span. */
+function sourceOwnedSingleOptionContext(input: ResolveCurrentFactualRequestInput,
+  demand: CommerceSemanticDemand): string | null {
+  const full=clean(input.question), quote=clean(demand.source_quote);
+  if (!full || !quote || full===quote || full.length>1600 ||
+      !full.endsWith(quote) || (input.semantic?.demands?.length??0)!==1 ||
+      !sourceBoundOptionDiscovery(input,demand) || isPersonalOrderStatusRequest(full)) return null;
+  const prefix=full.slice(0,-quote.length).trim();
+  if (!prefix || /[?？]/u.test(prefix) || TOPIC_BOUNDARY.test(prefix) ||
+      LIFECYCLE_BOUNDARY.test(prefix)) return null;
+  if (/(?:\b(?:order|invoice|payment|refund|reservation|booking|claim|ticket|account)\b|訂單|订单|付款|支付|退款|退貨|退货|預約|预约|預訂|预订|賬戶|账户|工單|工单|個案|个案)/iu.test(prefix) ||
+      /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/iu.test(prefix)) return null;
+  return full;
+}
+
 /** Same-ticket B2-committed clarification may reopen the customer's ORIGINAL
  * unresolved OPTION query with the newly supplied reply. No merchant facts,
  * other-ticket identity or old transaction is inherited. A fresh KB read must
@@ -782,6 +837,8 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     const quoteBound = !!sourceQuote && norm(question).includes(norm(sourceQuote));
     const criteria = quoteBound ? resolveOptionCriteria(input,demand) : null;
     const optionDiscovery = quoteBound && (Boolean(criteria) || sourceBoundOptionDiscovery(input,demand));
+    const sourceOwnedOptionQuestion = optionDiscovery && !criteria
+      ? sourceOwnedSingleOptionContext(input,demand) : null;
     if (criteria) contexts.push(...criteria.context);
     const ambiguity: CommerceSemanticAmbiguity = optionDiscovery ? clearAmbiguity() : {
       is_ambiguous: demand.ambiguity.is_ambiguous,
@@ -796,7 +853,7 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     if (quoteBound && demand.source_type === "transaction") privateLocators.set(id,
       refs.filter(ref => norm(sourceQuote).includes(norm(ref))));
     const resolved = optionDiscovery
-      ? {bindings: [], question: criteria?.question ?? sourceQuote, unresolved: false}
+      ? {bindings: [], question: criteria?.question ?? sourceOwnedOptionQuestion ?? sourceQuote, unresolved: false}
       : quoteBound && !demand.ambiguity.is_ambiguous
       ? resolveDemandSubjects(input, demand, refs, explicitCurrentSubjects)
       : {bindings: [], question: clean(demand.question), unresolved: false};

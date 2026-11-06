@@ -531,3 +531,26 @@ Deno.test("Task3 bound product options reject cross-brand, cross-category, cross
   d.source_quote="Panasonic 冷氣機 size 1 options";
   equal(select([d],[right]).grounding.items.length,0);
 });
+
+
+Deno.test("Task3C V6 B19: customer room area never pre-rejects actual returned product evidence",()=>{
+  const d=demand(1,"有冇慳電嘅變頻款可以睇?","product");
+  d.question="Hi，想換細房窗口冷氣，80呎又西斜。有冇慳電嘅變頻款可以睇?";
+  d.requested_facts=["published merchant options matching customer criteria"];
+  d.constraints={room_size:{value:80,unit:"square feet"},budget:{limited:true},inverter_model:true};
+  const faq=document("faq","General energy-saving information","Other","FAQ");
+  const product=document("product","Model: TEST-WIN-01\nCategory: Window inverter air conditioner\nEnergy grade: 1\nCapacity: 7400 BTU/h","Product","Window inverter model");
+  const result=select([d],[faq,product]);
+  assert(!result.grounding.demands[0].missing_reasons.includes("requested_specification_not_supported_by_returned_products"),"contextual number triggered pre-document hard spec rejection");
+  assert(result.grounding.items.some(item=>item.document_id==="product"),"valid product full-content returned yet rejected");
+});
+Deno.test("Task3C V6 generic SaaS/team and accommodation/guest contextual counts",()=>{
+  for(const item of [
+    {quote:"有冇入門訂閱方案可以睇?",constraints:{team_size:{value:5,unit:"people"}},text:"Plan: START-TEAM\nSubscription for small teams"},
+    {quote:"有冇家庭住宿套餐可以睇?",constraints:{guest_count:{value:3,unit:"people"}},text:"Plan: ROOM-FAMILY\nAccommodation for families"},
+  ]) {
+    const d=demand(1,item.quote,"product");d.requested_facts=["published merchant options matching customer criteria"];d.constraints=item.constraints;
+    const found=select([d],[document("option",item.text,"Product","Merchant plan")]);
+    assert(!found.grounding.demands[0].missing_reasons.includes("requested_specification_not_supported_by_returned_products"),"buyer headcount became exact package spec");
+  }
+});

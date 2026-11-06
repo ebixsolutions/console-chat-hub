@@ -3,6 +3,10 @@ import {verifyProductionSource,verifyIdentity,verifyChildEvidence,runChild,impor
 import {resolveAuthoritativeSupabaseBinding} from '../../src/integrations/supabase/runtime-authority.mjs';
 import {verifyDeterministicClosure} from './c3_deterministic_runtime_closure.mjs';
 const root=process.cwd(),profile=JSON.parse(fs.readFileSync(PROFILE_PATH));const tests=[];
+// Same Task3C: new source-only repair from actual V6 B19 Hosted FAIL.
+// Keep all historical B-T01 and Frozen signed hashes unchanged.
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,task3c_v6_hosted_repair_production_authorized:true},sourceOnly:true}),/task3c_v6_hosted_deployment_not_authorized/);
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_task3c_v6_hosted_repair_sha256:{}},sourceOnly:true}),/task3c_v6_hosted_scope_drift/);
 // Same Task3C B-T01 demand-contract repair pins current bytes only. Historical
 // A/Frozen receipts and production permissions remain independent and intact.
 assert.throws(()=>verifyProductionSource({root,profile:{...profile,task3c_b_t01_demand_repair_production_authorized:true},sourceOnly:true}),/task3c_b_t01_demand_deployment_not_authorized/);

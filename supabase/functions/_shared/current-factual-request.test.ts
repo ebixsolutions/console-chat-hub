@@ -1,4 +1,4 @@
-import { resolveCurrentFactualRequest, assertFactualQueryBudget, type FactualRequestHistoryRow } from "./current-factual-request.ts";
+import { resolveCurrentFactualRequest, assertFactualQueryBudget, customerOptionSpecifications, hasUnboundSourceOwnedOptionSpecification, type FactualRequestHistoryRow } from "./current-factual-request.ts";
 import { renderUnverifiedFactualNextStep } from "./factual-request-context.ts";
 import { scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
 import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state-core.ts";
@@ -1469,4 +1469,43 @@ Deno.test("Task3 numeric exploration preserves a different industry and fails cl
   }
   const untrusted = resolveCurrentFactualRequest({...input,trusted_company_id:null,history:[anchor]});
   assert(!untrusted.query?.includes("Harbor"),"unscoped history became customer evidence");
+});
+
+
+Deno.test("Task3C V6 B19: source-owned window option question retains the customer category",()=>{
+  const original="Hi，想換細房窗口冷氣，80呎又西斜，預算唔多，但驚買細咗唔夠凍。有冇慳電嘅變頻款可以睇？";
+  const quote="有冇慳電嘅變頻款可以睇?";
+  const d=demand("Show energy-saving inverter window air conditioners for an 80 sqft west-facing room","product",[],[]);
+  d.source_quote=quote;d.constraints={room_size:{value:80,unit:"square feet"},budget:{limited:true},inverter_model:true};
+  const sem=demanded(d);sem.operation="NO_STATE_CHANGE";sem.intent="unknown";sem.confidence=.8;
+  const r=resolveCurrentFactualRequest({question:original,semantic:sem,source_message_id:"new-visitor",trusted_company_id:"own-company",history:[]});
+  assert(r.kb_required&&r.subject===null&&!r.needs_subject_clarification,JSON.stringify(r));
+  const q=JSON.parse(r.query!);
+  assert(q.questions.length===1&&q.questions[0].subjects.length===0,"unknown model became an invented SKU");
+  assert(q.questions[0].question.includes("窗口冷氣")&&q.questions[0].question.includes("80呎")&&q.questions[0].question.includes("西斜"),"source-owned category/usage conditions were dropped");
+  assert(!q.questions[0].question.includes("Show energy-saving inverter window"),"model paraphrase replaced customer source");
+  equal(r.demands[0].source_quote,quote);
+  equal(customerOptionSpecifications(r.demands[0]),[]);
+  assert(!hasUnboundSourceOwnedOptionSpecification(r.demands[0]),"customer room area became exact SKU spec");
+});
+Deno.test("Task3C V6 generic SaaS/team contextual option discovery",()=>{
+  const original="我哋團隊有5位員工，預算有限，有冇入門方案可以睇？",quote="有冇入門方案可以睇?";
+  const d=demand("Available subscription plans for a five-person team","product",[],[]);
+  d.source_quote=quote;d.constraints={team_size:{value:5,unit:"people"},budget:{limited:true}};
+  const sem=demanded(d);sem.operation="NO_STATE_CHANGE";sem.intent="unknown";
+  const r=resolveCurrentFactualRequest({question:original,semantic:sem,source_message_id:"source",trusted_company_id:"tenant"});
+  const q=JSON.parse(r.query!);
+  assert(q.questions[0].question.includes("團隊有5位員工")&&q.questions[0].question.includes("入門方案"),"generic buyer context dropped");
+  equal(customerOptionSpecifications(r.demands[0]),[]);
+  assert(!hasUnboundSourceOwnedOptionSpecification(r.demands[0]),"staff headcount treated as plan specification");
+});
+Deno.test("Task3C V6 source-owned prefix excludes mixed private and independent operations",()=>{
+  const quote="有冇入門方案可以睇?";
+  for(const prefix of ["訂單 ORD-7788 需要退款。另外，","What is my booking 9901 status? ","請取消舊訂單，","Switch to another topic: "]) {
+    const d=demand("Show service options","product",[],[]);d.source_quote=quote;
+    const sem=demanded(d);sem.operation="NO_STATE_CHANGE";sem.intent="unknown";
+    const r=resolveCurrentFactualRequest({question:prefix+quote,semantic:sem,source_message_id:"source",trusted_company_id:"tenant"});
+    assert(!String(r.query??"").includes("ORD-7788")&&!String(r.query??"").includes("9901")&&
+      !String(r.query??"").includes(prefix.trim()),"private/independent prefix entered KB read");
+  }
 });

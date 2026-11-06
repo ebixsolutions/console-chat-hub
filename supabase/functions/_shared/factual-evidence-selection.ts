@@ -1,6 +1,6 @@
 import {selectCanonicalGrounding, fullContentSubjectMatch, deriveCurrentGroundingTarget,
   type CanonicalGroundingOptions, type CanonicalGroundingResult, type CurrentGroundingTarget} from "./canonical-grounding.ts";
-import {customerOptionSpecifications, optionSpecificationMatches,
+import {customerOptionSpecifications, hasUnboundSourceOwnedOptionSpecification, optionSpecificationMatches,
   type CurrentFactualRequest, type CurrentFactualDemand} from "./current-factual-request.ts";
 import {literalFactualSubject} from "./conversation-semantic-contract.ts";
 import type {KBDocumentCandidate, KBFullChunk} from "./kb-client.ts";
@@ -108,9 +108,8 @@ export function selectFactualEvidence(
     const discovery = demand.subjects.length === 0;
     const productOptions = discovery && demand.source_type === "product";
     const literalUnits = productOptions ? customerOptionSpecifications(demand) : [];
-    const unboundNumeric = productOptions && !literalUnits.length && Object.values(demand.constraints).flat().some(
-      value => value && typeof value === "object" && !Array.isArray(value) &&
-        (typeof value.value === "number" || typeof value.value === "string" && /^\d+(?:[./]\d+)?$/u.test(value.value.trim())));
+    const unboundNumeric = productOptions && !literalUnits.length &&
+      hasUnboundSourceOwnedOptionSpecification(demand);
     if (unboundNumeric) {
       coverage.missing_reasons.push("requested_specification_not_supported_by_returned_products");
       continue;
