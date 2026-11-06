@@ -1525,7 +1525,8 @@
     "tests/c3-widget-live-auth/original-preview.test.mjs": "ad268b314a1d680b76a0a7a65594da44ac15b77bac8695147fffb4f4eec36d6a",
     "tests/console-navigation/admin-evidence-log.test.mjs": "b3dff61c01d01c98b306a7a44b4b4971590c81398921a758003d5693c8639423",
     "tests/emergency-p0/chain.test.mjs": "f9d7abc51c25604d6cf7988357977381a90d92c83e0ab80fcf369f034fa3835c",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "6728799617e8a7d118860548e04f00700d0735d230bb70a17661aa27afb258ca"
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "6728799617e8a7d118860548e04f00700d0735d230bb70a17661aa27afb258ca",
+    "supabase/functions/_shared/f13-runtime-recovery.test.ts": "dfbe65ad1c38610cf2ac27a78691d859d009c583dbeb1948823684a4be727e1e"
   },
   "task3c_b_t01_demand_repair_production_authorized": false
 }
