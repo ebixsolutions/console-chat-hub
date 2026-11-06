@@ -1545,6 +1545,7 @@
     "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "6f3931c8b27e49d1222155bd0e479ed11543ecfb2f4a2fc011bdaa374513fa11",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "4edba0c677d4414b08a8b288ad246ac8a1eaea008e295a6b427ad0e8489508be",
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "c5122bd6ac566a12b758975447fe9142de5ebf11edc1cbc5f3b900e07edf1a23",
-    "tests/emergency-p0/chain.test.mjs": "aebe0ec62e003a493d80e241436c453f5ecc8bbb0cc588d6f4c7f4321022a933"
+    "tests/emergency-p0/chain.test.mjs": "aebe0ec62e003a493d80e241436c453f5ecc8bbb0cc588d6f4c7f4321022a933",
+    "supabase/functions/_shared/f13-runtime-recovery.test.ts": "6d898059abf230f7bb880829dd85192ff8879dbe6a7d9b6a7fc23caa9f8b2577"
   }
 }
