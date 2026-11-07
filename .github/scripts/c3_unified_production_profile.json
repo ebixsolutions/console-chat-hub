@@ -1548,11 +1548,12 @@
     "supabase/functions/_shared/vertex-generation-config.ts": "5e691ab14d0b80af7f07c79da1810eabcfdde4fc00f03bfe4a101b177a86a2d1",
     "supabase/functions/_shared/commerce-state-authority.ts": "32ec3880681b487848e5162784c7e3a1c28ad2fc99394e68cbf1d43493ce0a37",
     "supabase/functions/_shared/conversation-recall.integration.test.ts": "47a201a8a1f24afd27ba086925b98d432d3c6bad7580c274196f521a1c856334",
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "beb98e192bee122f6e3345db2ad52a0ae56282086373c5f4078c16006ceded33",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "d421e7d5aeb7942f7fd0e42df5accd8ffbf5510714259a55de87523727fd1966",
     "supabase/functions/_shared/conversation-long-memory.ts": "d022fecf99f7ef4e21574872a8cda16ef528661d3f801ec379c5ccde78ad87a1",
-    "supabase/functions/_shared/conversation-recall.ts": "f7b2d9fbd9f8f920e68b46040a63b620a36752e203d0ec10a2f1432583eae4c9",
+    "supabase/functions/_shared/conversation-recall.ts": "4276698948f0792db5ce0e6f2404d9496a2800854ca5e8618d45a17c4475bd52",
     "supabase/functions/_shared/conversation-runtime-state-core.ts": "5a659dc650a5428e02db7b3865e6fc458032051d3d71c1a73dcf471f2cb02653",
-    "supabase/functions/generate-reply/index.ts": "e2931f75cfd4f7ad1f6c9f9d11f3e6b191374651de8c40db8f5533becb28c2ab"
+    "supabase/functions/generate-reply/index.ts": "e2931f75cfd4f7ad1f6c9f9d11f3e6b191374651de8c40db8f5533becb28c2ab",
+    "supabase/functions/_shared/t12-round2-production-shaped.test.ts": "1cb54cc0b9627ce36a69ce9c3a9f01befdf68e74fbc507a15d57fe8356fe2666"
   },
   "task3c_p01_v7_production_authorized": false,
   "authorized_task3c_p01_v7_sha256": {

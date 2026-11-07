@@ -751,6 +751,10 @@ function entityAliases(e: CommerceEntity): string[] {
   }
   return [...new Set(values)];
 }
+/** Existing entity/referent vocabulary, shared by recap consumers. */
+export function retainedRecapTargets(state: ConversationCommerceState): string[] {
+  return state.entities.flatMap(entityAliases);
+}
 function selectEntities(
   input: ConversationRecallInput,
   entities: CommerceEntity[],
@@ -1281,7 +1285,7 @@ export function resolveConversationRecall(
   if (input.explicit_handoff) {
     return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
   }
-  const retainedTargets = (input.commerce?.state.entities ?? []).flatMap(entityAliases);
+  const retainedTargets = input.commerce ? retainedRecapTargets(input.commerce.state) : [];
   const resolved = summarySelection(input, input.commerce?.state.entities ?? []);
   if (resolved.provenance === "trusted_referent" && resolved.entities.length === 1) retainedTargets.push("it", "that", "this");
   const recap = isCurrentRequirementsRecap(input.question, retainedTargets);

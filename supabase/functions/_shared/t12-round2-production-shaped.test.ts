@@ -1,5 +1,5 @@
 import { isCurrentRequirementsRecap } from "./commerce-state-authority.ts";
-import { prepareConversationRecall } from "./conversation-recall.ts";
+import { prepareConversationRecall, retainedRecapTargets } from "./conversation-recall.ts";
 import { buildB2ReadOnlyRecapProof, executeB2PersistenceGate,
   type B2DatabaseClient, type B2QueryBuilder, type B2QueryResult } from "./pre-send-conversion-supervisor.ts";
 import { bindAuthorizedReply, hasUnresolvedLifecycleReplyForSource,
@@ -118,7 +118,9 @@ Deno.test("Round 2: actual T11 receipt cannot intercept later read-only T12", as
     "same-source failed reply must remain guarded");
   assert(!hasUnresolvedLifecycleReplyForSource(f.memory.memory, pending.source_message_id, pending),
     "verified same-source resume must remain possible");
-  assert(isCurrentRequirementsRecap(f.source_message_content), "T12 classification");
+  // The unchanged scoped T12 needs its captured target, not a keyword-only grant.
+  assert(!isCurrentRequirementsRecap(f.source_message_content), "unbound T12 cue is not authority");
+  assert(isCurrentRequirementsRecap(f.source_message_content, retainedRecapTargets(f.commerce.state)), "T12 state-bound classification");
   const questions = [
     "三個位都有窗口位，而家裝緊嘅都係窗口機。",
     "另外個廳下晝西斜幾勁，揀機時要點考慮？",

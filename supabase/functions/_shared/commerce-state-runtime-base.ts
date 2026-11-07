@@ -1,3 +1,4 @@
+import { retainedRecapTargets } from "./conversation-recall.ts";
 /**
  * TASK A3 — Commerce state runtime adapter.
  *
@@ -2981,7 +2982,7 @@ export async function runCommerceStateRuntime(
     revision: contextualBefore.revision, persist_result: "read_only",
     reason: "read_only_handoff_control", route: "commerce_state_answer" };
   input = { ...input, text };
-  if (isCurrentRequirementsRecap(recapOriginalText, contextualBefore.state.entities.flatMap(e => [e.entity_id, e.category, e.category.replace(/_/g, " "), e.model ?? "", ...["product_name", "display_name", "original_name", "sku"].map(k => String(e.attributes[k] ?? ""))])) &&
+  if (isCurrentRequirementsRecap(recapOriginalText, retainedRecapTargets(contextualBefore.state)) &&
     resolveEntityLifecyclePlan(text,contextualBefore.state).kind === "none") {
     return { authority: "CONVERSATION_STATE", reply: null,
       revision: contextualBefore.revision, persist_result: "read_only",
