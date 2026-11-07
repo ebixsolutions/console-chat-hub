@@ -780,7 +780,7 @@ orderSemanticTransport(COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA);
  * A nested number cannot be emitted without an explicitly typed ancestor.
  * Historical V6/V7 malformed paths are never repaired by this adapter. */
 const semanticAncestorAnnotatedNodes=(field:string,value:Record<string,unknown>,depth:number)=>({
-  type:"array",items:{type:"object",properties:{
+  type:"array",items:{type:"object",required:["path",field],properties:{
     path:{type:"array",minItems:1,maxItems:depth,items:{type:"object",properties:{
       key:{type:"string"},parent_kind:{type:"string",enum:["object","array"]},
     }}},

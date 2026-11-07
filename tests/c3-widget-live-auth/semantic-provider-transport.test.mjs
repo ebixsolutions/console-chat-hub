@@ -720,13 +720,14 @@ function v7(delta={},operation='ASK_FACT'){
   ...local(rest)};
 }
 const acceptsV7=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA);
+
 test('v7 legacy provider still has explicit required constraints owned by each demand',()=>{
  assert.notEqual(COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA);
- const s=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash').responseSchema;
+ const s=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA,0,'gemini-2.5-flash').responseSchema;
  assert.deepEqual(s.properties.context_encoding.enum,['semantic_demands_v7']);
  assert.deepEqual(s.properties.demands.items.required,[...v6DemandFields,'constraints']);
  assert.deepEqual(s.properties.demands.items.properties.constraints.required,['containers','strings','numbers','booleans']);
- assert.equal(vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_SCHEMA).transport,'semantic_demands_v7');
+ assert.equal(vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA).transport,'semantic_demands_v7');
 });
 for(const n of [0,1,2,12])test('v7 '+n+' demands preserve explicit empty contexts, not omitted fields',()=>{
  const w=v7({demands:Array.from({length:n},()=>demand())});assert(acceptsV7(w),JSON.stringify(acceptsV7.errors));
@@ -797,6 +798,33 @@ test('v8 active Vertex schema owns all demand envelopes and all ancestor kinds',
   assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V7));
   assert.equal(config.thinkingConfig.thinkingBudget,0);
 });
+test('v8 producer and Vertex schemas require path and the matching typed value for every collection',()=>{
+  const vertex=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_V8_SCHEMA,0,'gemini-2.5-flash').responseSchema;
+  const slots={containers:'kind',strings:'text',numbers:'number',booleans:'boolean'};
+  for(const schema of [COMMERCE_SEMANTIC_PROVIDER_V8_SCHEMA,vertex]){
+    for(const owner of [schema.properties,schema.properties.demands.items.properties.constraints.properties]){
+      for(const [collection,field] of Object.entries(slots)){
+        assert.deepEqual(owner[collection].items.required,['path',field]);
+        assert.deepEqual(owner[collection].items.properties.path.items.required,['key','parent_kind']);
+      }
+    }
+  }
+  const values={kind:'object',text:'retained',number:0,boolean:false};
+  for(const local of [false,true])for(const [collection,field] of Object.entries(slots)){
+    for(const missing of ['path',field]){
+      const raw=v8({demands:[demand()]});
+      const owner=local?raw.demands[0].constraints:raw;
+      const node={path:[{key:'test_condition',parent_kind:'object'}],[field]:values[field]};
+      delete node[missing];owner[collection].push(node);
+      assert(!acceptsV8(raw),`${local?'demand':'outer'} ${collection} accepted missing ${missing}`);
+      let diagnostic;
+      assert.equal(decodeCommerceSemanticWire(raw,(_code,value)=>diagnostic=value),null);
+      assert.equal(diagnostic?.stage,'canonical_vocabulary');
+      assert.equal(diagnostic?.reason,'required');
+      assert(!JSON.stringify(diagnostic).includes('test_condition'));
+    }
+  }
+});
 for(const n of [0,1,2,12])test('v8 '+n+' demands distinguish explicitly empty from missing constraints',()=>{
   const raw=v8({demands:Array.from({length:n},(_,i)=>demand({question:'Q'+i,source_quote:'Q'+i}))});
   assert(acceptsV8(raw),JSON.stringify(acceptsV8.errors));
@@ -807,20 +835,21 @@ for(const n of [0,1,2,12])test('v8 '+n+' demands distinguish explicitly empty fr
     const partial=structuredClone(raw);delete partial.demands[0].constraints.numbers;assert(!acceptsV8(partial));assert.equal(canonical(partial),null);
   }
 });
-test('v8 literal raw multi-demand model output supports nested area=80 with NO separate room_size parent',()=>{
+test('v8 independently authored multi-demand fixture preserves nested area, units and safety without a separate parent entry',()=>{
   const area=[{key:'room_size',parent_kind:'object'},{key:'value',parent_kind:'object'}];
   const unit=[{key:'room_size',parent_kind:'object'},{key:'unit',parent_kind:'object'}];
   const west=[{key:'west_facing',parent_kind:'object'}];
   const first={...demand({question:'Did you recommend a particular model?',source_quote:'recommend a model?',source_type:'general',
     subject_refs:[],requested_facts:[],ambiguity:{is_ambiguous:true,reasons:['unverified prior recommendation'],clarification_question:'Which earlier suggestion?'}}),constraints:v8Empty()};
   const second={...demand({question:'What should be considered for this west-facing room?',source_quote:'80 sq ft west-facing room',source_type:'general',
-    subject_refs:[],requested_facts:[]}),constraints:{containers:[],strings:[{path:unit,text:'sq_ft'}],
+    subject_refs:[],requested_facts:[],explicit_negations:['do not guarantee cooling without heat-load data']}),constraints:{containers:[],strings:[{path:unit,text:'sq_ft'}],
     numbers:[{path:area,number:80}],booleans:[{path:west,boolean:true}]}};
   const raw={context_encoding:'semantic_demands_v8',operation:'ASK_FACT',confidence:.9,demands:[first,second],...v8Empty()};
   assert(acceptsV8(raw),JSON.stringify(acceptsV8.errors));
   const frame=canonical(raw);assert(frame);assert.equal(frame.demands.length,2);
   assert.deepEqual(frame.demands[0].constraints,{});
   assert.deepEqual(frame.demands[1].constraints,{room_size:{unit:'sq_ft',value:80},west_facing:true});
+  assert.deepEqual(frame.demands[1].explicit_negations,['do not guarantee cooling without heat-load data']);
   assert.equal(frame.demands[0].ambiguity.is_ambiguous,true);
   assert.equal(frame.demands[1].ambiguity.is_ambiguous,false);
 });
@@ -837,7 +866,7 @@ test('v8 independent product/general/transaction requirements preserve false, ze
  assert.equal(frame.customer_correction,true);assert.deepEqual(frame.explicit_negations,['not paid']);
  assert.deepEqual(Object.fromEntries(frame.customer_facts.map(x=>[x.key,x.value])),{auto_renew:false,revision_date:null,seats:0});
 });
-test('actual V7 missing intermediate parent remains a strict negative, never reinterpreted as V8',()=>{
+test('synthetic V7 missing intermediate parent remains a strict negative, never reinterpreted as V8',()=>{
  const old=v7({demands:[demand({constraints:{room_size:{value:80,unit:'sq_ft'}}}),demand({source_type:'general'})]});
  old.demands[0].constraints.containers=old.demands[0].constraints.containers.filter(n=>n.path[0]!=='room_size');
  let diagnostic;assert.equal(decodeCommerceSemanticWire(old,(_,d)=>diagnostic=d),null);
@@ -858,4 +887,20 @@ test('v8 conflicting ancestor, duplicate scalar, sparse array, unsafe key and in
   x=>x.demands[0].constraints.numbers[0].path.push({key:'too',parent_kind:'object'},{key:'deep',parent_kind:'object'}),
  ];
  for(const modify of cases){const raw=structuredClone(good);modify(raw);assert.equal(canonical(raw),null);}
+});
+
+// Exact captured SEMANTIC_MODEL_TEXT from the original authorized synthetic
+// V7 diagnostic. These are captured model-text bytes, not provider HTTP raw.
+// No provider call, reconstructed response, or normalization of the old FAIL.
+const capturedV7ParentFailure="{\n  \"context_encoding\": \"semantic_demands_v7\",\n  \"operation\": \"ASK_FACT\",\n  \"confidence\": 0.9,\n  \"demands\": [\n    {\n      \"question\": \"Have you previously recommended any specific models?\",\n      \"source_quote\": \"你之前有冇實際推薦過任何具體型號?\",\n      \"subject_refs\": [],\n      \"source_type\": \"general\",\n      \"requested_facts\": [\n        \"previous recommendations\"\n      ],\n      \"customer_correction\": false,\n      \"explicit_negations\": [],\n      \"ambiguity\": {\n        \"is_ambiguous\": false,\n        \"reasons\": [],\n        \"clarification_question\": null\n      },\n      \"constraints\": {\n        \"containers\": [],\n        \"strings\": [],\n        \"numbers\": [],\n        \"booleans\": []\n      }\n    },\n    {\n      \"question\": \"For my 80 sq ft west-facing room, which has always used a window air conditioner, is 3/4 HP or 1 HP more suitable?\",\n      \"source_quote\": \"我間80呎西斜房一直用窗口機,3/4匹定1匹較合適?\",\n      \"subject_refs\": [\n        \"air_conditioner:unscoped\"\n      ],\n      \"source_type\": \"product\",\n      \"requested_facts\": [\n        \"suitable air conditioner horsepower for 80 sq ft west-facing room\"\n      ],\n      \"customer_correction\": false,\n      \"explicit_negations\": [],\n      \"ambiguity\": {\n        \"is_ambiguous\": false,\n        \"reasons\": [],\n        \"clarification_question\": null\n      },\n      \"constraints\": {\n        \"containers\": [],\n        \"strings\": [],\n        \"numbers\": [\n          {\n            \"path\": [\n              \"room_size\",\n              \"value\"\n            ],\n            \"number\": 80\n          }\n        ],\n        \"booleans\": []\n      }\n    }\n  ],\n  \"containers\": [],\n  \"strings\": [],\n  \"numbers\": [],\n  \"booleans\": []\n}";
+test('captured V7 34bbc7a0 model text retains its exact hash and parent failure under the V8 decoder',()=>{
+  assert.equal(createHash('sha256').update(capturedV7ParentFailure).digest('hex'),'34bbc7a070e4a7eda4e5c4db8d7dc264218fee5755ef3b5a7c7aea350be6986b');
+  assert.equal(Buffer.byteLength(capturedV7ParentFailure),1704);
+  const raw=JSON.parse(capturedV7ParentFailure);assert(acceptsV7(raw));
+  let diagnostic;
+  assert.equal(decodeCommerceSemanticWire(raw,(_code,value)=>diagnostic=value),null);
+  assert.deepEqual(diagnostic,{container:'wire_nodes',stage:'parent',node_count:32});
+  assert.equal(canonical(raw),null);
+  const relabelled={...raw,context_encoding:'semantic_demands_v8'};
+  assert(!acceptsV8(relabelled));assert.equal(canonical(relabelled),null);
 });

@@ -1536,16 +1536,16 @@
     "supabase/functions/_shared/current-factual-request.test.ts": "7bd3b7d942578ed26b02d6bc047945e9976295178bc169493a7ae20482180ca3",
     "supabase/functions/_shared/factual-evidence-selection.test.ts": "9058bf25b2287aeeda16afa09a68ab540c299ea1da76ed68c2afe8a09b38c488",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "bf3ad5c2a8cd627bbd7f44081e4500196830dd3937ca834fd92751fdf3cded6c"
-  }
-,
+  },
   "task3c_p01_v8_production_authorized": false,
   "authorized_task3c_p01_v8_sha256": {
-    "supabase/functions/_shared/commerce-semantic-frame.ts": "a81492bb08f2feec17918bc98b245d7f4cb4ec9ae015c0d77cae0c2f0072ee80",
-    "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "6e3e4e89ba0e89a2011d7262f9e59053ee46136b01d5a8e14e7af4235f662590",
+    "supabase/functions/_shared/commerce-semantic-frame.ts": "ac4324e7faf07227e46a5e871f920fe2a657712cb0e6aed40d69a329ee469f61",
+    "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "d64ad832c44fea566a476843542c7385a205d4c83eb9dff07ee74338d6f2b720",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "09c5bb379d06b708048ddced950b74177fe699ff7097a9ced64483edec538ec5",
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "a764ae1384288498ac27b6f397687b92328e7cfd394943f51d627854fe9d954f",
     "tests/emergency-p0/chain.test.mjs": "6bc2d60756f0279f4f57e30cd18e0de9312937e7b9511d170f5f1ab0fff03550",
-    "supabase/functions/_shared/f13-runtime-recovery.test.ts": "bed0bbe205fdf9530907158e44f026cd0dc2732813fda43d70fe6f70ce3d879f"
+    "supabase/functions/_shared/f13-runtime-recovery.test.ts": "bed0bbe205fdf9530907158e44f026cd0dc2732813fda43d70fe6f70ce3d879f",
+    "supabase/functions/_shared/vertex-generation-config.ts": "5e691ab14d0b80af7f07c79da1810eabcfdde4fc00f03bfe4a101b177a86a2d1"
   },
   "task3c_p01_v7_production_authorized": false,
   "authorized_task3c_p01_v7_sha256": {
