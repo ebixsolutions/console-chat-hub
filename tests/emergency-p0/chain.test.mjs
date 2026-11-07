@@ -22,7 +22,7 @@ function typedContextNodes(value,at=[]) {
  return [{path:at,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},
   ...((kind==='object'||kind==='array')?Object.entries(value).flatMap(([k,v])=>typedContextNodes(v,[...at,k])):[])];
 }
-// Retained v2/v5/V6 fixtures exercise decoder compatibility; the active provider request uses v7.
+// Retained v2/v5/V6 fixtures exercise decoder compatibility; the active provider request uses V8.
 const providerWire=(delta,operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:.98,nodes:typedContextNodes(delta)});
 const providerWireV5=(delta,operation='UPDATE_ITEM')=>{
  const nodes=typedContextNodes(delta).filter(node=>node.path.length);
@@ -207,15 +207,20 @@ function fixture(text,options={}) {
     const item=semanticSchema.properties[list].items;
     assert.deepEqual(Object.keys(item.properties),['path',field]);assert.deepEqual(item.required,['path',field]);
     assert.equal(item.properties.path.maxItems,'6');
+    assert.deepEqual(item.properties.path.items.required,['key','parent_kind']);
    }
    assert(!JSON.stringify(semanticSchema).includes('"anyOf"'),'typed transport must not reintroduce union branch growth');
    assert(body.systemInstruction.parts[0].text.includes('Follow the supplied typed transport schema'));
    assert(body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_demands_v8'));
    assert(!body.systemInstruction.parts[0].text.includes('Wire contract: context_encoding=semantic_paths_v2'));
    if(options.enforceSmallTransport){
-    assert(Buffer.byteLength(JSON.stringify(semanticSchema))<4500,'V7 demand-owned constraints schema must remain bounded');
+    assert(Buffer.byteLength(JSON.stringify(semanticSchema))<5500,'V8 ancestor-annotated constraints schema must remain bounded');
      assert.deepEqual(semanticSchema.properties.demands.items.properties.constraints.required,['containers','strings','numbers','booleans']);
-     for(const list of ['containers','strings','numbers','booleans'])assert.equal(semanticSchema.properties.demands.items.properties.constraints.properties[list].items.properties.path.maxItems,'3');
+     for(const [list,field] of [['containers','kind'],['strings','text'],['numbers','number'],['booleans','boolean']]){
+      const item=semanticSchema.properties.demands.items.properties.constraints.properties[list].items;
+      assert.equal(item.properties.path.maxItems,'3');assert.deepEqual(item.required,['path',field]);
+      assert.deepEqual(item.properties.path.items.required,['key','parent_kind']);
+     }
     assert.deepEqual(Object.keys(semanticSchema.properties),['context_encoding','operation','confidence','demands','containers','strings','numbers','booleans']);
    }
    if(options.enforceSchemaBranchBudget){
@@ -677,7 +682,7 @@ for(const alias of ['lifecycle','correction','negations'])test('prompt/decoder i
  const r=await f.load(path.join(root,'supabase/functions/_shared/commerce-semantic-interpreter.ts')).interpretCommerceSemantics({company_id:company,conversation_id:ticket,source_message_id:source,latest:'Please correct my requirements',persistent_state_summary:'{}'});
  assert.equal(r.frame,null);assert.equal(r.contract_rejection,'wire_delta_fields');assert(!JSON.stringify(r).includes('PRIVATE-SECRET'));
  const request=f.requests.find(x=>x.url.includes('aiplatform')).body.systemInstruction.parts[0].text;
- assert(request.includes('customer_correction'));assert(request.includes('semantic_demands_v8'));assert(request.includes('customer_facts'));assert(request.includes('Strict canonical vocabulary still applies'));assert(request.includes('containers'));assert(request.includes('numbers'));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
+ assert(request.includes('customer_correction'));assert(request.includes('semantic_demands_v8'));assert(request.includes('customer_facts'));assert(request.includes('Strict canonical vocabulary still applies'));for(const list of ['containers','strings','numbers','booleans'])assert(request.includes(list));assert(!request.includes('only delta_json is JSON-encoded'));assert(!request.includes('customer_facts, lifecycle, correction, negations'));
 });
 
 test('Hosted Frankie correction then same-ticket Summary retains latest canonical Memory and passes unchanged B2',async()=>{
@@ -990,10 +995,15 @@ for(const [industry,values] of [
  const sr=await summary.run();assert.equal(sr.status,200);assert(!summary.commits[0].metadata.degraded,JSON.stringify({sr,metadata:summary.commits[0].metadata,events:summary.events.slice(-8),state:summary.tables.conversation_commerce_state[0]}));assert(summary.commits[0].content.includes(industry==='service'?'75':industry==='subscription'?'5':'3'));assert(!summary.requests.some(x=>x.url.includes('context-search')));
  const replay=await summary.run();assert.equal(replay.body.idempotent,true);assert.equal(summary.commits.length,1);
 });
-for(const mutate of [w=>w.nodes.push({path:['unknown_merchant_authority'],kind:'boolean',boolean:true}),w=>w.nodes.push({path:['entities','0'],kind:'object'})])test('malformed new provider tree cannot create canonical Memory or bypass B2',async()=>{
+for(const [mutate,stage] of [[w=>w.nodes.push({path:['unknown_merchant_authority'],kind:'boolean',boolean:true}),'delta_fields'],[w=>w.nodes.push({path:['entities','0'],kind:'object'}),'parent']])test('malformed new provider tree cannot create canonical Memory or bypass B2',async()=>{
  const semantic=providerWire({});mutate(semantic);
  const f=fixture('Update this requirement',{originalPreview:true,fullChain:true,enforceSmallTransport:true,semantic});await f.run();
- assert.equal(f.tables.conversation_memory_state.length,0);assert(f.commits.every(x=>x.metadata.degraded===true));
+ assert.equal(f.tables.conversation_memory_state.length,0);assert.equal(f.commits.length,1);assert(f.commits.every(x=>x.metadata.degraded===true));
+ assert.equal(f.commits[0].metadata.source_error_code,'LLM_INVALID_OUTPUT');
+ assert.equal(f.commits[0].metadata.execution_failure.stage,'canonical_validation');
+ assert.equal(f.commits[0].metadata.semantic_failure_receipt.contract_rejection,'wire_context_nodes');
+ const diagnostic=f.commits[0].metadata.semantic_failure_receipt.contract_diagnostic;
+ assert.equal(diagnostic.container,'wire_nodes');assert.equal(diagnostic.stage,stage);assert.equal(diagnostic.node_count,2);
  assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1);assert(!f.requests.some(x=>x.url.includes('context-search')));
 });
 

@@ -1539,11 +1539,11 @@
   },
   "task3c_p01_v8_production_authorized": false,
   "authorized_task3c_p01_v8_sha256": {
-    "supabase/functions/_shared/commerce-semantic-frame.ts": "ac4324e7faf07227e46a5e871f920fe2a657712cb0e6aed40d69a329ee469f61",
+    "supabase/functions/_shared/commerce-semantic-frame.ts": "7f29de30de20412db0f3d3783fc0ab8b4184dc8396ff373d0c904f0cfbdd4ac1",
     "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "d64ad832c44fea566a476843542c7385a205d4c83eb9dff07ee74338d6f2b720",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "09c5bb379d06b708048ddced950b74177fe699ff7097a9ced64483edec538ec5",
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "a764ae1384288498ac27b6f397687b92328e7cfd394943f51d627854fe9d954f",
-    "tests/emergency-p0/chain.test.mjs": "6bc2d60756f0279f4f57e30cd18e0de9312937e7b9511d170f5f1ab0fff03550",
+    "tests/emergency-p0/chain.test.mjs": "4971f3c59c945e8bef2a7d5a2e775d278e531fff69ba4ab4e262c01f3137206d",
     "supabase/functions/_shared/f13-runtime-recovery.test.ts": "bed0bbe205fdf9530907158e44f026cd0dc2732813fda43d70fe6f70ce3d879f",
     "supabase/functions/_shared/vertex-generation-config.ts": "5e691ab14d0b80af7f07c79da1810eabcfdde4fc00f03bfe4a101b177a86a2d1"
   },
