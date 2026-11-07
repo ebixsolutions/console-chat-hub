@@ -1546,15 +1546,16 @@
     "tests/emergency-p0/chain.test.mjs": "1fdfd9e75dfcb0a17e1963cd7863618dd0c0a7333d8be174891eaeedcf86ac8e",
     "supabase/functions/_shared/f13-runtime-recovery.test.ts": "bed0bbe205fdf9530907158e44f026cd0dc2732813fda43d70fe6f70ce3d879f",
     "supabase/functions/_shared/vertex-generation-config.ts": "5e691ab14d0b80af7f07c79da1810eabcfdde4fc00f03bfe4a101b177a86a2d1",
-    "supabase/functions/_shared/commerce-state-authority.ts": "72a9ed66dcec1fcb53745a9f6f983d04e4d8939d426c3a2bf450e7b4cf77d4b3",
+    "supabase/functions/_shared/commerce-state-authority.ts": "f58a50eb9c24c210e1fea267da131e831dc227583b47a2461d3ad7b05b2f45dc",
     "supabase/functions/_shared/conversation-recall.integration.test.ts": "b58b0fe4429084395adb994bed197bf3d40574768347174ccba1cb412d4a8400",
     "supabase/functions/_shared/commerce-state-runtime-base.ts": "d421e7d5aeb7942f7fd0e42df5accd8ffbf5510714259a55de87523727fd1966",
     "supabase/functions/_shared/conversation-long-memory.ts": "d022fecf99f7ef4e21574872a8cda16ef528661d3f801ec379c5ccde78ad87a1",
-    "supabase/functions/_shared/conversation-recall.ts": "4276698948f0792db5ce0e6f2404d9496a2800854ca5e8618d45a17c4475bd52",
+    "supabase/functions/_shared/conversation-recall.ts": "2dc7fb8d36cd30aa0b0c1d6fe4df51a41be9a7627accd683d784609f483cf986",
     "supabase/functions/_shared/conversation-runtime-state-core.ts": "5a659dc650a5428e02db7b3865e6fc458032051d3d71c1a73dcf471f2cb02653",
     "supabase/functions/generate-reply/index.ts": "e2931f75cfd4f7ad1f6c9f9d11f3e6b191374651de8c40db8f5533becb28c2ab",
     "supabase/functions/_shared/t12-round2-production-shaped.test.ts": "1cb54cc0b9627ce36a69ce9c3a9f01befdf68e74fbc507a15d57fe8356fe2666",
-    "tests/emergency-p0/provider-request.test.ts": "db1be5e9ffdf26481953f05e9db1697ea9dccb694f73d44d02f8979400b03d5d"
+    "tests/emergency-p0/provider-request.test.ts": "db1be5e9ffdf26481953f05e9db1697ea9dccb694f73d44d02f8979400b03d5d",
+    "tests/section15/compound-dialogue-state.test.ts": "cca2daba68793d8d1bf429f89cd79dd2dbd8d0aca231104df049967a5e4d8d18"
   },
   "task3c_p01_v7_production_authorized": false,
   "authorized_task3c_p01_v7_sha256": {

@@ -391,6 +391,7 @@ export function isCurrentRequirementsRecap(question: string, retainedTargets: re
   const projectedState = new RegExp("^(?:(?:同一張|這張|呢張|这张)(?:票|對話|对话))(?:的|嘅|目前記低的|目前记录的)(?:最新)?" + fields + "(?:(?:[、,，]|和|同|及|以及)" + fields + ")*$", "u");
   const target = (s: string) => projectedState.test(s) || globalTarget.test(s) || zhTarget.test(s) || bound(s) || bound(s.replace(/^(?:the|my|our) /i, "")) ||
     bound(s.replace(/^(?:the|my|our) /i, "").replace(/ (?:booking|plan)$/i, "").replace(/\s*預約$/u, ""));
+  if (/^(?:please )?give me (?:a )?(?:short |quick )?(?:English )?(?:summary|recap)$/i.test(text)) return true;
   const imperative = text.match(/^(?:(?:please|can you|could you) )?(?:recap|summari[sz]e) (.+?)(?: in English| in this (?:ticket|conversation))?$/i) ||
     text.match(/^(?:give me (?:a )?(?:quick )?)?(?:recap|summary) of (.+)$/i) ||
     text.match(/^(.+) recap$/i) ||

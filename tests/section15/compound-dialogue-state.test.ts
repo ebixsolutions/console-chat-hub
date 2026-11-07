@@ -39,6 +39,20 @@ for(const [a,b,unit] of [['subscription','addon','seats'],['booking','parking','
   const readback=prepareConversationRecall({...input('Give me a short English summary.'),question:text,memory,commerce:{company_id:'tenant-a',conversation_id:'ticket-a',source_message_id:'compound',revision:2,state:after}},'en');
   assert(readback.decision.handled&&readback.reply?.includes('8')&&/paused|deferred/i.test(readback.reply),JSON.stringify(readback));
   assert(!/generic:|revision|state key|B2_|paid|invoice/i.test(readback.reply!));
+  // Same syntax is not authority before the exact source has been applied.
+  const scoped={...input(text),question:text,memory,commerce:{company_id:'tenant-a',conversation_id:'ticket-a',source_message_id:'compound',revision:2,state:after}};
+  for(const bad of [
+    {...scoped,source_message_id:'next-source'},
+    {...scoped,company_id:'foreign'},
+    {...scoped,memory:{...memory,commerce_state_revision:1}},
+    {...scoped,commerce:{...scoped.commerce,source_message_id:'prior'}},
+    {...scoped,commerce:{...scoped.commerce,state:before}},
+    {...scoped,question:text.replace('8 '+unit,'9 '+unit)},
+    {...scoped,question:text.replace('8 '+unit,'8 unknownunit')},
+    {...scoped,question:text+' What is your current price?'},
+    {...scoped,question:'Explain the product features; '+text},
+  ]) assert(!prepareConversationRecall(bad,'en').decision.handled,'unproven compound acknowledged: '+JSON.stringify(bad));
+
  });
 }
 for(const text of ['附加服務先暫緩。訂閱改為8席；講返訂閱，請用英文簡短總結。','暫緩附加服務；將訂閱改為8席。回到訂閱，請簡短整理。'])Deno.test(`Chinese independent corrections: ${text}`,()=>{

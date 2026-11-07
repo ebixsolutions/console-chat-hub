@@ -4,7 +4,7 @@ import type {
   CommerceEntity,
   ConversationCommerceState,
 } from "./commerce-state-contract.ts";
-import { hasRequirementsRecapCue, isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall, withoutExcludedLookups } from "./commerce-state-authority.ts";
+import { splitCustomerOperationClauses, hasRequirementsRecapCue, isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall, withoutExcludedLookups } from "./commerce-state-authority.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { industryEntityLabel, industryEntityQuantityUnit } from "./industry-runtime-adapter.ts";
 import { renderEnglishRequirement } from "./commerce-capability-runtime.ts";
@@ -557,6 +557,7 @@ function parseQuery(
   q: string,
   recentQuestions: string[] = [],
   retainedTargets: string[] = [],
+  completedCompoundRecap = false,
 ): { facts: RecallFact[]; stop?: ConversationRecallDecision } {
   if (!q.trim() || q.length > 2400) {
     return {
@@ -565,7 +566,7 @@ function parseQuery(
     };
   }
   const owner = any(q, OWNER), question = /[?？]|呢$/.test(q) || any(q, ASK);
-  const summary = isCurrentRequirementsRecap(q, retainedTargets);
+  const summary = completedCompoundRecap || isCurrentRequirementsRecap(q, retainedTargets);
   // A rejected recap-containing turn cannot be partially answered as another
   // recalled slot while silently dropping the rest of the customer request.
   if (!summary && (hasField(q, "summary") || hasRequirementsRecapCue(q))) {
@@ -1279,6 +1280,42 @@ function memoryCandidates(
   return out;
 }
 
+/** A compound correction is never a pre-mutation recap. Only an exact
+ * same-source readback may acknowledge the closed, already-applied operations.
+ * This compares state; it does not plan, infer, execute or discard a clause. */
+function hasSourceBoundCompletedRecap(input: ConversationRecallInput): boolean {
+  const {memory:m,commerce:c,question:q}=input;
+  if (!m || !c || !q || q.length>2400 || /["“”「」『』`\n]/u.test(q) ||
+    m.source_message_id!==input.source_message_id || c.source_message_id!==input.source_message_id ||
+    m.commerce_state_revision!==c.revision) return false;
+  const clauses=splitCustomerOperationClauses(q);
+  if(clauses.length<2 || clauses.length>8 ||
+    !isCurrentRequirementsRecap(clauses[clauses.length-1],retainedRecapTargets(c.state))) return false;
+  const norm=(v:string)=>v.normalize("NFKC").toLowerCase().trim();
+  const named=(label:string)=>c.state.entities.filter(e=>entityAliases(e).some(a=>norm(a)===norm(label)));
+  let changed=false;
+  for(const clause of clauses.slice(0,-1)){
+    const lifecycle=clause.match(/^(?:please )?(defer|pause|cancel) (.+)$/i);
+    const quantity=clause.match(/^(?:please )?change (.+) to (\d+(?:\.\d+)?) ([a-z]+)$/i);
+    const focus=clause.match(/^(?:back to|return to) (.+)$/i);
+    if(!lifecycle && !quantity && !focus) return false;
+    const entities=named((lifecycle||quantity||focus)![lifecycle?2:1]);
+    if(entities.length!==1) return false;
+    const e=entities[0];
+    if(e.provenance.source_message_id!==input.source_message_id) return false;
+    if(lifecycle){
+      if(e.status!==(/^cancel$/i.test(lifecycle[1])?"cancelled":"deferred")) return false;
+      changed=true;
+    }else if(quantity){
+      if(["deferred","cancelled","superseded"].includes(e.status) ||
+        e.quantity!==Number(quantity[2]) || typeof e.attributes.unit!=="string" ||
+        norm(e.attributes.unit)!==norm(quantity[3])) return false;
+      changed=true;
+    }else if(c.state.current_topic!==e.category || ["deferred","cancelled","superseded"].includes(e.status)) return false;
+  }
+  return changed;
+}
+
 export function resolveConversationRecall(
   input: ConversationRecallInput,
 ): ConversationRecallDecision {
@@ -1289,7 +1326,7 @@ export function resolveConversationRecall(
   const resolved = summarySelection(input, input.commerce?.state.entities ?? []);
   if (resolved.provenance === "trusted_referent" && resolved.entities.length === 1) retainedTargets.push("it", "that", "this");
   const recap = isCurrentRequirementsRecap(input.question, retainedTargets);
-  const parsed = parseQuery(input.question, input.recent_questions, retainedTargets);
+  const parsed = parseQuery(input.question, input.recent_questions, retainedTargets, hasSourceBoundCompletedRecap(input));
   const m = input.memory, c = input.commerce;
   const requestedAmounts = (input.question.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((v) => Number(v.replace(/,/g, "")));
   const retainedHistoricalAmount = (m?.historical_facts ?? []).some((fact) => {
