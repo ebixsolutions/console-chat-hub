@@ -381,7 +381,7 @@ export function isCurrentRequirementsRecap(question: string, retainedTargets: re
   text = text.replace(/\s+without (?:looking up|checking|querying) (?:products?|merchant (?:data|policies)|external (?:data|information))[.!]?$/i, "").trim();
   // A bounded list of retained field concepts is a projection, not a new demand.
   const fields = "(?:商品數量|商品數目|人手|同事人數|市場|服務市場|App需要|是否要App|(?:客廳|客厅|房間|房间)?(?:面積|面积)|預算|预算|優先需求|优先需求)";
-  text = text.replace(new RegExp("(?:[:：]|[,，]列出|[,，]同我最新更正嘅)" + fields + "(?:(?:[、,，]|同|及|以及)" + fields + ")*[。.]?$", "u"), "");
+  text = text.replace(new RegExp("(?:[:：]|[,，]列出|[,，]同我最新更正嘅)" + fields + "(?:(?:[、,，](?:以及)?|同|及|以及)" + fields + ")*[。.]?$", "u"), "");
   text = text.replace(/[。.!?？！]+$/u, "").trim().replace(/\s+/g, " ");
   if (!text || /[;；。!?？！]|\b(?:and|but|then|also|if|unless|not|don't)\b|(?:再介紹|再介绍|同埋|唔使|唔好|不要|不用|如果|若|取消|更正|暫緩|暂缓)/i.test(text)) return false;
   const norm = (s: string) => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
