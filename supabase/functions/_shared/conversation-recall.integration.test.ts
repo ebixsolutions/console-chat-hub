@@ -2907,3 +2907,14 @@ Deno.test("H-R6 read-only unknown-scope reconciliation revalidates positive repl
   ];
   for (const [label, mutate] of negatives) { const rows = structuredClone(baseline); mutate(rows); await check(rows, false, label); }
 });
+
+Deno.test("conditional need is not a retained-requirements recap", () => {
+  for (const text of [
+    "我想分開確認兩件事：Panasonic CW-SUL70BA 有咩主要功能？另外，西斜約80呎房間用呢款是否合適？如果需要現場資料先可以判斷，請講清楚；暫時唔查售價或庫存。",
+    "What can this service do for me? If you need more details to assess suitability, explain them. Do not check price.",
+    "這個方案有甚麼功能？如果需要現場資料，請告訴我。",
+    "我想問呢個課程適唔適合？需要其他資料就講。",
+  ]) assert(!isCurrentRequirementsRecap(text), text);
+  for (const text of ["What are my current needs?", "我嘅需要記錄咗咩？", "Summarize our recorded requirements."])
+    assert(isCurrentRequirementsRecap(text), text);
+});

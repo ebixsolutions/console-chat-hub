@@ -382,7 +382,11 @@ export function isCurrentRequirementsRecap(question: string): boolean {
   const recall = /\b(?:remind|remember)\b|(?:講|讲|說|说)(?:返|回)|記低|记低|記錄|记录/i.test(text);
   const inquiry = /\bwhat\b|咩|甚麼|什么|係點|系点|是怎樣|是怎样/i.test(text);
   const scope = /\b(?:my|our|we|i|current|currently|latest|now)\b|\bso far\b|我|而家|現在|现在|目前|最新/i.test(text);
-  const recordedState = /\b(?:requirements?|requests?|needs?|setup|noted|recorded|agreed)\b|要求|需求|需要|情況|情况|記低|记低|記錄|记录/i.test(text);
+  // "Need" in a conditional ("if you need site data") is not a reference
+  // to retained customer requirements. Require ownership for that ambiguous
+  // noun; do not combine an unrelated first-person clause with a later need.
+  const ownedNeeds = /\b(?:my|our)\s+(?:current\s+|recorded\s+)?needs\b|(?:我(?:哋|們|们)?(?:嘅|的))\s*(?:需要|情況|情况)/i.test(text);
+  const recordedState = ownedNeeds || /\b(?:requirements?|requests?|setup|noted|recorded|agreed)\b|要求|需求|記低|记低|記錄|记录/i.test(text);
   // Organising future selection criteria is advice, not a read of recorded
   // requirements. A recap needs an explicit past/current conversation target;
   // the broad verb "整理" alone cannot suppress semantic interpretation.

@@ -1545,7 +1545,9 @@
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "a764ae1384288498ac27b6f397687b92328e7cfd394943f51d627854fe9d954f",
     "tests/emergency-p0/chain.test.mjs": "4971f3c59c945e8bef2a7d5a2e775d278e531fff69ba4ab4e262c01f3137206d",
     "supabase/functions/_shared/f13-runtime-recovery.test.ts": "bed0bbe205fdf9530907158e44f026cd0dc2732813fda43d70fe6f70ce3d879f",
-    "supabase/functions/_shared/vertex-generation-config.ts": "5e691ab14d0b80af7f07c79da1810eabcfdde4fc00f03bfe4a101b177a86a2d1"
+    "supabase/functions/_shared/vertex-generation-config.ts": "5e691ab14d0b80af7f07c79da1810eabcfdde4fc00f03bfe4a101b177a86a2d1",
+    "supabase/functions/_shared/commerce-state-authority.ts": "10d4d5daa4535775bc274ec0740679c6c40aa94fc48a3e12edc507161af4133e",
+    "supabase/functions/_shared/conversation-recall.integration.test.ts": "d591db0f813177925334d2d32e52c94c8ed012935c61d3a0150e377dcd7c1a22"
   },
   "task3c_p01_v7_production_authorized": false,
   "authorized_task3c_p01_v7_sha256": {
