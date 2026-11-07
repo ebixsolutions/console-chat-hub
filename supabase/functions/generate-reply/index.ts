@@ -6,6 +6,7 @@ import { resolveIndustryProfile } from "../_shared/industry-runtime-adapter.ts";
 import { phase1CoachAllowed } from "../_shared/remote-model-accounting.ts";
 import {
   prepareConversationRecall,
+  hasProvenCurrentRequirementsRecap,
   renderCanonicalCustomerFactRecap,
   type RecallCommerceSnapshot,
   type TrustedPersistedMemoryReadback,
@@ -130,7 +131,7 @@ import {
   selectCanonicalGrounding,
 } from "../_shared/canonical-grounding.ts";
 import type { ReferenceAuthorityDecision } from "../_shared/commerce-state-authority.ts";
-import { customerBusinessText, isCurrentRequirementsRecap, isCustomerGuidanceRequest, resolveCustomerRequestDecision, applyCustomerRequestDecision } from "../_shared/commerce-state-authority.ts";
+import { customerBusinessText, isCustomerGuidanceRequest, resolveCustomerRequestDecision, applyCustomerRequestDecision } from "../_shared/commerce-state-authority.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import {
   type CanonicalKbDirectAnswer,
@@ -4488,7 +4489,13 @@ async function orchestrationGenerateReply(
   let _semanticFailure: string | null = null;
   let _semanticDiagnostic: ExecutionFailure | undefined;
   const _semanticBusinessText = customerBusinessText(_h1LastMsg);
-  if (_criticalE2ExpectedTenantId && _semanticBusinessText && !isCurrentRequirementsRecap(_semanticBusinessText)) {
+  // Only the existing scoped readback resolver may own a pure recap turn.
+  // Mixed/unbound/negated requests keep their complete Semantic input.
+  const _provenRecap = _criticalE2ExpectedTenantId && await hasProvenCurrentRequirementsRecap(supabaseAdmin, {
+    company_id: _criticalE2ExpectedTenantId, conversation_id, source_message_id: _h1SourceMessageId,
+    question: _h1LastMsg, explicit_handoff: _explicitHandoffRequested,
+  });
+  if (_criticalE2ExpectedTenantId && _semanticBusinessText && !_provenRecap) {
     try {
       _semanticPrepared = await prepareSemanticRequest(supabaseAdmin, {
         company_id: _criticalE2ExpectedTenantId,

@@ -623,7 +623,7 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
     const content=clean(row.content,1600);
     const meta = record(row.metadata);
     if (CUSTOMER_ROLES.has(String(row.role ?? "")) && row.id && !classifySocialTurn(content) &&
-      !isCurrentRequirementsRecap(content) && (factualSourceIds.has(row.id) ||
+      !isCurrentRequirementsRecap(String(row.content)) && (factualSourceIds.has(row.id) ||
         /[?？]|(?:what|how|why|can|could|幾多|有冇|夠唔夠)/i.test(content)) && !items.has(row.id)) {
       const matches = entities.filter(entity=>[entity.model,entity.attributes.product_name,entity.category.replace(/_/g," "),industryEntityLabel(entity.entity_id,"zh-TW"),industryEntityLabel(entity.entity_id,"en")]
         .some(name=>typeof name === "string" && content.toLowerCase().includes(name.toLowerCase())));
@@ -643,7 +643,7 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
       Array.isArray(meta.unresolved_fact_fields) && meta.unresolved_fact_fields.length > 0;
     if (!item && (clarification || site || stockUnknown || cataloguePending || missingCustomerDecision || missingMerchantEvidence)) {
       const source=rows.find(row=>row.id===meta.source_message_id && CUSTOMER_ROLES.has(String(row.role)));
-      if (!source || classifySocialTurn(clean(source.content)) || isCurrentRequirementsRecap(clean(source.content))) continue;
+      if (!source || classifySocialTurn(clean(source.content)) || isCurrentRequirementsRecap(String(source.content))) continue;
       const matches=entities.filter(entity=>[entity.model,entity.attributes.product_name,entity.category.replace(/_/g," "),industryEntityLabel(entity.entity_id,"zh-TW"),industryEntityLabel(entity.entity_id,"en")]
         .some(name=>typeof name === "string" && clean(source.content).toLowerCase().includes(name.toLowerCase())));
       item={source_message_id:meta.source_message_id,text:clean(source.content,1600),status:"pending",entity_id:matches.length===1?matches[0].entity_id:null};
@@ -675,7 +675,7 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
     const source = rows.find(row => row.id === item.source_message_id);
     const customerOnly = source && !/[?？]|\b(?:what|how|can|could|price|policy|stock)\b|售價|政策|庫存/i.test(clean(source.content)) &&
       deriveRequirementFacts([source]).current.length > 0;
-    if (source && (isCurrentRequirementsRecap(clean(source.content)) ||
+    if (source && (isCurrentRequirementsRecap(String(source.content)) ||
       customerOnly && !item.entity_id && item.resolution === "customer information required")) {
       item.status = "superseded";
       item.resolution = "read-only recall is not a missing customer requirement";
@@ -713,7 +713,7 @@ export function buildCanonicalConversationMemory(args: {
 }): CanonicalConversationMemory {
   const businessRows = args.newest_first.map(row=>CUSTOMER_ROLES.has(String(row.role ?? ""))
     ? {...row,content:businessMessageText(row.content)} : row)
-    .filter(row=>!CUSTOMER_ROLES.has(String(row.role ?? "")) || clean(row.content) && !classifySocialTurn(clean(row.content,1600)) && !isCurrentRequirementsRecap(clean(row.content)));
+    .filter(row=>!CUSTOMER_ROLES.has(String(row.role ?? "")) || clean(row.content) && !classifySocialTurn(clean(row.content,1600)) && !isCurrentRequirementsRecap(String(row.content)));
   const runtime = projectConversationRuntimeState(businessRows);
   const requirements = deriveRequirementFacts(businessRows);
   const commerce = projectCommerce(args.commerce_state);
@@ -778,7 +778,7 @@ export function buildCanonicalConversationMemory(args: {
     : null;
   const factualText = currentFactualRow && !classifySocialTurn(clean(currentFactualRow.content,1600)) &&
       !classifyHandoffIntent(clean(currentFactualRow.content,1600)).explicit_request &&
-      !isCurrentRequirementsRecap(clean(currentFactualRow.content,1600))
+      !isCurrentRequirementsRecap(String(currentFactualRow.content))
     ? businessMessageText(currentFactualRow.content).slice(0,1600) : null;
   const sourceBoundFactualGoal = factualText && currentReadAnchor?.subjects.length &&
       !currentReadAnchor.subjects.every(subject => factualText.toLocaleLowerCase().includes(subject.toLocaleLowerCase()))
@@ -1250,7 +1250,7 @@ export async function reconcileDeliveredMemoryReply(client: LongMemoryDbClient, 
       .eq("conversation_id",args.conversation_id).eq("company_id",reply.metadata.b2_expected_company_id).maybeSingle();
     if(sourceError || commerceError || !source || source.id!==args.source_message_id ||
       source.conversation_id!==args.conversation_id || !CUSTOMER_ROLES.has(String(source.role)) ||
-      !isCurrentRequirementsRecap(String(source.content)) || !commerce || !isConversationCommerceState(commerce.state) ||
+      !commerce || !isConversationCommerceState(commerce.state) ||
       commerce.conversation_id!==args.conversation_id || commerce.company_id!==reply.metadata.b2_expected_company_id ||
       !Number.isInteger(Number(commerce.revision)) || Number(commerce.revision)<0 ||
       reply.metadata.b2_expected_revision!==Number(commerce.revision) || !isCanonicalConversationMemory(stored.memory) ||

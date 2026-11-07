@@ -8,6 +8,7 @@ import {
 } from "./pre-send-conversion-supervisor.ts";
 import {
   prepareConversationRecall,
+  hasProvenCurrentRequirementsRecap,
   resolveConversationRecall,
 } from "./conversation-recall.ts";
 import {
@@ -24,6 +25,7 @@ import {
 } from "./commerce-state-runtime.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
 import {
+  hasRequirementsRecapCue,
   isCurrentRequirementsRecap,
   isDeliveryScheduleCurrentFactQuery,
   isReadOnlyCurrentStateAggregateQuery,
@@ -2802,8 +2804,14 @@ Deno.test("entity-scoped_vs_global_recap_partition", () => {
 
 Deno.test("explicit_recap_intent_is_independent_of_entity_scope", async () => {
   for (const text of ["Recap the ZX-731 booking.", "Summarize the premium plan.", "整理返 ZX-731 預約。", "What do I currently have noted?"]) {
-    assert(isCurrentRequirementsRecap(text), text);
-    const state = createEmptyConversationCommerceState();
+    assert(hasRequirementsRecapCue(text) || isCurrentRequirementsRecap(text), text);
+    if (hasRequirementsRecapCue(text)) assert(!isCurrentRequirementsRecap(text), "unbound named cue became authority");
+    // A named cue alone is no proof: bind the unchanged original request to
+    // existing state. Generic current-state recap is separately supported.
+    const state = structuredClone(recallFixture().commerce!.state);
+    state.entities[0].model = "ZX-731";
+    state.entities[0].attributes.product_name = "premium plan";
+    assert(isCurrentRequirementsRecap(text, ["ZX-731", "premium plan"]), text);
     const before = JSON.stringify(state);
     let calls = 0;
     const db: CommerceStateDbClient = {
@@ -2917,4 +2925,51 @@ Deno.test("conditional need is not a retained-requirements recap", () => {
   ]) assert(!isCurrentRequirementsRecap(text), text);
   for (const text of ["What are my current needs?", "我嘅需要記錄咗咩？", "Summarize our recorded requirements."])
     assert(isCurrentRequirementsRecap(text), text);
+});
+
+// Source regression cases; original UAT words/IDs and denominators unchanged.
+Deno.test("P0-1 whole-turn recap cannot swallow another demand or an unbound target", () => {
+  const negatives = ["我想分開確認兩件事：Panasonic CW-SUL70BA 有咩主要功能？另外，西斜約80呎房間用呢款是否合適？如果需要現場資料先可以判斷，請講清楚；暫時唔查售價或庫存。", "唔使總結之前的需求，直接介紹 CW-SUL70BA 有咩功能。", "請總結我之前的需求，再介紹 CW-SUL70BA 有咩功能。", "請總結 CW-SUL70BA 的主要功能。", "請總結我之前的需求，再介紹企業訂閱方案支援哪些功能。", "Do not summarize my requirements. Explain the features of the enterprise subscription.", "If I ask later, summarize my requirements.", "He said \"summarize my requirements\". What does that mean?", "請總結我之前的需求，再解釋醫療預約流程。", "Summarize my requirements and explain the cancellation terms.", "Summarize the policy document.", "Recap my current request and change the booking to 7 sessions.", "Cancel my booking and recap it.", "Recap my requirements; tell me a joke.", "Recap my requirements.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   Cancel the booking.", "Recap my requirements. xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx Show availability.", "Recap it.", "Summarize unknown plan.", "不要總結需求，我之前的地址係咩？", "Please summarize my needs and tell me my address."];
+  for (const question of negatives) {
+    assert(!isCurrentRequirementsRecap(question), question);
+    const input = recallFixture(question), before = JSON.stringify(input);
+    const result = prepareConversationRecall(input, "en");
+    assert(!result.decision.handled, JSON.stringify({question,result}));
+    assert(JSON.stringify(input) === before, "recall mutated state");
+  }
+  for (const question of ["Recap ac-wall.", "Recap aircon.", "Recap it."]) {
+    const input = recallFixture(question);
+    input.referents = [{ref:"ac-wall",confidence:1,source:"canonical_commerce"}];
+    assert(prepareConversationRecall(input,"en").decision.handled, question);
+    input.company_id = "foreign";
+    assert(!prepareConversationRecall(input,"en").decision.handled, "cross tenant recap");
+  }
+  const handoff = recallFixture("Please recap my current requirements and transfer me to a human.");
+  handoff.explicit_handoff = true;
+  const decision = resolveConversationRecall(handoff);
+  assert(!decision.handled && decision.detail === "HANDOFF_PRECEDENCE");
+});
+
+Deno.test("P0-1 pre-Semantic recap requires scoped successful current readback", async () => {
+  const input=recallFixture("Summarize our current requirements");
+  const c=input.commerce!, m=input.memory!;
+  const rows={conversation_commerce_state:c, conversation_memory_state:{
+    company_id:input.company_id,conversation_id:input.conversation_id,source_message_id:m.source_message_id,
+    revision:m.memory_revision,commerce_state_revision:m.commerce_state_revision,memory:m,memory_hash:"a".repeat(64)}};
+  const db=(data:typeof rows,error:unknown=null)=>({from:(table:string)=>{
+    const filters:Record<string,string>={}; const q={select:()=>q,eq:(k:string,v:string)=>{filters[k]=v;return q;},
+      maybeSingle:async()=>{assert(filters.company_id===input.company_id && filters.conversation_id===input.conversation_id,"unscoped read");return {data:data[table as keyof typeof rows],error};}};return q;
+  }});
+  assert(await hasProvenCurrentRequirementsRecap(db(rows),input),"valid retained recap");
+  for(const mutate of [
+    (r:typeof rows)=>{r.conversation_commerce_state.company_id="foreign";},
+    (r:typeof rows)=>{r.conversation_memory_state.source_message_id="unbound";},
+    (r:typeof rows)=>{r.conversation_memory_state.memory_hash="missing";},
+    (r:typeof rows)=>{r.conversation_commerce_state.revision++;},
+  ]) {const r=structuredClone(rows);mutate(r);assert(!await hasProvenCurrentRequirementsRecap(db(r),input));}
+  assert(!await hasProvenCurrentRequirementsRecap(db(rows,"denied"),input));
+  assert(!await hasProvenCurrentRequirementsRecap(db(rows),{...input,question:"Summarize our current requirements and explain the policy."}));
+  assert(!await hasProvenCurrentRequirementsRecap(db(rows),{...input,explicit_handoff:true}));
+  const absent={from:()=>{const q={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:null,error:null})};return q;}};
+  assert(await hasProvenCurrentRequirementsRecap(absent,input),"verified empty recap");
 });

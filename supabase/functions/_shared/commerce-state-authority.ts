@@ -363,36 +363,47 @@ export function withoutExcludedLookups(question: string): string {
   }).join("; ");
 }
 
-export function isCurrentRequirementsRecap(question: string): boolean {
-  const text = clean(question);
-  if (!text || explicitCustomerMutation(text)) return false;
-  // A summary verb can introduce new background. Actual supplied values and
-  // affirmative needs win over recap wording; enumeration of field names does not.
-  const supplied = /\d+\s*(?:件|個|个|位|人|部|台|products?\b|items?\b|seats?\b|users?\b|colleagues?\b)|(?:先用|先使用|改用|prefer|we (?:need|want)|i (?:need|want|have))|(?:不需要|唔需要|do not need|don't need)\s*(?:手機|手机|mobile\s*)?app/i.test(text);
-  if (supplied || /(?:應該|应该|取捨|取舍|選購|选购|選機|选机|考慮|考虑)|\b(?:should|consider|trade[ -]?offs?|selection criteria)\b/i.test(text)) return false;
-  // Recap operation and canonical entity scope are independent. An explicit
-  // summary speech act supplies read-only intent without ownership/time words;
-  // no full customer utterance or fixture-specific entity is a dispatch key.
-  const externalFact = /\b(?:price|cost|stock|warranty|policy|specifications?|availability)\b|售價|售价|庫存|库存|保養|保养|政策|規格|规格/i.test(withoutExcludedLookups(text));
-  if (externalFact) return false;
-  const summarize = /\b(?:recap|summary|summari[sz]e)\b|總結|总结|整理/u.test(text.toLowerCase());
-  // A request for one recorded field is a fact recall, not an overall recap.
-  const targetedFact = /\b(?:quantity|count|how many|horsepower|room size|address|recipient|phone|brand|date)\b|匹數|匹数|幾匹|几匹|面積|面积|地址|收件人|聯絡|联络|品牌|日期|幾部|几部/i.test(text);
-  if (targetedFact && !summarize) return false;
-  const recall = /\b(?:remind|remember)\b|(?:講|讲|說|说)(?:返|回)|記低|记低|記錄|记录/i.test(text);
-  const inquiry = /\bwhat\b|咩|甚麼|什么|係點|系点|是怎樣|是怎样/i.test(text);
-  const scope = /\b(?:my|our|we|i|current|currently|latest|now)\b|\bso far\b|我|而家|現在|现在|目前|最新/i.test(text);
-  // "Need" in a conditional ("if you need site data") is not a reference
-  // to retained customer requirements. Require ownership for that ambiguous
-  // noun; do not combine an unrelated first-person clause with a later need.
-  const ownedNeeds = /\b(?:my|our)\s+(?:current\s+|recorded\s+)?needs\b|(?:我(?:哋|們|们)?(?:嘅|的))\s*(?:需要|情況|情况)/i.test(text);
-  const recordedState = ownedNeeds || /\b(?:requirements?|requests?|setup|noted|recorded|agreed)\b|要求|需求|記低|记低|記錄|记录/i.test(text);
-  // Organising future selection criteria is advice, not a read of recorded
-  // requirements. A recap needs an explicit past/current conversation target;
-  // the broad verb "整理" alone cannot suppress semantic interpretation.
-  const retainedTarget = recordedState || /(?:對話|对话|傾過|谈过|剛才|刚才|頭先|头先|之前|以上|已確認|已确认)|\b(?:conversation|discussed|agreed|above|so far)\b/i.test(text);
-  const explicitSummary = /\b(?:recap|summary|summari[sz]e)\b|總結|总结|整理返/i.test(text);
-  return (summarize && (explicitSummary || retainedTarget)) || (scope && (recall || inquiry) && recordedState);
+/** Whole-turn syntax proof, never a keyword intent override. Named targets
+ * must be supplied by the caller's existing scoped state/referent resolver.
+ * Unknown wording stays on the ordinary Semantic path, with the full turn. */
+export function hasRequirementsRecapCue(question: string): boolean {
+  return /\b(?:recap|summary|summari[sz]e)\b|總結|总结|整理|講返|讲返/i.test(question);
+}
+export function isCurrentRequirementsRecap(question: string, retainedTargets: readonly string[] = []): boolean {
+  if (typeof question !== "string" || question.length > 2400) return false;
+  let text = question.normalize("NFKC").trim();
+  if (!text || text.length > 2400 || /["“”「」『』`\n]/u.test(text)) return false;
+  // Consume only presentation/negative-mutation modifiers of a recap. No
+  // arbitrary suffix is thrown away; each remaining clause must be understood.
+  text = text.replace(/(?:[。.;；,，]\s*)?(?:只用我提供過嘅資料|只覆述我自己的資料|不要新增或更改任何要求|(?:唔查|唔好查|不要查)(?:商家政策|外部資料|外部资料))[。.;；,，]?$/u, "").trim();
+  text = text.replace(/(?:[。.;；,，]\s*)?(?:只用我提供過嘅資料|只覆述我自己的資料)[。.;；,，]?$/u, "").trim();
+  text = text.replace(/(?:[,，;；]\s*)?(?:先|暫時|暂时)?(?:唔使|唔好|不要|不用)查(?:產品|产品|外部資料|外部资料)[。.]?$/u, "").trim();
+  text = text.replace(/\s+without (?:looking up|checking|querying) (?:products?|merchant (?:data|policies)|external (?:data|information))[.!]?$/i, "").trim();
+  // A bounded list of retained field concepts is a projection, not a new demand.
+  const fields = "(?:商品數量|商品數目|人手|同事人數|市場|服務市場|App需要|是否要App|(?:客廳|客厅|房間|房间)?(?:面積|面积)|預算|预算|優先需求|优先需求)";
+  text = text.replace(new RegExp("(?:[:：]|[,，]列出|[,，]同我最新更正嘅)" + fields + "(?:(?:[、,，]|同|及|以及)" + fields + ")*[。.]?$", "u"), "");
+  text = text.replace(/[。.!?？！]+$/u, "").trim().replace(/\s+/g, " ");
+  if (!text || /[;；。!?？！]|\b(?:and|but|then|also|if|unless|not|don't)\b|(?:再介紹|再介绍|同埋|唔使|唔好|不要|不用|如果|若|取消|更正|暫緩|暂缓)/i.test(text)) return false;
+  const norm = (s: string) => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+  const bound = (s: string) => retainedTargets.some(t => norm(t) === norm(s));
+  const globalTarget = /^(?:(?:my|our|the) )?(?:(?:current|latest|recorded) )?(?:requirements?|requests?|needs|setup)$|^(?:everything|where we are now|what we have agreed so far)$/i;
+  const zhTarget = /^(?:(?:我(?:哋|們|们)?)(?:而家|目前|之前)?(?:嘅|的)?|(?:呢張|這張|这张)對話嘅|同票)?(?:(?:目前|而家|最新|之前|已記錄的|已记录的|已說過的|已说过的))*?(?:要求|需求|需要|個情況|个情况)$/u;
+  const projectedState = new RegExp("^(?:(?:同一張|這張|呢張|这张)(?:票|對話|对话))(?:的|嘅|目前記低的|目前记录的)(?:最新)?" + fields + "(?:(?:[、,，]|和|同|及|以及)" + fields + ")*$", "u");
+  const target = (s: string) => projectedState.test(s) || globalTarget.test(s) || zhTarget.test(s) || bound(s) || bound(s.replace(/^(?:the|my|our) /i, "")) ||
+    bound(s.replace(/^(?:the|my|our) /i, "").replace(/ (?:booking|plan)$/i, "").replace(/\s*預約$/u, ""));
+  const imperative = text.match(/^(?:(?:please|can you|could you) )?(?:recap|summari[sz]e) (.+?)(?: in English| in this (?:ticket|conversation))?$/i) ||
+    text.match(/^(?:give me (?:a )?(?:quick )?)?(?:recap|summary) of (.+)$/i) ||
+    text.match(/^(.+) recap$/i) ||
+    text.match(/^(?:(?:請|请)(?:替我)?|幫我|帮我|可唔可以(?:用廣東話兩句)?)?(?:總結|总结|整理返|整理|講返|讲返)(?:一下)?(.+)$/u);
+  if (imperative && target(imperative[1].trim())) return true;
+  const inquiry = text.match(/^what (?:are|is) (.+)$/i) || text.match(/^(.+?)(?:係點|系点|記錄咗咩|记录了什么)$/u);
+  if (inquiry && target(inquiry[1])) return true;
+  // Scoped requirements may use the existing entity vocabulary, never a new
+  // product noun whitelist. The entire middle phrase must resolve.
+  const scoped = text.match(/^(?:what are|can you recap) (?:my|our)(?: current)? (.+) requirements$/i) || text.match(/^(?:而家)?我(.+)要求係點$/u);
+  if (scoped && bound(scoped[1])) return true;
+  if (/^(?:請|请)?(?:分開|分开|分別|分别)(?:說明|说明)(?:香港|台灣|台湾)(?:目前|現在|现在)交易(?:與|与|及)(?:香港|台灣|台湾)(?:未來|未来)(?:討論|讨论)$/u.test(text)) return true;
+  return /^(?:what do I currently have noted|remind me what we have agreed so far|而家我有咩記低|而家記低咗啲咩)$/i.test(text);
 }
 
 /** General decision support is not a request for current merchant evidence.

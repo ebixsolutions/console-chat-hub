@@ -171,7 +171,7 @@ export function deriveCurrentRequirementSnapshot(chronologicalCustomerTurns: str
 
   for (const raw of chronologicalCustomerTurns) {
     const text = clean(customerBusinessText(raw));
-    if (!text || /[?？]/.test(text) || isCurrentRequirementsRecap(text)) continue;
+    if (!text || /[?？]/.test(text) || isCurrentRequirementsRecap(raw)) continue;
     const staffCountBeforeTurn: number | null = staffCount;
 
     // Negated former values are not the replacement assertion. Preserve the
@@ -232,7 +232,7 @@ export function deriveRequirementFacts(rows: RuntimeHistoryRow[]) {
   for (const row of [...rows].reverse()) {
     if (!["visitor", "user", "customer"].includes(String(row.role))) continue;
     const text = clean(row.content);
-    if (!text || isCurrentRequirementsRecap(text)) continue;
+    if (!text || isCurrentRequirementsRecap(String(row.content))) continue;
     turns.push(text);
     const next = deriveCurrentRequirementSnapshot(turns);
     for (const [key, value] of Object.entries(next)) {

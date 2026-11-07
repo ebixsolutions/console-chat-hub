@@ -4,7 +4,7 @@ import type {
   CommerceEntity,
   ConversationCommerceState,
 } from "./commerce-state-contract.ts";
-import { isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall, withoutExcludedLookups } from "./commerce-state-authority.ts";
+import { hasRequirementsRecapCue, isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall, withoutExcludedLookups } from "./commerce-state-authority.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { industryEntityLabel, industryEntityQuantityUnit } from "./industry-runtime-adapter.ts";
 import { renderEnglishRequirement } from "./commerce-capability-runtime.ts";
@@ -556,6 +556,7 @@ function fail(
 function parseQuery(
   q: string,
   recentQuestions: string[] = [],
+  retainedTargets: string[] = [],
 ): { facts: RecallFact[]; stop?: ConversationRecallDecision } {
   if (!q.trim() || q.length > 2400) {
     return {
@@ -564,11 +565,22 @@ function parseQuery(
     };
   }
   const owner = any(q, OWNER), question = /[?？]|呢$/.test(q) || any(q, ASK);
-  const summary = hasField(q, "summary") || isCurrentRequirementsRecap(q);
+  const summary = isCurrentRequirementsRecap(q, retainedTargets);
+  // A rejected recap-containing turn cannot be partially answered as another
+  // recalled slot while silently dropping the rest of the customer request.
+  if (!summary && (hasField(q, "summary") || hasRequirementsRecapCue(q))) {
+    const identifier = q.match(/^(?:please )?recap ([a-z][a-z0-9]*-[a-z0-9-]+)[.!?]?$/i)?.[1];
+    if (identifier && isCurrentRequirementsRecap(q, [identifier]))
+      return { facts: [], stop: fail("AMBIGUOUS", "ENTITY_REFERENCE_AMBIGUOUS", ["summary"]) };
+    return { facts: [], stop: fail("NOT_A_RECALL_QUERY", "RECAP_WHOLE_TURN_NOT_PROVEN") };
+  }
   let facts = (Object.keys(FIELDS) as RecallFact[]).filter((f) =>
-    hasField(q, f)
+    f !== "summary" && hasField(q, f)
   );
   if (summary) facts = ["summary"];
+  if (!facts.length && /[?？][\s\S]+[?？]/u.test(q)) {
+    return { facts: [], stop: fail("NOT_A_RECALL_QUERY", "MULTIPLE_UNRESOLVED_QUESTIONS") };
+  }
   if (!facts.length && isReadOnlyMemoryOrCurrentStateRecall(q)) {
     facts = [
       /(?:狀態|状态|status|係咪取消|是否取消|仲要|仍然要|still active|cancelled|canceled)/i.test(q)
@@ -1269,7 +1281,11 @@ export function resolveConversationRecall(
   if (input.explicit_handoff) {
     return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
   }
-  const parsed = parseQuery(input.question, input.recent_questions);
+  const retainedTargets = (input.commerce?.state.entities ?? []).flatMap(entityAliases);
+  const resolved = summarySelection(input, input.commerce?.state.entities ?? []);
+  if (resolved.provenance === "trusted_referent" && resolved.entities.length === 1) retainedTargets.push("it", "that", "this");
+  const recap = isCurrentRequirementsRecap(input.question, retainedTargets);
+  const parsed = parseQuery(input.question, input.recent_questions, retainedTargets);
   const m = input.memory, c = input.commerce;
   const requestedAmounts = (input.question.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((v) => Number(v.replace(/,/g, "")));
   const retainedHistoricalAmount = (m?.historical_facts ?? []).some((fact) => {
@@ -1291,7 +1307,7 @@ export function resolveConversationRecall(
       m.company_id !== input.company_id ||
       m.conversation_id !== input.conversation_id ||
       (m.source_message_id !== input.source_message_id &&
-        !(isCurrentRequirementsRecap(input.question) && c &&
+        !(recap && c &&
           (m.source_message_id === c.source_message_id || (m.question_lifecycle ?? []).some(q =>
             q.source_message_id === m.source_message_id && q.status === "resolved" &&
             Boolean(q.resolution_source_message_id)) || hasTrustedPersistedMemoryReadback(input)) &&
@@ -1969,4 +1985,35 @@ function renderCustomerRecap(value: unknown, language: string): string {
     ? sections.map(section => section.replace(/[.。]$/, "")).join(l === 2 ? "; " : "；") + (l === 2 ? "." : "。")
     : "";
   return [items, details].filter(Boolean).join(l === 2 ? " " : "").slice(0, 4096);
+}
+
+/** Read-only pre-Semantic shortcut. Syntax alone never grants this route.
+ * Reads use the authenticated caller's exact Company/Ticket, then reuse the
+ * final resolver's source/revision/tenant checks. Commit still re-reads B2. */
+export async function hasProvenCurrentRequirementsRecap(
+  db: { from(table: string): any }, input: RecallScope & { question: string; explicit_handoff?: boolean },
+): Promise<boolean> {
+  if (input.explicit_handoff || !input.company_id || !input.conversation_id || !input.source_message_id ||
+    !hasRequirementsRecapCue(input.question) && !isCurrentRequirementsRecap(input.question)) return false;
+  try {
+    const [mr, cr] = await Promise.all([
+      db.from("conversation_memory_state").select("conversation_id,company_id,revision,source_message_id,commerce_state_revision,memory,memory_hash")
+        .eq("conversation_id", input.conversation_id).eq("company_id", input.company_id).maybeSingle(),
+      db.from("conversation_commerce_state").select("conversation_id,company_id,source_message_id,revision,state")
+        .eq("conversation_id", input.conversation_id).eq("company_id", input.company_id).maybeSingle(),
+    ]);
+    if (mr.error || cr.error) return false;
+    const m = mr.data, c = cr.data;
+    if (m && (m.company_id !== input.company_id || m.conversation_id !== input.conversation_id ||
+      m.memory?.source_message_id !== m.source_message_id || m.memory?.memory_revision !== m.revision ||
+      m.memory?.commerce_state_revision !== m.commerce_state_revision ||
+      !/^[a-f0-9]{64}$/i.test(String(m.memory_hash ?? "")))) return false;
+    const decision = resolveConversationRecall({ ...input, memory: m?.memory ?? null, commerce: c ?? null,
+      empty_state_verified: !m && !c,
+      trusted_persisted_memory_readback: m ? { contract:"persisted-memory-readback-v1",
+        company_id:m.company_id,conversation_id:m.conversation_id,source_message_id:m.source_message_id,
+        memory_revision:m.revision,commerce_state_revision:m.commerce_state_revision,memory_hash:m.memory_hash } : null,
+    });
+    return decision.handled && decision.fact_type === "summary";
+  } catch { return false; }
 }
