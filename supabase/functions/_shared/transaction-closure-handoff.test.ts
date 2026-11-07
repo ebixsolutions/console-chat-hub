@@ -1,3 +1,4 @@
+import { classifyConversationClosure } from "./conversation-closure.ts";
 import {
   buildC2HandoffPackage,
   classifyC2HandoffReason,
@@ -100,6 +101,19 @@ Deno.test("C2 cancelled entity is excluded", () => {
   const s = state();
   s.entities.push({ entity_id:"old", category:"aircon", quantity:3, status:"cancelled", attributes:{}, constraints:{}, provenance:{source_type:"customer"} });
   assert(buildC2HandoffPackage(packageInput({ commerce_state:s })).active_entities.length === 0, "cancelled revived");
+});
+Deno.test("Director handoff keeps scoped customer facts and deferred context distinct from merchant claims", () => {
+  const s = state();
+  s.entities.push(
+    { entity_id:"booking-a", category:"booking", quantity:3, status:"researching", attributes:{ nights:3 }, constraints:{}, provenance:{source_type:"customer",source_message_id:"a"} },
+    { entity_id:"parking-b", category:"parking", quantity:1, status:"deferred", attributes:{}, constraints:{ max_width_mm:610 }, provenance:{source_type:"customer",source_message_id:"b"} },
+  );
+  s.latest_corrections=["booking nights 2 to 3"];
+  const pkg=buildC2HandoffPackage(packageInput({ commerce_state:s }));
+  assert(pkg.active_entities.length===1 && pkg.deferred_entities?.length===1,"deferred entity lost or reactivated");
+  assert(pkg.current_customer_facts?.some((fact)=>fact.key==="nights" && fact.value===3 && fact.authority==="CUSTOMER_FACT"),"customer fact omitted");
+  assert(pkg.active_entities[0].attributes?.nights===3 && pkg.deferred_entities?.[0].constraints && pkg.latest_corrections.length===1,"context incomplete");
+  assert(pkg.current_authoritative_kb_facts.length===0 && !pkg.confirmed_facts.some((fact)=>fact.key==="suitability"),"unverified suitability promoted");
 });
 Deno.test("C2 active entities remain isolated", () => {
   const s = state();
@@ -225,4 +239,75 @@ Deno.test("C2 package generation never mutates canonical state", () => {
   const s = state(); const before = JSON.stringify(s);
   buildC2HandoffPackage(packageInput({ commerce_state:s }));
   assert(JSON.stringify(s)===before, "canonical state mutated");
+});
+
+Deno.test("Task3 v3.1 C2 natural-language closure is not a keyword-only substring", () => {
+  const cases: Array<{ utterance: string; kind: string }> = [
+    { utterance: "係，幫到我，產品資料呢個問題已經解決。暫時無其他問題，多謝！", kind: "positive_no_more_help" },
+    { utterance: "冇啦，不過我仲想知道安裝費幾多？", kind: "none" },
+    { utterance: "沒有其他問題，但請先幫我查安裝費", kind: "none" },
+    { utterance: "I have no more questions, but can you check the delivery cost?", kind: "none" },
+    { utterance: "沒有其他問題，不過今日幾錢？", kind: "none" },
+    { utterance: "暫時沒有報價", kind: "none" },
+    { utterance: "沒有其他問題，多謝", kind: "positive_no_more_help" },
+    { utterance: "冇其他問題，多謝", kind: "positive_no_more_help" },
+    { utterance: "没有其他问题，谢谢", kind: "positive_no_more_help" },
+    { utterance: "No more questions, thanks!", kind: "no_more_help" },
+    { utterance: "多謝", kind: "closure_candidate" },
+    { utterance: "我唔使真人，但仲想問幾錢？", kind: "none" },
+    { utterance: "沒有其他問題，但請轉真人客服", kind: "none" },
+    { utterance: "冇", kind: "none" },
+    { utterance: "No more stock, can I order it?", kind: "none" },
+  ];
+  for (const {utterance, kind} of cases) {
+    const classified = classifyConversationClosure(utterance);
+    assert(classified.kind === kind, "misclassified closure: " + utterance + " => " + classified.kind);
+  }
+});
+
+Deno.test("Task3 v3.1 C2 cannot resolve follow-up questions even when empty Commerce state", () => {
+  const utterances = [
+    "冇啦，不過我仲想知道安裝費幾多？",
+    "沒有其他問題，但請先幫我查安裝費",
+    "I have no more questions, but can you check the delivery cost?",
+  ];
+  for (const utterance of utterances) {
+    const kind = classifyConversationClosure(utterance).kind;
+    const decision = decideTransactionClosure({utterance_kind:kind,commerce_state:state()});
+    assert(!decision.may_resolve, "unresolved service question marked RESOLVED: " + utterance);
+  }
+  const confirmed = classifyConversationClosure(
+    "係，幫到我，產品資料呢個問題已經解決。暫時無其他問題，多謝！",
+  );
+  assert(confirmed.kind === "positive_no_more_help", "explicit v3.1 confirmation not recognized");
+  const guarded = state();
+  guarded.unresolved_items = ["confirm merchant price"];
+  assert(!decideTransactionClosure({utterance_kind:confirmed.kind,commerce_state:guarded}).may_resolve,
+    "actual Commerce blocker removed by positive speech");
+});
+
+Deno.test("Task3 v3.1 frozen C2 source regression: unresolved prefix must not close Ticket", () => {
+  const cases: Array<{ utterance: string; expected: "none" | "no_more_help" | "positive_no_more_help" }> = [
+    { utterance: "我仲想問埋保養期，冇其他問題", expected: "none" },
+    { utterance: "麻煩先幫我核實安裝費，我冇其他問題", expected: "none" },
+    { utterance: "Could you check the delivery charge, no more questions", expected: "none" },
+    { utterance: "I am not saying I have no more questions", expected: "none" },
+    { utterance: "Please confirm the stock first; that is all", expected: "none" },
+    { utterance: "係，幫到我，產品資料呢個問題已經解決。暫時無其他問題，多謝！", expected: "positive_no_more_help" },
+    { utterance: "Thanks, no more questions", expected: "no_more_help" },
+    { utterance: "冇其他問題，多謝", expected: "positive_no_more_help" },
+    { utterance: "我冇其他問題", expected: "no_more_help" },
+    { utterance: "I have no more questions", expected: "no_more_help" },
+    { utterance: "I don't have any more questions", expected: "no_more_help" },
+    { utterance: "No, that's all", expected: "no_more_help" },
+    { utterance: "No, please check the stock first, that is all", expected: "none" },
+  ];
+  for (const {utterance,expected} of cases) {
+    const classified = classifyConversationClosure(utterance);
+    assert(classified.kind === expected, "C2 source P0 mismatch: " + JSON.stringify({utterance,expected,actual:classified.kind}));
+    const decision = decideTransactionClosure({utterance_kind:classified.kind,commerce_state:state()});
+    if (expected === "none") {
+      assert(!decision.may_resolve, "C2 wrongly resolved active customer question: " + utterance);
+    }
+  }
 });

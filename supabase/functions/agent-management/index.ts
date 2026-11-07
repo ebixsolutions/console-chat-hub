@@ -71,8 +71,9 @@ Deno.serve(async (req) => {
           );
         }
 
+        const membershipRows = (memberships ?? []) as Array<{ user_id: string; role: string; is_active: boolean }>;
         const userIds = [
-          ...new Set((memberships ?? []).map((row) => String(row.user_id))),
+          ...new Set(membershipRows.map((row) => String(row.user_id))),
         ];
 
         if (userIds.length === 0) {
@@ -93,7 +94,7 @@ Deno.serve(async (req) => {
         }
 
         const membershipByUser = new Map(
-          (memberships ?? []).map((row) => [
+          membershipRows.map((row) => [
             String(row.user_id),
             {
               role: String(row.role),
@@ -102,7 +103,8 @@ Deno.serve(async (req) => {
           ]),
         );
 
-        const agents = (profiles ?? [])
+        const profileRows = (profiles ?? []) as Array<{ id: string; user_id: string; display_name: string | null; email: string | null; role: string; status: string; created_at: string; updated_at: string }>;
+        const agents = profileRows
           .map((profile) => {
             const membership = membershipByUser.get(String(profile.user_id));
             if (!membership) return null;

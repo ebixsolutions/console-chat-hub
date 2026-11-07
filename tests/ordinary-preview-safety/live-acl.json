@@ -1,0 +1,52 @@
+[
+  {
+    "signature": "c3_uat_learning_excluded(uuid)",
+    "acl": "{postgres=X/postgres}",
+    "owner": "postgres"
+  },
+  {
+    "signature": "ce_conversation_evaluable_v1(uuid)",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "owner": "postgres"
+  },
+  {
+    "signature": "ce_dispatch_realtime_evaluation_v1(uuid)",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "owner": "postgres"
+  },
+  {
+    "signature": "ce_mark_evaluation_dirty(uuid,timestamp with time zone)",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "owner": "postgres"
+  },
+  {
+    "signature": "ce_message_evaluation_dirty_trigger()",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "owner": "postgres"
+  },
+  {
+    "signature": "ce_realtime_assistant_message_trigger_v1()",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "owner": "postgres"
+  },
+  {
+    "signature": "commit_ai_reply_tx(uuid,uuid,text,jsonb)",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "owner": "postgres"
+  },
+  {
+    "signature": "explicit_handoff_tx(uuid,text,uuid)",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "owner": "postgres"
+  },
+  {
+    "signature": "receive_widget_message_tx(uuid,text,text)",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "owner": "postgres"
+  },
+  {
+    "signature": "receive_widget_message_tx(uuid,text,text,text)",
+    "acl": "{postgres=X/postgres,service_role=X/postgres}",
+    "owner": "postgres"
+  }
+]

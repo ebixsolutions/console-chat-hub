@@ -79,6 +79,14 @@ def poll():
     st,d=call(f'{BASE}/widget-poll-messages','POST',{'conversation_id':CID,'session_token':TOK},{'Origin':ORIGIN,'Content-Type':'application/json'})
     return st,d
 
+def classify_ingress_terminal(response):
+    if not isinstance(response,dict) or response.get('success') is not True:
+        return None
+    data=response.get('data') or {}
+    if data.get('ai_reply_pending') is False and data.get('control_state')=='human_control':
+        return 'HUMAN_CONTROL_SUPPRESSED'
+    return None
+
 def recover_if_needed(status):
     if status not in ('pending','transferred') or not agent_jwt: return False
     h={'Origin':ORIGIN,'apikey':PK,'Authorization':f'Bearer {agent_jwt}','Content-Type':'application/json'}
@@ -196,7 +204,12 @@ for idx,text in enumerate(turns,1):
         before=[m for m in pd['data'].get('messages',[]) if m.get('role')=='assistant']
     headers={'Origin':ORIGIN,'Content-Type':'application/json','idempotency-key':str(uuid.uuid4())}
     st,resp=call(f'{BASE}/receive-widget-message','POST',{'conversation_id':CID,'session_token':TOK,'content':text},headers)
-    item={'turn':idx,'user':text,'send_http':st,'send_success':resp.get('success') if isinstance(resp,dict) else None,'assistant':None,'status':None,'timed_out':False,'recovered':False}
+    terminal=classify_ingress_terminal(resp)
+    item={'turn':idx,'user':text,'send_http':st,'send_success':resp.get('success') if isinstance(resp,dict) else None,'assistant':None,'status':'human_control' if terminal else None,'timed_out':False,'recovered':False,'terminal_classification':terminal}
+    if terminal:
+        results.append(item)
+        print(f"T{idx:03d} send={st} status=human_control ai=NO recovered=False terminal={terminal}",flush=True)
+        break
     target=len(before)+1
     for _ in range(24):
         time.sleep(1.25)

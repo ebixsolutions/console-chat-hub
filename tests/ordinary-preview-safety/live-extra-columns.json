@@ -1,0 +1,810 @@
+[
+  {
+    "table_name": "agent_profile",
+    "column_name": "id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": "gen_random_uuid()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "agent_profile",
+    "column_name": "user_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "agent_profile",
+    "column_name": "display_name",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "agent_profile",
+    "column_name": "email",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "agent_profile",
+    "column_name": "role",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": "'agent'::text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "agent_profile",
+    "column_name": "status",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": "'active'::text",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "agent_profile",
+    "column_name": "avatar_url",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "agent_profile",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "agent_profile",
+    "column_name": "updated_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "c3_uat_channel_scope",
+    "column_name": "channel_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "c3_uat_channel_scope",
+    "column_name": "company_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "c3_uat_channel_scope",
+    "column_name": "run_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "c3_uat_channel_scope",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "c3_uat_conversation_scope",
+    "column_name": "conversation_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "c3_uat_conversation_scope",
+    "column_name": "channel_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "c3_uat_conversation_scope",
+    "column_name": "company_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "c3_uat_conversation_scope",
+    "column_name": "run_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "conversation_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "company_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "state",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": "'never_evaluated'::text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "revision",
+    "data_type": "bigint",
+    "udt_name": "int8",
+    "column_default": "0",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "current_snapshot_hash",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "current_evaluation_fingerprint",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "last_success_evaluation_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "last_success_source",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "last_success_snapshot_hash",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "last_success_fingerprint",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "last_success_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "dirty_since",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "last_activity_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "queued_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "evaluating_started_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "last_error_code",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "ce_evaluation_state",
+    "column_name": "updated_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company",
+    "column_name": "id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": "gen_random_uuid()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company",
+    "column_name": "slug",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company",
+    "column_name": "display_name",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company",
+    "column_name": "external_workspace_id",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company",
+    "column_name": "external_tenant_id",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company",
+    "column_name": "is_active",
+    "data_type": "boolean",
+    "udt_name": "bool",
+    "column_default": "true",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company",
+    "column_name": "platform_company_id",
+    "data_type": "bigint",
+    "udt_name": "int8",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company_membership",
+    "column_name": "id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": "gen_random_uuid()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company_membership",
+    "column_name": "company_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company_membership",
+    "column_name": "user_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company_membership",
+    "column_name": "role",
+    "data_type": "USER-DEFINED",
+    "udt_name": "app_role",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company_membership",
+    "column_name": "is_active",
+    "data_type": "boolean",
+    "udt_name": "bool",
+    "column_default": "true",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "company_membership",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_assignment",
+    "column_name": "id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": "gen_random_uuid()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_assignment",
+    "column_name": "conversation_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_assignment",
+    "column_name": "agent_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_assignment",
+    "column_name": "assigned_by",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "conversation_assignment",
+    "column_name": "assigned_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "conversation_assignment",
+    "column_name": "unassigned_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "conversation_assignment",
+    "column_name": "is_active",
+    "data_type": "boolean",
+    "udt_name": "bool",
+    "column_default": "true",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "conversation_commerce_state",
+    "column_name": "conversation_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_commerce_state",
+    "column_name": "company_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_commerce_state",
+    "column_name": "revision",
+    "data_type": "bigint",
+    "udt_name": "int8",
+    "column_default": "1",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_commerce_state",
+    "column_name": "source_message_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_commerce_state",
+    "column_name": "state",
+    "data_type": "jsonb",
+    "udt_name": "jsonb",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_commerce_state",
+    "column_name": "state_hash",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_commerce_state",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_commerce_state",
+    "column_name": "updated_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_memory_state",
+    "column_name": "conversation_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_memory_state",
+    "column_name": "company_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_memory_state",
+    "column_name": "revision",
+    "data_type": "bigint",
+    "udt_name": "int8",
+    "column_default": "1",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_memory_state",
+    "column_name": "source_message_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_memory_state",
+    "column_name": "commerce_state_revision",
+    "data_type": "bigint",
+    "udt_name": "int8",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "conversation_memory_state",
+    "column_name": "memory",
+    "data_type": "jsonb",
+    "udt_name": "jsonb",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_memory_state",
+    "column_name": "markdown_projection",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_memory_state",
+    "column_name": "memory_hash",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_memory_state",
+    "column_name": "updated_from_turn",
+    "data_type": "bigint",
+    "udt_name": "int8",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_memory_state",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "conversation_memory_state",
+    "column_name": "updated_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "handoff_event",
+    "column_name": "id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": "gen_random_uuid()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "handoff_event",
+    "column_name": "conversation_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "handoff_event",
+    "column_name": "handoff_reason",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "handoff_event",
+    "column_name": "handoff_type",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "handoff_event",
+    "column_name": "from_agent_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "handoff_event",
+    "column_name": "to_agent_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "handoff_event",
+    "column_name": "ai_summary",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "handoff_event",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "handoff_event",
+    "column_name": "source_message_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "handoff_event",
+    "column_name": "branch_tag",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "handoff_event",
+    "column_name": "escalation_rule",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "handoff_event",
+    "column_name": "safe_reply_content",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "human_support_queue",
+    "column_name": "conversation_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "human_support_queue",
+    "column_name": "company_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "human_support_queue",
+    "column_name": "queued_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "human_support_queue",
+    "column_name": "priority",
+    "data_type": "integer",
+    "udt_name": "int4",
+    "column_default": "100",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "human_support_queue",
+    "column_name": "state",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": "'waiting'::text",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "human_support_queue",
+    "column_name": "assigned_agent_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "human_support_queue",
+    "column_name": "assigned_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "human_support_queue",
+    "column_name": "closed_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "human_support_queue",
+    "column_name": "updated_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "widget_session_event",
+    "column_name": "id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": "gen_random_uuid()",
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "widget_session_event",
+    "column_name": "visitor_session_id",
+    "data_type": "uuid",
+    "udt_name": "uuid",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "widget_session_event",
+    "column_name": "event_type",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "NO"
+  },
+  {
+    "table_name": "widget_session_event",
+    "column_name": "event_data",
+    "data_type": "jsonb",
+    "udt_name": "jsonb",
+    "column_default": "'{}'::jsonb",
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "widget_session_event",
+    "column_name": "page_url",
+    "data_type": "text",
+    "udt_name": "text",
+    "column_default": null,
+    "is_nullable": "YES"
+  },
+  {
+    "table_name": "widget_session_event",
+    "column_name": "created_at",
+    "data_type": "timestamp with time zone",
+    "udt_name": "timestamptz",
+    "column_default": "now()",
+    "is_nullable": "YES"
+  }
+]

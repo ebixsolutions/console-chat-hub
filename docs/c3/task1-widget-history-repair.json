@@ -1,0 +1,184 @@
+{
+  "contract": "C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1",
+  "task": 1,
+  "baseline_head": "c5d072afdb922b31e8dad73ffcd654f6dfae5233",
+  "baseline_tree": "1db1255537f00253b77b2340ee07013dc0bed3fa",
+  "original_reference": "b0c76120537b53b5c9172cc81a3bad1c4060621b",
+  "scope": "Backward-compatible read-only original Preview history. Existing ordinary dispatch and all synthetic admission/KB guards unchanged. No new paid execution path.",
+  "read_security": [
+    "server Auth.getUser; active own membership/company; own active allowed-origin Channel",
+    "original canonical/pre_activation null-channel conversation, currently bound to the verified own Company, AND independently matching Session actor/fingerprint/markers; historical pre_activation is read-only, never execution authority",
+    "message query embeds conversation and Session in one database snapshot; rejects concurrent identity change",
+    "archive cannot use send or reconciliation; no session token returned; recalled/thinking rows omitted; IDs deduplicated",
+    "frontend archive blocks Send, Enter and composition; ordinary new-conversation and synthetic paths retained"
+  ],
+  "production_readonly_eligibility": {
+    "total_original_Frankie": 38,
+    "eligible": 37,
+    "excluded": 1,
+    "reasons": [
+      "one nonmatching fingerprint/missing Session scope marker"
+    ],
+    "not_Hosted_acceptance": true
+  },
+  "changed_files": [
+    {
+      "path": "src/routes/_authenticated/console.widget-preview.tsx",
+      "sha256": "1cb76660189bbcfe20ebca6a203cdb4f5e141bebb5896790b66f0961cbfb6448",
+      "rollback": "restore exact baseline file"
+    },
+    {
+      "path": "supabase/functions/widget-live-ai-test/index.ts",
+      "sha256": "68bfd92da77eafd5b55293b342a68540b5c904ffb732b37de0b92ece5878857f",
+      "rollback": "restore exact baseline file"
+    },
+    {
+      "path": "tests/c3-widget-live-auth/handler.test.mjs",
+      "sha256": "942770dd5127500644f19ddbe0e55e3dbbb293c0705b3e0daa5878c5ea2687df",
+      "rollback": "restore exact baseline file"
+    },
+    {
+      "path": "tests/c3-widget-live-auth/legacy-history.test.mjs",
+      "sha256": "be721e3ae43a8b4b81fd5e6bda59638d836a6bada9d1ed2b0519c67cddc4cd7d",
+      "rollback": "remove new file"
+    },
+    {
+      "path": "tests/console-navigation/widget-input-dom.test.mjs",
+      "sha256": "e5a2af6d30d3c8589798dffb77c00a313643bec3313fd143261e151c487f2b03",
+      "rollback": "restore exact baseline file"
+    },
+    {
+      "path": ".github/workflows/task-ai-abc-c3-final-gate.yml",
+      "sha256": "d5d7855ac92db473c1f0e4d58a215985a4d580c3d3948855076a628fe541e848",
+      "rollback": "restore exact baseline file"
+    }
+  ],
+  "function_manifest": {
+    "slug": "widget-live-ai-test",
+    "baseline_version": 15,
+    "baseline_ezbr_sha256": "95c07a55deec05d1fd3e629129494bc41dbc2e3e15a693e82e8733eb079600d4",
+    "baseline": [
+      {
+        "path": "supabase/functions/_shared/conversational-routing.ts",
+        "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+      },
+      {
+        "path": "supabase/functions/_shared/execution-failure.ts",
+        "sha256": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249"
+      },
+      {
+        "path": "supabase/functions/_shared/handoff-intent.ts",
+        "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+      },
+      {
+        "path": "supabase/functions/_shared/supabase-admin-key.ts",
+        "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+      },
+      {
+        "path": "supabase/functions/_shared/supabase-cors.ts",
+        "sha256": "7beec6546ab29f0dc4bc586fdca49b2dbd65195c9c6455471c42458d6ecdc9d1"
+      },
+      {
+        "path": "supabase/functions/_shared/uat-execution-contract.ts",
+        "sha256": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd"
+      },
+      {
+        "path": "supabase/functions/_shared/uat-execution-readiness.ts",
+        "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+      },
+      {
+        "path": "supabase/functions/_shared/vertex-generation-config.ts",
+        "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+      },
+      {
+        "path": "supabase/functions/widget-live-ai-test/index.ts",
+        "sha256": "b8c05ccb43b43cbf3360943ade89d0f5212a7ce26ebde16da3d5878c2b47d826"
+      }
+    ],
+    "target": {
+      "slug": "widget-live-ai-test",
+      "verify_jwt": true,
+      "import_map": false,
+      "entrypoint": "functions/widget-live-ai-test/index.ts",
+      "paths": [
+        {
+          "path": "supabase/functions/_shared/conversational-routing.ts",
+          "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+        },
+        {
+          "path": "supabase/functions/_shared/execution-failure.ts",
+          "sha256": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249"
+        },
+        {
+          "path": "supabase/functions/_shared/handoff-intent.ts",
+          "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+        },
+        {
+          "path": "supabase/functions/_shared/supabase-admin-key.ts",
+          "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+        },
+        {
+          "path": "supabase/functions/_shared/supabase-cors.ts",
+          "sha256": "7beec6546ab29f0dc4bc586fdca49b2dbd65195c9c6455471c42458d6ecdc9d1"
+        },
+        {
+          "path": "supabase/functions/_shared/uat-execution-contract.ts",
+          "sha256": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd"
+        },
+        {
+          "path": "supabase/functions/_shared/uat-execution-readiness.ts",
+          "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+        },
+        {
+          "path": "supabase/functions/_shared/vertex-generation-config.ts",
+          "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+        },
+        {
+          "path": "supabase/functions/widget-live-ai-test/index.ts",
+          "sha256": "68bfd92da77eafd5b55293b342a68540b5c904ffb732b37de0b92ece5878857f"
+        }
+      ],
+      "production_deployment_authorized": false
+    },
+    "changed": [
+      {
+        "path": "supabase/functions/widget-live-ai-test/index.ts",
+        "sha256": "68bfd92da77eafd5b55293b342a68540b5c904ffb732b37de0b92ece5878857f",
+        "rollback_sha256": "b8c05ccb43b43cbf3360943ade89d0f5212a7ce26ebde16da3d5878c2b47d826"
+      }
+    ],
+    "removed": [],
+    "target_sha256": "89af81ad303ae4ee6d0898467b444da29c3485c6312ee7e58e961c2a7854f9ab",
+    "rollback": "Before deployment require live v15 dependency hashes/config exactly match baseline; after approved deployment restore all nine exact c5 baseline files with unchanged JWT/import-map/entrypoint settings. No SQL/config/lease rollback needed.",
+    "deployment_authorized": false
+  },
+  "validation": {
+    "backend_history": "44 actual-handler adapter tests; not Hosted",
+    "existing_handler": "57 actual-handler adapter assertions; not Hosted",
+    "ordinary_ingress_and_exactly_once": "8 ingress and 8 merge tests; not Hosted",
+    "frontend": "18 React DOM tests; not Hosted",
+    "memory_correction_recall_summary": "388 Deno tests exit0, same complete repo, pinned supabase-js 2.45.0 from local npm cache via temporary import map (esm.sh transport unavailable)",
+    "uat_admission": "17 Deno tests exit0; ordinary compatibility and synthetic denial",
+    "generic_recall_handoff": "109 Deno tests + HF1 assertions exit0; temporary pinned SDK import map",
+    "TypeScript": "tsc --noEmit --project tsconfig.json exit0",
+    "full_build": "npm run build exit0; complete authoritative repo client and SSR",
+    "changed_Edge_check": "deno check exit0 with pinned SDK 2.45.0 temporary import map; canonical URL check added to existing CI",
+    "baseline_reproduction": "new history regression on c5 baseline exit1 as expected; archive absent",
+    "source_gate": "207 anti-fake controls and original C3_GATE_PHASE=preproduction final-gate exit0 on same initial repair tree; rerun required on final scoped correction",
+    "legacy_phase1_validator": "phase1_console_final_gate --source-only exit1 at historical B0 validation-only successor restriction. This checker admits validation-only commits; current C3 application repair uses the existing governed preproduction gate. Frozen B0/Phase-1 acceptance is preserved, not relabelled."
+  },
+  "guards": {
+    "kb_bounds_verified": false,
+    "UAT_REMOTE_BOUND_UNVERIFIED": "RETAINED",
+    "synthetic_lease_quota": "UNCHANGED",
+    "Agent_platform_dependency": "browser_security_restricted; no retry"
+  },
+  "readiness": {
+    "task1_hosted_P0": "NOT ACCEPTED",
+    "uat_start_allowed": false,
+    "VIBECODE_FUNCTIONAL_HANDOFF_READY": false,
+    "FUNCTIONAL_UAT_ACCEPTED": false,
+    "PRODUCTION_RELEASE_READY": false
+  },
+  "remaining_execution_decision": "The safe Source repair does not grant paid execution. Any activation must specify the separate actor/Tenant runs and exact admitted conversations/limits under existing lease guards with independently verified historical allowance; preserve remote KB denial. Deploying this history-only patch cannot itself resolve UAT_AUTHORIZATION_ABSENT."
+}

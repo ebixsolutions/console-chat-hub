@@ -1,9 +1,12 @@
+import { parseKbProductRecord, kbProductRecordNames, kbProductFieldKey, catalogueFactRequest, matchCatalogueRecord, kbProductRecordPrice, kbProductRecordStock, type CatalogueMatch, type CatalogueRequest, type KbProductRecord } from "./kb-product-record.ts";
 import type {
   KBDocumentCandidate,
   KBFullChunk,
   KBLLMContextEvidence,
 } from "./kb-client.ts";
 import { detectExplicitJurisdiction } from "./conversation-runtime-state.ts";
+import { factualSubject } from "./conversation-semantic-contract.ts";
+import { ragServiceDocument } from "./preview-kb-query-embedding.ts";
 import {
   type ReferenceAuthorityDecision,
   type ReferenceEvidenceCandidate,
@@ -11,6 +14,11 @@ import {
 } from "./commerce-state-authority.ts";
 
 export interface CanonicalGroundingOptions {
+  /** Internal demand-aware selection only. This admits an authorized source
+   * for semantic applicability review, never certifies the answer or policy. */
+  evidenceScope?: "policy_candidate" | "discovery_candidate";
+  /** Server-resolved same-ticket subject, independently required in fresh evidence. */
+  expectedSubject?: string;
   minScore?: number;
   policyOnly?: boolean;
   requirePublished?: boolean;
@@ -19,6 +27,12 @@ export interface CanonicalGroundingOptions {
   expectedTenantId?: string | null;
   expectedEntityIds?: string[];
   expectedTopicIds?: string[];
+  /** Free-form model descriptions are answer facets, NEVER source taxonomy IDs. */
+  semanticFactDescriptions?: string[];
+  /** Server caller resolved a factual request, without source taxonomy IDs. */
+  requireSubjectSupport?: boolean;
+  /** Inbox performs its existing bounded relevance adjudication after authority. */
+  deferRelevanceToCaller?: boolean;
   expectedRegion?: string | null;
   requiresCurrentKb?: boolean;
   targetChanged?: boolean;
@@ -30,6 +44,15 @@ export interface CurrentGroundingTarget {
   explicit_entity: boolean;
   explicit_topic: boolean;
   target_changed: boolean;
+}
+export interface CatalogueSourceBinding {
+  record: KbProductRecord;
+  match_kind: CatalogueMatch["kind"];
+  document_id: string;
+  chunk_id: string;
+}
+export interface CatalogueSourceOption extends CatalogueSourceBinding {
+  authority: ReferenceAuthorityDecision;
 }
 export type CanonicalGroundingResult =
   | {
@@ -44,6 +67,9 @@ export type CanonicalGroundingResult =
       document_jurisdictions: string[];
     };
     authority_decision: ReferenceAuthorityDecision;
+    catalogue_binding?: CatalogueSourceBinding;
+    catalogue_options?: CatalogueSourceOption[];
+    catalogue_request?: CatalogueRequest;
   }
   | {
     ok: false;
@@ -90,7 +116,7 @@ function namedTargetTokens(text: string): string[] {
   // earlier product answer to be reused for this newly named object.
   for (
     const match of text.matchAll(
-      /\b(order|transaction|invoice|shipment|booking|subscription|account|case|ticket|claim)\s*(?:number|no\.?|id|#|[:\uFF1A-])?\s*((?!(?:is|was|not|has|status|state|confirmed|paid|pending|cancelled|canceled|the|my|a)\b)[a-z0-9][a-z0-9._/-]{1,80})\b/gi,
+      /\b(order|transaction|invoice|shipment|booking|subscription|account|case|ticket|claim)[ \t]*(?:number|no\.?|id|#|[:\uFF1A-])?[ \t]*((?!(?:is|was|not|has|status|state|confirmed|paid|pending|cancelled|canceled|the|my|a)\b)[a-z0-9][a-z0-9._/-]{1,80})\b/gi,
     )
   ) {
     const kind = match[1].toLowerCase();
@@ -100,7 +126,7 @@ function namedTargetTokens(text: string): string[] {
   }
   for (
     const match of text.matchAll(
-      /(?:\u8A02\u55AE|\u8BA2\u5355|\u4EA4\u6613|\u767C\u7968|\u53D1\u7968|\u904B\u55AE|\u8FD0\u5355|\u9810\u8A02|\u9884\u8BA2|\u8A02\u95B1|\u8BA2\u9605|\u5E33\u6236|\u8D26\u6237|\u500B\u6848|\u4E2A\u6848|\u5DE5\u55AE|\u5DE5\u5355|\u7D22\u511F|\u7D22\u8D54)\s*(?:\u7DE8\u865F|\u7F16\u53F7|id|#|[:\uFF1A-])?\s*([a-z0-9][a-z0-9._/-]{1,80})/gi,
+      /(?:\u8A02\u55AE|\u8BA2\u5355|\u4EA4\u6613|\u767C\u7968|\u53D1\u7968|\u904B\u55AE|\u8FD0\u5355|\u9810\u8A02|\u9884\u8BA2|\u8A02\u95B1|\u8BA2\u9605|\u5E33\u6236|\u8D26\u6237|\u500B\u6848|\u4E2A\u6848|\u5DE5\u55AE|\u5DE5\u5355|\u7D22\u511F|\u7D22\u8D54)[ \t]*(?:\u7DE8\u865F|\u7F16\u53F7|id|#|[:\uFF1A-])?[ \t]*([a-z0-9][a-z0-9._/-]{1,80})/gi,
     )
   ) {
     targets.push(match[0].toLowerCase().replace(/\s+/g, " ").trim());
@@ -114,6 +140,7 @@ function namedTargetTokens(text: string): string[] {
 function topicTokens(text: string): string[] {
   const topics: string[] = [];
   const rules: Array<[string, RegExp]> = [
+    ["policy", /(?:billing|booking|cancellation|return|warranty)\s+policy|付款政策|預約政策|预约政策|取消政策|退貨政策|退货政策|保養政策|保修政策/i],
     ["warranty", /(?:warranty|保養|保修)/i],
     ["delivery", /(?:delivery|shipping|送貨|送货|物流|派送)/i],
     ["returns", /(?:refund|return|退款|退貨|退货|換貨|换货)/i],
@@ -135,7 +162,7 @@ function topicTokens(text: string): string[] {
     ],
     [
       "specification",
-      /(?:spec(?:ification)?s?|規格|规格|噪音|noise|\bdb\b|dimension|尺寸)/i,
+      /(?:\bspec(?:ification)?s?\b|規格|规格|噪音|noise|\bdb\b|dimension|尺寸)/i,
     ],
     ["payment", /(?:payment|付款|支付)/i],
     [
@@ -158,11 +185,21 @@ export function deriveCurrentGroundingTarget(
   const explicitEntities = namedTargetTokens(currentTurnText);
   const explicitTopics = topicTokens(currentTurnText);
   const retrievalTopics = topicTokens(retrievalText);
+  // A resolved exact-model fact request uses the product evidence family.
+  // Customer wording such as "features" is an answer facet, not a requirement
+  // that the published product description literally repeat that label.
+  // Control/transaction topics retain their explicit target precedence.
+  const exactProductFactFamily = fallbackTopicIds.length === 1 &&
+    fallbackTopicIds[0] === "product_facts" && fallbackEntityIds.length === 1 &&
+    modelTokens(fallbackEntityIds[0].toUpperCase()).length === 1 &&
+    explicitTopics.every((topic) => ["price", "features", "specification", "warranty"].includes(topic));
   return {
     entity_ids: explicitEntities.length
       ? explicitEntities
       : unique(fallbackEntityIds),
-    topic_ids: explicitTopics.length
+    topic_ids: exactProductFactFamily
+      ? ["product_facts"]
+      : explicitTopics.length
       ? explicitTopics
       : unique([...fallbackTopicIds, ...retrievalTopics]),
     region: detectExplicitJurisdiction(currentTurnText) ?? null,
@@ -184,7 +221,7 @@ function candidateText(document: KBDocumentCandidate): string {
 function jurisdictions(text: string): string[] {
   const found: string[] = [];
   if (/(mars|火星)/i.test(text)) found.push("mars");
-  if (/(香港|hong\s*kong|\bhk\b)/i.test(text)) found.push("hong_kong");
+  if (/(香港|全港|hong\s*kong|\bhk\b)/i.test(text)) found.push("hong_kong");
   if (/(澳門|澳门|macau|macao)/i.test(text)) found.push("macau");
   if (/(新加坡|singapore)/i.test(text)) found.push("singapore");
   if (/(台灣|台湾|taiwan)/i.test(text)) found.push("taiwan");
@@ -192,6 +229,11 @@ function jurisdictions(text: string): string[] {
     found.push("mainland_china");
   }
   return found;
+}
+function canonicalRegion(value: string): string {
+  const normalized = value.normalize("NFKC").trim().toLowerCase().replace(/[_-]+/g, " ");
+  const aliases = jurisdictions(normalized);
+  return aliases.length === 1 ? aliases[0] : value.trim().toLowerCase();
 }
 function assessApplicability(
   document: KBDocumentCandidate,
@@ -242,6 +284,59 @@ function assessApplicability(
     request_jurisdiction: requestJurisdiction,
     document_jurisdictions: documentJurisdictions,
   };
+}
+
+
+/**
+ * A merchant price question can identify a product by its source-recorded
+ * name rather than a Latin model number. Never interpret a broad category,
+ * a multi-product request or a generated translation as a unique identity.
+ */
+export function namedPriceProductLabel(request: string): string | null {
+  const normalized = request.normalize("NFKC").trim().replace(/\s+/gu, " ");
+  // Price-reference relaxation applies ONLY to an explicit price request.
+  // Generic definitions / product recommendations may never masquerade as a
+  // named-price lookup merely because a terminal question mark was removed.
+  if (!/(?:售價|售价|價錢|价钱|價格|价格|標價|标价|幾錢|几钱|多少錢|多少钱|\b(?:selling\s+price|price|how\s+much)\b)/iu.test(normalized))
+    return null;
+  if (modelTokens(normalized).length) return null;
+  let value = normalized.replace(/^(?:(?:請問|请问|想問|想问|我想知道|我想知|幫我查|帮我查|請查|请查)\s*)+/u, "");
+  value = value
+    .replace(/^(?:how much (?:is|for|does) (?:the )?|what(?:'s| is) the (?:selling )?(?:price|cost) (?:of|for) (?:the )?|(?:selling )?price (?:of|for) (?:the )?)/iu, "")
+    .replace(/\s*(?:(?:嘅|的)?(?:售價|售价|價錢|价钱|價格|价格)(?:係幾多|是多少|几多|幾多|多少)?|幾錢|几钱|多少錢|多少钱|(?:selling )?price(?:\s+please)?)\s*[?？!！。.\s]*$/iu, "")
+    .replace(/[?？!！。.\s]+$/gu, "")
+    .trim();
+  if (!value || value === normalized || value.length > 90 ||
+    /[?？!！]|(?:\s+(?:and|or)\s+)|[、，,;；/]|\b(?:price|cost|how much)\b/iu.test(value) ||
+    /(?:幾錢|几钱|多少錢|多少钱|售價|售价|價錢|价钱|價格|价格)/u.test(value)) return null;
+  const han = (value.match(/\p{Script=Han}/gu) ?? []).length;
+  if (han < 4 && !/^[\p{Script=Latin}][\p{Script=Latin}\d \-]{5,}$/u.test(value)) return null;
+  return value;
+}
+
+function normalizedProductName(value: string): string {
+  return value.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+}
+
+/** Only a full-content product row can bind a customer name to one product. */
+export function exactNamedProductEvidence(
+  label: string,
+  document: KBDocumentCandidate,
+  chunk: KBFullChunk,
+): boolean {
+  if (!/product|商品|產品|产品/iu.test(document.source_type) ||
+    chunk.chunk_type !== "full_content" || !chunk.chunk_id ||
+    chunk.document_id !== document.document_id) return false;
+  const body = chunk.content.normalize("NFKC");
+  const wanted = normalizedProductName(label);
+  const record = parseKbProductRecord(body);
+  if (record.ambiguous) return false;
+  const names = kbProductRecordNames(record);
+  if (names.length) return names.length === 1 && names[0] === wanted;
+  // Legacy title-owned names remain usable only when the same full-content
+  // evidence contains the full name, not a search summary or partial match.
+  return normalizedProductName(document.title) === wanted &&
+    normalizedProductName(body).includes(wanted);
 }
 
 const STRONG_LEXICAL_SCORE_FLOOR = 0.05;
@@ -341,6 +436,86 @@ function lexicalRelevance(
   return score;
 }
 
+function serviceTopicMatch(request:string,document:KBDocumentCandidate):boolean {
+  const q=request.normalize("NFKC").toLowerCase(),text=candidateText(document).normalize("NFKC").toLowerCase();
+  const tokens=q.match(/[a-z0-9][a-z0-9_-]{3,}|[\p{Script=Han}]{4,}/gu)??[];
+  for(const token of tokens){
+    if(/^[\p{Script=Han}]+$/u.test(token)){for(let i=0;i<=token.length-4;i++)if(text.includes(token.slice(i,i+4)))return true;}
+    else if(!["what","which","please","policy","information","details","about","current","customer","context","canonical","published","request","retrieval"].includes(token) && text.includes(token))return true;
+  }
+  return false;
+}
+
+/** Bind the customer's subject to actual full content, not translated model
+ * labels, retrieval rank, titles or summaries. A source-quoted name can be a
+ * legitimate alias of a longer customer description only when that exact name
+ * occurs in the customer subject too. No generated translation grants authority.
+ */
+export function fullContentSubjectMatch(subject: string, document: KBDocumentCandidate, explicitSubject = true): boolean {
+  const norm = (s: string) => s.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+  const q = norm(subject);
+  const contains = (text: string, name: string) => {
+    const key = norm(name);
+    if (key.length < 2) return false;
+    if (/\p{Script=Han}/u.test(key)) return norm(text).includes(key);
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:^|[^a-z0-9_-])${escaped}(?=$|[^a-z0-9_-])`, "u").test(norm(text));
+  };
+  return !!q && document.llm_context.full_content_evidence.some(e => {
+    if (contains(e.content, q)) return true;
+    // Quotes are source-owned aliases; title-only/summary-only matches fail.
+    const names = [...e.content.matchAll(/[「『“"]([^」』”"\n]{2,160})[」』”"]/gu)].map(m => m[1]);
+    return names.some(name => {
+      const key=norm(name);
+      if(key.length<4 || /^(?:計劃|计划|服務|服务|方案|資料|资料|policy|service|scheme|programme|program|details)$/iu.test(key) || !contains(q,name))return false;
+      if(!explicitSubject)return true;
+      let remainder=q.replace(key," ");
+      if(jurisdictions(e.content).includes("hong_kong"))remainder=remainder.replace(/香港|全港|hong\s*kong|\bhk\b/giu," ");
+      remainder=remainder.replace(/(?:嘅|的)|\b(?:the|service|scheme|programme|program|plan)\b/giu," ").trim();
+      // A base-name quote cannot authorize an unsupported tier, industry or
+      // qualifier. Chinese residual words must be actual contiguous phrases
+      // in the full evidence, not isolated characters or translated guesses.
+      const body=norm(e.content);
+      return (remainder.match(/[\p{Script=Han}]+|[a-z0-9][a-z0-9_-]*/gu)??[]).every(token=>{
+        if(!/\p{Script=Han}/u.test(token))return contains(body,token);
+        const seen=new Set([0]);for(let start=0;start<token.length;start++)if(seen.has(start))for(let end=start+2;end<=token.length;end++)if(body.includes(token.slice(start,end)))seen.add(end);
+        return seen.has(token.length);
+      });
+    });
+  });
+}
+
+/** Semantic requested_facts are descriptions, not source-owned taxonomy IDs.
+ * Resolve a bounded question/answer facet to its literal subject only when
+ * that whole subject occurs in BOTH the current request and returned full
+ * evidence. A retrieval score, title, translated guess, or shared single word
+ * cannot establish this binding. This does not grant source authority.
+ */
+function serviceFactTopicMatch(topic: string, request: string, document: KBDocumentCandidate): boolean {
+  const normalize = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
+  const label = normalize(topic);
+  const subject = label
+    .replace(/^(?:(?:the )?(?:definition|meaning|explanation|description) of|what (?:is|are))\s+/u, "")
+    .replace(/\s+(?:definition|meaning|explanation|description)$/u, "")
+    .replace(/^(?:什麼是|什么是|何謂|何谓|解釋|解释)\s*/u, "")
+    .replace(/(?:的)?(?:定義|定义|意思|含義|含义)$/u, "")
+    .replace(/^[\s「」『』“”"'？?]+|[\s「」『』“”"'？?]+$/gu, "").trim();
+  if (!subject || subject === label || subject.length > 200) return false;
+  // Empty/generic facets are never topics; do not permit substring matches
+  // inside another Latin word, SKU, or a longer Chinese subject.
+  if (!/[\p{Script=Han}]{2,}|[a-z0-9][a-z0-9 _-]{3,}/u.test(subject) ||
+    /^(?:current information|information|details|policy|資料|资料|定義|定义)$/u.test(subject)) return false;
+  const containsSubject = (value: string) => {
+    const text = normalize(value);
+    const escaped = subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Han subjects need no spaces; exact whole subject, never n-gram overlap.
+    return /[\p{Script=Han}]/u.test(subject)
+      ? text.includes(subject)
+      : new RegExp(`(?:^|[^a-z0-9_-])${escaped}(?=$|[^a-z0-9_-])`, "u").test(text);
+  };
+  return containsSubject(request) && document.llm_context.full_content_evidence.some(e => containsSubject(e.content));
+}
+
 function extractStructuredClaims(
   evidence: KBLLMContextEvidence[],
 ): Array<{ key: string; value: string }> {
@@ -368,20 +543,27 @@ export function selectCanonicalGrounding(
     ? Number(options.minScore)
     : 0;
   const policyOnly = options.policyOnly === true;
+  const candidateScope = options.evidenceScope !== undefined;
   const requirePublished = options.requirePublished !== false;
   const requestText = options.requestText ?? "";
   const currentTurnText = options.currentTurnText ?? requestText;
   const target = deriveCurrentGroundingTarget(
     currentTurnText,
     requestText,
-    options.expectedEntityIds ?? modelTokens(requestText),
+    options.expectedEntityIds ?? modelTokens(currentTurnText),
     options.expectedTopicIds ?? [],
     options.targetChanged === true,
   );
-  const expectedEntityIds = target.entity_ids;
-  const expectedTopicIds = target.topic_ids;
-  const expectedRegion = options.expectedRegion ?? target.region ??
-    detectExplicitJurisdiction(requestText);
+  const catalogueQuery = policyOnly || candidateScope ? null : catalogueFactRequest(currentTurnText);
+  const namedPriceTarget = candidateScope ? null : namedPriceProductLabel(currentTurnText);
+  const expectedEntityIds = candidateScope ? [] : namedPriceTarget ? unique([...target.entity_ids, namedPriceTarget]) : target.entity_ids;
+  const freeFactRequest = !candidateScope && (options.requireSubjectSupport === true || (options.semanticFactDescriptions?.length ?? 0) > 0);
+  const expectedTopicIds = candidateScope ? [] : freeFactRequest ? unique(options.expectedTopicIds ?? []) : target.topic_ids;
+  const explicitSubject = options.expectedSubject ?? factualSubject(currentTurnText);
+  const subject = namedPriceTarget ?? explicitSubject ??
+    (freeFactRequest ? currentTurnText.slice(0, 500) : null);
+  const region = options.expectedRegion ?? target.region ?? detectExplicitJurisdiction(currentTurnText);
+  const expectedRegion = region ? canonicalRegion(region) : null;
   const eligible: Array<{
     document: KBDocumentCandidate;
     chunks: KBFullChunk[];
@@ -390,9 +572,11 @@ export function selectCanonicalGrounding(
     evidenceScore: number;
     lexicalScore: number;
     authorityCandidate: ReferenceEvidenceCandidate;
+    catalogueRows: Array<{chunk:KBFullChunk;match:CatalogueMatch;preferred:boolean}>;
   }> = [];
 
   for (const document of documents ?? []) {
+    const service=ragServiceDocument(document);
     if (document.llm_context.selected_document_id !== document.document_id) {
       return { ok: false, error: "KB_DOCUMENT_EVIDENCE_MISMATCH" };
     }
@@ -409,8 +593,44 @@ export function selectCanonicalGrounding(
 
     const currentTargetRequest = currentTurnText || requestText;
     const lexicalScore = lexicalRelevance(currentTargetRequest, document);
-    const effectiveMinScore =
-      strongLexicalEvidenceMatch(currentTargetRequest, document)
+    const catalogueRows = catalogueQuery && /product|商品|產品|产品/iu.test(document.source_type)
+      ? document.chunks.flatMap(chunk => {
+        if(chunk.chunk_type!=="full_content" || !chunk.chunk_id)return [];
+        const record=parseKbProductRecord(chunk.content), price=kbProductRecordPrice(record);
+        const rich = record.spu_codes.length || record.sku_codes.length || Object.keys(record.variants).length ||
+          (catalogueQuery.stock && kbProductRecordStock(record).has_field) ||
+          (price.reason==="ok" && price.currency!==null && price.currency!=="HKD");
+        const match=matchCatalogueRecord(catalogueQuery,record);
+        return match?[{chunk,match,preferred:Boolean(rich)}]:[];
+      }):[];
+    const catalogueEvidence = catalogueRows.some(row=>row.preferred);
+    const namedPriceEvidence = catalogueEvidence || namedPriceTarget !== null &&
+      document.chunks.some(chunk => exactNamedProductEvidence(namedPriceTarget, document, chunk));
+    // An exact customer-named product without full-content identity proof
+    // cannot inherit a similarly ranked but unrelated catalogue entry.
+    if (namedPriceTarget && !namedPriceEvidence) {
+      // No source text, prices, credentials or customer message in diagnostics.
+      // These finite field names/counts identify a failed protocol boundary.
+      const rows = document.chunks.filter(c => c.chunk_type === "full_content")
+        .map(c => parseKbProductRecord(c.content));
+      const knownKeys = new Set(["name", "title", "productname", "producttitle", "itemname", "model", "productmodel",
+        "商品名稱", "商品名称", "產品名稱", "产品名称", "名稱", "名称", "商品型號", "商品型号", "產品型號", "产品型号", "spuname", "skuname", "spucode", "skucode"]);
+      console.info(JSON.stringify({endpoint:"canonical-grounding",stage:"named_product_identity",
+        document_id: /^[a-z0-9-]{1,96}$/iu.test(document.document_id) ? document.document_id : null,
+        full_content_count:rows.length,format:rows.map(r=>r.format),
+        identity_fields:[...new Set(rows.flatMap(r=>r.fields.map(f=>kbProductFieldKey(f.key)).filter(k=>knownKeys.has(k))))],
+        reason:rows.some(r=>r.ambiguous)?"ambiguous_record":rows.some(r=>kbProductRecordNames(r).length)?"name_mismatch":"identity_field_absent",
+        service_bound:Boolean(service)}));
+      continue;
+    }
+    const serviceTopic=!!service && (namedPriceEvidence || serviceTopicMatch(currentTargetRequest,document));
+    // A low relevance tag is retained, never equated to a supported answer.
+    // Exact contextual evidence and the unchanged generation verifier are still
+    // required; unrelated low hits cannot reach Knowledge/Policy as grounding.
+    if(service?.relevance?.toLowerCase()==="low" && !serviceTopic && !options.deferRelevanceToCaller)continue;
+    const policyEligible=document.source_type.toLowerCase().includes("policy") || !!service && /(?:政策|條款|条款|須知|须知|守則|退貨|退货|退款|保養|保修|\bpolicy\b|\bterms\b|\brefund\b|\breturns\b)/iu.test(candidateText(document));
+    const effectiveMinScore = namedPriceEvidence && !!service ? 0 :
+      strongLexicalEvidenceMatch(currentTargetRequest, document) || serviceTopic
         ? Math.min(minScore, STRONG_LEXICAL_SCORE_FLOOR)
         : minScore;
     const chunks = document.chunks.filter(
@@ -418,8 +638,8 @@ export function selectCanonicalGrounding(
         c.content.trim() &&
         Number.isFinite(c.score) &&
         c.score >= effectiveMinScore &&
-        (!requirePublished || c.status === "published") &&
-        (!policyOnly || c.source_type.toLowerCase().includes("policy")),
+        (!requirePublished || c.status === "published" || c.status === "unknown" && !!service) &&
+        (!policyOnly || policyEligible),
     );
     const fullContentIds = new Set(
       chunks.filter((c) => c.chunk_type === "full_content").map((c) =>
@@ -431,54 +651,81 @@ export function selectCanonicalGrounding(
         e.content.trim() &&
         Number.isFinite(e.score) &&
         e.score >= effectiveMinScore &&
-        (!policyOnly || e.source_type.toLowerCase().includes("policy")) &&
+        (!policyOnly || policyEligible) &&
         fullContentIds.has(e.chunk_id ?? e.content),
     );
 
     if (
       requirePublished && evidence.length > 0 &&
-      chunks.every((c) => c.status !== "published")
+      chunks.every((c) => c.status !== "published") && !service
     ) {
       return { ok: false, error: "KB_EVIDENCE_NOT_PUBLISHED" };
     }
     if (!evidence.length) continue;
+    if (namedPriceTarget && !chunks.some(chunk =>
+      (catalogueRows.some(row=>row.chunk===chunk) || exactNamedProductEvidence(namedPriceTarget, document, chunk)) &&
+      evidence.some(item => item.chunk_id === chunk.chunk_id && item.content === chunk.content))) continue;
+    // Bind against the evidence that will actually reach generation. A subject
+    // present only in a discarded/low-score chunk must not authorize another
+    // surviving chunk, even within the same authenticated document.
+    const subjectSupported = catalogueRows.some(row=>chunks.includes(row.chunk) && evidence.some(e=>e.chunk_id===row.chunk.chunk_id && e.content===row.chunk.content)) || (namedPriceTarget !== null && chunks.some(chunk =>
+      exactNamedProductEvidence(namedPriceTarget, document, chunk) &&
+      evidence.some(item => item.chunk_id === chunk.chunk_id && item.content === chunk.content))) ||
+      (!!subject && fullContentSubjectMatch(subject, {
+        ...document, llm_context: {...document.llm_context, full_content_evidence: evidence},
+      },Boolean(explicitSubject)));
+    if (!candidateScope && options.expectedSubject && !subjectSupported) continue;
 
     const applicability = assessApplicability(document, currentTargetRequest);
     const metadata = document.authority;
     const declaredCurrentness = metadata?.currentness ?? "unknown";
-    const effectiveCurrentness = declaredCurrentness === "unknown"
-      // The authenticated Singapore endpoint is explicitly the published/live
-      // read path. Missing optional currentness metadata is bound to that
-      // server-side contract, never to a client assertion.
-      ? "current"
-      : declaredCurrentness;
+    // Missing metadata never becomes a currentness assertion. Only the separate
+    // authenticated service proof permits PUBLISHED_KB_SERVICE with UNKNOWN.
+    const effectiveCurrentness = declaredCurrentness;
     eligible.push({
       document,
       chunks,
       evidence,
       applicability,
+      catalogueRows: catalogueRows.filter(row=>chunks.includes(row.chunk) && evidence.some(e=>e.chunk_id===row.chunk.chunk_id && e.content===row.chunk.content)),
       evidenceScore: Math.max(...evidence.map((e) => e.score), 0),
       lexicalScore,
       authorityCandidate: {
+        request_subject_supported: subjectSupported,
         source_id: document.document_id,
         source_type: document.source_type,
-        authority_class: effectiveCurrentness === "current"
+        authority_class: service && effectiveCurrentness==="unknown" ? "PUBLISHED_KB_SERVICE" : effectiveCurrentness === "current"
           ? "CURRENT_KB"
           : "HISTORICAL",
-        tenant_id: metadata?.tenant_id ?? options.expectedTenantId ?? null,
-        publication_state: metadata?.publication_state ?? "published",
+        tenant_id: metadata?.tenant_id ?? service?.tenant ?? options.expectedTenantId ?? null,
+        publication_state: metadata?.publication_state ?? (service ? null : "published"),
         currentness: effectiveCurrentness,
         entity_ids: unique([
           ...(metadata?.entity_ids ?? []),
+          ...(namedPriceEvidence && namedPriceTarget ? [namedPriceTarget] : []),
+          ...catalogueRows.flatMap(row=>[...row.match.record.spu_codes,...row.match.record.sku_codes,...kbProductRecordNames(row.match.record)]),
           ...namedTargetTokens(candidateText(document)),
         ]),
         topic_ids: unique([
+          // "included features" is an answer facet, not a requirement that
+          // a source literally use that taxonomy word. Subject support still
+          // needs actual request/evidence overlap and all authority checks.
+          ...(serviceTopic && expectedTopicIds.includes("features") ? ["features"] : []),
+          // Free semantic fact labels are not a fixed taxonomy. Accept one as
+          // a document topic only when the actual returned evidence contains
+          // that label; never infer it merely from the customer's request.
+          ...(service ? expectedTopicIds.filter(topic=>{
+            const key=topic.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"");
+            return key.length>=3 && candidateText(document).normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"").includes(key) || serviceFactTopicMatch(topic,currentTargetRequest,document);
+          }) : []),
+          ...(namedPriceEvidence ? ["price", "product_facts", ...(catalogueQuery?.stock?["stock"]:[])] : []),
+          ...(document.source_type.toLowerCase() === "product" ? ["product_facts"] : []),
           ...(metadata?.claims ?? []).map((claim) => claim.key),
           ...topicTokens(candidateText(document)),
           ...namedTargetTokens(candidateText(document)),
         ]),
         regions: metadata?.regions?.length
-          ? metadata.regions
+          ? unique(metadata.regions.map(canonicalRegion))
           : applicability.document_jurisdictions.length
           ? applicability.document_jurisdictions
           : !applicability.accepted && applicability.request_jurisdiction
@@ -501,15 +748,77 @@ export function selectCanonicalGrounding(
     });
   }
 
+  // Resolve each source-owned SKU independently before asking a variant
+  // question. Different SKU prices are not contradictory quotes for one SKU;
+  // competing facts for the SAME SKU still use the unchanged authority gate.
+  if(catalogueQuery && eligible.some(c=>c.catalogueRows.some(row=>row.preferred))) {
+    const groups=new Map<string,Array<{candidate:typeof eligible[number];row:typeof eligible[number]["catalogueRows"][number]}>>();
+    for(const candidate of eligible)for(const row of candidate.catalogueRows){
+      if(!candidate.applicability.accepted)continue;
+      const record=row.match.record;
+      const key=JSON.stringify([record.spu_codes[0]??record.names[0]??record.models[0]??null,
+        record.sku_codes[0]??null,Object.entries(record.variants).sort()]);
+      const values=groups.get(key)??[];values.push({candidate,row});groups.set(key,values);
+    }
+    const resolved:Array<{candidate:typeof eligible[number];row:typeof eligible[number]["catalogueRows"][number];authority:ReferenceAuthorityDecision}>=[];
+    let conflicting=false;
+    let conflictDecision:ReferenceAuthorityDecision|null=null;
+    for(const values of groups.values()){
+      const scoped = values.map(({candidate,row})=>{
+        const price=kbProductRecordPrice(row.match.record),stock=kbProductRecordStock(row.match.record);
+        return {...candidate.authorityCandidate,
+          entity_ids:[...candidate.authorityCandidate.entity_ids??[],catalogueQuery.label],
+          topic_ids:[...candidate.authorityCandidate.topic_ids??[],"product_facts",...(catalogueQuery.price?["price"]:[]),...(catalogueQuery.stock?["stock"]:[])],request_subject_supported:true,
+          // Authority selection may choose the latest version. It must never
+          // choose by vector score when same-authority rows disagree.
+          claims:[...(price.reason==="ok"?[{key:"catalogue_price",value:`${price.currency}:${price.amount}`}]:[]),
+            ...(stock.reason==="ok"?[{key:"catalogue_stock",value:String(stock.quantity)}]:[])],
+        };
+      });
+      const authority=resolveReferenceAuthority({candidates:scoped,expected_tenant_id:options.expectedTenantId,
+        expected_entity_ids:[catalogueQuery.label],expected_topic_ids:["product_facts"],
+        require_request_subject_match:true,require_explicit_target_match:true,
+        expected_region:expectedRegion,requires_current_kb:options.requiresCurrentKb!==false});
+      if(authority.decision==="CONFLICT_UNRESOLVED"){conflicting=true;conflictDecision=authority;continue;}
+      if(authority.decision!=="USE_CURRENT_KB" || !authority.selected_source_id)continue;
+      const matches=values.filter(v=>v.candidate.document.document_id===authority.selected_source_id);
+      // Two differing chunks inside the same document cannot be collapsed.
+      const fingerprints=new Set(matches.map(v=>JSON.stringify(v.row.match.record.fields)));
+      if(fingerprints.size!==1){conflicting=true;continue;}
+      const winner=matches[0];if(winner)resolved.push({...winner,authority});
+    }
+    if(!conflicting && resolved.length===1){
+      const {candidate,row,authority}=resolved[0];
+      return {ok:true,document:candidate.document,chunks:[row.chunk],
+        evidence:candidate.evidence.filter(e=>e.chunk_id===row.chunk.chunk_id && e.content===row.chunk.content),
+        applicability:candidate.applicability,authority_decision:authority,
+        catalogue_binding:{record:row.match.record,match_kind:row.match.kind,document_id:candidate.document.document_id,chunk_id:row.chunk.chunk_id!}};
+    }
+    if(!conflicting && resolved.length>1){
+      const authority=resolveReferenceAuthority({candidates:[],expected_tenant_id:options.expectedTenantId,requires_current_kb:true});
+      return {ok:true,document:null,chunks:[],evidence:[],
+        applicability:{accepted:false,reason:"catalogue_variant_or_product_ambiguous",request_jurisdiction:detectExplicitJurisdiction(requestText),document_jurisdictions:[]},
+        authority_decision:authority,catalogue_request:catalogueQuery,catalogue_options:resolved.slice(0,8).map(({candidate,row,authority})=>({
+          record:row.match.record,match_kind:row.match.kind,document_id:candidate.document.document_id,chunk_id:row.chunk.chunk_id!,authority}))};
+    }
+    if(conflicting){
+      const authority=conflictDecision ?? resolveReferenceAuthority({candidates:[],expected_tenant_id:options.expectedTenantId,requires_current_kb:true});
+      return {ok:true,document:null,chunks:[],evidence:[],authority_decision:authority,
+        applicability:{accepted:false,reason:"catalogue_same_sku_conflict",request_jurisdiction:detectExplicitJurisdiction(requestText),document_jurisdictions:[]}};
+    }
+    // No authorized catalogue match: retain the generic authoritative path.
+  }
+
   const authorityDecision = resolveReferenceAuthority({
     candidates: eligible.map((candidate) => candidate.authorityCandidate),
     expected_tenant_id: options.expectedTenantId ?? null,
     expected_entity_ids: expectedEntityIds,
     expected_topic_ids: expectedTopicIds,
+    require_request_subject_match: freeFactRequest,
     expected_region: expectedRegion,
     requires_current_kb: options.requiresCurrentKb !== false,
     require_explicit_target_match: target.target_changed ||
-      target.explicit_entity || target.explicit_topic ||
+      target.explicit_entity || target.explicit_topic || Boolean(namedPriceTarget) ||
       Boolean(expectedRegion),
   });
   const winner = authorityDecision.selected_source_id

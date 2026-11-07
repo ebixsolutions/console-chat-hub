@@ -1,3 +1,6 @@
+import { SavedResponses } from "@/components/console/SavedResponses";
+import { B12VerificationDialog } from "@/components/console/B12VerificationDialog";
+import { useTicketReply } from "@/hooks/useTicketReply";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,11 +14,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { feedbackService } from "@/lib/api/feedback.service";
+import { TicketHandoffSummary } from "@/components/console/TicketHandoffSummary";
 import { AgentToolPanel } from "@/components/console/AgentToolPanel";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { CRMPanel, RIGHT_COPY, buildBoundedContext, computeContextRevisionKey } from "@/components/console/CRMPanel";
 import { MessageAttachment, isAttachmentMessage, type AttachmentMeta } from "@/components/console/MessageAttachment";
 import { AttachmentButtons, EmojiPickerButton, insertAtCaret } from "@/components/console/ComposerTools";
+import { readInboxConversations, readInboxPreviews, readInboxHistoryMatches, inboxSearchPattern } from "@/lib/api/inbox-read";
 
 
 export const Route = createFileRoute("/_authenticated/console/conversations/")({
@@ -36,6 +41,7 @@ function ConversationsInboxGuard() {
 // ─── Types ───────────────────────────────────────────────────────────────────
 type Conv = {
   id: string;
+  company_id?: string | null;
   status: string;
   priority: string | null;
   updated_at: string | null;
@@ -49,6 +55,7 @@ type Conv = {
 type Msg = {
   id: string;
   role: string;
+  sender_id?: string | null;
   content: string;
   content_type: string | null;
   status: string | null;
@@ -186,59 +193,9 @@ function HandoffBanner({
   const aiMsgs = messages.filter((m) => m.role === "assistant");
   const aiCount = aiMsgs.length;
   const visitorCount = visitorMsgs.length;
-  const allVisitorText = visitorMsgs
-    .map((m) => m.content)
-    .join(" ")
-    .toLowerCase();
-  const hasRefund = allVisitorText.includes("退款") || allVisitorText.includes("refund");
-  const hasDamaged =
-    allVisitorText.includes("損壞") ||
-    allVisitorText.includes("损坏") ||
-    allVisitorText.includes("damaged") ||
-    allVisitorText.includes("破損");
-  const hasUrgent =
-    allVisitorText.includes("急") ||
-    allVisitorText.includes("urgent") ||
-    allVisitorText.includes("今天") ||
-    allVisitorText.includes("today");
-  const hasAngry =
-    allVisitorText.includes("angry") ||
-    allVisitorText.includes("😡") ||
-    allVisitorText.includes("不滿") ||
-    allVisitorText.includes("失去預算") ||
-    allVisitorText.includes("unacceptable");
-  const hasHuman =
-    allVisitorText.includes("真人") ||
-    allVisitorText.includes("人工") ||
-    allVisitorText.includes("human") ||
-    allVisitorText.includes("轉接") ||
-    allVisitorText.includes("transfer");
-  const hasBudget =
-    allVisitorText.includes("預算") ||
-    allVisitorText.includes("budget") ||
-    allVisitorText.includes("失去") ||
-    allVisitorText.includes("超支");
-  const summaryParts: string[] = [];
-  if (hasRefund) summaryParts.push("requested a refund");
-  if (hasDamaged) summaryParts.push("reported damaged goods after delivery");
-  if (hasUrgent) summaryParts.push("said the item was urgently needed today");
-  if (hasAngry || hasBudget) summaryParts.push("became upset about the budget impact");
-  if (hasHuman) summaryParts.push("requested human support");
-  if (summaryParts.length === 0) summaryParts.push("escalated the conversation");
-  const summaryText = "Customer " + summaryParts.join(", ") + ".";
-  const whyReasons: string[] = [];
-  if (hasAngry) whyReasons.push("✓ Angry sentiment detected");
-  if (hasRefund) whyReasons.push("✓ Refund / policy issue");
-  if (hasDamaged) whyReasons.push("✓ Damaged item after delivery");
-  if (hasUrgent) whyReasons.push("✓ Urgent need today");
-  if (hasHuman) whyReasons.push("✓ Human support requested");
-  if (whyReasons.length === 0)
-    whyReasons.push(lang === "zh" ? "✓ 此對話已標記供人工檢視" : "✓ Conversation flagged for review");
-  const actions: string[] = ["✓ Prioritize human takeover", "✓ Review full conversation"];
-  if (hasRefund || hasDamaged) actions.push("✓ Ask for order number");
-  if (hasDamaged) actions.push("✓ Request damage photos");
-  if (hasHuman) actions.push("✓ Confirm contact method");
-  if (hasRefund || hasDamaged) actions.push("✓ Review refund / replacement policy");
+  // A quotation is source-bound evidence, not an inferred intent/entitlement.
+  // The persisted, tenant-checked TicketHandoffSummary remains the authority.
+  const latestVisitor = visitorMsgs.filter((m) => !m.is_recalled).at(-1);
   return (
     <div
       style={{
@@ -254,7 +211,7 @@ function HandoffBanner({
         <span style={{ fontSize: 12, fontWeight: 700, color: headerColor }}>
           {isHumanControl
             ? "🟣 Human Control Active — Knowledge Helper available for internal reference only"
-            : "🔴 AI Handoff Summary — Human Action Required"}
+            : "🔴 Handoff Status — Human Review Required"}
         </span>
       </div>
       <div style={{ padding: "10px 12px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, fontSize: 12 }}>
@@ -285,42 +242,18 @@ function HandoffBanner({
               marginBottom: 5,
             }}
           >
-            Detected Issues
+            Latest customer message (quotation)
           </div>
-          <div style={{ lineHeight: 1.6, fontSize: 11, color: "#1a1a1a" }}>{summaryText}</div>
+          <div style={{ lineHeight: 1.6, fontSize: 11, color: "#1a1a1a", whiteSpace: "pre-wrap" }}>
+            {latestVisitor ? <q data-source-message-id={latestVisitor.id}>{latestVisitor.content}</q> : "No customer message is currently loaded."}
+          </div>
         </div>
         <div>
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: "#888",
-              textTransform: "uppercase" as const,
-              marginBottom: 4,
-            }}
-          >
-            Detected Signals (keyword-based)
-          </div>
-          <div style={{ lineHeight: 1.7, marginBottom: 6, fontSize: 11 }}>
-            {whyReasons.map((r, i) => (
-              <div key={i}>{r}</div>
-            ))}
-          </div>
-          <div
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: "#888",
-              textTransform: "uppercase" as const,
-              marginBottom: 4,
-            }}
-          >
-            Recommended Action
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#888", marginBottom: 4 }}>
+            Persisted handoff summary
           </div>
           <div style={{ fontSize: 11 }}>
-            {actions.map((a, i) => (
-              <div key={i}>{a}</div>
-            ))}
+            Review this ticket’s saved handoff summary and latest corrections. Message keywords alone do not establish a refund request, sentiment, entitlement or required action.
           </div>
         </div>
       </div>
@@ -390,104 +323,191 @@ function SinglePageInbox() {
   const [conversations, setConversations] = useState<Conv[] | null>(null);
   const [filter, setFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [searchRefresh,setSearchRefresh]=useState(0);
+  const [historySearch, setHistorySearch] = useState<{ query: string; state: "loading" | "ready" | "error"; ids: string[]; error?: string }>({query:"",state:"ready",ids:[]});
+  useEffect(()=>{
+    const query=search.trim();let cancelled=false;
+    if(!query||!conversations){setHistorySearch({query,state:"ready",ids:[]});return;}
+    setHistorySearch({query,state:"loading",ids:[]});
+    const timer=window.setTimeout(()=>{void (async()=>{
+      const result=await readInboxHistoryMatches(conversations.map(c=>c.id),(ids,from,to)=>supabase.from("messages")
+        .select("id,conversation_id",{count:"exact"}).in("conversation_id",ids)
+        .or("is_recalled.is.null,is_recalled.eq.false").neq("content","__THINKING__")
+        .ilike("content",inboxSearchPattern(query)).order("id",{ascending:true}).range(from,to));
+      if(cancelled)return;
+      setHistorySearch(result.error?{query,state:"error",ids:[],error:result.error.message}:{query,state:"ready",ids:result.data});
+    })();},250);
+    return()=>{cancelled=true;window.clearTimeout(timer);};
+  },[search,conversations,searchRefresh]);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [messagesConversationId, setMessagesConversationId] = useState<string | null>(null);
   const [loadingMessages, setLoadingMessages] = useState(false);
-  const [reply, setReply] = useState("");
-  const [sending, setSending] = useState(false);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
+  const messageLoadRef = useRef(0);
+
   const [agents, setAgents] = useState<AgentLite[]>([]);
   const [myAgent, setMyAgent] = useState<AgentLite | null>(null);
+  const replyDraft = useTicketReply(user?.id, selectedId, myAgent?.id, messagesConversationId === selectedId ? messages : []);
+  const { reply, setReply, sending } = replyDraft;
   const [activityOpen, setActivityOpen] = useState(false);
   const [sendGuardOpen, setSendGuardOpen] = useState(false);
   const [resolvedWarningOpen, setResolvedWarningOpen] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState(false);
   const [activityRows, setActivityRows] = useState<ActivityEvent[]>([]);
+  const activityLoadRef = useRef(0);
+  useEffect(() => {
+    activityLoadRef.current++;
+    setActivityOpen(false);
+    setActivityLoading(false);
+    setActivityError(false);
+    setActivityRows([]);
+    return () => { activityLoadRef.current++; };
+  }, [selectedId]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const replyRef = useRef<HTMLTextAreaElement>(null);
+  const conversationLoadRef = useRef(0);
+  const conversationsRef = useRef<Conv[]>([]);
+  conversationsRef.current = conversations ?? [];
 
   const lang = useConsoleLang();
   const { role: currentRole } = useCurrentRole();
+  const inboxScopeKey = JSON.stringify([user?.id, currentRole]);
+  const liveInboxScopeKey = useRef(inboxScopeKey);
+  liveInboxScopeKey.current = inboxScopeKey;
   const [selectedMessage, setSelectedMessage] = useState<{ id: string; role: string; content: string } | null>(null);
   const [useConfirmOpen, setUseConfirmOpen] = useState(false);
   const [pendingUseText, setPendingUseText] = useState("");
 
   async function loadConversations() {
-    const { data: convs, error: cErr } = await supabase
+    const loadId = ++conversationLoadRef.current;
+    const stale = () => loadId !== conversationLoadRef.current || liveInboxScopeKey.current !== inboxScopeKey;
+    // Keep the existing authenticated client and RLS as the sole ticket authority.
+    // Optional relational metadata and previews must not hide an authorized Inbox.
+    let { data: convs, error: cErr } = await readInboxConversations((from, to) => supabase
       .from("conversations")
       .select(
-        `id,status,priority,updated_at,created_at,assigned_agent_id,channel_config:channel_config_id(name),visitor_session:visitor_session_id(id,visitor_metadata)`,
+        "id,company_id,status,priority,updated_at,created_at,assigned_agent_id,channel_config:channel_config_id(name),visitor_session:visitor_session_id(id,visitor_metadata)",
+        { count: "exact" },
       )
       .order("updated_at", { ascending: false })
-      .limit(50);
+      .order("id", { ascending: false })
+      .range(from, to));
+    if (stale()) return;
+    let relationUnavailable = false;
     if (cErr) {
-      setError(cErr.message);
-      return;
+      // A failed optional relationship projection is not an empty ticket result.
+      // Retry ONLY the same RLS-scoped conversations table and scalar columns.
+      const flat = await readInboxConversations((from, to) => supabase
+        .from("conversations")
+        .select("id,company_id,status,priority,updated_at,created_at,assigned_agent_id", { count: "exact" })
+        .order("updated_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to));
+      if (stale()) return;
+      if (flat.error) { setError(flat.error.message); return; }
+      relationUnavailable = true;
+      convs = (flat.data ?? []).map(c => ({ ...c, channel_config: null, visitor_session: null }));
     }
     const list = convs ?? [];
-    const agentIds = [...new Set(list.filter((c) => c.assigned_agent_id).map((c) => c.assigned_agent_id as string))];
+    const assignedLabel = (c: Pick<Conv, "status" | "assigned_agent_id">, agentMap: Record<string, string>): string =>
+      c.assigned_agent_id
+        ? agentMap[c.assigned_agent_id]?.trim() || "Assigned agent (name unavailable)"
+        : c.status === "pending" ||
+            c.status === "unresolved" ||
+            c.status === "human_needed" ||
+            c.status === "escalation_risk"
+          ? "Needs assignment"
+          : c.status === "open" || c.status === "ai_handling"
+            ? "AI Chatbot"
+            : c.status === "resolved"
+              ? "—"
+              : "Unassigned";
+
+    const base = list.map(c => ({
+      ...c,
+      assigned_agent_name: assignedLabel(c, {}),
+      latest_preview: "(preview loading…)",
+    })) as Conv[];
+    // The full counted ticket list can now render independently of later reads.
+    setConversations(base);
+    let warning: string | null = relationUnavailable
+      ? "Ticket details unavailable; showing your authorized tickets without optional names."
+      : null;
+    setError(warning);
+
+    const agentIds = [...new Set(list.filter(c => c.assigned_agent_id).map(c => c.assigned_agent_id as string))];
     const agentMap: Record<string, string> = {};
     if (agentIds.length > 0) {
-      const { data: ags } = await supabase.from("agent_profile").select("id,display_name").in("id", agentIds);
-      ags?.forEach((a) => {
-        agentMap[a.id] = a.display_name;
-      });
+      const { data: ags, error: agentError } = await supabase.from("agent_profile")
+        .select("id,display_name").in("id", agentIds);
+      if (stale()) return;
+      if (agentError) {
+        warning = "Assigned-agent names unavailable; tickets remain accessible.";
+      } else {
+        ags?.forEach(a => { agentMap[a.id] = a.display_name; });
+      }
     }
-    const previews: Record<string, string> = {};
-    if (list.length > 0) {
-      const { data: recent } = await supabase
-        .from("messages")
-        .select("conversation_id,content,created_at,is_recalled")
-        .in(
-          "conversation_id",
-          list.map((c) => c.id),
-        )
-        .neq("content", "__THINKING__")
-        .order("created_at", { ascending: false })
-        .limit(500);
-      recent?.forEach((m) => {
-        if (!previews[m.conversation_id])
-          previews[m.conversation_id] = m.is_recalled ? "[訊息已撤回]" : (m.content as string).slice(0, 80);
-      });
-    }
-    setConversations(
-      list.map((c) => ({
+    const previewResult = await readInboxPreviews(list.map(c => c.id), (ids, from, to) => supabase
+      .from("messages")
+      .select("conversation_id,content,created_at,is_recalled")
+      .in("conversation_id", ids)
+      .neq("content", "__THINKING__")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to));
+    if (stale()) return;
+    if (previewResult.error) {
+      // Report incomplete previews; never turn the full ticket list into zero.
+      setConversations(base.map(c => ({
         ...c,
-        assigned_agent_name: c.assigned_agent_id
-          ? agentMap[c.assigned_agent_id] || "Unknown"
-          : c.status === "pending" ||
-              c.status === "unresolved" ||
-              c.status === "human_needed" ||
-              c.status === "escalation_risk"
-            ? "Needs assignment"
-            : c.status === "open" || c.status === "ai_handling"
-              ? "AI Chatbot"
-              : c.status === "resolved"
-                ? "—"
-                : "Unassigned",
-        latest_preview: previews[c.id] || "(no messages yet)",
-      })) as Conv[],
-    );
-    setError(null);
+        assigned_agent_name: assignedLabel(c, agentMap),
+        latest_preview: "(preview unavailable)",
+      })));
+      setError("Ticket previews unavailable: " + previewResult.error.message + "; ticket list remains accessible.");
+      return;
+    }
+    const previews = previewResult.data;
+    setConversations(list.map(c => ({
+      ...c,
+      assigned_agent_name: assignedLabel(c, agentMap),
+      latest_preview: previews[c.id] || "(no messages yet)",
+    })) as Conv[]);
+    setError(warning);
   }
 
   const loadMessages = useCallback(async (convId: string, showLoading = false, scrollToBottom = false) => {
+    if (selectedIdRef.current !== convId) return;
+    const read = ++messageLoadRef.current;
+    const scope = liveInboxScopeKey.current;
+    const stale = () => read !== messageLoadRef.current || selectedIdRef.current !== convId || liveInboxScopeKey.current !== scope;
     if (showLoading) {
       setLoadingMessages(true);
       setMessagesConversationId(null);
     }
-    const { data } = await supabase
-      .from("messages")
-      .select("id,role,content,content_type,status,is_recalled,metadata,created_at")
-      .eq("conversation_id", convId)
-      .neq("content", "__THINKING__")
-      .order("created_at", { ascending: true });
-    setMessages((data as Msg[]) ?? []);
-    setMessagesConversationId(convId);
-    if (showLoading) setLoadingMessages(false);
-    if (showLoading || scrollToBottom) {
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    try {
+      const { data, error } = await supabase
+        .from("messages")
+        .select("id,role,sender_id,content,content_type,status,is_recalled,metadata,created_at")
+        .eq("conversation_id", convId)
+        .neq("content", "__THINKING__")
+        .order("created_at", { ascending: true });
+      if (stale()) return;
+      if (error) { setMessagesError("Messages unavailable. Retry this ticket’s history."); return; }
+      setMessages((data as Msg[]) ?? []);
+      setMessagesConversationId(convId);
+      setMessagesError(null);
+      if (showLoading || scrollToBottom) {
+        setTimeout(() => {
+          if (!stale()) messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }, 50);
+      }
+    } catch {
+      if (!stale()) setMessagesError("Messages unavailable. Retry this ticket’s history.");
+    } finally {
+      if (!stale()) setLoadingMessages(false);
     }
   }, []);
 
@@ -498,41 +518,36 @@ function SinglePageInbox() {
 
   // ── J1: Realtime infrastructure ──
   const selectedIdRef = useRef<string | null>(null);
-  const realtimeConnectedRef = useRef(true);
-  const fallbackTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  selectedIdRef.current = selectedId;
+  // Subscriptions deliver events, never recurring database reads.
+  // Every subscription acknowledgement closes its snapshot-to-stream gap.
+  // Sibling acknowledgements in the same turn share one scoped catch-up.
+  const snapshotCatchupRef = useRef<{ scope: string; ticket: string | null; list: boolean } | null>(null);
   const convDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function scheduleSnapshotCatchup(includeList: boolean) {
+    const scope = liveInboxScopeKey.current;
+    const pending = snapshotCatchupRef.current;
+    if (pending?.scope === scope) {
+      pending.list ||= includeList;
+      pending.ticket = selectedIdRef.current;
+      return;
+    }
+    const snapshot = { scope, ticket: selectedIdRef.current, list: includeList };
+    snapshotCatchupRef.current = snapshot;
+    void Promise.resolve().then(() => {
+      if (snapshotCatchupRef.current !== snapshot || liveInboxScopeKey.current !== scope) return;
+      snapshotCatchupRef.current = null;
+      if (snapshot.list) void loadConversations();
+      if (snapshot.ticket && snapshot.ticket === selectedIdRef.current) void loadMessages(snapshot.ticket, false);
+    });
+  }
 
   function debouncedLoadConversations() {
     if (convDebounceRef.current) clearTimeout(convDebounceRef.current);
     convDebounceRef.current = setTimeout(() => {
       loadConversations();
     }, 1000);
-  }
-  function startFallbackPolling() {
-    if (fallbackTimerRef.current) return;
-    fallbackTimerRef.current = setInterval(() => {
-      loadConversations();
-      const sid = selectedIdRef.current;
-      if (sid) loadMessages(sid, false);
-    }, 20000);
-  }
-  function stopFallbackPolling() {
-    if (!fallbackTimerRef.current) return;
-    clearInterval(fallbackTimerRef.current);
-    fallbackTimerRef.current = null;
-    loadConversations();
-    const sid = selectedIdRef.current;
-    if (sid) loadMessages(sid, false);
-  }
-  function handleSubscribeStatus(status: string) {
-    if (status === "SUBSCRIBED") {
-      realtimeConnectedRef.current = true;
-      stopFallbackPolling();
-    }
-    if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR") {
-      realtimeConnectedRef.current = false;
-      startFallbackPolling();
-    }
   }
 
   useEffect(() => {
@@ -547,28 +562,63 @@ function SinglePageInbox() {
     })();
   }, [user]);
   useEffect(() => {
+    let active = true;
+    const current = () => active && liveInboxScopeKey.current === inboxScopeKey;
+    const handleSubscribeStatus = (status: string) => {
+      if (current() && status === "SUBSCRIBED") scheduleSnapshotCatchup(true);
+    };
+    setConversations(null);
+    setMessagesConversationId(null);
     loadConversations();
     loadAgents();
     const convChannel = supabase
       .channel("console-conversations")
-      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, () => {
-        debouncedLoadConversations();
+      .on("postgres_changes", { event: "*", schema: "public", table: "conversations" }, (payload) => {
+        if (!current()) return;
+        const change = payload.new as Partial<Conv> | undefined;
+        if(payload.eventType!=="UPDATE" || !change?.id ||
+            !conversationsRef.current.some(c=>c.id===change.id)){
+          // New/revoked tickets need one fresh authenticated/RLS-scoped read.
+          debouncedLoadConversations();return;
+        }
+        // Existing ticket: Realtime event updates its visible row without
+        // rescanning every message in all 542+ ticket histories.
+        setConversations(current=>current?.map(c=>c.id!==change.id?c:{
+          ...c,
+          company_id:change.company_id===undefined?c.company_id:change.company_id,
+          status:typeof change.status==="string"?change.status:c.status,
+          priority:change.priority===undefined?c.priority:change.priority,
+          updated_at:change.updated_at??c.updated_at,
+          assigned_agent_id:change.assigned_agent_id===undefined?c.assigned_agent_id:change.assigned_agent_id,
+          assigned_agent_name:change.assigned_agent_id===undefined||change.assigned_agent_id===c.assigned_agent_id
+            ? c.assigned_agent_name : change.assigned_agent_id?"Assigned agent (name unavailable)":"AI Chatbot",
+        }).sort((a,b)=>String(b.updated_at??"").localeCompare(String(a.updated_at??"")))??null);
       })
       .subscribe(handleSubscribeStatus);
     const allMsgChannel = supabase
       .channel("console-all-messages")
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (payload) => {
-        if ((payload.new as { content?: string })?.content === "__THINKING__") return;
-        debouncedLoadConversations();
+        if (!current()) return;
+        const row=payload.new as {conversation_id?:string;content?:string;created_at?:string;is_recalled?:boolean}|undefined;
+        if(!row?.conversation_id||typeof row.content!=="string"||row.content==="__THINKING__")return;
+        // Only update a ticket already returned under this actor's RLS.
+        if(!conversationsRef.current.some(c=>c.id===row.conversation_id))return;
+        setConversations(current=>current?.map(c=>c.id!==row.conversation_id?c:{
+          ...c,latest_preview:row.is_recalled===true?"[訊息已撤回]":row.content!.slice(0,80),
+          updated_at:row.created_at&&(!c.updated_at||row.created_at>c.updated_at)?row.created_at:c.updated_at,
+        }).sort((a,b)=>String(b.updated_at??"").localeCompare(String(a.updated_at??"")))??null);
       })
-      .subscribe();
+      .subscribe(handleSubscribeStatus);
     return () => {
+      active = false;
+      conversationLoadRef.current++;
+      messageLoadRef.current++;
+      snapshotCatchupRef.current = null;
       supabase.removeChannel(convChannel);
       supabase.removeChannel(allMsgChannel);
-      if (fallbackTimerRef.current) clearInterval(fallbackTimerRef.current);
       if (convDebounceRef.current) clearTimeout(convDebounceRef.current);
     };
-  }, [loadAgents]);
+  }, [loadAgents, inboxScopeKey]);
 
   useEffect(() => {
     selectedIdRef.current = selectedId;
@@ -576,6 +626,7 @@ function SinglePageInbox() {
 
   useEffect(() => {
     setSelectedMessage(null);
+    setMessagesError(null);
     if (!selectedId) {
       setMessages([]);
       setMessagesConversationId(null);
@@ -583,56 +634,59 @@ function SinglePageInbox() {
       return;
     }
     loadMessages(selectedId, true);
+    let active = true;
+    const current = () => active && selectedIdRef.current === selectedId && liveInboxScopeKey.current === inboxScopeKey;
     const msgChannel = supabase
       .channel(`console-messages-${selectedId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "messages", filter: `conversation_id=eq.${selectedId}` },
         (payload) => {
+          if (!current()) return;
           if (payload.eventType === "INSERT" && (payload.new as { content?: string })?.content === "__THINKING__")
             return;
           loadMessages(selectedId, false, payload.eventType === "INSERT");
         },
       )
-      .subscribe();
+      .subscribe(status => {
+        if (current() && status === "SUBSCRIBED") scheduleSnapshotCatchup(false);
+      });
     return () => {
+      active = false;
+      messageLoadRef.current++;
       supabase.removeChannel(msgChannel);
     };
-  }, [selectedId, loadMessages]);
+  }, [selectedId, loadMessages, inboxScopeKey]);
 
   useEffect(() => {
     function handleVisibility() {
       if (!document.hidden) {
-        loadConversations();
-        const sid = selectedIdRef.current;
-        if (sid) loadMessages(sid, false);
+        scheduleSnapshotCatchup(true);
       }
     }
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [loadMessages]);
+  }, [loadMessages, inboxScopeKey]);
 
   async function callEF(name: string, body: Record<string, unknown>) {
-    const { data, error: efErr } = await supabase.functions.invoke(name, { body });
-    if (efErr) {
-      toast.error(efErr.message);
+    try {
+      const { data, error } = await supabase.functions.invoke(name, { body });
+      if (error || data?.success !== true) {
+        toast.error("Operation not confirmed. Refresh the ticket before further action.");
+        return false;
+      }
+      return true;
+    } catch {
+      toast.error("Operation outcome unconfirmed. Check the ticket before further action.");
       return false;
     }
-    if (data && (data as { error?: string }).error) {
-      toast.error((data as { error: string }).error);
-      return false;
-    }
-    return true;
   }
   async function sendReply() {
-    if (!selectedId || !reply.trim()) return;
-    setSending(true);
-    const ok = await callEF("agent-send-reply", { conversation_id: selectedId, content: reply.trim() });
-    setSending(false);
-    if (ok) {
-      setReply("");
-      toast.success("Reply sent");
-      loadMessages(selectedId, false, true);
+    const ticketId = selectedId;
+    if (!ticketId) return;
+    if (await replyDraft.send()) {
+      toast.success("Reply saved");
+      void loadMessages(ticketId, false, true);
     }
   }
   function handleSendClick() {
@@ -650,24 +704,13 @@ function SinglePageInbox() {
     setSendGuardOpen(true);
   }
   async function handleTakeOverAndSend() {
-    if (!selectedId) return;
-    setSending(true);
-    const takeOverOk = await callEF("take-over-conversation", { conversation_id: selectedId });
-    if (!takeOverOk) {
-      setSending(false);
-      setSendGuardOpen(false);
-      toast.error("Take over failed. Message not sent.");
-      return;
-    }
-    const sendOk = await callEF("agent-send-reply", { conversation_id: selectedId, content: reply.trim() });
-    setSending(false);
+    const ticketId = selectedId;
+    if (!ticketId) return;
+    const ok = await replyDraft.send(ticket => callEF("take-over-conversation", { conversation_id: ticket }));
     setSendGuardOpen(false);
-    if (sendOk) {
-      setReply("");
-      toast.success("Took over and sent reply");
-      loadConversations();
-      loadMessages(selectedId, false, true);
-    }
+    if (ok) toast.success("Take over confirmed and reply saved");
+    void loadConversations();
+    void loadMessages(ticketId, false, true);
   }
   async function handleResolve() {
     const conversationId = selectedId;
@@ -760,7 +803,11 @@ function SinglePageInbox() {
 
   // Dev21b Phase 1: Conversation Activity Timeline
   async function loadActivity(convId: string) {
+    if (selectedIdRef.current !== convId) return;
+    const request = ++activityLoadRef.current;
+    const stale = () => request !== activityLoadRef.current || selectedIdRef.current !== convId;
     setActivityLoading(true);
+    setActivityError(false);
     setActivityRows([]);
     try {
       const [statusRes, assignRes, handoffRes] = await Promise.all([
@@ -777,11 +824,13 @@ function SinglePageInbox() {
           .select("created_at,handoff_type,handoff_reason,from_agent_id,to_agent_id")
           .eq("conversation_id", convId),
       ]);
+      if (stale()) return;
       if (statusRes.error || assignRes.error || handoffRes.error) {
         if (statusRes.error) console.error("[activity] conversation_status_log:", statusRes.error.message);
         if (assignRes.error) console.error("[activity] conversation_assignment:", assignRes.error.message);
         if (handoffRes.error) console.error("[activity] handoff_event:", handoffRes.error.message);
         toast.error("Failed to load conversation activity");
+        setActivityError(true);
         setActivityRows([]);
         return;
       }
@@ -827,11 +876,13 @@ function SinglePageInbox() {
       events.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
       setActivityRows(events);
     } catch (err) {
+      if (stale()) return;
       console.error("[activity] unexpected error:", err);
       toast.error("Failed to load conversation activity");
+      setActivityError(true);
       setActivityRows([]);
     } finally {
-      setActivityLoading(false);
+      if (!stale()) setActivityLoading(false);
     }
   }
   function openActivity() {
@@ -855,9 +906,12 @@ function SinglePageInbox() {
     if (!conversations) return null;
     let list = conversations;
     if (search.trim()) {
-      const q = search.toLowerCase();
+      if(historySearch.query!==search.trim()||historySearch.state!=="ready")return [];
+      const q = search.trim().toLowerCase();
+      const historyIds=new Set(historySearch.ids);
       list = list.filter(
         (c) =>
+          historyIds.has(c.id) || c.id.toLowerCase().includes(q) ||
           getVisitorLabel(c).toLowerCase().includes(q) ||
           (c.visitor_session?.id || c.id).toLowerCase().includes(q) ||
           c.latest_preview.toLowerCase().includes(q),
@@ -872,14 +926,16 @@ function SinglePageInbox() {
     if (filter === "ai_handling")
       return list.filter((c) => c.status === "ai_handling" || (!isHumanNeeded(c) && c.status === "open"));
     return list.filter((c) => c.status === filter);
-  }, [conversations, filter, search]);
+  }, [conversations, filter, search, historySearch]);
 
   const selectedConv = useMemo(
     () => conversations?.find((c) => c.id === selectedId) ?? null,
     [conversations, selectedId],
   );
   const visitorLabel = selectedConv ? getVisitorLabel(selectedConv) : "";
-  const assignedName = agents.find((a) => a.id === selectedConv?.assigned_agent_id)?.display_name || "Unassigned";
+  const assignedName = selectedConv?.assigned_agent_id
+    ? agents.find((a) => a.id === selectedConv.assigned_agent_id)?.display_name?.trim() || "Assigned agent (name unavailable)"
+    : "Unassigned";
   const isElevated = myAgent ? ELEVATED.has(myAgent.role) : false;
   const transferableAgents = agents.filter((a) => a.id !== myAgent?.id);
   const chipStyle = (active: boolean, special?: boolean): CSSProperties => ({
@@ -907,6 +963,26 @@ function SinglePageInbox() {
     [messages, messagesConversationId, selectedId],
   );
 
+  const currentSelectedMessage = selectedMessage && messagesConversationId === selectedId
+    ? messages.find(m => m.id === selectedMessage.id && !m.is_recalled) ?? null : null;
+  const toolScopeKey = JSON.stringify([user?.id, currentRole, selectedConv?.company_id, selectedConv?.assigned_agent_id]);
+  const draftActionKey = JSON.stringify([selectedId, toolScopeKey, selectedConv?.status, contextRevisionKey,
+    currentSelectedMessage?.id, currentSelectedMessage?.content, reply]);
+  const liveDraftActionKey = useRef(draftActionKey);
+  liveDraftActionKey.current = draftActionKey;
+  const pendingDraftAction = useRef<{ key: string; text: string } | null>(null);
+  const renderedPendingDraftAction = pendingDraftAction.current;
+  useEffect(() => {
+    liveDraftActionKey.current = draftActionKey;
+    return () => { liveDraftActionKey.current = ""; pendingDraftAction.current = null; };
+  }, []);
+  // Invalidate both the visible modal and any retained callback on context change.
+  useEffect(() => {
+    setUseConfirmOpen(false);
+    setPendingUseText("");
+    pendingDraftAction.current = null;
+  }, [draftActionKey]);
+
   return (
     <div
       style={{
@@ -930,6 +1006,7 @@ function SinglePageInbox() {
         }}
       >
         <div style={{ padding: "10px 12px", borderBottom: "0.5px solid #e8e6e0", flexShrink: 0 }}>
+          <B12VerificationDialog />
           <div style={{ display: "flex", gap: 12, fontSize: 10.5, color: "#555" }}>
             <span>
               <b style={{ color: "#991b1b" }}>{stats.pending_human}</b> Pending
@@ -1017,7 +1094,9 @@ function SinglePageInbox() {
               ))}
             </div>
           )}
-          {filtered && filtered.length === 0 && (
+          {search.trim() && (historySearch.query!==search.trim() || historySearch.state==="loading") && <div role="status" style={{padding:16}}>Searching conversation history…</div>}
+          {search.trim() && historySearch.query===search.trim() && historySearch.state==="error" && <div role="alert" style={{padding:16}}>Message search unavailable: {historySearch.error}. <button type="button" onClick={()=>setSearchRefresh(n=>n+1)}>Retry message search</button></div>}
+          {filtered && filtered.length === 0 && (!search.trim() || (historySearch.query===search.trim() && historySearch.state==="ready")) && (
             <div style={{ padding: 40, textAlign: "center", fontSize: 12, color: "#888" }}>No conversations found</div>
           )}
           {filtered?.map((c) => {
@@ -1290,7 +1369,7 @@ function SinglePageInbox() {
             {selectedConv && (
               <HandoffBanner
                 conv={selectedConv}
-                messages={messages}
+                messages={messagesConversationId === selectedId ? messages : []}
                 onResolve={handleResolve}
                 onTakeOver={handleTakeOver}
                 onReturnToAi={handleReturnToAi}
@@ -1302,10 +1381,13 @@ function SinglePageInbox() {
                   <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                 </div>
               )}
-              {!loadingMessages && messages.length === 0 && (
+              {messagesError && <div role="alert" className="text-sm text-red-700">
+                {messagesError}<button type="button" onClick={() => { if (selectedId) void loadMessages(selectedId, true); }}>Retry messages</button>
+              </div>}
+              {!loadingMessages && !messagesError && messagesConversationId === selectedId && messages.length === 0 && (
                 <div className="text-sm text-muted-foreground text-center py-8">No messages yet.</div>
               )}
-              {messages.map((m) => {
+              {(messagesConversationId === selectedId ? messages : []).map((m) => {
                 const isVisitor = m.role === "visitor",
                   isAgent = m.role === "agent",
                   isAssistant = m.role === "assistant";
@@ -1464,6 +1546,10 @@ function SinglePageInbox() {
               <div ref={messagesEndRef} />
             </div>
             <div style={{ background: "#fff", borderTop: "0.5px solid #e8e6e0", padding: "8px 12px", flexShrink: 0 }}>
+              <SavedResponses key={`${user?.id}:${selectedId}`} conversationId={selectedId!}
+                variables={{customer_name: (()=>{const meta=selectedConv?.visitor_session?.visitor_metadata;return meta&&typeof meta==="object"&&"name" in meta&&typeof meta.name==="string"?meta.name:null;})(), agent_name: myAgent?.display_name, channel_name: selectedConv?.channel_config?.name}}
+                onInsert={text=>{if(reply.trim()&&reply.trim()!==text.trim()){setPendingUseText(text);setUseConfirmOpen(true);}else setReply(text);}} />
+              {replyDraft.notice && <div role="alert">{replyDraft.notice}<button type="button" onClick={async () => { if (selectedId) await loadMessages(selectedId, false); replyDraft.checked(); }}>Check reply status</button></div>}
               <Textarea
                 ref={replyRef}
                 value={reply}
@@ -1492,7 +1578,7 @@ function SinglePageInbox() {
                   }}
                 />
 
-                <Button onClick={handleSendClick} disabled={sending || !reply.trim()} className="ml-auto">
+                <Button onClick={handleSendClick} disabled={replyDraft.blocked || !reply.trim()} className="ml-auto">
                   {sending ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1528,8 +1614,11 @@ function SinglePageInbox() {
             contextRevisionKey={contextRevisionKey}
             draftText={reply}
             currentRole={currentRole}
+            toolScopeKey={toolScopeKey}
             onInsertDraft={(text) => {
+              if (!selectedConv || liveDraftActionKey.current !== draftActionKey || selectedConv.status === "resolved") return;
               if (reply.trim() && reply.trim() !== text.trim()) {
+                pendingDraftAction.current = { key: draftActionKey, text };
                 setPendingUseText(text);
                 setUseConfirmOpen(true);
               } else {
@@ -1540,15 +1629,21 @@ function SinglePageInbox() {
           />
         </div>
         {selectedId && selectedConv && (
-          <div style={{ flex: 1, overflow: "hidden" }}>
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            <>
+            <TicketHandoffSummary conversationId={selectedId} />
             <AgentToolPanel
               conversationId={selectedId}
               convStatus={selectedConv.status}
+              toolScopeKey={toolScopeKey}
+              contextRevisionKey={contextRevisionKey}
               draftText={reply}
-              selectedMessage={selectedMessage}
+              selectedMessage={currentSelectedMessage}
               onClearSelection={() => setSelectedMessage(null)}
               onUseDraft={(text) => {
+                if (liveDraftActionKey.current !== draftActionKey || selectedConv.status === "resolved") return;
                 if (reply.trim() && reply.trim() !== text.trim()) {
+                  pendingDraftAction.current = { key: draftActionKey, text };
                   setPendingUseText(text);
                   setUseConfirmOpen(true);
                 } else {
@@ -1556,11 +1651,15 @@ function SinglePageInbox() {
                 }
               }}
             />
+            </>
           </div>
         )}
       </div>
 
-      <Dialog open={useConfirmOpen} onOpenChange={setUseConfirmOpen}>
+      <Dialog open={useConfirmOpen} onOpenChange={(open) => {
+        setUseConfirmOpen(open);
+        if (!open) { pendingDraftAction.current = null; setPendingUseText(""); }
+      }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle>{lang === "zh" ? "取代草稿？" : "Replace Draft?"}</DialogTitle>
@@ -1575,6 +1674,7 @@ function SinglePageInbox() {
               variant="outline"
               size="sm"
               onClick={() => {
+                pendingDraftAction.current = null;
                 setUseConfirmOpen(false);
                 setPendingUseText("");
               }}
@@ -1584,7 +1684,12 @@ function SinglePageInbox() {
             <Button
               size="sm"
               onClick={() => {
-                setReply(pendingUseText);
+                if (!renderedPendingDraftAction || pendingDraftAction.current !== renderedPendingDraftAction ||
+                    renderedPendingDraftAction.text !== pendingUseText || !selectedConv ||
+                    renderedPendingDraftAction.key !== liveDraftActionKey.current ||
+                    liveDraftActionKey.current !== draftActionKey || selectedConv?.status === "resolved") return;
+                pendingDraftAction.current = null;
+                setReply(renderedPendingDraftAction.text);
                 setUseConfirmOpen(false);
                 setPendingUseText("");
               }}
@@ -1648,7 +1753,15 @@ function SinglePageInbox() {
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
             )}
-            {!activityLoading && activityRows.length === 0 && (
+            {!activityLoading && activityError && (
+              <div role="alert" className="p-4 text-sm text-red-700">
+                Conversation activity unavailable. History has not been confirmed.
+                <Button type="button" variant="outline" className="ml-2" onClick={() => selectedId && loadActivity(selectedId)}>
+                  Retry activity
+                </Button>
+              </div>
+            )}
+            {!activityLoading && !activityError && activityRows.length === 0 && (
               <div style={{ padding: 24, textAlign: "center", fontSize: 13, color: "#888" }}>
                 No status, assignment, or handoff activity recorded for this conversation.
               </div>

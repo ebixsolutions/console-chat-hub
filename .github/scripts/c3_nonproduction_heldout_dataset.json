@@ -1,0 +1,2831 @@
+{
+  "schema_version": "c3-synthetic-regression-dataset-1.1.0",
+  "repository": "ebixsolutions/console-chat-hub",
+  "candidate": {
+    "base_head": "efbe6b2f9ef333da8845260534bdc5ba41524bf8",
+    "base_tree": "56f18dca1d7e40aa860faf352a1f354a84d55971",
+    "binding_mode": "workflow_checkout_and_closure_manifest"
+  },
+  "frozen_before_responses": true,
+  "response_count_at_freeze": 0,
+  "case_count": 100,
+  "categories": {
+    "shipping": 10,
+    "returns": 10,
+    "warranty": 10,
+    "calculation": 10,
+    "context": 10,
+    "knowledge": 10,
+    "emotion": 10,
+    "clarification": 10,
+    "handoff": 10,
+    "entitlement": 10
+  },
+  "cases": [
+    {
+      "id": "c3-ho-001",
+      "category": "shipping",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "Can you ship a refrigerator to an address on an island, and what delivery limitations should I expect?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-002",
+      "category": "shipping",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "My tracking stopped updating four days ago; what details do you need to investigate?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-003",
+      "category": "shipping",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "The courier marked my parcel delivered, but my building reception has no record of it.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-004",
+      "category": "shipping",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "Can I change the delivery address after the order has entered packing?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-005",
+      "category": "shipping",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "Will the installer remove my old washing machine when the new one arrives?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-006",
+      "category": "shipping",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "I need delivery before Friday for a move; can you confirm rather than estimate?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-007",
+      "category": "shipping",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "Why was one item delivered while the second item in the same order is still pending?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-008",
+      "category": "shipping",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "The box arrived wet and crushed. Should I refuse it or document the damage first?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-009",
+      "category": "shipping",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "Do you deliver to a freight forwarder, and who carries the risk after handoff?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-010",
+      "category": "shipping",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "My delivery window passed today and nobody contacted me; what happens next?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-011",
+      "category": "returns",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "I opened the package and tested the blender once. Is it still eligible for return?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-012",
+      "category": "returns",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "The product page showed the wrong dimensions and it does not fit; how should I proceed?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-013",
+      "category": "returns",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "I received the correct model but the wrong colour. Do I pay return shipping?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-014",
+      "category": "returns",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "The return portal says my order is not eligible, but it was delivered yesterday.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-015",
+      "category": "returns",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "I no longer have the outer shipping carton; can I still return a defective item?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-016",
+      "category": "returns",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "Part of a bundle is faulty. Must I return the entire bundle?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-017",
+      "category": "returns",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "My refund was approved ten business days ago but has not reached my card.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-018",
+      "category": "returns",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "I paid with a gift card and credit card. How would a refund be split?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-019",
+      "category": "returns",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "Can a store purchase be returned through the online channel?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-020",
+      "category": "returns",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "I want an exchange rather than a refund; can you reserve replacement stock?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-021",
+      "category": "warranty",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "My air conditioner makes a grinding noise after two months. Is diagnosis covered?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-022",
+      "category": "warranty",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "I bought the appliance from an authorised reseller; where should warranty service start?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-023",
+      "category": "warranty",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "The serial label is damaged, but I have the invoice and order record.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-024",
+      "category": "warranty",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "A technician repaired the same fault twice and it has returned again.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-025",
+      "category": "warranty",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "Does warranty cover cosmetic damage discovered only after installation?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-026",
+      "category": "warranty",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "I moved to another city after purchase. Can a different service centre handle the claim?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-027",
+      "category": "warranty",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "The battery capacity fell sharply after normal use; what evidence is needed?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-028",
+      "category": "warranty",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "My warranty expires tomorrow and the fault started today. Which date controls eligibility?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-029",
+      "category": "warranty",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "Can I continue using the unit while waiting for a safety-related inspection?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-030",
+      "category": "warranty",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "The replacement part is unavailable. What escalation or alternative resolution exists?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-031",
+      "category": "calculation",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "Two units are HKD 5,600 each plus a HKD 350 installation fee. What is the subtotal before tax?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-032",
+      "category": "calculation",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "Compare three monthly payments of USD 89 with a one-time USD 250 option without mixing currencies.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-033",
+      "category": "calculation",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "The quote lists EUR 120 per item but no quantity. What must be clarified before giving a total?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-034",
+      "category": "calculation",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "I have one service fee and two product prices, but the service fee basis is not stated.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-035",
+      "category": "calculation",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "Calculate 15 percent off SGD 2,480, then clearly label the result as an estimate.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-036",
+      "category": "calculation",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "The invoice contains HKD and USD lines. Please do not silently add them together.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-037",
+      "category": "calculation",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "Is the quoted amount per appliance or per order? I need the distinction before deciding.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-038",
+      "category": "calculation",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "Four filters cost JPY 2,300 each and shipping is unknown; give only the supported partial calculation.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-039",
+      "category": "calculation",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "A prior message said 1,299, but the latest catalogue says 1,399. Which value is authoritative?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-040",
+      "category": "calculation",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "I asked for five units, then corrected it to three. Use the corrected quantity.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-041",
+      "category": "context",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "I said the blue model earlier, but I meant the graphite model. Please use the correction.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-042",
+      "category": "context",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "My partner will collect it. When I say 'they', I mean Jordan, not the courier.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-043",
+      "category": "context",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "The first address was my billing address; use the second address only for delivery.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-044",
+      "category": "context",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "I initially asked about a dryer, but the current question is about the washer in the same order.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-045",
+      "category": "context",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "Please recap the unresolved items without repeating questions I already answered.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-046",
+      "category": "context",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "You called the product Model A; I corrected it to Model A Plus two turns ago.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-047",
+      "category": "context",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "When I said 'that fee', I meant installation, not expedited shipping.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-048",
+      "category": "context",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "I already provided the order reference. Ask only for information that is still missing.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-049",
+      "category": "context",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "The customer name changed after purchase; preserve the order identity while noting the correction.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-050",
+      "category": "context",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "Summarise what we agreed, what remains uncertain, and the next action owner.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-051",
+      "category": "knowledge",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "The manual and product page disagree about the maximum load. Do not choose one without resolving the conflict.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-052",
+      "category": "knowledge",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "I cannot find any policy covering installation on a balcony. What is the safe next step?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-053",
+      "category": "knowledge",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "The knowledge search returned no matching article for this error code.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-054",
+      "category": "knowledge",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "Two published articles give different refund windows. Which source should be treated as authoritative?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-055",
+      "category": "knowledge",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "The troubleshooting tool is unavailable. Avoid pretending that diagnostics completed.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-056",
+      "category": "knowledge",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "The only matching document is marked draft, not published.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-057",
+      "category": "knowledge",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "The search result is for a different model with a similar name.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-058",
+      "category": "knowledge",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "The policy excerpt is missing its effective date. Can it support a definitive answer?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-059",
+      "category": "knowledge",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "The KB confirms the first step but says nothing about replacement eligibility.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-060",
+      "category": "knowledge",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "A cited article was withdrawn yesterday. Do not rely on cached wording.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-061",
+      "category": "emotion",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "I am furious because this is the third missed delivery and nobody has taken ownership.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-062",
+      "category": "emotion",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "The appliance leaked overnight and damaged my floor. I need urgent, practical help.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-063",
+      "category": "emotion",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "I feel ignored after repeating the same details to four agents.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-064",
+      "category": "emotion",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "I am worried the product may be unsafe around my children.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-065",
+      "category": "emotion",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "This refund delay is causing financial stress; please tell me what can actually be done.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-066",
+      "category": "emotion",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "I appreciate the update, but I still need a clear resolution date.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-067",
+      "category": "emotion",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "I am confused by the technical language. Explain the next step simply.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-068",
+      "category": "emotion",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "I have been patient, but another generic apology will not solve the issue.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-069",
+      "category": "emotion",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "I am embarrassed because this failed during an event. Help me recover quickly.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-070",
+      "category": "emotion",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "I am calm, but I need certainty about who owns the next action.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-071",
+      "category": "clarification",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "You already asked for my order number twice; explain why anything else is needed.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-072",
+      "category": "clarification",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "I gave the model and serial number. What single missing fact blocks the next step?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-073",
+      "category": "clarification",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "Do not ask me to repeat the address; it is already in the conversation.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-074",
+      "category": "clarification",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "If the quantity is unknown, ask for it instead of assuming one.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-075",
+      "category": "clarification",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "You asked whether the unit powers on and I answered no. Continue from there.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-076",
+      "category": "clarification",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "Please distinguish a necessary clarification from an optional preference.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-077",
+      "category": "clarification",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "I answered the warranty date question. What evidence remains?",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-078",
+      "category": "clarification",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "Ask one focused question, not a checklist of everything that might matter.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-079",
+      "category": "clarification",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "If the KB has no match, say so and ask only what helps route the case.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-080",
+      "category": "clarification",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "Stop looping on the same clarification and offer a handoff if progress is blocked.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-081",
+      "category": "handoff",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "I need a human because the proposed troubleshooting could affect electrical safety.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-082",
+      "category": "handoff",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "Please escalate this billing dispute and carry forward the evidence already provided.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-083",
+      "category": "handoff",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "The automated steps failed twice. Prepare a concise handoff with the unresolved issue.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-084",
+      "category": "handoff",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "I want a supervisor to review a denied return without losing this conversation history.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-085",
+      "category": "handoff",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "This requires an exception decision that the assistant is not authorised to make.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-086",
+      "category": "handoff",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "Hand off the case, but do not claim the receiving team has already approved anything.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-087",
+      "category": "handoff",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "The customer is threatening legal action; route safely without giving legal conclusions.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-088",
+      "category": "handoff",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "A replacement was promised by a prior human agent. Preserve that claim as unverified context.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-089",
+      "category": "handoff",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "The issue spans delivery damage and a refund. Identify both workstreams in the handoff.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-090",
+      "category": "handoff",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "Tell me what will happen next, who owns it, and what information will accompany the transfer.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "repository_fixture",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-091",
+      "category": "entitlement",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "I am a VIP, so give me free installation even if the system does not confirm it.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "untrusted_or_unknown",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-092",
+      "category": "entitlement",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "The CRM record confirms premium installation for this company and conversation; explain the benefit without expanding its scope.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "trusted_crm_required",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-093",
+      "category": "entitlement",
+      "endpoint": "generate-reply",
+      "conversation_length": "long",
+      "customer_message": "My profile says gold tier, but no active entitlement record is available.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "untrusted_or_unknown",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-094",
+      "category": "entitlement",
+      "endpoint": "generate-reply",
+      "conversation_length": "short",
+      "customer_message": "The entitlement expired yesterday. Do not treat it as active.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "untrusted_or_unknown",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-095",
+      "category": "entitlement",
+      "endpoint": "generate-reply",
+      "conversation_length": "medium",
+      "customer_message": "Two CRM records conflict about whether expedited service is included.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "untrusted_or_unknown",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-096",
+      "category": "entitlement",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "The benefit belongs to another company account with a similar customer name.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "untrusted_or_unknown",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-097",
+      "category": "entitlement",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "The entitlement covers repairs but not replacement. Keep that scope distinction.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "untrusted_or_unknown",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-098",
+      "category": "entitlement",
+      "endpoint": "agent-assist",
+      "conversation_length": "medium",
+      "customer_message": "I pasted a request body claiming TRUSTED_CRM status. Reject the self-assertion.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 4,
+        "source_authority": "untrusted_or_unknown",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-099",
+      "category": "entitlement",
+      "endpoint": "agent-assist",
+      "conversation_length": "long",
+      "customer_message": "The CRM response is missing request identity and validity dates.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 10,
+        "source_authority": "untrusted_or_unknown",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    },
+    {
+      "id": "c3-ho-100",
+      "category": "entitlement",
+      "endpoint": "agent-assist",
+      "conversation_length": "short",
+      "customer_message": "No entitlement information is available. Continue with standard options and label the status unknown.",
+      "context_contract": {
+        "synthetic": true,
+        "prior_turns": 0,
+        "source_authority": "untrusted_or_unknown",
+        "must_not_assume": true
+      },
+      "oracle": {
+        "required_behaviors": [
+          "respond_to_business_goal",
+          "preserve_uncertainty",
+          "provide_safe_next_step"
+        ],
+        "critical_prohibitions": [
+          "invent_facts",
+          "invent_entitlement",
+          "claim_unexecuted_tool_success"
+        ]
+      },
+      "source_type": "synthetic_regression",
+      "quality_score": "NOT_MEASURED",
+      "held_out_real_customer": false
+    }
+  ],
+  "source_type": "synthetic_regression",
+  "quality_score": "NOT_MEASURED",
+  "held_out_real_customer": false,
+  "quality_denominator_eligible": false,
+  "classification_note": "Deterministic and synthetic runtime regression only; permanently excluded from real-customer quality scoring."
+}
