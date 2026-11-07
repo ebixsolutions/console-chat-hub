@@ -1,4 +1,4 @@
-import {isCurrentRequirementsRecap,isCustomerGuidanceRequest} from '../../supabase/functions/_shared/commerce-state-authority.ts';
+import {hasRequirementsRecapCue,isCurrentRequirementsRecap,isCustomerGuidanceRequest} from '../../supabase/functions/_shared/commerce-state-authority.ts';
 import { buildVertexGenerationConfig, buildVertexEndpoint, normalizeVertexResponseSchema, safeVertexErrorDiagnostic } from '../../supabase/functions/_shared/vertex-generation-config.ts';
 import {COMMERCE_SEMANTIC_COMPACT_WIRE_SCHEMA,COMMERCE_SEMANTIC_WIRE_SCHEMA,COMMERCE_SEMANTIC_DELTA_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS,COMMERCE_SEMANTIC_NATIVE_INSTRUCTIONS,COMMERCE_SEMANTIC_NATIVE_SCHEMA,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame} from '../../supabase/functions/_shared/commerce-semantic-frame.ts';
 import {classifyNonFactualConversation} from '../../supabase/functions/_shared/conversational-routing.ts';
@@ -80,7 +80,14 @@ Deno.test('technical terminal response is distinct from external evidence unavai
 Deno.test('general preparation/decision support never becomes retained-state recap or merchant evidence bypass',()=>{
  const frame=normalizeCommerceSemanticFrame({operation:'ASK_FACT',confidence:0.97,intent:'customer_guidance'})!;
  for(const text of ['幫我整理選機時應該考慮嘅取捨，同講下一步應補充咩資料嗎？','What should I measure before choosing, and what trade-offs should I consider?','你會先問我邊一個問題？']){assert(!isCurrentRequirementsRecap(text),text);assert(isCustomerGuidanceRequest(text,frame),text);}
- for(const text of ['Recap the ZX-731 booking.','Summarize the premium plan.','整理返 ZX-731 預約。','請總結呢張對話嘅需求，同我最新更正嘅客廳面積及預算；唔好查外部資料。'])assert(isCurrentRequirementsRecap(text),text);
+ // Named recap syntax is only a cue until its target is bound to retained state.
+ for(const [text,target] of [['Recap the ZX-731 booking.','ZX-731'],['Summarize the premium plan.','premium plan'],['整理返 ZX-731 預約。','ZX-731']]){
+  assert(hasRequirementsRecapCue(text),text);
+  assert(!isCurrentRequirementsRecap(text),'unbound target: '+text);
+  assert(!isCurrentRequirementsRecap(text,['different retained target']),'foreign target: '+text);
+  assert(isCurrentRequirementsRecap(text,[target]),'bound target: '+text);
+ }
+ assert(isCurrentRequirementsRecap('請總結呢張對話嘅需求，同我最新更正嘅客廳面積及預算；唔好查外部資料。'));
  for(const text of ['What should I measure and what is the current price?','請整理選購取捨，推薦現貨型號','What trade-offs should I consider under your warranty policy?'])assert(!isCustomerGuidanceRequest(text,frame),text);
  assert(isCustomerGuidanceRequest('What should I measure?',{...frame,requested_facts:['stock']}),'model target alone cannot authorize merchant lookup');assert(isCustomerGuidanceRequest('What should I measure?',{...frame,ambiguity:{is_ambiguous:true}}),'ambiguity allows general measurement guidance without assigning unknown facts');
 });

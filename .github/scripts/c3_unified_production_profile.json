@@ -1553,7 +1553,8 @@
     "supabase/functions/_shared/conversation-recall.ts": "4276698948f0792db5ce0e6f2404d9496a2800854ca5e8618d45a17c4475bd52",
     "supabase/functions/_shared/conversation-runtime-state-core.ts": "5a659dc650a5428e02db7b3865e6fc458032051d3d71c1a73dcf471f2cb02653",
     "supabase/functions/generate-reply/index.ts": "e2931f75cfd4f7ad1f6c9f9d11f3e6b191374651de8c40db8f5533becb28c2ab",
-    "supabase/functions/_shared/t12-round2-production-shaped.test.ts": "1cb54cc0b9627ce36a69ce9c3a9f01befdf68e74fbc507a15d57fe8356fe2666"
+    "supabase/functions/_shared/t12-round2-production-shaped.test.ts": "1cb54cc0b9627ce36a69ce9c3a9f01befdf68e74fbc507a15d57fe8356fe2666",
+    "tests/emergency-p0/provider-request.test.ts": "db1be5e9ffdf26481953f05e9db1697ea9dccb694f73d44d02f8979400b03d5d"
   },
   "task3c_p01_v7_production_authorized": false,
   "authorized_task3c_p01_v7_sha256": {
