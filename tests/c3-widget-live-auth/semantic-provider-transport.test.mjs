@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import Ajv from 'ajv';
 import {build} from 'esbuild';
 const compiled=await build({stdin:{contents:"export * from './supabase/functions/_shared/commerce-semantic-frame.ts'; export * from './supabase/functions/_shared/vertex-generation-config.ts'; export {resolveCustomerRequestDecision} from './supabase/functions/_shared/commerce-state-authority.ts'; export {sourceOwnedOptionWording,resolveCurrentFactualRequest} from './supabase/functions/_shared/current-factual-request.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
-const {resolveCustomerRequestDecision,resolveCurrentFactualRequest,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V5_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V6,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V7,COMMERCE_SEMANTIC_SYSTEM_PROMPT,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,recoverSourceOwnedOptionAfterEntityTypeFailure,sourceOwnedOptionWording,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const {resolveCustomerRequestDecision,resolveCurrentFactualRequest,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V2_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V3_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V4_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V5_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V8_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V6,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V7,COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V8,COMMERCE_SEMANTIC_SYSTEM_PROMPT,decodeCommerceSemanticWire,normalizeCommerceSemanticFrame,recoverSourceOwnedOptionAfterEntityTypeFailure,sourceOwnedOptionWording,buildVertexGenerationConfig,vertexResponseSchemaDiagnostic}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 function nodes(value,path=[]){const kind=value===null?'null':Array.isArray(value)?'array':typeof value;return [{path,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},...(['object','array'].includes(kind)?Object.entries(value).flatMap(([k,v])=>nodes(v,[...path,k])):[])];}
 const wire=(delta={},operation='UPDATE_ITEM')=>({context_encoding:'semantic_paths_v2',operation,confidence:0.98,nodes:nodes(delta)});
 const canonical=v=>normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(v));
@@ -419,7 +419,7 @@ test('v6 active provider owns every fixed demand field while constraints retain 
  assert(providerV6Accepts(raw));assert(canonical(raw));
 });
 test('v6 prompt and active schema describe one transport without a second native demand vocabulary',()=>{
- assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V6));assert(COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V7));
+ assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V6));assert(COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V8));
  assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V5));
  assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes('semantic_values_v4'));
  assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes('Declare exactly one object root at path []'));
@@ -720,8 +720,8 @@ function v7(delta={},operation='ASK_FACT'){
   ...local(rest)};
 }
 const acceptsV7=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA);
-test('v7 active provider has explicit required constraints owned by each demand',()=>{
- assert.equal(COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA);
+test('v7 legacy provider still has explicit required constraints owned by each demand',()=>{
+ assert.notEqual(COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA);
  const s=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash').responseSchema;
  assert.deepEqual(s.properties.context_encoding.enum,['semantic_demands_v7']);
  assert.deepEqual(s.properties.demands.items.required,[...v6DemandFields,'constraints']);
@@ -762,4 +762,100 @@ test('historical V6 B-T02 two-demand missing constraints roots remains FAIL',()=
  let diagnostic;assert.equal(decodeCommerceSemanticWire(w,(_,d)=>{diagnostic=d}),null);
  assert.equal(diagnostic.field_class,'demand_constraints');assert.equal(diagnostic.reason,'required');
  assert.equal(canonical({...w,context_encoding:'semantic_demands_v7'}),null);
+});
+
+
+// The current V8 provider emits explicit ancestor type with EACH value's path.
+// No separate nested parent-container node is necessary or silently invented.
+const v8Empty=()=>({containers:[],strings:[],numbers:[],booleans:[]});
+const acceptsV8=new Ajv({strict:false}).compile(COMMERCE_SEMANTIC_PROVIDER_V8_SCHEMA);
+function v8(delta={},operation='ASK_FACT'){
+  const legacy=v7(delta,operation),names=['containers','strings','numbers','booleans'];
+  const annotate=owner=>{
+    const parents=new Map(owner.containers.map(x=>[JSON.stringify(x.path),x.kind]));
+    return Object.fromEntries(names.map(collection=>[collection,owner[collection].map(node=>({
+      ...node,path:node.path.map((key,index)=>{
+        const parent_kind=index===0?'object':parents.get(JSON.stringify(node.path.slice(0,index)));
+        assert(['object','array'].includes(parent_kind),'invalid test fixture ancestor');
+        return {key,parent_kind};
+      }),
+    }))]));
+  };
+  return {...legacy,context_encoding:'semantic_demands_v8',...annotate(legacy),
+    demands:legacy.demands.map(({constraints,...fixed})=>({...fixed,constraints:annotate(constraints)}))};
+}
+test('v8 active Vertex schema owns all demand envelopes and all ancestor kinds',()=>{
+  assert.equal(COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_PROVIDER_V8_SCHEMA);
+  const config=buildVertexGenerationConfig(4096,true,COMMERCE_SEMANTIC_PROVIDER_SCHEMA,0,'gemini-2.5-flash');
+  assert.deepEqual(config.responseSchema.properties.context_encoding.enum,['semantic_demands_v8']);
+  assert.deepEqual(config.responseSchema.properties.demands.items.required,[...v6DemandFields,'constraints']);
+  assert.deepEqual(config.responseSchema.properties.demands.items.properties.constraints.required,['containers','strings','numbers','booleans']);
+  assert.deepEqual(config.responseSchema.properties.demands.items.properties.constraints.properties.numbers.items.properties.path.items.required,['key','parent_kind']);
+  assert.equal(vertexResponseSchemaDiagnostic(COMMERCE_SEMANTIC_PROVIDER_SCHEMA).transport,'semantic_demands_v8');
+  assert(COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V8));
+  assert(COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes('Wire contract: context_encoding=semantic_demands_v8'));
+  assert(!COMMERCE_SEMANTIC_SYSTEM_PROMPT.includes(COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V7));
+  assert.equal(config.thinkingConfig.thinkingBudget,0);
+});
+for(const n of [0,1,2,12])test('v8 '+n+' demands distinguish explicitly empty from missing constraints',()=>{
+  const raw=v8({demands:Array.from({length:n},(_,i)=>demand({question:'Q'+i,source_quote:'Q'+i}))});
+  assert(acceptsV8(raw),JSON.stringify(acceptsV8.errors));
+  const frame=canonical(raw);assert(frame);assert.equal(frame.demands.length,n);
+  frame.demands.forEach(x=>assert.deepEqual(x.constraints,{}));
+  if(n){
+    const missing=structuredClone(raw);delete missing.demands[0].constraints;assert(!acceptsV8(missing));assert.equal(canonical(missing),null);
+    const partial=structuredClone(raw);delete partial.demands[0].constraints.numbers;assert(!acceptsV8(partial));assert.equal(canonical(partial),null);
+  }
+});
+test('v8 literal raw multi-demand model output supports nested area=80 with NO separate room_size parent',()=>{
+  const area=[{key:'room_size',parent_kind:'object'},{key:'value',parent_kind:'object'}];
+  const unit=[{key:'room_size',parent_kind:'object'},{key:'unit',parent_kind:'object'}];
+  const west=[{key:'west_facing',parent_kind:'object'}];
+  const first={...demand({question:'Did you recommend a particular model?',source_quote:'recommend a model?',source_type:'general',
+    subject_refs:[],requested_facts:[],ambiguity:{is_ambiguous:true,reasons:['unverified prior recommendation'],clarification_question:'Which earlier suggestion?'}}),constraints:v8Empty()};
+  const second={...demand({question:'What should be considered for this west-facing room?',source_quote:'80 sq ft west-facing room',source_type:'general',
+    subject_refs:[],requested_facts:[]}),constraints:{containers:[],strings:[{path:unit,text:'sq_ft'}],
+    numbers:[{path:area,number:80}],booleans:[{path:west,boolean:true}]}};
+  const raw={context_encoding:'semantic_demands_v8',operation:'ASK_FACT',confidence:.9,demands:[first,second],...v8Empty()};
+  assert(acceptsV8(raw),JSON.stringify(acceptsV8.errors));
+  const frame=canonical(raw);assert(frame);assert.equal(frame.demands.length,2);
+  assert.deepEqual(frame.demands[0].constraints,{});
+  assert.deepEqual(frame.demands[1].constraints,{room_size:{unit:'sq_ft',value:80},west_facing:true});
+  assert.equal(frame.demands[0].ambiguity.is_ambiguous,true);
+  assert.equal(frame.demands[1].ambiguity.is_ambiguous,false);
+});
+test('v8 independent product/general/transaction requirements preserve false, zero, null, units and correction',()=>{
+ const raw=v8({customer_correction:true,explicit_negations:['not paid'],
+  customer_facts:[{key:'seats',value:0},{key:'auto_renew',value:false},{key:'revision_date',value:null}],
+  demands:[
+   demand({constraints:{seats:0,auto_renew:false,area:{amount:80,unit:'sq_ft'},excluded:[],date:null}}),
+   demand({source_type:'general',subject_refs:[],requested_facts:[],constraints:{guests:2}}),
+   demand({source_type:'transaction',constraints:{}})]},'UPDATE_ITEM');
+ assert(acceptsV8(raw),JSON.stringify(acceptsV8.errors));const frame=canonical(raw);assert(frame);
+ assert.deepEqual(frame.demands[0].constraints,{area:{amount:80,unit:'sq_ft'},auto_renew:false,date:null,excluded:[],seats:0});
+ assert.deepEqual(frame.demands[1].constraints,{guests:2});assert.deepEqual(frame.demands[2].constraints,{});
+ assert.equal(frame.customer_correction,true);assert.deepEqual(frame.explicit_negations,['not paid']);
+ assert.deepEqual(Object.fromEntries(frame.customer_facts.map(x=>[x.key,x.value])),{auto_renew:false,revision_date:null,seats:0});
+});
+test('actual V7 missing intermediate parent remains a strict negative, never reinterpreted as V8',()=>{
+ const old=v7({demands:[demand({constraints:{room_size:{value:80,unit:'sq_ft'}}}),demand({source_type:'general'})]});
+ old.demands[0].constraints.containers=old.demands[0].constraints.containers.filter(n=>n.path[0]!=='room_size');
+ let diagnostic;assert.equal(decodeCommerceSemanticWire(old,(_,d)=>diagnostic=d),null);
+ assert.equal(diagnostic.stage,'parent');assert.equal(canonical(old),null);
+ const notV8={...old,context_encoding:'semantic_demands_v8'};
+ assert(!acceptsV8(notV8));assert.equal(canonical(notV8),null);
+});
+test('v8 conflicting ancestor, duplicate scalar, sparse array, unsafe key and invalid depth fail closed',()=>{
+ const good=v8({demands:[demand({constraints:{nested:{a:1,b:2},other:false}})]});assert(canonical(good));
+ const cases=[
+  x=>x.demands[0].constraints.numbers[0].path[1].parent_kind='array',
+  x=>x.demands[0].constraints.booleans.push({path:x.demands[0].constraints.numbers[0].path,boolean:false}),
+  x=>x.demands[0].constraints.numbers[0].path[0].parent_kind='array',
+  x=>x.demands[0].constraints.numbers[0].path[0].key='__proto__',
+  x=>x.demands[0].constraints.strings.push({path:[{key:'missing',parent_kind:'object'},{key:'4',parent_kind:'array'}],text:'gap'}),
+  x=>x.demands[0].constraints.containers.push({path:[],kind:'object'}),
+  x=>x.demands[0].constraints.numbers[0].path[1].parent_kind='not_a_kind',
+  x=>x.demands[0].constraints.numbers[0].path.push({key:'too',parent_kind:'object'},{key:'deep',parent_kind:'object'}),
+ ];
+ for(const modify of cases){const raw=structuredClone(good);modify(raw);assert.equal(canonical(raw),null);}
 });

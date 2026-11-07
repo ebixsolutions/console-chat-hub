@@ -775,7 +775,31 @@ export const COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA:Record<string,unknown>={
   booleans:semanticValueNodes("boolean",{type:"boolean"},1),
  }};
 orderSemanticTransport(COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA);
-export const COMMERCE_SEMANTIC_PROVIDER_SCHEMA = COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA;
+
+/** Active P0-1: the typed path carries the KIND of every containing parent.
+ * A nested number cannot be emitted without an explicitly typed ancestor.
+ * Historical V6/V7 malformed paths are never repaired by this adapter. */
+const semanticAncestorAnnotatedNodes=(field:string,value:Record<string,unknown>,depth:number)=>({
+  type:"array",items:{type:"object",properties:{
+    path:{type:"array",minItems:1,maxItems:depth,items:{type:"object",properties:{
+      key:{type:"string"},parent_kind:{type:"string",enum:["object","array"]},
+    }}},
+    [field]:value,
+  }},
+});
+const semanticAncestorCollections=(depth:number)=>({
+  containers:semanticAncestorAnnotatedNodes("kind",{type:"string",enum:["object","array","null"]},depth),
+  strings:semanticAncestorAnnotatedNodes("text",{type:"string"},depth),
+  numbers:semanticAncestorAnnotatedNodes("number",{type:"number"},depth),
+  booleans:semanticAncestorAnnotatedNodes("boolean",{type:"boolean"},depth),
+});
+export const COMMERCE_SEMANTIC_PROVIDER_V8_SCHEMA:Record<string,unknown>=structuredClone(COMMERCE_SEMANTIC_PROVIDER_V7_SCHEMA);
+const v8Properties=(COMMERCE_SEMANTIC_PROVIDER_V8_SCHEMA as Record<string,any>).properties;
+v8Properties.context_encoding.enum=["semantic_demands_v8"];
+Object.assign(v8Properties,semanticAncestorCollections(6));
+v8Properties.demands.items.properties.constraints={type:"object",properties:semanticAncestorCollections(DECISION_CONTEXT_LIMITS.depth)};
+orderSemanticTransport(COMMERCE_SEMANTIC_PROVIDER_V8_SCHEMA);
+export const COMMERCE_SEMANTIC_PROVIDER_SCHEMA = COMMERCE_SEMANTIC_PROVIDER_V8_SCHEMA;
 export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V4 =
   "Return context_encoding=semantic_values_v4, operation, confidence, containers, strings, numbers, booleans in schema order. " +
   "The four arrays represent one flat typed tree of this turn's optional semantic delta. containers contains {path,kind} for object/array/null; " +
@@ -853,6 +877,14 @@ export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V7 =
  "Do not invent an entity or a previous merchant recommendation. An unresolved dependent subject stays ambiguous but cannot suppress a separately answerable demand. " +
  "Do not copy historical state, drop clauses or facts for convenience, invent data, hallucinate a SKU, or encode nested JSON as a string. No extra/unrecognized fields, duplicate/conflicting paths, orphan parents or unsafe prototype keys. " +
  "Limit to 12 demands, 40 fields per context object, 12 array items, 96 scalar leaves, depth3, 80 characters per key and 300 normalized characters per context string. No provider retry; invalid output remains rejected by strict canonical validation.";
+
+export const COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V8 =
+  "Follow only the active response schema: context_encoding=semantic_demands_v8. Zero, one or multiple independent current-turn demands each own a REQUIRED constraints envelope with four REQUIRED typed arrays. Four [] mean explicitly empty constraints, but a missing envelope, collection or actual customer condition is NOT an empty default. " +
+  "Every typed node path is a NONEMPTY array of {key,parent_kind} objects. parent_kind identifies the actual object or array that contains that segment. The first segment always has parent_kind=object. For room_size.value=80, emit path=[{key:room_size,parent_kind:object},{key:value,parent_kind:object}] with number=80. This single path is sufficient evidence for every ancestor: separate parent-container nodes are optional, never required. Do not guess an unknown parent type. " +
+  "Use annotated paths in both outer four arrays (non-demand current-turn data) and in each demand's own four constraints arrays (relative to that demand). Never prefix local demand constraints with demands or indices; never put native demands or fixed native demand fields in outer arrays. " +
+  "For empty object/array explicitly include one container entry with kind object/array at its path. For null include kind null. String entries have only text, number entries only number and boolean entries only boolean. Keep actual zero, false, null, measurement units, nested attributes/constraints, exclusions, source quotes, latest correction and separate entities. " +
+  "Entries sharing an ancestor must agree about that ancestor's kind. No duplicate paths, conflicting types, sparse arrays, unsafe/prototype keys, cross-array index alignment, JSON-as-string, invented merchant facts, invented historical recommendations, dropped demand or missing customer conditions. " +
+  "Limits: 12 demands, 3 local context path segments, 6 outer segments, 40 fields per context object, 12 array items, 96 scalar leaves, 80 characters per key and 300 normalized characters per context string. If context truly cannot fit, report explicit ambiguity; do not silently discard information. Original strict canonical validation, Auth/Tenant/source, B2, CAS, and no model retry remain unchanged.";
 
 // Diagnostic labels come only from this fixed vocabulary, never from a model's
 // customer-authored keys, text, paths, enum values or Error.message.
@@ -1207,10 +1239,66 @@ function semanticDemandOwnedValuesWire(value:Record<string,unknown>):Record<stri
  }
  return semanticDemandValuesWire(out);
 }
+
+/** V8 preserves strict graph validation while ensuring the producer itself
+ * supplies each ancestor's type. No old V6/V7 malformed proposal is repaired. */
+function semanticDemandAnnotatedValuesWire(value:Record<string,unknown>):Record<string,unknown>{
+  const collections=["containers","strings","numbers","booleans"] as const;
+  let count=1;
+  const fail=(stage:SemanticWireStage,detail?:SemanticVocabularyDiagnostic):never=>{
+    throw new SemanticWireError({container:"wire_nodes",stage,node_count:Math.min(count,32769),...detail});
+  };
+  const shape=semanticSchemaMismatch(value,COMMERCE_SEMANTIC_PROVIDER_V8_SCHEMA,[],true);
+  if(shape)return fail(shape.reason==="range"?"canonical_range":"canonical_vocabulary",shape);
+  const flatten=(owner:Record<string,unknown>)=>{
+    type Node={path:string[];kind:string;value:unknown;explicit:boolean};
+    const nodes=new Map<string,Node>();
+    const put=(path:string[],kind:string,data:unknown,explicit:boolean)=>{
+      const key=JSON.stringify(path),prior=nodes.get(key);
+      if(prior){
+        if(prior.kind!==kind)return fail("parent");
+        if(explicit&&prior.explicit)return fail("duplicate_path");
+        if(explicit){prior.explicit=true;prior.value=data;}
+      }else nodes.set(key,{path,kind,value:data,explicit});
+      if(nodes.size>32768)return fail("envelope");
+    };
+    for(const collection of collections)for(const raw of owner[collection] as Record<string,unknown>[]){
+      const segments=raw.path as {key:string;parent_kind:"object"|"array"}[];
+      const path:string[]=[];
+      for(const [index,segment] of segments.entries()){
+        if(index===0){if(segment.parent_kind!=="object")return fail("parent");}
+        else put([...path],segment.parent_kind,undefined,false);
+        path.push(segment.key);
+      }
+      const kind=collection==="containers"?raw.kind as string
+        :collection==="strings"?"string":collection==="numbers"?"number":"boolean";
+      const data=kind==="string"?raw.text:kind==="number"?raw.number:kind==="boolean"?raw.boolean:undefined;
+      put(path,kind,data,true);
+      if(++count>32768)return fail("envelope");
+    }
+    const out:Record<string,unknown[]>={containers:[],strings:[],numbers:[],booleans:[]};
+    for(const node of nodes.values()){
+      const {path,kind,value:data}=node;
+      if(["object","array","null"].includes(kind))out.containers.push({path,kind});
+      else if(kind==="string")out.strings.push({path,text:data});
+      else if(kind==="number")out.numbers.push({path,number:data});
+      else out.booleans.push({path,boolean:data});
+    }
+    return out;
+  };
+  const outer=flatten(value);
+  const demands=(value.demands as Record<string,unknown>[]).map(demand=>{
+    const {constraints,...fixed}=demand;
+    return {...fixed,constraints:flatten(constraints as Record<string,unknown>)};
+  });
+  return semanticDemandOwnedValuesWire({...value,...outer,demands,context_encoding:"semantic_demands_v7"});
+}
+
 function semanticRecoveryWire(wire:unknown): unknown {
  if(!isRecord(wire))return wire;
  try{
-  if(wire.context_encoding==="semantic_demands_v7")return semanticDemandOwnedValuesWire(wire);
+  if(wire.context_encoding==="semantic_demands_v8")return semanticDemandAnnotatedValuesWire(wire);
+   if(wire.context_encoding==="semantic_demands_v7")return semanticDemandOwnedValuesWire(wire);
   if(wire.context_encoding==="semantic_demands_v6")return semanticDemandValuesWire(wire);
   return wire;
  }catch{return null;}
@@ -1292,7 +1380,8 @@ export function decodeCommerceSemanticWire(value: unknown, onReject?: RejectSema
   const reject = (reason: SemanticContractRejection, diagnostic?:SemanticContractDiagnostic): null => { onReject?.(reason,diagnostic); return null; };
   if (!isRecord(value)) return reject("wire_object");
   if (Object.hasOwn(value, "context_encoding")) {
-    try { value = value.context_encoding==="semantic_demands_v7" ? decodeProviderSemanticValues(semanticDemandOwnedValuesWire(value),true)
+    try { value = value.context_encoding==="semantic_demands_v8" ? decodeProviderSemanticValues(semanticDemandAnnotatedValuesWire(value),true)
+       : value.context_encoding==="semantic_demands_v7" ? decodeProviderSemanticValues(semanticDemandOwnedValuesWire(value),true)
       : value.context_encoding==="semantic_demands_v6" ? decodeProviderSemanticValues(semanticDemandValuesWire(value),true)
       : value.context_encoding==="semantic_values_v5" ? decodeProviderSemanticValues(value,true)
       : value.context_encoding==="semantic_values_v4" ? decodeProviderSemanticValues(value)
@@ -1758,7 +1847,7 @@ const SEMANTIC_INTERPRETER_SYSTEM = `You are a multilingual commerce semantic in
 Your job is ONLY to understand the customer's commerce meaning and return one JSON object following the supplied typed transport schema, which the server decodes into the canonical commerce semantic frame.
 Do not answer the customer. Do not invent product facts, prices, availability, policies, T&C, delivery rules or company facts.
 Do not assume an industry taxonomy. Interpret unfamiliar products/services compositionally from the customer's words and context.
-Wire contract: context_encoding=semantic_demands_v7. Follow the supplied typed transport schema and property order. Include only THIS turn's changed/referenced entities, newly asserted customer facts, questions and ambiguity. Required empty collections are transport defaults, not new customer evidence. Fixed demand fields are native typed JSON, each demand owns its REQUIRED constraints object with four local typed arrays; other fields use four outer path arrays. Strict canonical vocabulary still applies.
+Wire contract: context_encoding=semantic_demands_v8. Follow the supplied typed transport schema and property order. Include only THIS turn's changed/referenced entities, newly asserted customer facts, questions and ambiguity. Required empty collections are transport defaults, not new customer evidence. Fixed demand fields are native typed JSON, each demand owns its REQUIRED constraints object with four local typed arrays; each node path self-describes its ancestors' container kinds, and other fields use four outer annotated-path arrays. Strict canonical vocabulary still applies.
 Lifecycle scope: delaying a lookup, quotation search, comparison, or choice of model is not cancelling or deferring the product/service requirement. An undecided model is not a deferred item. Use CANCEL_ITEM/REMOVE_ITEM/DEFER only when the customer explicitly cancels/removes/pauses the item or purchase/service itself; preserve real item cancellation and deferral. A request for general guidance without external research keeps the stated need current and does not create a quote, order or payment state.
 Newly supplied or changed customer_facts require UPDATE_ITEM rather than NO_STATE_CHANGE; read-only recap must not re-emit unchanged facts.
 customer_facts contains at most 16 named keys for newly asserted CUSTOMER background/needs, not merchant evidence; attach each actual value with paths under customer_facts/index/value. Keep meaningful field names, quantities with units, false, zero, null/unknown, exclusions and nested constraints. Reuse the exact retained key from persistent current_customer_facts when correcting the same field; never emit an old value as a second current fact under a synonym. Never include a fact solely recalled from prior context. A background catalogue count/team/market/interface is a customer fact, not an item to buy or cancel. Control/handoff/recap instructions are not facts or entities.
@@ -1791,5 +1880,5 @@ Core rules:
 Output budget: 4096 tokens. Return compact JSON without prose, markdown or reasoning. Do not repeat the transcript or persistent state. Include only entities changed or referenced by THIS turn; never reproduce an entire historical portfolio. Keep intent/topic/reasons concise. Do not copy already retained attributes merely to acknowledge or recap them. Empty entities/referents/requested_facts arrays are valid for a customer-only acknowledgement or read-only recap; omitted customer facts are NOT deletion events. Preserve every newly supplied decision-relevant value, unit, correction and explicit negation. If this turn itself cannot fit completely, return NO_STATE_CHANGE with ambiguity.is_ambiguous=true and a concise context-limit reason; do not silently truncate or invent a KB-insufficient reason.
 Return JSON only.`;
 export const COMMERCE_SEMANTIC_SYSTEM_PROMPT = SEMANTIC_INTERPRETER_SYSTEM +
-  COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V7 +
+  COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V8 +
   "\nFor corrections to a requirement, cancel only the superseded field value, never the item: use UPDATE_ITEM with the new constraint values encoded in constraints and customer_correction=true. Output budget 4096 tokens; emit only current-turn facts/entities, never placeholder customer facts or copied state. Do not include reasoning.";

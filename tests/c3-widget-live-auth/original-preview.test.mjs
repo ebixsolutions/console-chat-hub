@@ -316,7 +316,7 @@ async function setupInbox(fault='none',documentFixture={},semanticFixture=null,o
  globalThis.fetch=async(url,init)=>{
   if(String(url)===x.endpoint){if(fault==='tool-failure')return new Response(null,{status:503});if(fault==='revoke-on-return')delete f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION;return await x.upstream(url,init);}
   assert.equal(String(url),f.url,'no unrelated provider or accounting endpoint');model++;const b=JSON.parse(init.body);modelRequests.push(b);const text=b.contents.map(c=>c.parts.map(p=>p.text??'').join('')).join('');prompts.push(text);
-  if(b.generationConfig?.responseSchema?.properties?.context_encoding?.enum?.includes('semantic_demands_v7')){
+  if(b.generationConfig?.responseSchema?.properties?.context_encoding?.enum?.includes('semantic_demands_v8')){
    modelKinds.semantic++;assert(semanticFixture,'unexpected semantic dispatch without a source-bound fixture');
    return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(semanticFixture)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:120}});
   }
@@ -404,9 +404,28 @@ function providerWireV7(delta){
   demands,...Object.fromEntries(keys.map(k=>[k,old[k].filter(n=>n.path[0]!=='demands')]))};
 }
 
+
+/** Only the isolated model fixture is upgraded; the original Inbox caller and
+ * production safety/control paths remain unchanged. */
+function providerWireV8(delta){
+  const old=providerWireV7(delta),collections=['containers','strings','numbers','booleans'];
+  const annotate=owner=>{
+    const parents=new Map(owner.containers.map(n=>[JSON.stringify(n.path),n.kind]));
+    return Object.fromEntries(collections.map(k=>[k,owner[k].map(node=>({
+      ...node,path:node.path.map((key,index)=>{
+        const parent_kind=index===0?'object':parents.get(JSON.stringify(node.path.slice(0,index)));
+        assert(['object','array'].includes(parent_kind),'test fixture lacks required parent');
+        return {key,parent_kind};
+      }),
+    }))]));
+  };
+  return {...old,context_encoding:'semantic_demands_v8',...annotate(old),
+    demands:old.demands.map(({constraints,...fixed})=>({...fixed,constraints:annotate(constraints)}))};
+}
+
 for(const [facet,content,tool] of [['price','幾錢？','suggest_reply'],['stock','有冇貨？','knowledge_helper']]) {
  for(const mode of ['conversation','manual'])test(`actual agent-assist ${mode} ${facet}: ${mode==='conversation'?'one fresh subject-bound query':'no inherited subject or paid dispatch'}`,async()=>{
-  const semantic=providerWireV7({language:'zh-HK',intent:'merchant_facts',requested_facts:[facet],
+  const semantic=providerWireV8({language:'zh-HK',intent:'merchant_facts',requested_facts:[facet],
    referents:[{ref:'ITEM-Q9',source:'prior_turn',confidence:.98}],
    demands:[{question:`ITEM-Q9 ${content}`,source_quote:content,subject_refs:['ITEM-Q9'],source_type:'product',requested_facts:[facet],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]});
   const x=await setupInbox('none',inboxProductFixture,semantic);
@@ -451,7 +470,7 @@ for(const [facet,content,tool] of [['price','幾錢？','suggest_reply'],['stock
 }
 for(const tool of ['knowledge_helper','suggest_reply'])for(const stale of [true,false])test(`Task3 topic-switch v5 Inbox ${tool}: ${stale?'confident older proposal':'correct newer proposal'}`,async()=>{
  const older='AX-QZ81',newer='Harbor field pack',question='How much?',proposed=stale?older:newer;
- const semantic=providerWireV7({language:'en',intent:'merchant_facts',topic:proposed,requested_facts:['price'],
+ const semantic=providerWireV8({language:'en',intent:'merchant_facts',topic:proposed,requested_facts:['price'],
   referents:[{ref:proposed,source:'prior_turn',confidence:.98}],
   demands:[{question:proposed+' price?',source_quote:question,subject_refs:[proposed],source_type:'product',requested_facts:['price'],
    constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]});
@@ -499,7 +518,7 @@ for(const tool of ['knowledge_helper','suggest_reply'])for(const stale of [true,
 
 async function task2AssistFixture(fault='none'){
  const first='訂購後一般幾時送貨？',second='偏遠地區有咩例外？',question=first+second;
- const semantic=providerWireV7({language:'zh-HK',intent:'merchant_facts',requested_facts:['delivery_period','delivery_exceptions'],
+ const semantic=providerWireV8({language:'zh-HK',intent:'merchant_facts',requested_facts:['delivery_period','delivery_exceptions'],
   demands:[first,second].map((quote,index)=>({question:quote,source_quote:quote,subject_refs:[],source_type:'policy',requested_facts:[index?'delivery_exceptions':'delivery_period'],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}))});
  const documents=['一般訂單付款後三至五個工作天送貨。','偏遠地區需另外預約送貨時間，不適用一般時段。'].map((content,index)=>({
   document_id:'task2-assist-policy-'+index,version_id:'task2-assist-version-'+index,title:'送貨政策',source_type:'policy',document_score:.99,
@@ -547,7 +566,7 @@ for(const fault of ['omitted-demand','partial-inconsistent','oversized-draft','s
 
 async function sourceFieldAssistFixture(stage='local_grounding',documentFixture=inboxProductFixture){
  const quotes=['ITEM-Q9 price?','Is ITEM-Q9 in stock?'],question=quotes.join(' ');
- const semantic=providerWireV7({language:'en',intent:'merchant_facts',topic:'ITEM-Q9',requested_facts:['price','availability'],
+ const semantic=providerWireV8({language:'en',intent:'merchant_facts',topic:'ITEM-Q9',requested_facts:['price','availability'],
   demands:quotes.map((quote,index)=>({question:quote,source_quote:quote,subject_refs:['ITEM-Q9'],source_type:'product',
    requested_facts:[index?'availability':'price'],constraints:{},customer_correction:false,explicit_negations:[],
    ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}))});
@@ -627,7 +646,7 @@ for(const tool of ['knowledge_helper','policy'])test('Task3 Inbox source-field r
 });
 
 for(const fault of ['none','default-denied','opt-in-false','assist-disabled','policy-authority','arbitrary-evaluation','wrong-slot','wrong-schema','missing-schema','wrong-system','wrong-purpose','attempt-two','oversized-output','prepare-hook','missing-source','wrong-source','foreign-source','recalled-source','assistant-source','source-time-drift','source-content-changed','replay','new-operation-replay','grant-revoked','grant-revoked-during-source-read','membership-revoked-during-source-read'])test('Inbox semantic context has separate opt-in and never grants answer grounding: '+fault,async()=>{
- const x=await setupInbox('none',{},providerWireV7({demands:[]}));
+ const x=await setupInbox('none',{},providerWireV8({demands:[]}));
  const grant=JSON.parse(f.env.AUTHENTICATED_INBOX_KB_AUTHORIZATION);
  if(fault==='default-denied')delete grant.bindings[0].allow_semantic_context;
  if(fault==='opt-in-false')grant.bindings[0].allow_semantic_context=false;

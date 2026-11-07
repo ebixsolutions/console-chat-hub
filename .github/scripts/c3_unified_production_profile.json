@@ -1538,6 +1538,15 @@
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "bf3ad5c2a8cd627bbd7f44081e4500196830dd3937ca834fd92751fdf3cded6c"
   }
 ,
+  "task3c_p01_v8_production_authorized": false,
+  "authorized_task3c_p01_v8_sha256": {
+    "supabase/functions/_shared/commerce-semantic-frame.ts": "a81492bb08f2feec17918bc98b245d7f4cb4ec9ae015c0d77cae0c2f0072ee80",
+    "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "6e3e4e89ba0e89a2011d7262f9e59053ee46136b01d5a8e14e7af4235f662590",
+    "tests/c3-widget-live-auth/original-preview.test.mjs": "09c5bb379d06b708048ddced950b74177fe699ff7097a9ced64483edec538ec5",
+    "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "a764ae1384288498ac27b6f397687b92328e7cfd394943f51d627854fe9d954f",
+    "tests/emergency-p0/chain.test.mjs": "6bc2d60756f0279f4f57e30cd18e0de9312937e7b9511d170f5f1ab0fff03550",
+    "supabase/functions/_shared/f13-runtime-recovery.test.ts": "bed0bbe205fdf9530907158e44f026cd0dc2732813fda43d70fe6f70ce3d879f"
+  },
   "task3c_p01_v7_production_authorized": false,
   "authorized_task3c_p01_v7_sha256": {
     "supabase/functions/_shared/commerce-semantic-frame.ts": "8a0ae57358075722610db07b02acb4699cf097d73018ca3e1a3db84036b4434d",

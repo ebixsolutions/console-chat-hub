@@ -70,7 +70,7 @@ Deno.test('compact semantic transport uses bounded complete-delta budget, curren
   let calls=0;
   globalThis.fetch=withMockAccounting(async(_url,init)=>{
    calls++;const request=JSON.parse(String(init?.body));assert(request.max_tokens===4096,'budget changed');
-   assert(request.system.includes('Wire contract: context_encoding=semantic_demands_v7.'),'active semantic wire changed');
+   assert(request.system.includes('Wire contract: context_encoding=semantic_demands_v8.'),'active semantic wire changed');
    assert(request.system.includes("Include only THIS turn's changed/referenced entities"),'current-turn delta boundary lost');
    assert(request.system.includes('Required empty collections are transport defaults, not new customer evidence.'),'neutral defaults became customer evidence');
    assert(request.system.includes('Do not repeat complete history/state, unchanged entities or resolved fields.'),'full snapshot still required');
