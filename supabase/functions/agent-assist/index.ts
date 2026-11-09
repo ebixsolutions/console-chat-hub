@@ -1197,6 +1197,10 @@ Deno.serve(async (req) => {
         );
       }
       const checked=await verifyAssistClaims(verificationRequest,boundEvidence ? JSON.stringify({suggestions:safe}) : safe.map(s=>s.content).join("\n"),evidence,{companyId:scope.companyId,conversationId,toolType:"suggest_reply",legacyAuthority:inboxAuthority,maxProviderAttempts:boundedModelAttempts},false,boundEvidence);
+      if(assistFactualRequest?.source_message_id) await writeProtectedPipelineEvidence(supabaseAdmin,
+        {company_id:scope.companyId,conversation_id:conversationId,source_message_id:assistFactualRequest.source_message_id},
+        "assist_grounding_verdict",{candidate:safe,verdict:checked,request:assistFactualRequest,
+          selected:boundEvidence?.items.map(({content,...item})=>item)??[],coverage:boundEvidence?.demands??[]});
       if(!checked.ok){
         // Discard every rejected draft. The shared resolver may independently
         // retain exact source-recorded fields; it cannot certify current price,
