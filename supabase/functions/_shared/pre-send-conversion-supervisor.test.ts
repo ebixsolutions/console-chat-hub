@@ -1691,3 +1691,18 @@ Deno.test("B2 absent defaults do not forbid first collection and superseded fiel
   const result=decision("Please confirm RX-100?",state);
   assert(!result.context_request?.target,"deferred entity not a current repair fact");
 });
+
+Deno.test("B2 declared committed planner progress cannot fall through without its private receipt",async()=>{
+  const metadata={response_route:"product_guidance",commerce_reason:"CUSTOMER_JOURNEY_REQUEST_HIGHEST_VALUE_MISSING_INFORMATION",
+    commerce_authority:"CONVERSATION_STATE",commerce_state_persistence_classification:"COMMITTED",commerce_state_revision:7};
+  let commits=0;
+  const result=await executeB2PersistenceGate({client:new MockClient(),conversation_id:CONVERSATION_ID,source_message_id:SOURCE_ID,
+    proposed_response:"Please provide the previously unmentioned window area.",persistence_kind:"ai_reply",metadata,
+    commit:async()=>{commits++;return "forbidden";}});
+  assertEquals(result.decision.decision,"block","missing planner receipt blocks independently of lexical known fields");
+  assertEquals(result.decision.reason,"DECLARED_JOURNEY_RECEIPT_UNVERIFIED","earliest failed dependency");
+  assertEquals(commits,0,"missing receipt cannot commit");
+  assert(!result.decision.detail&&!result.decision.context_request?.target,"no fabricated repair field");
+  assert(result.snapshot,"snapshot retained");
+  assertEquals(b2KnownContextRepair(result.decision,result.snapshot),null,"missing authorization cannot trigger a draft repair");
+});

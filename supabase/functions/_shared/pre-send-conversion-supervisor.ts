@@ -45,6 +45,8 @@ export interface B2Decision {
   decision: B2DecisionKind;
   code: string;
   detail?: string;
+  /** Private machine reason; never interpreted as a field for regeneration. */
+  reason?: string;
   /** Private evaluator receipt, never derived from response_route or model labels. */
   context_request?: B2ContextRequestReceipt;
 }
@@ -1555,6 +1557,15 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     evaluateCancellation(draft, state) ??
     (kbPriceDecision || trustedCustomerCalculation ? null : evaluateQuoteReality(draft, state, input)) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
+    // A declared, committed planner transition requires its original private
+    // receipt independently of lexical matches. Metadata cannot grant authority;
+    // absence of the receipt must not silently become an ordinary allow.
+    (input.metadata?.commerce_authority === "CONVERSATION_STATE" &&
+      input.metadata?.commerce_state_persistence_classification === "COMMITTED" &&
+      (clean(input.metadata?.commerce_reason).startsWith("CUSTOMER_JOURNEY_") ||
+        input.metadata?.response_route === "contextual_scoped_update" && input.metadata?.commerce_reason === "UNIQUE_COMPATIBLE_CONTEXT") &&
+      !trustedJourneyProgress
+      ? {decision:"block" as const,code:"KNOWN_CONTEXT_RECONFIRMATION",reason:"DECLARED_JOURNEY_RECEIPT_UNVERIFIED"} : null) ??
     (input.trusted_journey_progress && !trustedJourneyProgress && customerInformationRequests(draft).length > 0 ? {decision:"block" as const,code:"UNPROVEN_JOURNEY_PROGRESS"} : null) ??
     (input.trusted_targeted_clarification && !trustedTargetedClarification ? {decision:"block" as const,code:"UNPROVEN_TARGETED_CLARIFICATION"} : null) ??
     (input.metadata?.commerce_reason === "contextual_targeted_clarification" && !input.trusted_targeted_clarification
