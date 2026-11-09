@@ -703,6 +703,7 @@ test('semantic success captures exact private router input and model text separa
   const result=await interpretCommerceSemantics(diagnosticInput());assert.equal(calls,1);
   assert.equal(result.failure_code,null);assert(result.frame);assert(!Object.hasOwn(result,'failure_evidence'));
   assert.equal(result.success_evidence.contract,'c3-semantic-success-evidence-v1');
+  assert.deepEqual(result.success_evidence.original_contract,{verdict:'ACCEPTED',rejection:null,diagnostic:null});
   assertDiagnosticReceipt(result.success_evidence.response,raw,'SEMANTIC_MODEL_TEXT','CAPTURED');
  }finally{previous===undefined?delete globalThis.__semanticTransportModel:globalThis.__semanticTransportModel=previous;}
 });
@@ -905,4 +906,20 @@ test('captured V7 34bbc7a0 model text retains its exact hash and parent failure 
   assert.equal(canonical(raw),null);
   const relabelled={...raw,context_encoding:'semantic_demands_v8'};
   assert(!acceptsV8(relabelled));assert.equal(canonical(relabelled),null);
+});
+
+test('accepted source recovery preserves original wire rejection instead of claiming decoder PASS',async()=>{
+ const {interpretCommerceSemantics}=await diagnosticInterpreter();
+ const latest='有冇啲適合小團隊嘅訂閱方案可以睇？';
+ const raw=JSON.stringify(v6({entities:[{name:'PRIVATE-UNBOUND',kind:'subscription',confidence:'0.95'}],
+  demands:[demand({question:latest,source_quote:latest,subject_refs:[],requested_facts:['published options'],constraints:{}})]}));
+ const previous=globalThis.__semanticTransportModel;
+ globalThis.__semanticTransportModel=async()=>({ok:true,request_id:'isolated-recovery',text:raw});
+ try{
+  const result=await interpretCommerceSemantics(diagnosticInput(latest));
+  assert(result.frame);assert.equal(result.failure_code,null);
+  assert.equal(result.success_evidence.original_contract.verdict,'REJECTED_RECOVERED');
+  assert.equal(result.success_evidence.original_contract.rejection,'wire_context_nodes');
+  assert.equal(result.success_evidence.original_contract.diagnostic.field_class,'entity_confidence');
+ }finally{previous===undefined?delete globalThis.__semanticTransportModel:globalThis.__semanticTransportModel=previous;}
 });

@@ -133,7 +133,8 @@ export async function prepareSemanticRequest(
     signal: input.signal,
   });
   if (semantic.success_evidence) await writeProtectedPipelineEvidence(client, input, "semantic_accepted", {
-    semantic:semantic.success_evidence,accepted_frame:semantic.frame,decoder:"ACCEPTED",canonical:"ACCEPTED",
+    semantic:semantic.success_evidence,accepted_frame:semantic.frame,original_contract:semantic.success_evidence.original_contract,
+    consumer_result:"FRAME_ACCEPTED",
     input_state:{commerce:commerce ? {revision:commerceRow.revision,source_message_id:commerceRow.source_message_id}:null,
       memory:memory ? {revision:memoryRow.revision,source_message_id:memoryRow.source_message_id}:null}});
   // Raw capture is private and must never escape through a caller result.

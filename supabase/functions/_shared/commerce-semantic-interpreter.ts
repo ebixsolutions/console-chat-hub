@@ -159,7 +159,7 @@ export interface CommerceSemanticInterpretResult {
   /** Sensitive in-process evidence: only the existing Admin/Tenant trace writer
    * may persist it. Never spread this result into a public response or metadata. */
   failure_evidence?: SemanticFailureEvidence;
-  success_evidence?: Omit<SemanticFailureEvidence,"contract"> & {contract:"c3-semantic-success-evidence-v1"};
+  success_evidence?: Omit<SemanticFailureEvidence,"contract"> & {contract:"c3-semantic-success-evidence-v1"; original_contract:{verdict:"ACCEPTED"|"REJECTED_RECOVERED";rejection:SemanticContractRejection|null;diagnostic:SemanticContractDiagnostic|null}};
   input_receipt?: {
     source_message_id: string;
     recent_source_message_ids: (string | null)[];
@@ -577,7 +577,7 @@ export async function interpretCommerceSemantics(
         original_stage:"canonical_validation",demand_count:readOnly.demands?.length ?? 0,
         state_mutation:false,additional_model_attempts:0,
       }));
-      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1"},input_receipt,frame:readOnly,source:"semantic_model",failure_code:null,request_id:result.request_id};
+      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1",original_contract:{verdict:frame?"ACCEPTED":"REJECTED_RECOVERED",rejection:contractRejection??null,diagnostic:contractDiagnostic??null}},input_receipt,frame:readOnly,source:"semantic_model",failure_code:null,request_id:result.request_id};
     }
     // Never coerce the malformed entity or accept its business state. A
     // source-verifiable first-turn option request may read KB using only the
@@ -597,7 +597,7 @@ export async function interpretCommerceSemantics(
         state_mutation:false,additional_model_attempts:0,
         merchant_evidence_granted:false,
       }));
-      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1"},input_receipt,frame:sourceOptionRecovery,source:"semantic_model",
+      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1",original_contract:{verdict:frame?"ACCEPTED":"REJECTED_RECOVERED",rejection:contractRejection??null,diagnostic:contractDiagnostic??null}},input_receipt,frame:sourceOptionRecovery,source:"semantic_model",
         failure_code:null,request_id:result.request_id};
     }
     const recoveredOptions = contractRejection === "wire_context_nodes"
@@ -610,7 +610,7 @@ export async function interpretCommerceSemantics(
         source_quote_bound:true,demand_count:1,
         state_mutation:false,additional_model_attempts:0,merchant_evidence_granted:false,
       }));
-      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1"},input_receipt,frame:recoveredOptions,source:"semantic_model",failure_code:null,request_id:result.request_id};
+      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1",original_contract:{verdict:frame?"ACCEPTED":"REJECTED_RECOVERED",rejection:contractRejection??null,diagnostic:contractDiagnostic??null}},input_receipt,frame:recoveredOptions,source:"semantic_model",failure_code:null,request_id:result.request_id};
     }
     return {
       input_receipt,frame: null,
@@ -633,7 +633,7 @@ export async function interpretCommerceSemantics(
         source_message_id:input.source_message_id,request_id:result.request_id,
         original_stage:"semantic_source_binding",demand_count:1,
         state_mutation:false,extra_model_attempts:0}));
-      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1"},input_receipt,frame:rebound,source:"semantic_model",failure_code:null,request_id:result.request_id};
+      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1",original_contract:{verdict:frame?"ACCEPTED":"REJECTED_RECOVERED",rejection:contractRejection??null,diagnostic:contractDiagnostic??null}},input_receipt,frame:rebound,source:"semantic_model",failure_code:null,request_id:result.request_id};
     }
     return {
       input_receipt,frame:null,source:"none",failure_code:"LLM_INVALID_OUTPUT",failure_stage:"semantic_source_binding",
@@ -659,5 +659,5 @@ export async function interpretCommerceSemantics(
       request_id: result.request_id,
     };
   }
-  return { success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1"},input_receipt,frame,source:"semantic_model",failure_code:null,request_id:result.request_id };
+  return { success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1",original_contract:{verdict:frame?"ACCEPTED":"REJECTED_RECOVERED",rejection:contractRejection??null,diagnostic:contractDiagnostic??null}},input_receipt,frame,source:"semantic_model",failure_code:null,request_id:result.request_id };
 }
