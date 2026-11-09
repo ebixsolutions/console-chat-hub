@@ -220,6 +220,7 @@ import {
   buildB2TrustedCustomerCalculation,
   classifyCommerceStatePersistenceResult,
   collectKnownCommerceFacts,
+  b2KnownContextRepair,
   executeB2PersistenceGate,
   stripUnverifiedCurrentQuoteClauses,
 } from "../_shared/pre-send-conversion-supervisor.ts";
@@ -696,7 +697,8 @@ async function executeB2RpcPersistence<T>(
     company_id:result.snapshot.company_id,conversation_id:input.conversation_id,source_message_id:input.source_message_id,
   },"b2_verdict",{candidate:input.proposed_response,decision:result.decision,
     state_revision:result.snapshot.commerce_state_revision,committed:result.committed,
-    matched_path:result.decision.detail??null,matched_span:"NOT_CAPTURED"});
+    matched_path:result.decision.detail??null,matched_span:result.decision.context_request?.request_text??"NOT_CAPTURED",
+    context_request:result.decision.context_request??null,state_source_message_id:result.snapshot.commerce_state_source_message_id});
   return result;
 }
 
@@ -808,9 +810,8 @@ async function commitAiReplyWithControlGate(
       b2_code: b2.decision.code,
       ...(b2.decision.code === "KNOWN_CONTEXT_RECONFIRMATION" && b2.snapshot
         ? (() => {
-          const fact = collectKnownCommerceFacts(b2.snapshot.state).find(f => f.path === b2.decision.detail);
-          return fact ? {known_context_repair: {company_id:b2.snapshot.company_id,
-            revision:b2.snapshot.commerce_state_revision,field:fact.path,value:fact.value}} : {};
+          const repair = b2KnownContextRepair(b2.decision,b2.snapshot);
+          return repair ? {known_context_repair:repair} : {};
         })() : {}),
     };
   }

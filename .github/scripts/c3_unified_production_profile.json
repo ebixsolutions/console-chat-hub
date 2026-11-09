@@ -1544,7 +1544,7 @@
     "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "8888445cd689d6b76bae1a35b7720f4922b514e0bbc59c84d9f54a9b5ba5e09a",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "09c5bb379d06b708048ddced950b74177fe699ff7097a9ced64483edec538ec5",
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "a764ae1384288498ac27b6f397687b92328e7cfd394943f51d627854fe9d954f",
-    "tests/emergency-p0/chain.test.mjs": "8768684cd9fb352edc0e85482fecb28ff21ffcde8d9016e7f785fe7b7138dea9",
+    "tests/emergency-p0/chain.test.mjs": "5afda8d27d897081c9d714909e5892fdcf24a90fee05d1f31eca70e6441a8018",
     "supabase/functions/_shared/f13-runtime-recovery.test.ts": "bed0bbe205fdf9530907158e44f026cd0dc2732813fda43d70fe6f70ce3d879f",
     "supabase/functions/_shared/vertex-generation-config.ts": "5e691ab14d0b80af7f07c79da1810eabcfdde4fc00f03bfe4a101b177a86a2d1",
     "supabase/functions/_shared/commerce-state-authority.ts": "f58a50eb9c24c210e1fea267da131e831dc227583b47a2461d3ad7b05b2f45dc",
@@ -1553,7 +1553,7 @@
     "supabase/functions/_shared/conversation-long-memory.ts": "d022fecf99f7ef4e21574872a8cda16ef528661d3f801ec379c5ccde78ad87a1",
     "supabase/functions/_shared/conversation-recall.ts": "2dc7fb8d36cd30aa0b0c1d6fe4df51a41be9a7627accd683d784609f483cf986",
     "supabase/functions/_shared/conversation-runtime-state-core.ts": "5a659dc650a5428e02db7b3865e6fc458032051d3d71c1a73dcf471f2cb02653",
-    "supabase/functions/generate-reply/index.ts": "d577b7a63a55dd9a7041afbaae6dad1cf53b04347a9df78871525043b4c8771b",
+    "supabase/functions/generate-reply/index.ts": "fd4da68c82c1d4f2b0d049c7249653d04f9a9965220f91bfaefd5995da6eb7df",
     "supabase/functions/_shared/t12-round2-production-shaped.test.ts": "1cb54cc0b9627ce36a69ce9c3a9f01befdf68e74fbc507a15d57fe8356fe2666",
     "tests/emergency-p0/provider-request.test.ts": "db1be5e9ffdf26481953f05e9db1697ea9dccb694f73d44d02f8979400b03d5d",
     "tests/section15/compound-dialogue-state.test.ts": "cca2daba68793d8d1bf429f89cd79dd2dbd8d0aca231104df049967a5e4d8d18",
@@ -1571,8 +1571,8 @@
     "src/routes/_authenticated/console.settings.llm-runtime.tsx": "4f530a843cea897988225b562e2a8300e907e75450cc286122aeffa560149f10",
     "tests/console-navigation/admin-evidence-log.test.mjs": "ce3018bc0cecc00b574ce129b4b887b524777de3c2ed24ea723950c127d2fc8a",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "468a6a95b768a1affdeba1c1af8560e123bd360e132ca8e44da4989988f1c3d5",
-    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "e783c10fde8a173af4ca58de1d9b2b5ee88a7a9ca92466022f59d648607ed191",
-    "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "6dd102b54fa30ece229230531b98c1cb318b3c3c33655618b253326d5f3a2439"
+    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "5d178ca5b9fe378816018cbf3bc797ef1ff39ead17eb6ea1936822c4acefeb99",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "54787e334fb4431795e3480e40eade8abf22fcc4921ce3ccf64b520e45adab02"
   },
   "task3c_p01_v7_production_authorized": false,
   "authorized_task3c_p01_v7_sha256": {

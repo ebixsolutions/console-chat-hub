@@ -755,9 +755,22 @@ for(const variant of ['valid-repair','still-invalid','merchant-claim','human-con
  const text='我想選洗衣機，請解釋選機時應該考慮的取捨，暫時不用查型號。';
  const invalid='What product type do you need?';
  const answer='可先比較每次衣量、夜間使用時段和現場空間的取捨，並量度門位及喉管空間。具體型號的容量、噪音和適用性仍需核實。';
- const f=fixture(text,{fullChain:true,originalPreview:variant!=='ordinary',humanAfterFirstDraft:variant==='human-control',newSourceAfterFirstDraft:variant==='superseded-source',answers:[invalid,variant==='still-invalid'?invalid:variant==='merchant-claim'?'訂單已確認。':answer],semantic:wireDelta({intent:'customer_guidance',entities:[{name:'洗衣機',kind:'physical_product',confidence:0.97}],requested_facts:[]},'ADD_ITEM')});
+ const f=fixture(text,{fullChain:true,captureEvidence:true,originalPreview:variant!=='ordinary',humanAfterFirstDraft:variant==='human-control',newSourceAfterFirstDraft:variant==='superseded-source',answers:[invalid,variant==='still-invalid'?invalid:variant==='merchant-claim'?'訂單已確認。':answer],semantic:wireDelta({intent:'customer_guidance',entities:[{name:'洗衣機',kind:'physical_product',confidence:0.97}],requested_facts:[]},'ADD_ITEM')});
  const r=await f.run();const modelCalls=f.requests.filter(x=>x.url.endsWith(':generateContent'));
  const repairCalls=modelCalls.filter(x=>x.body.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered'));
+ const b2Captured=f.tables.rag_trace.filter(r=>r.kb_source==='protected_pipeline_diagnostic'&&r.retrieved_chunks.stage==='b2_verdict')
+   .map(r=>JSON.parse(r.retrieved_chunks.payload.body));
+ const rejected=b2Captured.find(r=>r.candidate===invalid);
+ assert(rejected,'protected rejected draft receipt');
+ assert.equal(rejected.committed,false);
+ assert.equal(rejected.context_request.target.field,'entities.0.category');
+ assert.equal(rejected.context_request.target.authority,'CUSTOMER');
+ assert.equal(rejected.context_request.source_message_id,source);
+ assert.equal(rejected.context_request.revision,rejected.state_revision);
+ assert.equal(rejected.context_request.state_source_message_id,source);
+ assert.equal(rejected.matched_path,'entities.0.category');
+ assert(!JSON.stringify(rejected.context_request.target).includes('confirmed'),'no status alias in feedback');
+
  assert.equal(repairCalls.length,['valid-repair','still-invalid','merchant-claim'].includes(variant)?1:0,JSON.stringify({r,events:f.events}));
  assert(!f.commits.some(x=>x.content===invalid),'B2-rejected first or second draft must never persist');
  if(variant==='valid-repair'){

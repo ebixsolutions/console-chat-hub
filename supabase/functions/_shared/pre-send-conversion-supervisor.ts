@@ -9,6 +9,7 @@
 
 import {
   type CommerceEntity,
+  type CommerceProvenance,
   type CommerceQuote,
   type ConversationCommerceState,
   createEmptyConversationCommerceState,
@@ -44,6 +45,20 @@ export interface B2Decision {
   decision: B2DecisionKind;
   code: string;
   detail?: string;
+  /** Private evaluator receipt, never derived from response_route or model labels. */
+  context_request?: B2ContextRequestReceipt;
+}
+export interface B2ContextRequestReceipt {
+  contract: "b2-context-request-v1";
+  binding: "QUALIFIED" | "UNVERIFIED" | "AMBIGUOUS";
+  request_text: string;
+  company_id: string;
+  conversation_id: string;
+  source_message_id: string;
+  state_source_message_id: string | null;
+  revision: number;
+  target?: { field: string; entity_id: string | null; value: string;
+    authority: KnownFact["authority"]; provenance: CommerceProvenance | null };
 }
 export type B2AuthoritativePersistenceClassification =
   | "COMMITTED"
@@ -386,7 +401,7 @@ function aliasesForKey(key: string): string[] {
     ],
     preferred_date: ["delivery date", "date", "送貨日期", "送货日期", "日期"],
     preferred_window: ["delivery time", "time slot", "送貨時間", "送货时间", "時段", "时段"],
-    confirmed: ["confirmed", "confirmation", "確認", "确认"],
+    confirmed: ["delivery confirmation", "delivery confirmation status", "送貨確認狀態", "送货确认状态"],
     quantity: ["quantity", "how many", "數量", "数量", "幾多", "几多"],
     brand: ["brand", "品牌"],
     category: ["category", "product type", "產品類型", "产品类型", "產品種類", "产品种类"],
@@ -422,7 +437,13 @@ function aliasesForKey(key: string): string[] {
 interface KnownFact {
   path: string;
   value: string;
+  /** Field labels and literal values are deliberately separate namespaces. */
   aliases: string[];
+  field_aliases: string[];
+  authority: "CUSTOMER" | "BACKEND" | "STAFF" | "DERIVED" | "DEFAULT" | "UNVERIFIED";
+  provenance: CommerceProvenance | null;
+  entity_id: string | null;
+  current: boolean;
 }
 
 function addFact(facts: KnownFact[], path: string, value: unknown): void {
@@ -431,7 +452,9 @@ function addFact(facts: KnownFact[], path: string, value: unknown): void {
   facts.push({
     path,
     value: rendered,
-    aliases: [...new Set([...aliasesForKey(path), ...aliasesForKey(rendered)])],
+    aliases: [...new Set([...aliasesForKey(path), lower(rendered)])],
+    field_aliases: aliasesForKey(path),
+    authority: "UNVERIFIED", provenance: null, entity_id: null, current: true,
   });
 }
 
@@ -493,6 +516,37 @@ export function collectKnownCommerceFacts(state: ConversationCommerceState): Kno
   addFact(facts, "conversion.quotation_status", state.conversion.quotation_status);
   addFact(facts, "conversion.order_status", state.conversion.order_status);
   addFact(facts, "conversion.payment_status", state.conversion.payment_status);
+  for (const fact of facts) {
+    const segments = fact.path.split(".");
+    let cursor: unknown = state;
+    let provenance: CommerceProvenance | null = null;
+    for (const segment of segments) {
+      if (isRecord(cursor) && isRecord(cursor.provenance)) provenance = cursor.provenance as unknown as CommerceProvenance;
+      cursor = cursor && typeof cursor === "object" ? (cursor as Record<string, unknown>)[segment] : undefined;
+    }
+    // Provenance is metadata, never itself a customer fact/target.
+    if (segments.includes("provenance")) { fact.current = false; continue; }
+    const entity = segments[0] === "entities" ? state.entities[Number(segments[1])] : undefined;
+    const quote = segments[0] === "quotes" ? state.quotes[Number(segments[1])] : undefined;
+    const item = segments[0] === "installation" && segments[1] === "items" ? state.installation.items[Number(segments[2])] : undefined;
+    fact.entity_id = entity?.entity_id ?? quote?.entity_id ?? item?.entity_id ?? null;
+    fact.current = !(entity && ["cancelled", "deferred"].includes(entity.status)) &&
+      !(quote && quote.validity_status !== "current") && !(item && item.status === "cancelled") &&
+      !/\.attributes\.customer_goal\.missing\.\d+$/.test(fact.path);
+    fact.provenance = provenance;
+    let defaultValue: unknown = createEmptyConversationCommerceState();
+    for (const segment of segments) defaultValue = defaultValue && typeof defaultValue === "object"
+      ? (defaultValue as Record<string,unknown>)[segment] : undefined;
+    fact.authority = !provenance && scalarText(defaultValue)===fact.value ? "DEFAULT" : provenance?.source_type === "derived" ? "DERIVED"
+      : provenance?.source_type === "customer" && clean(provenance.source_message_id) ? "CUSTOMER"
+      : provenance?.source_type === "human_agent" && clean(provenance.source_message_id) ? "STAFF"
+      : provenance && ["tool", "system", "kb"].includes(provenance.source_type) && clean(provenance.source_reference) ? "BACKEND"
+      : "UNVERIFIED";
+    // Wrappers retain the semantic field name, not generic `value`/array indices.
+    const semantic = segments.filter(x => !/^\d+$/.test(x) && x !== "value").at(-1) ?? fact.path;
+    fact.field_aliases = aliasesForKey(semantic);
+    fact.aliases = [...new Set([...fact.field_aliases, lower(fact.value)])];
+  }
   return facts;
 }
 
@@ -913,53 +967,106 @@ function evaluateTransactionReality(
   return null;
 }
 
-// An embedded whether-clause in a negative knowledge assertion is not a
-// request to repeat customer facts. Remove only that bounded assertion from
-// the question's scope, retaining subsequent request clauses and their aliases.
-// A question mark or request cue inside the assertion keeps the original check.
-// No metadata-based exemption is granted.
-function knownContextQuestionText(clause: string): string {
-  if (/[?？]/u.test(clause)) return clause;
-  const requestCue = /(?:請|请|麻煩|麻烦|重講|重讲|再說|再说|再講|再讲|tell me|repeat|again)/iu;
-  const scoped = clause.replace(
-    /(?:^|[，,；;])\s*(?:(?:我(?:們|们)?|目前|現時|现时|暫時|暂时)\s*)?(?:未能|無法|无法|不能|尚未能)(?:確認|确认|判斷|判断|確定|确定)[^?？。.!！\n，,；;]{0,80}是否[^?？。.!！\n，,；;]{0,160}(?=$|[。.!！\n，,；;])/gu,
-    (assertion) => QUESTION.test(assertion.replace(/是否/gu, "")) || requestCue.test(assertion) ? assertion : "",
-  );
-  // Do not turn an unclassified appended instruction into permission merely
-  // by removing the earlier interrogative marker. Retain the old fail-closed
-  // scope when the remaining request is not understood by QUESTION.
-  return requestCue.test(scoped) && !QUESTION.test(scoped) ? clause : scoped;
-}
-
-function evaluateKnownContext(text: string, state: ConversationCommerceState, readOnlyProjection: boolean = false, sourceBoundGuidance: boolean = false): B2Decision | null {
-  if (!QUESTION.test(text)) return null;
-  // Preserve the original Frozen B2 clause scope. Only an actual, freshly
-  // source-bound customer-guidance reply receives finer punctuation scope:
-  // already-known preferences in a preceding statement do not constitute a
-  // repeated question. All ordinary known-field re-asks still remain blocked.
-  const questionClauses = text
-    .split(sourceBoundGuidance ? /(?<=[?？.!！。])|[，,；;]|\n+/ : /(?<=[?？.!！。])|\n+/)
-    .map((clause) => knownContextQuestionText(lower(clause)))
-    .filter((clause) => QUESTION.test(clause));
-  for (const clause of questionClauses) {
-    for (const fact of collectKnownCommerceFacts(state)) {
-      // A default false delivery flag is not a customer assertion and its
-      // generic "confirm" alias must not reject unrelated guidance. Keep the
-      // original default fact/guard for all non-guidance B2 paths.
-      if (sourceBoundGuidance && fact.path === "delivery.confirmed" &&
-        state.delivery.confirmed !== true && !state.delivery.provenance?.source_message_id) continue;
-      // A missing-slot identifier is a planning descriptor, not a provided value.
-      if (readOnlyProjection && /\.attributes\.customer_goal\.missing\.\d+$/.test(fact.path)) continue;
-      if (fact.aliases.some((alias) => clause.includes(alias))) {
-        return {
-          decision: "block",
-          code: "KNOWN_CONTEXT_RECONFIRMATION",
-          detail: fact.path,
-        };
+/** Resolve the speech act before matching any fact. A subordinate uncertainty
+ * clause does not ask the customer anything. Imperatives/questions are parsed
+ * independently of route; an elliptical repeat inherits only the same sentence's
+ * object. Literal enum values are never expanded into field names. */
+function customerInformationRequests(text: string): string[] {
+  const requests: string[] = [];
+  const command = /(?:請|请|麻煩|麻烦|please|(?:can|could|would|will) you|你(?:可否|可以|能否|不能|能|再|重|講|讲|說|说)|您)/iu;
+  const informationVerb = /(?:提供|確認|确认|告訴|告诉|重講|重讲|再講|再讲|講多|讲多|再說|再说|重說|重说|再問|再问|tell|provide|confirm|repeat|specify|share)/iu;
+  const directQuestion = /(?:[?？]|^(?:what|which|when|where|who|how)\b|請問|请问|邊個|边个|邊度|边度|幾多|几多|多少|係咪|是不是)/iu;
+  const epistemic = /(?:未能|無法|无法|不能|尚未能|未能夠|未能够|\b(?:cannot|can't|unable to)\b).{0,12}(?:確認|确认|判斷|判断|確定|确定|confirm|determine|guarantee)/iu;
+  for (const sentence of text.split(/(?<=[?？.!！。])|\n+/u)) {
+    let previous = "";
+    for (const raw of sentence.split(/[，,；;]/u)) {
+      const clause = lower(raw);
+      if (!clause) continue;
+      const imperative = command.exec(clause);
+      const instruction = imperative ? clause.slice(imperative.index) : "";
+      const prohibited = /(?:不要|不用|無需|无需|不必|毋須|毋须|唔使|do not|don.t|no need to)\s*(?:再|重|again)?\s*(?:提供|確認|确认|告訴|告诉|重講|重讲|講|讲|說|说|tell|provide|confirm|repeat|share)/iu.test(clause);
+      const asks = !prohibited && (!!instruction && informationVerb.test(instruction) ||
+        directQuestion.test(clause) && !(epistemic.test(clause) && !/[?？]/u.test(clause)));
+      // Negative knowledge alone (including embedded whether) is not a request.
+      // An embedded explicit directive remains a directive (e.g. R2).
+      if (asks) {
+        const object = instruction || clause;
+        const repeat = /(?:重|再|多次|again|repeat)/iu.test(object);
+        requests.push(repeat && previous ? `${previous} ${object}` : object);
       }
+      previous = clause;
     }
   }
+  return requests;
+}
+
+function fieldMention(text: string, alias: string): boolean {
+  if (alias.length < 2) return false;
+  const at = text.indexOf(alias);
+  if (at < 0) return false;
+  // Do not interpret a Latin field inside another word (e.g. update/date).
+  return !/^[a-z0-9 ]+$/i.test(alias) ||
+    !/[a-z0-9]/i.test(text[at - 1] ?? "") && !/[a-z0-9]/i.test(text[at + alias.length] ?? "");
+}
+
+function evaluateKnownContext(text: string, input: B2EvaluationInput): B2Decision | null {
+  const snapshot = input.snapshot;
+  const state = snapshot.state;
+  const facts = collectKnownCommerceFacts(state).filter(f => f.current && f.authority!=="DEFAULT" && !f.path.split(".").includes("provenance"));
+  for (const request of customerInformationRequests(text)) {
+    // Resolve requested fields independently of values. Generic status/confirmed
+    // cannot win over a specific address, and changing collection order is inert.
+    const mentions = facts.map(fact => ({fact, labels:fact.field_aliases.filter(alias => fieldMention(request,alias))}));
+    const matched = mentions.filter(m=>m.labels.length);
+    // Discard only a label nested inside a more specific matched label, never
+    // discard a second independently requested field merely because it is short.
+    const labels=matched.flatMap(m=>m.labels);
+    let candidates=matched.filter(m=>m.labels.some(a=>!labels.some(b=>b!==a && b.includes(a)))).map(m=>m.fact);
+    // A literal model/name scopes an entity; it is not a status/field alias.
+    const named = state.entities.filter(entity => [entity.entity_id,entity.model,entity.attributes.product_name]
+      .some(value=>typeof value === "string" && value.length>=2 && fieldMention(request,lower(value)))).map(e=>e.entity_id);
+    if (named.length) candidates = candidates.filter(f=>!f.entity_id || named.includes(f.entity_id));
+    // A literal non-enum reference can identify a known preference even when its
+    // field is paraphrased. Boolean/numeric/status values cannot identify fields.
+    if (!candidates.length) candidates = facts.filter(f=>
+      !/(?:^|\.)(?:status|confirmed|quantity|funnel_stage|order_status|payment_status|quotation_status)$/.test(f.path) &&
+      f.value.length>=2 && !/^(?:true|false|\d+(?:\.\d+)?)$/i.test(f.value) && fieldMention(request,lower(f.value)));
+    if (!candidates.length && !/(?:這款|这款|該項|该项|嗰個|果個|\b(?:confirm|repeat)\b.{0,24}\b(?:it|that|this)\b|\b(?:is|was) (?:it|that|this)\b|請確認是否|请确认是否)/iu.test(request)) continue;
+    // An actual request with only an unresolved referent has no trustworthy
+    // repair target. Missing named details can still be requested normally.
+    const qualified = candidates.filter(f=>["CUSTOMER","BACKEND","STAFF"].includes(f.authority));
+    const fresh = snapshot.commerce_state_source_message_id === snapshot.source_message_id;
+    const target = candidates.length === 1 && qualified.length === 1 && fresh ? qualified[0] : null;
+    const receipt: B2ContextRequestReceipt = {
+      contract:"b2-context-request-v1",binding:target ? "QUALIFIED" : candidates.length>1 ? "AMBIGUOUS" : "UNVERIFIED",
+      request_text:request,company_id:snapshot.company_id,conversation_id:snapshot.conversation_id,
+      source_message_id:snapshot.source_message_id,state_source_message_id:snapshot.commerce_state_source_message_id,
+      revision:snapshot.commerce_state_revision,
+      ...(target ? {target:{field:target.path,entity_id:target.entity_id,value:target.value,
+        authority:target.authority,provenance:target.provenance}} : {}),
+    };
+    // A real request with unverified attribution remains fail-closed, but cannot
+    // emit a field/value to the bounded repair prompt. Known value != permission.
+    return {decision:"block",code:"KNOWN_CONTEXT_RECONFIRMATION",
+      ...(target ? {detail:target.path} : {}),context_request:receipt};
+  }
   return null;
+}
+
+/** The caller consumes an evaluator-owned, exact-snapshot receipt, not `detail`
+ * or a model-emitted route. No unverified field/value can enter regeneration. */
+export function b2KnownContextRepair(decision: B2Decision, snapshot: B2CanonicalSnapshot) {
+  const r=decision.context_request;
+  if (decision.decision!=="block" || decision.code!=="KNOWN_CONTEXT_RECONFIRMATION" ||
+      !r || r.binding!=="QUALIFIED" || !r.target || r.target.field!==decision.detail ||
+      r.company_id!==snapshot.company_id || r.conversation_id!==snapshot.conversation_id ||
+      r.source_message_id!==snapshot.source_message_id || r.state_source_message_id!==snapshot.source_message_id || r.state_source_message_id!==snapshot.commerce_state_source_message_id ||
+      r.revision!==snapshot.commerce_state_revision) return null;
+  const fact=collectKnownCommerceFacts(snapshot.state).find(f=>f.path===r.target!.field);
+  if (!fact || !fact.current || fact.value!==r.target.value || fact.authority!==r.target.authority ||
+      !sameCanonicalJson(fact.provenance,r.target.provenance)) return null;
+  return {company_id:snapshot.company_id,revision:snapshot.commerce_state_revision,
+    field:fact.path,value:fact.value};
 }
 
 function isTrustedTargetedReadOnlyClarification(input: B2EvaluationInput, draft: string): boolean {
@@ -1425,11 +1532,13 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     evaluateCancellation(draft, state) ??
     (kbPriceDecision || trustedCustomerCalculation ? null : evaluateQuoteReality(draft, state, input)) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
+    (input.trusted_journey_progress && !trustedJourneyProgress && customerInformationRequests(draft).length > 0 ? {decision:"block" as const,code:"UNPROVEN_JOURNEY_PROGRESS"} : null) ??
+    (input.trusted_targeted_clarification && !trustedTargetedClarification ? {decision:"block" as const,code:"UNPROVEN_TARGETED_CLARIFICATION"} : null) ??
+    (input.metadata?.commerce_reason === "contextual_targeted_clarification" && !input.trusted_targeted_clarification
+      ? {decision:"block" as const,code:"KNOWN_CONTEXT_RECONFIRMATION"} : null) ??
     (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection || trustedLifecycle || trustedReadOnlyRecap || trustedCustomerCalculation
       ? null
-      : evaluateKnownContext(draft, state, input.metadata?.commerce_state_persistence_classification !== "COMMITTED" && !input.trusted_journey_progress,
-          input.persistence_kind === "ai_reply" && input.metadata?.response_route === "customer_guidance" &&
-          input.snapshot.commerce_state_source_message_id === input.snapshot.source_message_id)) ?? {
+      : evaluateKnownContext(draft, input)) ?? {
       decision: "allow",
       code: kbPriceDecision?.code ?? (trustedReadOnlyRecap
         ? "B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP"

@@ -11,6 +11,7 @@ import {
   classifyB2AuthoritativePersistence,
   classifyCommerceStatePersistenceResult,
   collectKnownCommerceFacts,
+  b2KnownContextRepair,
   evaluateB2BeforeCommit,
   executeB2PersistenceGate,
   stripUnverifiedCurrentQuoteClauses,
@@ -1558,4 +1559,129 @@ Deno.test("Task1 B2 preserves historical/current-price verification disclaimers 
   for (const [draft, expected] of denied) {
     assertEquals(decision(draft, state).code, expected, "affirmative price still fails closed: " + draft);
   }
+});
+
+// Director consensus regression: actual target and private repair receipt, not
+// merely a coincidental public B2 block code. The original tests stay intact.
+const contextCounterexamples = [
+  ["R1", "未能確認收貨地址是否正確，請重講一次。"],
+  ["R2", "未能確認是否請你重講收貨地址。"],
+  ["D1", "請確認收貨地址是否正確？"],
+  ["X1", "未能確認收貨地址是否正確，你講多次。"],
+  ["EN", "I cannot confirm the delivery address; please repeat it."],
+  ["SC", "无法确认收货地址是否正确，请重新提供收货地址。"],
+] as const;
+for (const [id,draft] of contextCounterexamples) for (const route of [undefined,"customer_guidance","mixed","factual"])
+  for (const competing of [false,true]) Deno.test(`B2 bound request ${id}/${route}/${competing}`,()=>{
+    const state=competing?stateFixture():createEmptyConversationCommerceState();
+    state.delivery={address:"1 Queen's Road Central",confirmed:false,provenance:{source_type:"customer",source_message_id:SOURCE_ID}};
+    const before=JSON.stringify(state);
+    const run=(s:ConversationCommerceState)=>evaluateB2BeforeCommit({proposed_response:draft,
+      persistence_kind:"ai_reply",snapshot:snapshot(s),metadata:{response_route:route}});
+    const result=run(state);
+    assertEquals(result.decision,"block","known repeated request");
+    assertEquals(result.detail,"delivery.address","exact requested field");
+    assertEquals(result.context_request?.target?.authority,"CUSTOMER","qualified authority");
+    assertEquals(result.context_request?.target?.provenance?.source_message_id,SOURCE_ID,"fact source");
+    assertEquals(result.context_request?.revision,7,"revision");
+    assertEquals(result.context_request?.company_id,COMPANY_ID,"tenant");
+    assertEquals(result.context_request?.source_message_id,SOURCE_ID,"turn binding");
+    assertEquals(b2KnownContextRepair(result,snapshot(state)),{company_id:COMPANY_ID,revision:7,field:"delivery.address",value:"1 Queen's Road Central"},"only address reaches repair");
+    assertEquals(JSON.stringify(state),before,"evaluation read only");
+    state.entities.reverse();state.quotes.reverse();
+    state.customer_constraints.unrelated={status:"order_confirmed",value:"確認",provenance:{source_type:"derived"}};
+    const permuted=run(state);
+    assertEquals(permuted.context_request?.target,result.context_request?.target,"unrelated facts/reordering invariant");
+  });
+
+Deno.test("B2 request authority/defaults/zero/false are distinct; repair is fail-silent",()=>{
+  for(const [provenance,authority] of [
+    [{source_type:"customer",source_message_id:SOURCE_ID},"CUSTOMER"],
+    [{source_type:"tool",source_reference:"verified-backend:receipt-1"},"BACKEND"],
+    [{source_type:"kb",source_reference:"published-tenant-document:version-2"},"BACKEND"],
+    [{source_type:"derived",source_message_id:SOURCE_ID},"DERIVED"],
+    [{source_type:"system"},"UNVERIFIED"],
+    [null,"UNVERIFIED"],
+  ] as const){
+    const state=createEmptyConversationCommerceState();
+    state.delivery={address:"1 Queen's Road Central",confirmed:false,provenance};
+    const result=decision("Please confirm your delivery address?",state);
+    const fact=collectKnownCommerceFacts(state).find(f=>f.path==="delivery.address")!;
+    assertEquals(fact.authority,authority,"source authority");
+    const qualified=authority==="CUSTOMER"||authority==="BACKEND";
+    assertEquals(result.context_request?.binding,qualified?"QUALIFIED":"UNVERIFIED","qualified or unknown");
+    assertEquals(Boolean(b2KnownContextRepair(result,snapshot(state))),qualified,"only qualified feedback");
+    if(!qualified){assert(!result.detail&&!result.context_request?.target,"unknown field/value must not escape");}
+  }
+  const state=stateFixture();state.entities[0].quantity=0;state.entities[0].attributes.warranty_included=false;
+  const facts=collectKnownCommerceFacts(state);
+  assertEquals(facts.find(f=>f.path==="entities.0.quantity")?.value,"0","explicit zero retained");
+  assertEquals(facts.find(f=>f.path==="entities.0.attributes.warranty_included")?.value,"false","explicit false retained");
+  assertEquals(facts.find(f=>f.path==="entities.0.attributes.warranty_included")?.authority,"CUSTOMER","false provenance retained");
+  const zero=decision("How many RX-100?",state);
+  assertEquals(zero.context_request?.target?.field,"entities.0.quantity","zero exact target");
+  assertEquals(zero.context_request?.target?.value,"0","zero actual request protected");
+  const falseFact=decision("Please confirm RX-100 warranty included?",state);
+  assertEquals(falseFact.context_request?.target?.field,"entities.0.attributes.warranty_included","false exact target");
+  assertEquals(falseFact.context_request?.target?.value,"false","false actual request protected");
+  const defaults=collectKnownCommerceFacts(createEmptyConversationCommerceState());
+  assertEquals(defaults.find(f=>f.path==="delivery.confirmed")?.authority,"DEFAULT","default false not customer fact");
+});
+
+Deno.test("B2 ambiguous target and stale source cannot supply repair feedback",()=>{
+  const state=stateFixture();
+  state.entities[1].status="researching";
+  for(const draft of ["Please confirm the model?","Please confirm the delivery address and phone?","請確認這款是否適合？"]){
+    const result=decision(draft,state);
+    assertEquals(result.decision,"block","unresolved actual request fail closed");
+    assert(!result.detail&&!result.context_request?.target,"no arbitrary target");
+    assertEquals(b2KnownContextRepair(result,snapshot(state)),null,"no unverified repair");
+  }
+  const fresh=decision("What is your delivery address?",state);
+  for(const altered of [{...snapshot(state),commerce_state_revision:8},{...snapshot(state),company_id:"other"},
+    {...snapshot(state),source_message_id:"other"},{...snapshot(state),commerce_state_source_message_id:"old"}])
+    assertEquals(b2KnownContextRepair(fresh,altered),null,"repair rejects source/tenant/revision drift");
+  const stale=evaluateB2BeforeCommit({proposed_response:"What is your delivery address?",persistence_kind:"ai_reply",
+    snapshot:{...snapshot(state),commerce_state_source_message_id:"old"}});
+  assertEquals(stale.decision,"block","stale safety verdict");
+  assert(!stale.detail&&!stale.context_request?.target,"stale no repair feedback");
+});
+
+Deno.test("B2 honest limitations, prohibitions and genuinely missing detail remain useful",()=>{
+  for(const draft of [
+    "未能確認這款是否適合西斜房間，不能保證夠凍。",
+    "我未能確認是否符合條件；請提供尚未提及的窗戶面積。",
+    "I cannot determine whether it is suitable. Please provide the window area.",
+    "不用再提供收貨地址。","不要再次確認收貨地址。","Do not repeat the delivery address.",
+    "The model RX-100 is recorded. What is the window area?",
+  ])for(const route of ["customer_guidance","mixed","factual"]){
+    const result=evaluateB2BeforeCommit({proposed_response:draft,persistence_kind:"ai_reply",snapshot:snapshot(),metadata:{response_route:route}});
+    assertEquals(result.decision,"allow",draft+"/"+route);
+  }
+  const state=stateFixture();
+  const result=decision("Please confirm RX-100?",state);
+  assertEquals(result.detail,"entities.0.model","literal model reference remains supported");
+  assertEquals(result.context_request?.target?.entity_id,"air_conditioner:bedroom","exact entity");
+});
+
+Deno.test("B2 actual bound repeated request never commits; justified original planner proof remains separate",async()=>{
+  let commits=0;
+  const result=await executeB2PersistenceGate({client:new MockClient(),conversation_id:CONVERSATION_ID,
+    source_message_id:SOURCE_ID,proposed_response:contextCounterexamples[0][1],persistence_kind:"ai_reply",
+    commit:async()=>{commits++;return "forbidden";}});
+  assert(!result.committed,"blocked before commit");assertEquals(commits,0,"zero writes");
+  assertEquals(result.decision.detail,"delivery.address","persistence caller target");
+  assertEquals(result.decision.context_request?.source_message_id,SOURCE_ID,"caller source");
+  const empty=createEmptyConversationCommerceState();
+  assertEquals(decision("訂單已確認並已付款。",empty).decision,"block","transaction guard intact");
+  assertEquals(decision("Current price is HKD 5000.",empty).decision,"block","price guard intact");
+});
+
+Deno.test("B2 absent defaults do not forbid first collection and superseded fields cannot bind",()=>{
+  const empty=createEmptyConversationCommerceState();
+  assertEquals(decision("What is the delivery confirmation status?",empty).decision,"allow","unknown default is collectable");
+  assertEquals(decision("What is the order status?",empty).decision,"allow","default none is not order evidence");
+  const state=stateFixture();state.entities[0].status="deferred";
+  const result=decision("Please confirm RX-100?",state);
+  assert(!result.context_request?.target,"deferred entity not a current repair fact");
 });
