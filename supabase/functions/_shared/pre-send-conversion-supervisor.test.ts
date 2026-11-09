@@ -1569,6 +1569,8 @@ const contextCounterexamples = [
   ["D1", "請確認收貨地址是否正確？"],
   ["X1", "未能確認收貨地址是否正確，你講多次。"],
   ["EN", "I cannot confirm the delivery address; please repeat it."],
+  ["EN_IMPERATIVE", "Repeat the delivery address."],
+  ["ZH_IMPERATIVE", "提供收貨地址。"],
   ["SC", "无法确认收货地址是否正确，请重新提供收货地址。"],
 ] as const;
 for (const [id,draft] of contextCounterexamples) for (const route of [undefined,"customer_guidance","mixed","factual"])
@@ -1654,6 +1656,8 @@ Deno.test("B2 honest limitations, prohibitions and genuinely missing detail rema
     "I cannot determine whether it is suitable. Please provide the window area.",
     "不用再提供收貨地址。","不要再次確認收貨地址。","Do not repeat the delivery address.",
     "The model RX-100 is recorded. What is the window area?",
+    "收貨地址已記錄，請再提供尚未提及的窗戶面積。",
+    "Your delivery address is recorded; please provide the window area again.",
   ])for(const route of ["customer_guidance","mixed","factual"]){
     const result=evaluateB2BeforeCommit({proposed_response:draft,persistence_kind:"ai_reply",snapshot:snapshot(),metadata:{response_route:route}});
     assertEquals(result.decision,"allow",draft+"/"+route);

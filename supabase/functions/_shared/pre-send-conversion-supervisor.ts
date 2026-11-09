@@ -974,7 +974,7 @@ function evaluateTransactionReality(
 function customerInformationRequests(text: string): string[] {
   const requests: string[] = [];
   const command = /(?:請|请|麻煩|麻烦|please|(?:can|could|would|will) you|你(?:可否|可以|能否|不能|能|再|重|講|讲|說|说)|您)/iu;
-  const informationVerb = /(?:提供|確認|确认|告訴|告诉|重講|重讲|再講|再讲|講多|讲多|再說|再说|重說|重说|再問|再问|tell|provide|confirm|repeat|specify|share)/iu;
+  const informationVerb = /(?:提供|確認|确认|告訴|告诉|重講|重讲|再講|再讲|講多|讲多|再說|再说|重說|重说|再問|再问|\b(?:tell|provide|confirm|repeat|specify|share)\b)/iu;
   const directQuestion = /(?:[?？]|^(?:what|which|when|where|who|how)\b|請問|请问|邊個|边个|邊度|边度|幾多|几多|多少|係咪|是不是)/iu;
   const epistemic = /(?:未能|無法|无法|不能|尚未能|未能夠|未能够|\b(?:cannot|can't|unable to)\b).{0,12}(?:確認|确认|判斷|判断|確定|确定|confirm|determine|guarantee)/iu;
   for (const sentence of text.split(/(?<=[?？.!！。])|\n+/u)) {
@@ -983,7 +983,9 @@ function customerInformationRequests(text: string): string[] {
       const clause = lower(raw);
       if (!clause) continue;
       const imperative = command.exec(clause);
-      const instruction = imperative ? clause.slice(imperative.index) : "";
+      const verb=informationVerb.exec(clause);
+      const bareDirective=verb?.index===0;
+      const instruction = imperative ? clause.slice(imperative.index) : bareDirective ? clause : "";
       const prohibited = /(?:不要|不用|無需|无需|不必|毋須|毋须|唔使|do not|don.t|no need to)\s*(?:再|重|again)?\s*(?:提供|確認|确认|告訴|告诉|重講|重讲|講|讲|說|说|tell|provide|confirm|repeat|share)/iu.test(clause);
       const asks = !prohibited && (!!instruction && informationVerb.test(instruction) ||
         directQuestion.test(clause) && !(epistemic.test(clause) && !/[?？]/u.test(clause)));
@@ -992,7 +994,13 @@ function customerInformationRequests(text: string): string[] {
       if (asks) {
         const object = instruction || clause;
         const repeat = /(?:重|再|多次|again|repeat)/iu.test(object);
-        requests.push(repeat && previous ? `${previous} ${object}` : object);
+        const action = informationVerb.exec(object);
+        const complement = action ? object.slice(action.index + action[0].length) : object;
+        // Inherit an antecedent only for a syntactically empty/pronominal
+        // complement. A newly named missing field must never inherit an earlier
+        // known address/preference just because the directive contains "again".
+        const elliptical = !complement.replace(/\b(?:it|that|this|again|once|more|please)\b|(?:一次|一遍|多次|次|佢|它|這個|这个)|[\s.。!?！？]/giu, "");
+        requests.push(repeat && elliptical && previous ? `${previous} ${object}` : object);
       }
       previous = clause;
     }
