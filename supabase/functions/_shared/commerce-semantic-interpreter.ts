@@ -1,3 +1,4 @@
+import {captureProtectedDiagnosticText} from "./protected-pipeline-evidence.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
 import { callModel } from "./llm-router.ts";
 import { sha256 } from "./model-attempt-accounting.ts";
@@ -104,21 +105,8 @@ export interface SemanticDiagnosticText {
  * Hashes describe the original bytes even when the body must be withheld.
  * This is router input/model text, never a claim to capture provider HTTP raw.
  * Do not put this object in public logs, reply bodies or message metadata. */
-export async function captureSemanticDiagnosticText(
-  value: string,
-  origin: SemanticDiagnosticText["capture_origin"],
-): Promise<SemanticDiagnosticText> {
-  const bytes = new TextEncoder().encode(value).byteLength;
-  const hash = await sha256(value);
-  // Whole-body withholding avoids retaining a partially scrubbed credential or
-  // reporting truncated data as the actual complete model response.
-  let inspected = value;
-  // Inspect escaped JSON strings too, without changing the captured bytes.
-  try { inspected += "\n" + JSON.stringify(JSON.parse(value)); } catch { /* Preserve malformed model text as received. */ }
-  const sensitive = /\bBearer\s+\S+|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|-----BEGIN [^-]*(?:PRIVATE KEY|CERTIFICATE)-----|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b|(?<![A-Za-z0-9])(?:\+?852[- .]?)?[23569]\d{3}[- .]?\d{4}(?![A-Za-z0-9])|(?<![A-Za-z0-9])\+\d{1,3}(?:[ .()-]?\d){7,14}(?![A-Za-z0-9])|\b(?:sk-[A-Za-z0-9_-]{12,}|AIza[A-Za-z0-9_-]{20,})|\b(?:password|authorization|x-api-key|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|private[_ -]?key|client[_ -]?secret|service[_ -]?role[_ -]?key)\b/i.test(inspected.normalize("NFKC"));
-  const state = bytes > 65_536 ? "WITHHELD_OVERSIZED" : sensitive ? "WITHHELD_SENSITIVE" : "CAPTURED";
-  return {capture_origin: origin, capture_state: state, sha256: hash, bytes,
-    body: state === "CAPTURED" ? value : null};
+export async function captureSemanticDiagnosticText(value: string, origin: SemanticDiagnosticText["capture_origin"]): Promise<SemanticDiagnosticText> {
+  return {...await captureProtectedDiagnosticText(value,origin),capture_origin:origin};
 }
 
 export interface SemanticFailureEvidence {
@@ -171,6 +159,7 @@ export interface CommerceSemanticInterpretResult {
   /** Sensitive in-process evidence: only the existing Admin/Tenant trace writer
    * may persist it. Never spread this result into a public response or metadata. */
   failure_evidence?: SemanticFailureEvidence;
+  success_evidence?: Omit<SemanticFailureEvidence,"contract"> & {contract:"c3-semantic-success-evidence-v1"};
   input_receipt?: {
     source_message_id: string;
     recent_source_message_ids: (string | null)[];
@@ -588,7 +577,7 @@ export async function interpretCommerceSemantics(
         original_stage:"canonical_validation",demand_count:readOnly.demands?.length ?? 0,
         state_mutation:false,additional_model_attempts:0,
       }));
-      return {input_receipt,frame:readOnly,source:"semantic_model",failure_code:null,request_id:result.request_id};
+      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1"},input_receipt,frame:readOnly,source:"semantic_model",failure_code:null,request_id:result.request_id};
     }
     // Never coerce the malformed entity or accept its business state. A
     // source-verifiable first-turn option request may read KB using only the
@@ -608,7 +597,7 @@ export async function interpretCommerceSemantics(
         state_mutation:false,additional_model_attempts:0,
         merchant_evidence_granted:false,
       }));
-      return {input_receipt,frame:sourceOptionRecovery,source:"semantic_model",
+      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1"},input_receipt,frame:sourceOptionRecovery,source:"semantic_model",
         failure_code:null,request_id:result.request_id};
     }
     const recoveredOptions = contractRejection === "wire_context_nodes"
@@ -621,7 +610,7 @@ export async function interpretCommerceSemantics(
         source_quote_bound:true,demand_count:1,
         state_mutation:false,additional_model_attempts:0,merchant_evidence_granted:false,
       }));
-      return {input_receipt,frame:recoveredOptions,source:"semantic_model",failure_code:null,request_id:result.request_id};
+      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1"},input_receipt,frame:recoveredOptions,source:"semantic_model",failure_code:null,request_id:result.request_id};
     }
     return {
       input_receipt,frame: null,
@@ -644,7 +633,7 @@ export async function interpretCommerceSemantics(
         source_message_id:input.source_message_id,request_id:result.request_id,
         original_stage:"semantic_source_binding",demand_count:1,
         state_mutation:false,extra_model_attempts:0}));
-      return {input_receipt,frame:rebound,source:"semantic_model",failure_code:null,request_id:result.request_id};
+      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1"},input_receipt,frame:rebound,source:"semantic_model",failure_code:null,request_id:result.request_id};
     }
     return {
       input_receipt,frame:null,source:"none",failure_code:"LLM_INVALID_OUTPUT",failure_stage:"semantic_source_binding",
@@ -670,5 +659,5 @@ export async function interpretCommerceSemantics(
       request_id: result.request_id,
     };
   }
-  return { input_receipt,frame,source:"semantic_model",failure_code:null,request_id:result.request_id };
+  return { success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1"},input_receipt,frame,source:"semantic_model",failure_code:null,request_id:result.request_id };
 }

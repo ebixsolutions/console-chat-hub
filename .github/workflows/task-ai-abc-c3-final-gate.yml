@@ -312,6 +312,8 @@ jobs:
             supabase/functions/_shared/pre-send-conversion-supervisor.test.ts \
             supabase/functions/_shared/conversation-service-planner.test.ts \
             supabase/functions/_shared/current-factual-request.test.ts \
+            tests/emergency-p0/subject-binding-projection.test.ts \
+            tests/emergency-p0/protected-evidence.test.ts \
             supabase/functions/_shared/factual-evidence-selection.test.ts \
             supabase/functions/_shared/canonical-kb-product-record.test.ts
           C3_OFFLINE

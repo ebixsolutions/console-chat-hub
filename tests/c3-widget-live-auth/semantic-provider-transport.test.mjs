@@ -694,7 +694,7 @@ test('semantic failure evidence withholds the full router input for sensitive cu
   assert(!JSON.stringify(publicResult).includes('PRIVATE-CONTRACT-MARKER'));
  }finally{previous===undefined?delete globalThis.__semanticTransportModel:globalThis.__semanticTransportModel=previous;}
 });
-test('semantic failure evidence does not attach input or model bodies to a successful semantic result',async()=>{
+test('semantic success captures exact private router input and model text separately from failure evidence',async()=>{
  const {interpretCommerceSemantics}=await diagnosticInterpreter();
  const previous=globalThis.__semanticTransportModel;let calls=0;
  const raw=JSON.stringify(v6({demands:[demand({question:diagnosticLatest,source_quote:diagnosticLatest})]}));
@@ -702,6 +702,8 @@ test('semantic failure evidence does not attach input or model bodies to a succe
  try{
   const result=await interpretCommerceSemantics(diagnosticInput());assert.equal(calls,1);
   assert.equal(result.failure_code,null);assert(result.frame);assert(!Object.hasOwn(result,'failure_evidence'));
+  assert.equal(result.success_evidence.contract,'c3-semantic-success-evidence-v1');
+  assertDiagnosticReceipt(result.success_evidence.response,raw,'SEMANTIC_MODEL_TEXT','CAPTURED');
  }finally{previous===undefined?delete globalThis.__semanticTransportModel:globalThis.__semanticTransportModel=previous;}
 });
 

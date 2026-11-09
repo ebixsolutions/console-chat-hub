@@ -1,3 +1,4 @@
+import {writeProtectedPipelineEvidence} from "../_shared/protected-pipeline-evidence.ts";
 import { resolveCatalogueVariantFollowup } from "../_shared/kb-product-record.ts";
 import { resolveFactualFollowup, buildFactualFollowupPrompt, factualSubject, literalFactualSubject } from "../_shared/conversation-semantic-contract.ts";
 import { originalPreviewEnabled } from "../_shared/original-widget-preview.ts";
@@ -686,11 +687,17 @@ async function executeB2RpcPersistence<T>(
   },
   commit: (snapshot: B2CanonicalSnapshot) => Promise<T>,
 ) {
-  return await executeB2PersistenceGate({
+  const result = await executeB2PersistenceGate({
     client: supabaseAdmin as unknown as B2DatabaseClient,
     ...input,
     commit,
   });
+  if (result.snapshot?.company_id) await writeProtectedPipelineEvidence(supabaseAdmin,{
+    company_id:result.snapshot.company_id,conversation_id:input.conversation_id,source_message_id:input.source_message_id,
+  },"b2_verdict",{candidate:input.proposed_response,decision:result.decision,
+    state_revision:result.snapshot.commerce_state_revision,committed:result.committed,
+    matched_path:result.decision.detail??null,matched_span:"NOT_CAPTURED"});
+  return result;
 }
 
 async function commitAiReplyWithControlGate(
@@ -7052,6 +7059,12 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
     generalDecisionSupport:_mixedRequest,
     factualEvidenceAbsent:_mixedEvidenceUnavailable,
     factualFollowup: _factualFollowup ?? undefined,
+    protectedEvidence: async evidence => { if (_generationCompanyId && source_message_id)
+      await writeProtectedPipelineEvidence(supabaseAdmin,{company_id:_generationCompanyId,conversation_id,source_message_id},
+        String(evidence.stage),{...evidence,request:currentFactualRequestContext(_currentFactualRequest),
+          selected:_factualEvidenceBundle?.grounding.items.map(({content,...item})=>item)??[],
+          coverage:_factualEvidenceBundle?.grounding.demands??[],
+          selection_limited:_factualEvidenceBundle?.grounding.selection_limited??null}); },
     resolvedFactualRequest: currentFactualRequestContext(_currentFactualRequest),
     ...(!_priorGroundedTransform && _factualEvidenceBundle ? {groundingEvidence: _factualEvidenceBundle.grounding} : {}),
     factualEvidenceAvailable: _c1AuthorityDecision?.decision === "USE_CURRENT_KB" && Boolean(ragResult?.chunks?.some(c => c.chunk_type === "full_content")),
@@ -7108,7 +7121,13 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
       system: `${finalSystemPrompt}\n\n[FACTUAL_RETRY] The preceding draft was rejected and never delivered. Write a fresh, short answer using only the same bound E* evidence. Give the source-recorded amount with its model, explicitly say when the currency and current price are unverified, and leave live availability pending without inferring stock from a record. Do not add unsupported numbers, currencies or claims, and do not echo the visitor's question. [/FACTUAL_RETRY]`,
       user: _generationUserInput,
       factualFollowup: _factualFollowup ?? undefined,
-      resolvedFactualRequest: currentFactualRequestContext(_currentFactualRequest),
+      protectedEvidence: async evidence => { if (_generationCompanyId && source_message_id)
+      await writeProtectedPipelineEvidence(supabaseAdmin,{company_id:_generationCompanyId,conversation_id,source_message_id},
+        String(evidence.stage),{...evidence,request:currentFactualRequestContext(_currentFactualRequest),
+          selected:_factualEvidenceBundle?.grounding.items.map(({content,...item})=>item)??[],
+          coverage:_factualEvidenceBundle?.grounding.demands??[],
+          selection_limited:_factualEvidenceBundle?.grounding.selection_limited??null}); },
+    resolvedFactualRequest: currentFactualRequestContext(_currentFactualRequest),
       groundingEvidence: _factualEvidenceBundle.grounding,
       factualEvidenceAvailable: _c1AuthorityDecision?.decision === "USE_CURRENT_KB" && Boolean(ragResult?.chunks?.some(c => c.chunk_type === "full_content")),
       maxTokens: Math.min(resolveGenerationMaxTokens(), 1024),

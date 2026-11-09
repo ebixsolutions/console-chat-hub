@@ -22,6 +22,8 @@ export interface CurrentFactualDemand {
   source_quote: string;
   subjects: string[];
   subject_source_message_ids: string[];
+  /** Server-derived read-target proof. Never model output or merchant evidence. */
+  subject_binding_proof?: CurrentTurnSubjectBindingProof;
   source_type: FactualDemandSourceType;
   requested_facts: string[];
   constraints: Record<string, DecisionValue>;
@@ -817,13 +819,134 @@ subject_source_message_id:null,subject_source_message_ids:[],demands:[demand],
   return request;
 }
 
+/** A source-owned repair of an EMPTY reference representation, not a second
+ * intent classifier. The accepted frame remains immutable. Names supplied in
+ * constraints are only locating hints until the customer's own text proves them.
+ * No history, merchant facts, state mutation, extra model call or KB retry. */
+export interface CurrentTurnSubjectBindingProof {
+  basis: "current_customer_literal" | "same_turn_unique_antecedent";
+  source_message_id: string;
+  subjects: string[];
+  literal_name: string;
+  source_quote: string;
+  antecedent_quotes: string[];
+  text_normalization: "NFKC_WHITESPACE";
+}
+type CurrentTurnSubjectAttempt =
+  | { kind: "not_applicable" }
+  | { kind: "unresolved" }
+  | { kind: "proven"; proof: CurrentTurnSubjectBindingProof };
+
+function currentTurnSubjectAttempt(
+  input: ResolveCurrentFactualRequestInput,
+  demand: CommerceSemanticDemand,
+  proposed: readonly CommerceSemanticDemand[],
+): CurrentTurnSubjectAttempt {
+  const none: CurrentTurnSubjectAttempt = {kind:"not_applicable"};
+  const unresolved: CurrentTurnSubjectAttempt = {kind:"unresolved"};
+  const frame=trustedFrame(input.semantic), full=clean(input.question), quote=clean(demand.source_quote);
+  if (!frame || demand.source_type!=="product" || demand.subject_refs.length ||
+      proposedReferences(frame).length || sourceBoundOptionDiscovery(input,demand)) return none;
+  const hints=(d:CommerceSemanticDemand):string[] => unique(
+    [d.constraints.name,d.constraints.model,d.constraints.sku]
+      .filter((value):value is string=>typeof value==="string").map(clean).filter(validSubject));
+  const declared=hints(demand);
+  const ids=unique(exactProductIdentifiers(quote));
+  // No specific item is required for ordinary model-free option discovery.
+  if (!declared.length && !ids.length && !POINTER.test(quote)) return none;
+  if (!clean(input.trusted_company_id) || !clean(input.source_message_id) ||
+      input.memory && input.memory.company_id!==input.trusted_company_id ||
+      !quote || full.length>2400 || !["ASK_FACT","NO_STATE_CHANGE"].includes(frame.operation) ||
+      frame.customer_correction || frame.additive || demand.customer_correction ||
+      demand.ambiguity.is_ambiguous) return unresolved;
+  const span=(value:string):{start:number;end:number}|null => {
+    const normalized=clean(value);
+    const start=full.indexOf(normalized);
+    if (start<0 || full.indexOf(normalized,start+1)>=0) return null;
+    return {start,end:start+normalized.length};
+  };
+  const here=span(quote);
+  if (!here) return unresolved;
+  // Recovering an omitted reference must not transfer an unquoted quantitative
+  // condition. Check the demand's OWN quote, not another item's number, and
+  // exclude model-code digits. Normalized descriptive values remain semantic
+  // proposals under the original downstream checks, never merchant evidence.
+  let quantitativeSource=quote;
+  for(const identifier of exactProductIdentifiers(quote)) quantitativeSource=quantitativeSource.split(identifier).join(" ");
+  const sourceNumbers=[...quantitativeSource.matchAll(/(?<![A-Za-z0-9_.\/+-])(?:\d{1,3}(?:,\d{3})+|\d{1,8})(?:\.\d{1,8})?(?:\/\d{1,8})?(?![\d.\/])/gu)]
+    .map(match=>match[0].replace(/,/g,""));
+  const quotedNumbers=(value:DecisionValue):boolean => {
+    if(Array.isArray(value))return value.every(quotedNumbers);
+    if(value && typeof value==="object")return Object.entries(value).every(([key,child])=>
+      ["name","model","sku"].includes(key) || quotedNumbers(child));
+    const scalar=typeof value==="number" ? String(value) : typeof value==="string" && /^(?:\d+(?:\.\d+)?|\d+\/\d+)$/.test(value.trim()) ? value.trim() : null;
+    return scalar===null || sourceNumbers.some(number=>sameOptionNumber(number,scalar));
+  };
+  if(!quotedNumbers(demand.constraints))return unresolved;
+  const maximal=(values:string[]) => unique(values).filter(name=>
+    !values.some(other=>norm(name)!==norm(other) && !!literalFactualSubject(other,[name])));
+  const literalNames=(d:CommerceSemanticDemand):string[] => {
+    const q=clean(d.source_quote);
+    if (!q || !span(q) || d.source_type!=="product" || d.ambiguity.is_ambiguous ||
+        sourceBoundOptionDiscovery(input,d) || LIFECYCLE_BOUNDARY.test(q)) return [];
+    const candidates=unique([...d.subject_refs,...hints(d),...exactProductIdentifiers(q)]);
+    return maximal(candidates.filter(name=>validSubject(name) &&
+      !!literalFactualSubject(q,[name]) && !explicitlyNegatesSubject(q,name)));
+  };
+  const direct=literalNames(demand);
+  const inactive=(name:string) => (input.commerce?.entities??[]).some(entity=>INACTIVE.has(entity.status) &&
+    entityNames(entity).some(alias=>norm(alias)===norm(name) || !!literalFactualSubject(name,[alias])));
+  const same=(name:string,other:string) => norm(name)===norm(other) ||
+    !!literalFactualSubject(name,[other]) || !!literalFactualSubject(other,[name]);
+  const make=(basis:CurrentTurnSubjectBindingProof["basis"],subject:string,antecedents:string[]):CurrentTurnSubjectAttempt => ({
+    kind:"proven",proof:{basis,source_message_id:clean(input.source_message_id),
+      // The existing resolver uses exact identifiers as canonical read targets.
+      // A longer literal designation is retained as proof, not a second subject.
+      subjects:exactProductIdentifiers(subject).length===1 ? exactProductIdentifiers(subject) : [subject],
+      literal_name:subject,source_quote:quote,antecedent_quotes:antecedents,text_normalization:"NFKC_WHITESPACE"},
+  });
+  // The proposed expanded English question is deliberately not an evidence input.
+  if (direct.length) {
+    if (direct.length!==1 || ids.some(id=>!same(direct[0],id)) ||
+        declared.some(name=>!same(direct[0],name)) || inactive(direct[0]) ||
+        explicitlyNegatesSubject(full,direct[0]) || LIFECYCLE_BOUNDARY.test(quote)) return unresolved;
+    return make("current_customer_literal",direct[0],[]);
+  }
+  if (!POINTER.test(quote)) return declared.length?unresolved:none;
+  if (PLURAL_POINTER.test(quote) || EXPLICIT_HISTORY_REFERENCE.test(quote) ||
+      EXPLICIT_COMPARISON.test(quote) || TOPIC_BOUNDARY.test(quote) || LIFECYCLE_BOUNDARY.test(quote)) return unresolved;
+  // Only independently located PRECEDING current-turn names participate. A
+  // model-selected name cannot choose among two candidates or point forward.
+  const anchors=proposed.flatMap(d=>{
+    const q=clean(d.source_quote),position=span(q);
+    if (d===demand || !position || position.end>here.start) return [];
+    return literalNames(d).map(subject=>({subject,quote:q,start:position.start}));
+  });
+  if (!anchors.length) return declared.length ? unresolved : none;
+  const subjects=maximal(anchors.map(anchor=>anchor.subject));
+  if (subjects.length!==1) return unresolved;
+  const subject=subjects[0];
+  if (declared.some(name=>!same(subject,name)) || inactive(subject) || explicitlyNegatesSubject(full,subject)) return unresolved;
+  const interval=full.slice(Math.min(...anchors.map(anchor=>anchor.start)),here.end);
+  // Boundaries outside a model's short source_quote cannot be skipped.
+  if (TOPIC_BOUNDARY.test(interval) || LIFECYCLE_BOUNDARY.test(interval) ||
+      EXPLICIT_HISTORY_REFERENCE.test(interval) || EXPLICIT_COMPARISON.test(interval) ||
+      exactProductIdentifiers(interval).some(id=>!same(subject,id))) return unresolved;
+  return make("same_turn_unique_antecedent",subject,unique(anchors.map(anchor=>anchor.quote)));
+}
+
 function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, proposed: CommerceSemanticDemand[]): CurrentFactualRequest {
   const question = clean(input.question), frame = input.semantic!;
   const missing: FactualRequestMissingEvidence[] = [];
   const contexts: string[] = [];
   const bindings: Array<SubjectBinding & {demand_id: string}> = [];
   const privateLocators = new Map<string, string[]>();
-  const explicitCurrentSubjects = unique(proposed.filter(demand => !sourceBoundOptionDiscovery(input,demand) &&
+  const subjectAttempts = proposed.map(demand => currentTurnSubjectAttempt(input,demand,proposed));
+  // A local consumer view only: never mutate or relabel the accepted provider frame.
+  const boundProposals = proposed.map((demand,index) => subjectAttempts[index].kind === "proven"
+    ? {...demand,subject_refs:(subjectAttempts[index] as Extract<CurrentTurnSubjectAttempt,{kind:"proven"}>).proof.subjects}
+    : demand);
+  const explicitCurrentSubjects = unique(boundProposals.filter(demand => !sourceBoundOptionDiscovery(input,demand) &&
     ["product", "policy", "unknown"].includes(demand.source_type) &&
     (demand.subject_refs.length > 0 || proposedReferences(trustedFrame(input.semantic)).some(ref => literalFactualSubject(demand.source_quote, [ref]))) &&
     (demand.source_type !== "policy" || demand.subject_refs.some(ref => !POLICY_FACET_LABEL.test(ref) && literalFactualSubject(demand.source_quote, [ref]))) &&
@@ -847,14 +970,18 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
       ambiguity.is_ambiguous = true; ambiguity.reasons.push("source_quote_unbound");
       missing.push({demand_id: id, reason: "source_quote_unbound"});
     }
-    const refs = optionDiscovery ? [] : demand.subject_refs.length ? demand.subject_refs : demand.source_type === "product"
+    const subjectAttempt = subjectAttempts[index];
+    const proof = subjectAttempt.kind === "proven" ? subjectAttempt.proof : null;
+    const refs = optionDiscovery ? [] : demand.subject_refs.length ? demand.subject_refs : proof ? proof.subjects : demand.source_type === "product"
       ? proposedReferences(trustedFrame(frame)) : [];
     if (quoteBound && demand.source_type === "transaction") privateLocators.set(id,
       refs.filter(ref => norm(sourceQuote).includes(norm(ref))));
     const resolved = optionDiscovery
       ? {bindings: [], question: criteria?.question ?? sourceOwnedOptionQuestion ?? sourceQuote, unresolved: false}
+      : quoteBound && subjectAttempt.kind === "unresolved"
+      ? {bindings:[],question:sourceQuote,unresolved:true}
       : quoteBound && !demand.ambiguity.is_ambiguous
-      ? resolveDemandSubjects(input, demand, refs, explicitCurrentSubjects)
+      ? resolveDemandSubjects(input, demand, refs, proof ? proof.subjects : explicitCurrentSubjects)
       : {bindings: [], question: clean(demand.question), unresolved: false};
     const located = resolved.bindings;
     // Product/category discovery may intentionally have no specific item.
@@ -892,6 +1019,7 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
       : resolved.question;
     return {
       id, question: answerQuestion, source_quote: sourceQuote, subjects,
+      ...(proof && !unresolved ? {subject_binding_proof:proof} : {}),
       subject_source_message_ids: criteria
         ? unique([...criteria.criteria.scope.map(item => item.source_message_id), criteria.criteria.specification.source_message_id, input.source_message_id ?? ""])
         : unique(located.map(binding => binding.source_message_id ?? "")),

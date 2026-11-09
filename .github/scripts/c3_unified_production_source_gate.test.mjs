@@ -68,7 +68,7 @@ try{
   // Earlier historical guards retain their exact error identity. No unrelated
   // rejection may stand in for checking the current B repair bytes.
   const prefix=profile.authorized_task2_evidence_sha256[f]?'task2_evidence_source_hash_drift':
-   profile.authorized_task1_semantic_context_sha256[f]?'task1c_source_hash_drift':'task3c_b_t01_demand_source_hash_drift';
+   profile.authorized_task1_semantic_context_sha256[f]?'task1c_source_hash_drift':profile.authorized_task3c_p01_v8_sha256[f]?'task3c_p01_v8_hash_drift':'task3c_b_t01_demand_source_hash_drift';
   assert.throws(()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),error=>error.message===prefix+':'+f);
   tests.push({name:'B-T01 demand repair exact source bytes '+f,result:'PASS',rejected:true});fs.writeFileSync(path.join(fixture,f),original);
  }

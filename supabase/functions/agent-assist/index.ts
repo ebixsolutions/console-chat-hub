@@ -1,3 +1,4 @@
+import {writeProtectedPipelineEvidence} from "../_shared/protected-pipeline-evidence.ts";
 import { resolveCanonicalKbDirectAnswer, catalogueVariantClarification } from "../_shared/canonical-kb-direct-answer.ts";
 import { safeExecutionCode, executionFailure, type ExecutionFailure } from "../_shared/execution-failure.ts";
 import { authenticatedInboxAuthority, type InboxOperation } from "../_shared/uat-execution-contract.ts";
@@ -133,6 +134,7 @@ function isUuid(v: unknown): v is string {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 }
 type AssistModelMeta = {
+  protectedEvidence?: (evidence:Record<string,unknown>)=>Promise<void>;
   maxProviderAttempts?: 1;
   companyId: string | null;
   conversationId: string;
@@ -167,6 +169,7 @@ async function callAssistModel(
   const policy=meta.toolType==="check_policy", policyVerifier=meta.toolType==="check_policy-verify";
   const r = await callModel({
     purpose: "assist",
+    protectedEvidence:meta.protectedEvidence,
     maxProviderAttempts:meta.maxProviderAttempts,
     system: sys+(policyVerifier?" Keep at most 3 concise unsupported_claims, each at most 100 characters; use only supplied evidence_ids (at most 3). Return only the schema fields, no reasoning transcript.":""),
     user: usr,
@@ -1160,6 +1163,10 @@ Deno.serve(async (req) => {
         {
           companyId: scope.companyId,
           conversationId,
+          protectedEvidence:async evidence=>{ if(assistFactualRequest?.source_message_id)
+            await writeProtectedPipelineEvidence(supabaseAdmin,{company_id:scope.companyId,conversation_id:conversationId,
+              source_message_id:assistFactualRequest.source_message_id},String(evidence.stage),{...evidence,
+                request:assistFactualRequest,selected:boundEvidence?.items.map(({content,...item})=>item)??[],coverage:boundEvidence?.demands??[]}); },
           toolType: "suggest_reply", legacyAuthority:inboxAuthority, maxProviderAttempts:boundedModelAttempts,
         },
       );

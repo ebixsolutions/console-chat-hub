@@ -455,6 +455,7 @@ if(!page.ok){setLoaded(prev=>({...prev,[id]:{
            <td className="p-2">{t.index}<div className="font-mono text-[10px]">{t.messageId.slice(0,8)}</div></td>
            <td className="max-w-[220px] whitespace-pre-wrap break-words p-2">{t.customerQuestion}</td>
            <td className="max-w-[270px] p-2">
+            {t.pipelineEvidence.map(ev=><details key={ev.id} className="mb-2 rounded border p-2"><summary>Pipeline · {ev.stage} · {ev.linkageStatus}</summary><pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all">{showJson(ev.capture)}</pre></details>)}
             {t.semanticEvidence.map(ev=><details key={ev.id} className="mb-2 rounded border p-2">
              <summary className="cursor-pointer">語意解析失敗 · {ev.linkageStatus}</summary>
              {ev.linkageStatus!=="MATCH"?<p className="text-amber-700">Semantic evidence withheld: exact source/request binding was not verified.</p>:<>

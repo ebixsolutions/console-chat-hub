@@ -1,3 +1,4 @@
+import {writeProtectedPipelineEvidence} from "./protected-pipeline-evidence.ts";
 import {
   buildPersistentCommerceStateSummary,
   interpretCommerceSemantics,
@@ -131,6 +132,12 @@ export async function prepareSemanticRequest(
     legacy_authority: input.legacy_authority,
     signal: input.signal,
   });
+  if (semantic.success_evidence) await writeProtectedPipelineEvidence(client, input, "semantic_accepted", {
+    semantic:semantic.success_evidence,accepted_frame:semantic.frame,decoder:"ACCEPTED",canonical:"ACCEPTED",
+    input_state:{commerce:commerce ? {revision:commerceRow.revision,source_message_id:commerceRow.source_message_id}:null,
+      memory:memory ? {revision:memoryRow.revision,source_message_id:memoryRow.source_message_id}:null}});
+  // Raw capture is private and must never escape through a caller result.
+  delete semantic.success_evidence;
   return {semantic, history, memory, commerce, recovery, input_state:{
     commerce:commerce ? {revision:commerceRow.revision,source_message_id:commerceRow.source_message_id} : null,
     memory:memory ? {revision:memoryRow.revision,source_message_id:memoryRow.source_message_id} : null,

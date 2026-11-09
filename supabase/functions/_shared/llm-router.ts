@@ -71,6 +71,8 @@ export type LlmResult =
 export type ModelPurpose = "evaluation" | "assist" | "generation";
 
 export interface LlmCall {
+  /** In-process private evidence callback. Never serialized to a provider. */
+  protectedEvidence?: (evidence: Record<string,unknown>) => Promise<void>;
   /** Source-derived mixed request. Never merchant authority or provider admission. */
   generalDecisionSupport?: boolean;
   factualEvidenceAbsent?: boolean;
@@ -1195,6 +1197,11 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         log(call.tag, {event:"provider_schema_invalid",request_id:requestId,provider:adapter.id,attempt,status:res.status});
         break;
       }
+      if (call.protectedEvidence) {
+        try { await call.protectedEvidence({stage:"model_text",request_id:requestId,attempt,
+          capture_origin:"PROVIDER_PARSED_MODEL_TEXT",provider_http_raw:"NOT_CAPTURED",
+          candidate:parsed.text,finish_reason:parsed.finish_reason??null}); } catch { /* evidence only */ }
+      }
       usage.input_tokens = parsed.input_tokens;
       usage.output_tokens = parsed.output_tokens;
 
@@ -1242,6 +1249,10 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
           grounding,
           timeoutMs,
         ); } catch(error) { groundingDecision={ok:false,reason:"verifier_unavailable",failure:failureFromError(error,{request_id:requestId})}; }
+        if (call.protectedEvidence) {
+          try { await call.protectedEvidence({stage:"grounding_verdict",request_id:requestId,attempt,
+            verdict:groundingDecision}); } catch { /* evidence only */ }
+        }
         if (!groundingDecision.ok) {
           lastCode = "LLM_INVALID_OUTPUT";
           usage.latency_ms = Date.now() - started;

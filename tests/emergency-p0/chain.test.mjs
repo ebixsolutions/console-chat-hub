@@ -17,6 +17,7 @@ assert.equal(sdkRequire('@supabase/supabase-js/package.json').version,'2.45.0');
 const compiledCode=new Map();
 const uuid=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const company=uuid(1),ticket=uuid(2),source=uuid(3);
+const pipelineDiagnostic = r => r.url?.includes('/rag_trace') && r.method==='POST' && r.body?.kb_source==='protected_pipeline_diagnostic';
 function typedContextNodes(value,at=[]) {
  const kind=value===null?'null':Array.isArray(value)?'array':typeof value;
  return [{path:at,kind,...(kind==='string'?{text:value}:kind==='number'?{number:value}:kind==='boolean'?{boolean:value}:{})},
@@ -363,7 +364,7 @@ test('Director natural-language counterexample executes complete handler without
 for(const text of social)test('full handler social/identity no provider: '+text,async()=>{
  const f=fixture(text);const result=await f.run();assert.equal(result.status,200);assert.equal(f.commits.length,1);
  assert.equal(f.requests.filter(r=>r.url.includes('aiplatform')).length,0);assert.equal(f.logs.length,0);
- assert(!f.requests.some(r=>/commerce.*rpc|rag|context-search/.test(r.url)));
+ assert(!f.requests.some(r=>!pipelineDiagnostic(r)&&/commerce.*rpc|rag|context-search/.test(r.url)));
  assert(!result.body.degraded);assert.equal(f.commits[0].metadata.transaction_mutation,'NONE');
  if(/name|who|誰|名|person|真人/.test(text))assert.match(result.body.reply,/AI/);
  assert.notEqual(result.body.response_route,'terminal_failure_recovery');
@@ -384,7 +385,7 @@ for(const mode of ['400','malformed','timeout'])test('full handler provider '+mo
  else assert(f.logs.some(x=>x.request_payload.error_code===(mode==='400'?'LLM_NON_2XX':'LLM_TIMEOUT')));
  assert(!JSON.stringify(f.logs).includes('PRIVATE-SECRET'));if(mode==='400')assert.equal(f.logs[0].request_payload.provider_diagnostic.provider_error_class,'schema_complexity');
  assert(!f.requests.some(x=>/context-search|rpc\/.*(?:memory|commerce)/.test(x.url)));
- const traces=f.requests.filter(x=>x.url.includes('/rag_trace'));
+ const traces=f.requests.filter(x=>!pipelineDiagnostic(x)&&x.url.includes('/rag_trace'));
  assert.equal(traces.length,mode==='malformed'?1:0);
  if(traces.length)assert.equal(traces[0].body.kb_source,'semantic_contract_failure','failure evidence is not KB dispatch');
  await f.run();assert.equal(f.commits.length,1);
@@ -424,7 +425,7 @@ for(const traceInsertFailure of [false,true])test('actual handler v6 demand-fiel
  assert.equal(f.requests.filter(x=>x.url.includes('context-search')).length,0);
  assert(!f.requests.some(x=>x.method==='POST'&&/rpc\/.*(?:memory|commerce)/.test(x.url)));
  assert.deepEqual({commerce:f.tables.conversation_commerce_state,memory:f.tables.conversation_memory_state},before);
- const writes=f.requests.filter(x=>x.url.includes('/rag_trace')&&x.method==='POST');
+ const writes=f.requests.filter(x=>!pipelineDiagnostic(x)&&x.url.includes('/rag_trace')&&x.method==='POST');
  assert.equal(writes.length,1,'only the existing protected trace sink receives semantic text');
  const trace=writes[0].body,protectedEvidence=trace.retrieved_chunks;
  assert.equal(trace.conversation_id,ticket);assert.equal(trace.message_id,sourceId);
@@ -456,7 +457,7 @@ for(const traceInsertFailure of [false,true])test('actual handler v6 demand-fiel
  assert(routerInput.user.includes(uuid(9302)));
  assert(models[0].body.contents[0].parts[0].text.includes(question));
  assert(models[0].body.contents[0].parts[0].text.includes(priorCustomer));
- assert.equal(f.tables.rag_trace.length,traceInsertFailure?0:1);
+ assert.equal(f.tables.rag_trace.filter(r=>r.kb_source!=="protected_pipeline_diagnostic").length,traceInsertFailure?0:1);
  if(!traceInsertFailure)assert.deepEqual(f.tables.rag_trace[0],trace);
  const captureErrors=f.events.flat().filter(x=>typeof x==='string').flatMap(x=>{try{return [JSON.parse(x)]}catch{return []}}).filter(x=>x.event==='c3_semantic_evidence_write_failed');
  assert.deepEqual(captureErrors,traceInsertFailure?[{event:'c3_semantic_evidence_write_failed',source_message_id:sourceId,code:'TRACE_INSERT_FAILED'}]:[]);
@@ -465,7 +466,7 @@ for(const traceInsertFailure of [false,true])test('actual handler v6 demand-fiel
  assert(!ordinaryOutputs.includes('failure_evidence'));
  const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
  assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1);
- assert.equal(f.requests.filter(x=>x.url.includes('/rag_trace')&&x.method==='POST').length,1,'an existing terminal reply must not duplicate capture');
+ assert.equal(f.requests.filter(x=>!pipelineDiagnostic(x)&&x.url.includes('/rag_trace')&&x.method==='POST').length,1,'an existing terminal reply must not duplicate capture');
 });
 test('wrong source/Tenant and human-control deny before provider or reply',async()=>{
  const f=fixture('hello');f.setForeign();assert.equal((await f.run()).status,400);assert.equal(f.commits.length,0);assert(!f.requests.some(x=>x.url.includes('aiplatform')));
@@ -556,13 +557,13 @@ test('global endpoint compatibility never bypasses the original remote-bound dat
 test('whole-turn social grammar generalizes repetitions, orthography and supported languages',async()=>{
  const acts=['how do you do?','How are you feeling today?','how have you been keeping lately?','how are things going?','how is your day going?','你好嗎？','您最近過得怎麼樣？','近排點呀？','你今日好唔好？','how are u doing?'];
  for(const act of acts)for(const opening of ['', 'Hi hi! ', 'HELLO\tHEY\n']) {
-  const f=fixture(opening+act,{mode:'400'}),r=await f.run();assert.equal(r.body.response_route,'natural_small_talk',opening+act);assert.equal(f.commits.length,1);assert.equal(f.logs.length,0);assert.equal(f.requests.filter(x=>/aiplatform|rag|context-search/.test(x.url)).length,0);assert.equal(f.commits[0].metadata.transaction_mutation,'NONE');
+  const f=fixture(opening+act,{mode:'400'}),r=await f.run();assert.equal(r.body.response_route,'natural_small_talk',opening+act);assert.equal(f.commits.length,1);assert.equal(f.logs.length,0);assert.equal(f.requests.filter(x=>!pipelineDiagnostic(x)&&/aiplatform|rag|context-search/.test(x.url)).length,0);assert.equal(f.commits[0].metadata.transaction_mutation,'NONE');
  }
  const f=fixture(Array(20).fill('hi').join(' ')+' how do you do?');assert.equal((await f.run()).body.response_route,'natural_small_talk');
 });
 test('minimal business, quotation, translation, negation and reference contrasts retain the complete semantic input',async()=>{
  for(const text of ['Hi, how do you do refunds?',"What does ‘how do you do’ mean?",'Please translate "how do you do" into Cantonese.','Hi hi, change my booking to Saturday, but keep the other one.','你好，最近過得怎麼樣這句英文點講？','Hi, not Saturday; keep Friday for the second booking.','How are you doing the cancellation?','How do you do? The subscription is deferred, not cancelled.','Hi, what about the earlier option?','點樣','One person needs a Saturday booking.','Do not connect me to a person. Check the refund policy.','If this fails, connect me to someone.','What does "please connect me to a person" mean?','Hi, I am angry. Just tell me the return policy.']) {
-  const f=fixture(text,{mode:'400'}),r=await f.run();const req=f.requests.find(x=>x.url.includes('aiplatform'));assert(req,text);assert(req.body.contents[0].parts[0].text.includes(text.normalize("NFKC")),JSON.stringify(req.body.contents[0].parts[0].text));assert.equal(r.body.response_route,'terminal_failure_recovery');assert.equal(r.body.generation_success,false);assert.equal(f.commits.length,1);assert(!f.requests.some(x=>/explicit_handoff_tx|required_escalation_handoff_tx|rag|context-search/.test(x.url)));assert.doesNotMatch(r.body.reply,/booking.*(?:changed|updated)|refund.*completed/i);
+  const f=fixture(text,{mode:'400'}),r=await f.run();const req=f.requests.find(x=>x.url.includes('aiplatform'));assert(req,text);assert(req.body.contents[0].parts[0].text.includes(text.normalize("NFKC")),JSON.stringify(req.body.contents[0].parts[0].text));assert.equal(r.body.response_route,'terminal_failure_recovery');assert.equal(r.body.generation_success,false);assert.equal(f.commits.length,1);assert(!f.requests.some(x=>!pipelineDiagnostic(x)&&/explicit_handoff_tx|required_escalation_handoff_tx|rag|context-search/.test(x.url)));assert.doesNotMatch(r.body.reply,/booking.*(?:changed|updated)|refund.*completed/i);
  }
 });
 test('canonical nonempty multi-entity memory and pending corrections survive social interruption and return to context',async()=>{
@@ -2180,9 +2181,10 @@ test('Task3 source-bound T9–T12 handler shares the request, verifies a late ma
    assert.match(committed.content,/Panasonic.*1匹/u);
    assert.doesNotMatch(committed.content,/options|model_info|CW-SUL90BA/u);
   }else assert.equal(committed.content,answer);
-  assert.equal(f.tables.rag_trace.length,1);
-  const trace=f.tables.rag_trace[0].retrieved_chunks;
-  assert.equal(f.tables.rag_trace[0].message_id,sourceId);
+  const kbTraces=f.tables.rag_trace.filter(r=>r.kb_source!=="protected_pipeline_diagnostic");
+  assert.equal(kbTraces.length,1);
+  const trace=kbTraces[0].retrieved_chunks;
+  assert.equal(kbTraces[0].message_id,sourceId);
   assert.equal(trace.lineage.length,10);assert.equal(trace.lineage.flatMap(d=>d.chunks).length,40);
   assert.equal(trace.source_context.semantic_input.source_message_id,sourceId);
   assert.equal(trace.response.capture_origin,'UPSTREAM_HTTP');
@@ -2203,4 +2205,28 @@ for (const [index,text] of ["我想分開確認兩件事：Panasonic CW-SUL70BA 
  if(text.length<2400) assert(sent.includes(text.normalize('NFKC').replace(/\s+/g,' ').trim()), 'full customer turn missing');
  assert(!f.commits.some(c=>c.metadata?.recall_fact_type==='summary'));
  assert(!f.requests.some(r=>r.url.includes('context-search')),'failed semantic admitted KB');
+});
+
+// Same P0-1: complete original handler, real local resolver/router and protected
+// sink; isolated external HTTP is not a Hosted acceptance claim.
+test('P0-1 empty native references bind both current-source demands and retain protected rejection evidence',async()=>{
+ const first='CW-SUL70BA 有咩主要功能？',second='西斜80呎房間用呢款是否合適？';
+ const f=fixture(first+second,{source:uuid(9201),originalPreview:true,fullChain:true,captureEvidence:true,
+  answer:'CW-SUL70BA 保證適合所有房間。',verifierGrounded:false,
+  semantic:task1SemanticContextWire([
+   task1SemanticContextDemand(first,{subject_refs:[],requested_facts:['features'],constraints:{name:'CW-SUL70BA'}}),
+   task1SemanticContextDemand(second,{subject_refs:[],requested_facts:['suitability'],constraints:{name:'CW-SUL70BA',room_area:80}}),
+  ]),originalRagResponse:task1cRagDocuments(task1cModelDocument({id:'p01-source-document'}))});
+ await f.run();
+ const kb=f.requests.filter(r=>r.url.includes('context-search'));assert.equal(kb.length,1);
+ assert.match(kb[0].body.query,/features/);assert.match(kb[0].body.query,/suitability/);
+ const records=f.tables.rag_trace.filter(r=>r.kb_source==='protected_pipeline_diagnostic');
+ const decoded=records.map(r=>({stage:r.retrieved_chunks.stage,payload:r.retrieved_chunks.payload}));
+ assert(decoded.some(r=>r.stage==='semantic_accepted'),'accepted semantic private receipt missing');
+ const drafts=decoded.filter(r=>r.stage==='model_text').map(r=>JSON.parse(r.payload.body));
+ assert(drafts.some(r=>r.candidate==='CW-SUL70BA 保證適合所有房間。'),'rejected draft must survive verifier rejection');
+ assert(decoded.some(r=>r.stage==='grounding_verdict'),'actual grounding decision missing');
+ assert(decoded.some(r=>r.stage==='b2_verdict'),'actual B2 decision missing');
+ assert(f.commits.every(r=>r.content!=='CW-SUL70BA 保證適合所有房間。'));
+ for(const record of records)assert.equal(record.message_id,uuid(9201));
 });

@@ -117,7 +117,7 @@ const declared=[meta.source_message_id,meta.b2_source_message_id]
    replies.set(source,[...(replies.get(source)??[]),m]);
  }
  const turns=visitors.map((m,index)=>{
-  const sourceTraces=traces.filter(t=>t.message_id===m.id),kbTraces=sourceTraces.filter(t=>!isSemanticTrace(t));
+  const sourceTraces=traces.filter(t=>t.message_id===m.id),kbTraces=sourceTraces.filter(t=>!isSemanticTrace(t)&&t.kb_source!=="protected_pipeline_diagnostic");
   const semanticEvidence=sourceTraces.filter(isSemanticTrace).map(t=>semanticTraceView(t,m.id));
   return{
   index:index+1,messageId:m.id,createdAt:m.created_at,
@@ -146,6 +146,12 @@ grounding_verification:meta.grounding_verification??null,
     },true)};
   }),
   semanticEvidence,
+  pipelineEvidence:sourceTraces.filter(t=>t.kb_source==="protected_pipeline_diagnostic").map(t=>{
+   const d=asRecord(t.retrieved_chunks);
+   const linked=d.contract==="c3-protected-pipeline-evidence-v1"&&d.source_message_id===m.id&&EVIDENCE_UUID.test(m.id);
+   return {id:t.id,stage:linked?String(d.stage):"NOT_VERIFIED",linkageStatus:linked?"MATCH":"MISMATCH",
+    capture:linked?redactEvidenceValue(d.payload):null};
+  }),
   evidence:kbTraces.map(t=>{
    const d=asRecord(t.retrieved_chunks),r=asRecord(d.response);
    const raw=typeof r.response_json_raw==="string"?r.response_json_raw:null;

@@ -307,3 +307,14 @@ test("Malformed semantic capture receipts are withheld without exposing body or 
   assert.equal(response.body,null);assert.equal(response.sha256,null);assert.equal(response.captureOrigin,null);
  }
 });
+
+test('protected pipeline receipts remain Admin evidence and never become a KB dispatch',()=>{
+ const id='10000000-0000-4000-8000-000000000001';
+ const messages=[{id,role:'visitor',content:'Question',created_at:'2026-01-01'}];
+ const trace={id:'diagnostic',message_id:id,kb_source:'protected_pipeline_diagnostic',retrieved_chunks:{contract:'c3-protected-pipeline-evidence-v1',source_message_id:id,stage:'b2_verdict',payload:{body:'private@example.test',capture_state:'CAPTURED'}}};
+ const turn=linkConversationEvidenceTurns(messages,[trace]).turns[0];
+ assert.equal(turn.evidence.length,0);assert.equal(turn.evidenceStatus,'NOT_CAPTURED');
+ assert.equal(turn.pipelineEvidence[0].linkageStatus,'MATCH');assert(!JSON.stringify(turn.pipelineEvidence).includes('private@example.test'));
+ const bad=structuredClone(trace);bad.retrieved_chunks.source_message_id='other';
+ assert.equal(linkConversationEvidenceTurns(messages,[bad]).turns[0].pipelineEvidence[0].capture,null);
+});
