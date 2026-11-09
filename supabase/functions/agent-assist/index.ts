@@ -1163,7 +1163,7 @@ Deno.serve(async (req) => {
         {
           companyId: scope.companyId,
           conversationId,
-          protectedEvidence:async evidence=>{ if(assistFactualRequest?.source_message_id)
+          protectedEvidence:async evidence=>{ if(scope.companyId && assistFactualRequest?.source_message_id)
             await writeProtectedPipelineEvidence(supabaseAdmin,{company_id:scope.companyId,conversation_id:conversationId,
               source_message_id:assistFactualRequest.source_message_id},String(evidence.stage),{...evidence,
                 request:assistFactualRequest,selected:boundEvidence?.items.map(({content,...item})=>item)??[],coverage:boundEvidence?.demands??[]}); },
@@ -1197,7 +1197,7 @@ Deno.serve(async (req) => {
         );
       }
       const checked=await verifyAssistClaims(verificationRequest,boundEvidence ? JSON.stringify({suggestions:safe}) : safe.map(s=>s.content).join("\n"),evidence,{companyId:scope.companyId,conversationId,toolType:"suggest_reply",legacyAuthority:inboxAuthority,maxProviderAttempts:boundedModelAttempts},false,boundEvidence);
-      if(assistFactualRequest?.source_message_id) await writeProtectedPipelineEvidence(supabaseAdmin,
+      if(scope.companyId && assistFactualRequest?.source_message_id) await writeProtectedPipelineEvidence(supabaseAdmin,
         {company_id:scope.companyId,conversation_id:conversationId,source_message_id:assistFactualRequest.source_message_id},
         "assist_grounding_verdict",{candidate:safe,verdict:checked,request:assistFactualRequest,
           selected:boundEvidence?.items.map(({content,...item})=>item)??[],coverage:boundEvidence?.demands??[]});

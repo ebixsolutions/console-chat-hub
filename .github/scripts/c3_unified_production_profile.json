@@ -1563,7 +1563,7 @@
     "supabase/functions/_shared/factual-request-context.ts": "c4c379524c51c1befbe69bb16e8ae2e78d38a35ac4d28f72d1c7c7c0c374a53d",
     "supabase/functions/_shared/llm-router.ts": "81344fddb547e0782be8ba5f447497365db84d6cce068e09e1ee9e8a1e8f7614",
     "supabase/functions/_shared/prepare-semantic-request.ts": "a46f9d94c6f612187ed1a49be8a876a5e2e3c5430884c75832739d1d717bafd1",
-    "supabase/functions/agent-assist/index.ts": "f87fb2c06154d56e0c9b77044901739ac69157c0e366e9e725793a715880de33",
+    "supabase/functions/agent-assist/index.ts": "79115ca72b93f7d397c6f42d0a6f0a6686e23179adbf93a194d0df6381dcf161",
     "supabase/functions/_shared/protected-pipeline-evidence.ts": "f73e131cb3a53026ee1336917355255690683d54a39423901f27cd4403aca9e9",
     "tests/emergency-p0/protected-evidence.test.ts": "50df4a5f9176c19659dafb850b7d245a3697be8c3e079dac4326b84df5937683",
     "tests/emergency-p0/subject-binding-projection.test.ts": "7d7ae8af77ef22c919a0e4363475dd48f6a14512af2b9021d406e2d6d3b4f16d",
