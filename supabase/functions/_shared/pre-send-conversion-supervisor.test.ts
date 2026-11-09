@@ -410,6 +410,29 @@ Deno.test("B2 blocks asking for a known delivery address", () => {
   );
 });
 
+Deno.test("P0-1 negative knowledge assertions are not known-field reconfirmation", () => {
+  for (const draft of [
+    "未能確認這款是否適合西斜房間，不能保證夠凍。",
+    "現有資料沒有現場熱負荷評估，未能確認這款是否適合你已提及的西斜約80呎房間。",
+    "目前無法判斷這項服務是否適用，還需要現場評估。",
+    "我不能确定该方案是否支持此配置。",
+    "我未能確認是否符合條件；請提供尚未提及的窗戶面積。",
+  ]) assertEquals(decision(draft, createEmptyConversationCommerceState()).code, "B2_ALLOW", draft);
+
+  // A negative assertion cannot exempt a subsequent actual known-field request.
+  for (const draft of [
+    "未能確認這款是否適合？",
+    "未能確認這款是否適合，請確認收貨地址。",
+    "未能確認這款是否適合。What is your delivery address?",
+    "未能確認這款是否適合；請提供收貨地址。",
+    "你不能確認收貨地址是否正確。",
+    "請確認是否適合。",
+    "Can you confirm the delivery address?",
+  ]) assertEquals(decision(draft).code, "KNOWN_CONTEXT_RECONFIRMATION", draft);
+  assertEquals(decision("未能確認這款是否適合。訂單已確認並已付款。", createEmptyConversationCommerceState()).decision,
+    "block", "negative knowledge must not exempt transaction claims");
+});
+
 Deno.test("B2 blocks asking for known order and payment status", () => {
   assertEquals(
     decision("Can you confirm the order status?").code,

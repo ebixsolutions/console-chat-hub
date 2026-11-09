@@ -913,6 +913,19 @@ function evaluateTransactionReality(
   return null;
 }
 
+// An embedded whether-clause in a negative knowledge assertion is not a
+// request to repeat customer facts. Remove only that bounded assertion from
+// the question's scope, retaining subsequent request clauses and their aliases.
+// A question mark or request cue inside the assertion keeps the original check.
+// No metadata-based exemption is granted.
+function knownContextQuestionText(clause: string): string {
+  if (/[?？]/u.test(clause)) return clause;
+  return clause.replace(
+    /(?:^|[，,；;])\s*(?:(?:我(?:們|们)?|目前|現時|现时|暫時|暂时)\s*)?(?:未能|無法|无法|不能|尚未能)(?:確認|确认|判斷|判断|確定|确定)[^?？。.!！\n，,；;]{0,80}是否[^?？。.!！\n，,；;]{0,160}(?=$|[。.!！\n，,；;])/gu,
+    (assertion) => QUESTION.test(assertion.replace(/是否/gu, "")) ? assertion : "",
+  );
+}
+
 function evaluateKnownContext(text: string, state: ConversationCommerceState, readOnlyProjection: boolean = false, sourceBoundGuidance: boolean = false): B2Decision | null {
   if (!QUESTION.test(text)) return null;
   // Preserve the original Frozen B2 clause scope. Only an actual, freshly
@@ -921,7 +934,7 @@ function evaluateKnownContext(text: string, state: ConversationCommerceState, re
   // repeated question. All ordinary known-field re-asks still remain blocked.
   const questionClauses = text
     .split(sourceBoundGuidance ? /(?<=[?？.!！。])|[，,；;]|\n+/ : /(?<=[?？.!！。])|\n+/)
-    .map(lower)
+    .map((clause) => knownContextQuestionText(lower(clause)))
     .filter((clause) => QUESTION.test(clause));
   for (const clause of questionClauses) {
     for (const fact of collectKnownCommerceFacts(state)) {

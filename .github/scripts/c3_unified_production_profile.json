@@ -1544,7 +1544,7 @@
     "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "8888445cd689d6b76bae1a35b7720f4922b514e0bbc59c84d9f54a9b5ba5e09a",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "09c5bb379d06b708048ddced950b74177fe699ff7097a9ced64483edec538ec5",
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "a764ae1384288498ac27b6f397687b92328e7cfd394943f51d627854fe9d954f",
-    "tests/emergency-p0/chain.test.mjs": "8d47b0f19095ad196c8b27afd8f88dc62f97f4dbb0a925771748af91ed4a62af",
+    "tests/emergency-p0/chain.test.mjs": "8768684cd9fb352edc0e85482fecb28ff21ffcde8d9016e7f785fe7b7138dea9",
     "supabase/functions/_shared/f13-runtime-recovery.test.ts": "bed0bbe205fdf9530907158e44f026cd0dc2732813fda43d70fe6f70ce3d879f",
     "supabase/functions/_shared/vertex-generation-config.ts": "5e691ab14d0b80af7f07c79da1810eabcfdde4fc00f03bfe4a101b177a86a2d1",
     "supabase/functions/_shared/commerce-state-authority.ts": "f58a50eb9c24c210e1fea267da131e831dc227583b47a2461d3ad7b05b2f45dc",
@@ -1570,7 +1570,9 @@
     "src/lib/api/evidence-log-scope.ts": "cb30b2bfd9151b67502836582741138c52612d7282b01c7c967f726754c9e2dc",
     "src/routes/_authenticated/console.settings.llm-runtime.tsx": "4f530a843cea897988225b562e2a8300e907e75450cc286122aeffa560149f10",
     "tests/console-navigation/admin-evidence-log.test.mjs": "ce3018bc0cecc00b574ce129b4b887b524777de3c2ed24ea723950c127d2fc8a",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "468a6a95b768a1affdeba1c1af8560e123bd360e132ca8e44da4989988f1c3d5"
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "468a6a95b768a1affdeba1c1af8560e123bd360e132ca8e44da4989988f1c3d5",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "546702d5570830c01e3daa42ea681d2e964ba8a9e01e5a03ef68d188db317623",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "96ab124af72f3743634c7b4d9dce4db390d4e30a2ad2fa0b2c3e318e0a79798a"
   },
   "task3c_p01_v7_production_authorized": false,
   "authorized_task3c_p01_v7_sha256": {

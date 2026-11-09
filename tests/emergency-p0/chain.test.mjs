@@ -2230,3 +2230,38 @@ test('P0-1 empty native references bind both current-source demands and retain p
  assert(f.commits.every(r=>r.content!=='CW-SUL70BA 保證適合所有房間。'));
  for(const record of records)assert.equal(record.message_id,uuid(9201));
 });
+
+// Original e76 full-question regression: synthetic external transport, never Hosted evidence.
+test('P0-1 original useful partial answer survives negative-knowledge B2 classification and idempotent readback',async()=>{
+ const text='我想分開確認兩件事：Panasonic CW-SUL70BA 有咩主要功能？另外，西斜約80呎房間用呢款是否合適？如果需要現場資料先可以判斷，請講清楚；暫時唔查售價或庫存。';
+ const first='Panasonic CW-SUL70BA 有咩主要功能？',second='西斜約80呎房間用呢款是否合適？如果需要現場資料先可以判斷，請講清楚';
+ const answer='Panasonic CW-SUL70BA 的已發布資料列有製冷、送風及除濕功能。現有資料沒有現場熱負荷評估，未能確認這款是否適合你已提及的西斜約80呎房間，不能保證夠凍；需要補充窗戶面積及遮陽情況才能進一步評估。';
+ const doc=task1cModelDocument({id:'e76-local-permitted-document'});
+ doc.evidence[0].content='商品型號: CW-SUL70BA\n品牌: Panasonic\n功能: 製冷、送風及除濕';
+ const f=fixture(text,{source:uuid(9301),originalPreview:true,fullChain:true,captureEvidence:true,answer,
+  verifierResolution:'partial',verifierIds:['E1'],verifierDemandResolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']},{demand_id:'demand-2',status:'unavailable',evidence_ids:[]}],
+  semantic:task1SemanticContextWire([
+   task1SemanticContextDemand(first,{subject_refs:[],requested_facts:['features'],constraints:{name:'Panasonic CW-SUL70BA'}}),
+   task1SemanticContextDemand(second,{subject_refs:[],requested_facts:['suitability'],constraints:{name:'Panasonic CW-SUL70BA',room_size:{value:80},sunlight:'西斜'}}),
+  ],{entities:[],referents:[],explicit_negations:['售價','庫存']}),originalRagResponse:task1cRagDocuments(doc)});
+ const result=await f.run();
+ const kb=f.requests.filter(r=>r.url.includes('context-search'));assert.equal(kb.length,1);
+ assert.match(kb[0].body.query,/features/);assert.match(kb[0].body.query,/suitability/);
+ const projected=JSON.parse(kb[0].body.query).questions;
+ assert.deepEqual(projected.map(q=>q.subjects),[['CW-SUL70BA'],['CW-SUL70BA']]);
+ assert.deepEqual(projected.map(q=>q.requested_facts),[['features'],['suitability']]);
+ assert.deepEqual(projected[1].constraints.room_size,{value:80});
+ assert.equal(projected[1].constraints.sunlight,'西斜');
+ assert.equal(f.commits.length,1);assert.equal(f.commits[0].content,answer,JSON.stringify({reply:f.commits[0],events:f.events.slice(-8)}));
+ assert.equal(f.commits[0].metadata.b2_commit_source,'commit_ai_reply_tx');
+ assert.deepEqual(catalogueGateEvents(f).map(x=>[x.gate_decision,x.gate_code,x.commit_attempted]),[['allow','B2_ALLOW',true]]);
+ assert.equal(f.requests.filter(r=>r.url.endsWith(':generateContent')).length,3);
+ assert.equal(f.commits[0].metadata.grounding_verification.question_resolution,'partial');
+ assert.deepEqual(f.commits[0].metadata.unresolved_fact_fields,['demand-2']);
+ assert.equal(f.commits[0].metadata.kb_request_contract.source_message_id,uuid(9301));
+ assert.deepEqual(f.commits[0].metadata.grounding_verification.used_evidence_ids,['E1']);
+ assert.deepEqual(f.commits[0].metadata.citation_lineage.evidence_chunk_ids,['e76-local-permitted-document-full']);
+ assert.equal(f.tables.messages.filter(m=>m.role==='assistant').length,1);
+ assert.equal(f.tables.messages.find(m=>m.role==='assistant').content,answer);
+ await task1cAssertReplay(f);
+});
