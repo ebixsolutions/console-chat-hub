@@ -920,10 +920,15 @@ function evaluateTransactionReality(
 // No metadata-based exemption is granted.
 function knownContextQuestionText(clause: string): string {
   if (/[?？]/u.test(clause)) return clause;
-  return clause.replace(
+  const requestCue = /(?:請|请|麻煩|麻烦|重講|重讲|再說|再说|再講|再讲|tell me|repeat|again)/iu;
+  const scoped = clause.replace(
     /(?:^|[，,；;])\s*(?:(?:我(?:們|们)?|目前|現時|现时|暫時|暂时)\s*)?(?:未能|無法|无法|不能|尚未能)(?:確認|确认|判斷|判断|確定|确定)[^?？。.!！\n，,；;]{0,80}是否[^?？。.!！\n，,；;]{0,160}(?=$|[。.!！\n，,；;])/gu,
-    (assertion) => QUESTION.test(assertion.replace(/是否/gu, "")) ? assertion : "",
+    (assertion) => QUESTION.test(assertion.replace(/是否/gu, "")) || requestCue.test(assertion) ? assertion : "",
   );
+  // Do not turn an unclassified appended instruction into permission merely
+  // by removing the earlier interrogative marker. Retain the old fail-closed
+  // scope when the remaining request is not understood by QUESTION.
+  return requestCue.test(scoped) && !QUESTION.test(scoped) ? clause : scoped;
 }
 
 function evaluateKnownContext(text: string, state: ConversationCommerceState, readOnlyProjection: boolean = false, sourceBoundGuidance: boolean = false): B2Decision | null {

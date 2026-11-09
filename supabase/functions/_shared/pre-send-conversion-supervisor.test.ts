@@ -428,6 +428,8 @@ Deno.test("P0-1 negative knowledge assertions are not known-field reconfirmation
     "你不能確認收貨地址是否正確。",
     "請確認是否適合。",
     "Can you confirm the delivery address?",
+    "未能確認收貨地址是否正確，請重講一次。",
+    "未能確認是否請你重講收貨地址。",
   ]) assertEquals(decision(draft).code, "KNOWN_CONTEXT_RECONFIRMATION", draft);
   assertEquals(decision("未能確認這款是否適合。訂單已確認並已付款。", createEmptyConversationCommerceState()).decision,
     "block", "negative knowledge must not exempt transaction claims");
