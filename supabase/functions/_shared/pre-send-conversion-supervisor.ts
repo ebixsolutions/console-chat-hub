@@ -971,8 +971,13 @@ function evaluateTransactionReality(
  * clause does not ask the customer anything. Imperatives/questions are parsed
  * independently of route; an elliptical repeat inherits only the same sentence's
  * object. Literal enum values are never expanded into field names. */
-function customerInformationRequests(text: string): string[] {
-  const requests: string[] = [];
+interface CustomerInformationRequest {
+  text: string;
+  object_binding: "EXPLICIT" | "INHERITED" | "UNRESOLVED" | "NOMINAL";
+  object_text: string;
+}
+function customerInformationRequests(text: string): CustomerInformationRequest[] {
+  const requests: CustomerInformationRequest[] = [];
   const command = /(?:請|请|麻煩|麻烦|please|(?:can|could|would|will) you|你(?:可否|可以|能否|不能|能|再|重|講|讲|說|说)|您)/iu;
   const informationVerb = /(?:提供|確認|确认|告訴|告诉|重講|重讲|再講|再讲|講多|讲多|再說|再说|重說|重说|再問|再问|\b(?:tell|provide|confirm|repeat|specify|share)\b)/iu;
   const directQuestion = /(?:[?？]|^(?:what|which|when|where|who|how)\b|請問|请问|邊個|边个|邊度|边度|幾多|几多|多少|係咪|是不是)/iu;
@@ -1000,7 +1005,14 @@ function customerInformationRequests(text: string): string[] {
         // complement. A newly named missing field must never inherit an earlier
         // known address/preference just because the directive contains "again".
         const elliptical = !complement.replace(/\b(?:it|that|this|again|once|more|please)\b|(?:一次|一遍|多次|次|佢|它|這個|这个)|[\s.。!?！？]/giu, "");
-        requests.push(repeat && elliptical && previous ? `${previous} ${object}` : object);
+        const inherited = repeat && elliptical && !!previous;
+        // A bare nominal echo (e.g. a model plus "price?") has no reliable
+        // customer-information predicate. It cannot select a known model as
+        // its field or silently authorize an unexplained follow-up.
+        const nominalQuestion = !action && /[?？]/u.test(object) &&
+          !/^(?:what|which|when|where|who|how|is|are|was|were|do|does|did|can|could|would|will|you|we|i|they)\b|^(?:你|您|我|我們|我们|佢|他|她)|請問|请问|邊|边|幾|几|多少|係咪|是不是/iu.test(object);
+        requests.push({text:inherited ? `${previous} ${object}` : object,object_text:complement.replace(/[.。!?！？]+$/u, "").trim(),
+          object_binding:inherited ? "INHERITED" : elliptical ? "UNRESOLVED" : nominalQuestion ? "NOMINAL" : "EXPLICIT"});
       }
       previous = clause;
     }
@@ -1021,7 +1033,8 @@ function evaluateKnownContext(text: string, input: B2EvaluationInput): B2Decisio
   const snapshot = input.snapshot;
   const state = snapshot.state;
   const facts = collectKnownCommerceFacts(state).filter(f => f.current && f.authority!=="DEFAULT" && !f.path.split(".").includes("provenance"));
-  for (const request of customerInformationRequests(text)) {
+  for (const parsedRequest of customerInformationRequests(text)) {
+    const request=parsedRequest.text;
     // Resolve requested fields independently of values. Generic status/confirmed
     // cannot win over a specific address, and changing collection order is inert.
     const mentions = facts.map(fact => ({fact, labels:fact.field_aliases.filter(alias => fieldMention(request,alias))}));
@@ -1036,15 +1049,17 @@ function evaluateKnownContext(text: string, input: B2EvaluationInput): B2Decisio
     if (named.length) candidates = candidates.filter(f=>!f.entity_id || named.includes(f.entity_id));
     // A literal non-enum reference can identify a known preference even when its
     // field is paraphrased. Boolean/numeric/status values cannot identify fields.
-    if (!candidates.length) candidates = facts.filter(f=>
+    const fieldBound = candidates.length > 0;
+    if (!candidates.length && /(?:\bconfirm\b|確認|确认)/iu.test(request)) candidates = facts.filter(f=>
       !/(?:^|\.)(?:status|confirmed|quantity|funnel_stage|order_status|payment_status|quotation_status)$/.test(f.path) &&
       f.value.length>=2 && !/^(?:true|false|\d+(?:\.\d+)?)$/i.test(f.value) && fieldMention(request,lower(f.value)));
-    if (!candidates.length && !/(?:這款|这款|該項|该项|嗰個|果個|\b(?:confirm|repeat)\b.{0,24}\b(?:it|that|this)\b|\b(?:is|was) (?:it|that|this)\b|請確認是否|请确认是否)/iu.test(request)) continue;
+    if (!candidates.length && parsedRequest.object_binding!=="UNRESOLVED" && !(parsedRequest.object_binding==="NOMINAL" && named.length) && !/(?:這款|这款|該項|该项|嗰個|果個|\b(?:confirm|repeat)\b.{0,24}\b(?:it|that|this)\b|\b(?:is|was) (?:it|that|this)\b|請確認是否|请确认是否)/iu.test(request)) continue;
     // An actual request with only an unresolved referent has no trustworthy
     // repair target. Missing named details can still be requested normally.
     const qualified = candidates.filter(f=>["CUSTOMER","BACKEND","STAFF"].includes(f.authority));
     const fresh = snapshot.commerce_state_source_message_id === snapshot.source_message_id;
-    const target = candidates.length === 1 && qualified.length === 1 && fresh ? qualified[0] : null;
+    const target = candidates.length === 1 && qualified.length === 1 && fresh &&
+      (fieldBound || parsedRequest.object_text === lower(qualified[0].value)) ? qualified[0] : null;
     const receipt: B2ContextRequestReceipt = {
       contract:"b2-context-request-v1",binding:target ? "QUALIFIED" : candidates.length>1 ? "AMBIGUOUS" : "UNVERIFIED",
       request_text:request,company_id:snapshot.company_id,conversation_id:snapshot.conversation_id,

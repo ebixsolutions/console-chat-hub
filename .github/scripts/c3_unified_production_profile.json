@@ -1571,8 +1571,8 @@
     "src/routes/_authenticated/console.settings.llm-runtime.tsx": "4f530a843cea897988225b562e2a8300e907e75450cc286122aeffa560149f10",
     "tests/console-navigation/admin-evidence-log.test.mjs": "ce3018bc0cecc00b574ce129b4b887b524777de3c2ed24ea723950c127d2fc8a",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "468a6a95b768a1affdeba1c1af8560e123bd360e132ca8e44da4989988f1c3d5",
-    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "9cc487287d593e48c7af3a4fe80dee15cb59122dd7794a0f04408eb6e8f22f8e",
-    "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "89e46e5baba4678a90e3cf47de0ee8082383f4cb257a7c1a9ea6c15364f7b013"
+    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "5764ca4b122dd866144cfc5e0822e79081f1df9f68a7b660b1b99b2faacb6d3a",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "484ea8051f698a19165b054ffbd58194b11b31e9b79fcfa0596f77e159f3057f"
   },
   "task3c_p01_v7_production_authorized": false,
   "authorized_task3c_p01_v7_sha256": {

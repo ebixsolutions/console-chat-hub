@@ -1633,7 +1633,7 @@ Deno.test("B2 request authority/defaults/zero/false are distinct; repair is fail
 Deno.test("B2 ambiguous target and stale source cannot supply repair feedback",()=>{
   const state=stateFixture();
   state.entities[1].status="researching";
-  for(const draft of ["Please confirm the model?","Please confirm the delivery address and phone?","請確認這款是否適合？"]){
+  for(const draft of ["Please confirm the model?","Please confirm the delivery address and phone?","請確認這款是否適合？","Please confirm.","請提供。","Repeat it."]){
     const result=decision(draft,state);
     assertEquals(result.decision,"block","unresolved actual request fail closed");
     assert(!result.detail&&!result.context_request?.target,"no arbitrary target");
@@ -1656,6 +1656,8 @@ Deno.test("B2 honest limitations, prohibitions and genuinely missing detail rema
     "I cannot determine whether it is suitable. Please provide the window area.",
     "不用再提供收貨地址。","不要再次確認收貨地址。","Do not repeat the delivery address.",
     "The model RX-100 is recorded. What is the window area?",
+    "How often do you use RX-100?",
+    "Please provide the window area for RX-100.",
     "收貨地址已記錄，請再提供尚未提及的窗戶面積。",
     "Your delivery address is recorded; please provide the window area again.",
   ])for(const route of ["customer_guidance","mixed","factual"]){
