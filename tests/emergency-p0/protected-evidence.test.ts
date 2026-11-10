@@ -73,11 +73,11 @@ Deno.test("Task3C reviewer original output: at most 8KB per attempt, hash and no
   model_text:'{"grounded":"bad","demand_resolutions":"bad"}',include_model_text:true});
  assert(valid.attempt===2&&valid.model_text_capture_state==="CAPTURED"&&
   valid.origin==="PROVIDER_PARSED_MODEL_TEXT_NOT_HTTP_RAW");
- assert(typeof valid.model_text==="string"&&valid.model_text_sha256.length===64);
+ assert(typeof valid.model_text==="string"&&typeof valid.model_text_sha256==="string"&&valid.model_text_sha256.length===64);
  const huge=await boundedReviewerSpecifics({attempt:1,failure_code:"verifier_invalid_output",
   model_text:"x".repeat(8193),include_model_text:true});
  assert(huge.model_text===null&&huge.model_text_capture_state==="WITHHELD_OVER_8KB"&&
-  huge.model_text_bytes===8193&&huge.model_text_sha256.length===64);
+  huge.model_text_bytes===8193&&typeof huge.model_text_sha256==="string"&&huge.model_text_sha256.length===64);
  const db=database();
  assert(await writeProtectedPipelineEvidence(db,scope,"grounding_reviewer_specifics",huge));
  assert(!("decision_receipt" in db.writes[0].retrieved_chunks));

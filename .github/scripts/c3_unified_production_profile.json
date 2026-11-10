@@ -1627,7 +1627,7 @@
     "supabase/functions/_shared/protected-pipeline-evidence.ts": "76bfb78382af7452ea6f8180144535381689e6f5ced738c0b17717be87df6440",
     "supabase/functions/_shared/llm-router.ts": "48468ceaa39ea014825b575883d6c8e8b892697207f61e8ab49ea4c20cee2982",
     "supabase/functions/agent-assist/index.ts": "21178dd2dfe99cd5a21a5c9229bcaa85add641717a8be1f7f9fa80357c317ed7",
-    "tests/emergency-p0/protected-evidence.test.ts": "ae808dff555ea9f6d2c7956f21be39544f6b9742a3d5d61c8ffd46f1a5eb1092",
+    "tests/emergency-p0/protected-evidence.test.ts": "24f1d6eef950d8b5d7d1689521db89323967e834b441b06f88a8dfa43493dc6a",
     "tests/emergency-p0/chain.test.mjs": "364f35ec362b35d825c5e8bdf20b731c3fa563fc1dd631b2a2c5009a703e8511",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "4e216707e3697afde2d8f9d98769ac93345d68c40c6ccbf01781fc66841ea05d"
   },
