@@ -159,7 +159,7 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
     const historic=TASK3C_REASON_LOG_SOURCE[f]?'task3c_reason_log_source_drift:':
       TASK3C_1139_GROUNDING_RECOVERY_SOURCE[f]?'task3c_1139_grounding_recovery_source_drift:':
       'task3c_supervisor_source_drift:';
-    must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,historic+f);
+    must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===(TASK3C_REVIEWER_SPECIFICS_SOURCE[f]??h),historic+f);
   }
   must(profile.task3c_reason_log_deployment_authorized===false,'task3c_reason_log_deploy_not_authorized');
   must(profile.task3c_reason_log_publish_authorized===false,'task3c_reason_log_publish_not_authorized');
