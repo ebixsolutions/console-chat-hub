@@ -47,13 +47,15 @@ export async function safeGateReasonReceipt(scope:{
    gate==="b2"?code(decision.code):gate==="recovery"?code(x.fallback_condition):code(x.failure_code);
  const outcome=gate==="grounding_verifier"?verdict.ok===true?"accepted":verdict.ok===false?"rejected":"NOT_CAPTURED":
    gate==="b2"?decision.decision==="allow"?"accepted":decision.decision==="block"?"rejected":"NOT_CAPTURED":
-   gate==="recovery"?"fallback_selected":x.accepted===true?"accepted":x.accepted===false?"rejected":"NOT_CAPTURED";
+   gate==="recovery"?x.committed===true?"fallback_selected":x.committed===false?"rejected":"NOT_CAPTURED":
+   x.accepted===true?"accepted":x.accepted===false?"rejected":"NOT_CAPTURED";
  const fault=gate==="grounding_verifier"?
-   rejection.stage==="demand_resolution_shape"||fired==="question_resolution_missing"||
+   rejection.stage==="verifier_output_shape"||rejection.stage==="demand_resolution_shape"||fired==="question_resolution_missing"||
    fired==="question_resolution_demand_inconsistent"?"reviewer_output_shape":
    rejection.stage==="semantic_claims"||fired==="unsupported_semantic_claim"?"content":"NOT_CAPTURED":
    gate==="b2"&&outcome==="rejected"?"policy":"NOT_CAPTURED";
- const demands=Array.isArray(rejection.demand_resolutions)?rejection.demand_resolutions.slice(0,12).flatMap(v=>{
+ const rawDemands=gate==="recovery"?x.demand_outcomes:rejection.demand_resolutions;
+ const demands=Array.isArray(rawDemands)?rawDemands.slice(0,12).flatMap(v=>{
    const d=obj(v);
    if(typeof d.demand_id!=="string"||!/^demand-(?:[1-9]|1[0-2])$/u.test(d.demand_id)||
       !["supported","partial","unavailable"].includes(String(d.status)))return [];

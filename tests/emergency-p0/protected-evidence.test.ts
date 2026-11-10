@@ -40,6 +40,26 @@ Deno.test("Task3C reason summary redacts raw B2 candidate even on whole-body WIT
  assert(proof.fired_condition==="B2_ALLOW"&&proof.commit_confirmed===true&&proof.candidate_ref.sha256.length===64);
  assert(!JSON.stringify(proof).includes("alice@example.com"));
 });
+
+Deno.test("Task3C all four source-bound gate summaries distinguish real acceptance from review and recovery",async()=>{
+ const db=database();
+ for(const [stage,payload] of [
+  ["semantic_validation",{accepted:true}],
+  ["grounding_verdict",{verdict:{ok:false,reason:"verifier_invalid_output",
+    rejection:{stage:"verifier_output_shape",reason:"verifier_invalid_output",demand_resolutions:[]}}}],
+  ["recovery_decision",{fallback_condition:"REVIEWER_OUTPUT_SHAPE",selected_fallback:"canonical_kb_partial_recovery",
+    committed:true,demand_outcomes:[{demand_id:"demand-1",status:"partial",evidence_ids:["E1"]},
+      {demand_id:"demand-2",status:"unavailable",evidence_ids:[]}]}],
+  ["b2_verdict",{decision:{decision:"allow",code:"B2_ALLOW"},committed:true}],
+ ] as Array<[string,unknown]>)assert(await writeProtectedPipelineEvidence(db,scope,stage,payload));
+ assert(db.writes.length===4);
+ const receipts=db.writes.map(row=>row.retrieved_chunks.decision_receipt);
+ assert(receipts.map(x=>x.gate).join(",")==="semantic_validation,grounding_verifier,recovery,b2");
+ assert(receipts[0].outcome==="accepted");
+ assert(receipts[1].fault_class==="reviewer_output_shape");
+ assert(receipts[2].outcome==="fallback_selected"&&receipts[2].per_demand.length===2);
+ assert(receipts[3].commit_confirmed===true);
+});
 Deno.test("Task3C unknown reviewer free text cannot become a factual code",async()=>{
  const db=database();
  assert(await writeProtectedPipelineEvidence(db,scope,"grounding_verdict",

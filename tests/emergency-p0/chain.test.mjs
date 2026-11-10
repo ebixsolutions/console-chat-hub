@@ -1645,6 +1645,46 @@ test('11:39 class: malformed per-demand verifier shape is identified and stays i
  const invalidEvent=f.events.flat().find(event=>typeof event==='string'&&event.includes('grounding_verifier_demand_resolution_invalid'));
  assert(invalidEvent&&invalidEvent.includes('unavailable_cannot_cite_evidence'));
 });
+
+for(const fault of ["demand_resolution_shape","verifier_output_shape"])test(
+ '11:39 supervisor: two malformed verifier decisions still retain exact source-bound feature facts: '+fault,async()=>{
+ const invalid=fault==="demand_resolution_shape"?
+  {grounded:true,unsupported_claims:[],evidence_chunk_ids:["E1"],question_resolution:"partial",
+   demand_resolutions:[{demand_id:"demand-1",status:"supported",evidence_ids:["E1"]},
+    {demand_id:"demand-2",status:"unavailable",evidence_ids:["E1"]}]}:
+  {grounded:"unrecognized",unsupported_claims:[],evidence_chunk_ids:["E1"],
+   question_resolution:"partial",demand_resolutions:v1139DemandResolutions};
+ const f=v1139RecoveryFixture({verifierResponses:[invalid,invalid]});
+ const result=await f.run();assert.equal(result.status,200,JSON.stringify({result,commits:f.commits}));
+ const {semantic,drafts,verifiers}=v2RetryCalls(f);
+ assert.equal(semantic.length,1);assert.equal(drafts.length,1);
+ assert.equal(verifiers.length,2,"only the existing one verifier-shape retry is allowed");
+ assert.equal(f.requests.filter(item=>item.url.includes("context-search")).length,1);
+ assert.equal(f.commits.length,1);
+ const reply=f.commits[0],meta=reply.metadata;
+ assert.equal(meta.response_route,"canonical_kb_partial_recovery",JSON.stringify({reply,events:f.events.slice(-9)}));
+ assert.match(reply.content,/CW-SUL70BA/);
+ assert.match(reply.content,/變頻、淨冷|3\/4匹窗口式冷氣/);
+ assert.match(reply.content,/適合|适合|suitability/iu);
+ assert.match(reply.content,/未能可靠核實|尚未能可靠核实|not been verified/iu);
+ assert(!reply.content.includes("熱負荷較高")&&!reply.content.includes("一定要"));
+ assert(!/HK\$|現價|已預約|已付款|已安排評估/.test(reply.content),"unverified facts were promoted");
+ assert.equal(meta.grounding_rejection_receipt?.stage,fault);
+ assert.deepEqual(meta.partial_recovery.demand_outcomes.map(x=>[x.demand_id,x.status]),[
+  ["demand-1","partial"],["demand-2","unavailable"]]);
+ assert.equal(meta.partial_recovery.demand_outcomes[0].reason,"source_recorded_features_independent_shape_recovery");
+ assert.equal(f.requests.filter(item=>item.url.endsWith("/commit_ai_reply_tx")).length,1);
+ assert.deepEqual(catalogueGateEvents(f).map(x=>[x.gate_decision,x.gate_code,x.commit_attempted]),[
+  ["allow","B2_ALLOW",true]]);
+ const protectedLogs=f.tables.rag_trace.filter(x=>x.kb_source==="protected_pipeline_diagnostic");
+ for(const gate of ["semantic_validation","grounding_verdict","recovery_decision","b2_verdict"])
+  assert(protectedLogs.some(x=>x.retrieved_chunks.stage===gate),"missing protected gate "+gate);
+ const recovery=protectedLogs.find(x=>x.retrieved_chunks.stage==="recovery_decision").retrieved_chunks.decision_receipt;
+ assert.equal(recovery.outcome,"fallback_selected");assert.equal(recovery.selected_fallback,"canonical_kb_partial_recovery");
+ assert.deepEqual(recovery.per_demand.map(x=>[x.demand_id,x.status]),[
+  ["demand-1","partial"],["demand-2","unavailable"]]);
+ const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+});
 test('V2 exact-fact retry: one bounded second draft uses the same E1 and commits verified human wording once',async()=>{
  const answer='AX-QZ81 嘅已發布商品資料記錄 HK$1,290。呢個金額未核實係現價；現貨庫存亦待商家確認。';
  const f=v2PartialRecoveryFixture({answers:['AX-QZ81 costs HK$9,999,999 and 88 units are in stock.',answer],

@@ -4526,6 +4526,14 @@ async function orchestrationGenerateReply(
         reason: _semanticPrepared.recovery.reason,
       }));
       _a3SemanticFrame = semanticResult.frame;
+      // Protected and source-bound semantic admission receipt. Never expose
+      // raw model data or customer values outside the existing diagnostic sink.
+      if(semanticResult.frame&&_criticalE2ExpectedTenantId&&_h1SourceMessageId){
+        await writeProtectedPipelineEvidence(supabaseAdmin,{
+          company_id:_criticalE2ExpectedTenantId,conversation_id,
+          source_message_id:_h1SourceMessageId,
+        },"semantic_validation",{accepted:true,source_stage:"validated_semantic_frame"});
+      }
       _semanticFailure = semanticResult.failure_code;
       if (_semanticFailure) _semanticDiagnostic = semanticResult.failure ?? executionFailure(_semanticFailure,{source_message_id:_h1SourceMessageId});
       if (semanticResult.failure_code) console.warn(JSON.stringify({
@@ -7222,6 +7230,19 @@ source_error_code:llm.code,
           unresolved_fact_fields:unresolved,partial_recovery_b2_rejection:safeB2FailureCode(committed.b2_code),
         });
       }
+      // One protected recovery decision after the original B2/CAS commit
+      // attempt, never the rejected draft or a fabricated success claim.
+      if(_generationCompanyId&&source_message_id)await writeProtectedPipelineEvidence(supabaseAdmin,{
+        company_id:_generationCompanyId,conversation_id,source_message_id,
+      },"recovery_decision",{
+        fallback_condition:llm.grounding_rejection?.stage==="demand_resolution_shape"||
+          llm.grounding_rejection?.stage==="verifier_output_shape"?"REVIEWER_OUTPUT_SHAPE":
+          partial?"SOURCE_BOUND_PARTIAL":"NO_SAFE_SOURCE_FIELD",
+        selected_fallback:responseRoute,committed:committed.ok,
+        demand_outcomes:partial?.demand_outcomes??unresolved.map(demand_id=>({
+          demand_id,status:"unavailable",evidence_ids:[],
+        })),
+      });
       await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
       if (!committed.ok) {
         if (

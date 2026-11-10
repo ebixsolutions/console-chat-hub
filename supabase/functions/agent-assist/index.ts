@@ -1227,6 +1227,14 @@ Deno.serve(async (req) => {
             groundingRejection:checked.grounding_rejection,
           }) : null;
         // Preserve the existing per-draft bound without truncating a pending need.
+        if(scope.companyId&&assistFactualRequest.source_message_id)await writeProtectedPipelineEvidence(supabaseAdmin,{
+          company_id:scope.companyId,conversation_id:conversationId,
+          source_message_id:assistFactualRequest.source_message_id,
+        },"recovery_decision",{
+          fallback_condition:recovery?"SOURCE_BOUND_PARTIAL":"NO_SAFE_SOURCE_FIELD",
+          selected_fallback:recovery?"canonical_kb_partial_recovery":"suggest_failed",
+          committed:false,draft_only:true,demand_outcomes:recovery?.demand_outcomes??[],
+        });
         if(recovery && recovery.reply.length <= 1000)return jsonRes({
           success:true,tool_type:"suggest_reply",draft_only:true,knowledge_grounded:true,
           scope_mode:tenant.scope.mode,kb_request_contract:kbRequestContract,

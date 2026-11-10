@@ -67,11 +67,29 @@ const kbDemand=(demand:CurrentFactualDemand)=>["product","policy","unknown"].inc
 const APPLICABILITY_FACT=/(?:product_)?suitab|compatib|eligib|\bfit\b|適合|适合|合適|合适|適用|适用/iu,APPLICABILITY_TEXT=/適用|适用|適合|适合|合適|合适|suitab|compatib|recommended\s+(?:room|area)|room\s+(?:area|size)|適用面積|适用面积/iu;
 function demandNeedsApplicabilityProof(demand:CurrentFactualDemand){return demand.requested_facts.some(fact=>APPLICABILITY_FACT.test(fact));}
 function scalarConstraintValues(value:unknown):string[]{if(typeof value==="string"||typeof value==="number"||typeof value==="boolean")return [String(value)];if(!value||typeof value!=="object"||Array.isArray(value))return [];return Object.values(value as Record<string,unknown>).flatMap(scalarConstraintValues);}
-function sourceExplicitlySupportsApplicability(source:FactualEvidenceSource,demand:CurrentFactualDemand){if(!demandNeedsApplicabilityProof(demand))return true;
- const texts=source.selection.chunks.filter(chunk=>chunk.chunk_type==="full_content").map(chunk=>chunk.content.normalize("NFKC"));if(!texts.some(text=>APPLICABILITY_TEXT.test(text)))return false;
- for(const [name,value] of Object.entries(demand.constraints).filter(([name])=>!["brand","name","model","sku","spu"].includes(key(name)))){
-  const values=scalarConstraintValues(value).filter(item=>item&&item!=="true"&&item!=="false");if(!values.length)continue;
-  if(!values.every(raw=>name==="room_orientation"&&/west[- ]?facing|西斜/iu.test(raw)?texts.some(text=>/west[- ]?facing|西斜/iu.test(text)):texts.some(text=>key(text).includes(key(raw)))))return false;}return true;}
+/** Each condition must be supported by the SAME exact full-content
+ * chunk. Never infer orientation or other context from a per-scenario keyword
+ * translation, another chunk, or the customer's own question. */
+function sourceConditionMatches(text:string,value:string):boolean{
+ const needle=key(value),haystack=key(text);
+ if(!needle||needle==="true"||needle==="false")return false;
+ if(/^\d+(?:\.\d+)?$/u.test(needle)){
+   const exact=needle.replace(/\./gu,"\\.");
+   return new RegExp("(?:^|[^\\p{L}\\p{N}.])"+exact+"(?=$|[^\\p{L}\\p{N}.])","u").test(haystack);
+ }
+ return haystack.includes(needle);
+}
+function sourceExplicitlySupportsApplicability(source:FactualEvidenceSource,demand:CurrentFactualDemand){
+ if(!demandNeedsApplicabilityProof(demand))return true;
+ const conditions=Object.entries(demand.constraints).filter(([name])=>!["brand","name","model","sku","spu"].includes(key(name)));
+ return source.selection.chunks.filter(chunk=>chunk.chunk_type==="full_content").some(chunk=>{
+  const text=chunk.content.normalize("NFKC");
+  return APPLICABILITY_TEXT.test(text)&&conditions.every(([,value])=>{
+   const values=scalarConstraintValues(value).filter(item=>item&&item!=="true"&&item!=="false");
+   return values.length>0&&values.every(item=>sourceConditionMatches(text,item));
+  });
+ });
+}
 
 /** Source provenance still uses the existing authority gate. A merchant policy
  * is a candidate for applicability review, not an exact-SKU fact or an order. */
@@ -312,18 +330,66 @@ export function resolveSourceRecordedPartialRecovery(
     const commonEligible=demand.source_type==="product"&&!demand.ambiguity.is_ambiguous&&demand.subjects.length===1&&demand.subject_source_message_ids.length>0&&!demand.customer_correction&&!demand.explicit_negations.length&&Boolean(coverage)&&!coverage!.blocked&&!request.missing_evidence.some(item=>item.demand_id===demand.id);
     const matchedSources=commonEligible?bundle.sources.filter(source=>source.scope==="subject_evidence"&&source.demand_ids.includes(demand.id)&&source.target.entity_ids.length===1&&key(source.target.entity_ids[0])===key(demand.subjects[0])):[];
     const wantedFacts=demand.requested_facts.map(key),wantsFeatures=wantedFacts.length>0&&wantedFacts.every(fact=>/feature|功能/iu.test(fact));
-    if(commonEligible&&coverage&&wantsFeatures&&verifierResolution&&["supported","partial"].includes(verifierResolution.status)&&matchedSources.length===1){
-     const source=matchedSources[0],authority=source.selection.authority_decision;if(authority.provenance.tenant_id===options.expectedTenantId){
-      const chunk=source.selection.chunks.filter(candidate=>candidate.chunk_type==="full_content"&&candidate.chunk_id).find(candidate=>{const item=bundle.grounding.items.find(value=>value.document_id===candidate.document_id&&value.chunk_id===candidate.chunk_id&&value.content===candidate.content&&value.demand_ids.includes(demand.id)&&coverage.evidence_ids.includes(value.id));return Boolean(item&&verifierResolution.evidence_ids.includes(item.id));});
-      if(chunk){const item=bundle.grounding.items.find(value=>value.document_id===chunk.document_id&&value.chunk_id===chunk.chunk_id&&value.content===chunk.content)!;
-       const record=parseKbProductRecord(chunk.content),safeValues=record.fields.filter(field=>/^(?:description|details|features?|描述|商品描述|產品描述|产品描述|功能)$/iu.test(kbProductFieldKey(field.key))&&field.value.length>=2&&field.value.length<=600&&!/(?:成本|銷售價|销售价|售價|售价|特價|特价|庫存|库存|stock|price|cost|[$<>])/iu.test(field.value)).map(field=>field.value.replace(/\s+/gu," ").trim()).filter(Boolean).slice(0,2);
-       if(safeValues.length){const subject=demand.subjects[0],detail=[...new Set(safeValues)].join(options.language==="en"?"; ":"；");
-        replies.push(options.language==="en"?"The published source record for "+subject+" describes: "+detail+".":options.language==="zh-CN"?subject+" 的已发布来源记录描述："+detail+"。":subject+" 嘅已發布來源記錄描述："+detail+"。");
-        const outcome=outcomes.find(value=>value.demand_id===demand.id)!;outcome.status="partial";outcome.reason="source_recorded_features_currentness_unverified";outcome.evidence_ids=[item.id];outcome.answered_fields=["features"];}}}}
+    // After BOTH allowed verifier attempts are malformed, the original draft
+    // remains rejected. Only exact, independently bound source fields may
+    // survive the output-shape failure, never the draft's unsupported claims.
+    const reviewerShapeFailure=options.groundingRejection?.stage==="demand_resolution_shape"||
+      options.groundingRejection?.stage==="verifier_output_shape";
+    const approvedFeatureVerdict=Boolean(verifierResolution&&["supported","partial"].includes(verifierResolution.status));
+    if(commonEligible&&coverage&&wantsFeatures&&
+      (approvedFeatureVerdict||(!verifierResolution&&reviewerShapeFailure))&&
+      !coverage.missing_reasons.length&&matchedSources.length===1){
+      const source=matchedSources[0],authority=source.selection.authority_decision;
+      if(authority.decision==="USE_CURRENT_KB"&&authority.provenance.tenant_id===options.expectedTenantId){
+        const matches=source.selection.chunks.filter(chunk=>chunk.chunk_type==="full_content"&&Boolean(chunk.chunk_id)).flatMap(chunk=>{
+          const item=bundle.grounding.items.find(value=>value.document_id===chunk.document_id&&
+            value.chunk_id===chunk.chunk_id&&value.content===chunk.content&&
+            value.demand_ids.includes(demand.id)&&value.demand_scopes[demand.id]==="subject_evidence"&&
+            coverage.evidence_ids.includes(value.id)&&
+            value.source_authority.currentness===authority.provenance.currentness&&
+            value.source_authority.authority_class===authority.selected_authority_class&&
+            (!verifierResolution||verifierResolution.evidence_ids.includes(value.id)));
+          return item?[{chunk,item}]:[];
+        });
+        // A malformed verdict cannot choose between different chunks.
+        if(matches.length===1){
+          const {chunk,item}=matches[0],record=parseKbProductRecord(chunk.content);
+          if(!record.ambiguous){
+            const safeValues=record.fields.filter(field=>
+              /^(?:description|details|features?|描述|商品描述|產品描述|产品描述|功能)$/iu.test(kbProductFieldKey(field.key))&&
+              field.value.length>=2&&field.value.length<=600&&
+              !/(?:成本|銷售價|销售价|售價|售价|特價|特价|庫存|库存|stock|price|cost|[$<>])/iu.test(field.value))
+              .map(field=>field.value.replace(/\s+/gu," ").trim()).filter(Boolean).slice(0,2);
+            if(safeValues.length){
+              const subject=demand.subjects[0],detail=[...new Set(safeValues)].join(options.language==="en"?"; ":"；");
+              replies.push(options.language==="en"?"The published source record for "+subject+" describes: "+detail+"."
+                :options.language==="zh-CN"?subject+" 的已发布来源记录描述："+detail+"。"
+                :subject+" 嘅已發布來源記錄描述："+detail+"。");
+              const outcome=outcomes.find(value=>value.demand_id===demand.id)!;
+              outcome.status="partial";
+              outcome.reason=approvedFeatureVerdict?"source_recorded_features_currentness_unverified":"source_recorded_features_independent_shape_recovery";
+              outcome.evidence_ids=[item.id];outcome.answered_fields=["features"];
+            }
+          }
+        }
+      }
+    }
     const wantsSuitability=wantedFacts.some(fact=>APPLICABILITY_FACT.test(fact));
-    if(commonEligible&&coverage&&wantsSuitability&&(verifierResolution?.status==="unavailable"||verifierResolution?.status==="partial"||coverage.missing_reasons.includes("requested_condition_not_supported_by_source"))){
-     const subject=demand.subjects[0];replies.push(options.language==="en"?"Suitability of "+subject+" for the conditions you already provided remains unverified. The available source does not supply the applicable room/condition guidance needed for that decision; use applicable manufacturer guidance or a site assessment rather than guessing.":options.language==="zh-CN"?"至于 "+subject+" 是否适合你已经提供的房间条件，目前仍未能核实。现有来源没有提供足以判断的适用面积／条件依据；应核对适用的厂方资料或现场评估，不会猜测。":"至於 "+subject+" 是否適合你已經提供嘅房間條件，目前仍未能核實。現有來源冇提供足以判斷嘅適用面積／條件依據；應核對適用嘅廠方資料或現場評估，唔會估。");
-     const outcome=outcomes.find(value=>value.demand_id===demand.id)!;if(outcome.status!=="partial"){outcome.status="unavailable";outcome.reason="applicability_evidence_missing";outcome.evidence_ids=[];outcome.answered_fields=[];}}
+    if(commonEligible&&coverage&&wantsSuitability&&
+      (verifierResolution?.status==="unavailable"||verifierResolution?.status==="partial"||
+       coverage.missing_reasons.includes("requested_condition_not_supported_by_source")||
+       (!verifierResolution&&reviewerShapeFailure))){
+      // The failed verifier does not establish that a source has no answer.
+      // State only the missing verification, never claim a fit/booking outcome.
+      const subject=demand.subjects[0];
+      replies.push(options.language==="en"
+        ?"Whether "+subject+" is suitable for your stated conditions has not been verified from the selected source. Confirm the applicable specifications or conditions with the merchant or relevant specialist; no assessment has been booked."
+        :options.language==="zh-CN"
+        ?"至于 "+subject+" 是否适合你提出的条件，现有来源尚未能可靠核实；需要按相关规格及适用条件向商家或专业人员确认，尚未安排任何评估。"
+        :"至於 "+subject+" 是否適合你提出嘅條件，現有來源仍未能可靠核實；要按相關規格及適用條件向商家或相關專業人員確認，目前未有安排評估。");
+      const outcome=outcomes.find(value=>value.demand_id===demand.id)!;
+      if(outcome.status!=="partial"){outcome.status="unavailable";outcome.reason="applicability_not_independently_verified";outcome.evidence_ids=[];outcome.answered_fields=[];}
+    }
     if (demand.source_type !== "product" || demand.ambiguity.is_ambiguous || demand.subjects.length !== 1 ||
         !demand.subject_source_message_ids.length || demand.customer_correction || demand.explicit_negations.length ||
         Object.keys(demand.constraints).length || !demand.requested_facts.some(fact => ["price","stock","availability"].includes(key(fact))) ||
