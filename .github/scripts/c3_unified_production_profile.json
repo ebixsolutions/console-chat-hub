@@ -621,9 +621,7 @@
     "vite.candidate-identity.d.mts",
     "vite.candidate-identity.mjs",
     "vite.config.ts",
-    "vite.preview-environment.mjs",
-    "supabase/functions/_shared/protected-pipeline-evidence.ts",
-    "tests/emergency-p0/protected-evidence.test.ts"
+    "vite.preview-environment.mjs"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
