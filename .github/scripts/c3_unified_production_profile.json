@@ -1594,7 +1594,7 @@
   "task3c_1139_grounding_recovery_production_authorized": false,
   "authorized_task3c_1139_grounding_recovery_sha256": {
     "supabase/functions/_shared/grounding-evidence.ts": "f19b487d3f8f1faddcda3c432752bb62b06d2b041a33a867e6ebb40b503e0cd5",
-    "supabase/functions/_shared/llm-router.ts": "508d06e4e15dc08b300330b9e0b18f149729a9d1c92063048d9a60a08c43270a",
+    "supabase/functions/_shared/llm-router.ts": "c36f6ef1f3abdb1ab363ba619269e7a15fe3e3bde6486d6e2d310df2e072a57b",
     "supabase/functions/_shared/factual-evidence-selection.ts": "1a9855644d0f585f29b3c976addbca2ada71d92a449953e9ae46e0d04024bfe3",
     "supabase/functions/_shared/factual-request-context.ts": "15ea2d866e4e10b12b44e0b15ba9f1957bf25c43f1f9294e8796064dfc9a6177",
     "supabase/functions/generate-reply/index.ts": "e19dfb924635f8ebdee6aaf01fcb5d9200f99212598879b63336f2ab415c848e",
