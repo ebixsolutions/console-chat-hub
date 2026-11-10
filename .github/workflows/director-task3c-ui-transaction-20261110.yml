@@ -21,77 +21,34 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
-      - name: Execute the same bounded Director source transaction
+      - name: Finish the same source-only transaction with actual failed assertions repaired
         shell: bash
         env:
           C3_REACT_TEST_ROOT: ${{ runner.temp }}/task3c-react
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import os,subprocess,json,sys
-          from pathlib import Path
-          import yaml
-          base='b948ec7d943d88e35687c84631214cc1429741ca'
-          transport='118011f46a0ff1aaab026d9bd0b96ab345824f00'
-          workflow='.github/workflows/director-task3c-ui-transaction-20261110.yml'
-          def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
-          assert os.environ['GITHUB_REF']=='refs/heads/director/ai-abc-c3-long-memory-final-cutover'
-          subprocess.run(['git','merge-base','--is-ancestor',transport,'HEAD'],check=True)
-          assert git('diff','--name-only',base,'HEAD')==workflow
-          assert git('hash-object','src/routes/_authenticated/console.conversations.index.tsx')=='b252d9ccecff76ac220c3cc1b660a112322bf988'
-          assert git('hash-object','src/routes/_authenticated/console.conversations.$id.tsx')=='1f1d0bcd6af07875a2f51b3f3710d245ac6330d3'
-          original=yaml.safe_load(git('show',transport+':'+workflow))
-          scripts={s['name']:s['run'] for s in original['jobs']['source-transaction']['steps'] if 'run' in s}
-          out=Path(os.environ['RUNNER_TEMP'])/'task3c-ui-evidence';out.mkdir()
-          def execute(name,script):
-              print('\nEXECUTING '+name,flush=True)
-              with (out/(name+'.log')).open('w') as log:
-                  proc=subprocess.Popen(['bash','-euo','pipefail','-c',script],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
-                  for line in proc.stdout:
-                      print(line,end='',flush=True);log.write(line)
-                  rc=proc.wait()
-              print(name+'_EXIT='+str(rc),flush=True)
-              if rc: sys.exit(rc)
-          execute('install',scripts['Install unchanged application and isolated renderer dependencies'])
-          execute('append-inbox-regressions',scripts['Add regression coverage to the existing Inbox renderer suite'])
-          inbox=Path('tests/console-navigation/inbox-reply.test.mjs')
-          detail=Path('tests/console-navigation/detail-reply.test.mjs')
-          addition=inbox.read_text().split('// Task3C: actual Inbox renderer, mocked transport; never a Hosted UAT claim.',1)[1]
-          addition=addition.replace("await pick(r,'Other Visitor');", "f.id='other';await act(async()=>r.update(React.createElement(Route.component)));")
-          detail.write_text(detail.read_text()+'\n// Task3C: actual detail renderer, mocked transport; not Hosted.\n'+addition)
-          before=scripts['Prove the original defect fails the new regression']
-          execute('baseline-inbox-expected-failure',before)
-          execute('baseline-detail-expected-failure',before.replace('inbox-reply.test.mjs','detail-reply.test.mjs').replace('before.log','before-detail.log').replace('before-exit.txt','before-detail-exit.txt'))
-          patch=scripts['Apply only the proven recall UI repair and its exact source bindings']
-          # YAML already removes block indentation. Do not slice actual source characters.
-          patch='\n'.join(line for line in patch.split('\n') if not (line.startswith(('old=','new=')) and 'line[10:]' in line))
-          extra=r'''
-          detailRoute=Path('src/routes/_authenticated/console.conversations.$id.tsx')
-          d=detailRoute.read_text()
-          d=once(d,'function ConversationDetailContent() {','function ConversationDetailContent() {\n  const recallInFlightRef = useRef(false);\n  const [recallPending, setRecallPending] = useState(false);')
-          detailOld=old.replace('loadMessages(selectedId!, false, true);','loadMessages();')
-          detailNew=new.replace('const ticketId = selectedId;','const ticketId = id;').replace('const scope = inboxScopeKey;','const scope = detailScopeKey;')
-          detailNew=detailNew.replace('loadingMessages || messagesError','loading || messagesError || conversationError')
-          detailNew=detailNew.replace('messagesConversationId !== ticketId || selectedIdRef.current !== ticketId ||','messagesTicketId !== ticketId ||')
-          detailNew=detailNew.replace('selectedIdRef.current !== ticketId || ','')
-          detailNew=detailNew.replace('liveInboxScopeKey.current','detailScopeRef.current')
-          detailNew=detailNew.replace('await loadMessages(ticketId, false, true);','await loadMessages();')
-          d=once(d,detailOld,detailNew)
-          d=once(d,'                            onClick={() => handleRecall(m.id, m.role)}','                            type="button"\n                            aria-label={lang === "zh" ? "撤回訊息" : "Recall message"}\n                            title={lang === "zh" ? "撤回訊息 — 需要確認" : "Recall message — requires confirmation"}\n                            data-recall-message-id={m.id}\n                            disabled={recallPending || loading || messagesError || conversationError}\n                            onClick={() => handleRecall(m.id, m.role)}')
-          d=once(d,'                            Recall\n                          </button>','                            {lang === "zh" ? "撤回訊息" : "Recall message"}\n                          </button>')
-          detailRoute.write_text(d)
-          '''
-          marker="paths=[str(route),'tests/console-navigation/inbox-reply.test.mjs']"
-          assert patch.count(marker)==1
-          patch=patch.replace(marker,extra+"\npaths=[str(route),str(detailRoute),'tests/console-navigation/inbox-reply.test.mjs','tests/console-navigation/detail-reply.test.mjs']")
-          patch=patch.replace('git add src/routes/_authenticated/console.conversations.index.tsx tests/console-navigation/inbox-reply.test.mjs', "git add 'src/routes/_authenticated/console.conversations.$id.tsx' tests/console-navigation/detail-reply.test.mjs src/routes/_authenticated/console.conversations.index.tsx tests/console-navigation/inbox-reply.test.mjs")
-          patch=patch.replace("expected={'src/routes/_authenticated/console.conversations.index.tsx'", "expected={'src/routes/_authenticated/console.conversations.$id.tsx','tests/console-navigation/detail-reply.test.mjs','src/routes/_authenticated/console.conversations.index.tsx'")
-          patch=patch.replace('EXACT_FINAL_SOURCE_SCOPE=4_FILES','EXACT_FINAL_SOURCE_SCOPE=6_FILES')
-          execute('apply-complete-callers',patch)
-          execute('full-repository-validation',scripts['Validate actual source in the complete authoritative repository'])
-          execute('guarded-original-branch-push',scripts['Fast-forward original branch only if its exact preimage is unchanged'])
+          import subprocess,yaml
+          ref='29c919e421076e0eb129f82bf081b4c0a0e46794'
+          path='.github/workflows/director-task3c-ui-transaction-20261110.yml'
+          previous=yaml.safe_load(subprocess.check_output(['git','show',ref+':'+path],text=True))
+          step=next(s for s in previous['jobs']['source-transaction']['steps'] if s.get('name')=='Execute the same bounded Director source transaction')
+          script=step['run']
+          old="execute('install',scripts['Install unchanged application and isolated renderer dependencies'])"
+          new="execute('install',scripts['Install unchanged application and isolated renderer dependencies'].replace('react-test-renderer@19.2.0','react-test-renderer@19.2.0 react-dom@19.2.0 jsdom@26.1.0'))"
+          assert script.count(old)==1
+          script=script.replace(old,new)
+          old="detailNew=detailNew.replace('selectedIdRef.current !== ticketId || ','')"
+          new="detailNew=detailNew.replace('selectedIdRef.current !== ticketId ||','')\nassert 'selectedIdRef' not in detailNew"
+          assert script.count(old)==1
+          script=script.replace(old,new)
+          before="execute('full-repository-validation',scripts['Validate actual source in the complete authoritative repository'])"
+          bundle="execute('save-source-before-validation',\"git bundle create \\\"$RUNNER_TEMP/task3c-ui-evidence/source-before-validation.bundle\\\" b948ec7d943d88e35687c84631214cc1429741ca..HEAD\")\n"
+          assert script.count(before)==1
+          script=script.replace(before,bundle+before)
+          subprocess.run(['bash','-euo','pipefail','-c',script],check=True)
           PY
-      - name: Preserve scoped source validation and original failure evidence
+      - name: Preserve scoped source validation and previous failure evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
