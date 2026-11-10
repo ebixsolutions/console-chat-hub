@@ -34,7 +34,7 @@ jobs:
           previous=yaml.safe_load(subprocess.check_output(['git','show',ref+':'+path],text=True))
           script=next(s['run'] for s in previous['jobs']['source-transaction']['steps'] if s.get('name')=='Execute the same bounded Director source transaction')
           old="execute('install',scripts['Install unchanged application and isolated renderer dependencies'])"
-          new="execute('install',scripts['Install unchanged application and isolated renderer dependencies'].replace('react-test-renderer@19.2.0','react-test-renderer@19.2.0 react-dom@19.2.0 jsdom@26.1.0'))"
+          new="execute('install',scripts['Install unchanged application and isolated renderer dependencies'].replace('react-test-renderer@19.2.0','react-test-renderer@19.2.0 react-dom@19.2.0 jsdom@26.1.0 @testing-library/user-event@14.6.1 @testing-library/dom@10.4.1'))"
           assert script.count(old)==1
           script=script.replace(old,new)
           old="detailNew=detailNew.replace('selectedIdRef.current !== ticketId || ','')"
