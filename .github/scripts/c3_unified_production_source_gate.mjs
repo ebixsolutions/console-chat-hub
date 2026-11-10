@@ -142,7 +142,12 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
   must(profile.task3c_supervisor_double_invalid_production_authorized===false,'task3c_supervisor_deploy_not_authorized');
   must(profile.task3c_supervisor_double_invalid_publish_authorized===false,'task3c_supervisor_publish_not_authorized');
   must(JSON.stringify(profile.authorized_task3c_supervisor_double_invalid_sha256)===JSON.stringify(TASK3C_SUPERVISOR_DOUBLE_INVALID_SOURCE),'task3c_supervisor_scope_drift');
-  for(const [f,h] of Object.entries(TASK3C_SUPERVISOR_DOUBLE_INVALID_SOURCE))must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task3c_supervisor_source_drift:'+f);
+  for(const [f,h] of Object.entries(TASK3C_SUPERVISOR_DOUBLE_INVALID_SOURCE)){
+    const historic=TASK3C_REASON_LOG_SOURCE[f]?'task3c_reason_log_source_drift:':
+      TASK3C_1139_GROUNDING_RECOVERY_SOURCE[f]?'task3c_1139_grounding_recovery_source_drift:':
+      'task3c_supervisor_source_drift:';
+    must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,historic+f);
+  }
   must(profile.task3c_reason_log_deployment_authorized===false,'task3c_reason_log_deploy_not_authorized');
   must(profile.task3c_reason_log_publish_authorized===false,'task3c_reason_log_publish_not_authorized');
   must(JSON.stringify(profile.authorized_task3c_reason_log_sha256)===JSON.stringify(TASK3C_REASON_LOG_SOURCE),'task3c_reason_log_scope_drift');
