@@ -154,7 +154,7 @@ export function parseGroundingDemandResolutionsDetailed(raw:unknown,evidence:Gro
 export function parseGroundingDemandResolutions(raw:unknown,evidence:GroundingEvidence,usedIds:string[]):GroundingDemandResolution[]|null{
  const parsed=parseGroundingDemandResolutionsDetailed(raw,evidence,usedIds);return parsed.ok?parsed.resolutions:null;
 }
-export function groundingDemandResponseSchema(): Record<string, unknown> {export function groundingDemandResponseSchema(): Record<string, unknown> {
+export function groundingDemandResponseSchema(): Record<string, unknown> {
   return {type: "ARRAY", maxItems: 12, items: {type: "OBJECT", properties: {
     demand_id: {type: "STRING"}, status: {type: "STRING", enum: ["supported", "partial", "unavailable"]},
     evidence_ids: {type: "ARRAY", maxItems: 15, items: {type: "STRING"}},
