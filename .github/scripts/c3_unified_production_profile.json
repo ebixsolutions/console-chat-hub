@@ -1598,7 +1598,7 @@
     "supabase/functions/_shared/factual-evidence-selection.ts": "1a9855644d0f585f29b3c976addbca2ada71d92a449953e9ae46e0d04024bfe3",
     "supabase/functions/_shared/factual-request-context.ts": "15ea2d866e4e10b12b44e0b15ba9f1957bf25c43f1f9294e8796064dfc9a6177",
     "supabase/functions/generate-reply/index.ts": "e19dfb924635f8ebdee6aaf01fcb5d9200f99212598879b63336f2ab415c848e",
-    "supabase/functions/agent-assist/index.ts": "cc68730bd8b0b660197da77db5aa0a0931cafb54310ce8a0670a64cc6cbbf657",
+    "supabase/functions/agent-assist/index.ts": "74c42c827445cc1daed541162efbfdf5d9af5079cb18c9fad468246617adf509",
     "tests/emergency-p0/chain.test.mjs": "80635aa6ada145432a8b14abe8a03f2f25503ae80f897d9630477bf699a40012",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "a8d5295ad87f56712a3a043ae7b5f2efb0d19303287fb2d3e70003371e0d3e40"
   }

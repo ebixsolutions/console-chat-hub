@@ -1211,8 +1211,13 @@ Deno.serve(async (req) => {
         // Discard every rejected draft. The shared resolver may independently
         // retain exact source-recorded fields; it cannot certify current price,
         // availability or the unresolved remainder, and makes no provider call.
-        const recovery = checked.failure.code === "LLM_GROUNDING_REJECTED" &&
-          ["local_grounding","independent_verifier"].includes(checked.rejection_stage ?? "") &&
+        const recoverableGroundingFailure =
+          checked.failure.code === "LLM_GROUNDING_REJECTED" &&
+            ["local_grounding","independent_verifier"].includes(checked.rejection_stage ?? "") ||
+          checked.failure.code === "LLM_INVALID_OUTPUT" &&
+            checked.rejection_stage === "verifier_demand_resolution_shape" &&
+            checked.grounding_rejection?.stage === "demand_resolution_shape";
+        const recovery = recoverableGroundingFailure &&
           factualBundle?.ok && scope.companyId && assistFactualRequest.source_message_id
           ? resolveSourceRecordedPartialRecovery(factualBundle,assistFactualRequest,{
             language:catalogueLanguage,companyId:scope.companyId,
