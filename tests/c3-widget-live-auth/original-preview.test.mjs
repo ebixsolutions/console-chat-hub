@@ -583,8 +583,12 @@ for(const stage of ['local_grounding','independent_verifier'])test('Task3 Inbox 
  const x=await sourceFieldAssistFixture(stage),before=JSON.stringify(f.rows.messages),marker=JSON.stringify(x.c.metadata_source);
  const r=await x.send('suggest_reply',x.question);
  assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.success,true);assert.equal(r.data.draft_only,true);
- assert.equal(r.data.response_route,'canonical_kb_partial_recovery');assert.equal(r.data.source_error_code,'LLM_GROUNDING_REJECTED');
- assert.equal(r.data.source_rejection_stage,stage);assert.equal(r.data.knowledge_grounded,true);
+ assert.equal(r.data.response_route,'canonical_kb_partial_recovery');
+ const expectedCode=stage==='independent_verifier'?'LLM_INVALID_OUTPUT':'LLM_GROUNDING_REJECTED';
+ const expectedStage=stage==='independent_verifier'?'verifier_demand_resolution_shape':stage;
+ assert.equal(r.data.source_error_code,expectedCode);assert.equal(r.data.source_rejection_stage,expectedStage);
+ if(stage==='independent_verifier'){assert.equal(r.data.grounding_rejection_receipt?.stage,'demand_resolution_shape');assert.equal(r.data.grounding_rejection_receipt?.reason,'demand_count_mismatch');}
+ assert.equal(r.data.knowledge_grounded,true);
  assert.equal(r.data.result.suggestions.length,1);const reply=r.data.result.suggestions[0].content;
  assert(reply.includes('ITEM-Q9')&&/CNY\s*125/u.test(reply),reply);
  assert(!/9999|Rejected draft marker|guaranteed immediate availability/u.test(reply),reply);
