@@ -66,6 +66,8 @@ const ELEVATED = new Set(["manager", "admin", "super_admin"]);
 const ADMIN_ONLY = new Set(["admin", "super_admin"]);
 
 function ConversationDetailContent() {
+  const recallInFlightRef = useRef(false);
+  const [recallPending, setRecallPending] = useState(false);
   const { id } = Route.useParams();
   const { user } = useAuth();
   const { role: currentRole } = useCurrentRole();
@@ -332,14 +334,41 @@ function ConversationDetailContent() {
     }
   }
   async function handleRecall(messageId: string, role: string) {
-    if (!myAgent) return;
+    const ticketId = id;
+    const scope = detailScopeKey;
+    if (!myAgent || !ticketId || recallInFlightRef.current || loading || messagesError || conversationError ||
+        messagesTicketId !== ticketId ||
+        detailScopeRef.current !== scope) return;
+    const message = messages.find(m => m.id === messageId && m.role === role && !m.is_recalled);
+    if (!message || !["visitor", "agent", "assistant"].includes(role)) return;
     if (role === "visitor" && !ADMIN_ONLY.has(myAgent.role)) {
       toast.error("Only admins can recall visitor messages");
       return;
     }
-    if (await callEF("recall-message", { message_id: messageId })) {
-      toast.success("Message recalled");
-      loadMessages();
+    let confirmed = false;
+    try {
+      confirmed = window.confirm(
+        (lang === "zh"
+          ? "確定撤回這則訊息？這會更改對話內容，並非查看訊息詳情。"
+          : "Recall this message? This changes the conversation; it is not a message-details action.") +
+        `\n\nTicket: ${ticketId}\nMessage: ${messageId}\n\n${message.content.slice(0, 160)}`,
+      );
+    } catch {
+      toast.error("Recall confirmation unavailable. No recall request was sent.");
+      return;
+    }
+    if (!confirmed || recallInFlightRef.current || detailScopeRef.current !== scope) return;
+    recallInFlightRef.current = true;
+    setRecallPending(true);
+    try {
+      const confirmedByServer = await callEF("recall-message", { message_id: messageId });
+      if (detailScopeRef.current !== scope) return;
+      if (confirmedByServer) toast.success("Message recalled");
+      // Re-read after success OR an unknown/error response; never retry the mutation automatically.
+      await loadMessages();
+    } finally {
+      recallInFlightRef.current = false;
+      setRecallPending(false);
     }
   }
 
@@ -518,10 +547,15 @@ function ConversationDetailContent() {
                       {!m.is_recalled &&
                         (isAgent || isAssistant || (isVisitor && myAgent && ADMIN_ONLY.has(myAgent.role))) && (
                           <button
+                            type="button"
+                            aria-label={lang === "zh" ? "撤回訊息" : "Recall message"}
+                            title={lang === "zh" ? "撤回訊息 — 需要確認" : "Recall message — requires confirmation"}
+                            data-recall-message-id={m.id}
+                            disabled={recallPending || loading || messagesError || conversationError}
                             onClick={() => handleRecall(m.id, m.role)}
                             className="mt-1 hidden text-[10px] text-destructive underline group-hover:inline"
                           >
-                            Recall
+                            {lang === "zh" ? "撤回訊息" : "Recall message"}
                           </button>
                         )}
                     </div>

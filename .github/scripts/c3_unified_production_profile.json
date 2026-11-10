@@ -1583,5 +1583,12 @@
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "c5122bd6ac566a12b758975447fe9142de5ebf11edc1cbc5f3b900e07edf1a23",
     "tests/emergency-p0/chain.test.mjs": "aebe0ec62e003a493d80e241436c453f5ecc8bbb0cc588d6f4c7f4321022a933",
     "supabase/functions/_shared/f13-runtime-recovery.test.ts": "6d898059abf230f7bb880829dd85192ff8879dbe6a7d9b6a7fc23caa9f8b2577"
-  }
+  },
+  "authorized_task3c_ui_recall_sha256": {
+    "src/routes/_authenticated/console.conversations.index.tsx": "72e9994c8330537edd4672b7a7a2f746cf466185799a4e8aefda6dd96a2434ae",
+    "src/routes/_authenticated/console.conversations.$id.tsx": "9b8b0a24b741437fbaa7c31369cfae64037b7c9f52e3f91ce89cd254e6bc569c",
+    "tests/console-navigation/inbox-reply.test.mjs": "446f375aabaaa28b3f6d287d9c6bdf892146c49a242123a7c1695b436d1b4425",
+    "tests/console-navigation/detail-reply.test.mjs": "55e126802042c1f5ec02ef9407e48dc64260d926f4c4e78e746997475c7036aa"
+  },
+  "task3c_ui_recall_publish_authorized": false
 }
