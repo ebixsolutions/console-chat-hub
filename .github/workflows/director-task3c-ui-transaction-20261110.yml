@@ -21,7 +21,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
-      - name: Finish the same source-only transaction with actual failed assertions repaired
+      - name: Complete the original source-only transaction
         shell: bash
         env:
           C3_REACT_TEST_ROOT: ${{ runner.temp }}/task3c-react
@@ -32,20 +32,15 @@ jobs:
           ref='29c919e421076e0eb129f82bf081b4c0a0e46794'
           path='.github/workflows/director-task3c-ui-transaction-20261110.yml'
           previous=yaml.safe_load(subprocess.check_output(['git','show',ref+':'+path],text=True))
-          step=next(s for s in previous['jobs']['source-transaction']['steps'] if s.get('name')=='Execute the same bounded Director source transaction')
-          script=step['run']
+          script=next(s['run'] for s in previous['jobs']['source-transaction']['steps'] if s.get('name')=='Execute the same bounded Director source transaction')
           old="execute('install',scripts['Install unchanged application and isolated renderer dependencies'])"
           new="execute('install',scripts['Install unchanged application and isolated renderer dependencies'].replace('react-test-renderer@19.2.0','react-test-renderer@19.2.0 react-dom@19.2.0 jsdom@26.1.0'))"
           assert script.count(old)==1
           script=script.replace(old,new)
           old="detailNew=detailNew.replace('selectedIdRef.current !== ticketId || ','')"
-          new="detailNew=detailNew.replace('selectedIdRef.current !== ticketId ||','')\nassert 'selectedIdRef' not in detailNew"
+          new="detailNew=re.sub(r'selectedIdRef\\.current !== ticketId \\|\\|\\s*','',detailNew)\nassert 'selectedIdRef' not in detailNew"
           assert script.count(old)==1
           script=script.replace(old,new)
-          before="execute('full-repository-validation',scripts['Validate actual source in the complete authoritative repository'])"
-          bundle="execute('save-source-before-validation',\"git bundle create \\\"$RUNNER_TEMP/task3c-ui-evidence/source-before-validation.bundle\\\" b948ec7d943d88e35687c84631214cc1429741ca..HEAD\")\n"
-          assert script.count(before)==1
-          script=script.replace(before,bundle+before)
           subprocess.run(['bash','-euo','pipefail','-c',script],check=True)
           PY
       - name: Preserve scoped source validation and previous failure evidence
