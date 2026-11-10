@@ -865,7 +865,10 @@ async function verifyGroundedGeneration(
           await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
           continue;
         }
-        return { ok: false, reason: "verifier_invalid_output",failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"decode",request_id:call.operationId,http_status:res.status}) };
+        return { ok:false, reason:"verifier_invalid_output",
+          failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"decode",request_id:call.operationId,http_status:res.status}),
+          rejection:{version:"grounding-rejection-1",stage:"verifier_output_shape",reason:"verifier_invalid_output",
+            question_resolution:null,used_evidence_ids:[],demand_resolutions:[],unsupported_claim_count:0} };
       }
 
       const usedEvidenceIds=decision.evidence_chunk_ids.filter(id=>verifierEvidence.allowed_ids.includes(id));
@@ -1254,7 +1257,6 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       return {ok:false,code,status:res.status,grounding_rejection_reason:reason,...(groundingDecision.rejection?{grounding_rejection:groundingDecision.rejection}:{}),
        request_id:requestId,usage,failure:groundingDecision.failure??executionFailure(code,{stage:"canonical_validation",request_id:requestId,http_status:res.status})};
     }
-    groundingReceipt = groundingDecision.receipt;
     groundingReceipt = groundingDecision.receipt;
       }
 

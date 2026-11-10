@@ -46,7 +46,7 @@ export type GroundingDemandResolutionParseResult =
   | {ok:false;reason:GroundingDemandResolutionParseFailureReason;demand_index?:number;demand_id?:string};
 export interface GroundingRejectionReceipt {
   version:"grounding-rejection-1";
-  stage:"demand_resolution_shape"|"question_resolution"|"semantic_claims";
+  stage:"verifier_output_shape"|"demand_resolution_shape"|"question_resolution"|"semantic_claims";
   reason:string;
   question_resolution:"supported"|"partial"|"unsupported"|null;
   used_evidence_ids:string[];

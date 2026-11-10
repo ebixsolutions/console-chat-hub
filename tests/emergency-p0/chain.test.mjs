@@ -1642,7 +1642,8 @@ test('11:39 class: malformed per-demand verifier shape is identified and stays i
  const f=v1139RecoveryFixture({verifierResponses:[malformed,valid]});const result=await f.run();assert.equal(result.status,200,JSON.stringify({result,commits:f.commits,events:f.events.slice(-12)}));
  const {semantic,drafts,verifiers}=v2RetryCalls(f);assert.equal(semantic.length,1);assert.equal(drafts.length,1);assert.equal(verifiers.length,2);assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
  assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.response_route,'canonical_kb_partial_recovery');
- const invalidEvent=f.events.flat().find(event=>event?.event==='grounding_verifier_demand_resolution_invalid');assert(invalidEvent);assert.equal(invalidEvent.reason,'unavailable_cannot_cite_evidence');
+ const invalidEvent=f.events.flat().find(event=>typeof event==='string'&&event.includes('grounding_verifier_demand_resolution_invalid'));
+ assert(invalidEvent&&invalidEvent.includes('unavailable_cannot_cite_evidence'));
 });
 test('V2 exact-fact retry: one bounded second draft uses the same E1 and commits verified human wording once',async()=>{
  const answer='AX-QZ81 嘅已發布商品資料記錄 HK$1,290。呢個金額未核實係現價；現貨庫存亦待商家確認。';
@@ -1998,7 +1999,8 @@ test('Task2 evidence: unresolved same-scope policy conflict fails complete-answe
  const b=task2PolicyDocument('returns-thirty','一般商品未開封，可於付款後三十日內退回。');
  a.authority.claims=[{key:'return_days',value:'7'}];b.authority.claims=[{key:'return_days',value:'30'}];
  const f=fixture(question,{source:uuid(8112),originalPreview:true,fullChain:true,answer:'一般商品未開封，可於付款後三十日內退回。',
-  verifierGrounded:false,verifierIds:[],verifierResolution:'unsupported',verifierDemandResolutions:[],
+  verifierGrounded:false,verifierIds:[],verifierResolution:'unsupported',
+  verifierDemandResolutions:[{demand_id:'demand-1',status:'unavailable',evidence_ids:[]}],
   semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'policy',requested_facts:['returns_period']})]),
   originalRagResponse:task1cRagDocuments(a,b)});
  const result=await f.run();assert.equal(f.commits[0]?.metadata.source_error_code,'LLM_GROUNDING_REJECTED',JSON.stringify({result,reply:f.commits[0]}));
@@ -2007,7 +2009,8 @@ test('Task2 evidence: unresolved same-scope policy conflict fails complete-answe
 
 test('Task2 evidence: verifier receives the whole answer beyond the former tail cutoff',async()=>{
  const tail='未獲來源支持的額外保證。',answer='適用條件仍須逐項核對。'.repeat(350)+tail;
- const f=task2PricePolicyFixture({answer,verifierGrounded:false,verifierIds:[],verifierResolution:'unsupported',verifierDemandResolutions:[]});
+ const f=task2PricePolicyFixture({answer,verifierGrounded:false,verifierIds:[],verifierResolution:'unsupported',
+  verifierDemandResolutions:[{demand_id:'demand-1',status:'unavailable',evidence_ids:[]},{demand_id:'demand-2',status:'unavailable',evidence_ids:[]},{demand_id:'demand-3',status:'unavailable',evidence_ids:[]}]});
  await f.run();const verifier=f.requests.find(request=>request.body?.generationConfig?.responseSchema?.properties?.grounded);
  assert(verifier);const text=JSON.stringify(verifier.body.contents);assert(text.includes(tail)&&text.length>3000);
  assert.equal(f.commits[0]?.metadata.source_error_code,'LLM_GROUNDING_REJECTED');assert.notEqual(f.commits[0].content,answer);

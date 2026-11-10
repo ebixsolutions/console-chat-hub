@@ -1593,13 +1593,13 @@
   "task3c_ui_recall_publish_authorized": false,
   "task3c_1139_grounding_recovery_production_authorized": false,
   "authorized_task3c_1139_grounding_recovery_sha256": {
-    "supabase/functions/_shared/grounding-evidence.ts": "924ab57ed01a34ced0a97158411b90e406dacd7029c13ceaf1cbcb408f88a82b",
-    "supabase/functions/_shared/llm-router.ts": "c36f6ef1f3abdb1ab363ba619269e7a15fe3e3bde6486d6e2d310df2e072a57b",
+    "supabase/functions/_shared/grounding-evidence.ts": "659f3cea555f29a028f8c388814fdb3bf2619436387798d699413eec8e4db660",
+    "supabase/functions/_shared/llm-router.ts": "03d4a5394ff5a955e48f6d9398e1ec235bad39ead147695cac1e880eaf079504",
     "supabase/functions/_shared/factual-evidence-selection.ts": "1a9855644d0f585f29b3c976addbca2ada71d92a449953e9ae46e0d04024bfe3",
     "supabase/functions/_shared/factual-request-context.ts": "15ea2d866e4e10b12b44e0b15ba9f1957bf25c43f1f9294e8796064dfc9a6177",
     "supabase/functions/generate-reply/index.ts": "e19dfb924635f8ebdee6aaf01fcb5d9200f99212598879b63336f2ab415c848e",
     "supabase/functions/agent-assist/index.ts": "74c42c827445cc1daed541162efbfdf5d9af5079cb18c9fad468246617adf509",
-    "tests/emergency-p0/chain.test.mjs": "80635aa6ada145432a8b14abe8a03f2f25503ae80f897d9630477bf699a40012",
+    "tests/emergency-p0/chain.test.mjs": "8e3ad9ccbb981641fabb7da460302e8d6f2e0795258e304c8942bb2aa28d32f1",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "a8d5295ad87f56712a3a043ae7b5f2efb0d19303287fb2d3e70003371e0d3e40",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "e88cd729a8aa7f0026c9653931284b51f61dd12aad259b03a0ecefddbb3409f0"
   }
