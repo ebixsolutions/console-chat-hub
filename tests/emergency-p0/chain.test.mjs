@@ -1633,6 +1633,21 @@ test('11:39 class: rejected draft preserves source-bound features and explicitly
  assert.deepEqual(meta.partial_recovery.demand_outcomes.map(item=>[item.demand_id,item.status]),[['demand-1','partial'],['demand-2','unavailable']]);
  assert(meta.factual_evidence_coverage.find(item=>item.id==='demand-2')?.missing_reasons.includes('requested_condition_not_supported_by_source'));
  assert.equal(meta.grounding_rejection_receipt?.stage,'semantic_claims');assert.equal(meta.grounding_rejection_receipt?.unsupported_claim_count,1);
+ // The actual existing reviewer text is private evidence, never an approved
+ // claim, a new free-text error code, or customer-visible message metadata.
+ const reviewerDetails=f.tables.rag_trace.filter(row=>row.kb_source==="protected_pipeline_diagnostic"&&
+   row.retrieved_chunks.stage==="grounding_reviewer_specifics");
+ assert.equal(reviewerDetails.length,1,"one rejected reviewer output for this generation");
+ const reviewerPayload=reviewerDetails[0].retrieved_chunks;
+ assert.equal(reviewerPayload.payload.capture_state,"CAPTURED");
+ const reviewer=JSON.parse(reviewerPayload.payload.body);
+ assert.equal(reviewer.contract,"c3-reviewer-specifics-v1");
+ assert.equal(reviewer.failure_code,"unsupported_semantic_claim");
+ assert.equal(reviewer.unsupported_claim_count,1);
+ assert.deepEqual(reviewer.unsupported_claims,["unsupported merchant claim"]);
+ assert.equal(reviewer.model_text,null,"content rejection stores named claims, not entire original text");
+ assert(!("decision_receipt" in reviewerPayload));
+ assert(!JSON.stringify(meta).includes("unsupported merchant claim"));
  assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);assert.equal(f.requests.filter(item=>item.url.endsWith('/commit_ai_reply_tx')).length,1);
  assert.deepEqual(catalogueGateEvents(f).map(item=>[item.gate_decision,item.gate_code,item.commit_attempted]),[['allow','B2_ALLOW',true]]);
 });
@@ -1670,6 +1685,16 @@ for(const fault of ["demand_resolution_shape","verifier_output_shape"])test(
  assert(!reply.content.includes("熱負荷較高")&&!reply.content.includes("一定要"));
  assert(!/HK\$|現價|已預約|已付款|已安排評估/.test(reply.content),"unverified facts were promoted");
  assert.equal(meta.grounding_rejection_receipt?.stage,fault);
+ const snippets=f.tables.rag_trace.filter(row=>row.kb_source==="protected_pipeline_diagnostic"&&
+   row.retrieved_chunks.stage==="grounding_reviewer_specifics");
+ assert.equal(snippets.length,2,"both rejected reviewer attempts must be retained");
+ const first=snippets.map(row=>row.retrieved_chunks);
+ assert.deepEqual(first.map(row=>JSON.parse(row.payload.body).attempt),[1,2]);
+ assert(first.every(row=>row.payload.capture_state==="CAPTURED"&&!row.decision_receipt));
+ assert(first.every(row=>JSON.parse(row.payload.body).model_text_capture_state==="CAPTURED"));
+ assert(first.every(row=>typeof JSON.parse(row.payload.body).model_text==="string"));
+ assert(!JSON.stringify(meta).includes("PROVIDER_PARSED_MODEL_TEXT_NOT_HTTP_RAW"));
+
  assert.deepEqual(meta.partial_recovery.demand_outcomes.map(x=>[x.demand_id,x.status]),[
   ["demand-1","partial"],["demand-2","unavailable"]]);
  assert.equal(meta.partial_recovery.demand_outcomes[0].reason,"source_recorded_features_independent_shape_recovery");

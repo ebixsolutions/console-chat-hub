@@ -1,4 +1,4 @@
-import {writeProtectedPipelineEvidence} from "../_shared/protected-pipeline-evidence.ts";
+import {boundedReviewerSpecifics,writeProtectedPipelineEvidence} from "../_shared/protected-pipeline-evidence.ts";
 import { resolveCanonicalKbDirectAnswer, catalogueVariantClarification } from "../_shared/canonical-kb-direct-answer.ts";
 import { safeExecutionCode, executionFailure, type ExecutionFailure } from "../_shared/execution-failure.ts";
 import { authenticatedInboxAuthority, type InboxOperation } from "../_shared/uat-execution-contract.ts";
@@ -212,6 +212,17 @@ async function verifyAssistClaims(
   );
   if(!result.ok || !result.text)return {ok:false,failure:result.failure??executionFailure("LLM_INVALID_OUTPUT"),rejection_stage:"verifier_execution"};
   const v=parseJsonObject(result.text);
+  const recordReviewerSpecifics=async(reason:string,raw:boolean,demandIndex?:number,demandId?:string)=>{
+    if(!meta.protectedEvidence)return;
+    try{
+      const details=await boundedReviewerSpecifics({
+        attempt:1,failure_code:reason,model_text:result.text!,
+        include_model_text:raw,unsupported_claims:v?.unsupported_claims,
+        demand_index:demandIndex,demand_id:demandId,
+      });
+      await meta.protectedEvidence({stage:"assist_grounding_reviewer_specifics",...details});
+    }catch{/* Evidence-only; must not change Agent Assist's decision or retry. */}
+  };
   if(meta.toolType==="check_policy" && (!v || Object.keys(v).some(k=>!["grounded","unsupported_claims","evidence_ids","resolution"].includes(k)) ||
     !Array.isArray(v.unsupported_claims) || v.unsupported_claims.length>3 || v.unsupported_claims.some(c=>typeof c!=="string" || c.length>100) ||
     !Array.isArray(v.evidence_ids) || v.evidence_ids.length>3))return {ok:false,failure:executionFailure("LLM_GROUNDING_REJECTED"),rejection_stage:"verifier_schema"};
@@ -219,12 +230,15 @@ async function verifyAssistClaims(
   const idsValid=!!v&&Array.isArray(v.evidence_ids)&&(v.evidence_ids.length>0||boundEvidence!==undefined)&&v.evidence_ids.length<=15&&new Set(v.evidence_ids).size===v.evidence_ids.length&&v.evidence_ids.every(id=>typeof id==="string"&&evidence.some((_,n)=>id==="E"+(n+1)));
   const baseValid=!!v&&typeof v.grounded==="boolean"&&Array.isArray(v.unsupported_claims)&&(v.grounded===true?v.unsupported_claims.length===0:v.unsupported_claims.length>0)&&idsValid&&(normalizedResolution==="supported"||(!complete&&normalizedResolution==="partial")||normalizedResolution==="unsupported");
   const demandParse=baseValid&&boundEvidence?parseGroundingDemandResolutionsDetailed(v!.demand_resolutions,boundEvidence,v!.evidence_ids as string[]):null;
+  if(boundEvidence&&demandParse&&!demandParse.ok)await recordReviewerSpecifics(demandParse.reason,true,
+    demandParse.demand_index,demandParse.demand_id);
   if(boundEvidence&&demandParse&&!demandParse.ok)return {ok:false,failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"decode"}),rejection_stage:"verifier_demand_resolution_shape",
    grounding_rejection:{version:"grounding-rejection-1",stage:"demand_resolution_shape",reason:demandParse.reason,question_resolution:normalizedResolution,used_evidence_ids:idsValid?v!.evidence_ids as string[]:[],demand_resolutions:[],
     unsupported_claim_count:Array.isArray(v!.unsupported_claims)?v!.unsupported_claims.length:0,demand_parse_failure:{reason:demandParse.reason,...(typeof demandParse.demand_index==="number"?{demand_index:demandParse.demand_index}:{}),...(demandParse.demand_id?{demand_id:demandParse.demand_id}:{})}}};
   const resolutions=demandParse?.ok?demandParse.resolutions:null,coverageFailure=Boolean(boundEvidence&&baseValid&&((normalizedResolution==="supported")!==Boolean(resolutions?.every(item=>item.status==="supported"))));
   const supported=baseValid&&v!.grounded===true&&(normalizedResolution==="supported"||(!complete&&normalizedResolution==="partial"))&&!coverageFailure;
   if(!supported){const stage=coverageFailure?"question_resolution":"semantic_claims",reason=coverageFailure?"question_resolution_demand_inconsistent":!baseValid?"verifier_top_level_invalid":"unsupported_semantic_claim";
+   await recordReviewerSpecifics(reason,!baseValid);
    return {ok:false,failure:executionFailure("LLM_GROUNDING_REJECTED"),rejection_stage:"independent_verifier",grounding_rejection:{version:"grounding-rejection-1",stage,reason,question_resolution:normalizedResolution,
     used_evidence_ids:idsValid?v!.evidence_ids as string[]:[],demand_resolutions:resolutions??[],unsupported_claim_count:Array.isArray(v?.unsupported_claims)?v!.unsupported_claims.length:0}};}
   return {ok:true,...(boundEvidence&&resolutions?{receipt:{used_evidence_ids:v!.evidence_ids as string[],question_resolution:normalizedResolution as "supported"|"partial",demand_resolutions:resolutions}}:{})};
@@ -1202,7 +1216,11 @@ Deno.serve(async (req) => {
           req,
         );
       }
-      const checked=await verifyAssistClaims(verificationRequest,boundEvidence ? JSON.stringify({suggestions:safe}) : safe.map(s=>s.content).join("\n"),evidence,{companyId:scope.companyId,conversationId,toolType:"suggest_reply",legacyAuthority:inboxAuthority,maxProviderAttempts:boundedModelAttempts},false,boundEvidence);
+      const checked=await verifyAssistClaims(verificationRequest,boundEvidence ? JSON.stringify({suggestions:safe}) : safe.map(s=>s.content).join("\n"),evidence,{companyId:scope.companyId,conversationId,toolType:"suggest_reply",legacyAuthority:inboxAuthority,maxProviderAttempts:boundedModelAttempts,
+        protectedEvidence:async details=>{if(scope.companyId&&assistFactualRequest?.source_message_id)
+          await writeProtectedPipelineEvidence(supabaseAdmin,{company_id:scope.companyId,conversation_id:conversationId,source_message_id:assistFactualRequest.source_message_id},
+            String(details.stage),details);},
+      },false,boundEvidence);
       if(scope.companyId && assistFactualRequest?.source_message_id) await writeProtectedPipelineEvidence(supabaseAdmin,
         {company_id:scope.companyId,conversation_id:conversationId,source_message_id:assistFactualRequest.source_message_id},
         "assist_grounding_verdict",{candidate:safe,verdict:checked,request:assistFactualRequest,

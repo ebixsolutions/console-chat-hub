@@ -3,6 +3,7 @@ import type { ResolvedFactualRequestContext } from "./factual-request-context.ts
 import {GROUNDING_EVIDENCE_LIMITS, groundingEvidenceText, validGroundingEvidence, parseGroundingDemandResolutions,
   parseGroundingDemandResolutionsDetailed, groundingDemandResponseSchema, type GroundingEvidence,
   type GroundingVerificationReceipt, type GroundingRejectionReceipt} from "./grounding-evidence.ts";
+import { boundedReviewerSpecifics } from "./protected-pipeline-evidence.ts";
 import { uatExecutionReadiness } from "./uat-execution-readiness.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
 import { trustedDispatchScope, UatDenied, UAT_THINKING } from "./uat-execution-contract.ts";
@@ -757,6 +758,24 @@ async function verifyGroundedGeneration(
   const verifierStarted = Date.now();
   let lastStatus = 0;
 
+  // Best-effort, attempt-specific protected reviewer evidence. No prompt,
+  // provider retry, public log, answer, B2, or admission changes.
+  const recordReviewerSpecifics=async (
+    attempt:number,reason:string,modelText:string|null,includeModelText:boolean,
+    unsupportedClaims:unknown,demandIndex?:number,demandId?:string,
+  ):Promise<void>=>{
+    if(!call.protectedEvidence)return;
+    try{
+      const specifics=await boundedReviewerSpecifics({
+        attempt,failure_code:reason,model_text:modelText,
+        include_model_text:includeModelText,unsupported_claims:unsupportedClaims,
+        demand_index:demandIndex,demand_id:demandId,
+      });
+      await call.protectedEvidence({stage:"grounding_reviewer_specifics",
+        request_id:call.operationId,...specifics});
+    }catch{/* Protected evidence must never change the decision/retry budget. */}
+  };
+
   for (let attempt = 1; attempt <= 2; attempt++) {
     if (call.signal?.aborted) break;
 
@@ -827,6 +846,8 @@ async function verifyGroundedGeneration(
       );
       if (!decision) {
         const parsedShape = parseJsonObjectLoose(parsed.text);
+        await recordReviewerSpecifics(attempt,"verifier_invalid_output",parsed.text,true,
+          parsedShape?.unsupported_claims);
         log(call.tag, {
           event: "grounding_verifier_invalid_output_shape",
           request_id: call.operationId,
@@ -876,6 +897,8 @@ async function verifyGroundedGeneration(
       if(grounding.bound_evidence&&demandParse&&!demandParse.ok){const rejection:GroundingRejectionReceipt={version:"grounding-rejection-1",stage:"demand_resolution_shape",reason:demandParse.reason,
         question_resolution:decision.question_resolution??null,used_evidence_ids:usedEvidenceIds,demand_resolutions:[],unsupported_claim_count:decision.unsupported_claims.length,
         demand_parse_failure:{reason:demandParse.reason,...(typeof demandParse.demand_index==="number"?{demand_index:demandParse.demand_index}:{}),...(demandParse.demand_id?{demand_id:demandParse.demand_id}:{})}};
+       await recordReviewerSpecifics(attempt,demandParse.reason,parsed.text,true,
+         decision.unsupported_claims,demandParse.demand_index,demandParse.demand_id);
        log(call.tag,{event:"grounding_verifier_demand_resolution_invalid",request_id:call.operationId,reason:demandParse.reason,demand_index:demandParse.demand_index??null,demand_id:demandParse.demand_id??null,question_resolution:decision.question_resolution??null,used_evidence_count:usedEvidenceIds.length});
        if(!call.signal?.aborted&&attempt<2){await sleep(BASE_BACKOFF_MS*2**(attempt-1));continue;}
        await recordUsage(verifierCall,verifierAdapter.id,verifierAdapter.model,"failed",res.status,verifierUsage,"GROUNDING_VERIFIER_DEMAND_RESOLUTION_INVALID");
@@ -887,9 +910,13 @@ async function verifyGroundedGeneration(
        coverageFailure=!decision.question_resolution?"question_resolution_missing":decision.question_resolution==="unsupported"?"question_resolution_unsupported":"question_resolution_missing_evidence";
       await recordUsage(verifierCall,verifierAdapter.id,verifierAdapter.model,decision.grounded&&!coverageFailure?"success":"failed",res.status,verifierUsage,
        coverageFailure?"GROUNDING_QUESTION_UNRESOLVED":decision.grounded?undefined:"GROUNDING_UNSUPPORTED_CLAIMS");
+      if(coverageFailure)await recordReviewerSpecifics(attempt,coverageFailure,parsed.text,false,
+        decision.unsupported_claims);
       if(coverageFailure)return {ok:false,reason:"question_not_resolved_by_applicable_evidence",rejection:{version:"grounding-rejection-1",stage:"question_resolution",reason:coverageFailure,
        question_resolution:decision.question_resolution??null,used_evidence_ids:usedEvidenceIds,demand_resolutions:resolutions??[],unsupported_claim_count:decision.unsupported_claims.length}};
-      if(!decision.grounded){log(call.tag,{event:"grounding_semantic_rejected",request_id:call.operationId,grounding_authority:grounding.authority,unsupported_claim_count:decision.unsupported_claims.length});
+      if(!decision.grounded){await recordReviewerSpecifics(attempt,"unsupported_semantic_claim",parsed.text,false,
+        decision.unsupported_claims);
+       log(call.tag,{event:"grounding_semantic_rejected",request_id:call.operationId,grounding_authority:grounding.authority,unsupported_claim_count:decision.unsupported_claims.length});
        return {ok:false,reason:"unsupported_semantic_claim",rejection:{version:"grounding-rejection-1",stage:"semantic_claims",reason:"unsupported_semantic_claim",
         question_resolution:decision.question_resolution??null,used_evidence_ids:usedEvidenceIds,demand_resolutions:resolutions??[],unsupported_claim_count:decision.unsupported_claims.length}};}
       return {ok:true,...(grounding.bound_evidence&&resolutions?{receipt:{used_evidence_ids:usedEvidenceIds,question_resolution:decision.question_resolution as "supported"|"partial",demand_resolutions:resolutions}}:{})};

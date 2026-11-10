@@ -25,6 +25,58 @@ export async function captureProtectedDiagnosticText(
 }
 
 
+
+/**
+ * Capture what the existing grounding reviewer already wrote, never request
+ * another model answer. This returned object is UNTRUSTED and must be stored
+ * ONLY inside writeProtectedPipelineEvidence's protected payload.
+ *
+ * Byte limits are all-or-nothing: do not call a truncated text "raw".
+ * The protected sink additionally withholds the whole serialized payload if
+ * it contains a contact detail, token, credential, or other known secret.
+ * Nothing here is a quality verdict, approved claim, or public metadata.
+ */
+export async function boundedReviewerSpecifics(input:{
+  attempt:number;
+  failure_code:string;
+  model_text:string | null;
+  include_model_text:boolean;
+  unsupported_claims?:unknown;
+  demand_index?:number | null;
+  demand_id?:string | null;
+}):Promise<Record<string,unknown>> {
+  const text=typeof input.model_text==="string"?input.model_text:"";
+  const bytes=new TextEncoder().encode(text).byteLength;
+  const capture=input.include_model_text
+    ? bytes===0?"NOT_CAPTURED":bytes>8192?"WITHHELD_OVER_8KB":"CAPTURED"
+    : "NOT_REQUESTED";
+  const claims=Array.isArray(input.unsupported_claims)?input.unsupported_claims:[];
+  const allowedClaims=claims.filter((x):x is string=>typeof x==="string");
+  const bounded=allowedClaims.slice(0,5).map(x=>x.slice(0,300));
+  const code=/^[a-z][a-z0-9_]{1,79}$/u.test(input.failure_code)?input.failure_code:"unknown";
+  return {
+    contract:"c3-reviewer-specifics-v1",
+    origin:"PROVIDER_PARSED_MODEL_TEXT_NOT_HTTP_RAW",
+    trust:"UNTRUSTED_REVIEWER_ASSERTION_NOT_FACT",
+    attempt:Number.isInteger(input.attempt)&&input.attempt>=1&&input.attempt<=2?input.attempt:null,
+    failure_code:code,
+    model_text_capture_state:capture,
+    model_text_bytes:bytes,
+    model_text_sha256:await sha256(text),
+    // Only the complete original model text <= 8KB is captured. The existing
+    // protected writer handles whole-body sensitive-content withholding.
+    model_text:capture==="CAPTURED"?text:null,
+    unsupported_claim_count:claims.length,
+    unsupported_claims:bounded,
+    claims_complete:claims.length<=5&&allowedClaims.length===claims.length&&
+      allowedClaims.every(x=>x.length<=300),
+    demand_index:typeof input.demand_index==="number"&&Number.isInteger(input.demand_index)&&
+      input.demand_index>=0&&input.demand_index<12?input.demand_index:null,
+    demand_id:typeof input.demand_id==="string"&&/^demand-(?:[1-9]|1[0-2])$/u.test(input.demand_id)
+      ?input.demand_id:null,
+  };
+}
+
 /** Closed, PII-free gate decision receipt. The original captured payload is
  * retained separately; unknown historic decisions are never reconstructed. */
 export async function safeGateReasonReceipt(scope:{
