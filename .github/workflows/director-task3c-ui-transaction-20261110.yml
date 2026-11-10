@@ -21,199 +21,76 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
-      - name: Verify exact original authority and source scope
+      - name: Execute the same bounded Director source transaction
         shell: bash
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REF" = refs/heads/director/ai-abc-c3-long-memory-final-cutover
-          test "$(git rev-parse HEAD^)" = b948ec7d943d88e35687c84631214cc1429741ca
-          test "$(git diff --name-only HEAD^ HEAD)" = .github/workflows/director-task3c-ui-transaction-20261110.yml
-          test "$(git hash-object src/routes/_authenticated/console.conversations.index.tsx)" = b252d9ccecff76ac220c3cc1b660a112322bf988
-          test "$(git hash-object tests/console-navigation/inbox-reply.test.mjs)" = a7d8a03046a81355765442746605a9fc82a3595e
-          mkdir -p "$RUNNER_TEMP/task3c-ui-evidence"
-          git grep -n -E 'handleRecall|recall-message' -- src > "$RUNNER_TEMP/task3c-ui-evidence/recall-callers.txt"
-          cat "$RUNNER_TEMP/task3c-ui-evidence/recall-callers.txt"
-          echo 'Same Task3C; source-only repair. No Production credentials, publish, deploy, SQL, Visitor/Agent send or model/KB invocation.'
-      - name: Install unchanged application and isolated renderer dependencies
-        run: |
-          npm ci
-          npm install --prefix "$RUNNER_TEMP/task3c-react" --no-audit --no-fund --package-lock=false react@19.2.0 react-test-renderer@19.2.0
-      - name: Add regression coverage to the existing Inbox renderer suite
-        shell: bash
+        env:
+          C3_REACT_TEST_ROOT: ${{ runner.temp }}/task3c-react
         run: |
           set -euo pipefail
           python3 - <<'PY'
+          import os,subprocess,json,sys
           from pathlib import Path
-          p=Path('tests/console-navigation/inbox-reply.test.mjs')
-          addition=r'''
-
-          // Task3C: actual Inbox renderer, mocked transport; never a Hosted UAT claim.
-          function setupRecall(){setup();f.tables.messages=f.tables.messages.map(m=>({...m,role:'visitor'}));}
-          const recallButtons=r=>r.root.findAllByType('button').filter(b=>b.props['aria-label']==='Recall message');
-          const firstRecall=r=>{const b=recallButtons(r)[0];assert(b,'explicit Recall message button must exist');return b;};
-          test('Task3C recall explicit destructive label is not a details menu',async()=>{setupRecall();const r=await open();try{const b=firstRecall(r);assert.equal(txt({children:b.children}),'Recall message');assert.match(b.props.title,/confirmation/i);assert.equal(b.props.type,'button');assert.equal(f.calls.length,0);}finally{await act(async()=>r.unmount());}});
-          test('Task3C recall cancelled confirmation performs zero mutations',async()=>{setupRecall();let prompts=0;window.confirm=()=>{prompts++;return false};const r=await open();try{await act(async()=>firstRecall(r).props.onClick());assert.equal(prompts,1);assert.equal(f.calls.length,0);assert.equal(f.successes.length,0);assert(f.tables.messages.every(m=>!m.is_recalled));}finally{await act(async()=>r.unmount());}});
-          test('Task3C recall approved confirmation binds the original message',async()=>{setupRecall();let prompt='';window.confirm=t=>(prompt=t,true);f.invoke=async(name,opts)=>{f.calls.push({name,...opts});if(name==='recall-message'){const m=f.tables.messages.find(m=>m.id===opts.body.message_id);assert(m);m.is_recalled=true;}return {data:{success:true},error:null}};const r=await open();try{const b=firstRecall(r);const id=b.props['data-recall-message-id'];await act(async()=>b.props.onClick());assert.match(prompt,/target/);assert(prompt.includes(id));assert.equal(f.calls.length,1);assert.deepEqual(f.calls[0],{name:'recall-message',body:{message_id:id}});assert.equal(f.successes.length,1);assert(f.tables.messages.find(m=>m.id===id).is_recalled);}finally{await act(async()=>r.unmount());}});
-          test('Task3C recall duplicate clicks dispatch exactly one request',async()=>{setupRecall();let prompts=0,finish;window.confirm=()=>{prompts++;return true};f.invoke=(name,opts)=>{f.calls.push({name,...opts});return new Promise(resolve=>finish=resolve)};const r=await open();try{const click=firstRecall(r).props.onClick;await act(async()=>{void click();void click()});assert.equal(prompts,1);assert.equal(f.calls.length,1);assert(firstRecall(r).props.disabled);await act(async()=>finish({data:{success:false},error:null}));assert.equal(f.calls.length,1);assert.equal(f.successes.length,0);}finally{await act(async()=>r.unmount());}});
-          test('Task3C recall stale ticket callback cannot mutate the prior ticket',async()=>{setupRecall();let prompts=0;window.confirm=()=>{prompts++;return true};const r=await open();try{const click=firstRecall(r).props.onClick;await pick(r,'Other Visitor');await act(async()=>click());assert.equal(prompts,0);assert.equal(f.calls.length,0);}finally{await act(async()=>r.unmount());}});
-          test('Task3C recall failed transport retains messages without retry or false success',async()=>{for(const thrown of [false,true]){setupRecall();window.confirm=()=>true;f.invoke=async(name,opts)=>{f.calls.push({name,...opts});if(thrown)throw Error('transport outcome unknown');return {data:null,error:{message:'HTTP 500'}}};const r=await open();try{await act(async()=>firstRecall(r).props.onClick());assert.equal(f.calls.length,1);assert.equal(f.successes.length,0);assert(f.tables.messages.every(m=>!m.is_recalled));assert(f.toasts.some(t=>/not confirmed|unconfirmed/.test(t)));assert(recallButtons(r).length>0);}finally{await act(async()=>r.unmount());}}});
-          test('Task3C recall unavailable confirmation fails closed',async()=>{setupRecall();window.confirm=()=>{throw Error('confirmation unavailable')};const r=await open();try{await act(async()=>firstRecall(r).props.onClick());assert.equal(f.calls.length,0);assert.equal(f.successes.length,0);assert(f.toasts.some(t=>/confirmation/i.test(t)));}finally{await act(async()=>r.unmount());}});
+          import yaml
+          base='b948ec7d943d88e35687c84631214cc1429741ca'
+          transport='118011f46a0ff1aaab026d9bd0b96ab345824f00'
+          workflow='.github/workflows/director-task3c-ui-transaction-20261110.yml'
+          def git(*args): return subprocess.check_output(['git',*args],text=True).strip()
+          assert os.environ['GITHUB_REF']=='refs/heads/director/ai-abc-c3-long-memory-final-cutover'
+          assert git('rev-parse','HEAD^')==transport
+          assert git('diff','--name-only',base,'HEAD')==workflow
+          assert git('hash-object','src/routes/_authenticated/console.conversations.index.tsx')=='b252d9ccecff76ac220c3cc1b660a112322bf988'
+          assert git('hash-object','src/routes/_authenticated/console.conversations.$id.tsx')=='1f1d0bcd6af07875a2f51b3f3710d245ac6330d3'
+          original=yaml.safe_load(git('show',transport+':'+workflow))
+          steps=original['jobs']['source-transaction']['steps']
+          out=Path(os.environ['RUNNER_TEMP'])/'task3c-ui-evidence';out.mkdir()
+          def execute(name,script):
+              print('\nEXECUTING '+name,flush=True)
+              with (out/(name+'.log')).open('w') as log:
+                  proc=subprocess.Popen(['bash','-euo','pipefail','-c',script],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
+                  for line in proc.stdout:
+                      print(line,end='',flush=True);log.write(line)
+                  rc=proc.wait()
+              print(name+'_EXIT='+str(rc),flush=True)
+              if rc: sys.exit(rc)
+          execute('install',steps[4]['run'])
+          execute('append-inbox-regressions',steps[5]['run'])
+          inbox=Path('tests/console-navigation/inbox-reply.test.mjs')
+          detail=Path('tests/console-navigation/detail-reply.test.mjs')
+          addition=inbox.read_text().split('// Task3C: actual Inbox renderer, mocked transport; never a Hosted UAT claim.',1)[1]
+          addition=addition.replace("await pick(r,'Other Visitor');", "f.id='other';await act(async()=>r.update(React.createElement(Route.component)));")
+          detail.write_text(detail.read_text()+'\n// Task3C: actual detail renderer, mocked transport; not Hosted.\n'+addition)
+          execute('baseline-inbox-expected-failure',steps[6]['run'])
+          execute('baseline-detail-expected-failure',steps[6]['run'].replace('inbox-reply.test.mjs','detail-reply.test.mjs').replace('before.log','before-detail.log').replace('before-exit.txt','before-detail-exit.txt'))
+          patch=steps[7]['run']
+          # YAML already removes block indentation. The previous transport incorrectly sliced source text.
+          patch='\n'.join(line for line in patch.split('\n') if not (line.startswith(('old=','new=')) and 'line[10:]' in line))
+          extra=r'''
+          detailRoute=Path('src/routes/_authenticated/console.conversations.$id.tsx')
+          d=detailRoute.read_text()
+          d=once(d,'function ConversationDetailContent() {','function ConversationDetailContent() {\n  const recallInFlightRef = useRef(false);\n  const [recallPending, setRecallPending] = useState(false);')
+          detailOld=old.replace('loadMessages(selectedId!, false, true);','loadMessages();')
+          detailNew=new.replace('const ticketId = selectedId;','const ticketId = id;').replace('const scope = inboxScopeKey;','const scope = detailScopeKey;')
+          detailNew=detailNew.replace('loadingMessages || messagesError','loading || messagesError || conversationError')
+          detailNew=detailNew.replace('messagesConversationId !== ticketId || selectedIdRef.current !== ticketId ||','messagesTicketId !== ticketId ||')
+          detailNew=detailNew.replace('selectedIdRef.current !== ticketId || ','')
+          detailNew=detailNew.replace('liveInboxScopeKey.current','detailScopeRef.current')
+          detailNew=detailNew.replace('await loadMessages(ticketId, false, true);','await loadMessages();')
+          d=once(d,detailOld,detailNew)
+          d=once(d,'                            onClick={() => handleRecall(m.id, m.role)}','                            type="button"\n                            aria-label={lang === "zh" ? "撤回訊息" : "Recall message"}\n                            title={lang === "zh" ? "撤回訊息 — 需要確認" : "Recall message — requires confirmation"}\n                            data-recall-message-id={m.id}\n                            disabled={recallPending || loading || messagesError || conversationError}\n                            onClick={() => handleRecall(m.id, m.role)}')
+          d=once(d,'                            ⋯\n                          </button>','                            {lang === "zh" ? "撤回訊息" : "Recall message"}\n                          </button>')
+          detailRoute.write_text(d)
           '''
-          assert 'Task3C recall explicit destructive label' not in p.read_text()
-          p.write_text(p.read_text()+addition)
+          marker="paths=[str(route),'tests/console-navigation/inbox-reply.test.mjs']"
+          assert patch.count(marker)==1
+          patch=patch.replace(marker,extra+"\npaths=[str(route),str(detailRoute),'tests/console-navigation/inbox-reply.test.mjs','tests/console-navigation/detail-reply.test.mjs']")
+          patch=patch.replace('git add src/routes/_authenticated/console.conversations.index.tsx tests/console-navigation/inbox-reply.test.mjs', "git add 'src/routes/_authenticated/console.conversations.$id.tsx' tests/console-navigation/detail-reply.test.mjs src/routes/_authenticated/console.conversations.index.tsx tests/console-navigation/inbox-reply.test.mjs")
+          patch=patch.replace("expected={'src/routes/_authenticated/console.conversations.index.tsx'", "expected={'src/routes/_authenticated/console.conversations.$id.tsx','tests/console-navigation/detail-reply.test.mjs','src/routes/_authenticated/console.conversations.index.tsx'")
+          patch=patch.replace('EXACT_FINAL_SOURCE_SCOPE=4_FILES','EXACT_FINAL_SOURCE_SCOPE=6_FILES')
+          execute('apply-complete-callers',patch)
+          execute('full-repository-validation',steps[8]['run'])
+          execute('guarded-original-branch-push',steps[9]['run'])
           PY
-      - name: Prove the original defect fails the new regression
-        shell: bash
-        env:
-          C3_REACT_TEST_ROOT: ${{ runner.temp }}/task3c-react
-        run: |
-          set -euo pipefail
-          set +e
-          node --test --test-name-pattern='Task3C recall' tests/console-navigation/inbox-reply.test.mjs > "$RUNNER_TEMP/task3c-ui-evidence/before.log" 2>&1
-          rc=$?
-          set -e
-          cat "$RUNNER_TEMP/task3c-ui-evidence/before.log"
-          test "$rc" -ne 0
-          grep -q 'explicit Recall message button must exist' "$RUNNER_TEMP/task3c-ui-evidence/before.log"
-          printf 'BASELINE_EXPECTED_FAILURE_EXIT=%s\n' "$rc" | tee "$RUNNER_TEMP/task3c-ui-evidence/before-exit.txt"
-      - name: Apply only the proven recall UI repair and its exact source bindings
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import hashlib,json,re
-          route=Path('src/routes/_authenticated/console.conversations.index.tsx')
-          s=route.read_text()
-          def once(text,old,new):
-              assert text.count(old)==1, f'anchor_count:{old[:90]}:{text.count(old)}'
-              return text.replace(old,new,1)
-          s=once(s,'function SinglePageInbox() {','function SinglePageInbox() {\n  const recallInFlightRef = useRef(false);\n  const [recallPending, setRecallPending] = useState(false);')
-          old='''  async function handleRecall(messageId: string, role: string) {
-              if (!myAgent) return;
-              if (role === "visitor" && !ADMIN_ONLY.has(myAgent.role)) {
-                toast.error("Only admins can recall visitor messages");
-                return;
-              }
-              if (await callEF("recall-message", { message_id: messageId })) {
-                toast.success("Message recalled");
-                loadMessages(selectedId!, false, true);
-              }
-            }'''
-          # Indentation in the original source is two spaces for the function body level.
-          old='\n'.join(line[10:] if i else line for i,line in enumerate(old.split('\n')))
-          new='''  async function handleRecall(messageId: string, role: string) {
-              const ticketId = selectedId;
-              const scope = inboxScopeKey;
-              if (!myAgent || !ticketId || recallInFlightRef.current || loadingMessages || messagesError ||
-                  messagesConversationId !== ticketId || selectedIdRef.current !== ticketId ||
-                  liveInboxScopeKey.current !== scope) return;
-              const message = messages.find(m => m.id === messageId && m.role === role && !m.is_recalled);
-              if (!message || !["visitor", "agent", "assistant"].includes(role)) return;
-              if (role === "visitor" && !ADMIN_ONLY.has(myAgent.role)) {
-                toast.error("Only admins can recall visitor messages");
-                return;
-              }
-              let confirmed = false;
-              try {
-                confirmed = window.confirm(
-                  (lang === "zh"
-                    ? "確定撤回這則訊息？這會更改對話內容，並非查看訊息詳情。"
-                    : "Recall this message? This changes the conversation; it is not a message-details action.") +
-                  `\\n\\nTicket: ${ticketId}\\nMessage: ${messageId}\\n\\n${message.content.slice(0, 160)}`,
-                );
-              } catch {
-                toast.error("Recall confirmation unavailable. No recall request was sent.");
-                return;
-              }
-              if (!confirmed || recallInFlightRef.current || selectedIdRef.current !== ticketId ||
-                  liveInboxScopeKey.current !== scope) return;
-              recallInFlightRef.current = true;
-              setRecallPending(true);
-              try {
-                const confirmedByServer = await callEF("recall-message", { message_id: messageId });
-                if (selectedIdRef.current !== ticketId || liveInboxScopeKey.current !== scope) return;
-                if (confirmedByServer) toast.success("Message recalled");
-                // Re-read after success OR an unknown/error response; never retry the mutation automatically.
-                await loadMessages(ticketId, false, true);
-              } finally {
-                recallInFlightRef.current = false;
-                setRecallPending(false);
-              }
-            }'''
-          new='\n'.join(line[10:] if i else line for i,line in enumerate(new.split('\n')))
-          s=once(s,old,new)
-          s=once(s,'                            onClick={() => handleRecall(m.id, m.role)}','''                            type="button"
-                                      aria-label={lang === "zh" ? "撤回訊息" : "Recall message"}
-                                      title={lang === "zh" ? "撤回訊息 — 需要確認" : "Recall message — requires confirmation"}
-                                      data-recall-message-id={m.id}
-                                      disabled={recallPending || loadingMessages || Boolean(messagesError)}
-                                      onClick={() => handleRecall(m.id, m.role)}'''.replace('\n                                      ','\n                            '))
-          s=once(s,'                            ⋯\n                          </button>','                            {lang === "zh" ? "撤回訊息" : "Recall message"}\n                          </button>')
-          route.write_text(s)
-          paths=[str(route),'tests/console-navigation/inbox-reply.test.mjs']
-          hashes={p:hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in paths}
-          gate=Path('.github/scripts/c3_unified_production_source_gate.mjs')
-          g=gate.read_text()
-          assert 'TASK3C_UI_RECALL_SOURCE' not in g
-          g=g.replace('TASK3C_P01_V8_SOURCE[f]??','TASK3C_UI_RECALL_SOURCE[f]??TASK3C_P01_V8_SOURCE[f]??')
-          g=g.replace('TASK3C_P01_V8_SOURCE[file]??','TASK3C_UI_RECALL_SOURCE[file]??TASK3C_P01_V8_SOURCE[file]??')
-          g=g.replace('...Object.keys(TASK3C_P01_V8_SOURCE)','...Object.keys(TASK3C_UI_RECALL_SOURCE),...Object.keys(TASK3C_P01_V8_SOURCE)')
-          g='const TASK3C_UI_RECALL_SOURCE=Object.freeze('+json.dumps(hashes,separators=(',',':'))+');\n'+g
-          anchor="  return {status:'SOURCE_VALIDATED',mode:profile.mode"
-          check="  must(profile.task3c_ui_recall_publish_authorized===false,'task3c_ui_recall_publish_not_authorized');\n  must(JSON.stringify(profile.authorized_task3c_ui_recall_sha256)===JSON.stringify(TASK3C_UI_RECALL_SOURCE),'task3c_ui_recall_scope_drift');\n  for(const [f,h] of Object.entries(TASK3C_UI_RECALL_SOURCE))must(sha(fs.readFileSync(path.join(root,f)))===h,'task3c_ui_recall_hash_drift:'+f);\n"
-          assert g.count(anchor)==1
-          g=g.replace(anchor,check+anchor)
-          gate.write_text(g)
-          profile=Path('.github/scripts/c3_unified_production_profile.json')
-          p=json.loads(profile.read_text())
-          p['authorized_task3c_ui_recall_sha256']=hashes
-          p['task3c_ui_recall_publish_authorized']=False
-          for item in paths:
-              if item not in p['authorized_changes']: p['authorized_changes'].append(item)
-          profile.write_text(json.dumps(p,ensure_ascii=False,indent=2)+'\n')
-          Path('.github/workflows/director-task3c-ui-transaction-20261110.yml').unlink()
-          print(json.dumps({'changed_source':hashes,'production_changed':False,'publish_authorized':False},indent=2))
-          PY
-          git diff --check
-          git config user.name 'ebixsolutions'
-          git config user.email '64578119+ebixsolutions@users.noreply.github.com'
-          git add src/routes/_authenticated/console.conversations.index.tsx tests/console-navigation/inbox-reply.test.mjs .github/scripts/c3_unified_production_profile.json .github/scripts/c3_unified_production_source_gate.mjs .github/workflows/director-task3c-ui-transaction-20261110.yml
-          git commit -m 'fix(task3c): require explicit scoped confirmation before message recall'
-          python3 - <<'PY'
-          import subprocess
-          actual=set(subprocess.check_output(['git','diff','--name-only','b948ec7d943d88e35687c84631214cc1429741ca','HEAD'],text=True).splitlines())
-          expected={'src/routes/_authenticated/console.conversations.index.tsx','tests/console-navigation/inbox-reply.test.mjs','.github/scripts/c3_unified_production_profile.json','.github/scripts/c3_unified_production_source_gate.mjs'}
-          assert actual==expected,(actual,expected)
-          print('EXACT_FINAL_SOURCE_SCOPE=4_FILES; TEMPORARY_WORKFLOW_REMOVED; BACKEND_UNCHANGED')
-          PY
-      - name: Validate actual source in the complete authoritative repository
-        shell: bash
-        env:
-          C3_REACT_TEST_ROOT: ${{ runner.temp }}/task3c-react
-        run: |
-          set -euo pipefail
-          node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/console-navigation/*.test.mjs 2>&1 | tee "$RUNNER_TEMP/task3c-ui-evidence/renderer.log"
-          npx tsc --noEmit 2>&1 | tee "$RUNNER_TEMP/task3c-ui-evidence/typecheck.log"
-          npm run build 2>&1 | tee "$RUNNER_TEMP/task3c-ui-evidence/build.log"
-          node --test .github/scripts/c3_unified_production_source_gate.test.mjs 2>&1 | tee "$RUNNER_TEMP/task3c-ui-evidence/gate-regression.log"
-          GITHUB_SHA="$(git rev-parse HEAD)" node .github/scripts/c3_unified_production_source_gate.mjs 2>&1 | tee "$RUNNER_TEMP/task3c-ui-evidence/source-gate.log"
-          git diff --exit-code
-          git diff --cached --exit-code
-          git rev-parse HEAD HEAD^{tree} | tee "$RUNNER_TEMP/task3c-ui-evidence/candidate-identity.txt"
-          git diff --stat b948ec7d943d88e35687c84631214cc1429741ca HEAD | tee "$RUNNER_TEMP/task3c-ui-evidence/changed-files.txt"
-          git bundle create "$RUNNER_TEMP/task3c-ui-evidence/source.bundle" b948ec7d943d88e35687c84631214cc1429741ca..HEAD
-      - name: Fast-forward original branch only if its exact preimage is unchanged
-        shell: bash
-        run: |
-          set -euo pipefail
-          branch=director/ai-abc-c3-long-memory-final-cutover
-          remote=$(git ls-remote origin "refs/heads/$branch" | cut -f1)
-          test "$remote" = "$GITHUB_SHA"
-          git push origin "HEAD:refs/heads/$branch"
-          test "$(git ls-remote origin "refs/heads/$branch" | cut -f1)" = "$(git rev-parse HEAD)"
-          echo 'SOURCE_COMMIT_PUSHED_AND_READBACK_MATCH; NO_DEPLOYMENT; HOSTED_NOT_RUN'
-      - name: Preserve only scoped source-validation receipts
+      - name: Preserve scoped source validation and original failure evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
