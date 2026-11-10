@@ -35,7 +35,7 @@ assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_ta
 // not a permissive alternative error from a different guard.
 assert.throws(()=>verifyProductionSource({root,profile:{...profile,task1_cross_topic_deployment_authorized:true},sourceOnly:true}),/task1_cross_topic_deployment_not_authorized/);
 assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_task1_cross_topic_sha256:{}},sourceOnly:true}),/task1_cross_topic_scope_drift/);
-function reject(name,fn,re){assert.throws(fn,new RegExp(re.source+"|task3c_1139_grounding_recovery_source_drift:|task2_evidence_source_hash_drift:|task1c_source_hash_drift:|task1_current_quote_hash_drift:|task1_cross_topic_hash_drift:|task1_director_hash_drift:|live_execution_source_drift:|uat_source_drift:|uat_compatibility_source_drift:|director_functional_source_drift:"));tests.push({name,result:'PASS',rejected:true});}
+function reject(name,fn,re){assert.throws(fn,new RegExp(re.source+"|task3c_reason_log_source_drift:|task3c_1139_grounding_recovery_source_drift:|task2_evidence_source_hash_drift:|task1c_source_hash_drift:|task1_current_quote_hash_drift:|task1_cross_topic_hash_drift:|task1_director_hash_drift:|live_execution_source_drift:|uat_source_drift:|uat_compatibility_source_drift:|director_functional_source_drift:"));tests.push({name,result:'PASS',rejected:true});}
 reject('Task 1 source repair cannot authorize production deployment',()=>verifyProductionSource({root,profile:{...profile,task1_director_repair_deployment_authorized:true},sourceOnly:true}),/task1_deployment_not_authorized/);
 reject('Task 1 exact source bytes cannot be widened',()=>verifyProductionSource({root,profile:{...profile,authorized_task1_director_repair_sha256:{}},sourceOnly:true}),/task1_director_scope_drift/);
 reject('live execution source repair cannot authorize deployment',()=>verifyProductionSource({root,profile:{...profile,live_execution_deployment_authorized:true},sourceOnly:true}),/live_execution_deployment_not_authorized/);
@@ -79,14 +79,14 @@ try{
   const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized B-T01 demand repair drift');
   // Earlier historical guards retain their exact error identity. No unrelated
   // rejection may stand in for checking the current B repair bytes.
-   const prefix=profile.authorized_task3c_1139_grounding_recovery_sha256[f]?'task3c_1139_grounding_recovery_source_drift':profile.authorized_task2_evidence_sha256[f]?'task2_evidence_source_hash_drift':
+   const prefix=profile.authorized_task3c_reason_log_sha256[f]?'task3c_reason_log_source_drift':profile.authorized_task3c_1139_grounding_recovery_sha256[f]?'task3c_1139_grounding_recovery_source_drift':profile.authorized_task2_evidence_sha256[f]?'task2_evidence_source_hash_drift':
    profile.authorized_task1_semantic_context_sha256[f]?'task1c_source_hash_drift':profile.authorized_task3c_p01_v8_sha256[f]?'task3c_p01_v8_hash_drift':'task3c_b_t01_demand_source_hash_drift';
   assert.throws(()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),error=>error.message===prefix+':'+f);
   tests.push({name:'B-T01 demand repair exact source bytes '+f,result:'PASS',rejected:true});fs.writeFileSync(path.join(fixture,f),original);
  }
  for(const f of Object.keys(profile.authorized_task2_evidence_sha256)){
   const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized Task 2 source drift');
-   const expectedPrefix=profile.authorized_task3c_1139_grounding_recovery_sha256[f]?'task3c_1139_grounding_recovery_source_drift':'task2_evidence_source_hash_drift';
+   const expectedPrefix=profile.authorized_task3c_reason_log_sha256[f]?'task3c_reason_log_source_drift':profile.authorized_task3c_1139_grounding_recovery_sha256[f]?'task3c_1139_grounding_recovery_source_drift':'task2_evidence_source_hash_drift';
    assert.throws(()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),new RegExp(expectedPrefix+':'+f.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   tests.push({name:'Task 2 exact source bytes '+f,result:'PASS',rejected:true});fs.writeFileSync(path.join(fixture,f),original);
  }

@@ -1609,7 +1609,7 @@
     "src/routes/_authenticated/console.settings.llm-runtime.tsx": "e6497959a042b95d1fc4042297f5c13cd552226a54fca6458f7ad06f4d692b6f",
     "tests/emergency-p0/protected-evidence.test.ts": "8274e3029533931e61f956ed526bbccd5e19e81cffc13ed13b933c0e9959cba2",
     "tests/console-navigation/admin-evidence-log.test.mjs": "0cb7b3367e15399761ac1a8157219d21313b4f913768994907723f75c4580dd0",
-    ".github/scripts/c3_unified_production_source_gate.test.mjs": "126c6ea16bd4dcdfa476dce2aa25c8f38c6181ca67be0a4bb1f3f96edf71d6ca"
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "466cf232d89dcd943f2abbbd4e90744622b8a6b5c05281342b641f7dbbd9df18"
   },
   "task3c_reason_log_deployment_authorized": false,
   "task3c_reason_log_publish_authorized": false
