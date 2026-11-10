@@ -107,21 +107,21 @@ function gateReceiptView(t:EvidenceTrace,sourceId:string){
  if(t.kb_source!=="protected_pipeline_diagnostic"||o.contract!=="c3-protected-pipeline-evidence-v1"||
    t.message_id!==sourceId||o.source_message_id!==sourceId||d.contract!==GATE_RECEIPT_CONTRACT||
    binding.source_message_id!==sourceId||binding.company_id!==o.company_id||
-   typeof binding.conversation_id!=="string"||!EVIDENCE_UUID.test(binding.conversation_id)||!EVIDENCE_UUID.test(binding.company_id))return null;
+   typeof binding.conversation_id!=="string"||typeof binding.company_id!=="string"||!EVIDENCE_UUID.test(binding.conversation_id)||!EVIDENCE_UUID.test(binding.company_id))return null;
  if(!["grounding_verifier","b2","semantic_validation","recovery"].includes(String(d.gate))||
     !["accepted","rejected","fallback_selected","NOT_CAPTURED"].includes(String(d.outcome)))return null;
  const demands=Array.isArray(d.per_demand)?d.per_demand.slice(0,12).flatMap(raw=>{
    const e=asRecord(raw);
    if(typeof e.demand_id!=="string"||!/^demand-(?:[1-9]|1[0-2])$/u.test(e.demand_id)||
       !["supported","partial","unavailable"].includes(String(e.status)))return [];
-   return [{demand_id:e.demand_id,status:e.status,evidence_ids:Array.isArray(e.evidence_ids)?
+   return [{demand_id:e.demand_id,status:String(e.status),evidence_ids:Array.isArray(e.evidence_ids)?
       e.evidence_ids.filter(v=>typeof v==="string"&&/^E(?:[1-9]|1[0-5])$/u.test(v)).slice(0,15):[]}];
  }):[];
- return {id:t.id,gate:d.gate,outcome:d.outcome,
+ return {id:t.id,gate:String(d.gate),outcome:String(d.outcome),
    firedCondition:typeof d.fired_condition==="string"&&/^[A-Za-z0-9_]{3,80}$/u.test(d.fired_condition)?
      d.fired_condition:"NOT_CAPTURED",
    faultClass:["content","reviewer_output_shape","policy","system","NOT_CAPTURED"].includes(String(d.fault_class))?
-     d.fault_class:"NOT_CAPTURED",perDemand:demands,
+     String(d.fault_class):"NOT_CAPTURED",perDemand:demands,
    selectedFallback:typeof d.selected_fallback==="string"&&/^[a-z_]{4,80}$/u.test(d.selected_fallback)?
      d.selected_fallback:null,source:"PROTECTED_PIPELINE_DIAGNOSTIC"};
 }
