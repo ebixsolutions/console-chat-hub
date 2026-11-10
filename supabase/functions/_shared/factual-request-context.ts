@@ -195,6 +195,7 @@ export function renderUnverifiedFactualNextStep(
     {pattern:/entitlement|membership|benefit|會員權益|会员权益|會籍|会籍/iu,en:"membership entitlement",tw:"會員權益",cn:"会员权益"},
     {pattern:/subscription|renewal|訂閱|订阅|續訂|续订/iu,en:"subscription terms",tw:"訂閱條款",cn:"订阅条款"},
     {pattern:/feature|specification|specs|功能|規格|规格/iu,en:"product or service features",tw:"產品／服務功能",cn:"商品／服务功能"},
+    {pattern:/(?:product_)?suitab|compatib|eligib|\bfit\b|適合|适合|合適|合适|適用|适用/iu,en:"product suitability",tw:"產品適用性",cn:"商品适用性"},
     {pattern:/policy|terms|政策|條款|条款/iu,en:"applicable policy",tw:"適用政策",cn:"适用政策"},
   ];
   const details = dimensions.filter(item => wants(item.pattern));

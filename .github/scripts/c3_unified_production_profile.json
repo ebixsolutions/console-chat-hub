@@ -1590,5 +1590,16 @@
     "tests/console-navigation/inbox-reply.test.mjs": "446f375aabaaa28b3f6d287d9c6bdf892146c49a242123a7c1695b436d1b4425",
     "tests/console-navigation/detail-reply.test.mjs": "55e126802042c1f5ec02ef9407e48dc64260d926f4c4e78e746997475c7036aa"
   },
-  "task3c_ui_recall_publish_authorized": false
+  "task3c_ui_recall_publish_authorized": false,
+  "task3c_1139_grounding_recovery_production_authorized": false,
+  "authorized_task3c_1139_grounding_recovery_sha256": {
+    "supabase/functions/_shared/grounding-evidence.ts": "f19b487d3f8f1faddcda3c432752bb62b06d2b041a33a867e6ebb40b503e0cd5",
+    "supabase/functions/_shared/llm-router.ts": "4340af4a25bb679d0585caac5f3efcbcba52618c70559b908c4c669568c000b7",
+    "supabase/functions/_shared/factual-evidence-selection.ts": "1a9855644d0f585f29b3c976addbca2ada71d92a449953e9ae46e0d04024bfe3",
+    "supabase/functions/_shared/factual-request-context.ts": "15ea2d866e4e10b12b44e0b15ba9f1957bf25c43f1f9294e8796064dfc9a6177",
+    "supabase/functions/generate-reply/index.ts": "e19dfb924635f8ebdee6aaf01fcb5d9200f99212598879b63336f2ab415c848e",
+    "supabase/functions/agent-assist/index.ts": "cc68730bd8b0b660197da77db5aa0a0931cafb54310ce8a0670a64cc6cbbf657",
+    "tests/emergency-p0/chain.test.mjs": "80635aa6ada145432a8b14abe8a03f2f25503ae80f897d9630477bf699a40012",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "fe2d6202bc9b506d8f017046dd82f069270613140d941ee4200de9cafa1266f3"
+  }
 }

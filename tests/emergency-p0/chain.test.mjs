@@ -177,7 +177,7 @@ function fixture(text,options={}) {
  const sourceTime=options.source_created_at??new Date(Math.max(Date.parse('2026-10-14T01:00:00.000Z'),...priorTimes.map(value=>value+1000))).toISOString();
  const visitor={id:source,conversation_id:ticket,role:'visitor',content:text,is_recalled:false,created_at:sourceTime,metadata:{}};
  const tables={ce_evaluation_state:[],handoff_event:[],conversation_commerce_state_event:[],company:[{id:company,is_active:true}],conversations:[conversation],messages:[visitor],conversation_commerce_state:[],conversation_memory_state:[],conversation_memory_state_event:[],c3_memory_reply_lifecycle_receipt:[]};
- let generationIndex=0, previewInitialization;
+ let generationIndex=0, verifierIndex=0, previewInitialization;
  const claimReaders=[];
  if(options.captureEvidence)tables.rag_trace=[];
  if(options.previous)for(const name of ['conversation_commerce_state','conversation_memory_state','conversation_commerce_state_event','conversation_memory_state_event'])tables[name]=structuredClone(options.previous[name]);
@@ -196,7 +196,8 @@ function fixture(text,options={}) {
    if(options.fullChain && !body.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.')) {
     const verifier=body.generationConfig.responseSchema?.properties?.grounded;
     const isRepair=body.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered');
-    const text=verifier?JSON.stringify({grounded:options.verifierGrounded??true,unsupported_claims:options.verifierGrounded===false?['unsupported merchant claim']:[],evidence_chunk_ids:options.verifierIds??['E1'],...(options.omitQuestionResolution?{}:{question_resolution:options.verifierResolution??'supported'}),...(options.verifierDemandResolutions!==undefined?{demand_resolutions:options.verifierDemandResolutions}:{})}):isRepair&&options.repairAnswer?options.repairAnswer:options.answers?.[generationIndex++]??options.answer??'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
+    const verifierShape=verifier&&Array.isArray(options.verifierResponses)?options.verifierResponses[Math.min(verifierIndex++,options.verifierResponses.length-1)]:null;
+    const text=verifier?JSON.stringify(verifierShape??{grounded:options.verifierGrounded??true,unsupported_claims:options.verifierGrounded===false?['unsupported merchant claim']:[],evidence_chunk_ids:options.verifierIds??['E1'],...(options.omitQuestionResolution?{}:{question_resolution:options.verifierResolution??'supported'}),...(options.verifierDemandResolutions!==undefined?{demand_resolutions:options.verifierDemandResolutions}:{})}):isRepair&&options.repairAnswer?options.repairAnswer:options.answers?.[generationIndex++]??options.answer??'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
     if(!verifier && options.humanAfterFirstDraft && generationIndex===1)conversation.status='human_control';
     if(!verifier && options.newSourceAfterFirstDraft && generationIndex===1)tables.messages.unshift({...visitor,id:uuid(999),content:'A newer customer question',created_at:'2026-10-14T01:00:01.000Z'});
     return Response.json({candidates:[{content:{parts:[{text}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}});
@@ -1614,6 +1615,35 @@ const v2PartialDemandResolutions=[
  {demand_id:'demand-1',status:'partial',evidence_ids:['E1']},
  {demand_id:'demand-2',status:'unavailable',evidence_ids:[]},
 ];
+function v1139RecoveryFixture(options={}) {
+ const model='CW-SUL70BA',feature='Panasonic '+model+' 有咩主要功能？',suitability='西斜約80呎房間用呢款是否合適？';
+ const document=task1cModelDocument({model,currentness:'unknown',id:'v1139-feature-record'});
+ document.evidence[0].content='商品型號: '+model+'\n品牌: Panasonic\n描述: 3/4匹窗口式冷氣，R32製冷劑，四合一抗菌過濾網，左右自動送風、睡眠模式及獨立抽濕\n功能: 變頻、淨冷';
+ const rejected=model+' 係3/4匹窗口式冷氣，西斜房熱負荷較高，所以80呎一定要現場再判斷。';
+ return fixture(feature+suitability,{source:uuid(8391),originalPreview:true,fullChain:true,captureEvidence:true,answer:rejected,originalRagResponse:task1cRagDocuments(document),
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(feature,{requested_facts:['features'],constraints:{brand:'Panasonic',name:model}}),
+   task1SemanticContextDemand(suitability,{requested_facts:['product_suitability'],constraints:{brand:'Panasonic',name:model,room_orientation:'west-facing',room_size:{value:80}}})],{topic:model}),...options});
+}
+const v1139DemandResolutions=[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']},{demand_id:'demand-2',status:'unavailable',evidence_ids:[]}];
+test('11:39 class: rejected draft preserves source-bound features and explicitly retains unresolved suitability',async()=>{
+ const f=v1139RecoveryFixture({verifierGrounded:false,verifierResolution:'partial',verifierIds:['E1'],verifierDemandResolutions:v1139DemandResolutions});
+ const result=await f.run();assert.equal(result.status,200,JSON.stringify({result,commits:f.commits,events:f.events.slice(-12)}));assert.equal(f.commits.length,1);
+ const reply=f.commits[0],meta=reply.metadata;assert.equal(meta.response_route,'canonical_kb_partial_recovery');assert.match(reply.content,/CW-SUL70BA/);assert.match(reply.content,/3\/4匹窗口式冷氣|變頻、淨冷/);
+ assert.match(reply.content,/適合|适合|suitability/iu);assert.match(reply.content,/未能核實|未能核实|unverified/iu);assert(!reply.content.includes('熱負荷較高')&&!reply.content.includes('一定要'));
+ assert.deepEqual(meta.partial_recovery.demand_outcomes.map(item=>[item.demand_id,item.status]),[['demand-1','partial'],['demand-2','unavailable']]);
+ assert(meta.factual_evidence_coverage.find(item=>item.id==='demand-2')?.missing_reasons.includes('requested_condition_not_supported_by_source'));
+ assert.equal(meta.grounding_rejection_receipt?.stage,'semantic_claims');assert.equal(meta.grounding_rejection_receipt?.unsupported_claim_count,1);
+ assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);assert.equal(f.requests.filter(item=>item.url.endsWith('/commit_ai_reply_tx')).length,1);
+ assert.deepEqual(catalogueGateEvents(f).map(item=>[item.gate_decision,item.gate_code,item.commit_attempted]),[['allow','B2_ALLOW',true]]);
+});
+test('11:39 class: malformed per-demand verifier shape is identified and stays inside existing verifier retry budget',async()=>{
+ const malformed={grounded:true,unsupported_claims:[],evidence_chunk_ids:['E1'],question_resolution:'partial',demand_resolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']},{demand_id:'demand-2',status:'unavailable',evidence_ids:['E1']}]};
+ const valid={grounded:false,unsupported_claims:['unsupported suitability claim'],evidence_chunk_ids:['E1'],question_resolution:'partial',demand_resolutions:v1139DemandResolutions};
+ const f=v1139RecoveryFixture({verifierResponses:[malformed,valid]});const result=await f.run();assert.equal(result.status,200,JSON.stringify({result,commits:f.commits,events:f.events.slice(-12)}));
+ const {semantic,drafts,verifiers}=v2RetryCalls(f);assert.equal(semantic.length,1);assert.equal(drafts.length,1);assert.equal(verifiers.length,2);assert.equal(f.requests.filter(item=>item.url.includes('context-search')).length,1);
+ assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.response_route,'canonical_kb_partial_recovery');
+ const invalidEvent=f.events.flat().find(event=>event?.event==='grounding_verifier_demand_resolution_invalid');assert(invalidEvent);assert.equal(invalidEvent.reason,'unavailable_cannot_cite_evidence');
+});
 test('V2 exact-fact retry: one bounded second draft uses the same E1 and commits verified human wording once',async()=>{
  const answer='AX-QZ81 嘅已發布商品資料記錄 HK$1,290。呢個金額未核實係現價；現貨庫存亦待商家確認。';
  const f=v2PartialRecoveryFixture({answers:['AX-QZ81 costs HK$9,999,999 and 88 units are in stock.',answer],

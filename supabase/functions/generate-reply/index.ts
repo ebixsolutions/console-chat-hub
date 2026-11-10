@@ -7164,25 +7164,26 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
       await cleanupThinking(supabaseAdmin,conversation_id,source_message_id);
       return new Response(JSON.stringify({success:false,error:"AI service error",failure,retryable:false}),{status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
     }
-    if (llm.code === "LLM_GROUNDING_REJECTED") {
+    if (llm.code === "LLM_GROUNDING_REJECTED" || llm.code === "LLM_INVALID_OUTPUT" && Boolean(llm.grounding_rejection)) {
       const clarificationReply = _factualFollowup || _c1AuthorityDecision?.decision === "USE_CURRENT_KB"
         ? (_visitorLang === "en" ? "I found relevant source material, but could not reliably validate this answer. This does not mean the information is unavailable." : "我搵到相關資料，但今次未能可靠核實回答；呢個唔代表資料不存在。")
         : GROUNDING_RECOVERY_WORDING[_visitorLang] ?? GROUNDING_RECOVERY_WORDING.en;
       const partial = !_priorGroundedTransform && !_mixedRequest && _factualEvidenceBundle && _currentFactualRequest &&
           _generationCompanyId && source_message_id && _canonicalKbTenantId
         ? resolveSourceRecordedPartialRecovery(_factualEvidenceBundle,_currentFactualRequest,{
-          language:_visitorLang,companyId:_generationCompanyId,sourceMessageId:source_message_id,expectedTenantId:_canonicalKbTenantId,
+          language:_visitorLang,companyId:_generationCompanyId,sourceMessageId:source_message_id,expectedTenantId:_canonicalKbTenantId,groundingRejection:llm.grounding_rejection,
         }) : null;
       // A rejected draft cannot turn unknown source data into a present-day offer.
       // Use the current source-bound factual request to explain the unresolved fact.
       const unverifiedReply = renderUnverifiedFactualNextStep(_currentFactualRequest, _visitorLang);
       const humanSupportOffer = unverifiedReply ? {version:1,type:"request_human_support",reason:"unverified_current_fact"} : null;
       const recoveryTrace = {
-source_error_code:"LLM_GROUNDING_REJECTED",
+source_error_code:llm.code,
  grounding_rejection_reason:typeof llm.grounding_rejection_reason==="string"&&
    /^[a-z_]{1,80}$/u.test(llm.grounding_rejection_reason)?llm.grounding_rejection_reason:null,
  grounding_verifier_failure:llm.failure?
    {code:llm.failure.code,stage:llm.failure.stage,http_status:llm.failure.http_status??null}:null,
+ grounding_rejection_receipt:llm.grounding_rejection??null,
  failed_generation_request_id:llm.request_id,
         factual_evidence_candidates:[...factualEvidenceCandidates.values()],
         factual_evidence_selection:factualEvidenceSelection,

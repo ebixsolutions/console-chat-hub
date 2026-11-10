@@ -26,7 +26,8 @@ import { resolveCurrentFactualRequest, type CurrentFactualRequest } from "../_sh
 import { currentFactualRequestReceipt, buildCurrentFactualRequestPrompt } from "../_shared/factual-request-context.ts";
 import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer, resolveSourceRecordedPartialRecovery} from "../_shared/factual-evidence-selection.ts";
 import {buildGroundingEvidencePrompt, groundingEvidenceText, parseGroundingDemandResolutions,
-  type GroundingEvidence, type GroundingVerificationReceipt} from "../_shared/grounding-evidence.ts";
+  parseGroundingDemandResolutionsDetailed, type GroundingEvidence, type GroundingVerificationReceipt,
+  type GroundingRejectionReceipt} from "../_shared/grounding-evidence.ts";
 import { DecisionContextLimitError } from "../_shared/bounded-decision-context.ts";
 import { prepareSemanticRequest, type PreparedSemanticRequest } from "../_shared/prepare-semantic-request.ts";
 import { applyCustomerRequestDecision, resolveCustomerRequestDecision } from "../_shared/commerce-state-authority.ts";
@@ -191,7 +192,7 @@ async function callAssistModel(
 async function verifyAssistClaims(
   content:string, claims:string, evidence:Array<{chunk_id?:string;content:string}>,
   meta:AssistModelMeta, complete:boolean, boundEvidence?: GroundingEvidence,
-):Promise<{ok:true;receipt?:GroundingVerificationReceipt}|{ok:false;failure:ExecutionFailure;rejection_stage?:string}> {
+):Promise<{ok:true;receipt?:GroundingVerificationReceipt}|{ok:false;failure:ExecutionFailure;rejection_stage?:string;grounding_rejection?:GroundingRejectionReceipt}> {
   if(!evidence.length || evidence.some(e=>!e.chunk_id)) {
     console.warn(JSON.stringify({event:"assist_claim_rejection",stage:"evidence_binding"}));
     return {ok:false,failure:executionFailure("LLM_GROUNDING_REJECTED"),rejection_stage:"evidence_binding"};
@@ -214,14 +215,19 @@ async function verifyAssistClaims(
   if(meta.toolType==="check_policy" && (!v || Object.keys(v).some(k=>!["grounded","unsupported_claims","evidence_ids","resolution"].includes(k)) ||
     !Array.isArray(v.unsupported_claims) || v.unsupported_claims.length>3 || v.unsupported_claims.some(c=>typeof c!=="string" || c.length>100) ||
     !Array.isArray(v.evidence_ids) || v.evidence_ids.length>3))return {ok:false,failure:executionFailure("LLM_GROUNDING_REJECTED"),rejection_stage:"verifier_schema"};
-  const supported=!!v && v.grounded===true && Array.isArray(v.unsupported_claims) && v.unsupported_claims.length===0 &&
-    Array.isArray(v.evidence_ids) && (v.evidence_ids.length>0 || boundEvidence !== undefined) && v.evidence_ids.length <= 15 && new Set(v.evidence_ids).size === v.evidence_ids.length && v.evidence_ids.every(id=>typeof id==="string" && evidence.some((_,n)=>id===`E${n+1}`)) &&
-    (v.resolution==="supported" || (!complete && v.resolution==="partial"));
-  const resolutions = supported && boundEvidence ? parseGroundingDemandResolutions(v!.demand_resolutions,boundEvidence,v!.evidence_ids as string[]) : null;
-  if (!supported || boundEvidence && (!resolutions || (v!.resolution === "supported") !== resolutions.every(item=>item.status==="supported")))
-    return {ok:false,failure:executionFailure("LLM_GROUNDING_REJECTED"),rejection_stage:"independent_verifier"};
-  return {ok:true,...(boundEvidence && resolutions ? {receipt:{used_evidence_ids:v!.evidence_ids as string[],
-    question_resolution:v!.resolution as "supported"|"partial",demand_resolutions:resolutions}} : {})};
+  const resolution=v?.resolution,normalizedResolution=resolution==="supported"||resolution==="partial"||resolution==="unsupported"?resolution:null;
+  const idsValid=!!v&&Array.isArray(v.evidence_ids)&&(v.evidence_ids.length>0||boundEvidence!==undefined)&&v.evidence_ids.length<=15&&new Set(v.evidence_ids).size===v.evidence_ids.length&&v.evidence_ids.every(id=>typeof id==="string"&&evidence.some((_,n)=>id==="E"+(n+1)));
+  const baseValid=!!v&&typeof v.grounded==="boolean"&&Array.isArray(v.unsupported_claims)&&(v.grounded===true?v.unsupported_claims.length===0:v.unsupported_claims.length>0)&&idsValid&&(normalizedResolution==="supported"||(!complete&&normalizedResolution==="partial")||normalizedResolution==="unsupported");
+  const demandParse=baseValid&&boundEvidence?parseGroundingDemandResolutionsDetailed(v!.demand_resolutions,boundEvidence,v!.evidence_ids as string[]):null;
+  if(boundEvidence&&demandParse&&!demandParse.ok)return {ok:false,failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"decode"}),rejection_stage:"verifier_demand_resolution_shape",
+   grounding_rejection:{version:"grounding-rejection-1",stage:"demand_resolution_shape",reason:demandParse.reason,question_resolution:normalizedResolution,used_evidence_ids:idsValid?v!.evidence_ids as string[]:[],demand_resolutions:[],
+    unsupported_claim_count:Array.isArray(v!.unsupported_claims)?v!.unsupported_claims.length:0,demand_parse_failure:{reason:demandParse.reason,...(typeof demandParse.demand_index==="number"?{demand_index:demandParse.demand_index}:{}),...(demandParse.demand_id?{demand_id:demandParse.demand_id}:{})}}};
+  const resolutions=demandParse?.ok?demandParse.resolutions:null,coverageFailure=Boolean(boundEvidence&&baseValid&&((normalizedResolution==="supported")!==Boolean(resolutions?.every(item=>item.status==="supported"))));
+  const supported=baseValid&&v!.grounded===true&&(normalizedResolution==="supported"||(!complete&&normalizedResolution==="partial"))&&!coverageFailure;
+  if(!supported){const stage=coverageFailure?"question_resolution":"semantic_claims",reason=coverageFailure?"question_resolution_demand_inconsistent":!baseValid?"verifier_top_level_invalid":"unsupported_semantic_claim";
+   return {ok:false,failure:executionFailure("LLM_GROUNDING_REJECTED"),rejection_stage:"independent_verifier",grounding_rejection:{version:"grounding-rejection-1",stage,reason,question_resolution:normalizedResolution,
+    used_evidence_ids:idsValid?v!.evidence_ids as string[]:[],demand_resolutions:resolutions??[],unsupported_claim_count:Array.isArray(v?.unsupported_claims)?v!.unsupported_claims.length:0}};}
+  return {ok:true,...(boundEvidence&&resolutions?{receipt:{used_evidence_ids:v!.evidence_ids as string[],question_resolution:normalizedResolution as "supported"|"partial",demand_resolutions:resolutions}}:{})};
 }
 
 function parseJson(raw: string): Record<string, unknown> | null {
@@ -1213,6 +1219,7 @@ Deno.serve(async (req) => {
             sourceMessageId:assistFactualRequest.source_message_id,
             expectedTenantId:tenant.scope.singaporeTenantId,
             preserveQuestionInUnsentDraft:true,
+            groundingRejection:checked.grounding_rejection,
           }) : null;
         // Preserve the existing per-draft bound without truncating a pending need.
         if(recovery && recovery.reply.length <= 1000)return jsonRes({
@@ -1222,6 +1229,7 @@ Deno.serve(async (req) => {
           ...recovery.citation_metadata,
           response_route:"canonical_kb_partial_recovery",
           source_error_code:checked.failure.code,source_rejection_stage:checked.rejection_stage,
+          grounding_rejection_receipt:checked.grounding_rejection??null,
           partial_recovery:{contract:"canonical-source-field-recovery-1",question_resolution:"partial",demand_outcomes:recovery.demand_outcomes},
           recorded_kb_facts:recovery.recorded_facts,authoritative_kb_facts:[],
           unresolved_fact_fields:recovery.unresolved_demand_ids,

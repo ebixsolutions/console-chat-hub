@@ -36,6 +36,24 @@ export interface GroundingVerificationReceipt {
   question_resolution: "supported" | "partial";
   demand_resolutions: GroundingDemandResolution[];
 }
+export type GroundingDemandResolutionParseFailureReason =
+  | "raw_not_array" | "demand_count_mismatch" | "invalid_grounding_evidence" | "invalid_item"
+  | "unexpected_key" | "unknown_or_duplicate_demand" | "invalid_status" | "invalid_evidence_ids"
+  | "evidence_id_not_used_or_bound" | "blocked_demand_must_be_unavailable" | "kb_resolution_requires_evidence"
+  | "unavailable_cannot_cite_evidence" | "supported_with_missing_reasons" | "used_evidence_unattributed";
+export type GroundingDemandResolutionParseResult =
+  | {ok:true;resolutions:GroundingDemandResolution[]}
+  | {ok:false;reason:GroundingDemandResolutionParseFailureReason;demand_index?:number;demand_id?:string};
+export interface GroundingRejectionReceipt {
+  version:"grounding-rejection-1";
+  stage:"demand_resolution_shape"|"question_resolution"|"semantic_claims";
+  reason:string;
+  question_resolution:"supported"|"partial"|"unsupported"|null;
+  used_evidence_ids:string[];
+  demand_resolutions:GroundingDemandResolution[];
+  unsupported_claim_count:number;
+  demand_parse_failure?:{reason:GroundingDemandResolutionParseFailureReason;demand_index?:number;demand_id?:string};
+}
 
 /** Use server-assigned aliases, never markers scanned out of source content. */
 export function groundingEvidenceText(items: GroundingEvidenceItem[]): string {
@@ -114,34 +132,29 @@ export function buildGroundingEvidencePrompt(value: GroundingEvidence): string {
 
 /** Every demand must be accounted for; policy applicability is checked by the
  * existing verifier rather than guessed from customer wording or source rank. */
-export function parseGroundingDemandResolutions(
-  raw: unknown, evidence: GroundingEvidence, usedIds: string[],
-): GroundingDemandResolution[] | null {
-  if (!Array.isArray(raw) || raw.length !== evidence.demands.length || !validGroundingEvidence(evidence)) return null;
-  const seen = new Set<string>(), used = new Set(usedIds);
-  const result: GroundingDemandResolution[] = [];
-  for (const value of raw) {
-    if (!value || typeof value !== "object" || Array.isArray(value) ||
-        Object.keys(value).some(key => !["demand_id", "status", "evidence_ids"].includes(key))) return null;
-    const demand = evidence.demands.find(item => item.id === value.demand_id);
-    if (!demand || seen.has(demand.id) || !["supported", "partial", "unavailable"].includes(value.status) ||
-        !Array.isArray(value.evidence_ids) || value.evidence_ids.length > 15 || new Set(value.evidence_ids).size !== value.evidence_ids.length || value.evidence_ids.some((id: unknown) =>
-          typeof id !== "string" || !used.has(id) || !demand.evidence_ids.includes(id))) return null;
-    const ids = [...new Set<string>(value.evidence_ids)];
-    const kb = ["product", "policy", "unknown"].includes(demand.source_type);
-    if ((demand.blocked || demand.source_type === "transaction") && (value.status !== "unavailable" || ids.length)) return null;
-    if (kb && value.status !== "unavailable" && !ids.length) return null;
-    if (value.status === "unavailable" && ids.length) return null;
-    if (kb && value.status === "supported" && demand.missing_reasons.length > 0) return null;
-    seen.add(demand.id);
-    result.push({demand_id: demand.id, status: value.status, evidence_ids: ids});
-  }
-  const attributed = new Set(result.flatMap(item => item.evidence_ids));
-  if (usedIds.some(id => !attributed.has(id))) return null;
-  return result;
+export function parseGroundingDemandResolutionsDetailed(raw:unknown,evidence:GroundingEvidence,usedIds:string[]):GroundingDemandResolutionParseResult{
+ const fail=(reason:GroundingDemandResolutionParseFailureReason,demand_index?:number,demand_id?:string):GroundingDemandResolutionParseResult=>({ok:false,reason,...(typeof demand_index==="number"?{demand_index}:{}),...(demand_id?{demand_id}:{})});
+ if(!Array.isArray(raw))return fail("raw_not_array");if(raw.length!==evidence.demands.length)return fail("demand_count_mismatch");if(!validGroundingEvidence(evidence))return fail("invalid_grounding_evidence");
+ const seen=new Set<string>(),used=new Set(usedIds),result:GroundingDemandResolution[]=[];
+ for(let index=0;index<raw.length;index++){const value=raw[index];if(!value||typeof value!=="object"||Array.isArray(value))return fail("invalid_item",index);
+  const v=value as Record<string,unknown>,keys=Object.keys(v);if(keys.some(key=>!["demand_id","status","evidence_ids"].includes(key)))return fail("unexpected_key",index,typeof v.demand_id==="string"?v.demand_id:undefined);
+  const id=typeof v.demand_id==="string"?v.demand_id:"",demand=evidence.demands.find(item=>item.id===id);if(!demand||seen.has(demand.id))return fail("unknown_or_duplicate_demand",index,id||undefined);
+  if(!["supported","partial","unavailable"].includes(String(v.status)))return fail("invalid_status",index,demand.id);
+  if(!Array.isArray(v.evidence_ids)||v.evidence_ids.length>15||new Set(v.evidence_ids).size!==v.evidence_ids.length)return fail("invalid_evidence_ids",index,demand.id);
+  if(v.evidence_ids.some((x:unknown)=>typeof x!=="string"||!used.has(x)||!demand.evidence_ids.includes(x)))return fail("evidence_id_not_used_or_bound",index,demand.id);
+  const ids=[...new Set<string>(v.evidence_ids as string[])],status=v.status as GroundingDemandResolution["status"],kb=["product","policy","unknown"].includes(demand.source_type);
+  if((demand.blocked||demand.source_type==="transaction")&&(status!=="unavailable"||ids.length))return fail("blocked_demand_must_be_unavailable",index,demand.id);
+  if(kb&&status!=="unavailable"&&!ids.length)return fail("kb_resolution_requires_evidence",index,demand.id);
+  if(status==="unavailable"&&ids.length)return fail("unavailable_cannot_cite_evidence",index,demand.id);
+  if(kb&&status==="supported"&&demand.missing_reasons.length>0)return fail("supported_with_missing_reasons",index,demand.id);
+  seen.add(demand.id);result.push({demand_id:demand.id,status,evidence_ids:ids});}
+ const attributed=new Set(result.flatMap(item=>item.evidence_ids));if(usedIds.some(id=>!attributed.has(id)))return fail("used_evidence_unattributed");
+ return {ok:true,resolutions:result};
 }
-
-export function groundingDemandResponseSchema(): Record<string, unknown> {
+export function parseGroundingDemandResolutions(raw:unknown,evidence:GroundingEvidence,usedIds:string[]):GroundingDemandResolution[]|null{
+ const parsed=parseGroundingDemandResolutionsDetailed(raw,evidence,usedIds);return parsed.ok?parsed.resolutions:null;
+}
+export function groundingDemandResponseSchema(): Record<string, unknown> {export function groundingDemandResponseSchema(): Record<string, unknown> {
   return {type: "ARRAY", maxItems: 12, items: {type: "OBJECT", properties: {
     demand_id: {type: "STRING"}, status: {type: "STRING", enum: ["supported", "partial", "unavailable"]},
     evidence_ids: {type: "ARRAY", maxItems: 15, items: {type: "STRING"}},

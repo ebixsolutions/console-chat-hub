@@ -8,7 +8,8 @@ import {buildCitationMetadata} from "./citation-lineage.ts";
 import {currentKbSellingPrice, exactKbModelIds, resolveCanonicalKbDirectAnswer} from "./canonical-kb-direct-answer.ts";
 import {kbProductFieldKey, kbProductRecordPrice, kbProductRecordStock, normalizeCatalogueCode, parseKbProductRecord} from "./kb-product-record.ts";
 import {GROUNDING_EVIDENCE_LIMITS, groundingEvidenceText, validGroundingEvidence,
-  type GroundingEvidence, type GroundingEvidenceItem, type GroundingDemand, type GroundingDemandResolution} from "./grounding-evidence.ts";
+  type GroundingEvidence, type GroundingEvidenceItem, type GroundingDemand, type GroundingDemandResolution,
+  type GroundingRejectionReceipt} from "./grounding-evidence.ts";
 
 type Selection = Extract<CanonicalGroundingResult, {ok: true}>;
 export interface FactualEvidenceSource {
@@ -62,7 +63,15 @@ function applicableOptionChunk(chunk: KBFullChunk, demand: CurrentFactualDemand,
   return units.every(unit => specificationText.some(text=>optionSpecificationMatches(text,unit)));
 }
 
-const kbDemand = (demand: CurrentFactualDemand) => ["product", "policy", "unknown"].includes(demand.source_type);
+const kbDemand=(demand:CurrentFactualDemand)=>["product","policy","unknown"].includes(demand.source_type);
+const APPLICABILITY_FACT=/(?:product_)?suitab|compatib|eligib|\bfit\b|適合|适合|合適|合适|適用|适用/iu,APPLICABILITY_TEXT=/適用|适用|適合|适合|合適|合适|suitab|compatib|recommended\s+(?:room|area)|room\s+(?:area|size)|適用面積|适用面积/iu;
+function demandNeedsApplicabilityProof(demand:CurrentFactualDemand){return demand.requested_facts.some(fact=>APPLICABILITY_FACT.test(fact));}
+function scalarConstraintValues(value:unknown):string[]{if(typeof value==="string"||typeof value==="number"||typeof value==="boolean")return [String(value)];if(!value||typeof value!=="object"||Array.isArray(value))return [];return Object.values(value as Record<string,unknown>).flatMap(scalarConstraintValues);}
+function sourceExplicitlySupportsApplicability(source:FactualEvidenceSource,demand:CurrentFactualDemand){if(!demandNeedsApplicabilityProof(demand))return true;
+ const texts=source.selection.chunks.filter(chunk=>chunk.chunk_type==="full_content").map(chunk=>chunk.content.normalize("NFKC"));if(!texts.some(text=>APPLICABILITY_TEXT.test(text)))return false;
+ for(const [name,value] of Object.entries(demand.constraints).filter(([name])=>!["brand","name","model","sku","spu"].includes(key(name)))){
+  const values=scalarConstraintValues(value).filter(item=>item&&item!=="true"&&item!=="false");if(!values.length)continue;
+  if(!values.every(raw=>name==="room_orientation"&&/west[- ]?facing|西斜/iu.test(raw)?texts.some(text=>/west[- ]?facing|西斜/iu.test(text)):texts.some(text=>key(text).includes(key(raw)))))return false;}return true;}
 
 /** Source provenance still uses the existing authority gate. A merchant policy
  * is a candidate for applicability review, not an exact-SKU fact or an order. */
@@ -170,7 +179,8 @@ export function selectFactualEvidence(
         append(selected, demand, "subject_evidence", target);
       }
     }
-    if (!sources.some(source => source.demand_ids.includes(demand.id))) coverage.missing_reasons.push("no_applicable_source");
+    const demandSources=sources.filter(source=>source.demand_ids.includes(demand.id));if(!demandSources.length)coverage.missing_reasons.push("no_applicable_source");
+    if(demandNeedsApplicabilityProof(demand)&&!demandSources.some(source=>sourceExplicitlySupportsApplicability(source,demand)))coverage.missing_reasons.push("requested_condition_not_supported_by_source");
   }
   const items: GroundingEvidenceItem[] = [];
   const selectedChunks = new Map<string, KBFullChunk>();
@@ -287,7 +297,7 @@ export interface SourceRecordedPartialRecovery {
  * policy applicability or a transaction, and never turns a partial turn complete. */
 export function resolveSourceRecordedPartialRecovery(
   bundle: Extract<FactualEvidenceBundle, {ok:true}>, request: CurrentFactualRequest,
-  options: {language:"en"|"zh-TW"|"zh-CN";companyId:string;sourceMessageId:string;expectedTenantId:string; preserveQuestionInUnsentDraft?:true},
+  options:{language:"en"|"zh-TW"|"zh-CN";companyId:string;sourceMessageId:string;expectedTenantId:string;preserveQuestionInUnsentDraft?:true;groundingRejection?:GroundingRejectionReceipt},
 ): SourceRecordedPartialRecovery | null {
   if (!options.companyId || !options.sourceMessageId || !options.expectedTenantId ||
       request.source_message_id !== options.sourceMessageId || request.interpretation_source !== "semantic_demands" ||
@@ -298,7 +308,22 @@ export function resolveSourceRecordedPartialRecovery(
   const facts: SourceRecordedPartialRecovery["recorded_facts"] = [];
   const replies: string[] = [];
   for (const demand of request.demands) {
-    const coverage = bundle.grounding.demands.find(item => item.id === demand.id);
+    const coverage=bundle.grounding.demands.find(item=>item.id===demand.id),verifierResolution=options.groundingRejection?.demand_resolutions.find(item=>item.demand_id===demand.id);
+    const commonEligible=demand.source_type==="product"&&!demand.ambiguity.is_ambiguous&&demand.subjects.length===1&&demand.subject_source_message_ids.length>0&&!demand.customer_correction&&!demand.explicit_negations.length&&Boolean(coverage)&&!coverage!.blocked&&!request.missing_evidence.some(item=>item.demand_id===demand.id);
+    const matchedSources=commonEligible?bundle.sources.filter(source=>source.scope==="subject_evidence"&&source.demand_ids.includes(demand.id)&&source.target.entity_ids.length===1&&key(source.target.entity_ids[0])===key(demand.subjects[0])):[];
+    const wantedFacts=demand.requested_facts.map(key),wantsFeatures=wantedFacts.length>0&&wantedFacts.every(fact=>/feature|功能/iu.test(fact));
+    if(commonEligible&&coverage&&wantsFeatures&&verifierResolution&&["supported","partial"].includes(verifierResolution.status)&&matchedSources.length===1){
+     const source=matchedSources[0],authority=source.selection.authority_decision;if(authority.provenance.tenant_id===options.expectedTenantId){
+      const chunk=source.selection.chunks.filter(candidate=>candidate.chunk_type==="full_content"&&candidate.chunk_id).find(candidate=>{const item=bundle.grounding.items.find(value=>value.document_id===candidate.document_id&&value.chunk_id===candidate.chunk_id&&value.content===candidate.content&&value.demand_ids.includes(demand.id)&&coverage.evidence_ids.includes(value.id));return Boolean(item&&verifierResolution.evidence_ids.includes(item.id));});
+      if(chunk){const item=bundle.grounding.items.find(value=>value.document_id===chunk.document_id&&value.chunk_id===chunk.chunk_id&&value.content===chunk.content)!;
+       const record=parseKbProductRecord(chunk.content),safeValues=record.fields.filter(field=>/^(?:description|details|features?|描述|商品描述|產品描述|产品描述|功能)$/iu.test(kbProductFieldKey(field.key))&&field.value.length>=2&&field.value.length<=600&&!/(?:成本|銷售價|销售价|售價|售价|特價|特价|庫存|库存|stock|price|cost|[$<>])/iu.test(field.value)).map(field=>field.value.replace(/\s+/gu," ").trim()).filter(Boolean).slice(0,2);
+       if(safeValues.length){const subject=demand.subjects[0],detail=[...new Set(safeValues)].join(options.language==="en"?"; ":"；");
+        replies.push(options.language==="en"?"The published source record for "+subject+" describes: "+detail+".":options.language==="zh-CN"?subject+" 的已发布来源记录描述："+detail+"。":subject+" 嘅已發布來源記錄描述："+detail+"。");
+        const outcome=outcomes.find(value=>value.demand_id===demand.id)!;outcome.status="partial";outcome.reason="source_recorded_features_currentness_unverified";outcome.evidence_ids=[item.id];outcome.answered_fields=["features"];}}}}
+    const wantsSuitability=wantedFacts.some(fact=>APPLICABILITY_FACT.test(fact));
+    if(commonEligible&&coverage&&wantsSuitability&&(verifierResolution?.status==="unavailable"||verifierResolution?.status==="partial"||coverage.missing_reasons.includes("requested_condition_not_supported_by_source"))){
+     const subject=demand.subjects[0];replies.push(options.language==="en"?"Suitability of "+subject+" for the conditions you already provided remains unverified. The available source does not supply the applicable room/condition guidance needed for that decision; use applicable manufacturer guidance or a site assessment rather than guessing.":options.language==="zh-CN"?"至于 "+subject+" 是否适合你已经提供的房间条件，目前仍未能核实。现有来源没有提供足以判断的适用面积／条件依据；应核对适用的厂方资料或现场评估，不会猜测。":"至於 "+subject+" 是否適合你已經提供嘅房間條件，目前仍未能核實。現有來源冇提供足以判斷嘅適用面積／條件依據；應核對適用嘅廠方資料或現場評估，唔會估。");
+     const outcome=outcomes.find(value=>value.demand_id===demand.id)!;if(outcome.status!=="partial"){outcome.status="unavailable";outcome.reason="applicability_evidence_missing";outcome.evidence_ids=[];outcome.answered_fields=[];}}
     if (demand.source_type !== "product" || demand.ambiguity.is_ambiguous || demand.subjects.length !== 1 ||
         !demand.subject_source_message_ids.length || demand.customer_correction || demand.explicit_negations.length ||
         Object.keys(demand.constraints).length || !demand.requested_facts.some(fact => ["price","stock","availability"].includes(key(fact))) ||
@@ -384,7 +409,7 @@ export function resolveSourceRecordedPartialRecovery(
     outcome.evidence_ids=[item.id];
     outcome.answered_fields=answeredFields;
   }
-  if (!facts.length) return null;
+  if (!replies.length) return null;
   const used = [...new Set(outcomes.flatMap(item => item.evidence_ids))];
   const citation = buildFactualCitationMetadata(bundle,used,outcomes);
   if (!citation) return null;
@@ -401,6 +426,7 @@ export function resolveSourceRecordedPartialRecovery(
       return en ? "live stock verification pending" : cn ? "现货库存待核实" : "現貨庫存待核實";
     if (/(?:feature|specification|功能|規格|规格)/u.test(value))
       return en ? "product features" : cn ? "商品功能" : "商品功能";
+    if (APPLICABILITY_FACT.test(value)) return en ? "product suitability" : cn ? "商品适用性" : "產品適用性";
     if (/(?:deliver|ship|dispatch|送貨|送货|物流)/u.test(value))
       return en ? "delivery conditions" : cn ? "配送条件" : "送貨條件";
     if (/(?:return|refund|cancel|退貨|退货|退款|取消)/u.test(value))
