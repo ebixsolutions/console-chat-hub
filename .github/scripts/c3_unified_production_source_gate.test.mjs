@@ -72,7 +72,8 @@ try{
  tests.push({name:'complete isolated source fixture passes before anti-tamper mutations',result:'PASS'});
  for(const f of Object.keys(profile.authorized_task3c_1139_grounding_recovery_sha256)){
   const original=fs.readFileSync(path.join(fixture,f));fs.appendFileSync(path.join(fixture,f),'\n// unauthorized 11:39 grounding/recovery drift');
-  assert.throws(()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),error=>error.message==='task3c_1139_grounding_recovery_source_drift:'+f);
+  const expected=profile.authorized_task3c_reason_log_sha256[f]?'task3c_reason_log_source_drift':'task3c_1139_grounding_recovery_source_drift';
+  assert.throws(()=>verifyProductionSource({root:fixture,profile,sourceOnly:true}),error=>error.message===expected+':'+f);
   tests.push({name:'11:39 grounding/recovery exact source bytes '+f,result:'PASS',rejected:true});fs.writeFileSync(path.join(fixture,f),original);
  }
  for(const f of Object.keys(profile.authorized_task3c_b_t01_demand_repair_sha256)){
