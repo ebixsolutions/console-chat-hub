@@ -1666,13 +1666,14 @@ for(const fault of ["demand_resolution_shape","verifier_output_shape"])test(
  assert.match(reply.content,/CW-SUL70BA/);
  assert.match(reply.content,/變頻、淨冷|3\/4匹窗口式冷氣/);
  assert.match(reply.content,/適合|适合|suitability/iu);
- assert.match(reply.content,/未能可靠核實|尚未能可靠核实|not been verified/iu);
+ assert.match(reply.content,/未能(?:可靠)?核實|尚未能可靠核实|not been verified/iu);
  assert(!reply.content.includes("熱負荷較高")&&!reply.content.includes("一定要"));
  assert(!/HK\$|現價|已預約|已付款|已安排評估/.test(reply.content),"unverified facts were promoted");
  assert.equal(meta.grounding_rejection_receipt?.stage,fault);
  assert.deepEqual(meta.partial_recovery.demand_outcomes.map(x=>[x.demand_id,x.status]),[
   ["demand-1","partial"],["demand-2","unavailable"]]);
  assert.equal(meta.partial_recovery.demand_outcomes[0].reason,"source_recorded_features_independent_shape_recovery");
+ assert(!/仍待核實[^\n]*商品功能/u.test(reply.content),"already answered features were presented as entirely unknown");
  assert.equal(f.requests.filter(item=>item.url.endsWith("/commit_ai_reply_tx")).length,1);
  assert.deepEqual(catalogueGateEvents(f).map(x=>[x.gate_decision,x.gate_code,x.commit_attempted]),[
   ["allow","B2_ALLOW",true]]);

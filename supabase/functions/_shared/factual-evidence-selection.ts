@@ -386,7 +386,7 @@ export function resolveSourceRecordedPartialRecovery(
         ?"Whether "+subject+" is suitable for your stated conditions has not been verified from the selected source. Confirm the applicable specifications or conditions with the merchant or relevant specialist; no assessment has been booked."
         :options.language==="zh-CN"
         ?"至于 "+subject+" 是否适合你提出的条件，现有来源尚未能可靠核实；需要按相关规格及适用条件向商家或专业人员确认，尚未安排任何评估。"
-        :"至於 "+subject+" 是否適合你提出嘅條件，現有來源仍未能可靠核實；要按相關規格及適用條件向商家或相關專業人員確認，目前未有安排評估。");
+        :"至於 "+subject+" 是否適合你提出嘅條件，現有來源仍未能核實；要按相關規格及適用條件向商家或相關專業人員確認，目前未有安排評估。");
       const outcome=outcomes.find(value=>value.demand_id===demand.id)!;
       if(outcome.status!=="partial"){outcome.status="unavailable";outcome.reason="applicability_not_independently_verified";outcome.evidence_ids=[];outcome.answered_fields=[];}
     }
@@ -506,19 +506,25 @@ export function resolveSourceRecordedPartialRecovery(
   };
   const pending = options.preserveQuestionInUnsentDraft === true
     ? [...new Set(request.demands.map(demand=>demand.source_quote.trim()))].filter(Boolean)
-    : [...new Set(request.demands.map(demand => {
-    const factLabels = [...new Set(demand.requested_facts.map(fact => pendingFact(fact,demand.source_type)))];
-    const subject = demand.subjects.length === 1
-      ? demand.subjects[0].replace(/[?？\r\n]/gu," ").trim().slice(0,100) : "";
-    return [subject, (factLabels.length ? factLabels : [pendingFact("",demand.source_type)])
-      .join(options.language === "en" ? ", " : "、")].filter(Boolean).join(" — ");
+    : [...new Set(request.demands.flatMap(demand => {
+    const outcome=outcomes.find(item=>item.demand_id===demand.id);
+    // The exact source-bound description is already provided. Keep this
+    // demand in pending Memory/currentness state, not as a missing answer.
+    const outstanding=demand.requested_facts.filter(fact=>
+      !(outcome?.answered_fields.includes("features")&&/feature|功能/iu.test(key(fact))));
+    if(!outstanding.length&&outcome?.answered_fields.includes("features"))return [];
+    const factLabels=[...new Set(outstanding.map(fact=>pendingFact(fact,demand.source_type)))];
+    const subject=demand.subjects.length===1
+      ?demand.subjects[0].replace(/[?？\r\n]/gu," ").trim().slice(0,100):"";
+    return [[subject,(factLabels.length?factLabels:[pendingFact("",demand.source_type)])
+      .join(options.language==="en"?", ":"、")].filter(Boolean).join(" — ")];
   }))].filter(Boolean);
   const remaining = options.language === "en"
     ? `Still unverified: ${pending.map(question => `“${question}”`).join("; ")}.`
     : options.language === "zh-CN"
     ? `仍待核实：${pending.map(question => `「${question}」`).join("、")}。`
     : `仍待核實：${pending.map(question => `「${question}」`).join("、")}。`;
-  const reply = [...new Set(replies),remaining].join("\n\n");
+  const reply = [...new Set(replies),...(pending.length?[remaining]:[])].join("\n\n");
   if (reply.length > GROUNDING_EVIDENCE_LIMITS.answerCharacters) return null;
   return {reply,citation_metadata:citation,used_evidence_ids:used,demand_outcomes:outcomes,
     unresolved_demand_ids:request.demands.map(demand => demand.id),recorded_facts:facts};
