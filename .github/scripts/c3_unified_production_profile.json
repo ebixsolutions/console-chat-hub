@@ -1602,5 +1602,15 @@
     "tests/emergency-p0/chain.test.mjs": "8e3ad9ccbb981641fabb7da460302e8d6f2e0795258e304c8942bb2aa28d32f1",
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "a8d5295ad87f56712a3a043ae7b5f2efb0d19303287fb2d3e70003371e0d3e40",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "e88cd729a8aa7f0026c9653931284b51f61dd12aad259b03a0ecefddbb3409f0"
-  }
+  },
+  "authorized_task3c_reason_log_sha256": {
+    "supabase/functions/_shared/protected-pipeline-evidence.ts": "0569bf6b1f1b232635d250a3cd54e3b64c68569d6ccbd350ec0fe601f0a45dd0",
+    "src/lib/api/evidence-log-scope.ts": "7742d32a8cde6afd6b56c7696959bfd6b63edd83bffdb8b58ff9d97fda893a54",
+    "src/routes/_authenticated/console.settings.llm-runtime.tsx": "e6497959a042b95d1fc4042297f5c13cd552226a54fca6458f7ad06f4d692b6f",
+    "tests/emergency-p0/protected-evidence.test.ts": "8274e3029533931e61f956ed526bbccd5e19e81cffc13ed13b933c0e9959cba2",
+    "tests/console-navigation/admin-evidence-log.test.mjs": "0cb7b3367e15399761ac1a8157219d21313b4f913768994907723f75c4580dd0",
+    ".github/scripts/c3_unified_production_source_gate.test.mjs": "126c6ea16bd4dcdfa476dce2aa25c8f38c6181ca67be0a4bb1f3f96edf71d6ca"
+  },
+  "task3c_reason_log_deployment_authorized": false,
+  "task3c_reason_log_publish_authorized": false
 }

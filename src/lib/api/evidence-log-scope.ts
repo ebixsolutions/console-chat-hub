@@ -100,6 +100,31 @@ function semanticTraceView(trace:EvidenceTrace,sourceId:string){
   diagnostics:linked?redactEvidenceValue({stage:data.stage??null,contract_rejection:data.contract_rejection??null,
    contract_diagnostic:data.contract_diagnostic??null,recovery_outcomes:semantic.recovery_outcomes??null}):null};
 }
+
+const GATE_RECEIPT_CONTRACT="c3-gate-reason-v1";
+function gateReceiptView(t:EvidenceTrace,sourceId:string){
+ const o=asRecord(t.retrieved_chunks),d=asRecord(o.decision_receipt),binding=asRecord(d.source_binding);
+ if(t.kb_source!=="protected_pipeline_diagnostic"||o.contract!=="c3-protected-pipeline-evidence-v1"||
+   t.message_id!==sourceId||o.source_message_id!==sourceId||d.contract!==GATE_RECEIPT_CONTRACT||
+   binding.source_message_id!==sourceId||binding.company_id!==o.company_id||
+   typeof binding.conversation_id!=="string"||!EVIDENCE_UUID.test(binding.conversation_id)||!EVIDENCE_UUID.test(binding.company_id))return null;
+ if(!["grounding_verifier","b2","semantic_validation","recovery"].includes(String(d.gate))||
+    !["accepted","rejected","fallback_selected","NOT_CAPTURED"].includes(String(d.outcome)))return null;
+ const demands=Array.isArray(d.per_demand)?d.per_demand.slice(0,12).flatMap(raw=>{
+   const e=asRecord(raw);
+   if(typeof e.demand_id!=="string"||!/^demand-(?:[1-9]|1[0-2])$/u.test(e.demand_id)||
+      !["supported","partial","unavailable"].includes(String(e.status)))return [];
+   return [{demand_id:e.demand_id,status:e.status,evidence_ids:Array.isArray(e.evidence_ids)?
+      e.evidence_ids.filter(v=>typeof v==="string"&&/^E(?:[1-9]|1[0-5])$/u.test(v)).slice(0,15):[]}];
+ }):[];
+ return {id:t.id,gate:d.gate,outcome:d.outcome,
+   firedCondition:typeof d.fired_condition==="string"&&/^[A-Za-z0-9_]{3,80}$/u.test(d.fired_condition)?
+     d.fired_condition:"NOT_CAPTURED",
+   faultClass:["content","reviewer_output_shape","policy","system","NOT_CAPTURED"].includes(String(d.fault_class))?
+     d.fault_class:"NOT_CAPTURED",perDemand:demands,
+   selectedFallback:typeof d.selected_fallback==="string"&&/^[a-z_]{4,80}$/u.test(d.selected_fallback)?
+     d.selected_fallback:null,source:"PROTECTED_PIPELINE_DIAGNOSTIC"};
+}
 export function linkConversationEvidenceTurns(messages:EvidenceMessage[],traces:EvidenceTrace[]){
  const visitors=messages.filter(m=>["visitor","customer","user"].includes(m.role));
  const visitorIds=new Set(visitors.map(x=>x.id));
@@ -146,6 +171,7 @@ grounding_verification:meta.grounding_verification??null,
     },true)};
   }),
   semanticEvidence,
+  gateDecisions:sourceTraces.map(t=>gateReceiptView(t,m.id)).filter((x):x is NonNullable<typeof x>=>x!==null),
   pipelineEvidence:sourceTraces.filter(t=>t.kb_source==="protected_pipeline_diagnostic").map(t=>{
    const d=asRecord(t.retrieved_chunks);
    const linked=d.contract==="c3-protected-pipeline-evidence-v1"&&d.source_message_id===m.id&&EVIDENCE_UUID.test(m.id);

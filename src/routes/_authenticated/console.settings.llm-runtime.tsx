@@ -450,6 +450,7 @@ if(!page.ok){setLoaded(prev=>({...prev,[id]:{
           <thead className="bg-slate-50"><tr>
            <th className="p-2">Turn</th><th className="p-2">客人實際問題</th>
            <th className="p-2">上下文理解／完整 KB Query</th><th className="p-2">KB 原始返回證據</th>
+           <th className="p-2">主管檢查／拒絕原因</th>
            <th className="p-2">最終人話回答／Grounding</th></tr></thead>
           <tbody>{(loaded[c.id].turns??[]).map(t=><tr key={t.messageId} className="border-t align-top">
            <td className="p-2">{t.index}<div className="font-mono text-[10px]">{t.messageId.slice(0,8)}</div></td>
@@ -487,6 +488,19 @@ if(!page.ok){setLoaded(prev=>({...prev,[id]:{
              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{ev.rawResponse??"NOT_CAPTURED / WITHHELD"}</pre>
              <p>Document / Chunk lineage</p><pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all rounded bg-slate-100 p-2">{showJson(ev.lineage)}</pre>
             </details>)}</td>
+           <td className="max-w-[270px] p-2">
+            {t.gateDecisions.length?t.gateDecisions.map(d=><details key={d.id} className="mb-2 rounded border p-2">
+             <summary>{d.gate} · {d.outcome}</summary>
+             <p>觸發規則：{d.firedCondition}</p>
+             <p>錯誤類別：{d.faultClass}</p>
+             <p>後備回覆：{d.selectedFallback??"NOT_CAPTURED"}</p>
+             <pre className="max-h-36 overflow-auto whitespace-pre-wrap break-all">{showJson(d.perDemand)}</pre>
+             <small>來源：{d.source} · 未記錄的歷史判決不可還原。</small>
+            </details>):<span className="text-amber-700">逐條判決 NOT_CAPTURED（歷史）</span>}
+            {t.answers.map(a=><details key={a.id} className="my-2"><summary>歷史回覆原因（已存 Metadata）</summary>
+             <pre className="max-h-44 overflow-auto whitespace-pre-wrap break-all">{showJson(a.metadata)}</pre>
+            </details>)}
+           </td>
            <td className="max-w-[270px] p-2">{t.answers.length?t.answers.map(a=><div key={a.id} className="mb-2">
             <div className="whitespace-pre-wrap break-words">{a.text}</div>
             <details><summary className="cursor-pointer text-slate-500">Evidence decision／Grounding</summary>

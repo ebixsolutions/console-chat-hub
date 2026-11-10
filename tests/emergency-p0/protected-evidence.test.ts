@@ -18,3 +18,32 @@ Deno.test('sensitive and oversized evidence withholds entire body with original 
  }
 });
 Deno.test('sink errors do not throw or obtain a business decision/retry',async()=>{assert(!await writeProtectedPipelineEvidence({from(){throw Error('unavailable');}},scope,'b2',{}));});
+
+Deno.test("Task3C reason summary retains real reviewer condition without plaintext",async()=>{
+ const db=database();
+ const verifier={verdict:{ok:false,reason:"verifier_demand_resolution_invalid",
+  rejection:{stage:"demand_resolution_shape",reason:"unavailable_cannot_cite_evidence",
+   demand_resolutions:[{demand_id:"demand-1",status:"supported",evidence_ids:["E1"]}]}}};
+ assert(await writeProtectedPipelineEvidence(db,scope,"grounding_verdict",verifier));
+ const row=db.writes[0].retrieved_chunks,proof=row.decision_receipt;
+ assert(proof.gate==="grounding_verifier"&&proof.outcome==="rejected");
+ assert(proof.fired_condition==="unavailable_cannot_cite_evidence"&&proof.fault_class==="reviewer_output_shape");
+ assert(proof.per_demand[0].status==="supported");
+ assert(row.payload.body===JSON.stringify(verifier));
+});
+Deno.test("Task3C reason summary redacts raw B2 candidate even on whole-body WITHHELD",async()=>{
+ const db=database(),data={candidate:"email alice@example.com",decision:{decision:"allow",code:"B2_ALLOW"},
+  committed:true,state_revision:2};
+ assert(await writeProtectedPipelineEvidence(db,scope,"b2_verdict",data));
+ const row=db.writes[0].retrieved_chunks,proof=row.decision_receipt;
+ assert(row.payload.capture_state==="WITHHELD_SENSITIVE"&&row.payload.body===null);
+ assert(proof.fired_condition==="B2_ALLOW"&&proof.commit_confirmed===true&&proof.candidate_ref.sha256.length===64);
+ assert(!JSON.stringify(proof).includes("alice@example.com"));
+});
+Deno.test("Task3C unknown reviewer free text cannot become a factual code",async()=>{
+ const db=database();
+ assert(await writeProtectedPipelineEvidence(db,scope,"grounding_verdict",
+  {verdict:{ok:false,reason:"email bad@example.com",rejection:{reason:"Free text bad@example.com"}}}));
+ const proof=db.writes[0].retrieved_chunks.decision_receipt;
+ assert(proof.fired_condition==="NOT_CAPTURED"&&!JSON.stringify(proof).includes("bad@example.com"));
+});

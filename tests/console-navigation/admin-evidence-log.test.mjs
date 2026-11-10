@@ -318,3 +318,26 @@ test('protected pipeline receipts remain Admin evidence and never become a KB di
  const bad=structuredClone(trace);bad.retrieved_chunks.source_message_id='other';
  assert.equal(linkConversationEvidenceTurns(messages,[bad]).turns[0].pipelineEvidence[0].capture,null);
 });
+
+test("Task3C same-ticket reason column: protected source binding, shape and historical NOT_CAPTURED",()=>{
+ const id="77777777-1111-4111-8111-111111111111",company="88888888-1111-4111-8111-111111111111",ticket="99999999-1111-4111-8111-111111111111";
+ const visitor={id,role:"visitor",content:"two demands",created_at:"2026-11-10T03:39:23Z"};
+ const reply={id:"r",role:"assistant",content:"Fallback",created_at:"2026-11-10T03:40:00Z",
+   metadata:{source_message_id:id,source_error_code:"LLM_GROUNDING_REJECTED"}};
+ const decision_receipt={contract:"c3-gate-reason-v1",gate:"grounding_verifier",outcome:"rejected",
+  fired_condition:"unavailable_cannot_cite_evidence",fault_class:"reviewer_output_shape",
+  per_demand:[{demand_id:"demand-1",status:"supported",evidence_ids:["E1"]}],
+  source_binding:{company_id:company,conversation_id:ticket,source_message_id:id}};
+ const trace={id:"t",message_id:id,created_at:"2026-11-10T03:40:01Z",kb_source:"protected_pipeline_diagnostic",
+  query_sent:"",top_score:null,retrieved_chunks:{contract:"c3-protected-pipeline-evidence-v1",
+  source_message_id:id,company_id:company,stage:"grounding_verdict",
+  payload:{capture_state:"WITHHELD_SENSITIVE",body:null},decision_receipt}};
+ const turns=linkConversationEvidenceTurns([visitor,reply],[trace]).turns;
+ assert.equal(turns[0].gateDecisions.length,1);
+ assert.equal(turns[0].gateDecisions[0].firedCondition,"unavailable_cannot_cite_evidence");
+ assert.deepEqual(turns[0].gateDecisions[0].perDemand[0].evidence_ids,["E1"]);
+ assert.equal(linkConversationEvidenceTurns([visitor,reply],[]).turns[0].gateDecisions.length,0);
+ assert.equal(linkConversationEvidenceTurns([visitor,reply],[{...trace,retrieved_chunks:{...trace.retrieved_chunks,company_id:"other"}}]).turns[0].gateDecisions.length,0);
+ const injection=structuredClone(trace);injection.retrieved_chunks.decision_receipt.fired_condition="bad@example.com";
+ assert.equal(linkConversationEvidenceTurns([visitor,reply],[injection]).turns[0].gateDecisions[0].firedCondition,"NOT_CAPTURED");
+});

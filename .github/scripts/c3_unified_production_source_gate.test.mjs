@@ -10,6 +10,10 @@ assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_ta
 // Same Task3C 11:39 grounding/recovery successor is source-only.
 assert.throws(()=>verifyProductionSource({root,profile:{...profile,task3c_1139_grounding_recovery_production_authorized:true},sourceOnly:true}),/task3c_1139_grounding_recovery_deployment_not_authorized/);
 assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_task3c_1139_grounding_recovery_sha256:{}},sourceOnly:true}),/task3c_1139_grounding_recovery_scope_drift/);
+// Same Task3C safe reason-log source-only successor, not Production or Publish permission.
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,task3c_reason_log_deployment_authorized:true},sourceOnly:true}),/task3c_reason_log_deploy_not_authorized/);
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,task3c_reason_log_publish_authorized:true},sourceOnly:true}),/task3c_reason_log_publish_not_authorized/);
+assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_task3c_reason_log_sha256:{}},sourceOnly:true}),/task3c_reason_log_scope_drift/);
 // Same Task3C B-T01 demand-contract repair pins current bytes only. Historical
 // A/Frozen receipts and production permissions remain independent and intact.
 assert.throws(()=>verifyProductionSource({root,profile:{...profile,task3c_b_t01_demand_repair_production_authorized:true},sourceOnly:true}),/task3c_b_t01_demand_deployment_not_authorized/);
