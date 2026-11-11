@@ -34,6 +34,7 @@ const translations: Record<string, Record<string, string>> = {
     navCustomer360: "Customer 360",
     navVisitorAnalytics: "Visitor Analytics",
     navLLMRuntime: "LLM Runtime",
+    navKBBinding: "KB Tenant Binding (Dev)",
     navEvidenceLog: "Log",
     navWidgetPreview: "Widget Preview",
     navFeedbackResponses: "Feedback Responses",
@@ -54,6 +55,7 @@ const translations: Record<string, Record<string, string>> = {
     navCustomer360: "客戶全景",
     navVisitorAnalytics: "訪客分析",
     navLLMRuntime: "LLM 模型設定",
+    navKBBinding: "KB 帳戶綁定（開發）",
     navEvidenceLog: "Log（對話證據）",
     navWidgetPreview: "Widget 預覽",
     navFeedbackResponses: "客戶回饋",
@@ -111,6 +113,11 @@ const pageMeta: Record<string, { zh: string; en: string; sub?: { zh: string; en:
       zh: "AI 模型提供商設定與路由規則（僅限 Admin）",
       en: "AI model provider config & routing rules (Admin only)",
     },
+  },
+  "/console/settings/kb-binding": {
+    zh: "KB 帳戶綁定（開發）",
+    en: "KB Tenant Binding (Development)",
+    sub: { zh: "只限獲授權的 Admin、Company 及 Singapore KB Tenant", en: "Authorized Admin Company-to-KB tenant binding" },
   },
   "/console/widget-preview": {
     zh: "Widget 預覽",
@@ -174,7 +181,10 @@ const GROUPS = [
     color: "#6366f1",
     bgColor: "#ede9fe",
     adminOnly: true,
-    items: [{ path: "/console/settings/llm-runtime", icon: "🤖", navKey: "navLLMRuntime", adminOnly: true }],
+    items: [
+      { path: "/console/settings/llm-runtime", icon: "🤖", navKey: "navLLMRuntime", adminOnly: true },
+      { path: "/console/settings/kb-binding", icon: "🔐", navKey: "navKBBinding", kbDevOnly: true },
+    ],
   },
 ];
 
@@ -187,6 +197,7 @@ const GROUP_BADGE: Record<string, { label: string; bg: string; color: string }> 
   "/console/feedback-settings": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/feedback-responses": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/settings/llm-runtime": { label: "SETTINGS", bg: "#ede9fe", color: "#6d28d9" },
+  "/console/settings/kb-binding": { label: "DEVELOPMENT", bg: "#f1f5f9", color: "#334155" },
   "/console/widget-preview": { label: "WIDGET", bg: "#f0fdf4", color: "#16a34a" },
   "/console/conversation-evaluation": { label: "CONVERSATION EVALUATION", bg: "#ede9fe", color: "#6d28d9" },
   "/console/kb-gaps": { label: "KNOWLEDGE", bg: "#ede9fe", color: "#6d28d9" },
@@ -275,6 +286,10 @@ function ConsoleLayout() {
   const t = (key: string) => translations[lang]?.[key] ?? translations.en[key] ?? key;
   const toggleGroup = (key: string) => setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
   const showSettingsGroup = sidebarRole === "admin" || sidebarRole === "supervisor";
+  const showKbDevLink = sidebarRole === "admin" &&
+    import.meta.env.VITE_C3_KB_BINDING_DEV_ENABLED === "true" &&
+    typeof window !== "undefined" &&
+    /^(?:localhost|127\.0\.0\.1|(?:[a-z0-9-]+--)?4dbf593e-577e-4af4-a553-460441c34473\.lovableproject\.com|id-preview(?:-[a-z0-9-]+)?--4dbf593e-577e-4af4-a553-460441c34473\.lovable\.app)$/.test(window.location.hostname);
   const roleDisplayKey: string | null = sidebarRole === "agent" ? "customer_service" : sidebarRole; // one authoritative role only
   const currentRoleMeta =
     roleDisplayKey && roleDisplayKey in ROLE_META
@@ -552,7 +567,7 @@ function ConsoleLayout() {
                   )}
                   {!groupCollapsed &&
                     g.items
-                      .filter((item) => !(item as any).adminOnly || showSettingsGroup)
+                      .filter((item) => (!(item as any).adminOnly || showSettingsGroup) && (!(item as any).kbDevOnly || showKbDevLink))
                       .map((item) => {
                         const active = pathname === item.path || pathname.startsWith(item.path + "/");
                         return (

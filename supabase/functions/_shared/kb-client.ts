@@ -24,6 +24,7 @@ import {
   type KBAuthHeaderMode,
   resolveSingaporeCredential,
   singaporeCredentialHeaders,
+  type KBCredential,
 } from "./kb-auth.ts";
 import {
   type AggregationAuthorityMetadata,
@@ -85,6 +86,8 @@ export interface KBResolvedScope {
   mode: KBScopeMode;
   aiCompanyId: string | null;
   singaporeTenantId: string;
+  /** Only set by an active verified Company UUID -> tenant DB binding. */
+  managedBinding?: boolean;
   legacyAuthority?: object;
 }
 export interface KBFullChunk {
@@ -490,7 +493,28 @@ export async function resolveTenantScope(
     }
 
     let singaporeTenantId: string | undefined;
-    if (isC3NonproductionProject()) {
+    let managedBinding = false;
+    // Canonical development-managed binding supersedes legacy env only when
+    // an ACTIVE, Company-owned row with a protected secret reference exists.
+    // A disabled or malformed row is an explicit denial, never env fallback.
+    const { data: managed, error: managedErr } = await sb
+      .from("company_kb_tenant_binding")
+      .select("kb_tenant_id,is_active,api_key_secret_ref")
+      .eq("company_id", String(company.id)).maybeSingle();
+    if (managedErr && !["42P01","PGRST205"].includes(String(managedErr.code ?? ""))) {
+      return { resolved: false, reason: "KB_TENANT_MAPPING_CONFIG_INVALID" };
+    }
+    if (managed) {
+      if (managed.is_active !== true || typeof managed.kb_tenant_id !== "string" ||
+          !/^[1-9]\d{0,15}$/.test(managed.kb_tenant_id) ||
+          !UUID_RE.test(String(managed.api_key_secret_ref ?? ""))) {
+        return { resolved: false, reason: "KB_TENANT_MAPPING_UNRESOLVED" };
+      }
+      // Scope remains derived from the authorized persisted conversation,
+      // never browser-supplied Tenant ID or email.
+      singaporeTenantId = managed.kb_tenant_id;
+      managedBinding = true;
+    } else if (isC3NonproductionProject()) {
       const { data: tenant, error: tenantError } = await sb
         .from("c3_nonprod_kb_tenant")
         .select("external_tenant_id,is_active")
@@ -520,6 +544,7 @@ export async function resolveTenantScope(
         mode: "canonical",
         aiCompanyId: String(company.id),
         singaporeTenantId,
+        ...(managedBinding ? { managedBinding: true } : {}),
       },
     };
   }
@@ -581,6 +606,30 @@ function mapDocumentCandidate(
   };
 }
 
+/** Resolves a managed tenant credential directly from the existing Supabase
+ * Vault-backed service-role accessor. No secret reaches logs, client or UI.
+ * A managed row never falls back to legacy env credentials on any failure. */
+async function resolveManagedSingaporeCredential(scope: KBResolvedScope): Promise<KBCredential> {
+  if (!scope.managedBinding || !scope.aiCompanyId || !UUID_RE.test(scope.aiCompanyId)) {
+    return { ok: false, error_code: "KB_MANAGED_SCOPE_INVALID" };
+  }
+  const url = Deno.env.get("SUPABASE_URL");
+  if (!url) return { ok: false, error_code: "KB_MANAGED_DB_UNAVAILABLE" };
+  try {
+    const sb = createClient(url, getSupabaseAdminKey());
+    const { data, error } = await sb.rpc("kb_binding_secret_v1", {
+      p_company: scope.aiCompanyId, p_tenant: scope.singaporeTenantId,
+    });
+    if (error || typeof data !== "string" || data.length < 16 ||
+        data.length > 4096 || /[\r\n\0]/.test(data)) {
+      return { ok: false, error_code: "KB_MANAGED_CREDENTIAL_UNAVAILABLE" };
+    }
+    return { ok: true, kind: "api_key", value: data };
+  } catch {
+    return { ok: false, error_code: "KB_MANAGED_CREDENTIAL_UNAVAILABLE" };
+  }
+}
+
 export async function fetchKBRag(
   queryInput: KBQueryInput,
   scope: KBResolvedScope,
@@ -610,14 +659,16 @@ export async function fetchKBRag(
   }
 
   const admissionBudget = createKBRequestBudget(KB_ADMISSION_TIMEOUT_MS, opts?.signal);
-  let credential;
+  let credential: KBCredential;
   try { credential = await admissionBudget.run(async () => endpointCfg.localProjectAuth
     ? {
       ok: true as const,
       kind: "bearer" as const,
       value: getSupabaseAdminKey(),
     }
-    : await diagnostic.run("credential", () => resolveSingaporeCredential(scope, endpointCfg))); }
+    : await diagnostic.run("credential", () => scope.managedBinding
+      ? resolveManagedSingaporeCredential(scope)
+      : resolveSingaporeCredential(scope, endpointCfg))); }
   catch (error) { admissionBudget.dispose(); if (!admissionBudget.signal.aborted) throw error; return {success:false,chunks:[],citations:[],documents:[],error_code:"KB_TIMEOUT",failure:executionFailure("LLM_TIMEOUT",{stage:"timeout"})}; }
 
   if (!credential.ok) {
