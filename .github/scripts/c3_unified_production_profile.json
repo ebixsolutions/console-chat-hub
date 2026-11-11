@@ -375,6 +375,7 @@
     "src/lib/api/config.service.ts",
     "src/lib/api/feedback.service.ts",
     "src/lib/api/inbox-read.ts",
+    "src/lib/api/kbBinding.service.ts",
     "src/lib/api/saved-responses.service.ts",
     "src/lib/console/csv-export.ts",
     "src/lib/console/saved-response-variables.ts",
@@ -392,6 +393,7 @@
     "src/routes/_authenticated/console.customer360.tsx",
     "src/routes/_authenticated/console.feedback-responses.tsx",
     "src/routes/_authenticated/console.feedback-settings.tsx",
+    "src/routes/_authenticated/console.settings.kb-binding.tsx",
     "src/routes/_authenticated/console.tsx",
     "src/routes/_authenticated/console.visitor-analytics.tsx",
     "src/routes/_authenticated/console.widget-preview.tsx",
@@ -497,7 +499,9 @@
     "supabase/migrations/20261006120001_c3_uat_feedback_isolation.sql",
     "supabase/migrations/20261011002343_c3_shared_model_attempt_accounting.sql",
     "supabase/migrations/20261027110810_task1_feedback_config_staff_select_rls_20261027.sql",
+    "supabase/migrations/20261111030000_task3c_company_kb_binding.sql",
     "supabase/migrations/rollback/20261027110810_task1_feedback_config_staff_select_rls_20261027.rollback.sql",
+    "supabase/migrations/rollback/20261111030000_task3c_company_kb_binding.rollback.sql",
     "tests/c3-b12-registry/build-payloads.py",
     "tests/c3-b12-registry/captured-company-helper.json",
     "tests/c3-b12-registry/captured-functions.json",
@@ -534,6 +538,7 @@
     "tests/console-navigation/handoff-summary-readback.test.mjs",
     "tests/console-navigation/inbox-history-search.test.mjs",
     "tests/console-navigation/inbox-reply.test.mjs",
+    "tests/console-navigation/kb-binding-dev.test.mjs",
     "tests/console-navigation/legacy-widget-entry.test.mjs",
     "tests/console-navigation/ordinary-preview-bridge.test.mjs",
     "tests/console-navigation/ordinary-preview-route.test.mjs",
@@ -1632,5 +1637,19 @@
     ".github/scripts/c3_unified_production_source_gate.test.mjs": "4e216707e3697afde2d8f9d98769ac93345d68c40c6ccbf01781fc66841ea05d"
   },
   "task3c_reviewer_specifics_production_authorized": false,
-  "task3c_reviewer_specifics_publish_authorized": false
+  "task3c_reviewer_specifics_publish_authorized": false,
+  "task3c_kb_binding_production_authorized": false,
+  "task3c_kb_binding_publish_authorized": false,
+  "task3c_kb_binding_schema_authorized": false,
+  "task3c_kb_binding_paid_traffic_authorized": false,
+  "authorized_task3c_kb_binding_sha256": {
+    "supabase/migrations/20261111030000_task3c_company_kb_binding.sql": "3025d0bfa4098c9921f0242780e7867ece937ccf5c3b747157467be4d6ee1391",
+    "supabase/migrations/rollback/20261111030000_task3c_company_kb_binding.rollback.sql": "cbea7d7c932171abb24279bada3fc18ec465ca1718c72c1de3d3e834abdaed83",
+    "src/lib/api/kbBinding.service.ts": "bb5ab1adaf4a1b23bd0626e6e0b04aeaa3688a8fef512309228403654a06322b",
+    "src/routes/_authenticated/console.settings.kb-binding.tsx": "501913868aecdd9bf0e9a656b33764953d21cb34b63f2dc14b0a06a2dd7c15e0",
+    "src/routes/_authenticated/console.tsx": "5bd3cdf5bf88a392146d4534077fa60933c5148cfac0e76dbc843456a08bad63",
+    "supabase/functions/_shared/kb-client.ts": "ab64cb164094a72edab8c1fea9373f15c8ba42547f4d06570a00a3b4a361fd9a",
+    "tests/console-navigation/kb-binding-dev.test.mjs": "9c30c5242e016b9b5a2df76974b7164aaf26a768e05f8dd0e42ac3df5c6088a6",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "d75a30511230f2f0ab0099949d572d433f3660e05e8e67df09406fac04a16f1b"
+  }
 }
