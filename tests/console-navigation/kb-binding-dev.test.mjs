@@ -143,3 +143,55 @@ test("Company selector recovers read-only actual RLS scope on server transport f
   assert.match(route, /Binding metadata and other members have NOT been read/);
   assert.match(route, /Stored Key, Revision and mapping state: Not loaded/);
 });
+
+
+const bootstrapDDL = read("supabase/migrations/20261111183000_task3c_dev_kb_bootstrap.sql");
+const bootstrapRollback = read("supabase/migrations/rollback/20261111183000_task3c_dev_kb_bootstrap.rollback.sql");
+test("private KB tenant bootstrap is one atomic existing Supabase transaction", () => {
+  const service = read("src/lib/api/kbBinding.service.ts");
+  assert.match(bootstrapDDL, /CREATE FUNCTION public\.kb_binding_dev_bootstrap_v1/);
+  assert.match(bootstrapDDL, /SECURITY DEFINER SET search_path = ''/);
+  assert.match(bootstrapDDL, /p_actor <> '3bdf936e-b543-41d8-9fff-fa020a85f3f6'::uuid/);
+  assert.match(bootstrapDDL, /pg_advisory_xact_lock\(5026111150\)/);
+  assert.match(bootstrapDDL, /p_request_id::text/);
+  assert.match(bootstrapDDL, /KB_DEV_BOOTSTRAP_TARGET_ALREADY_SCOPED_OR_INVALID/);
+  assert.match(bootstrapDDL, /KB_DEV_BOOTSTRAP_TENANT_ALREADY_BOUND/);
+  assert.match(bootstrapDDL, /INSERT INTO public\.company\(/);
+  assert.match(bootstrapDDL, /INSERT INTO public\.user_roles\(/);
+  assert.match(bootstrapDDL, /INSERT INTO public\.company_membership\(/);
+  assert.match(bootstrapDDL, /INSERT INTO public\.widget_config\(/);
+  assert.match(bootstrapDDL, /INSERT INTO public\.channel_config\(/);
+  assert.match(bootstrapDDL, /vault\.create_secret\(p_new_key/);
+  assert.match(bootstrapDDL, /INSERT INTO public\.company_kb_tenant_binding/);
+  assert.match(bootstrapDDL, /REVOKE ALL ON FUNCTION public\.kb_binding_dev_bootstrap_v1[\s\S]*FROM PUBLIC, anon, authenticated/);
+  assert.match(bootstrapDDL, /GRANT EXECUTE ON FUNCTION public\.kb_binding_dev_bootstrap_v1[\s\S]*TO service_role/);
+  assert.doesNotMatch(bootstrapDDL, /VALUES\(v_company,p_actor,'admin'/);
+  assert.doesNotMatch(bootstrapDDL, /DELETE FROM auth\.users|DROP TABLE/);
+  assert.match(bootstrapRollback, /ROLLBACK_HAS_REAL_TENANT_SAFE_STOP/);
+  assert.doesNotMatch(bootstrapRollback, /DELETE FROM|DROP TABLE|DROP SCHEMA/);
+  assert.match(service, /bootstrapKBDevCompanyFn = createServerFn/);
+  assert.match(service, /\.middleware\(\[requireSupabaseAuth\]\)\.inputValidator\(bootstrapInput\)/);
+  assert.match(service, /dev_bootstrap_owner_only/);
+  assert.match(service, /C3_KB_BINDING_INVITES_ENABLED !== "true"/);
+  assert.match(service, /auth\.admin\.createUser/);
+  assert.match(service, /email_confirm: true/);
+  assert.match(service, /kb_binding_dev_bootstrap_v1/);
+  assert.match(service, /auth_created_company_transaction_failed_retry_same_email/);
+  assert.match(service, /createOrLinkKBDevTestAccountFn/);
+  assert.match(service, /kb_binding_invite_grant_v1/);
+});
+test("same page provides existing Company accounts and new independent tenants safely", () => {
+  const source = read("src/routes/_authenticated/console.settings.kb-binding.tsx");
+  assert.match(source, /New independent KB tenant — one-page setup/);
+  assert.match(source, /Create \/ link test account in THIS Company/);
+  assert.match(source, /Create independent Company \+ Admin \+ Widget \+ KB binding/);
+  assert.match(source, /id="kb-test-password"[^\\n]*type="password"/);
+  assert.match(source, /id="new-kb-key"[^\\n]*type="password"/);
+  assert.match(source, /bootstrapDevTenant\(/);
+  assert.match(source, /createOrLinkTestAccount\(/);
+  assert.match(source, /crypto\.randomUUID\(\)/);
+  assert.match(source, /setNewKey\(""\)/);
+  assert.match(source, /phase !== "ready"/);
+  assert.match(source, /original Frankie Company\/KB34 is never modified/);
+  assert.doesNotMatch(source, /localStorage\.setItem\(/);
+});

@@ -224,8 +224,187 @@ export async function listAuthorizedCompanyScopesReadOnly(): Promise<Result<KBDe
   })) };
 }
 
+
+/** Resolve an exact Auth identity using the existing server-only admin client.
+ * Neither unrelated user records nor any credentials are returned to browsers.
+ */
+async function findExactDevAuth(admin: any, address: string) {
+  const wanted = address.trim().toLowerCase();
+  for (let page = 1; page <= 25; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
+    if (error || !Array.isArray(data?.users)) throw new Error("auth_lookup_unavailable");
+    const exact = data.users.filter((entry: any) =>
+      String(entry.email ?? "").trim().toLowerCase() === wanted);
+    if (exact.length > 1) throw new Error("auth_identity_ambiguous");
+    if (exact.length === 1) {
+      return { id: String(exact[0].id), confirmed: Boolean(exact[0].email_confirmed_at) };
+    }
+    if (data.users.length < 200) return null;
+  }
+  throw new Error("auth_lookup_pagination_exhausted");
+}
+
+// Different KB tenants are different Companies; first login is its own Admin.
+// The ORIGINAL Frankie Director actor is not added to a second Company, which
+// would otherwise break legacy getCurrentCompanyRoles()'s exactly-one invariant.
+const bootstrapInput = z.object({
+  email,
+  company_name: z.string().trim().min(3).max(80),
+  kb_tenant_id: z.string().regex(/^[1-9][0-9]{0,15}$/),
+  api_key: z.string().min(16).max(4096),
+  password: z.string().min(12).max(128).optional(),
+  request_id: uuid,
+}).strict();
+
+export const bootstrapKBDevCompanyFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth]).inputValidator(bootstrapInput)
+  .handler(async ({ context, data }): Promise<Result<{
+    user_id: string; company_id: string; channel_id: string;
+    kb_tenant_id: string; has_key: boolean; is_active: boolean;
+    revision: number; idempotent_replay: boolean; auth_created: boolean;
+  }>> => {
+    if (!devAllowed()) return { ok: false, error: "development_binding_disabled" };
+    // Temporary exact owner identity for original PRIVATE project, not a
+    // platform-wide ability granted to any Company's Admin or test email.
+    if (String(context.userId) !== "3bdf936e-b543-41d8-9fff-fa020a85f3f6") {
+      return { ok: false, error: "dev_bootstrap_owner_only" };
+    }
+    const owned = await ownAdminCompanies({ supabase: context.supabase, userId: String(context.userId) });
+    if (!owned.ok || !owned.data.some((c) =>
+        c.id === "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493" && c.channels_ready)) {
+      return { ok: false, error: "dev_bootstrap_owner_scope_denied" };
+    }
+    let authCreated = false;
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      let account = await findExactDevAuth(supabaseAdmin, data.email);
+      if (!account) {
+        if (!data.password ||
+            process.env.C3_KB_BINDING_INVITES_ENABLED !== "true") {
+          return { ok: false, error: "new_mock_auth_requires_authorized_password_creation" };
+        }
+        const created = await supabaseAdmin.auth.admin.createUser({
+          email: data.email.trim().toLowerCase(),
+          password: data.password, email_confirm: true,
+        });
+        if (created.error || !created.data.user?.id ||
+          created.data.user.email?.trim().toLowerCase() !== data.email.trim().toLowerCase()) {
+          return { ok: false, error: "no_email_auth_creation_failed" };
+        }
+        account = {
+          id: String(created.data.user.id),
+          confirmed: Boolean(created.data.user.email_confirmed_at),
+        };
+        authCreated = true;
+      }
+      if (!account.confirmed) return { ok: false, error: "test_auth_unconfirmed" };
+      // One SQL transaction creates Company, admin role/membership, private
+      // Widget and Vault key/binding, with CAS-like replay identity.
+      const { data: stored, error } = await (supabaseAdmin as any)
+        .rpc("kb_binding_dev_bootstrap_v1", {
+          p_actor: String(context.userId),
+          p_target: account.id,
+          p_tenant: data.kb_tenant_id,
+          p_display_name: data.company_name.trim(),
+          p_new_key: data.api_key,
+          p_request_id: data.request_id,
+        });
+      if (error || !stored ||
+          stored.user_id !== account.id ||
+          stored.kb_tenant_id !== data.kb_tenant_id ||
+          stored.has_key !== true || stored.is_active !== true ||
+          !uuid.safeParse(stored.company_id).success ||
+          !uuid.safeParse(stored.channel_id).success) {
+        return { ok: false, error: authCreated
+          ? "auth_created_company_transaction_failed_retry_same_email"
+          : "company_transaction_failed_no_success_claimed" };
+      }
+      return { ok: true, data: {
+        company_id: String(stored.company_id),
+        channel_id: String(stored.channel_id), user_id: String(stored.user_id),
+        kb_tenant_id: String(stored.kb_tenant_id), has_key: true, is_active: true,
+        revision: Number(stored.revision), idempotent_replay: stored.idempotent_replay === true,
+        auth_created: authCreated,
+      } };
+    } catch {
+      return { ok: false, error: authCreated
+        ? "auth_created_but_server_transaction_unverified_retry_same_email"
+        : "protected_server_admin_unavailable_no_company_write" };
+    }
+  });
+
+// Additional users in an EXISTING Company share its KB tenant. Use the
+// original atomic same-Company role/membership RPC; no new Company is needed.
+const testAccountInput = z.object({
+  company_id: uuid, email, role: roles,
+  password: z.string().min(12).max(128).optional(),
+}).strict();
+
+export const createOrLinkKBDevTestAccountFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth]).inputValidator(testAccountInput)
+  .handler(async ({ context, data }): Promise<Result<{
+    user_id: string; company_id: string; role: string;
+    is_active: boolean; auth_created: boolean;
+  }>> => {
+    if (!devAllowed() || process.env.C3_KB_BINDING_INVITES_ENABLED !== "true") {
+      return { ok: false, error: "test_account_grant_not_authorized" };
+    }
+    const owned = await ownAdminCompanies({ supabase: context.supabase, userId: String(context.userId) });
+    if (!owned.ok || !owned.data.some((c) => c.id === data.company_id && c.channels_ready)) {
+      return { ok: false, error: "same_company_admin_scope_denied" };
+    }
+    let authCreated = false;
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      let target = await findExactDevAuth(supabaseAdmin, data.email);
+      if (!target) {
+        if (!data.password) return { ok: false, error: "test_password_required_for_new_auth" };
+        const created = await supabaseAdmin.auth.admin.createUser({
+          email: data.email.trim().toLowerCase(),
+          password: data.password, email_confirm: true,
+        });
+        if (created.error || !created.data.user?.id ||
+          created.data.user.email?.trim().toLowerCase() !== data.email.trim().toLowerCase()) {
+          return { ok: false, error: "test_auth_create_failed" };
+        }
+        target = {
+          id: String(created.data.user.id),
+          confirmed: Boolean(created.data.user.email_confirmed_at),
+        };
+        authCreated = true;
+      }
+      if (!target.confirmed || target.id === String(context.userId)) {
+        return { ok: false, error: "test_account_identity_denied" };
+      }
+      const { data: granted, error } = await (supabaseAdmin as any)
+        .rpc("kb_binding_invite_grant_v1", {
+          p_actor: String(context.userId), p_company: data.company_id,
+          p_invited_user: target.id, p_role: data.role,
+        });
+      if (error || granted?.user_id !== target.id ||
+          granted?.company_id !== data.company_id ||
+          granted?.role !== data.role || granted?.is_active !== true) {
+        return { ok: false, error: authCreated
+          ? "auth_created_same_company_grant_failed_retry"
+          : "existing_auth_same_company_grant_failed" };
+      }
+      return { ok: true, data: {
+        user_id: target.id, company_id: data.company_id,
+        role: data.role, is_active: true, auth_created: authCreated,
+      } };
+    } catch {
+      return { ok: false, error: authCreated
+        ? "auth_created_but_grant_unverified_retry"
+        : "protected_server_admin_unavailable_no_grant" };
+    }
+  });
+
 export const kbDevBindingService = {
   listAuthorizedCompanyScopesReadOnly,
+  bootstrapDevTenant: (data: z.infer<typeof bootstrapInput>) =>
+    withConfigSession(supabase.auth, (headers) => bootstrapKBDevCompanyFn({ data, headers })),
+  createOrLinkTestAccount: (data: z.infer<typeof testAccountInput>) =>
+    withConfigSession(supabase.auth, (headers) => createOrLinkKBDevTestAccountFn({ data, headers })),
   list: () => withConfigSession(supabase.auth, (headers) => listKBDevBindingsFn({ headers })),
   save: (data: z.infer<typeof writeInput>) => withConfigSession(supabase.auth, (headers) => saveKBDevBindingFn({ data, headers })),
   invite: (data: z.infer<typeof inviteInput>) => withConfigSession(supabase.auth, (headers) => inviteKBDevTesterFn({ data, headers })),

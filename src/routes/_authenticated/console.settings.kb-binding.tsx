@@ -24,7 +24,14 @@ function KBDevBindingPage() {
   const [savedRev, setSavedRev] = useState(0);
   const [email, setEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "supervisor" | "agent" | "qa">("agent");
-  const [action, setAction] = useState<"saving" | "inviting" | "reloading" | null>(null);
+  const [testPassword, setTestPassword] = useState("");
+  const [newCompanyName, setNewCompanyName] = useState("");
+  const [newTenant, setNewTenant] = useState("");
+  const [newKey, setNewKey] = useState("");
+  const [createdScope, setCreatedScope] = useState<{
+    company_id: string; channel_id: string; user_id: string; kb_tenant_id: string;
+  } | null>(null);
+  const [action, setAction] = useState<"saving" | "inviting" | "reloading" | "linking" | "bootstrapping" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [phase, setPhase] = useState<"ready" | "unavailable" | "checking" | "read_only">("checking");
@@ -169,6 +176,59 @@ function KBDevBindingPage() {
     }
   };
 
+
+  const createOrLink = async () => {
+    if (!current || phase !== "ready" || action || !email.trim()) return;
+    setAction("linking"); setError(null); setSuccess(null);
+    try {
+      const result = await kbDevBindingService.createOrLinkTestAccount({
+        company_id: current.company_id, email: email.trim().toLowerCase(),
+        role: inviteRole, ...(testPassword ? { password: testPassword } : {}),
+      });
+      if (!result.ok) { setError(result.error); return; }
+      if (result.data.company_id !== current.company_id ||
+          result.data.is_active !== true) {
+        setError("Company role/membership readback was not verified.");
+        return;
+      }
+      setSuccess("Real Auth user and SAME Company membership are active. " +
+        "This account shares the existing Company's KB; no new Company was created.");
+      await load(true);
+    } catch {
+      setError("Account creation/linking did not return a verified server result.");
+    } finally {
+      setTestPassword(""); setAction(null);
+    }
+  };
+  const bootstrapTenant = async () => {
+    if (action || !email.trim() || !/^[1-9]\d{0,15}$/.test(newTenant) ||
+        newKey.length < 16 || newCompanyName.trim().length < 3) return;
+    setAction("bootstrapping"); setError(null); setSuccess(null); setCreatedScope(null);
+    try {
+      const request_id = crypto.randomUUID();
+      const result = await kbDevBindingService.bootstrapDevTenant({
+        email: email.trim().toLowerCase(), company_name: newCompanyName.trim(),
+        kb_tenant_id: newTenant, api_key: newKey, request_id,
+        ...(testPassword ? { password: testPassword } : {}),
+      });
+      if (!result.ok) { setError(result.error); return; }
+      if (!result.data.is_active || !result.data.has_key ||
+          result.data.kb_tenant_id !== newTenant) {
+        setError("The new tenant's DB/credential transaction has no valid readback.");
+        return;
+      }
+      setCreatedScope(result.data);
+      setSuccess("Dedicated Company, first Admin account, active Widget/Channel " +
+        "and encrypted KB credential were atomically saved by the protected server. " +
+        "Sign out and use the new account to verify automatic tenant selection.");
+    } catch {
+      setError("No verified tenant provisioning result was returned. " +
+        "Check existing Auth/Company before retrying; never create duplicates.");
+    } finally {
+      setTestPassword(""); setNewKey(""); setAction(null);
+    }
+  };
+
   if (roleLoading) return <LoadingState />;
   if (!authorizedUI) return <PermissionDenied message="KB Tenant Binding is limited to a legitimate Admin in the authorized development/UAT Console." />;
 
@@ -248,6 +308,22 @@ function KBDevBindingPage() {
             <button type="button" disabled={phase !== "ready" || Boolean(action) || !email.trim() || !current.channels_ready} onClick={() => void invite()}>
               {action === "inviting" ? "Sending authorized invite…" : "Invite new account and grant same-Company role"}
             </button>
+            <p style={{ color: "#64748b", fontSize: 12 }}>
+              An additional login in this same Company shares its KB tenant.
+              Existing Supabase Auth login needs no email invitation; new mock login
+              can use a test password without receiving email when authorized.
+              A different KB tenant must use the separate Company section below.
+            </p>
+            <label htmlFor="kb-test-password">Test login password (only for a NEW mock Auth login; never reveal again)</label>
+            <input id="kb-test-password" style={fieldStyle} type="password"
+              value={testPassword} onChange={(e) => setTestPassword(e.target.value)}
+              placeholder="Leave blank for an already-existing Auth user" autoComplete="new-password" />
+            <button type="button"
+              disabled={phase !== "ready" || Boolean(action) || !email.trim() || !current.channels_ready}
+              onClick={() => void createOrLink()}>
+              {action === "linking" ? "Verifying account and Company…" :
+                "Create / link test account in THIS Company (no invitation email)"}
+            </button>
           </div>
         </>}
       </section>
@@ -283,6 +359,51 @@ function KBDevBindingPage() {
             onClick={() => void save()}>
             {action === "saving" ? "Saving…" : "Save Company → KB binding (CAS)"}
           </button>
+        </div>
+      </section>
+      <section style={boxStyle}>
+        <h2 style={{ fontSize: 18, fontWeight: 700 }}>3. New independent KB tenant — one-page setup</h2>
+        <p style={{ fontSize: 13, color: "#475569" }}>
+          Use this only if the login requires a DIFFERENT Singapore KB tenant.
+          The first login becomes Admin of its own new Company, with its own active private
+          Widget Channel. The original Frankie Company/KB34 is never modified.
+          Do not use this for an account already assigned to a Company (including the current
+          uat@ebixpro.com test login); instead sign in as that Company's own Admin and use section 2.
+        </p>
+        <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
+          <label htmlFor="new-company-name">New test Company display name</label>
+          <input id="new-company-name" style={fieldStyle} value={newCompanyName}
+            onChange={(e) => setNewCompanyName(e.target.value)}
+            placeholder="e.g. KB 51 UAT test Company" />
+          <label htmlFor="new-kb-tenant">Singapore KB company_id / tenant ID (numeric)</label>
+          <input id="new-kb-tenant" style={fieldStyle} value={newTenant}
+            onChange={(e) => setNewTenant(e.target.value)}
+            placeholder="e.g. 51" inputMode="numeric" />
+          <label htmlFor="new-kb-key">New Singapore KB API Key — masked, write-only</label>
+          <input id="new-kb-key" style={fieldStyle} type="password" value={newKey}
+            onChange={(e) => setNewKey(e.target.value)}
+            placeholder="Enter here, not in ChatGPT or logs" autoComplete="new-password" />
+          <p style={{ fontSize: 12, color: "#64748b" }}>
+            Uses the login email from section 1; optional test password above only
+            if this Auth email does not yet exist. This is one transactional
+            Database Company/Role/Widget/KB+Vault setup; a newly created Supabase
+            Auth user is a separate external step and is reported if incomplete.
+            Only the original authorized development Owner may bootstrap tenants.
+          </p>
+          <button type="button"
+            disabled={Boolean(action) || !email.trim() ||
+              newCompanyName.trim().length < 3 || !/^[1-9]\d{0,15}$/.test(newTenant) ||
+              newKey.length < 16}
+            onClick={() => void bootstrapTenant()}>
+            {action === "bootstrapping" ? "Provisioning protected tenant…" :
+              "Create independent Company + Admin + Widget + KB binding"}
+          </button>
+          {createdScope && <div role="status" style={{ color: "#166534", fontSize: 13 }}>
+            Verified: Auth UID {createdScope.user_id}, Company UUID {createdScope.company_id},
+            Widget Channel UUID {createdScope.channel_id}, Singapore KB {createdScope.kb_tenant_id}.
+            Key bytes were never returned. This record is NOT external KB entitlement
+            or a successful paid RAG UAT result.
+          </div>}
         </div>
       </section>
       <p style={{ color: "#64748b", fontSize: 12 }}>
