@@ -14,7 +14,8 @@ const envEnabled = import.meta.env.VITE_C3_KB_BINDING_DEV_ENABLED === "true";
 const devPageHost = () => typeof window !== "undefined" && isKBDevHost(window.location.host, envEnabled);
 
 function KBDevBindingPage() {
-  const { role, loading: roleLoading } = useCurrentRole();
+  const { role, actorId, loading: roleLoading } = useCurrentRole();
+  const isOriginalDevOwner = actorId === "3bdf936e-b543-41d8-9fff-fa020a85f3f6";
   const [rows, setRows] = useState<KBDevBinding[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState("");
@@ -119,8 +120,8 @@ function KBDevBindingPage() {
   }, [current?.company_id, current?.revision, current?.kb_tenant_id, current?.kb_company_id, current?.is_active]);
 
   const save = async () => {
-    if (!current || action || !verifiedLogin) {
-      setError("Select an existing active AI Chatbot login email belonging to this authorized Company.");
+    if (!current || action || !verifiedLogin || !current.writer_ready) {
+      setError("Select a verified login and Company with an available protected server writer.");
       return;
     }
     setError(null);
@@ -285,6 +286,7 @@ function KBDevBindingPage() {
           <p style={{ fontSize: 13, color: "#475569", marginTop: 10 }}>
             Active Company Channel: {current.channels_ready ? "Verified" : "Not verified — saving disabled"}
             {phase === "read_only" && " · Binding operations unavailable"}
+            {phase === "ready" && !current.writer_ready && " · Protected writer not available"}
           </p>
           <h3 style={{ fontWeight: 600, marginTop: 16 }}>Authenticated accounts on this Company</h3>
           <div style={{ display: "grid", gap: 5, marginTop: 8 }}>
@@ -305,7 +307,7 @@ function KBDevBindingPage() {
               <option value="admin">Admin</option><option value="supervisor">Supervisor</option>
               <option value="agent">CS / Agent</option><option value="qa">QA</option>
             </select>
-            <button type="button" disabled={phase !== "ready" || Boolean(action) || !email.trim() || !current.channels_ready} onClick={() => void invite()}>
+            <button type="button" disabled={phase !== "ready" || !current.writer_ready || Boolean(action) || !email.trim() || !current.channels_ready} onClick={() => void invite()}>
               {action === "inviting" ? "Sending authorized invite…" : "Invite new account and grant same-Company role"}
             </button>
             <p style={{ color: "#64748b", fontSize: 12 }}>
@@ -319,7 +321,7 @@ function KBDevBindingPage() {
               value={testPassword} onChange={(e) => setTestPassword(e.target.value)}
               placeholder="Leave blank for an already-existing Auth user" autoComplete="new-password" />
             <button type="button"
-              disabled={phase !== "ready" || Boolean(action) || !email.trim() || !current.channels_ready}
+              disabled={phase !== "ready" || !current.writer_ready || Boolean(action) || !email.trim() || !current.channels_ready}
               onClick={() => void createOrLink()}>
               {action === "linking" ? "Verifying account and Company…" :
                 "Create / link test account in THIS Company (no invitation email)"}
@@ -339,29 +341,38 @@ function KBDevBindingPage() {
           Select a server-verified Company in step 1 to enable both fields. If Company loading is unavailable,
           these inputs stay visible but disabled; no local or mock mapping is substituted.
         </p>}
+        {phase === "ready" && current && !current.writer_ready && <p role="alert"
+          style={{ color: "#b45309", fontSize: 13 }}>
+          Company/KB metadata is verified through your real Supabase Auth and same-Company RLS.
+          The protected server writer is unavailable. You may prepare the numeric KB ID and masked
+          key here, but Save stays disabled until the original server-only credential is available;
+          no binding is claimed or stored.
+        </p>}
         <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
           <label htmlFor="kb-tenant-input">2. Singapore KB company_id (numeric, e.g. 34 or 35)</label>
           <input id="kb-tenant-input" style={fieldStyle} value={tenant} disabled={!current || phase !== "ready" || Boolean(action)}
-            onChange={(e) => setTenant(e.target.value)} placeholder="34" autoComplete="off" />
+            onChange={(e) => setTenant(e.target.value)} placeholder="34" inputMode="numeric" autoComplete="off" />
           <label htmlFor="kb-key-input">3. Singapore KB API Key — masked, write-only, never displayed again</label>
           <input id="kb-key-input" style={fieldStyle} type="password" value={key} disabled={!current || phase !== "ready" || Boolean(action)}
             onChange={(e) => setKey(e.target.value)} autoComplete="new-password" placeholder="Leave blank to retain stored secret" />
           <p style={{ fontSize: 12, color: "#64748b" }}>
             {phase === "read_only" ? "Stored Key, Revision and mapping state: Not loaded (backend unavailable)"
-              : <>Stored Key: {current?.has_key ? "Configured (masked)" : "Not configured"} ·
+              : <>Stored Key: {current?.has_key ? "Configured (active, masked)" :
+                    (current?.revision ?? 0) > 0 ? "Inactive; key presence is not exposed (re-enter a key to reactivate)" :
+                    "Not configured"} ·
                 Current Revision: {current?.revision ?? "—"} · Updated: {current?.updated_at ?? "Never"}</>}
           </p>
           <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <input type="checkbox" checked={active} disabled={!current || phase !== "ready"} onChange={(e) => setActive(e.target.checked)} />
             Activate (requires server-authorized Company/Channel and protected key)
           </label>
-          <button type="button" disabled={!current || phase !== "ready" || Boolean(action) || !verifiedLogin || !current?.channels_ready || !/^[1-9]\d{0,15}$/.test(tenant) || (active && !current?.has_key && key.length < 16)}
+          <button type="button" disabled={!current || phase !== "ready" || !current?.writer_ready || Boolean(action) || !verifiedLogin || !current?.channels_ready || !/^[1-9]\d{0,15}$/.test(tenant) || (active && !current?.has_key && key.length < 16)}
             onClick={() => void save()}>
             {action === "saving" ? "Saving…" : "Save Company → KB binding (CAS)"}
           </button>
         </div>
       </section>
-      <section style={boxStyle}>
+      {isOriginalDevOwner && <section style={boxStyle}>
         <h2 style={{ fontSize: 18, fontWeight: 700 }}>3. New independent KB tenant — one-page setup</h2>
         <p style={{ fontSize: 13, color: "#475569" }}>
           Use this only if the login requires a DIFFERENT Singapore KB tenant.
@@ -405,7 +416,7 @@ function KBDevBindingPage() {
             or a successful paid RAG UAT result.
           </div>}
         </div>
-      </section>
+      </section>}
       <p style={{ color: "#64748b", fontSize: 12 }}>
         Setup sequence on this page: select or invite a real account under an authorized Company,
         enter the numeric Singapore KB company_id and a masked write-only API Key,

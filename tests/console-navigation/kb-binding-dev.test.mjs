@@ -195,3 +195,53 @@ test("same page provides existing Company accounts and new independent tenants s
   assert.match(source, /original Frankie Company\/KB34 is never modified/);
   assert.doesNotMatch(source, /localStorage\.setItem\(/);
 });
+
+
+test("binding list uses canonical authenticated RLS instead of requiring privileged Admin read", () => {
+  const source = read("src/lib/api/kbBinding.service.ts");
+  const list = source.slice(source.indexOf("export const listKBDevBindingsFn"),
+    source.indexOf("const writeInput ="));
+  assert.match(list, /\.middleware\(\[requireSupabaseAuth\]\)/);
+  assert.match(list, /ownAdminCompanies\(\{ supabase: context\.supabase/);
+  assert.match(list, /await context\.supabase\s*\.from\("company_kb_tenant_binding"\)/);
+  assert.match(list, /\.select\("company_id,kb_tenant_id,kb_company_id,is_active,revision,updated_at"\)/);
+  assert.doesNotMatch(list, /\.select\("[^"]*api_key_secret_ref/);
+  assert.doesNotMatch(list, /vault\.decrypted_secrets/);
+  assert.match(list, /writerReady = false/);
+  assert.match(list, /if \(!writerError\) \{/);
+  assert.match(list, /catch \{ \/\* The credential name\/value\/exception is never returned/);
+  assert.match(list, /has_key: b\?\.is_active === true, writer_ready: writerReady/);
+  assert.match(source, /writer_ready: false/);
+});
+
+test("service-role client is server-only and uses only managed server key aliases", () => {
+  const source = read("src/lib/api/kbBinding.service.ts");
+  assert.match(source, /if \(typeof window !== "undefined"\) throw new Error\("kb_admin_server_only"\)/);
+  assert.match(source, /process\.env\.SUPABASE_SECRET_KEY \|\|/);
+  assert.match(source, /process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
+  assert.doesNotMatch(source, /process\.env\.VITE_SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(source, /assertAuthoritativeSupabaseRuntime\(authority\.url, authority\.projectId\)/);
+  assert.match(source, /persistSession: false, autoRefreshToken: false/);
+  assert.match(source, /const supabaseAdmin = await kbBindingAdminClient\(\)/);
+  assert.match(source, /protected_kb_writer_unavailable/);
+  assert.match(source, /p_actor: String\(context\.userId\)/);
+  assert.match(source, /p_expected_revision: data\.expected_revision/);
+  assert.match(source, /p_new_key: data\.api_key \?\? null/);
+  assert.match(source, /supabase\.auth\.getUser\(\)/);
+  assert.match(source, /member\.user_id === data\.user!\.id/);
+});
+
+test("numeric KB input can render after authenticated RLS read, Save needs real writer proof", () => {
+  const route = read("src/routes/_authenticated/console.settings.kb-binding.tsx");
+  assert.match(route, /Company\/KB metadata is verified through your real Supabase Auth/);
+  assert.match(route, /The protected server writer is unavailable/);
+  assert.match(route, /disabled=\{!current \|\| phase !== "ready" \|\| Boolean\(action\)\}/);
+  assert.match(route, /disabled=\{!current \|\| phase !== "ready" \|\| !current\?\.writer_ready/);
+  assert.match(route, /!current\.writer_ready/);
+  assert.match(route, /inputMode="numeric"/);
+  assert.match(route, /type="password" value=\{key\}/);
+  assert.match(route, /isOriginalDevOwner && <section style=\{boxStyle\}>/);
+  assert.match(route, /actorId === "3bdf936e-b543-41d8-9fff-fa020a85f3f6"/);
+  assert.match(route, /Inactive; key presence is not exposed/);
+  assert.doesNotMatch(route, /localStorage\.setItem\(/);
+});

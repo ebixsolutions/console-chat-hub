@@ -19,6 +19,7 @@ export type KBDevBinding = {
   is_active: boolean;
   revision: number;
   has_key: boolean;
+  writer_ready: boolean;
   channels_ready: boolean;
   updated_at: string | null;
   members: Array<{ user_id: string; role: string; email: string | null; is_active: boolean }>;
@@ -43,6 +44,29 @@ function devAllowed(): boolean {
   const request = getRequest();
   if (!request || process.env.C3_KB_BINDING_DEV_ENABLED !== "true") return false;
   return isKBDevHost(new URL(request.url).host, true);
+}
+
+/**
+ * Same authoritative Supabase, SERVER FUNCTIONS ONLY: there is no second API
+ * or backend. The platform's managed SERVICE_ROLE_KEY is a supported server
+ * alias; neither name is ever placed in a VITE_ variable or returned to UI.
+ * A missing/invalid protected server credential NEVER falls back to anon.
+ */
+async function kbBindingAdminClient(): Promise<any> {
+  if (typeof window !== "undefined") throw new Error("kb_admin_server_only");
+  const secret = process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!secret) throw new Error("kb_admin_server_credential_unavailable");
+  const { createClient } = await import("@supabase/supabase-js");
+  const { resolveAuthoritativeSupabaseBinding, assertAuthoritativeSupabaseRuntime } =
+    await import("@/integrations/supabase/runtime-authority.mjs");
+  const authority = resolveAuthoritativeSupabaseBinding({
+    url: process.env.SUPABASE_URL, projectId: process.env.SUPABASE_PROJECT_ID,
+  });
+  assertAuthoritativeSupabaseRuntime(authority.url, authority.projectId);
+  return createClient(authority.url, secret, {
+    auth: { storage: undefined, persistSession: false, autoRefreshToken: false },
+  });
 }
 
 async function ownAdminCompanies(context: { supabase: any; userId: string }): Promise<Result<Array<{ id: string; display_name: string; channels_ready: boolean }>>> {
@@ -74,36 +98,53 @@ export const listKBDevBindingsFn = createServerFn({ method: "GET" })
     if (!devAllowed()) return { ok: false, error: "development_binding_disabled" };
     const owned = await ownAdminCompanies({ supabase: context.supabase, userId: String(context.userId) });
     if (!owned.ok) return owned;
-    // Typed API deliberately never fetches plaintext keys or decrypted Vault view.
+    // This is an AUTHENTICATED RLS read. The existing table explicitly grants
+    // SELECT for the NONSECRET columns below. Never SELECT the Vault reference
+    // or make the Company's selector depend on a service-role key.
     const ids = owned.data.map((co) => co.id);
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: bindings, error } = await (supabaseAdmin as any)
+    const { data: bindings, error } = await context.supabase
       .from("company_kb_tenant_binding")
-      .select("company_id,kb_tenant_id,kb_company_id,is_active,revision,api_key_secret_ref,updated_at")
+      .select("company_id,kb_tenant_id,kb_company_id,is_active,revision,updated_at")
       .in("company_id", ids);
-    if (error) return { ok: false, error: "binding_table_not_available" };
+    if (error) return { ok: false, error: "binding_metadata_rls_read_failed" };
     const { data: members, error: memberError } = await context.supabase
       .from("company_membership").select("company_id,user_id,role,is_active")
       .in("company_id", ids).limit(100);
     if (memberError) return { ok: false, error: "membership_read_failed" };
     const userIds = [...new Set<string>((members ?? []).map((m: any) => String(m.user_id)))].slice(0, 100);
     const emails = new Map<string, string | null>();
-    await Promise.all(userIds.map(async (id) => {
-      try {
-        const { data: result, error: lookupError } = await supabaseAdmin.auth.admin.getUserById(id);
-        emails.set(id, lookupError ? null : result.user?.email ?? null);
-      } catch { emails.set(id, null); }
-    }));
+    let writerReady = false;
+    // An OPTIONAL server-side capability probe. Its failure cannot prevent
+    // safe nonsecret RLS reads and is never mistaken for a successful writer.
+    try {
+      const admin = await kbBindingAdminClient();
+      const { error: writerError } = await admin.from("company_kb_tenant_binding")
+        .select("company_id").in("company_id", ids).limit(1);
+      if (!writerError) {
+        writerReady = true;
+        await Promise.all(userIds.map(async (id) => {
+          try {
+            const { data: userResult, error: lookupError } =
+              await admin.auth.admin.getUserById(id);
+            emails.set(id, lookupError ? null : userResult.user?.email ?? null);
+          } catch { emails.set(id, null); }
+        }));
+      }
+    } catch { /* The credential name/value/exception is never returned. */ }
     return { ok: true, data: owned.data.map((co) => {
       const b = (bindings ?? []).find((x: any) => x.company_id === co.id);
       return {
         company_id: co.id, company_name: co.display_name,
         kb_tenant_id: b?.kb_tenant_id ?? null, kb_company_id: b?.kb_company_id ?? null,
         is_active: b?.is_active === true, revision: Number(b?.revision ?? 0),
-        has_key: !!b?.api_key_secret_ref, updated_at: b?.updated_at ?? null,
+        // Active rows are guaranteed to have a key by the existing SQL CHECK.
+        // An inactive row might also have one; do NOT claim its key is absent.
+        has_key: b?.is_active === true, writer_ready: writerReady,
+        updated_at: b?.updated_at ?? null,
         channels_ready: co.channels_ready,
         members: (members ?? []).filter((m: any) => m.company_id === co.id)
-          .map((m: any) => ({ user_id: String(m.user_id), role: String(m.role), email: emails.get(String(m.user_id)) ?? null, is_active: m.is_active === true })),
+          .map((m: any) => ({ user_id: String(m.user_id), role: String(m.role),
+            email: emails.get(String(m.user_id)) ?? null, is_active: m.is_active === true })),
       };
     }) };
   });
@@ -126,9 +167,11 @@ export const saveKBDevBindingFn = createServerFn({ method: "POST" })
     if (!owned.data.some((co) => co.id === data.company_id && co.channels_ready)) {
       return { ok: false, error: "company_not_owned_or_channel_inactive" };
     }
-    // Secrets go ONLY into protected SECURITY DEFINER -> Supabase Vault.
-    // Caller never chooses actor ID; no secret is ever returned.
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // Secrets go ONLY into the existing protected service_role SQL
+    // function -> Supabase Vault. Never send a key to a client-read API.
+    let supabaseAdmin: any;
+    try { supabaseAdmin = await kbBindingAdminClient(); }
+    catch { return { ok: false, error: "protected_kb_writer_unavailable" }; }
     const { data: output, error } = await (supabaseAdmin as any).rpc("kb_binding_write_v1", {
       p_actor: String(context.userId), p_company: data.company_id,
       p_tenant: data.kb_tenant_id, p_kb_company: data.kb_company_id,
@@ -162,7 +205,7 @@ export const inviteKBDevTesterFn = createServerFn({ method: "POST" })
     // granting the canonical role + active same-Company membership. Only this
     // server-issued Auth UID enters the RPC; clients cannot supply a target UID.
     // An invite alone is never reported as a usable account.
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const supabaseAdmin = await kbBindingAdminClient();
     const { data: invited, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(data.email.trim().toLowerCase());
     if (error || !invited.user?.id ||
         invited.user.email?.toLowerCase() !== data.email.trim().toLowerCase()) {
@@ -218,7 +261,8 @@ export async function listAuthorizedCompanyScopesReadOnly(): Promise<Result<KBDe
   return { ok: true, data: (companies ?? []).map((company) => ({
     company_id: String(company.id), company_name: String(company.display_name ?? company.id),
     kb_tenant_id: null, kb_company_id: null, is_active: false, revision: 0,
-    has_key: false, channels_ready: ready.has(String(company.id)), updated_at: null,
+    has_key: false, writer_ready: false,
+    channels_ready: ready.has(String(company.id)), updated_at: null,
     members: [{ user_id: actorId, role: "admin",
       email: auth.user.email ?? null, is_active: true }],
   })) };
@@ -276,7 +320,7 @@ export const bootstrapKBDevCompanyFn = createServerFn({ method: "POST" })
     }
     let authCreated = false;
     try {
-      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const supabaseAdmin = await kbBindingAdminClient();
       let account = await findExactDevAuth(supabaseAdmin, data.email);
       if (!account) {
         if (!data.password ||
@@ -355,7 +399,7 @@ export const createOrLinkKBDevTestAccountFn = createServerFn({ method: "POST" })
     }
     let authCreated = false;
     try {
-      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const supabaseAdmin = await kbBindingAdminClient();
       let target = await findExactDevAuth(supabaseAdmin, data.email);
       if (!target) {
         if (!data.password) return { ok: false, error: "test_password_required_for_new_auth" };
@@ -405,7 +449,23 @@ export const kbDevBindingService = {
     withConfigSession(supabase.auth, (headers) => bootstrapKBDevCompanyFn({ data, headers })),
   createOrLinkTestAccount: (data: z.infer<typeof testAccountInput>) =>
     withConfigSession(supabase.auth, (headers) => createOrLinkKBDevTestAccountFn({ data, headers })),
-  list: () => withConfigSession(supabase.auth, (headers) => listKBDevBindingsFn({ headers })),
+  list: async (): Promise<Result<KBDevBinding[]>> => {
+    const result = await withConfigSession(supabase.auth, (headers) =>
+      listKBDevBindingsFn({ headers }));
+    if (!result.ok) return result;
+    // The signed-in user's email may be attached ONLY to their own UID.
+    // The server separately authorizes Company/Membership/RLS by JWT, not email.
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user?.id || !data.user.email) {
+      return { ok: false, error: "verified_login_email_unavailable" };
+    }
+    return { ok: true, data: result.data.map((co) => ({
+      ...co, members: co.members.map((member) => ({
+        ...member, email: member.user_id === data.user!.id ?
+          data.user!.email! : member.email,
+      })),
+    })) };
+  },
   save: (data: z.infer<typeof writeInput>) => withConfigSession(supabase.auth, (headers) => saveKBDevBindingFn({ data, headers })),
   invite: (data: z.infer<typeof inviteInput>) => withConfigSession(supabase.auth, (headers) => inviteKBDevTesterFn({ data, headers })),
 };
