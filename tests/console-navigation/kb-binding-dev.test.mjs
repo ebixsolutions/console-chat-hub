@@ -64,7 +64,13 @@ test("development UI is real route and role/host guarded with write-only key", (
   assert.match(route, /type="password"/);
   assert.match(route, /setKey\(""\)/);
   assert.match(route, /expected_revision: savedRev/);
-  assert.match(route, /Invite account and grant same-Company role/);
+  assert.match(route, /Invite new account and grant same-Company role/);
+  assert.match(route, /AI Chatbot login email/);
+  assert.match(route, /Singapore KB company_id \(numeric, e\.g\. 34 or 35\)/);
+  assert.match(route, /verifiedLogin/);
+  assert.match(route, /member\.is_active && member\.email\?\.trim\(\)\.toLowerCase\(\) === normalizedEmail/);
+  assert.doesNotMatch(route, /id="kb-company-input"/);
+  assert.match(route, /kb_company_id: current\.kb_company_id \?\? null/);
   assert.match(tree, /console\.settings\.kb-binding/);
   assert.match(tree, /\/_authenticated\/console\/settings\/kb-binding/);
   assert.match(chain, /PGRST205/);

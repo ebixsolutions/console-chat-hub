@@ -19,7 +19,6 @@ function KBDevBindingPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState("");
   const [tenant, setTenant] = useState("");
-  const [kbCompany, setKbCompany] = useState("");
   const [key, setKey] = useState("");
   const [active, setActive] = useState(false);
   const [savedRev, setSavedRev] = useState(0);
@@ -32,6 +31,24 @@ function KBDevBindingPage() {
 
   const authorizedUI = role === "admin" && devPageHost();
   const current = useMemo(() => rows.find((r) => r.company_id === selected) ?? null, [rows, selected]);
+  // Email is only a lookup key among server-returned, same-Admin Company members.
+  // Access authority remains auth.uid(), active membership, role, and Company.
+  const normalizedEmail = email.trim().toLowerCase();
+  const matchingCompanies = useMemo(() => normalizedEmail
+    ? rows.filter((row) => row.members.some((member) =>
+        member.is_active && member.email?.trim().toLowerCase() === normalizedEmail))
+    : [], [rows, normalizedEmail]);
+  const verifiedLogin = Boolean(normalizedEmail && current?.members.some((member) =>
+    member.is_active && member.email?.trim().toLowerCase() === normalizedEmail));
+  const verifiedMember = verifiedLogin
+    ? current?.members.find((member) => member.is_active &&
+        member.email?.trim().toLowerCase() === normalizedEmail)
+    : null;
+  useEffect(() => {
+    if (matchingCompanies.length === 1 && selected !== matchingCompanies[0].company_id) {
+      setSelected(matchingCompanies[0].company_id);
+    }
+  }, [matchingCompanies, selected]);
 
   const load = async (preserveSuccess = false) => {
     setError(null);
@@ -63,12 +80,10 @@ function KBDevBindingPage() {
   useEffect(() => {
     if (!current) {
       setTenant("");
-      setKbCompany("");
       setActive(false);
       setSavedRev(0);
     } else {
       setTenant(current.kb_tenant_id ?? "");
-      setKbCompany(current.kb_company_id ?? "");
       setActive(current.is_active);
       setSavedRev(current.revision);
     }
@@ -78,14 +93,19 @@ function KBDevBindingPage() {
   }, [current?.company_id, current?.revision, current?.kb_tenant_id, current?.kb_company_id, current?.is_active]);
 
   const save = async () => {
-    if (!current || action) return;
+    if (!current || action || !verifiedLogin) {
+      setError("Select an existing active AI Chatbot login email belonging to this authorized Company.");
+      return;
+    }
     setError(null);
     setSuccess(null);
     setAction("saving");
     try {
       const result = await kbDevBindingService.save({
         company_id: current.company_id, kb_tenant_id: tenant.trim(),
-        kb_company_id: kbCompany.trim() || null, is_active: active,
+        // Preserve optional legacy metadata; current Singapore RAG API consumes
+        // the numeric KB company_id from kb_tenant_id, not this optional value.
+        kb_company_id: current.kb_company_id ?? null, is_active: active,
         expected_revision: savedRev, ...(key ? { api_key: key } : {}),
       });
       if (!result.ok) {
@@ -121,7 +141,6 @@ function KBDevBindingPage() {
         setError(result.error);
       } else {
         setSuccess("Invitation sent; the same-Company role and membership are active. The invitee must accept the Auth invitation before logging in.");
-        setEmail("");
       }
       await load(true);
     } catch {
@@ -153,13 +172,33 @@ function KBDevBindingPage() {
             Reload live identity
           </button>
         </div>
-        <label htmlFor="kb-company-picker" style={{ display: "block", marginTop: 16, marginBottom: 6 }}>AI Chatbot Company (active Admin membership only)</label>
+        <label htmlFor="kb-login-email" style={{ display: "block", marginTop: 16, marginBottom: 6 }}>
+          1. AI Chatbot login email
+        </label>
+        <input id="kb-login-email" type="email" autoComplete="off"
+          style={fieldStyle} value={email} placeholder="admin@your-company.com"
+          onChange={(e) => setEmail(e.target.value)} />
+        {normalizedEmail && matchingCompanies.length === 0 &&
+          <p role="status" style={{ fontSize: 12, color: "#b45309" }}>
+            No active account membership in your authorized Companies matches this email.
+            Choose your own Company below to invite this account; no binding can be saved until membership is verified.
+          </p>}
+        {matchingCompanies.length > 1 && <p role="status" style={{ fontSize: 12 }}>
+          Multiple authorized Company memberships match this login. Select the intended Company below.
+        </p>}
+        <label htmlFor="kb-company-picker" style={{ display: "block", marginTop: 16, marginBottom: 6 }}>
+          Verified AI Chatbot Company UUID (from active same-Company membership)
+        </label>
         <select id="kb-company-picker" style={fieldStyle} value={selected} disabled={loading || Boolean(action)}
           onChange={(e) => setSelected(e.target.value)}>
           <option value="">Select your authorized Company</option>
           {rows.map((r) => <option value={r.company_id} key={r.company_id}>{r.company_name} — {r.company_id}</option>)}
         </select>
         {loading && <div role="status">Loading real Company / Auth identity…</div>}
+        {verifiedMember && <p style={{ fontSize: 13, color: "#166534", marginTop: 9 }}>
+          Verified login: {verifiedMember.email} · Auth UID: {verifiedMember.user_id}
+          · Role: {verifiedMember.role}
+        </p>}
         {current && <>
           <p style={{ fontSize: 13, color: "#475569", marginTop: 10 }}>
             Active Company Channel: {current.channels_ready ? "Verified" : "Not verified — saving disabled"}
@@ -172,9 +211,10 @@ function KBDevBindingPage() {
               </div>) : <p>No active member records available.</p>}
           </div>
           <div style={{ marginTop: 16, display: "grid", gap: 8 }}>
-            <label htmlFor="invite-email">Invite a new test account (separate authorized invite permission required)</label>
-            <input id="invite-email" type="email" autoComplete="off" value={email} style={fieldStyle}
-              onChange={(e) => setEmail(e.target.value)} placeholder="test@example.com" />
+            <p style={{ fontSize: 13, color: "#475569" }}>
+              For a new login email entered above, invite a real test account only under the separately authorized
+              same-Company Admin grant. Existing accounts are selected without an invitation.
+            </p>
             <label htmlFor="invite-role">Authorized initial role (active after server grant and invite acceptance)</label>
             <select id="invite-role" value={inviteRole} style={fieldStyle}
               onChange={(e) => setInviteRole(e.target.value as typeof inviteRole)}>
@@ -182,25 +222,23 @@ function KBDevBindingPage() {
               <option value="agent">CS / Agent</option><option value="qa">QA</option>
             </select>
             <button type="button" disabled={Boolean(action) || !email.trim() || !current.channels_ready} onClick={() => void invite()}>
-              {action === "inviting" ? "Sending authorized invite…" : "Invite account and grant same-Company role"}
+              {action === "inviting" ? "Sending authorized invite…" : "Invite new account and grant same-Company role"}
             </button>
           </div>
         </>}
       </section>
       {current && <section style={boxStyle}>
-        <h2 style={{ fontSize: 18, fontWeight: 700 }}>2. Singapore KB binding and masked credential</h2>
+        <h2 style={{ fontSize: 18, fontWeight: 700 }}>2. Singapore KB company_id and API Key</h2>
         <p style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
-          AI Company UUID ≠ Singapore KB Tenant ID. Example: existing Frankie Tenant 34;
-          Tenant 35 requires a real separately verified owner credential and published knowledge.
+          The Singapore KB API expects a numeric company_id (example: 34).
+          This is stored as kb_tenant_id in the mapping, and is never the AI Chatbot Company UUID.
+          A different KB account such as 35 needs verified remote entitlement and its own key.
         </p>
         <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
-          <label htmlFor="kb-tenant-input">Singapore KB Tenant ID (required string)</label>
+          <label htmlFor="kb-tenant-input">2. Singapore KB company_id (numeric, e.g. 34 or 35)</label>
           <input id="kb-tenant-input" style={fieldStyle} value={tenant}
             onChange={(e) => setTenant(e.target.value)} placeholder="34" autoComplete="off" />
-          <label htmlFor="kb-company-input">Singapore KB-side Company ID (optional, only where API requires)</label>
-          <input id="kb-company-input" style={fieldStyle} value={kbCompany}
-            onChange={(e) => setKbCompany(e.target.value)} placeholder="Leave blank if not in API contract" />
-          <label htmlFor="kb-key-input">Singapore KB API Key — masked, write-only, never displayed again</label>
+          <label htmlFor="kb-key-input">3. Singapore KB API Key — masked, write-only, never displayed again</label>
           <input id="kb-key-input" style={fieldStyle} type="password" value={key}
             onChange={(e) => setKey(e.target.value)} autoComplete="new-password" placeholder="Leave blank to retain stored secret" />
           <p style={{ fontSize: 12, color: "#64748b" }}>
@@ -211,7 +249,7 @@ function KBDevBindingPage() {
             <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
             Activate (requires server-authorized Company/Channel and protected key)
           </label>
-          <button type="button" disabled={Boolean(action) || !current.channels_ready || !/^[1-9]\d{0,15}$/.test(tenant) || (active && !current.has_key && key.length < 16)}
+          <button type="button" disabled={Boolean(action) || !verifiedLogin || !current.channels_ready || !/^[1-9]\d{0,15}$/.test(tenant) || (active && !current.has_key && key.length < 16)}
             onClick={() => void save()}>
             {action === "saving" ? "Saving…" : "Save Company → KB binding (CAS)"}
           </button>
