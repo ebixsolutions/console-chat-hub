@@ -158,7 +158,7 @@ function KBDevBindingPage() {
       <header>
         <h1 style={{ fontSize: 24, fontWeight: 700 }}>KB Tenant Binding — Development Only</h1>
         <p style={{ color: "#475569", marginTop: 4 }}>
-          Link a legitimate AI Chatbot Company UUID to its distinct Singapore Knowledge Base Tenant ID.
+          One-page setup: find or invite an AI Chatbot login into an Admin-authorized Company, then enter that Company's Singapore KB company_id and masked API Key below. A different KB tenant requires a separately authorized AI Chatbot Company, not just another email.
           This page is unavailable on the published Production Console.
         </p>
       </header>
@@ -167,7 +167,7 @@ function KBDevBindingPage() {
       {success && <div role="status" style={{ color: "#166534" }}>{success}</div>}
       <section style={boxStyle}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-          <h2 style={{ fontSize: 18, fontWeight: 700 }}>1. Authorized Company and login account</h2>
+          <h2 style={{ fontSize: 18, fontWeight: 700 }}>1. AI Chatbot login account and authorized Company</h2>
           <button type="button" disabled={Boolean(action)} onClick={() => { void load(); }}>
             Reload live identity
           </button>
@@ -180,8 +180,7 @@ function KBDevBindingPage() {
           onChange={(e) => setEmail(e.target.value)} />
         {normalizedEmail && matchingCompanies.length === 0 &&
           <p role="status" style={{ fontSize: 12, color: "#b45309" }}>
-            No active account membership in your authorized Companies matches this email.
-            Choose your own Company below to invite this account; no binding can be saved until membership is verified.
+            This login is not yet an active member of your authorized Companies. Select an authorized Company, use the server-authorized account invitation below, and verify the new membership before saving the KB binding.
           </p>}
         {matchingCompanies.length > 1 && <p role="status" style={{ fontSize: 12 }}>
           Multiple authorized Company memberships match this login. Select the intended Company below.
@@ -227,35 +226,44 @@ function KBDevBindingPage() {
           </div>
         </>}
       </section>
-      {current && <section style={boxStyle}>
+      <section style={boxStyle}>
         <h2 style={{ fontSize: 18, fontWeight: 700 }}>2. Singapore KB company_id and API Key</h2>
         <p style={{ fontSize: 12, color: "#64748b", marginTop: 8 }}>
           The Singapore KB API expects a numeric company_id (example: 34).
           This is stored as kb_tenant_id in the mapping, and is never the AI Chatbot Company UUID.
           A different KB account such as 35 needs verified remote entitlement and its own key.
+          Each mapping belongs to one authorized AI Chatbot Company UUID, not to an email.
         </p>
+        {!current && <p role="status" style={{ color: "#b45309", fontSize: 13 }}>
+          Select a server-verified Company in step 1 to enable both fields. If Company loading is unavailable,
+          these inputs stay visible but disabled; no local or mock mapping is substituted.
+        </p>}
         <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
           <label htmlFor="kb-tenant-input">2. Singapore KB company_id (numeric, e.g. 34 or 35)</label>
-          <input id="kb-tenant-input" style={fieldStyle} value={tenant}
+          <input id="kb-tenant-input" style={fieldStyle} value={tenant} disabled={!current || phase !== "ready" || Boolean(action)}
             onChange={(e) => setTenant(e.target.value)} placeholder="34" autoComplete="off" />
           <label htmlFor="kb-key-input">3. Singapore KB API Key — masked, write-only, never displayed again</label>
-          <input id="kb-key-input" style={fieldStyle} type="password" value={key}
+          <input id="kb-key-input" style={fieldStyle} type="password" value={key} disabled={!current || phase !== "ready" || Boolean(action)}
             onChange={(e) => setKey(e.target.value)} autoComplete="new-password" placeholder="Leave blank to retain stored secret" />
           <p style={{ fontSize: 12, color: "#64748b" }}>
-            Stored Key: {current.has_key ? "Configured (masked)" : "Not configured"} ·
-            Current Revision: {current.revision} · Updated: {current.updated_at ?? "Never"}
+            Stored Key: {current?.has_key ? "Configured (masked)" : "Not configured"} ·
+            Current Revision: {current?.revision ?? "—"} · Updated: {current?.updated_at ?? "Never"}
           </p>
           <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
+            <input type="checkbox" checked={active} disabled={!current || phase !== "ready"} onChange={(e) => setActive(e.target.checked)} />
             Activate (requires server-authorized Company/Channel and protected key)
           </label>
-          <button type="button" disabled={Boolean(action) || !verifiedLogin || !current.channels_ready || !/^[1-9]\d{0,15}$/.test(tenant) || (active && !current.has_key && key.length < 16)}
+          <button type="button" disabled={!current || phase !== "ready" || Boolean(action) || !verifiedLogin || !current?.channels_ready || !/^[1-9]\d{0,15}$/.test(tenant) || (active && !current?.has_key && key.length < 16)}
             onClick={() => void save()}>
             {action === "saving" ? "Saving…" : "Save Company → KB binding (CAS)"}
           </button>
         </div>
-      </section>}
+      </section>
       <p style={{ color: "#64748b", fontSize: 12 }}>
+        Setup sequence on this page: select or invite a real account under an authorized Company,
+        enter the numeric Singapore KB company_id and a masked write-only API Key,
+        activate and save the Company binding, then test the invitee's legitimate login.
+        The account invitation and binding save are separate governed actions, not an unverified atomic transaction.
         On the next legitimate login, one authorized Company should resolve automatically.
         If an actor has more than one active Company membership, only those server-verified
         Companies may be selected; switching must clear Company-scoped session, Ticket,

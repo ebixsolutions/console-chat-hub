@@ -106,3 +106,20 @@ test("private Preview SSR receives its independent development-only server flag"
   assert.match(handler, /isKBDevHost\(new URL\(request\.url\)\.host, true\)/);
   assert.match(handler, /context\.userId/);
 });
+
+test("one-screen account invite and Singapore KB company_id/key remain visible and fail closed", () => {
+  assert.match(route, /1\. AI Chatbot login account and authorized Company/);
+  assert.match(route, /2\. Singapore KB company_id and API Key/);
+  assert.match(route, /One-page setup:/);
+  assert.match(route, /Select a server-verified Company in step 1/);
+  assert.doesNotMatch(route, /\{current && <section style=\{boxStyle\}>\s*<h2[^>]*>2\. Singapore KB/);
+  assert.match(route, /id="kb-tenant-input"[^\n]*disabled=\{!current \|\| phase !== "ready" \|\| Boolean\(action\)\}/);
+  assert.match(route, /id="kb-key-input"[^\n]*disabled=\{!current \|\| phase !== "ready" \|\| Boolean\(action\)\}/);
+  assert.match(route, /id="kb-key-input"[^\n]*type="password"/);
+  assert.match(route, /!verifiedLogin/);
+  assert.match(route, /Company UUID, not to an email/);
+  assert.match(route, /The account invitation and binding save are separate governed actions/);
+  assert.match(handler, /middleware\(\[requireSupabaseAuth\]\)/);
+  assert.match(handler, /\.eq\("is_active", true\)\.eq\("role", "admin"\)/);
+  assert.doesNotMatch(route, /localStorage\.setItem\(/);
+});
