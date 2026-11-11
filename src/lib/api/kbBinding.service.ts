@@ -75,7 +75,8 @@ async function bindingServerCredential(): Promise<string> {
   // platform-provided env is the canonical source of encrypted bindings.
   try {
     // @ts-ignore -- runtime-only built-in module, absent from Node typings
-    const worker = await import(/* @vite-ignore */ "cloudflare:workers");
+    const workerModuleId: string = "cloudflare:workers";
+    const worker = await import(/* @vite-ignore */ workerModuleId);
     const bindings: Record<string, unknown> = worker.env ?? {};
     for (const name of [
       "C3_KB_BINDING_ADMIN_KEY", "SUPABASE_SECRET_KEY",

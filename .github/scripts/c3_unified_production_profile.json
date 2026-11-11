@@ -1646,11 +1646,11 @@
   "authorized_task3c_kb_binding_sha256": {
     "supabase/migrations/20261111030000_task3c_company_kb_binding.sql": "484a97bf41c8dcc8adcbc92f1c6582934c199fd934b26e327e794579600903b1",
     "supabase/migrations/rollback/20261111030000_task3c_company_kb_binding.rollback.sql": "abd5632d5a2debf43f890c2e7729f50b834547a986f597537071802a4b304f3e",
-    "src/lib/api/kbBinding.service.ts": "1c2ff09b4a9863bd994504fa91e48ee0aaf8159adc81d64266e87ae0a8a89ee0",
+    "src/lib/api/kbBinding.service.ts": "885a9653d31be7deca681428992d10db7703e4c4b5791dde8c1c3d4f15f86f93",
     "src/routes/_authenticated/console.settings.kb-binding.tsx": "7003c14eec5a5ebeb96ccfacb5bfaf738fede63ac3bec733d7d4319bf3ff56d3",
     "src/routes/_authenticated/console.tsx": "5bd3cdf5bf88a392146d4534077fa60933c5148cfac0e76dbc843456a08bad63",
     "supabase/functions/_shared/kb-client.ts": "ab64cb164094a72edab8c1fea9373f15c8ba42547f4d06570a00a3b4a361fd9a",
-    "tests/console-navigation/kb-binding-dev.test.mjs": "2130b30ba7ffef72ef3c997c9bbba5bd4fc6d6e5e503e60fa74c840b237cc385",
+    "tests/console-navigation/kb-binding-dev.test.mjs": "8f569d49d6406e83dc5574bf30d63c537e0de110bfe45bb37940188eaabc653c",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "d75a30511230f2f0ab0099949d572d433f3660e05e8e67df09406fac04a16f1b",
     "tests/emergency-p0/chain.test.mjs": "0163e5d5404e5e2e389c20542b28aad179a80306ab83273c0c3cf9f2e4a5388d",
     "src/routeTree.gen.ts": "f9722928ec193944bdb1679d15780f6c921ea5fbb900bcafce6380ae366323ef",

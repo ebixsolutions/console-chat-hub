@@ -252,7 +252,8 @@ test("Lovable Worker Secrets are read server-side and cannot bypass original ten
   assert.match(src, /process\.env\.C3_KB_BINDING_ADMIN_KEY \|\|/);
   assert.match(src, /process\.env\.SUPABASE_SECRET_KEY \|\|/);
   assert.match(src, /process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
-  assert.match(src, /await import\(\/\* @vite-ignore \*\/ "cloudflare:workers"\)/);
+  assert.match(src, /const workerModuleId: string = "cloudflare:workers"/);
+  assert.match(src, /await import\(\/\* @vite-ignore \*\/ workerModuleId\)/);
   assert.match(src, /if \(typeof window !== "undefined"\) throw new Error\("kb_admin_server_only"\)/);
   assert.match(src, /bindings\[name\]/);
   assert.doesNotMatch(src, /import\.meta\.env\.VITE_.*(?:SECRET|SERVICE_ROLE|ADMIN_KEY)/);
