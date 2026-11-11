@@ -90,3 +90,19 @@ test("Vault audit history stays chronological and rollback removes invite RPC wi
   assert.match(rollback, /DROP FUNCTION IF EXISTS public\.kb_binding_invite_grant_v1/);
   assert.doesNotMatch(handler, /getUserById\(.*api_key/);
 });
+
+test("private Preview SSR receives its independent development-only server flag", () => {
+  const vite = read("vite.config.ts");
+  const devEnv = read(".env.development");
+  assert.match(devEnv, /^VITE_C3_KB_BINDING_DEV_ENABLED=true$/m);
+  assert.match(devEnv, /^C3_KB_BINDING_DEV_ENABLED=true$/m);
+  assert.doesNotMatch(devEnv, /^C3_KB_BINDING_INVITES_ENABLED=true$/m);
+  assert.match(vite, /import \{ loadEnv, type ConfigEnv \} from "vite"/);
+  assert.match(vite, /kbBindingPrivateServerEnabled = environment\.mode === "development"/);
+  assert.match(vite, /loadEnv\(environment\.mode, process\.cwd\(\), "C3_KB_BINDING_DEV_ENABLED"\)/);
+  assert.match(vite, /"process\.env\.C3_KB_BINDING_DEV_ENABLED": JSON\.stringify\(kbBindingPrivateServerEnabled \? "true" : "false"\)/);
+  assert.doesNotMatch(vite, /envPrefix\s*:/);
+  assert.match(handler, /process\.env\.C3_KB_BINDING_DEV_ENABLED !== "true"/);
+  assert.match(handler, /isKBDevHost\(new URL\(request\.url\)\.host, true\)/);
+  assert.match(handler, /context\.userId/);
+});

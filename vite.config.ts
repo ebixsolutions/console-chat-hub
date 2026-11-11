@@ -8,7 +8,7 @@ import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 import { mcpPlugin } from "@lovable.dev/mcp-js/stacks/tanstack/vite";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
-import type { ConfigEnv } from "vite";
+import { loadEnv, type ConfigEnv } from "vite";
 import { resolveConsoleEnvironment } from "./vite.preview-environment.mjs";
 import { candidateIdentity, candidateIdentityPlugin, renderCandidateIdentity } from "./vite.candidate-identity.mjs";
 
@@ -18,6 +18,15 @@ const isolatedBrowserAuth = process.env.C3_ISOLATED_BROWSER_AUTH === "local-only
 if (isolatedBrowserAuth && process.env.NODE_ENV === "production") {
   throw new Error("Isolated browser Auth binding is forbidden in a production build");
 }
+
+// Vite exposes VITE_* to the browser but does not populate process.env
+// from .env.development for TanStack Start server functions. Load only
+// this already-approved BOOLEAN and compile it into development-mode SSR.
+// Production-mode builds remain false; private-host + real Admin/RLS
+// checks stay in kbBinding.service.ts. Do not expose generic envPrefix.
+const kbBindingPrivateServerEnabled = environment.mode === "development" &&
+  loadEnv(environment.mode, process.cwd(), "C3_KB_BINDING_DEV_ENABLED")
+    .C3_KB_BINDING_DEV_ENABLED === "true";
 
 const consoleEnvironment = resolveConsoleEnvironment(environment, process.env);
 if (consoleEnvironment && !["production", "nonproduction"].includes(consoleEnvironment)) {
@@ -47,7 +56,8 @@ return defineConfig({
     server: { entry: "server" },
   },
   vite: {
-    define: { "import.meta.env.VITE_C3_BUILD_IDENTITY": JSON.stringify(buildIdentity), "import.meta.env.VITE_C3_CANDIDATE": JSON.stringify(identity) },
+    define: { "import.meta.env.VITE_C3_BUILD_IDENTITY": JSON.stringify(buildIdentity), "import.meta.env.VITE_C3_CANDIDATE": JSON.stringify(identity),
+      "process.env.C3_KB_BINDING_DEV_ENABLED": JSON.stringify(kbBindingPrivateServerEnabled ? "true" : "false") },
     server: tlsCert && tlsKey ? { https: { cert: readFileSync(tlsCert), key: readFileSync(tlsKey) } } : undefined,
     plugins: [mcpPlugin(), candidateIdentityPlugin(identity), {
       name: "c3-authoritative-widget-source-bundle",

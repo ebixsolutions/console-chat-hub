@@ -1650,9 +1650,10 @@
     "src/routes/_authenticated/console.settings.kb-binding.tsx": "e30a2026ead35b9db02cc4c89fe2c56b21a3fcc59a332487d6111114bf529ed6",
     "src/routes/_authenticated/console.tsx": "5bd3cdf5bf88a392146d4534077fa60933c5148cfac0e76dbc843456a08bad63",
     "supabase/functions/_shared/kb-client.ts": "ab64cb164094a72edab8c1fea9373f15c8ba42547f4d06570a00a3b4a361fd9a",
-    "tests/console-navigation/kb-binding-dev.test.mjs": "21490848c8e323211c40cb8e8f99b0124d1108b2da05ef5a8823a56e7ff669c3",
+    "tests/console-navigation/kb-binding-dev.test.mjs": "2643b14b92db1b85deaba23e95b7727461b1b29d3d000d813b010b373a845f65",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "d75a30511230f2f0ab0099949d572d433f3660e05e8e67df09406fac04a16f1b",
     "tests/emergency-p0/chain.test.mjs": "0163e5d5404e5e2e389c20542b28aad179a80306ab83273c0c3cf9f2e4a5388d",
-    "src/routeTree.gen.ts": "f9722928ec193944bdb1679d15780f6c921ea5fbb900bcafce6380ae366323ef"
+    "src/routeTree.gen.ts": "f9722928ec193944bdb1679d15780f6c921ea5fbb900bcafce6380ae366323ef",
+    "vite.config.ts": "0b13b6f2a2a7b13ecfbe3654013c8e1d86ca57d296c22e8910770d96e23e50f3"
   }
 }
