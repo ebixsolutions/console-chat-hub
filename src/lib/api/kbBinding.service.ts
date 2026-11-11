@@ -184,7 +184,48 @@ export const inviteKBDevTesterFn = createServerFn({ method: "POST" })
     return { ok: true, data: { invited: true } };
   });
 
+/**
+ * Recover ONLY authenticated Admin's actual Company choices on a transport /
+ * server-function exception. Existing Supabase Auth and RLS are authoritative.
+ * This is read-only scope discovery, NOT a KB-binding record or admin grant.
+ * Never use these incomplete rows for invitation or binding writes.
+ */
+export async function listAuthorizedCompanyScopesReadOnly(): Promise<Result<KBDevBinding[]>> {
+  const { data: auth, error: authError } = await supabase.auth.getUser();
+  if (authError || !auth.user?.id) return { ok: false, error: "read_only_auth_unavailable" };
+  const actorId = auth.user.id;
+  const { data: role, error: roleError } = await supabase.from("user_roles")
+    .select("user_id").eq("user_id", actorId).eq("role", "admin").maybeSingle();
+  if (roleError || !role) return { ok: false, error: "read_only_admin_role_required" };
+  const { data: membership, error: membershipError } = await supabase.from("company_membership")
+    .select("company_id,role,is_active").eq("user_id", actorId)
+    .eq("role", "admin").eq("is_active", true);
+  if (membershipError) return { ok: false, error: "read_only_membership_lookup_failed" };
+  const ids = [...new Set<string>((membership ?? []).map((m) => String(m.company_id)))];
+  if (!ids.length || ids.length > 12) return { ok: false, error: "read_only_company_scope_unresolved" };
+  const { data: companies, error: companyError } = await supabase.from("company")
+    .select("id,display_name,is_active").in("id", ids).eq("is_active", true);
+  if (companyError || (companies ?? []).length !== ids.length) {
+    return { ok: false, error: "read_only_company_scope_invalid" };
+  }
+  const { data: channels, error: channelError } = await supabase.from("channel_config")
+    .select("company_id").in("company_id", ids)
+    .eq("is_active", true).eq("channel_type", "web_widget");
+  if (channelError) return { ok: false, error: "read_only_channels_lookup_failed" };
+  const ready = new Set((channels ?? []).map((channel) => String(channel.company_id)));
+  // KB mapping/key/revision MUST remain unknown; the UI marks these rows
+  // read-only and disables Create/Save. No secret or admin read is attempted.
+  return { ok: true, data: (companies ?? []).map((company) => ({
+    company_id: String(company.id), company_name: String(company.display_name ?? company.id),
+    kb_tenant_id: null, kb_company_id: null, is_active: false, revision: 0,
+    has_key: false, channels_ready: ready.has(String(company.id)), updated_at: null,
+    members: [{ user_id: actorId, role: "admin",
+      email: auth.user.email ?? null, is_active: true }],
+  })) };
+}
+
 export const kbDevBindingService = {
+  listAuthorizedCompanyScopesReadOnly,
   list: () => withConfigSession(supabase.auth, (headers) => listKBDevBindingsFn({ headers })),
   save: (data: z.infer<typeof writeInput>) => withConfigSession(supabase.auth, (headers) => saveKBDevBindingFn({ data, headers })),
   invite: (data: z.infer<typeof inviteInput>) => withConfigSession(supabase.auth, (headers) => inviteKBDevTesterFn({ data, headers })),

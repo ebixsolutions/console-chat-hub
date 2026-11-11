@@ -123,3 +123,23 @@ test("one-screen account invite and Singapore KB company_id/key remain visible a
   assert.match(handler, /\.eq\("is_active", true\)\.eq\("role", "admin"\)/);
   assert.doesNotMatch(route, /localStorage\.setItem\(/);
 });
+
+test("Company selector recovers read-only actual RLS scope on server transport failure", () => {
+  const service = read("src/lib/api/kbBinding.service.ts");
+  assert.match(service, /export async function listAuthorizedCompanyScopesReadOnly/);
+  assert.match(service, /supabase\.auth\.getUser\(\)/);
+  assert.match(service, /\.from\("user_roles"\)/);
+  assert.match(service, /\.from\("company_membership"\)/);
+  assert.match(service, /\.eq\("user_id", actorId\)/);
+  assert.match(service, /\.eq\("role", "admin"\)\.eq\("is_active", true\)/);
+  assert.match(service, /\.from\("company"\)/);
+  assert.match(service, /\.from\("channel_config"\)/);
+  assert.doesNotMatch(service.slice(service.indexOf("export async function listAuthorizedCompanyScopesReadOnly")), /\.from\("company_kb_tenant_binding"\)/);
+  assert.match(route, /scopes = await kbDevBindingService\.listAuthorizedCompanyScopesReadOnly\(\)/);
+  assert.match(route, /setPhase\("read_only"\)/);
+  assert.match(route, /phase === "read_only"/);
+  assert.match(route, /disabled=\{phase !== "ready" \|\| Boolean\(action\)/);
+  assert.match(route, /disabled=\{!current \|\| phase !== "ready"/);
+  assert.match(route, /Binding metadata and other members have NOT been read/);
+  assert.match(route, /Stored Key, Revision and mapping state: Not loaded/);
+});

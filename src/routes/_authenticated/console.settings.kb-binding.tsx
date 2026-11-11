@@ -27,7 +27,7 @@ function KBDevBindingPage() {
   const [action, setAction] = useState<"saving" | "inviting" | "reloading" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [phase, setPhase] = useState<"ready" | "unavailable" | "checking">("checking");
+  const [phase, setPhase] = useState<"ready" | "unavailable" | "checking" | "read_only">("checking");
 
   const authorizedUI = role === "admin" && devPageHost();
   const current = useMemo(() => rows.find((r) => r.company_id === selected) ?? null, [rows, selected]);
@@ -66,8 +66,27 @@ function KBDevBindingPage() {
       setSelected((old) => result.data.some((row) => row.company_id === old)
         ? old : result.data.length === 1 ? result.data[0].company_id : "");
     } catch {
-      setPhase("unavailable");
-      setError("Unable to retrieve authorized Company scope.");
+      // A server-function/transport exception is NOT proof that Company data
+      // are absent. Recover only genuinely authorized same-actor RLS scopes.
+      // This does not authorize reading/writing a KB mapping.
+      try {
+        const scopes = await kbDevBindingService.listAuthorizedCompanyScopesReadOnly();
+        if (scopes.ok) {
+          setRows(scopes.data);
+          setPhase("read_only");
+          setSelected((old) => scopes.data.some((row) => row.company_id === old)
+            ? old : scopes.data.length === 1 ? scopes.data[0].company_id : "");
+          setError("Verified Company choices loaded read-only from the existing authenticated Supabase RLS. KB binding backend is unavailable; account creation, key entry and Save remain disabled.");
+        } else {
+          setRows([]);
+          setPhase("unavailable");
+          setError("Unable to retrieve authorized Company scope. RLS recovery: " + scopes.error);
+        }
+      } catch {
+        setRows([]);
+        setPhase("unavailable");
+        setError("Unable to retrieve authorized Company scope (authenticated read-only recovery failed).");
+      }
     } finally {
       setLoading(false);
     }
@@ -163,6 +182,10 @@ function KBDevBindingPage() {
         </p>
       </header>
       {phase === "unavailable" && <div role="alert" style={{ color: "#b91c1c" }}>Backend binding table/config is unavailable. No local or mock mapping will be used.</div>}
+      {phase === "read_only" && <div role="status" style={{ color: "#9a3412" }}>
+        Company choices below are verified by the existing authenticated Supabase RLS only.
+        Binding metadata and other members have NOT been read. This is NOT a working KB binding or a grant.
+      </div>}
       {error && <div role="alert" style={{ color: "#b91c1c" }}>{error}</div>}
       {success && <div role="status" style={{ color: "#166534" }}>{success}</div>}
       <section style={boxStyle}>
@@ -201,9 +224,11 @@ function KBDevBindingPage() {
         {current && <>
           <p style={{ fontSize: 13, color: "#475569", marginTop: 10 }}>
             Active Company Channel: {current.channels_ready ? "Verified" : "Not verified — saving disabled"}
+            {phase === "read_only" && " · Binding operations unavailable"}
           </p>
           <h3 style={{ fontWeight: 600, marginTop: 16 }}>Authenticated accounts on this Company</h3>
           <div style={{ display: "grid", gap: 5, marginTop: 8 }}>
+            {phase === "read_only" && <p>Only your own verified login is shown while the binding backend is unavailable.</p>}
             {current.members.length ? current.members.map((member) =>
               <div key={member.user_id} style={{ fontSize: 13, padding: 6, background: "#f8fafc" }}>
                 {member.email ?? "Email not available"} · {member.role} · {member.is_active ? "ACTIVE" : "PENDING / INACTIVE"} · {member.user_id}
@@ -220,7 +245,7 @@ function KBDevBindingPage() {
               <option value="admin">Admin</option><option value="supervisor">Supervisor</option>
               <option value="agent">CS / Agent</option><option value="qa">QA</option>
             </select>
-            <button type="button" disabled={Boolean(action) || !email.trim() || !current.channels_ready} onClick={() => void invite()}>
+            <button type="button" disabled={phase !== "ready" || Boolean(action) || !email.trim() || !current.channels_ready} onClick={() => void invite()}>
               {action === "inviting" ? "Sending authorized invite…" : "Invite new account and grant same-Company role"}
             </button>
           </div>
@@ -246,8 +271,9 @@ function KBDevBindingPage() {
           <input id="kb-key-input" style={fieldStyle} type="password" value={key} disabled={!current || phase !== "ready" || Boolean(action)}
             onChange={(e) => setKey(e.target.value)} autoComplete="new-password" placeholder="Leave blank to retain stored secret" />
           <p style={{ fontSize: 12, color: "#64748b" }}>
-            Stored Key: {current?.has_key ? "Configured (masked)" : "Not configured"} ·
-            Current Revision: {current?.revision ?? "—"} · Updated: {current?.updated_at ?? "Never"}
+            {phase === "read_only" ? "Stored Key, Revision and mapping state: Not loaded (backend unavailable)"
+              : <>Stored Key: {current?.has_key ? "Configured (masked)" : "Not configured"} ·
+                Current Revision: {current?.revision ?? "—"} · Updated: {current?.updated_at ?? "Never"}</>}
           </p>
           <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <input type="checkbox" checked={active} disabled={!current || phase !== "ready"} onChange={(e) => setActive(e.target.checked)} />
