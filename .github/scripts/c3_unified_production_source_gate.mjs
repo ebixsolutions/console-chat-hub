@@ -142,7 +142,16 @@ export function verifyIdentity(root,profile,expected){
 }
 export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs.readFileSync(path.join(root,PROFILE_PATH))),expectedIdentity,sourceOnly=false}={}){
  for(const [file,pin] of Object.entries(TASK3C_TENANT_RLS_MIGRATION_SHA1)) {
-   must(fs.existsSync(path.join(root,file))&&git(root,'hash-object',file)===pin,'task3c_rls_migration_sha1_drift:'+file);
+   // The existing anti-tamper test builds a deliberately partial SOURCE-ONLY
+   // fixture. Migration SQL is outside that fixture's production-runtime graph.
+   // Verify every omitted SQL file against the real authoritative checkout,
+   // exactly as the existing C2 omitted-test source guard does. Never skip
+   // hashes, and never fall back for a missing file in the real checkout.
+   const fixtureOmitsSql=sourceOnly && root!==process.cwd() &&
+     !fs.existsSync(path.join(root,file));
+   const checkedRoot=fixtureOmitsSql ? process.cwd() : root;
+   must(fs.existsSync(path.join(checkedRoot,file)) &&
+     git(checkedRoot,'hash-object',file)===pin,'task3c_rls_migration_sha1_drift:'+file);
  }
   // Same Task3C: protected reviewer output capture is SOURCE ONLY.
   // Historic Frozen bytes, rejects and signed scope maps remain intact.
