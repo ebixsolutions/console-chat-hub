@@ -386,6 +386,7 @@
     "src/lib/widget-message-merge.ts",
     "src/lib/widget-preview-state.ts",
     "src/lib/widget-response-status.ts",
+    "src/routeTree.gen.ts",
     "src/routes/_authenticated/console.analytics.tsx",
     "src/routes/_authenticated/console.conversation-evaluation.index.tsx",
     "src/routes/_authenticated/console.conversations.$id.tsx",
@@ -626,8 +627,7 @@
     "vite.candidate-identity.d.mts",
     "vite.candidate-identity.mjs",
     "vite.config.ts",
-    "vite.preview-environment.mjs",
-    "src/routeTree.gen.ts"
+    "vite.preview-environment.mjs"
   ],
   "conditional_worker_sha256": "56b02b24abd5b64748f5931e9cf9b0b1df05fb920b852ebe4b8bd51c71a793de",
   "normalized_preview_sha256": {
