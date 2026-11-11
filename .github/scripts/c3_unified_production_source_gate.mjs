@@ -151,16 +151,6 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
  must(profile.task3c_kb_binding_schema_authorized===false,'task3c_kb_binding_schema_not_authorized');
  must(profile.task3c_kb_binding_paid_traffic_authorized===false,'task3c_kb_binding_paid_not_authorized');
  must(JSON.stringify(profile.authorized_task3c_kb_binding_sha256)===JSON.stringify(TASK3C_KB_BINDING_SOURCE),'task3c_kb_binding_scope_drift');
- for(const [f,h] of Object.entries(TASK3C_KB_BINDING_SOURCE)){
-   const local=path.join(root,f);
-   // The negative fixture only models the runtime call graph. Read omitted
-   // docs/tests/migrations from authoritative checkout, never missing runtime.
-   const fixtureOmitted=sourceOnly&&root!==process.cwd()&&
-     !fs.existsSync(local)&&f!=='supabase/functions/_shared/kb-client.ts';
-   const checkedRoot=fixtureOmitted?process.cwd():root;
-   must(fs.existsSync(path.join(checkedRoot,f))&&sha(fs.readFileSync(path.join(checkedRoot,f)))===h,
-     'task3c_kb_binding_hash_drift:'+f);
- }
 
  for(const [file,pin] of Object.entries(TASK3C_TENANT_RLS_MIGRATION_SHA1)) {
    // The existing anti-tamper test builds a deliberately partial SOURCE-ONLY
@@ -389,6 +379,17 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
   must(profile.task3c_ui_recall_publish_authorized===false,'task3c_ui_recall_publish_not_authorized');
   must(JSON.stringify(profile.authorized_task3c_ui_recall_sha256)===JSON.stringify(TASK3C_UI_RECALL_SOURCE),'task3c_ui_recall_scope_drift');
   for(const [f,h] of Object.entries(TASK3C_UI_RECALL_SOURCE))must(sha(fs.readFileSync(path.join(root,f)))===(TASK3C_KB_BINDING_SOURCE[f]??h),'task3c_ui_recall_hash_drift:'+f);
+ for(const [f,h] of Object.entries(TASK3C_KB_BINDING_SOURCE)){
+   const local=path.join(root,f);
+   // The negative fixture only models the runtime call graph. Read omitted
+   // docs/tests/migrations from authoritative checkout, never missing runtime.
+   const fixtureOmitted=sourceOnly&&root!==process.cwd()&&
+     !fs.existsSync(local)&&f!=='supabase/functions/_shared/kb-client.ts';
+   const checkedRoot=fixtureOmitted?process.cwd():root;
+   must(fs.existsSync(path.join(checkedRoot,f))&&sha(fs.readFileSync(path.join(checkedRoot,f)))===h,
+     'task3c_kb_binding_hash_drift:'+f);
+ }
+
   return {status:'SOURCE_VALIDATED',mode:profile.mode,contract:profile.contract,authorization:profile.authorization,backend:profile.backend,identity,files,closure_sha256:sha(JSON.stringify(files)),hosted_runtime:'NOT_TESTED',uat_start_allowed:false};
 }
 export function verifyChildEvidence(rows){
