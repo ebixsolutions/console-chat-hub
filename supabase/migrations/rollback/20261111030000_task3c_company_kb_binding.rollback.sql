@@ -10,6 +10,7 @@ DO $check$ BEGIN
     END IF;
   END IF;
 END $check$;
+DROP FUNCTION IF EXISTS public.kb_binding_invite_grant_v1(uuid,uuid,uuid,public.app_role);
 DROP FUNCTION IF EXISTS public.kb_binding_secret_v1(uuid,text);
 DROP FUNCTION IF EXISTS public.kb_binding_write_v1(uuid,uuid,text,text,boolean,bigint,text);
 DROP TABLE IF EXISTS public.company_kb_tenant_binding;

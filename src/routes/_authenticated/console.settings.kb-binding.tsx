@@ -120,7 +120,7 @@ function KBDevBindingPage() {
       if (!result.ok) {
         setError(result.error);
       } else {
-        setSuccess("Invitation requested. Role membership is INACTIVE pending authorized approval.");
+        setSuccess("Invitation sent; the same-Company role and membership are active. The invitee must accept the Auth invitation before logging in.");
         setEmail("");
       }
       await load(true);
@@ -175,14 +175,14 @@ function KBDevBindingPage() {
             <label htmlFor="invite-email">Invite a new test account (separate authorized invite permission required)</label>
             <input id="invite-email" type="email" autoComplete="off" value={email} style={fieldStyle}
               onChange={(e) => setEmail(e.target.value)} placeholder="test@example.com" />
-            <label htmlFor="invite-role">Requested initial role (created INACTIVE)</label>
+            <label htmlFor="invite-role">Authorized initial role (active after server grant and invite acceptance)</label>
             <select id="invite-role" value={inviteRole} style={fieldStyle}
               onChange={(e) => setInviteRole(e.target.value as typeof inviteRole)}>
               <option value="admin">Admin</option><option value="supervisor">Supervisor</option>
               <option value="agent">CS / Agent</option><option value="qa">QA</option>
             </select>
             <button type="button" disabled={Boolean(action) || !email.trim() || !current.channels_ready} onClick={() => void invite()}>
-              {action === "inviting" ? "Sending authorized invite…" : "Invite account (no automatic role grant)"}
+              {action === "inviting" ? "Sending authorized invite…" : "Invite account and grant same-Company role"}
             </button>
           </div>
         </>}

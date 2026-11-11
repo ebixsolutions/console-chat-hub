@@ -177,6 +177,10 @@ function fixture(text,options={}) {
  const sourceTime=options.source_created_at??new Date(Math.max(Date.parse('2026-10-14T01:00:00.000Z'),...priorTimes.map(value=>value+1000))).toISOString();
  const visitor={id:source,conversation_id:ticket,role:'visitor',content:text,is_recalled:false,created_at:sourceTime,metadata:{}};
  const tables={ce_evaluation_state:[],handoff_event:[],conversation_commerce_state_event:[],company:[{id:company,is_active:true}],conversations:[conversation],messages:[visitor],conversation_commerce_state:[],conversation_memory_state:[],conversation_memory_state_event:[],c3_memory_reply_lifecycle_receipt:[]};
+ // Exact PostgREST schema-cache boundary: the managed binding migration has
+ // NOT been applied to the original fixture. Other database errors remain
+ // fatal; a missing table must not be simulated as a populated binding.
+ if(Object.hasOwn(options,'managedBindings'))tables.company_kb_tenant_binding=structuredClone(options.managedBindings);
  let generationIndex=0, verifierIndex=0, previewInitialization;
  const claimReaders=[];
  if(options.captureEvidence)tables.rag_trace=[];
@@ -277,6 +281,8 @@ function fixture(text,options={}) {
    throw Error('unhandled isolated RPC '+rpc);
   }
   const table=url.pathname.split('/').at(-1);
+  if(table==='company_kb_tenant_binding' && !Object.hasOwn(tables,table))
+    return Response.json({code:'PGRST205',message:'Could not find the table in the schema cache'},{status:404});
   if(table==='upstream_call_log'&&method==='POST'){logs.push(body);return new Response(null,{status:201});}
   if(table==='rag_trace'&&method==='POST'&&(options.captureEvidence||body.kb_source==='semantic_contract_failure')){
    if(options.traceInsertFailure)return Response.json({code:'XX000',message:'PRIVATE-TRACE-ERROR'},{status:503});
@@ -2376,4 +2382,18 @@ test('P0-1 original useful partial answer survives negative-knowledge B2 classif
  assert.equal(f.tables.messages.filter(m=>m.role==='assistant').length,1);
  assert.equal(f.tables.messages.find(m=>m.role==='assistant').content,answer);
  await task1cAssertReplay(f);
+});
+
+test('Task3C managed KB binding rejects inactive same-Company rows without an env fallback or paid call',async()=>{
+ const f=fixture('What are the published details?',{
+   fullChain:true,company:uuid(1),
+   managedBindings:[{company_id:uuid(1),kb_tenant_id:'35',is_active:false,
+     api_key_secret_ref:uuid(700)}],
+   semantic:providerWire({intent:'merchant_policy',requested_facts:['published policy']},'ASK_FACT'),
+ });
+ const r=await f.run();
+ assert.notEqual(r.status,200,'inactive managed row must not bypass scope');
+ assert.equal(f.requests.filter(x=>x.url.includes('/api/v1/rag/context-search')).length,0,
+   'managed-row denial must prevent remote KB dispatch');
+ assert.equal(f.commits.length,0,'denied KB scope must not persist fabricated answer');
 });

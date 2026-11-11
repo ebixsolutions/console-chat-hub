@@ -9,6 +9,8 @@ const handler = read("src/lib/api/kbBinding.service.ts");
 const route = read("src/routes/_authenticated/console.settings.kb-binding.tsx");
 const kb = read("supabase/functions/_shared/kb-client.ts");
 const nav = read("src/routes/_authenticated/console.tsx");
+const tree = read("src/routeTree.gen.ts");
+const chain = read("tests/emergency-p0/chain.test.mjs");
 
 test("one scoped mapping table and encrypted Vault secret, no raw key column", () => {
   assert.match(ddl, /CREATE TABLE public\.company_kb_tenant_binding/);
@@ -36,7 +38,13 @@ test("server uses original Auth/RLS user and role, not posted actor or email", (
   assert.doesNotMatch(handler, /\bp_actor:\s*data\./);
   assert.match(handler, /C3_KB_BINDING_DEV_ENABLED/);
   assert.match(handler, /C3_KB_BINDING_INVITES_ENABLED/);
-  assert.match(handler, /is_active: false/);
+  assert.match(handler, /kb_binding_invite_grant_v1/);
+  assert.match(handler, /granted\?\.is_active !== true/);
+  assert.doesNotMatch(handler, /is_active:\s*false/);
+  assert.match(ddl, /CREATE FUNCTION public\.kb_binding_invite_grant_v1/);
+  assert.match(ddl, /ON CONFLICT \(company_id,user_id,role\) DO UPDATE SET is_active=true/);
+  assert.match(ddl, /GRANT EXECUTE ON FUNCTION public\.kb_binding_invite_grant_v1[\s\S]*TO service_role/);
+  assert.match(ddl, /KB_INVITE_ROLE_CONFLICT/);
   assert.match(ddl, /v_old\.revision <> p_expected_revision/);
   assert.match(ddl, /FOR UPDATE/);
 });
@@ -56,7 +64,10 @@ test("development UI is real route and role/host guarded with write-only key", (
   assert.match(route, /type="password"/);
   assert.match(route, /setKey\(""\)/);
   assert.match(route, /expected_revision: savedRev/);
-  assert.match(route, /Invite account \(no automatic role grant\)/);
+  assert.match(route, /Invite account and grant same-Company role/);
+  assert.match(tree, /console\.settings\.kb-binding/);
+  assert.match(tree, /\/_authenticated\/console\/settings\/kb-binding/);
+  assert.match(chain, /PGRST205/);
   assert.match(nav, /navKBBinding/);
   assert.match(nav, /showKbDevLink/);
   assert.match(nav, /kbDevOnly/);
@@ -66,4 +77,10 @@ test("rollback cannot erase existing live KB binding rows or Vault secret", () =
   assert.match(rollback, /KB_BINDING_ROLLBACK_HAS_MAPPINGS_SAFE_STOP/);
   assert.match(rollback, /DROP TABLE IF EXISTS public\.company_kb_tenant_binding/);
   assert.doesNotMatch(rollback, /DELETE FROM vault|DROP SCHEMA vault|DELETE FROM public\.company_membership/);
+});
+test("Vault audit history stays chronological and rollback removes invite RPC without leaking secrets", () => {
+  assert.match(ddl, /jsonb_agg\(item ORDER BY ord ASC\)/);
+  assert.match(ddl, /substr\(gen_random_uuid\(\)::text,1,12\)/);
+  assert.match(rollback, /DROP FUNCTION IF EXISTS public\.kb_binding_invite_grant_v1/);
+  assert.doesNotMatch(handler, /getUserById\(.*api_key/);
 });

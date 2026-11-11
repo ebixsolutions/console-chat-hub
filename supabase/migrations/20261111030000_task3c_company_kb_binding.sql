@@ -88,7 +88,7 @@ BEGIN
     v_key := v_old.api_key_secret_ref;
     IF p_new_key IS NOT NULL THEN
       IF v_key IS NULL THEN
-        v_key := vault.create_secret(p_new_key, 'chatbot_kb_' || p_company::text,
+        v_key := vault.create_secret(p_new_key, 'chatbot_kb_' || p_company::text || '_' || substr(gen_random_uuid()::text,1,12),
           'Tenant-bound Singapore KB API key (never returned to browser)');
       ELSE
         PERFORM vault.update_secret(v_key, p_new_key, NULL, NULL, NULL);
@@ -98,7 +98,7 @@ BEGIN
     v_event := jsonb_build_object('revision',v_old.revision,'at',now(),
       'actor',p_actor,'tenant_before',v_old.kb_tenant_id,'active_before',v_old.is_active,
       'key_rotated',(p_new_key IS NOT NULL));
-    SELECT COALESCE(jsonb_agg(item ORDER BY ord DESC),'[]'::jsonb) INTO v_history
+    SELECT COALESCE(jsonb_agg(item ORDER BY ord ASC),'[]'::jsonb) INTO v_history
     FROM (
       SELECT item,ord FROM jsonb_array_elements(v_old.audit_history || jsonb_build_array(v_event))
         WITH ORDINALITY AS t(item,ord) ORDER BY ord DESC LIMIT 20
@@ -112,7 +112,7 @@ BEGIN
   ELSE
     IF p_expected_revision <> 0 THEN RAISE EXCEPTION 'KB_BINDING_REVISION_CONFLICT'; END IF;
     IF p_new_key IS NOT NULL THEN
-      v_key := vault.create_secret(p_new_key, 'chatbot_kb_' || p_company::text,
+      v_key := vault.create_secret(p_new_key, 'chatbot_kb_' || p_company::text || '_' || substr(gen_random_uuid()::text,1,12),
         'Tenant-bound Singapore KB API key (never returned to browser)');
     END IF;
     IF p_active AND v_key IS NULL THEN RAISE EXCEPTION 'KB_BINDING_KEY_REQUIRED'; END IF;
@@ -149,4 +149,64 @@ BEGIN
 END $fn$;
 REVOKE ALL ON FUNCTION public.kb_binding_secret_v1(uuid,text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.kb_binding_secret_v1(uuid,text) TO service_role;
+-- Exactly-once same-Company invite grant. This is one transactional database RPC
+-- inside the EXISTING backend, not a second chatbot or a new Edge Function.
+-- Auth invite itself is external: a failed transaction leaves no role/member
+-- access and the server reports that incomplete state rather than success.
+CREATE FUNCTION public.kb_binding_invite_grant_v1(
+  p_actor uuid, p_company uuid, p_invited_user uuid, p_role public.app_role
+) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $fn$
+DECLARE v_existing_role public.app_role;
+BEGIN
+  IF p_actor IS NULL OR p_company IS NULL OR p_invited_user IS NULL
+     OR p_actor = p_invited_user
+     OR p_role IS NULL OR p_role NOT IN ('admin'::public.app_role,
+        'supervisor'::public.app_role,'agent'::public.app_role,'qa'::public.app_role) THEN
+    RAISE EXCEPTION 'KB_INVITE_INVALID_IDENTITY_OR_ROLE';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.company_membership cm
+    JOIN public.company co ON co.id=cm.company_id AND co.is_active
+    JOIN public.user_roles ur ON ur.user_id=cm.user_id AND ur.role='admin'::public.app_role
+    WHERE cm.user_id=p_actor AND cm.company_id=p_company
+      AND cm.is_active AND cm.role='admin'::public.app_role
+  ) OR NOT EXISTS (
+    SELECT 1 FROM public.channel_config ch
+    WHERE ch.company_id=p_company AND ch.is_active AND ch.channel_type='web_widget'
+  ) THEN RAISE EXCEPTION 'KB_INVITE_FORBIDDEN_OR_NO_ACTIVE_CHANNEL'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM auth.users au WHERE au.id=p_invited_user)
+     OR EXISTS (SELECT 1 FROM public.company_membership cm
+        WHERE cm.user_id=p_invited_user
+          AND (cm.company_id<>p_company OR cm.role<>p_role)) THEN
+    RAISE EXCEPTION 'KB_INVITE_IDENTITY_OR_MEMBERSHIP_CONFLICT';
+  END IF;
+  SELECT ur.role INTO v_existing_role
+  FROM public.user_roles ur WHERE ur.user_id=p_invited_user FOR UPDATE;
+  IF v_existing_role IS NOT NULL AND v_existing_role<>p_role THEN
+    RAISE EXCEPTION 'KB_INVITE_ROLE_CONFLICT';
+  END IF;
+  IF v_existing_role IS NULL THEN
+    INSERT INTO public.user_roles(user_id,role) VALUES(p_invited_user,p_role)
+    ON CONFLICT (user_id) DO NOTHING;
+  END IF;
+  SELECT ur.role INTO v_existing_role
+  FROM public.user_roles ur WHERE ur.user_id=p_invited_user FOR UPDATE;
+  IF v_existing_role IS DISTINCT FROM p_role THEN
+    RAISE EXCEPTION 'KB_INVITE_ROLE_CONFLICT';
+  END IF;
+  INSERT INTO public.company_membership(company_id,user_id,role,is_active)
+    VALUES(p_company,p_invited_user,p_role,true)
+    ON CONFLICT (company_id,user_id,role) DO UPDATE SET is_active=true;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.company_membership cm
+    WHERE cm.company_id=p_company AND cm.user_id=p_invited_user
+      AND cm.role=p_role AND cm.is_active
+  ) THEN RAISE EXCEPTION 'KB_INVITE_GRANT_NOT_VERIFIED'; END IF;
+  RETURN jsonb_build_object('company_id',p_company,'user_id',p_invited_user,
+    'role',p_role,'is_active',true);
+END $fn$;
+REVOKE ALL ON FUNCTION public.kb_binding_invite_grant_v1(uuid,uuid,uuid,public.app_role)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.kb_binding_invite_grant_v1(uuid,uuid,uuid,public.app_role)
+  TO service_role;
 COMMIT;

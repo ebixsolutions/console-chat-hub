@@ -1,5 +1,9 @@
 // SAME AI-ABC-C3 / original Console. Server-authorized development/UAT binding only.
 // No production-visible admin page or new backend/Edge Function.
+// Scoped deployment authorization must cover C3_KB_BINDING_DEV_ENABLED,
+// VITE_C3_KB_BINDING_DEV_ENABLED, C3_KB_BINDING_INVITES_ENABLED, preview
+// host visibility, and a separate explicit Supabase Auth/role grant scope.
+// All default OFF; this Source change does not authorize enabling them.
 import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
@@ -154,17 +158,28 @@ export const inviteKBDevTesterFn = createServerFn({ method: "POST" })
     if (!owned.ok || !owned.data.some((co) => co.id === data.company_id && co.channels_ready)) {
       return { ok: false, error: "company_not_owned_or_channel_inactive" };
     }
-    // Invite is not a user grant. A pending inactive membership is created;
-    // separate exact authorization/verified activation is needed before role access.
+    // Two external stages: Supabase Auth invitation followed by ONE transaction
+    // granting the canonical role + active same-Company membership. Only this
+    // server-issued Auth UID enters the RPC; clients cannot supply a target UID.
+    // An invite alone is never reported as a usable account.
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: invited, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(data.email.trim().toLowerCase());
-    if (error || !invited.user?.id) return { ok: false, error: "invitation_failed_or_existing_account" };
-    const { error: pendingError } = await (supabaseAdmin as any).from("company_membership").insert({
-      company_id: data.company_id, user_id: invited.user.id, role: data.role, is_active: false,
-    });
-    if (pendingError) {
-      // A delivered invitation is not a granted role; no automatic cross-company account activation.
-      return { ok: false, error: "invited_but_membership_pending_manual_reconciliation" };
+    if (error || !invited.user?.id ||
+        invited.user.email?.toLowerCase() !== data.email.trim().toLowerCase()) {
+      return { ok: false, error: "invitation_failed_or_existing_account" };
+    }
+    const { data: granted, error: grantError } = await (supabaseAdmin as any)
+      .rpc("kb_binding_invite_grant_v1", {
+        p_actor: String(context.userId), p_company: data.company_id,
+        p_invited_user: invited.user.id, p_role: data.role,
+      });
+    if (grantError || granted?.user_id !== invited.user.id ||
+        granted?.company_id !== data.company_id ||
+        granted?.role !== data.role || granted?.is_active !== true) {
+      const detail = String(grantError?.message ?? "");
+      return { ok: false, error: detail.includes("KB_INVITE_ROLE_CONFLICT")
+        ? "invited_but_role_conflict_no_access"
+        : "invited_but_grant_not_verified_no_access" };
     }
     return { ok: true, data: { invited: true } };
   });
