@@ -344,10 +344,17 @@ function KBDevBindingPage() {
         {phase === "ready" && current && !current.writer_ready && <p role="alert"
           style={{ color: "#b45309", fontSize: 13 }}>
           Company/KB metadata is verified through your real Supabase Auth and same-Company RLS.
-          The protected server writer is unavailable. You may prepare the numeric KB ID and masked
-          key here, but Save stays disabled until the original server-only credential is available;
-          no binding is claimed or stored.
+          The protected server writer is unavailable.
+          {current.writer_status === "server_credential_unavailable"
+            ? " The original private Preview server cannot access an authorized Supabase Admin key. Verify its Worker binding, or configure C3_KB_BINDING_ADMIN_KEY as a server-only secret for the original Supabase project (never VITE_)."
+            : " The available server Admin key did not pass the original Supabase project's authorized Admin readback; verify its project binding."}
+          {" "}You may prepare the numeric KB ID and masked key here, but Save stays disabled
+          until a real authorized writer is verified; no binding is claimed or stored.
         </p>}
+        {phase === "ready" && current && !current.writer_ready && <button
+          type="button" disabled={Boolean(action)} onClick={() => void load()}>
+          Recheck protected server writer
+        </button>}
         <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
           <label htmlFor="kb-tenant-input">2. Singapore KB company_id (numeric, e.g. 34 or 35)</label>
           <input id="kb-tenant-input" style={fieldStyle} value={tenant} disabled={!current || phase !== "ready" || Boolean(action)}

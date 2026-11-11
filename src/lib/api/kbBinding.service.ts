@@ -20,6 +20,7 @@ export type KBDevBinding = {
   revision: number;
   has_key: boolean;
   writer_ready: boolean;
+  writer_status: "ready" | "server_credential_unavailable" | "credential_not_authorized";
   channels_ready: boolean;
   updated_at: string | null;
   members: Array<{ user_id: string; role: string; email: string | null; is_active: boolean }>;
@@ -52,11 +53,48 @@ function devAllowed(): boolean {
  * alias; neither name is ever placed in a VITE_ variable or returned to UI.
  * A missing/invalid protected server credential NEVER falls back to anon.
  */
+/**
+ * Lovable TanStack Start can run in a Cloudflare Worker where secrets are
+ * request-scoped Worker bindings rather than process.env variables. Never
+ * inspect/serialize the key, and never import the Worker runtime in browser.
+ * Node/Nitro gets process.env; the optional Cloudflare branch is server-only.
+ *
+ * C3_KB_BINDING_ADMIN_KEY is a separately configured server-only project key
+ * alias for external-authoritative Supabase when Lovable's reserved SUPABASE_
+ * binding belongs to a different backend. It is NEVER a VITE_ setting.
+ */
+async function bindingServerCredential(): Promise<string> {
+  if (typeof window !== "undefined") throw new Error("kb_admin_server_only");
+  const value = process.env.C3_KB_BINDING_ADMIN_KEY ||
+    process.env.SUPABASE_SECRET_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (typeof value === "string" && value.length > 16) return value;
+
+  // This runtime-specific dynamic import is intentionally optional: local
+  // Node/Nitro environments do not have cloudflare:workers. In Workers, the
+  // platform-provided env is the canonical source of encrypted bindings.
+  try {
+    // @ts-ignore -- runtime-only built-in module, absent from Node typings
+    const worker = await import(/* @vite-ignore */ "cloudflare:workers");
+    const bindings: Record<string, unknown> = worker.env ?? {};
+    for (const name of [
+      "C3_KB_BINDING_ADMIN_KEY", "SUPABASE_SECRET_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+    ]) {
+      const candidate = bindings[name];
+      if (typeof candidate === "string" && candidate.length > 16) {
+        return candidate;
+      }
+    }
+  } catch {
+    // Do not reveal any platform exception, secret name availability or value.
+  }
+  throw new Error("kb_admin_server_credential_unavailable");
+}
+
 async function kbBindingAdminClient(): Promise<any> {
   if (typeof window !== "undefined") throw new Error("kb_admin_server_only");
-  const secret = process.env.SUPABASE_SECRET_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!secret) throw new Error("kb_admin_server_credential_unavailable");
+  const secret = await bindingServerCredential();
   const { createClient } = await import("@supabase/supabase-js");
   const { resolveAuthoritativeSupabaseBinding, assertAuthoritativeSupabaseRuntime } =
     await import("@/integrations/supabase/runtime-authority.mjs");
@@ -114,23 +152,34 @@ export const listKBDevBindingsFn = createServerFn({ method: "GET" })
     const userIds = [...new Set<string>((members ?? []).map((m: any) => String(m.user_id)))].slice(0, 100);
     const emails = new Map<string, string | null>();
     let writerReady = false;
-    // An OPTIONAL server-side capability probe. Its failure cannot prevent
-    // safe nonsecret RLS reads and is never mistaken for a successful writer.
+    let writerStatus: KBDevBinding["writer_status"] = "server_credential_unavailable";
+    // An OPTIONAL server-side capability probe. A key is considered usable
+    // only when the privileged Supabase Auth Admin API verifies the CURRENT
+    // authenticated actor and the existing binding table can be read.
+    // A failed probe must never block legitimate, RLS-scoped metadata reads.
     try {
       const admin = await kbBindingAdminClient();
-      const { error: writerError } = await admin.from("company_kb_tenant_binding")
-        .select("company_id").in("company_id", ids).limit(1);
-      if (!writerError) {
-        writerReady = true;
-        await Promise.all(userIds.map(async (id) => {
-          try {
-            const { data: userResult, error: lookupError } =
-              await admin.auth.admin.getUserById(id);
-            emails.set(id, lookupError ? null : userResult.user?.email ?? null);
-          } catch { emails.set(id, null); }
-        }));
+      writerStatus = "credential_not_authorized";
+      const { data: owner, error: ownerError } =
+        await admin.auth.admin.getUserById(String(context.userId));
+      if (!ownerError && owner.user?.id === String(context.userId)) {
+        const { error: writerError } = await admin.from("company_kb_tenant_binding")
+          .select("company_id").in("company_id", ids).limit(1);
+        if (!writerError) {
+          writerReady = true;
+          writerStatus = "ready";
+          await Promise.all(userIds.map(async (id) => {
+            try {
+              const { data: userResult, error: lookupError } =
+                await admin.auth.admin.getUserById(id);
+              emails.set(id, lookupError ? null : userResult.user?.email ?? null);
+            } catch { emails.set(id, null); }
+          }));
+        }
       }
-    } catch { /* The credential name/value/exception is never returned. */ }
+    } catch {
+      // Intentionally no exception text, credentials or platform data returned.
+    }
     return { ok: true, data: owned.data.map((co) => {
       const b = (bindings ?? []).find((x: any) => x.company_id === co.id);
       return {
@@ -140,6 +189,7 @@ export const listKBDevBindingsFn = createServerFn({ method: "GET" })
         // Active rows are guaranteed to have a key by the existing SQL CHECK.
         // An inactive row might also have one; do NOT claim its key is absent.
         has_key: b?.is_active === true, writer_ready: writerReady,
+        writer_status: writerStatus,
         updated_at: b?.updated_at ?? null,
         channels_ready: co.channels_ready,
         members: (members ?? []).filter((m: any) => m.company_id === co.id)
@@ -262,6 +312,7 @@ export async function listAuthorizedCompanyScopesReadOnly(): Promise<Result<KBDe
     company_id: String(company.id), company_name: String(company.display_name ?? company.id),
     kb_tenant_id: null, kb_company_id: null, is_active: false, revision: 0,
     has_key: false, writer_ready: false,
+    writer_status: "server_credential_unavailable",
     channels_ready: ready.has(String(company.id)), updated_at: null,
     members: [{ user_id: actorId, role: "admin",
       email: auth.user.email ?? null, is_active: true }],

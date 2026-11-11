@@ -209,7 +209,7 @@ test("binding list uses canonical authenticated RLS instead of requiring privile
   assert.doesNotMatch(list, /vault\.decrypted_secrets/);
   assert.match(list, /writerReady = false/);
   assert.match(list, /if \(!writerError\) \{/);
-  assert.match(list, /catch \{ \/\* The credential name\/value\/exception is never returned/);
+  assert.match(list, /catch \{\s*\/\/ Intentionally no exception text, credentials or platform data returned/);
   assert.match(list, /has_key: b\?\.is_active === true, writer_ready: writerReady/);
   assert.match(source, /writer_ready: false/);
 });
@@ -244,4 +244,48 @@ test("numeric KB input can render after authenticated RLS read, Save needs real 
   assert.match(route, /actorId === "3bdf936e-b543-41d8-9fff-fa020a85f3f6"/);
   assert.match(route, /Inactive; key presence is not exposed/);
   assert.doesNotMatch(route, /localStorage\.setItem\(/);
+});
+
+test("Lovable Worker Secrets are read server-side and cannot bypass original tenant guard", () => {
+  const src = read("src/lib/api/kbBinding.service.ts");
+  assert.match(src, /async function bindingServerCredential\(\): Promise<string>/);
+  assert.match(src, /process\.env\.C3_KB_BINDING_ADMIN_KEY \|\|/);
+  assert.match(src, /process\.env\.SUPABASE_SECRET_KEY \|\|/);
+  assert.match(src, /process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(src, /await import\(\/\* @vite-ignore \*\/ "cloudflare:workers"\)/);
+  assert.match(src, /if \(typeof window !== "undefined"\) throw new Error\("kb_admin_server_only"\)/);
+  assert.match(src, /bindings\[name\]/);
+  assert.doesNotMatch(src, /import\.meta\.env\.VITE_.*(?:SECRET|SERVICE_ROLE|ADMIN_KEY)/);
+  assert.doesNotMatch(src, /console\.(?:log|debug)\(.*(?:secret|candidate|binding)/);
+  assert.match(src, /assertAuthoritativeSupabaseRuntime\(authority\.url, authority\.projectId\)/);
+  assert.match(src, /\.middleware\(\[requireSupabaseAuth\]\)\.inputValidator\(writeInput\)/);
+  assert.match(src, /p_actor: String\(context\.userId\)/);
+  assert.match(src, /p_expected_revision: data\.expected_revision/);
+  assert.match(src, /p_new_key: data\.api_key \?\? null/);
+});
+
+test("privileged writer status is proven by original Supabase Auth Admin API", () => {
+  const src = read("src/lib/api/kbBinding.service.ts");
+  const list = src.slice(src.indexOf("export const listKBDevBindingsFn"),
+    src.indexOf("const writeInput ="));
+  assert.match(list, /let writerStatus: KBDevBinding\["writer_status"\] = "server_credential_unavailable"/);
+  assert.match(list, /await admin\.auth\.admin\.getUserById\(String\(context\.userId\)\)/);
+  assert.match(list, /owner\.user\?\.id === String\(context\.userId\)/);
+  assert.match(list, /writerStatus = "credential_not_authorized"/);
+  assert.match(list, /writerStatus = "ready"/);
+  assert.match(list, /writer_ready: writerReady/);
+  assert.match(list, /writer_status: writerStatus/);
+  assert.match(src, /writer_status: "server_credential_unavailable"/);
+  assert.doesNotMatch(list, /vault\.decrypted_secrets|api_key_secret_ref/);
+});
+
+test("Private Preview clearly reports safe writer cause and rechecks without fake Save", () => {
+  const src = read("src/routes/_authenticated/console.settings.kb-binding.tsx");
+  assert.match(src, /current\.writer_status === "server_credential_unavailable"/);
+  assert.match(src, /configure C3_KB_BINDING_ADMIN_KEY as a server-only secret/);
+  assert.match(src, /Recheck protected server writer/);
+  assert.match(src, /!current\?\.writer_ready/);
+  assert.match(src, /Save Company → KB binding \(CAS\)/);
+  assert.match(src, /setKey\(""/);
+  assert.doesNotMatch(src, /localStorage\.setItem\(/);
 });
