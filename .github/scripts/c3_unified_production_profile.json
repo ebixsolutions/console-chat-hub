@@ -1676,7 +1676,7 @@
     "supabase/functions/widget-poll-messages/index.ts": "bd43fed62a908c1518a2dd2325fde87b795368113310960ecfc4e072a2740d14",
     "supabase/functions/_shared/uat-execution-contract.ts": "d3148d3f0a73f65787a436465d6f24e06dd9584ef9b40dcaf0d62633d8d3ae87",
     "src/routes/_authenticated/console.widget-preview.tsx": "8298ec1182f3ff6503b443d1d184be17f7cfe5f424c0cad83a5492341b47d67e",
-    "tests/c3-widget-live-auth/original-preview.test.mjs": "d62cd9afb01c5288a907983b814958dbd2e98d55d3cfb4497af7f68aecda47ac",
+    "tests/c3-widget-live-auth/original-preview.test.mjs": "761381ca2106485264b1cd68da261b2472a3eace7c5192e63f91d8b2d49c6527",
     "src/lib/widget-live-recovery.ts": "eee044148c962b28caf7e7f910f32bcc351b508614bf755407a2fba22b423c98",
     "tests/console-navigation/widget-recovery.test.mjs": "1f34e53580aa314853f4eda935804a50eb815389d72285844a65e5afce7257ea"
   }

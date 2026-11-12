@@ -1622,3 +1622,37 @@ test("managed Preview: missing/revoked binding and tenant spoof never authorize"
  assert.equal(f.provider,0);
  assert.equal(f.rows.conversations.length,0);
 });
+
+test("managed Preview first Visitor on original served send action: creates signed own Ticket exactly once",async()=>{
+  const account={email:"managed-admin@example.test",
+    company:"bdb07806-be44-499c-bfcb-b08afac2d213",
+    channel:"99b7e832-0da8-4a44-8738-2e5fe9cb9685"};
+  setup(account);
+  f.rows.company_kb_tenant_binding=[{company_id:account.company,kb_tenant_id:"50",
+    is_active:true,revision:2,api_key_secret_ref:crypto.randomUUID()}];
+  const id=crypto.randomUUID(),query="Please compare options for my business.";
+  const first=await request({action:"send",client_message_id:id,query});
+  assert.equal(first.status,200,JSON.stringify(first));
+  assert.equal(f.rows.visitor_session.length,1);
+  assert.equal(f.rows.conversations.length,1);
+  const c=f.rows.conversations[0];
+  assert.equal(c.company_id,account.company);
+  assert.equal(c.channel_config_id,account.channel);
+  assert.equal(c.metadata_source.execution_class,MANAGED_PREVIEW_CLASS);
+  assert.equal(c.metadata_source.exclude_training,true);
+  assert.equal(await verifyManagedPreview(f.db,c),true);
+  assert.equal(first.data.delivery_receipt.persisted,true);
+  assert.equal(first.data.delivery_receipt.client_message_id,id);
+  assert.equal(first.data.delivery_receipt.conversation_id,c.id);
+  assert.equal(f.rows.messages.filter(m=>m.role==="visitor").length,1);
+  assert.equal(f.provider,1);
+  const repeat=await request({action:"send",test_conversation_id:c.id,client_message_id:id,query});
+  assert.equal(repeat.status,200,JSON.stringify(repeat));
+  assert.equal(repeat.data.idempotent,true);
+  assert.equal(repeat.data.delivery_receipt.visitor_message_id,first.data.delivery_receipt.visitor_message_id);
+  assert.equal(f.rows.visitor_session.length,1);
+  assert.equal(f.rows.conversations.length,1);
+  assert.equal(f.rows.messages.filter(m=>m.role==="visitor").length,1);
+  assert.equal(f.provider,1);
+  assert.equal(f.rpc.length,0,"never borrowed the synthetic C3 account");
+});
