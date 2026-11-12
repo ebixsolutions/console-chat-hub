@@ -35,10 +35,18 @@ function KBDevBindingPage() {
   const [action, setAction] = useState<"saving" | "inviting" | "reloading" | "linking" | "bootstrapping" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [saveNeedsReload, setSaveNeedsReload] = useState(false);
+  const [saveReceipt, setSaveReceipt] = useState<{
+    company_id: string; kb_tenant_id: string; revision: number; is_active: boolean;
+  } | null>(null);
   const [phase, setPhase] = useState<"ready" | "unavailable" | "checking" | "read_only">("checking");
 
   const authorizedUI = role === "admin" && devPageHost();
   const current = useMemo(() => rows.find((r) => r.company_id === selected) ?? null, [rows, selected]);
+  const confirmedSave = phase === "ready" && !loading && saveReceipt &&
+    current?.company_id === saveReceipt.company_id &&
+    current.kb_tenant_id === saveReceipt.kb_tenant_id &&
+    current.revision === saveReceipt.revision && current.is_active === saveReceipt.is_active;
   // Email is only a lookup key among server-returned, same-Admin Company members.
   // Access authority remains auth.uid(), active membership, role, and Company.
   const normalizedEmail = email.trim().toLowerCase();
@@ -54,25 +62,32 @@ function KBDevBindingPage() {
     : null;
   useEffect(() => {
     if (matchingCompanies.length === 1 && selected !== matchingCompanies[0].company_id) {
+      setSaveReceipt(null);
+      setSuccess(null);
       setSelected(matchingCompanies[0].company_id);
     }
   }, [matchingCompanies, selected]);
 
-  const load = async (preserveSuccess = false) => {
+  const load = async (preserveSuccess = false): Promise<KBDevBinding[] | null> => {
     setError(null);
-    if (!preserveSuccess) setSuccess(null);
+    if (!preserveSuccess) {
+      setSuccess(null);
+      setSaveReceipt(null);
+    }
     setLoading(true);
     try {
       const result = await kbDevBindingService.list();
       if (!result.ok) {
         setPhase("unavailable");
         setError(result.error);
-        return;
+        return null;
       }
       setRows(result.data);
       setPhase("ready");
+      if (!preserveSuccess) setSaveNeedsReload(false);
       setSelected((old) => result.data.some((row) => row.company_id === old)
         ? old : result.data.length === 1 ? result.data[0].company_id : "");
+      return result.data;
     } catch {
       // A server-function/transport exception is NOT proof that Company data
       // are absent. Recover only genuinely authorized same-actor RLS scopes.
@@ -95,6 +110,7 @@ function KBDevBindingPage() {
         setPhase("unavailable");
         setError("Unable to retrieve authorized Company scope (authenticated read-only recovery failed).");
       }
+      return null;
     } finally {
       setLoading(false);
     }
@@ -115,17 +131,16 @@ function KBDevBindingPage() {
       setSavedRev(current.revision);
     }
     setKey("");
-    setError(null);
-    setSuccess(null);
   }, [current?.company_id, current?.revision, current?.kb_tenant_id, current?.kb_company_id, current?.is_active]);
 
   const save = async () => {
-    if (!current || action || !verifiedLogin || !current.binding_write_eligible) {
+    if (!current || action || saveNeedsReload || !verifiedLogin || !current.binding_write_eligible) {
       setError("Select a verified login and Company eligible for the authenticated KB save route.");
       return;
     }
     setError(null);
     setSuccess(null);
+    setSaveReceipt(null);
     setAction("saving");
     try {
       const result = await kbDevBindingService.save({
@@ -136,6 +151,7 @@ function KBDevBindingPage() {
         expected_revision: savedRev, ...(key ? { api_key: key } : {}),
       });
       if (!result.ok) {
+        setSaveNeedsReload(true);
         setError(result.error === "binding_revision_conflict_reload"
           ? "This binding changed in another session. Reload before trying again."
           : result.error);
@@ -144,9 +160,22 @@ function KBDevBindingPage() {
       // Clear the write-only key immediately, regardless of successful rotation.
       setKey("");
       setSavedRev(result.data.revision);
-      setSuccess("Saved to the authorized Company binding. Sign out/in to test the new automatic scope.");
-      await load(true);
+      const refreshed = await load(true);
+      const stored = refreshed?.find((row) => row.company_id === result.data.company_id);
+      if (!stored || stored.company_id !== current.company_id ||
+          stored.kb_tenant_id !== result.data.kb_tenant_id ||
+          stored.revision !== result.data.revision ||
+          stored.is_active !== result.data.is_active ||
+          (stored.is_active && !stored.has_key)) {
+        setSaveNeedsReload(true);
+        setError("Binding was committed, but the refreshed Company/revision could not be confirmed. Reload before any further save.");
+        return;
+      }
+      // Retain the receipt across the revision-driven form refresh. It is
+      // displayed only while the current, authenticated readback still matches.
+      setSaveReceipt(result.data);
     } catch {
+      setSaveNeedsReload(true);
       setError("Binding update failed. No success is claimed.");
     } finally {
       setKey("");
@@ -249,6 +278,10 @@ function KBDevBindingPage() {
       </div>}
       {error && <div role="alert" style={{ color: "#b91c1c" }}>{error}</div>}
       {success && <div role="status" style={{ color: "#166534" }}>{success}</div>}
+      {confirmedSave && <div id="kb-binding-save-confirmation" role="status" style={{ color: "#166534" }}>
+        Saved and read back the authorized Company binding · KB {saveReceipt.kb_tenant_id} · Revision {saveReceipt.revision}.
+        Sign out/in to test the new automatic scope.
+      </div>}
       <section style={boxStyle}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
           <h2 style={{ fontSize: 18, fontWeight: 700 }}>1. AI Chatbot login account and authorized Company</h2>
@@ -273,7 +306,7 @@ function KBDevBindingPage() {
           Verified AI Chatbot Company UUID (from active same-Company membership)
         </label>
         <select id="kb-company-picker" style={fieldStyle} value={selected} disabled={loading || Boolean(action)}
-          onChange={(e) => setSelected(e.target.value)}>
+          onChange={(e) => { setSaveReceipt(null); setSuccess(null); setError(null); setSelected(e.target.value); }}>
           <option value="">Select your authorized Company</option>
           {rows.map((r) => <option value={r.company_id} key={r.company_id}>{r.company_name} — {r.company_id}</option>)}
         </select>
@@ -369,7 +402,7 @@ function KBDevBindingPage() {
             <input type="checkbox" checked={active} disabled={!current || phase !== "ready"} onChange={(e) => setActive(e.target.checked)} />
             Activate (requires server-authorized Company/Channel and protected key)
           </label>
-          <button id="kb-binding-save" type="button" aria-describedby="kb-binding-save-help" style={{ padding: "12px 18px", borderRadius: 8, border: "1px solid #475569", fontWeight: 700, background: current?.binding_write_eligible ? "#1d4ed8" : "#e2e8f0", color: current?.binding_write_eligible ? "#fff" : "#334155", cursor: current?.binding_write_eligible ? "pointer" : "not-allowed" }} disabled={!current || phase !== "ready" || !current?.binding_write_eligible || Boolean(action) || !verifiedLogin || !current?.channels_ready || !/^[1-9]\d{0,15}$/.test(tenant) || (active && !current?.has_key && key.length < 16)}
+          <button id="kb-binding-save" type="button" aria-describedby="kb-binding-save-help" style={{ padding: "12px 18px", borderRadius: 8, border: "1px solid #475569", fontWeight: 700, background: current?.binding_write_eligible ? "#1d4ed8" : "#e2e8f0", color: current?.binding_write_eligible ? "#fff" : "#334155", cursor: current?.binding_write_eligible ? "pointer" : "not-allowed" }} disabled={!current || phase !== "ready" || !current?.binding_write_eligible || Boolean(action) || saveNeedsReload || !verifiedLogin || !current?.channels_ready || !/^[1-9]\d{0,15}$/.test(tenant) || (active && !current?.has_key && key.length < 16)}
             onClick={() => void save()}>
             {action === "saving" ? "Saving…" : "Save Company → KB binding (CAS)"}
           </button>

@@ -1818,6 +1818,50 @@ export type Database = {
         }
         Relationships: []
       }
+      company_kb_tenant_binding: {
+        Row: {
+          api_key_secret_ref: string | null
+          audit_history: Json
+          company_id: string
+          is_active: boolean
+          kb_company_id: string | null
+          kb_tenant_id: string
+          revision: number
+          updated_at: string
+          updated_by: string
+        }
+        Insert: {
+          api_key_secret_ref?: string | null
+          audit_history?: Json
+          company_id: string
+          is_active?: boolean
+          kb_company_id?: string | null
+          kb_tenant_id: string
+          revision?: number
+          updated_at?: string
+          updated_by: string
+        }
+        Update: {
+          api_key_secret_ref?: string | null
+          audit_history?: Json
+          company_id?: string
+          is_active?: boolean
+          kb_company_id?: string | null
+          kb_tenant_id?: string
+          revision?: number
+          updated_at?: string
+          updated_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "company_kb_tenant_binding_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: true
+            referencedRelation: "company"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       company_membership: {
         Row: {
           company_id: string
@@ -3591,6 +3635,18 @@ export type Database = {
         Returns: boolean
       }
       is_staff: { Args: { _user_id: string }; Returns: boolean }
+      kb_binding_write_self_v1: {
+        Args: {
+          p_active: boolean
+          p_company: string
+          p_expected_revision: number
+          p_kb_company: string | null
+          p_new_key?: string | null
+          p_probe?: boolean
+          p_tenant: string
+        }
+        Returns: Json
+      }
       kb_fallback_handoff_tx: {
         Args: {
           p_branch_tag: string
