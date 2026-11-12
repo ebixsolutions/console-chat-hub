@@ -1574,7 +1574,14 @@ test("managed Preview: authenticated own Company/Channel binding, signed send an
  assert.equal(replay.status,200,JSON.stringify(replay));
  assert.equal(replay.data.idempotent,true);
  assert.equal(f.provider,1);
- assert.equal((await request({action:"send",client_message_id:crypto.randomUUID(),query:content})).status,403);
+ // Original served Console sends action="send" for newly managed Companies.
+ // Reconcile the exact same Visitor idempotently under the signed authority.
+ const legacy=await request({action:"send",test_conversation_id:c.id,client_message_id:messageId,query:content});
+ assert.equal(legacy.status,200,JSON.stringify(legacy));
+ assert.equal(legacy.data.idempotent,true);
+ assert.equal(legacy.data.delivery_receipt.client_message_id,messageId);
+ assert.equal(f.provider,1);
+ assert.equal(f.rows.conversations.length,1);
  const base=structuredClone(c);
  const restore=()=>{
   Object.assign(c,structuredClone(base));

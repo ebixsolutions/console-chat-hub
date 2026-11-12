@@ -98,6 +98,14 @@ test('definitive prewrite business denial releases only this unsent draft; subse
   reset();fixture.send=async()=>({data:null,error:{context:new Response(JSON.stringify({success:false,error:'live_ai_execution_unavailable',retryable:false}),{status:503})}});const r=await mount();await enter(r,'Check current energy label');await click(r,'Send');assert.match(content(r),/not admitted and was not sent/);assert(!store.has(storageKey+':pending'));assert(!content(r).includes('Delivery could not be confirmed'));
   fixture.send=null;await enter(r,'Please connect me to human support');await click(r,'Send');assert.equal(sends().length,2);await close(r);
 });
+test('managed Preview prewrite 403 clears the unsent draft and preserves the no-replay guard',async()=>{
+  reset();fixture.send=async()=>({data:null,error:{context:new Response(JSON.stringify({success:false,error:'managed_preview_action_denied',retryable:false}),{status:403})}});
+  const r=await mount();await enter(r,'hi');await click(r,'Send');
+  assert.match(content(r),/not admitted and was not sent/);
+  assert(!store.has(storageKey+':pending'));
+  assert(!content(r).includes('Delivery could not be confirmed'));
+  assert.equal(sends().length,1);await close(r);
+});
 test('unknown send cannot replay, clear pending by New, or settle against unrelated history; source-bound readback recovers without resend',async()=>{
   reset();fixture.send=async()=>{throw new Error('unknown transport outcome');};const r=await mount();await enter(r,'Business request');await click(r,'Send');const pending=JSON.parse(store.get(storageKey+':pending'));assert.equal(sends().length,1);assert.equal(button(r,'Send').props.disabled,true);
   await click(r,'New Conversation');assert(store.has(storageKey+':pending'));assert.equal(sends().length,1);

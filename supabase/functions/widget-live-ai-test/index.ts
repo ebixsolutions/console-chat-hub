@@ -503,11 +503,14 @@ return async (req: Request) => {
     // non-UAT default or browser field to authorize synthetic paid traffic.
     const originalCandidate = originalPreviewCandidate(authData.user,resolved.companyId,resolved.channelId) && (membership as any).role === "admin";
     const managedCandidate=Boolean(managedBinding&&managedChannelId===resolved.channelId);
-    if(managedCandidate&&(action==="send"||action==="open_authorized"))return json(req,{success:false,error:"managed_preview_action_denied",retryable:false},403);
+    // Backward-compatible original served Console action, limited to this real
+    // Admin's canonical Company, own active Channel/Origin and live KB binding.
+    // This does NOT broaden Frankie, C3 synthetic or unauthenticated authority.
+    if(managedCandidate&&action==="open_authorized")return json(req,{success:false,error:"managed_preview_action_denied",retryable:false},403);
     const originalRoute = action !== "send" && action !== "open_authorized";
     const original = originalRoute && originalPreviewActor(authData.user,resolved.companyId,resolved.channelId,deps.env) &&
       (membership as any).role === "admin";
-    const managed=managedCandidate&&originalRoute;
+    const managed=managedCandidate&&(originalRoute||action==="send");
     const remoteConfiguration=original ? originalPreviewRagConfiguration(deps.env,{actor:authData.user.id,company:resolved.companyId,channel:resolved.channelId}) : null;
     const execution = managed ? {ready:true as const,remote_ready:true,allowed_conversations:[] as string[]} : original ? {ready:true as const,remote_ready:remoteConfiguration!.ready,allowed_conversations:[] as string[]} :
       originalCandidate && originalRoute ? {ready:false as const,failure:executionFailure("ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED")} :
