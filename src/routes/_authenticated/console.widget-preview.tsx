@@ -1118,7 +1118,7 @@ function PreviewWidget({
       setRuntimeReady(ready && verifiedWidgetRuntime(data,user?.id));
       setRuntimeReason(ready ? widgetRuntimeBlockReason(data,user?.id) : null);
       setExecutionReady(ready && data?.execution_ready === true);
-      setOriginalPreviewMode(ready && verifiedWidgetRuntime(data,user?.id) && data?.execution_class === "authenticated_admin_preview");
+      setOriginalPreviewMode(ready && verifiedWidgetRuntime(data,user?.id) && ["authenticated_admin_preview","authenticated_managed_preview"].includes(String(data?.execution_class)));
       setAuthorizedPreviewAvailable(ready && verifiedWidgetRuntime(data,user?.id) && data?.execution_ready === true && data?.authorized_preview_available === true);
       setRemoteReady(ready && data?.remote_ready === true);
     } catch {

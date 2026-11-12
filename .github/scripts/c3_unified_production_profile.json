@@ -1669,6 +1669,13 @@
     ".env.development": "7466eb047d2f89266829902f5dd47bb90e58d39200d4329aa651d00844bee56a",
     "src/integrations/supabase/types.ts": "5f1985eb36c47cba9050d8db2c9a6bc798028e3a131cf1d752b5c6bd7684f238",
     "tests/console-navigation/kb-binding-save-runtime.test.mjs": "932d3a46e867b1dac8afb4be46ffa38b90ce84429e57f85560ca058d1685817e",
-    "tests/sql/kb-binding-self-postgres.py": "a2600beda22f79e46467465a72bde3d959745777cf078bd3a826fe7d9d6ef149"
+    "tests/sql/kb-binding-self-postgres.py": "a2600beda22f79e46467465a72bde3d959745777cf078bd3a826fe7d9d6ef149",
+    "supabase/functions/_shared/original-widget-preview.ts": "7082f3b917ee5d651c602a589a4cc49bbfee83b7e4e4f8cd17a4bc4f808ec89c",
+    "supabase/functions/widget-live-ai-test/index.ts": "324c038df6a1b31e8a953fbb27a41fe80286bcb8fcb343325e361b1e717aff5c",
+    "supabase/functions/receive-widget-message/index.ts": "7ca072284116d62c2e487138cc5f0589692390c0f891218aeb43fbb4794fdb51",
+    "supabase/functions/widget-poll-messages/index.ts": "bd43fed62a908c1518a2dd2325fde87b795368113310960ecfc4e072a2740d14",
+    "supabase/functions/_shared/uat-execution-contract.ts": "d3148d3f0a73f65787a436465d6f24e06dd9584ef9b40dcaf0d62633d8d3ae87",
+    "src/routes/_authenticated/console.widget-preview.tsx": "8298ec1182f3ff6503b443d1d184be17f7cfe5f424c0cad83a5492341b47d67e",
+    "tests/c3-widget-live-auth/original-preview.test.mjs": "ac372a732da3ce85a9c8b6e957d495488f427c9e700710bbd011e6690dc7a0f6"
   }
 }

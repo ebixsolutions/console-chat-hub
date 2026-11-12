@@ -1,4 +1,4 @@
-import { originalPreviewRequest } from "../_shared/original-widget-preview.ts";
+import { originalPreviewRequest, managedPreviewRequest, MANAGED_PREVIEW_CLASS } from "../_shared/original-widget-preview.ts";
 import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { corsHeaders, json } from "../_shared/cors.ts";
@@ -31,6 +31,8 @@ Deno.serve(async (req) => {
       return json({ success: false, error: "Conversation not found" }, 404);
     if(conv.metadata_source?.execution_class === "authenticated_admin_preview" && !await originalPreviewRequest(req,createClient,supabase,conv,false))
       return json({success:false,error:"original_preview_actor_or_authority_denied"},403);
+    if(conv.metadata_source?.execution_class === MANAGED_PREVIEW_CLASS && !await managedPreviewRequest(req,createClient,supabase,conv))
+      return json({success:false,error:"managed_preview_actor_or_authority_denied"},403);
 
     if (subscribe_events === true) {
       // The anonymous Widget cannot query staff-only Realtime rows. The
@@ -86,6 +88,11 @@ Deno.serve(async (req) => {
                 if ((conv.metadata_source?.execution_class === "authenticated_admin_preview" ||
                   current.metadata_source?.execution_class === "authenticated_admin_preview") &&
                   !await originalPreviewRequest(req, createClient, supabase, current, false)) {
+                  teardown(); return;
+                }
+                if ((conv.metadata_source?.execution_class === MANAGED_PREVIEW_CLASS ||
+                  current.metadata_source?.execution_class === MANAGED_PREVIEW_CLASS) &&
+                  !await managedPreviewRequest(req,createClient,supabase,current)) {
                   teardown(); return;
                 }
                 if (!closed) notify("invalidate");

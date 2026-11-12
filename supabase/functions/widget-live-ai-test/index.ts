@@ -1,9 +1,9 @@
-import { ORIGINAL_PREVIEW_ACCOUNTS, originalPreviewActor, originalPreviewCandidate, originalPreviewMetadata, signOriginalPreview, verifyOriginalPreview } from "../_shared/original-widget-preview.ts";
+import { ORIGINAL_PREVIEW_ACCOUNTS, originalPreviewActor, originalPreviewCandidate, originalPreviewMetadata, signOriginalPreview, verifyOriginalPreview, activeManagedPreviewBinding, managedPreviewMetadata, signManagedPreview, verifyManagedPreview, MANAGED_PREVIEW_CLASS, type ManagedPreviewBinding } from "../_shared/original-widget-preview.ts";
 import { classifyNonFactualConversation } from "../_shared/conversational-routing.ts";
 import { isExplicitHandoffRequest } from "../_shared/handoff-intent.ts";
 import { executionFailure } from "../_shared/execution-failure.ts";
 import { uatExecutionReadiness } from "../_shared/uat-execution-readiness.ts";
-import { FRANKIE_DEMO_COMPANY } from "../_shared/uat-execution-contract.ts";
+import { FRANKIE_DEMO_COMPANY, UAT_COMPANY } from "../_shared/uat-execution-contract.ts";
 import { originalPreviewRagConfiguration } from "../_shared/original-preview-kb-config.ts";
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
@@ -117,7 +117,7 @@ function isTestConversationOwned(metadataSource: unknown, userId: string): boole
     return false;
   }
   const m = metadataSource as Record<string, unknown>;
-  return originalPreviewMetadata(m,userId) || m.source === "c3_uat_widget" &&
+  return originalPreviewMetadata(m,userId) || managedPreviewMetadata(m,userId) || m.source === "c3_uat_widget" &&
     m.synthetic === true &&
     m.owner_user_id === userId &&
     m.exclude_training === true;
@@ -147,6 +147,7 @@ async function loadOwnedTestConversation(
     return { ok: false, status: 404, error: "test_conversation_not_found" };
   }
   if (data.metadata_source?.execution_class === "authenticated_admin_preview" && !await verifyOriginalPreview(admin,data,undefined,false)) return {ok:false,status:403,error:"original_preview_authority_denied"};
+  if (data.metadata_source?.execution_class===MANAGED_PREVIEW_CLASS&&!await verifyManagedPreview(admin,data))return {ok:false,status:403,error:"managed_preview_authority_denied"};
   return { ok: true, conversation: data };
 }
 
@@ -171,8 +172,8 @@ async function loadTestMessages(admin: QueryClient, conversationId: string, arch
   if (archiveScope?.channelId) {
     const rows=data ?? [],parent=rows[0]?.archive;
     if(rows.some((m:any)=>m.archive?.id!==conversationId || m.archive.company_id!==archiveScope.companyId || m.archive.channel_config_id!==archiveScope.channelId ||
-      !originalPreviewMetadata(m.archive.metadata_source,archiveScope.userId) || JSON.stringify(m.archive)!==JSON.stringify(parent))) throw new Error("original_preview_read_scope_changed");
-    if(parent && (!await verifyOriginalPreview(admin,parent,undefined,false) || parent.archive_session?.id!==parent.visitor_session_id ||
+      !(originalPreviewMetadata(m.archive.metadata_source,archiveScope.userId)||managedPreviewMetadata(m.archive.metadata_source,archiveScope.userId)) || JSON.stringify(m.archive)!==JSON.stringify(parent))) throw new Error("original_preview_read_scope_changed");
+    if(parent && (!(parent.metadata_source?.execution_class===MANAGED_PREVIEW_CLASS?await verifyManagedPreview(admin,parent):await verifyOriginalPreview(admin,parent,undefined,false)) || parent.archive_session?.id!==parent.visitor_session_id ||
       parent.archive_session?.channel_config_id!==archiveScope.channelId || parent.archive_session?.visitor_fingerprint!==`widget-live-test:${archiveScope.userId}` ||
       parent.archive_session?.visitor_metadata?.source!=="widget_live_test" || parent.archive_session?.visitor_metadata?.owner_user_id!==archiveScope.userId ||
       parent.archive_session?.visitor_metadata?.test_mode!==true || parent.archive_session?.visitor_metadata?.exclude_training!==true || parent.archive_session?.visitor_metadata?.scope_mode!=="canonical")) throw new Error("original_preview_read_scope_changed");
@@ -246,15 +247,16 @@ async function createTestConversation(
   resolved: { companyId: string; channelId: string; scopeMode: "canonical" },
   clientMessageId: string,
   originalUser?: any,
+  managedUser?: {user:any;binding:ManagedPreviewBinding},
 ): Promise<
   | { ok: true; conversationId: string }
   | { ok: false; status: number; error: string }
 > {
-  const conversationId = await testConversationId(userId,resolved.channelId,clientMessageId,Boolean(originalUser));
+  const conversationId = await testConversationId(userId,resolved.channelId,clientMessageId,Boolean(originalUser||managedUser));
   const existing = await loadOwnedTestConversation(admin,conversationId,userId,resolved);
   if (existing.ok) return {ok:true,conversationId};
   if (existing.status !== 404) return existing;
-  if (!originalUser) {
+  if (!originalUser && !managedUser) {
   const {count,error: countError} = await admin.from("conversations").select("id",{count:"exact",head:true}).eq("metadata_source->>source","c3_uat_widget");
   if (countError || typeof count !== "number") return {ok:false,status:503,error:"fixture_budget_unavailable"};
   if (count >= 200) return {ok:false,status:409,error:"fixture_budget_exhausted"};
@@ -262,7 +264,7 @@ async function createTestConversation(
   const sessionToken = `preview-test.${crypto.randomUUID()}.${crypto.randomUUID().replace(/-/g, "")}`;
   const visitorMetadata = {
     name: "Widget Live Test",
-    source: originalUser ? "widget_live_test" : "c3_uat_widget",
+    source: originalUser || managedUser ? "widget_live_test" : "c3_uat_widget",
     test_mode: true,
     owner_user_id: userId,
     exclude_training: true,
@@ -286,8 +288,8 @@ async function createTestConversation(
   }
 
   const metadataSource = {
-    source: originalUser ? "widget_live_test" : "c3_uat_widget",
-    ...(originalUser ? {widget_live_test:true,test_mode:true,execution_class:"authenticated_admin_preview",original_preview_authority:await signOriginalPreview(originalUser,resolved.companyId,resolved.channelId,conversationId,session.id)} : {synthetic:true}),
+    source: originalUser || managedUser ? "widget_live_test" : "c3_uat_widget",
+    ...(originalUser ? {widget_live_test:true,test_mode:true,execution_class:"authenticated_admin_preview",original_preview_authority:await signOriginalPreview(originalUser,resolved.companyId,resolved.channelId,conversationId,session.id)} : managedUser ? {widget_live_test:true,test_mode:true,execution_class:MANAGED_PREVIEW_CLASS,managed_preview_authority:await signManagedPreview(managedUser.user,resolved.companyId,resolved.channelId,conversationId,session.id,managedUser.binding)} : {synthetic:true}),
     owner_user_id: userId,
     exclude_training: true,
     scope_mode: resolved.scopeMode,
@@ -303,7 +305,7 @@ async function createTestConversation(
       company_id: resolved.companyId,
       status: "open",
       priority: "normal",
-      tags: originalUser ? ["widget_live_test","manual_admin_preview","exclude_training"] : ["c3_uat", "synthetic", "exclude_training"],
+      tags: originalUser || managedUser ? ["widget_live_test","manual_admin_preview","exclude_training"] : ["c3_uat", "synthetic", "exclude_training"],
       metadata_source: metadataSource,
       language: null,
     })
@@ -358,11 +360,11 @@ async function listOwnedTestHistory(admin: QueryClient, userId: string, scope: {
   const ordered = [...new Map<string,any>(candidates.map((c: any) => [c.id,c])).values()]
     .sort((a: any,b: any) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")) || String(a.id).localeCompare(String(b.id)));
   const out = await mapHistory<any,any>(ordered,async c=>{
-    if(c.metadata_source?.execution_class === "authenticated_admin_preview") {
+    if(c.metadata_source?.execution_class === "authenticated_admin_preview" || c.metadata_source?.execution_class===MANAGED_PREVIEW_CLASS) {
       const owned=await loadOwnedTestConversation(admin,c.id,userId,scope);
       if(!owned.ok) return null;
     }
-    const messages = await loadTestMessages(admin, String(c.id), c.read_only ? {userId,companyId:scope.companyId} : c.metadata_source?.execution_class === "authenticated_admin_preview" ? {userId,companyId:scope.companyId,channelId:scope.channelId} : undefined);
+    const messages = await loadTestMessages(admin, String(c.id), c.read_only ? {userId,companyId:scope.companyId} : (c.metadata_source?.execution_class === "authenticated_admin_preview" || c.metadata_source?.execution_class===MANAGED_PREVIEW_CLASS) ? {userId,companyId:scope.companyId,channelId:scope.channelId} : undefined);
     const latest = [...messages].reverse().find((m) => m.content.trim().length > 0);
     return {
       conversation_id: String(c.id),
@@ -453,13 +455,31 @@ return async (req: Request) => {
     }
     // Recover the existing own-company read/control scope without borrowing C3's
     // B12 synthetic authority. Any paid AI/KB dispatch remains admission-denied.
-    const ownCompany = membership.companyId === FRANKIE_DEMO_COMPANY;
+    const ownCompany=membership.companyId===FRANKIE_DEMO_COMPANY;
+    let managedBinding:ManagedPreviewBinding|null=null,managedChannelId:string|null=null;
+    if(![FRANKIE_DEMO_COMPANY,UAT_COMPANY].includes(membership.companyId)&&
+       (membership as any).role==="admin"&&authData.user.email_confirmed_at) {
+      managedBinding=await activeManagedPreviewBinding(admin,membership.companyId);
+      if(managedBinding) {
+        const {data:channels,error:ce}=await admin.from("channel_config")
+          .select("id,company_id,is_active,channel_type,allowed_origins")
+          .eq("company_id",membership.companyId).eq("is_active",true).eq("channel_type","web_widget");
+        if(ce)return json(req,{success:false,error:"managed_channel_lookup_failed"},503);
+        const valid=(channels??[]).filter((c:any)=>c.company_id===membership.companyId&&
+          c.is_active===true&&c.channel_type==="web_widget"&&isUuid(c.id)&&
+          Array.isArray(c.allowed_origins)&&c.allowed_origins.includes(origin));
+        if(valid.length!==1)return json(req,{success:false,error:valid.length?"managed_channel_ambiguous":"managed_channel_not_authorized"},valid.length?409:503);
+        managedChannelId=valid[0].id;
+      }
+    }
     let scopedChannelId: string;
     const originalChannel=ORIGINAL_PREVIEW_ACCOUNTS.find(a=>originalPreviewCandidate(authData.user,a.company,a.channel) && a.company===membership.companyId && (membership as any).role==="admin")?.channel;
     if (originalChannel) {
       scopedChannelId=originalChannel;
     } else if (ownCompany) {
       scopedChannelId = FRANKIE_DEMO_CHANNEL;
+    } else if(managedChannelId) {
+      scopedChannelId=managedChannelId;
     } else {
       // The C3 path retains its exact authenticated B12 registration.
       const {data: isolation, error: isolationError} = await auth.rpc("c3_uat_feedback_config_context");
@@ -482,11 +502,14 @@ return async (req: Request) => {
     // Both tenants use separate, server-verified admission; never use a
     // non-UAT default or browser field to authorize synthetic paid traffic.
     const originalCandidate = originalPreviewCandidate(authData.user,resolved.companyId,resolved.channelId) && (membership as any).role === "admin";
+    const managedCandidate=Boolean(managedBinding&&managedChannelId===resolved.channelId);
+    if(managedCandidate&&(action==="send"||action==="open_authorized"))return json(req,{success:false,error:"managed_preview_action_denied",retryable:false},403);
     const originalRoute = action !== "send" && action !== "open_authorized";
     const original = originalRoute && originalPreviewActor(authData.user,resolved.companyId,resolved.channelId,deps.env) &&
       (membership as any).role === "admin";
+    const managed=managedCandidate&&originalRoute;
     const remoteConfiguration=original ? originalPreviewRagConfiguration(deps.env,{actor:authData.user.id,company:resolved.companyId,channel:resolved.channelId}) : null;
-    const execution = original ? {ready:true as const,remote_ready:remoteConfiguration!.ready,allowed_conversations:[] as string[]} :
+    const execution = managed ? {ready:true as const,remote_ready:true,allowed_conversations:[] as string[]} : original ? {ready:true as const,remote_ready:remoteConfiguration!.ready,allowed_conversations:[] as string[]} :
       originalCandidate && originalRoute ? {ready:false as const,failure:executionFailure("ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED")} :
       await uatExecutionReadiness(admin as any,resolved.companyId,deps.env,{actorId:authData.user.id,channelId:resolved.channelId});
     if (action === "readiness" || action === "history") {
@@ -500,12 +523,12 @@ return async (req: Request) => {
         isolation_ready: true,
         runtime_contract: "c3-widget-control-v2",
         actor_id: authData.user.id,
-        execution_class: originalCandidate && originalRoute ? "authenticated_admin_preview" : "synthetic_uat",
+        execution_class: managed ? MANAGED_PREVIEW_CLASS : originalCandidate && originalRoute ? "authenticated_admin_preview" : "synthetic_uat",
         execution_ready: execution.ready,
         authorized_preview_available: execution.ready && execution.allowed_conversations.length > 0,
         execution_failure: execution.ready ? null : execution.failure,
         remote_ready: execution.ready && execution.remote_ready,
-        ...(original ? {remote_admission:remoteConfiguration!.code,remote_readiness_basis:"server_configuration_only",kb_retrieval_verified:false} : {}),
+        ...(original ? {remote_admission:remoteConfiguration!.code,remote_readiness_basis:"server_configuration_only",kb_retrieval_verified:false} : managed ? {remote_admission:"managed_binding_configured",remote_readiness_basis:"binding_secret_reference_only",kb_retrieval_verified:false} : {}),
         company_id: resolved.companyId,
         channel_id: resolved.channelId,
         admission_action: action,
@@ -530,7 +553,7 @@ return async (req: Request) => {
       if (!isUuid((body as any).client_message_id)) return json(req,{success:false,error:"invalid_client_message_id"},400);
       // Deterministic lookup only. A missing row is not proof of non-delivery.
       requestedConversationId = await testConversationId(authData.user.id, resolved.channelId, String((body as any).client_message_id));
-      if(originalCandidate) {
+      if(originalCandidate||managedCandidate) {
         const manualId=await testConversationId(authData.user.id,resolved.channelId,String((body as any).client_message_id),true);
         const old=await loadOwnedTestConversation(admin,requestedConversationId,authData.user.id,resolved);
         const manual=await loadOwnedTestConversation(admin,manualId,authData.user.id,resolved);
@@ -591,8 +614,11 @@ return async (req: Request) => {
       return json(req, {
         success: true,
         mode: "persistent_live_ai_test",
-        read_only: owned.conversation.metadata_source?.execution_class === "authenticated_admin_preview" ? !original : original,
-        read_only_reason: owned.conversation.metadata_source?.execution_class === "authenticated_admin_preview" ? (!original ? "original_preview_authorization_required" : null) : (original ? "synthetic_uat_start_new_original_preview" : null),
+        read_only: owned.conversation.metadata_source?.execution_class==="authenticated_admin_preview"?!original:
+          owned.conversation.metadata_source?.execution_class===MANAGED_PREVIEW_CLASS?!managed:original,
+        read_only_reason: owned.conversation.metadata_source?.execution_class==="authenticated_admin_preview"?(!original?"original_preview_authorization_required":null):
+          owned.conversation.metadata_source?.execution_class===MANAGED_PREVIEW_CLASS?(!managed?"managed_preview_authorization_required":null):
+          (original?"synthetic_uat_start_new_original_preview":null),
         scope_mode: resolved.scopeMode,
         conversation_id: requestedConversationId,
         ...(action === "reconcile" ? {reconciled_client_message_id: String((body as any).client_message_id)} : {}),
@@ -611,7 +637,7 @@ return async (req: Request) => {
       return json(req, { success: false, error: "invalid_action" }, 400);
     }
 
-    if(action === "original_preview_send" && !originalCandidate) return json(req,{success:false,error:"original_preview_actor_denied",retryable:false},403);
+    if(action === "original_preview_send" && !originalCandidate && !managedCandidate) return json(req,{success:false,error:"original_preview_actor_denied",retryable:false},403);
     const query = typeof (body as Record<string, unknown>).query === "string"
       ? String((body as Record<string, unknown>).query).trim()
       : "";
@@ -630,7 +656,7 @@ return async (req: Request) => {
     const underHumanControl = existingControl?.ok && (HUMAN_CONTROL_STATUSES.has(String(existingControl.conversation.status)) || Boolean(existingControl.conversation.assigned_agent_id));
     const controlOnly = isExplicitHandoffRequest(query);
     const localConversation = classifyNonFactualConversation(query) !== null;
-    if(original && !underHumanControl && !controlOnly && !localConversation && existingControl?.ok && existingControl.conversation.metadata_source?.execution_class !== "authenticated_admin_preview")
+    if((original||managed) && !underHumanControl && !controlOnly && !localConversation && existingControl?.ok && !["authenticated_admin_preview",MANAGED_PREVIEW_CLASS].includes(String(existingControl.conversation.metadata_source?.execution_class)))
       return json(req,{success:false,error:"original_preview_new_conversation_required",retryable:false},403);
     if(originalCandidate && originalRoute && !original && !requestedConversationId) return json(req,{success:false,error:"live_ai_execution_unavailable",failure:executionFailure("ORIGINAL_PREVIEW_AUTHORIZATION_REQUIRED"),retryable:false},503);
     if (!execution.ready && !underHumanControl && !controlOnly && !localConversation) return json(req,{success:false,error:"live_ai_execution_unavailable",failure:execution.failure,retryable:false,correlation_id:correlationId},503);
@@ -638,7 +664,7 @@ return async (req: Request) => {
 
     let conversationId = requestedConversationId;
     if (!conversationId) {
-      const created = await createTestConversation(admin, authData.user.id, resolved, String((body as any).client_message_id),original ? authData.user : undefined);
+      const created = await createTestConversation(admin, authData.user.id, resolved, String((body as any).client_message_id),original ? authData.user : undefined,managed ? {user:authData.user,binding:managedBinding!} : undefined);
       if (!created.ok) return json(req, { success: false, error: created.error }, created.status);
       conversationId = created.conversationId;
     }
@@ -669,7 +695,7 @@ return async (req: Request) => {
     const pollStarted=Date.now();
     let receiptState:any=null;
     let poll:any;
-    if(original) {
+    if(original||managed) {
       // Confirm only the exact durable Visitor row. Do not put another HTTP
       // poll/full transcript read on the send ACK path. The original client
       // polling mechanism still owns eventual AI/Agent delivery.
@@ -678,12 +704,12 @@ return async (req: Request) => {
       const row=receipt.data as Record<string,any>|null,parent=row?.archive,s=parent?.archive_session,sm=s?.visitor_metadata;
       if(receipt.error || !row || row.id!==sent.message_id || row.role!=="visitor" || row.content!==query || row.metadata?.client_message_id!==clientMessageId ||
         parent?.id!==conversationId || parent.company_id!==resolved.companyId || parent.channel_config_id!==resolved.channelId ||
-        !originalPreviewMetadata(parent.metadata_source,authData.user.id) || s?.id!==parent.visitor_session_id || s.channel_config_id!==resolved.channelId ||
+        !(originalPreviewMetadata(parent.metadata_source,authData.user.id)||managedPreviewMetadata(parent.metadata_source,authData.user.id)) || s?.id!==parent.visitor_session_id || s.channel_config_id!==resolved.channelId ||
         s.visitor_fingerprint!==`widget-live-test:${authData.user.id}` || sm?.source!=="widget_live_test" || sm.owner_user_id!==authData.user.id || sm.test_mode!==true || sm.exclude_training!==true || sm.scope_mode!=="canonical")
         return json(req,{success:false,error:"visitor_receipt_unverified"},503);
       const currentChannel=parent.archive_channel;
       if(!currentChannel || currentChannel.id!==resolved.channelId || currentChannel.company_id!==resolved.companyId || currentChannel.is_active!==true || currentChannel.channel_type!=="web_widget" || !Array.isArray(currentChannel.allowed_origins) || !currentChannel.allowed_origins.includes(origin))return json(req,{success:false,error:"widget_origin_or_channel_revoked"},403);
-      if(!await verifyOriginalPreview(admin,parent,undefined,false))return json(req,{success:false,error:"original_preview_authority_denied"},403);
+      if(!(managed?await verifyManagedPreview(admin,parent):await verifyOriginalPreview(admin,parent,undefined,false)))return json(req,{success:false,error:"original_preview_authority_denied"},403);
       receiptState=parent;
       const human=HUMAN_CONTROL_STATUSES.has(String(parent.status)) || Boolean(parent.assigned_agent_id);
       poll={messages:[{id:row.id,role:row.role,content:row.content,created_at:row.created_at,metadata:{client_message_id:clientMessageId}}],ai_generating:!human && sent.ai_reply_pending===true,
@@ -694,12 +720,12 @@ return async (req: Request) => {
       });
     }
     const receiptReadMs=Date.now()-pollStarted;
-    const pollMs=original ? 0 : receiptReadMs;
+    const pollMs=(original||managed)?0:receiptReadMs;
     // The existing receive transaction and EdgeRuntime.waitUntil own durable
     // dispatch. The exact scoped Visitor read verifies persistence; the existing
     // client poll delivers the eventual answer without server waiting.
     const messages = poll.messages ?? [];
-    if (original && !messages.some((m:any)=>m.id===sent.message_id && m.role==="visitor" && m.content===query))
+    if ((original||managed) && !messages.some((m:any)=>m.id===sent.message_id && m.role==="visitor" && m.content===query))
       return json(req,{success:false,error:"visitor_receipt_unverified"},503);
     const {data: state,error: stateError} = receiptState ? {data:receiptState,error:null} : await admin.from("conversations").select("status,assigned_agent_id").eq("id",conversationId).eq("company_id",resolved.companyId).eq("channel_config_id",resolved.channelId).maybeSingle();
     if (stateError || !state) return json(req,{success:false,error:"test_conversation_lookup_failed"},500);
@@ -709,7 +735,7 @@ return async (req: Request) => {
     deps.log({endpoint:"widget-live-ai-test",action,stage:"visitor_receipt_verified",source_message_id:sent.message_id,
       conversation_id:conversationId,correlation_id:correlationId,elapsed_ms:Date.now()-requestStarted,
       admission_ms:admissionMs,ownership_read_ms:ownershipReadMs,session_read_ms:sessionReadMs,
-      receive_ms:receiveMs,poll_ms:pollMs,receipt_read_ms:original ? receiptReadMs : 0,reply_persisted:Boolean(latestAssistant),generation_pending:sent.ai_reply_pending===true && !latestAssistant && !humanControl});
+      receive_ms:receiveMs,poll_ms:pollMs,receipt_read_ms:(original||managed)?receiptReadMs:0,reply_persisted:Boolean(latestAssistant),generation_pending:sent.ai_reply_pending===true && !latestAssistant && !humanControl});
     return json(req, {
       success: true,
       mode: "persistent_live_ai_test",

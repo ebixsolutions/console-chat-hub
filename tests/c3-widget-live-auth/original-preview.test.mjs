@@ -7,7 +7,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import {bui
 // Auth/DB/Widget transport/provider are isolated adapters. Never Hosted PASS.
 const f={};globalThis.Deno={env:{get:k=>f.env?.[k]},serve(){}};
 const out=await build({stdin:{contents:`export {kbErrorFamily,knowledgeFailureState} from './supabase/functions/_shared/kb-error-contract.ts'; export {createWidgetLiveHandler} from './supabase/functions/widget-live-ai-test/index.ts'; export * from './supabase/functions/_shared/original-widget-preview.ts'; export {authenticatedInboxAuthority,trustedDispatchScope} from './supabase/functions/_shared/uat-execution-contract.ts'; export {accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit} from './supabase/functions/_shared/model-attempt-accounting.ts'; export {prepareRemoteRetrieval,signRemote} from './supabase/functions/_shared/remote-model-accounting.ts'; export {selectCanonicalGrounding,deriveCurrentGroundingTarget} from './supabase/functions/_shared/canonical-grounding.ts'; export {createKBStageDiagnostics,fetchKBRag,resolveTenantScope,resolveKBEndpoint} from './supabase/functions/_shared/kb-client.ts';`,resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm',plugins:[{name:'sdk-transport-only',setup(b){if(process.env.C3_KB_ADMISSION_SOURCE_REF)b.onLoad({filter:/supabase\/functions\/_shared\/(kb-client|model-attempt-accounting|remote-model-accounting)\.ts$/},a=>({contents:execFileSync('git',['show',process.env.C3_KB_ADMISSION_SOURCE_REF+':'+a.path.slice(process.cwd().length+1)],{encoding:'utf8'}),loader:'ts'}));b.onResolve({filter:/^https:\/\/esm.sh\//},a=>({path:a.path,namespace:'sdk'}));b.onLoad({filter:/.*/,namespace:'sdk'},()=>({contents:'export const createClient=(url,key)=>globalThis.__c3KbClient(url,key);'}));}}]});
-const {kbErrorFamily,knowledgeFailureState,createWidgetLiveHandler,ORIGINAL_PREVIEW_AUTHORIZATION,ORIGINAL_PREVIEW_ACCOUNTS,signOriginalPreview,verifyOriginalPreview,authenticatedInboxAuthority,trustedDispatchScope,accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit,createKBStageDiagnostics,fetchKBRag,resolveTenantScope,resolveKBEndpoint,selectCanonicalGrounding,deriveCurrentGroundingTarget,prepareRemoteRetrieval,signRemote}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
+const {kbErrorFamily,knowledgeFailureState,createWidgetLiveHandler,ORIGINAL_PREVIEW_AUTHORIZATION,ORIGINAL_PREVIEW_ACCOUNTS,signOriginalPreview,verifyOriginalPreview,verifyManagedPreview,MANAGED_PREVIEW_CLASS,authenticatedInboxAuthority,trustedDispatchScope,accountedModelFetch,authorizeOriginalPreviewKB,consumeOriginalPreviewKBPermit,createKBStageDiagnostics,fetchKBRag,resolveTenantScope,resolveKBEndpoint,selectCanonicalGrounding,deriveCurrentGroundingTarget,prepareRemoteRetrieval,signRemote}=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
 const realFetch=globalThis.fetch;const realKbClient=globalThis.__c3KbClient;test.after(()=>{globalThis.fetch=realFetch;if(realKbClient===undefined)delete globalThis.__c3KbClient;else globalThis.__c3KbClient=realKbClient;});
 const body=JSON.stringify({contents:[{role:'user',parts:[{text:'Compare options for my business.'}]}],generationConfig:{maxOutputTokens:2048}});
 const semanticConfigBundle=await build({stdin:{contents:"export {COMMERCE_SEMANTIC_PROVIDER_SCHEMA,COMMERCE_SEMANTIC_SYSTEM_PROMPT} from './supabase/functions/_shared/commerce-semantic-frame.ts'; export {buildVertexGenerationConfig} from './supabase/functions/_shared/vertex-generation-config.ts';",resolveDir:process.cwd()},bundle:true,write:false,platform:'node',format:'esm'});
@@ -1530,4 +1530,88 @@ for(const [count,fault] of [[5,'none'],[6,'none'],[10,'none'],[11,'overflow'],
   }else{assert.equal(r.documents?.length??0,0);assert.equal(r.chunks?.length??0,0);}
   assert.deepEqual(chunkBatches,count===11?[]:count===5?[20]:[20,count*4-20]);
  }finally{globalThis.fetch=realFetch;}
+});
+
+
+// The first managed Company remains isolated from the original two accounts
+// and from the C3 synthetic registration. All transport/DB/provider are mocks.
+test("managed Preview: authenticated own Company/Channel binding, signed send and real readback",async()=>{
+ const account={email:"managed-admin@example.test",
+  company:"bdb07806-be44-499c-bfcb-b08afac2d213",
+  channel:"99b7e832-0da8-4a44-8738-2e5fe9cb9685"};
+ setup(account);
+ f.rows.company_kb_tenant_binding=[{company_id:account.company,kb_tenant_id:"50",
+   is_active:true,revision:2,api_key_secret_ref:crypto.randomUUID()}];
+ const ready=await request({action:"readiness"});
+ assert.equal(ready.status,200,JSON.stringify(ready));
+ assert.equal(ready.data.execution_class,MANAGED_PREVIEW_CLASS);
+ assert.equal(ready.data.company_id,account.company);
+ assert.equal(ready.data.channel_id,account.channel);
+ assert.equal(ready.data.execution_ready,true);
+ assert.equal(ready.data.kb_retrieval_verified,false);
+ assert.equal(f.rpc.length,0,"must not borrow the C3 synthetic registration");
+ const empty=await request({action:"history"});
+ assert.equal(empty.status,200);
+ assert.deepEqual(empty.data.history,[]);
+ const messageId=crypto.randomUUID(),content="Please compare options for my business.";
+ const sent=await request({action:"original_preview_send",client_message_id:messageId,query:content});
+ assert.equal(sent.status,200,JSON.stringify(sent));
+ const c=f.rows.conversations[0];
+ assert.equal(c.company_id,account.company);
+ assert.equal(c.channel_config_id,account.channel);
+ assert.equal(c.metadata_source.execution_class,MANAGED_PREVIEW_CLASS);
+ assert.equal(c.metadata_source.exclude_training,true);
+ assert.notEqual(c.metadata_source.synthetic,true);
+ assert.equal(await verifyManagedPreview(f.db,c),true);
+ assert.equal(await trustedDispatchScope(f.db,account.company,c.id),"legacy");
+ assert.equal(f.provider,1);
+ const loaded=await request({action:"load",test_conversation_id:c.id});
+ assert.equal(loaded.status,200,JSON.stringify(loaded));
+ assert.equal(loaded.data.read_only,false);
+ assert.equal(loaded.data.messages.find(m=>m.role==="assistant").content,"Isolated provider reply");
+ const replay=await request({action:"original_preview_send",
+  test_conversation_id:c.id,client_message_id:messageId,query:content});
+ assert.equal(replay.status,200,JSON.stringify(replay));
+ assert.equal(replay.data.idempotent,true);
+ assert.equal(f.provider,1);
+ assert.equal((await request({action:"send",client_message_id:crypto.randomUUID(),query:content})).status,403);
+ const base=structuredClone(c);
+ const restore=()=>{
+  Object.assign(c,structuredClone(base));
+  f.rows.company_kb_tenant_binding[0].revision=2;
+  f.rows.company_kb_tenant_binding[0].is_active=true;
+  f.rows.company_membership[0].role="admin";
+  f.rows.channel_config[0].is_active=true;
+  f.rows.visitor_session[0].visitor_metadata.owner_user_id=f.user.id;
+ };
+ for(const mutate of [
+   ()=>{c.metadata_source.managed_preview_authority.signature="0".repeat(64)},
+   ()=>{c.metadata_source.owner_user_id=crypto.randomUUID()},
+   ()=>{c.channel_config_id=crypto.randomUUID()},
+   ()=>{c.metadata_source.managed_preview_authority.revision=999},
+   ()=>{f.rows.company_kb_tenant_binding[0].revision=3},
+   ()=>{f.rows.company_kb_tenant_binding[0].is_active=false},
+   ()=>{f.rows.company_membership[0].role="agent"},
+   ()=>{f.rows.channel_config[0].is_active=false},
+   ()=>{f.rows.visitor_session[0].visitor_metadata.owner_user_id=crypto.randomUUID()}
+ ]){restore();mutate();await assert.rejects(()=>trustedDispatchScope(f.db,account.company,c.id));}
+ restore();
+});
+test("managed Preview: missing/revoked binding and tenant spoof never authorize",async()=>{
+ const account={email:"managed-admin@example.test",
+  company:"bdb07806-be44-499c-bfcb-b08afac2d213",
+  channel:"99b7e832-0da8-4a44-8738-2e5fe9cb9685"};
+ setup(account);
+ const missing=await request({action:"readiness"});
+ assert.notEqual(missing.status,200);
+ assert.equal(f.rows.conversations.length,0);
+ f.rows.company_kb_tenant_binding=[{company_id:account.company,kb_tenant_id:"50",
+  is_active:false,revision:2,api_key_secret_ref:crypto.randomUUID()}];
+ assert.notEqual((await request({action:"readiness"})).status,200);
+ assert.equal((await request({action:"history",company_id:account.company})).status,400);
+ f.rows.company_kb_tenant_binding[0].is_active=true;
+ f.rows.company_kb_tenant_binding[0].api_key_secret_ref=null;
+ assert.notEqual((await request({action:"readiness"})).status,200);
+ assert.equal(f.provider,0);
+ assert.equal(f.rows.conversations.length,0);
 });

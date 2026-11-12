@@ -67,3 +67,109 @@ export async function originalPreviewRequest(req:Request,createClient:any,db:any
   return !r.error && user?.id===c.metadata_source?.owner_user_id && originalPreviewCandidate(user,c.company_id,c.channel_config_id) &&
     await verifyOriginalPreview(db,c,undefined,requireEnabled);
 }
+
+
+// Separate development-managed Preview authority; existing Frankie/Authe
+// HMAC receipts and their exact-scope permissions remain unchanged.
+export const MANAGED_PREVIEW_CLASS = "authenticated_managed_preview";
+export const MANAGED_PREVIEW_AUTHORITY = "managed-widget-preview-v1";
+export type ManagedPreviewBinding = {tenant:string;revision:number};
+const managedUuid=/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+const managedNumber=/^[1-9]\d{0,15}$/;
+export function managedPreviewMetadata(m:any,actor:string):boolean {
+  return m?.source==="widget_live_test" && m?.widget_live_test===true &&
+    m?.test_mode===true && m?.exclude_training===true && m?.synthetic!==true &&
+    m?.execution_class===MANAGED_PREVIEW_CLASS && m?.owner_user_id===actor &&
+    m?.scope_mode==="canonical";
+}
+export async function activeManagedPreviewBinding(db:any,company:string):Promise<ManagedPreviewBinding|null> {
+  if(!managedUuid.test(company))return null;
+  const {data:b,error}=await db.from("company_kb_tenant_binding")
+    .select("company_id,kb_tenant_id,is_active,revision,api_key_secret_ref")
+    .eq("company_id",company).maybeSingle();
+  if(error||!b||b.company_id!==company||b.is_active!==true||
+    typeof b.kb_tenant_id!=="string"||!managedNumber.test(b.kb_tenant_id)||
+    !Number.isSafeInteger(b.revision)||b.revision<1||
+    !managedUuid.test(String(b.api_key_secret_ref??"")))return null;
+  return {tenant:b.kb_tenant_id,revision:b.revision};
+}
+type ManagedPreviewReceipt={
+  version:1;actor:string;email:string;company:string;channel:string;
+  tenant:string;revision:number;conversation:string;session:string;
+  authorization:typeof MANAGED_PREVIEW_AUTHORITY;signature:string;
+};
+const managedEncoded=(r:Omit<ManagedPreviewReceipt,"signature">)=>JSON.stringify([
+  MANAGED_PREVIEW_AUTHORITY,r.version,r.actor,r.email,r.company,r.channel,
+  r.tenant,r.revision,r.conversation,r.session,r.authorization
+]);
+export async function signManagedPreview(user:any,company:string,channel:string,
+  conversation:string,session:string,binding:ManagedPreviewBinding):Promise<ManagedPreviewReceipt> {
+  if(!managedUuid.test(String(user?.id??""))||!user?.email_confirmed_at||
+    typeof user?.email!=="string"||!managedUuid.test(company)||
+    !managedUuid.test(channel)||!managedUuid.test(conversation)||!managedUuid.test(session)||
+    !managedNumber.test(binding.tenant)||!Number.isSafeInteger(binding.revision)||binding.revision<1)
+    throw Error("managed_preview_identity_invalid");
+  const claims:Omit<ManagedPreviewReceipt,"signature">={
+    version:1,actor:user.id,email:user.email.toLowerCase(),company,channel,
+    tenant:binding.tenant,revision:binding.revision,conversation,session,
+    authorization:MANAGED_PREVIEW_AUTHORITY
+  };
+  const signature=Array.from(new Uint8Array(await crypto.subtle.sign(
+    "HMAC",await key(),encoder.encode(managedEncoded(claims))
+  )),v=>v.toString(16).padStart(2,"0")).join("");
+  return {...claims,signature};
+}
+export async function verifyManagedPreview(db:any,c:any):Promise<boolean> {
+  const m=c?.metadata_source,r=m?.managed_preview_authority as ManagedPreviewReceipt;
+  if(!r||!managedPreviewMetadata(m,r.actor)||r.version!==1||
+    r.authorization!==MANAGED_PREVIEW_AUTHORITY||
+    !managedUuid.test(String(r.actor??""))||
+    r.company!==c.company_id||r.channel!==c.channel_config_id||
+    r.conversation!==c.id||r.session!==c.visitor_session_id||
+    !managedUuid.test(String(r.channel??""))||
+    typeof r.signature!=="string"||!/^[a-f0-9]{64}$/.test(r.signature)||
+    typeof r.email!=="string"||!r.email.includes("@")||
+    !managedNumber.test(String(r.tenant??""))||
+    !Number.isSafeInteger(r.revision)||r.revision<1)return false;
+  const {signature,...claims}=r;
+  if(!await crypto.subtle.verify("HMAC",await key(),
+    new Uint8Array(signature.match(/../g)!.map(x=>parseInt(x,16))),
+    encoder.encode(managedEncoded(claims))))return false;
+  const [member,company,channel,session,binding]=await Promise.all([
+    db.from("company_membership").select("company_id,role,is_active")
+      .eq("user_id",r.actor).eq("company_id",r.company).eq("is_active",true).maybeSingle(),
+    db.from("company").select("id,is_active").eq("id",r.company).maybeSingle(),
+    db.from("channel_config").select("id,company_id,is_active,channel_type")
+      .eq("id",r.channel).eq("company_id",r.company).maybeSingle(),
+    db.from("visitor_session").select("id,channel_config_id,visitor_fingerprint,visitor_metadata")
+      .eq("id",r.session).eq("channel_config_id",r.channel).maybeSingle(),
+    activeManagedPreviewBinding(db,r.company),
+  ]);
+  const s=session.data,sm=s?.visitor_metadata;
+  return !member.error&&member.data?.company_id===r.company&&
+    member.data.role==="admin"&&member.data.is_active===true&&
+    !company.error&&company.data?.id===r.company&&company.data.is_active===true&&
+    !channel.error&&channel.data?.id===r.channel&&
+    channel.data.company_id===r.company&&channel.data.is_active===true&&
+    channel.data.channel_type==="web_widget"&&
+    !session.error&&s?.id===r.session&&s.channel_config_id===r.channel&&
+    s.visitor_fingerprint==="widget-live-test:"+r.actor&&
+    sm?.source==="widget_live_test"&&sm.test_mode===true&&
+    sm.exclude_training===true&&sm.owner_user_id===r.actor&&
+    sm.scope_mode==="canonical"&&
+    binding?.tenant===r.tenant&&binding.revision===r.revision;
+}
+/** A signed row cannot replace a current authenticated Admin at ingress. */
+export async function managedPreviewRequest(req:Request,createClient:any,db:any,c:any):Promise<boolean> {
+  const token=/^Bearer\s+(\S+)$/i.exec(req.headers.get("Authorization")??"")?.[1];
+  if(!token)return false;
+  const auth=createClient(Deno.env.get("SUPABASE_URL")!,Deno.env.get("SUPABASE_ANON_KEY")!,{
+    global:{headers:{Authorization:"Bearer "+token}},
+    auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}
+  });
+  const {data,error}=await auth.auth.getUser(token);
+  const r=c?.metadata_source?.managed_preview_authority as ManagedPreviewReceipt|undefined;
+  return !error&&Boolean(data?.user?.email_confirmed_at)&&
+    data.user?.id===r?.actor&&data.user?.email?.toLowerCase()===r?.email&&
+    await verifyManagedPreview(db,c);
+}

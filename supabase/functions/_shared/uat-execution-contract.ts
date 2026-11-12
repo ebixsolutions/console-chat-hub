@@ -1,4 +1,4 @@
-import { verifyOriginalPreview } from "./original-widget-preview.ts";
+import { verifyOriginalPreview, verifyManagedPreview, MANAGED_PREVIEW_CLASS } from "./original-widget-preview.ts";
 import { safeExecutionCode } from "./execution-failure.ts";
 import { buildVertexEndpoint } from "./vertex-generation-config.ts";
 /** Temporary synthetic UAT admission. Existing log persistence, not the deferred shared Guard. */
@@ -89,14 +89,28 @@ export async function trustedDispatchScope(db: Db, company: string | null, conve
   if(company===null && authority){const grant=preactivation.get(authority);if(grant && grant.conversation===conversation && grant.expires>Date.now() && Deno.env.get("KB_PREACTIVATION_ENABLED")==="true" && grant.tenant===Deno.env.get("KB_PREACTIVATION_TENANT_ID")?.trim()){if(conversation){if(!db.from)throw new UatDenied("PREACTIVATION_TICKET_DENIED");const ticket=await db.from("conversations").select("id,company_id").eq("id",conversation).maybeSingle();if(ticket.error || ticket.data?.id!==conversation || ticket.data.company_id!==null)throw new UatDenied("PREACTIVATION_TICKET_DENIED");}return "legacy";}throw new UatDenied("PREACTIVATION_AUTHORITY_DENIED");}
   if(authority)throw new UatDenied("INBOX_AUTHORITY_DENIED");
   if (!company || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(company) || !db.from) throw new UatDenied("DISPATCH_COMPANY_UNPROVEN");
+  let inspectedTicket:any=null;
   try {
     const owner = await db.from("company").select("id").eq("id", company).maybeSingle();
     if (owner.error || owner.data?.id !== company) throw new UatDenied("DISPATCH_COMPANY_UNPROVEN");
     if (conversation) {
-      const ticket = await db.from("conversations").select("id,company_id").eq("id", conversation).maybeSingle();
+      const ticket = await db.from("conversations").select("id,company_id,channel_config_id,visitor_session_id,metadata_source").eq("id", conversation).maybeSingle();
       if (ticket.error || ticket.data?.id !== conversation || ticket.data?.company_id !== company) throw new UatDenied("DISPATCH_TENANT_MISMATCH");
+      inspectedTicket=ticket.data;
     }
   } catch (error) { throw error instanceof UatDenied ? error : new UatDenied("DISPATCH_IDENTITY_UNAVAILABLE"); }
+  if(conversation && company!==UAT_COMPANY && company!==FRANKIE_DEMO_COMPANY) {
+    const metadata=inspectedTicket?.metadata_source;
+    if(metadata?.execution_class===MANAGED_PREVIEW_CLASS ||
+      metadata?.source==="widget_live_test" || metadata?.widget_live_test===true) {
+      if(metadata?.execution_class!==MANAGED_PREVIEW_CLASS ||
+        !await verifyManagedPreview(db,inspectedTicket))throw new UatDenied("UAT_AUTHORIZATION_DENIED");
+      // This Company's ordinary embedded Widget P1 already has legacy
+      // dispatch. The managed Preview requires a stronger signed and
+      // revocation-checked Admin/Company/Channel/Session/Binding receipt.
+      return "legacy";
+    }
+  }
   if (conversation && (company === UAT_COMPANY || company === FRANKIE_DEMO_COMPANY)) {
     const ticket=await db.from("conversations").select("id,company_id,channel_config_id,visitor_session_id,metadata_source").eq("id",conversation).eq("company_id",company).maybeSingle();
     if(ticket.error || !ticket.data)throw new UatDenied("DISPATCH_IDENTITY_UNAVAILABLE");
