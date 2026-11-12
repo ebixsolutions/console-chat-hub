@@ -20,6 +20,7 @@ export type KBDevBinding = {
   revision: number;
   has_key: boolean;
   writer_ready: boolean;
+  binding_write_eligible: boolean;
   writer_status: "ready" | "server_credential_unavailable" | "credential_not_authorized";
   channels_ready: boolean;
   updated_at: string | null;
@@ -49,8 +50,8 @@ function devAllowed(): boolean {
 
 /**
  * Same authoritative Supabase, SERVER FUNCTIONS ONLY: there is no second API
- * or backend. The platform's managed SERVICE_ROLE_KEY is a supported server
- * alias; neither name is ever placed in a VITE_ variable or returned to UI.
+ * or backend. Only the explicitly project-bound C3_KB_BINDING_ADMIN_KEY is used
+ * for Auth administration; platform-owned foreign-project keys are not a fallback.
  * A missing/invalid protected server credential NEVER falls back to anon.
  */
 /**
@@ -65,9 +66,7 @@ function devAllowed(): boolean {
  */
 async function bindingServerCredential(): Promise<string> {
   if (typeof window !== "undefined") throw new Error("kb_admin_server_only");
-  const value = process.env.C3_KB_BINDING_ADMIN_KEY ||
-    process.env.SUPABASE_SECRET_KEY ||
-    process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const value = process.env.C3_KB_BINDING_ADMIN_KEY;
   if (typeof value === "string" && value.length > 16) return value;
 
   // This runtime-specific dynamic import is intentionally optional: local
@@ -79,8 +78,7 @@ async function bindingServerCredential(): Promise<string> {
     const worker = await import(/* @vite-ignore */ workerModuleId);
     const bindings: Record<string, unknown> = worker.env ?? {};
     for (const name of [
-      "C3_KB_BINDING_ADMIN_KEY", "SUPABASE_SECRET_KEY",
-      "SUPABASE_SERVICE_ROLE_KEY",
+      "C3_KB_BINDING_ADMIN_KEY",
     ]) {
       const candidate = bindings[name];
       if (typeof candidate === "string" && candidate.length > 16) {
@@ -181,6 +179,21 @@ export const listKBDevBindingsFn = createServerFn({ method: "GET" })
     } catch {
       // Intentionally no exception text, credentials or platform data returned.
     }
+    // A deployed, non-writing RPC probe proves this user's exact eligibility.
+    // RLS SELECT alone is not write permission; this is not a claimed Save.
+    const selfEligible = new Set<string>();
+    await Promise.all(owned.data.map(async (co) => {
+      try {
+        const { data: probe, error: probeError } = await (context.supabase as any)
+          .rpc("kb_binding_write_self_v1", {
+            p_company: co.id, p_tenant: "50", p_kb_company: null,
+            p_active: false, p_expected_revision: 0, p_new_key: null, p_probe: true,
+          });
+        if (!probeError && probe?.contract === "kb-binding-self-v1" &&
+            probe?.eligible === true && probe?.company_id === co.id &&
+            probe?.actor_id === String(context.userId)) selfEligible.add(co.id);
+      } catch { /* fail closed; never manufacture write readiness */ }
+    }));
     return { ok: true, data: owned.data.map((co) => {
       const b = (bindings ?? []).find((x: any) => x.company_id === co.id);
       return {
@@ -191,6 +204,7 @@ export const listKBDevBindingsFn = createServerFn({ method: "GET" })
         // An inactive row might also have one; do NOT claim its key is absent.
         has_key: b?.is_active === true, writer_ready: writerReady,
         writer_status: writerStatus,
+        binding_write_eligible: selfEligible.has(co.id),
         updated_at: b?.updated_at ?? null,
         channels_ready: co.channels_ready,
         members: (members ?? []).filter((m: any) => m.company_id === co.id)
@@ -218,26 +232,39 @@ export const saveKBDevBindingFn = createServerFn({ method: "POST" })
     if (!owned.data.some((co) => co.id === data.company_id && co.channels_ready)) {
       return { ok: false, error: "company_not_owned_or_channel_inactive" };
     }
-    // Secrets go ONLY into the existing protected service_role SQL
-    // function -> Supabase Vault. Never send a key to a client-read API.
-    let supabaseAdmin: any;
-    try { supabaseAdmin = await kbBindingAdminClient(); }
-    catch { return { ok: false, error: "protected_kb_writer_unavailable" }; }
-    const { data: output, error } = await (supabaseAdmin as any).rpc("kb_binding_write_v1", {
-      p_actor: String(context.userId), p_company: data.company_id,
-      p_tenant: data.kb_tenant_id, p_kb_company: data.kb_company_id,
-      p_active: data.is_active, p_expected_revision: data.expected_revision,
-      p_new_key: data.api_key ?? null,
+    // B: user JWT reaches the narrow same-Company wrapper. No Admin key,
+    // caller-selected actor, direct table write or Vault plaintext permission.
+    const { data: output, error } = await (context.supabase as any).rpc("kb_binding_write_self_v1", {
+      p_company: data.company_id, p_tenant: data.kb_tenant_id,
+      p_kb_company: data.kb_company_id, p_active: data.is_active,
+      p_expected_revision: data.expected_revision, p_new_key: data.api_key ?? null,
+      p_probe: false,
     });
-    if (error || !output || output.company_id !== data.company_id) {
+    if (error || !output || output.company_id !== data.company_id ||
+        output.kb_tenant_id !== data.kb_tenant_id || output.is_active !== data.is_active ||
+        Number(output.revision) !== data.expected_revision + 1 ||
+        (data.is_active && output.has_key !== true)) {
       const code = String(error?.message ?? "");
       return { ok: false, error: code.includes("KB_BINDING_REVISION_CONFLICT")
-        ? "binding_revision_conflict_reload" : "binding_save_failed" };
+        ? "binding_revision_conflict_reload" : code.includes("KB_BINDING_SELF_SCOPE_DENIED")
+        ? "binding_development_scope_denied" : "binding_save_unconfirmed_reload_before_retry" };
+    }
+    // Do not retry an unknown commit. Read back only allowed metadata through
+    // the same user's RLS and require the exact post-image before success.
+    const { data: row, error: readError } = await (context.supabase as any)
+      .from("company_kb_tenant_binding")
+      .select("company_id,kb_tenant_id,kb_company_id,is_active,revision")
+      .eq("company_id", data.company_id).maybeSingle();
+    if (readError || row?.kb_tenant_id !== data.kb_tenant_id ||
+        row?.company_id !== data.company_id || row?.is_active !== data.is_active ||
+        (row?.kb_company_id ?? null) !== data.kb_company_id ||
+        Number(row?.revision) !== Number(output.revision)) {
+      return { ok: false, error: "binding_commit_readback_unconfirmed_reload_before_retry" };
     }
     return { ok: true, data: {
-      company_id: output.company_id, kb_tenant_id: output.kb_tenant_id,
-      revision: Number(output.revision), has_key: output.has_key === true,
-      is_active: output.is_active === true,
+      company_id: row.company_id, kb_tenant_id: row.kb_tenant_id,
+      revision: Number(row.revision), has_key: output.has_key === true,
+      is_active: row.is_active === true,
     } };
   });
 
@@ -312,7 +339,7 @@ export async function listAuthorizedCompanyScopesReadOnly(): Promise<Result<KBDe
   return { ok: true, data: (companies ?? []).map((company) => ({
     company_id: String(company.id), company_name: String(company.display_name ?? company.id),
     kb_tenant_id: null, kb_company_id: null, is_active: false, revision: 0,
-    has_key: false, writer_ready: false,
+    has_key: false, writer_ready: false, binding_write_eligible: false,
     writer_status: "server_credential_unavailable",
     channels_ready: ready.has(String(company.id)), updated_at: null,
     members: [{ user_id: actorId, role: "admin",

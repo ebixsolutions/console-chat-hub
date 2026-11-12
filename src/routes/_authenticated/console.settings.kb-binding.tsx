@@ -120,8 +120,8 @@ function KBDevBindingPage() {
   }, [current?.company_id, current?.revision, current?.kb_tenant_id, current?.kb_company_id, current?.is_active]);
 
   const save = async () => {
-    if (!current || action || !verifiedLogin || !current.writer_ready) {
-      setError("Select a verified login and Company with an available protected server writer.");
+    if (!current || action || !verifiedLogin || !current.binding_write_eligible) {
+      setError("Select a verified login and Company eligible for the authenticated KB save route.");
       return;
     }
     setError(null);
@@ -286,7 +286,7 @@ function KBDevBindingPage() {
           <p style={{ fontSize: 13, color: "#475569", marginTop: 10 }}>
             Active Company Channel: {current.channels_ready ? "Verified" : "Not verified — saving disabled"}
             {phase === "read_only" && " · Binding operations unavailable"}
-            {phase === "ready" && !current.writer_ready && " · Protected writer not available"}
+            {phase === "ready" && !current.binding_write_eligible && " · KB Save route unavailable"}
           </p>
           <h3 style={{ fontWeight: 600, marginTop: 16 }}>Authenticated accounts on this Company</h3>
           <div style={{ display: "grid", gap: 5, marginTop: 8 }}>
@@ -341,19 +341,15 @@ function KBDevBindingPage() {
           Select a server-verified Company in step 1 to enable both fields. If Company loading is unavailable,
           these inputs stay visible but disabled; no local or mock mapping is substituted.
         </p>}
-        {phase === "ready" && current && !current.writer_ready && <p role="alert"
+        {phase === "ready" && current && !current.binding_write_eligible && <p role="alert"
           style={{ color: "#b45309", fontSize: 13 }}>
-          Company/KB metadata is verified through your real Supabase Auth and same-Company RLS.
-          The protected server writer is unavailable.
-          {current.writer_status === "server_credential_unavailable"
-            ? " The original private Preview server cannot access an authorized Supabase Admin key. Verify its Worker binding, or configure C3_KB_BINDING_ADMIN_KEY as a server-only secret for the original Supabase project (never VITE_)."
-            : " The available server Admin key did not pass the original Supabase project's authorized Admin readback; verify its project binding."}
-          {" "}You may prepare the numeric KB ID and masked key here, but Save stays disabled
-          until a real authorized writer is verified; no binding is claimed or stored.
+          The authenticated KB save route has not confirmed eligibility for this Company.
+          No save has occurred. Check the signed-in Admin, the deployed scoped wrapper and
+          the active Company/Channel; do not enter a Supabase management key in this form.
         </p>}
-        {phase === "ready" && current && !current.writer_ready && <button
+        {phase === "ready" && current && !current.binding_write_eligible && <button
           type="button" disabled={Boolean(action)} onClick={() => void load()}>
-          Recheck protected server writer
+          Recheck authenticated Save eligibility
         </button>}
         <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
           <label htmlFor="kb-tenant-input">2. Singapore KB company_id (numeric, e.g. 34 or 35)</label>
@@ -373,10 +369,15 @@ function KBDevBindingPage() {
             <input type="checkbox" checked={active} disabled={!current || phase !== "ready"} onChange={(e) => setActive(e.target.checked)} />
             Activate (requires server-authorized Company/Channel and protected key)
           </label>
-          <button type="button" disabled={!current || phase !== "ready" || !current?.writer_ready || Boolean(action) || !verifiedLogin || !current?.channels_ready || !/^[1-9]\d{0,15}$/.test(tenant) || (active && !current?.has_key && key.length < 16)}
+          <button id="kb-binding-save" type="button" aria-describedby="kb-binding-save-help" style={{ padding: "12px 18px", borderRadius: 8, border: "1px solid #475569", fontWeight: 700, background: current?.binding_write_eligible ? "#1d4ed8" : "#e2e8f0", color: current?.binding_write_eligible ? "#fff" : "#334155", cursor: current?.binding_write_eligible ? "pointer" : "not-allowed" }} disabled={!current || phase !== "ready" || !current?.binding_write_eligible || Boolean(action) || !verifiedLogin || !current?.channels_ready || !/^[1-9]\d{0,15}$/.test(tenant) || (active && !current?.has_key && key.length < 16)}
             onClick={() => void save()}>
             {action === "saving" ? "Saving…" : "Save Company → KB binding (CAS)"}
           </button>
+          <p id="kb-binding-save-help" role="status" style={{ fontSize: 13 }}>
+            {current?.binding_write_eligible
+              ? "Authenticated save route available. Select the verified login, enter KB ID and key, then Save. Only an exact server commit and readback count as saved."
+              : "Save is unavailable until the signed-in Admin is eligible for the deployed authenticated route."}
+          </p>
         </div>
       </section>
       {isOriginalDevOwner && <section style={boxStyle}>

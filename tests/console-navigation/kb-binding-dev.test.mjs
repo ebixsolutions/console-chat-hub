@@ -40,7 +40,7 @@ test("server uses original Auth/RLS user and role, not posted actor or email", (
   assert.match(handler, /C3_KB_BINDING_INVITES_ENABLED/);
   assert.match(handler, /kb_binding_invite_grant_v1/);
   assert.match(handler, /granted\?\.is_active !== true/);
-  assert.doesNotMatch(handler, /is_active:\s*false/);
+  assert.doesNotMatch(handler.slice(handler.indexOf("const inviteInput ="), handler.indexOf("export async function listAuthorizedCompanyScopesReadOnly")), /is_active:\s*false/);
   assert.match(ddl, /CREATE FUNCTION public\.kb_binding_invite_grant_v1/);
   assert.match(ddl, /ON CONFLICT \(company_id,user_id,role\) DO UPDATE SET is_active=true/);
   assert.match(ddl, /GRANT EXECUTE ON FUNCTION public\.kb_binding_invite_grant_v1[\s\S]*TO service_role/);
@@ -138,7 +138,7 @@ test("Company selector recovers read-only actual RLS scope on server transport f
   assert.match(route, /scopes = await kbDevBindingService\.listAuthorizedCompanyScopesReadOnly\(\)/);
   assert.match(route, /setPhase\("read_only"\)/);
   assert.match(route, /phase === "read_only"/);
-  assert.match(route, /disabled=\{phase !== "ready" \|\| Boolean\(action\)/);
+  assert.match(route, /disabled=\{phase !== "ready" \|\| !current\.writer_ready \|\| Boolean\(action\)/);
   assert.match(route, /disabled=\{!current \|\| phase !== "ready"/);
   assert.match(route, /Binding metadata and other members have NOT been read/);
   assert.match(route, /Stored Key, Revision and mapping state: Not loaded/);
@@ -185,8 +185,8 @@ test("same page provides existing Company accounts and new independent tenants s
   assert.match(source, /New independent KB tenant — one-page setup/);
   assert.match(source, /Create \/ link test account in THIS Company/);
   assert.match(source, /Create independent Company \+ Admin \+ Widget \+ KB binding/);
-  assert.match(source, /id="kb-test-password"[^\\n]*type="password"/);
-  assert.match(source, /id="new-kb-key"[^\\n]*type="password"/);
+  assert.match(source, /id="kb-test-password"[^\n]*type="password"/);
+  assert.match(source, /id="new-kb-key"[^\n]*type="password"/);
   assert.match(source, /bootstrapDevTenant\(/);
   assert.match(source, /createOrLinkTestAccount\(/);
   assert.match(source, /crypto\.randomUUID\(\)/);
@@ -217,13 +217,13 @@ test("binding list uses canonical authenticated RLS instead of requiring privile
 test("service-role client is server-only and uses only managed server key aliases", () => {
   const source = read("src/lib/api/kbBinding.service.ts");
   assert.match(source, /if \(typeof window !== "undefined"\) throw new Error\("kb_admin_server_only"\)/);
-  assert.match(source, /process\.env\.SUPABASE_SECRET_KEY \|\|/);
-  assert.match(source, /process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
+  assert.doesNotMatch(source, /process\.env\.SUPABASE_SECRET_KEY/);
+  assert.doesNotMatch(source, /process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
   assert.doesNotMatch(source, /process\.env\.VITE_SUPABASE_SERVICE_ROLE_KEY/);
   assert.match(source, /assertAuthoritativeSupabaseRuntime\(authority\.url, authority\.projectId\)/);
   assert.match(source, /persistSession: false, autoRefreshToken: false/);
   assert.match(source, /const supabaseAdmin = await kbBindingAdminClient\(\)/);
-  assert.match(source, /protected_kb_writer_unavailable/);
+  assert.match(source, /binding_save_unconfirmed_reload_before_retry/);
   assert.match(source, /p_actor: String\(context\.userId\)/);
   assert.match(source, /p_expected_revision: data\.expected_revision/);
   assert.match(source, /p_new_key: data\.api_key \?\? null/);
@@ -233,10 +233,10 @@ test("service-role client is server-only and uses only managed server key aliase
 
 test("numeric KB input can render after authenticated RLS read, Save needs real writer proof", () => {
   const route = read("src/routes/_authenticated/console.settings.kb-binding.tsx");
-  assert.match(route, /Company\/KB metadata is verified through your real Supabase Auth/);
-  assert.match(route, /The protected server writer is unavailable/);
+  assert.match(route, /authenticated KB save route has not confirmed eligibility/);
+  assert.match(route, /No save has occurred/);
   assert.match(route, /disabled=\{!current \|\| phase !== "ready" \|\| Boolean\(action\)\}/);
-  assert.match(route, /disabled=\{!current \|\| phase !== "ready" \|\| !current\?\.writer_ready/);
+  assert.match(route, /disabled=\{!current \|\| phase !== "ready" \|\| !current\?\.binding_write_eligible/);
   assert.match(route, /!current\.writer_ready/);
   assert.match(route, /inputMode="numeric"/);
   assert.match(route, /type="password" value=\{key\}/);
@@ -249,9 +249,9 @@ test("numeric KB input can render after authenticated RLS read, Save needs real 
 test("Lovable Worker Secrets are read server-side and cannot bypass original tenant guard", () => {
   const src = read("src/lib/api/kbBinding.service.ts");
   assert.match(src, /async function bindingServerCredential\(\): Promise<string>/);
-  assert.match(src, /process\.env\.C3_KB_BINDING_ADMIN_KEY \|\|/);
-  assert.match(src, /process\.env\.SUPABASE_SECRET_KEY \|\|/);
-  assert.match(src, /process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
+  assert.match(src, /process\.env\.C3_KB_BINDING_ADMIN_KEY;/);
+  assert.doesNotMatch(src, /process\.env\.SUPABASE_SECRET_KEY/);
+  assert.doesNotMatch(src, /process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
   assert.match(src, /const workerModuleId: string = "cloudflare:workers"/);
   assert.match(src, /await import\(\/\* @vite-ignore \*\/ workerModuleId\)/);
   assert.match(src, /if \(typeof window !== "undefined"\) throw new Error\("kb_admin_server_only"\)/);
@@ -282,11 +282,28 @@ test("privileged writer status is proven by original Supabase Auth Admin API", (
 
 test("Private Preview clearly reports safe writer cause and rechecks without fake Save", () => {
   const src = read("src/routes/_authenticated/console.settings.kb-binding.tsx");
-  assert.match(src, /current\.writer_status === "server_credential_unavailable"/);
-  assert.match(src, /configure C3_KB_BINDING_ADMIN_KEY as a server-only secret/);
-  assert.match(src, /Recheck protected server writer/);
-  assert.match(src, /!current\?\.writer_ready/);
+  assert.match(src, /!current\.binding_write_eligible/);
+  assert.match(src, /do not enter a Supabase management key/);
+  assert.match(src, /Recheck authenticated Save eligibility/);
+  assert.match(src, /!current\?\.binding_write_eligible/);
   assert.match(src, /Save Company → KB binding \(CAS\)/);
   assert.match(src, /setKey\(""/);
   assert.doesNotMatch(src, /localStorage\.setItem\(/);
+});
+
+test("B authenticated Save uses current JWT with no actor override and verifies readback", () => {
+ const save = handler.slice(handler.indexOf("export const saveKBDevBindingFn"),handler.indexOf("const inviteInput ="));
+ assert.ok(save.includes('(context.supabase as any).rpc("kb_binding_write_self_v1"'));
+ assert.ok(!save.includes('kbBindingAdminClient('));
+ assert.ok(!save.includes('p_actor:'));
+ assert.ok(save.includes('p_expected_revision: data.expected_revision'));
+ assert.ok(save.includes('binding_commit_readback_unconfirmed_reload_before_retry'));
+ assert.ok(route.includes('id="kb-binding-save"'));
+ assert.ok(route.includes('!current?.binding_write_eligible'));
+ const wrapper = read("supabase/migrations/20261112024210_task3c_kb_binding_authenticated_save.sql");
+ for(const required of ['auth.uid()', "SET search_path = ''",'KB_BINDING_SELF_SCOPE_DENIED','p_probe','pg_advisory_xact_lock','public.kb_binding_write_v1','FROM PUBLIC, anon','TO authenticated']) assert.ok(wrapper.includes(required),required);
+ assert.ok(!wrapper.includes('GRANT SELECT'));
+ assert.ok(!wrapper.includes('CREATE TABLE'));
+ assert.ok(!wrapper.includes('p_actor uuid'));
+ const rb=read("supabase/migrations/rollback/20261112024210_task3c_kb_binding_authenticated_save.rollback.sql"); assert.ok(!rb.includes('DELETE FROM'));
 });
