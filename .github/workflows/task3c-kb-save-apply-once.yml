@@ -1,0 +1,51 @@
+name: Task3C one-time B source application
+on:
+  push:
+    branches: [director/ai-abc-c3-long-memory-final-cutover]
+    paths: [.github/scripts/task3c-kb-save-apply-once.mjs, .github/scripts/task3c-kb-self.sql, .github/workflows/task3c-kb-save-apply-once.yml]
+permissions:
+  contents: write
+concurrency:
+  group: task3c-original-kb-b-source-application
+  cancel-in-progress: false
+jobs:
+  apply-in-original-repository:
+    if: github.repository == 'ebixsolutions/console-chat-hub'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Original lockfile dependencies
+        run: npm ci
+      - name: Generate migration filename with CLI
+        run: npx --yes supabase@2.81.3 migration new task3c_kb_binding_authenticated_save
+      - name: Apply exact preimage-checked Source and original hash maps
+        run: node .github/scripts/task3c-kb-save-apply-once.mjs
+      - name: Original KB native tests
+        run: node --test tests/console-navigation/kb-binding-dev.test.mjs
+      - name: Full authoritative repository build
+        run: npm run build
+      - name: Publish exact tested Source to the SAME branch with lease
+        env:
+          EXPECTED_HEAD: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH=director/ai-abc-c3-long-memory-final-cutover
+          ACTUAL="$(git ls-remote origin "refs/heads/$BRANCH" | cut -f1)"
+          test "$ACTUAL" = "$EXPECTED_HEAD"
+          git rm .github/scripts/task3c-kb-save-apply-once.mjs .github/scripts/task3c-kb-self.sql .github/workflows/task3c-kb-save-apply-once.yml
+          while IFS= read -r path; do git add -- "$path"; done < /tmp/task3c-exact-paths
+          git diff --check --cached
+          git config user.name 'Task3C Director Source Repair'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(task3c): authenticated same-company KB50 Vault save with native tests and full build'
+          git push origin "HEAD:refs/heads/$BRANCH"
+          echo "TESTED_SOURCE_HEAD=$(git rev-parse HEAD)"
+          echo "TESTED_SOURCE_TREE=$(git rev-parse HEAD^{tree})"
