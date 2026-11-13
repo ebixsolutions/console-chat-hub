@@ -249,6 +249,10 @@ function fixture(text,options={}) {
   assert.equal(url.origin,'http://isolated.invalid' ,'live network escaped isolated transport');
   if(url.pathname.startsWith('/rest/v1/rpc/')) {
    const rpc=url.pathname.split('/').at(-1);
+   if(rpc==='kb_binding_secret_v1' && options.managedBindings) {
+    const binding=tables.company_kb_tenant_binding.find(row=>row.company_id===body.p_company && row.kb_tenant_id===body.p_tenant && row.is_active===true);
+    return binding ? Response.json('fixture-only-managed-key') : Response.json({code:'42501',message:'denied'},{status:403});
+   }
    if(options.fullChain && rpc==='upsert_conversation_commerce_state_v1') {
     const prior=tables.conversation_commerce_state[0];assert.equal(body.p_company_id,company);assert.equal(body.p_expected_revision,prior?.revision??0);
     const row={conversation_id:ticket,company_id:company,source_message_id:source,revision:(prior?.revision??0)+1,state:body.p_state};tables.conversation_commerce_state=[row];tables.conversation_commerce_state_event.push({...row,applied_revision:row.revision});return Response.json({result:'success',applied_revision:row.revision});
@@ -2396,4 +2400,48 @@ test('Task3C managed KB binding rejects inactive same-Company rows without an en
  assert.equal(f.requests.filter(x=>x.url.includes('/api/v1/rag/context-search')).length,0,
    'managed-row denial must prevent remote KB dispatch');
  assert.equal(f.commits.length,0,'denied KB scope must not persist fabricated answer');
+});
+
+// Actual full handler + imported production modules; external transports remain
+// isolated. These synthetic semantic frames are NOT the withheld Hosted bytes.
+function task3cManagedCase(text,content,answer,sourceType='general',tenant='50',extra={}) {
+ const own=uuid(751),binding={company_id:own,kb_tenant_id:tenant,is_active:true,revision:2,api_key_secret_ref:uuid(753)};
+ const demand={question:text,source_quote:text,subject_refs:[],source_type:sourceType,
+   requested_facts:sourceType==='product'?['price']:[],constraints:{},customer_correction:false,
+   explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}};
+ const data={success:true,context_found:true,selected_documents:[{document_id:'managed-article',
+   title:text,source_type:'Other',document_score:.95,evidence:[{chunk_id:'managed-chunk',chunk_type:'full_content',content,score:.95}]}],
+   citations:[{document_id:'managed-article',relevance:'high'}]};
+ return fixture(text,{company:own,fullChain:true,captureEvidence:true,managedBindings:[binding],originalRagResponse:data,
+   answer,semantic:providerWire({language:'zh-TW',intent:'customer_guidance',requested_facts:[],demands:[demand]},'ASK_FACT'),
+   verifierDemandResolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']}],...extra});
+}
+for(const [text,content,answer,kind] of [
+ ['如何使用LINE快速登入？','LINE快速登入：在管理後台開啟登入設定，填寫已核實的應用程式資料，保存後測試登入。','資料列出的 LINE 快速登入步驟是：在管理後台開啟登入設定，填寫已核實的應用程式資料，保存後測試登入。','general'],
+ ['介紹一下你公司','本公司提供網路商店管理平台，支援商品與會員資料管理。','資料介紹本公司提供網路商店管理平台，支援商品與會員資料管理。','general'],
+ ['收費計劃幾錢一個月？','資料列出：基本方案每月 TWD 888，進階方案每月 TWD 1888。此文件未提供價格生效日期。','資料列出基本方案每月 TWD 888，進階方案每月 TWD 1888；文件未提供生效日期，這不是已核實的現價或正式報價。','product'],
+ ['How do I use the reservation portal?','The reservation portal instructions say: open booking settings, choose the service, and save the configuration.','The published instructions say to open booking settings, choose the service, and save the configuration.','general'],
+])test('Task3C managed combined routing and published-service handler: '+text,async()=>{
+ const f=task3cManagedCase(text,content,answer,kind);const r=await f.run();
+ assert.equal(r.status,200,JSON.stringify({r,events:f.events}));
+ const kb=f.requests.filter(x=>x.url==='https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search');
+ assert.equal(kb.length,1,JSON.stringify({r,events:f.events,reply:f.commits}));assert.equal(kb[0].body.company_id,50);
+ assert(kb[0].body.query.normalize('NFKC').includes(text.normalize('NFKC')));assert.equal(f.commits.length,1);assert.equal(f.commits[0].content,answer,JSON.stringify({r,events:f.events,reply:f.commits}));
+ assert.notEqual(f.commits[0].metadata.response_route,'customer_guidance');
+ assert.notEqual(f.commits[0].metadata.response_route,'kb_no_current_evidence');
+ const receipt=f.tables.rag_trace.find(row=>row.kb_source==='protected_pipeline_diagnostic'&&row.retrieved_chunks.stage==='knowledge_ownership_routing');
+ assert(receipt);assert(receipt.retrieved_chunks.payload.body);assert(!JSON.stringify(receipt).includes('fixture-only-managed-key'));
+ if(kind==='product'){assert.match(f.commits[0].content,/TWD 888/);assert(!f.commits[0].content.includes('HK$'));}
+ // Widget ingress replay/no-second-provider is covered by the unchanged
+ // managed Preview first-send/replay suite. This case invokes generation once.
+ assert.equal(f.commits[0].metadata.source_message_id,source);
+});
+test('Task3C company question with no KB evidence cannot invent a biography',async()=>{
+ const f=task3cManagedCase('介紹一下你公司','','NEVER DELIVER AN INVENTED COMPANY DESCRIPTION','general','50',{
+   originalRagResponse:{success:true,context_found:false,selected_documents:[],citations:[],llm_context:{summary_count:0,evidence_count:0}}});
+ const r=await f.run();assert.equal(r.status,200);assert.equal(f.commits.length,1);
+ assert.equal(f.requests.filter(x=>x.url.includes('/rag/context-search')).length,1);
+ assert.notEqual(f.commits[0].metadata.response_route,'customer_guidance');
+ assert(!f.commits[0].content.includes('NEVER DELIVER'));
+ assert.match(f.commits[0].content,/資料|information|evidence/i);
 });

@@ -2,7 +2,7 @@ import { createKBRequestBudget, KB_ADMISSION_TIMEOUT_MS } from "./kb-error-contr
 import { executionFailure, failureFromError, safeExecutionCode, type ExecutionFailure } from "./execution-failure.ts";
 import { legacyPreactivationAuthority } from "./uat-execution-contract.ts";
 import { accountedModelFetch } from "./model-attempt-accounting.ts";
-import { bindRagServiceDocument, ragServiceDocument, ragValidationRule } from "./preview-kb-query-embedding.ts";
+import { bindRagServiceDocument, ragServiceDocument, ragValidationRule, prepareManagedRagServiceRead, bindManagedRagApiResponse } from "./preview-kb-query-embedding.ts";
 import {
   prepareRemoteRetrieval,
   remoteAccountingSecret,
@@ -608,8 +608,11 @@ function mapDocumentCandidate(
 
 /** Resolves a managed tenant credential directly from the existing Supabase
  * Vault-backed service-role accessor. No secret reaches logs, client or UI.
+ * prepareManagedRagServiceRead invokes the existing kb_binding_secret_v1 accessor.
  * A managed row never falls back to legacy env credentials on any failure. */
-async function resolveManagedSingaporeCredential(scope: KBResolvedScope): Promise<KBCredential> {
+const managedCredentialReads = new WeakMap<object,object>();
+async function resolveManagedSingaporeCredential(scope: KBResolvedScope, requestBody:string,
+  endpoint:KBEndpointConfig, context?:{conversationId:string;operationId:string}): Promise<KBCredential> {
   if (!scope.managedBinding || !scope.aiCompanyId || !UUID_RE.test(scope.aiCompanyId)) {
     return { ok: false, error_code: "KB_MANAGED_SCOPE_INVALID" };
   }
@@ -617,14 +620,14 @@ async function resolveManagedSingaporeCredential(scope: KBResolvedScope): Promis
   if (!url) return { ok: false, error_code: "KB_MANAGED_DB_UNAVAILABLE" };
   try {
     const sb = createClient(url, getSupabaseAdminKey());
-    const { data, error } = await sb.rpc("kb_binding_secret_v1", {
-      p_company: scope.aiCompanyId, p_tenant: scope.singaporeTenantId,
+    const read=await prepareManagedRagServiceRead(sb,{
+      company:scope.aiCompanyId,tenant:scope.singaporeTenantId,
+      conversation:context?.conversationId ?? "",operation:context?.operationId ?? "",
+      endpoint:endpoint.ragUrl,requestBody,
     });
-    if (error || typeof data !== "string" || data.length < 16 ||
-        data.length > 4096 || /[\r\n\0]/.test(data)) {
-      return { ok: false, error_code: "KB_MANAGED_CREDENTIAL_UNAVAILABLE" };
-    }
-    return { ok: true, kind: "api_key", value: data };
+    const credential:KBCredential={ok:true,kind:"api_key",value:read.credential};
+    managedCredentialReads.set(credential,read.authority);
+    return credential;
   } catch {
     return { ok: false, error_code: "KB_MANAGED_CREDENTIAL_UNAVAILABLE" };
   }
@@ -658,6 +661,15 @@ export async function fetchKBRag(
     };
   }
 
+  const requestBody = JSON.stringify({
+    query,
+    company_id: companyId,
+    candidate_top_k: Math.max(queryInput.top_k, 10),
+    max_documents: KB_MAX_DOCUMENT_CANDIDATES,
+    max_summary_chunks: 1,
+    max_full_content_chunks: 3,
+    score_threshold: 0.6,
+  });
   const admissionBudget = createKBRequestBudget(KB_ADMISSION_TIMEOUT_MS, opts?.signal);
   let credential: KBCredential;
   try { credential = await admissionBudget.run(async () => endpointCfg.localProjectAuth
@@ -667,7 +679,7 @@ export async function fetchKBRag(
       value: getSupabaseAdminKey(),
     }
     : await diagnostic.run("credential", () => scope.managedBinding
-      ? resolveManagedSingaporeCredential(scope)
+      ? resolveManagedSingaporeCredential(scope, requestBody, endpointCfg, opts?.uatContext)
       : resolveSingaporeCredential(scope, endpointCfg))); }
   catch (error) { admissionBudget.dispose(); if (!admissionBudget.signal.aborted) throw error; return {success:false,chunks:[],citations:[],documents:[],error_code:"KB_TIMEOUT",failure:executionFailure("LLM_TIMEOUT",{stage:"timeout"})}; }
 
@@ -684,15 +696,6 @@ export async function fetchKBRag(
     };
   }
 
-  const requestBody = JSON.stringify({
-    query,
-    company_id: companyId,
-    candidate_top_k: Math.max(queryInput.top_k, 10),
-    max_documents: KB_MAX_DOCUMENT_CANDIDATES,
-    max_summary_chunks: 1,
-    max_full_content_chunks: 3,
-    score_threshold: 0.6,
-  });
   const controller = {signal:admissionBudget.signal};
   const started=Date.now();
   let dispatched = false;
@@ -770,6 +773,15 @@ const result = await fetch(input, init);
       phase="accounting_admission"; admissionStarted=Date.now(); admissionOpen=true; diagnostic.event(phase,"start");
       return headers;
     });
+    // Managed KB authority is independent of Frankie-only Preview permits.
+    // It is minted only after the original admission and actual HTTP response,
+    // using the exact Vault-bound request and a fresh mapping revision check.
+    const managedRead=managedCredentialReads.get(credential);
+    if(scope.managedBinding && !endpointCfg.localProjectAuth && response.ok) {
+      if(!managedRead)throw Object.assign(new Error("KB_MANAGED_CREDENTIAL_UNAVAILABLE"),{code:"KB_TOOL_FAILURE"});
+      response=await bindManagedRagApiResponse(response,managedRead,requestBody,endpointCfg.ragUrl);
+      managedCredentialReads.delete(credential);
+    }
     if (bindingStarted) diagnostic.event("response_binding", "complete", { duration_ms: Date.now() - bindingStarted });
 
   } catch (error) {

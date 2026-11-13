@@ -4532,7 +4532,9 @@ async function orchestrationGenerateReply(
         await writeProtectedPipelineEvidence(supabaseAdmin,{
           company_id:_criticalE2ExpectedTenantId,conversation_id,
           source_message_id:_h1SourceMessageId,
-        },"semantic_validation",{accepted:true,source_stage:"validated_semantic_frame"});
+        } ,"semantic_validation",{accepted:true,source_stage:"validated_semantic_frame",
+          semantic_demand_types:semanticResult.frame.demands?.map(d=>d.source_type) ?? [],
+          semantic_requested_fact_count:semanticResult.frame.requested_facts.length});
       }
       _semanticFailure = semanticResult.failure_code;
       if (_semanticFailure) _semanticDiagnostic = semanticResult.failure ?? executionFailure(_semanticFailure,{source_message_id:_h1SourceMessageId});
@@ -4602,6 +4604,13 @@ async function orchestrationGenerateReply(
   const _semanticRequestQuestion = _a3SemanticFrame?.demands?.length
     ? _h1LastMsg : _catalogueFollowup?.request ?? _h1LastMsg;
   const _customerRequestDecision = resolveCustomerRequestDecision(_semanticRequestQuestion,_a3SemanticFrame,_semanticRoutingHistory);
+  if(_criticalE2ExpectedTenantId&&_h1SourceMessageId)await writeProtectedPipelineEvidence(supabaseAdmin,{
+    company_id:_criticalE2ExpectedTenantId,conversation_id,source_message_id:_h1SourceMessageId,
+  },"knowledge_ownership_routing",{decision:_customerRequestDecision.kind,
+    proposed_types:_a3SemanticFrame?.demands?.map(d=>d.source_type) ?? [],
+    effective_types:_customerRequestDecision.semantic_demands?.map(d=>d.source_type) ?? [],
+    reason:_customerRequestDecision.semantic_demands?.some((d,i)=>d.source_type!==_a3SemanticFrame?.demands?.[i]?.source_type)
+      ? "general_knowledge_requires_source" : "source_owned_demand_scope"});
   // Resolve once before writer, Memory, planner and KB. No new authority.
   if (classifyLocalTopicRisk(_h1LastMsg)?.level === "high") _customerRequestDecision.kind="other";
   if (_a3SemanticFrame) _a3SemanticFrame=applyCustomerRequestDecision(_a3SemanticFrame,_customerRequestDecision);
@@ -5144,7 +5153,7 @@ async function orchestrationGenerateReply(
     guidance_selected: _customerGuidance,
   }));
   const _customerGuidanceInstruction = _customerGuidance
-    ? "General customer decision support: answer the actual question first with useful trade-offs in 3-5 short points, without a lengthy introduction or repeating the question. Use the latest customer-authored Memory and corrections for exact needs and measurements; Preserve false and zero; null remains unknown, never a confirmed value. Do not ask again for a supplied product type, purpose, quantity, area, budget or priority. A request for a measurement checklist calls for declarative instructions about unmeasured site dimensions, not a questionnaire reconfirming known requirements. If an unprovided fact is essential to the actual decision, ask one narrowly scoped question about that missing fact after answering the supported part. Do not assert merchant model recommendations, specifications, prices, stock, policy, suitability guarantees or completed actions. Do not invent numerical thresholds. Distinguish general advice from facts needing verification."
+    ? "General customer decision support: answer the actual question first with useful trade-offs in 3-5 short points, without a lengthy introduction or repeating the question. Use the latest customer-authored Memory and corrections for exact needs and measurements; Preserve false and zero; null remains unknown, never a confirmed value. Do not ask again for a supplied product type, purpose, quantity, area, budget or priority. A request for a measurement checklist calls for declarative instructions about unmeasured site dimensions, not a questionnaire reconfirming known requirements. If an unprovided fact is essential to the actual decision, ask one narrowly scoped question about that missing fact after answering the supported part. Do not assert merchant/company identity, biography, capabilities, feature instructions, model recommendations, specifications, prices, stock, policy, suitability guarantees or completed actions. Do not invent numerical thresholds. Distinguish general advice from facts needing verification."
     : "";
   const _effectiveRequirementsBlock = `[EFFECTIVE_CUSTOMER_REQUIREMENTS]
 ${JSON.stringify({

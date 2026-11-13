@@ -223,6 +223,134 @@ async function bindOriginalAggregation(data:any):Promise<{response:Response;grou
   const response=Response.json({success:true,context_found:true,selected_documents:data.selected_documents,citations:data.citations},{headers:{"Cache-Control":"no-store"}});
   serviceResponses.set(response,proofs);return {response,grounded:true};
 }
+
+/** A per-request server capability. Neither a browser flag, parsed JSON nor a
+ * Company UUID alone can mint published-service provenance. No new endpoint,
+ * grant, model call, retry, version or current-price authority is introduced. */
+type ManagedRagReadInput = {
+  company:string; tenant:string; conversation:string; operation:string;
+  endpoint:string; requestBody:string;
+};
+type ManagedRagSnapshot = {revision:number; secretRef:string};
+type ManagedRagRead = ManagedRagReadInput & ManagedRagSnapshot & {db:any; expires:number};
+const managedRagReads = new WeakMap<object,ManagedRagRead>();
+const managedUuid = (v:unknown):v is string => typeof v==="string" &&
+  /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(v);
+async function readManagedRagSnapshot(db:any, input:ManagedRagReadInput):Promise<ManagedRagSnapshot> {
+  const [ticket,company,binding]=await Promise.all([
+    db.from("conversations").select("id,company_id").eq("id",input.conversation).maybeSingle(),
+    db.from("company").select("id,is_active").eq("id",input.company).maybeSingle(),
+    db.from("company_kb_tenant_binding").select("company_id,kb_tenant_id,is_active,revision,api_key_secret_ref")
+      .eq("company_id",input.company).maybeSingle(),
+  ]);
+  const b=binding.data;
+  if(ticket.error || ticket.data?.id!==input.conversation || ticket.data?.company_id!==input.company ||
+      company.error || company.data?.id!==input.company || company.data?.is_active!==true ||
+      binding.error || b?.company_id!==input.company || b.kb_tenant_id!==input.tenant || b.is_active!==true ||
+      !Number.isSafeInteger(Number(b.revision)) || Number(b.revision)<1 || !managedUuid(b.api_key_secret_ref))
+    return ragAuthorityFailure("KB_RAG_TENANT_CONFLICT");
+  return {revision:Number(b.revision),secretRef:b.api_key_secret_ref};
+}
+/** Resolve the EXISTING protected accessor and bind its actual revision before
+ * the original accounted transport. The secret stays inside this server call. */
+export async function prepareManagedRagServiceRead(db:any,input:ManagedRagReadInput):Promise<{
+  credential:string; authority:object;
+}> {
+  if(!managedUuid(input.company) || !managedUuid(input.conversation) ||
+      !/^[1-9]\d{0,15}$/.test(input.tenant) || !Number.isSafeInteger(Number(input.tenant)) ||
+      typeof input.operation!=="string" || !input.operation || input.operation.length>300 ||
+      input.endpoint!=="https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search")
+    return ragAuthorityFailure("KB_RAG_TENANT_CONFLICT");
+  let request:any;try{request=JSON.parse(input.requestBody);}catch{return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID");}
+  if(request?.company_id!==Number(input.tenant) || typeof request.query!=="string" || !request.query.trim())
+    return ragAuthorityFailure("KB_RAG_TENANT_CONFLICT");
+  const before=await readManagedRagSnapshot(db,input);
+  const {data,error}=await db.rpc("kb_binding_secret_v1",{p_company:input.company,p_tenant:input.tenant});
+  if(error || typeof data!=="string" || data.length<16 || data.length>4096 || /[\r\n\0]/.test(data))
+    return ragAuthorityFailure("KB_RAG_AUTHORITY_MISSING");
+  const after=await readManagedRagSnapshot(db,input);
+  if(before.revision!==after.revision || before.secretRef!==after.secretRef)
+    return ragAuthorityFailure("KB_RAG_TENANT_CONFLICT");
+  const authority=Object.freeze({});
+  managedRagReads.set(authority,{...input,...after,db,expires:Date.now()+60_000});
+  return {credential:data,authority};
+}
+/** Consume only the same successful response/request after current binding
+ * revalidation. No cross-call reuse, JSON-cloned receipt or changed key/revision.
+ * This does not bypass the existing transport/paid/tenant admission in any way. */
+export async function bindManagedRagApiResponse(response:Response,authority:object,
+  requestBody:string,endpoint:string):Promise<Response> {
+  const read=managedRagReads.get(authority);
+  managedRagReads.delete(authority);
+  if(!read || read.expires<=Date.now() || read.requestBody!==requestBody || read.endpoint!==endpoint ||
+      !response.ok || response.redirected || response.url && response.url!==endpoint)
+    return ragAuthorityFailure("KB_RAG_AUTHORITY_MISSING");
+  const data=await boundedJson(response);
+  if(!object(data) || data.success!==true || typeof data.context_found!=="boolean" ||
+      !Array.isArray(data.selected_documents) || data.selected_documents.length>10)
+    return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","envelope");
+  const bound=await bindManagedAggregation(data,read.tenant);
+  const current=await readManagedRagSnapshot(read.db,read);
+  if(current.revision!==read.revision || current.secretRef!==read.secretRef || read.expires<=Date.now())
+    return ragAuthorityFailure("KB_RAG_TENANT_CONFLICT");
+  return bound.response;
+}
+
+async function bindManagedAggregation(data:any,tenant:string):Promise<{response:Response;grounded:boolean}> {
+  // Trust only the server-verified managed binding and authenticated endpoint's tenant-key +
+  // production/published/live/indexed/active-version filter contract. This is
+  // not independent live attestation. Missing version/publication stays unknown.
+  const check=(claim:any,version?:string,chunk=false)=>{
+    if(!object(claim))return;
+    if(claim.company_id!==undefined && String(claim.company_id)!==tenant || claim.tenant_id!==undefined && String(claim.tenant_id)!==tenant)return ragAuthorityFailure("KB_RAG_TENANT_CONFLICT");
+    if(claim.publication_state!==undefined && claim.publication_state!=="published" && claim.publication_state!=="live" || claim.status!==undefined && !["published","live",...(chunk?["active"]:[])].includes(String(claim.status)) || claim.currentness!==undefined && !["current","unknown"].includes(String(claim.currentness)) || claim.is_current===false || claim.is_published===false || claim.available_to_live_console===false || claim.environment!==undefined && claim.environment!=="production")return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
+    if(version && (claim.version_id!==undefined && claim.version_id!==version || claim.version!==undefined && claim.version!==version))return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
+  };
+  check(data);check(data.metadata);check(data.meta);
+  if(data.authority_contract!==undefined && data.authority_contract!=="singapore_rag_published_v1")return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
+  if(!Array.isArray(data.citations))return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","citations_shape");
+  if(!data.context_found){
+    if(data.selected_documents.length || data.citations.length)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","no_match_shape");
+    if(data.llm_context!==undefined && data.llm_context!==null && (!object(data.llm_context) || data.llm_context.summary_count!==0 || data.llm_context.evidence_count!==0))return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","no_match_counts");
+    return {response:Response.json({success:true,context_found:false,selected_documents:[],citations:[]},{headers:{"Cache-Control":"no-store"}}),grounded:false};
+  }
+  if(!data.selected_documents.length)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","selected_documents_empty");
+  const docs=new Set<string>(),chunks=new Set<string>(),owners=new Map<string,string>(),proofs=new Map<string,ServiceRead>();
+  for(const d of data.selected_documents){
+    // The authorized aggregation producer can select a summary-only document
+    // (zero content chunks) alongside answerable documents. Retain it for
+    // orientation; canonical grounding still requires matching full_content.
+    // Empty legacy display metadata is not a tenant/publication assertion.
+    if(!object(d) || !id(d.document_id) || docs.has(String(d.document_id)) || typeof d.title!=="string" || typeof d.source_type!=="string" || typeof d.document_score!=="number" || !Number.isFinite(d.document_score) || !Array.isArray(d.evidence) || d.evidence.length>3 ||
+      d.summary!==undefined && d.summary!==null && !object(d.summary) || !d.evidence.length && !object(d.summary))return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","document_shape");
+    docs.add(String(d.document_id));
+    if(d.authority!=null && !object(d.authority) || d.metadata!=null && !object(d.metadata))return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","optional_authority_shape");
+    const versions=[d.version_id,d.version,(d.authority as any)?.version_id,(d.authority as any)?.version,(d.metadata as any)?.version_id,(d.metadata as any)?.version].filter(v=>v!==undefined && v!==null);
+    if(versions.some(v=>!id(v)) || new Set(versions).size>1)return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
+    for(const claim of [d,d.authority,d.metadata])check(claim,versions[0] as string|undefined);
+    const chunkVersions=new Set<string>();
+    for(const c of [...(d.summary?[d.summary]:[]),...d.evidence]){
+      if(!object(c) || !id(c.chunk_id) || chunks.has(String(c.chunk_id)) || !["rag_summary","full_content","faq_pair","section"].includes(String(c.chunk_type)) || typeof c.content!=="string" || !c.content.trim() || typeof c.score!=="number" || !Number.isFinite(c.score) || c.document_id!==undefined && c.document_id!==d.document_id)return ragAuthorityFailure("KB_RAG_CHUNK_INVALID");
+      check(c,versions[0] as string|undefined,true);check(c.metadata,versions[0] as string|undefined,true);
+      if(c.version_id!==undefined){if(!id(c.version_id))return ragAuthorityFailure("KB_RAG_CHUNK_INVALID");chunkVersions.add(String(c.version_id));}
+      if(c.content_sha256!==undefined && (!hash(c.content_sha256) || await digest(c.content)!==c.content_sha256))return ragAuthorityFailure("KB_RAG_CONTENT_MISMATCH");
+      chunks.add(String(c.chunk_id));
+      owners.set(String(c.chunk_id),String(d.document_id));
+    }
+    if(chunkVersions.size>1)return ragAuthorityFailure("KB_RAG_AUTHORITY_CONFLICT");
+  }
+  const cited=new Set<string>();
+  for(const c of data.citations){
+    if(!object(c) || !docs.has(String(c.document_id)) || cited.has(String(c.document_id)) || c.chunk_id!==undefined && owners.get(String(c.chunk_id))!==c.document_id)return ragAuthorityFailure("KB_RAG_RESPONSE_INVALID","citation_lineage");
+    check(c);cited.add(String(c.document_id));
+  }
+  for(const d of data.selected_documents){const citation=data.citations.find((c:any)=>c.document_id===d.document_id);proofs.set(d.document_id,{tenant:tenant,relevance:typeof citation?.relevance==="string"?citation.relevance:null});}
+  // Keep actual authority fields exactly; no locally fabricated hashes/versions.
+  // combined_text/query never become evidence or a second customer instruction.
+  const response=Response.json({success:true,context_found:true,selected_documents:data.selected_documents,citations:data.citations},{headers:{"Cache-Control":"no-store"}});
+  serviceResponses.set(response,proofs);return {response,grounded:true};
+}
+
 /** No metadata GET, fallback legacy path, fabricated version or model retry.
  * These are authenticated service assertions, not an independently verified
  * index snapshot or runtime/cost attestation. Approval must accept that boundary.

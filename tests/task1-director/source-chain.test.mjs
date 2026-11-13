@@ -364,3 +364,93 @@ test('Task1C catalogue source answers share safe consumer wiring and real fresh-
  assert.match(assist,/draft_only:true/);
  assert.match(assist,/recorded_product_facts: catalogueAnswer\?\.recorded_facts/);
 });
+
+// Task3C same-closure regressions. These are source/native fixtures, not a
+// reconstruction of the withheld production semantic response or Hosted PASS.
+import {applyCustomerRequestDecision} from '../../supabase/functions/_shared/commerce-state-authority.ts';
+import {prepareManagedRagServiceRead,bindManagedRagApiResponse,bindRagServiceDocument,ragServiceDocument} from '../../supabase/functions/_shared/preview-kb-query-embedding.ts';
+const ownershipFrame = (text, overrides={}) => ({...semantic(), requested_facts:[], demands:[{
+  question:text,source_quote:text,subject_refs:[],source_type:'general',requested_facts:[],constraints:{},
+  customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+}],...overrides});
+for(const text of ['如何使用LINE快速登入？','介紹一下你公司','How do I configure an unfamiliar feature?','請介紹你哋提供的服務。','How do I use this booking portal?','How do I install this device?'])test('Task3C merchant-owned procedural/company demand cannot escape KB: '+text,()=>{
+  const frame=ownershipFrame(text), decision=resolveCustomerRequestDecision(text,frame);
+  assert.equal(decision.kind,'merchant_facts');
+  const next=applyCustomerRequestDecision(frame,decision);
+  assert.equal(next.demands[0].source_type,'unknown');
+  assert.equal(next.demands[0].source_quote,text);
+  assert.equal(next.demands[0].question,text);
+  assert.deepEqual(next.requested_facts,['published_information']);
+  assert.deepEqual(frame.requested_facts,[], 'never mutate the original provider receipt');
+});
+for(const text of ['How should I compare alternatives for a small team?','請按我需求比較各種選擇的取捨。','Which upgrade should I prioritize and which can wait?','Help me choose which arrangement fits','explain general selection considerations'])test('Task3C independent general decision criteria remain no-KB: '+text,()=>{
+ const frame=ownershipFrame(text);assert.equal(resolveCustomerRequestDecision(text,frame).kind,'guidance');
+});
+test('Task3C ownership guards retain explicit no-lookup, control and source bounds',()=>{
+ const text='不要查外部資料，如何比較選擇？';assert.equal(resolveCustomerRequestDecision(text,ownershipFrame(text)).kind,'guidance');
+ const human='請轉真人客服';assert.equal(resolveCustomerRequestDecision(human,ownershipFrame(human)).kind,'other');
+ const invented=ownershipFrame('介紹公司');invented.demands[0].source_quote='unsaid private company fact';
+ assert.equal(resolveCustomerRequestDecision('介紹公司',invented).kind,'other');
+});
+const managedEndpoint='https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search';
+function managedAuthorityFixture(tenant='50') {
+ const company='00000000-0000-4000-8000-000000000751',conversation='00000000-0000-4000-8000-000000000752';
+ const rows={company:{id:company,is_active:true},conversations:{id:conversation,company_id:company},
+  company_kb_tenant_binding:{company_id:company,kb_tenant_id:tenant,is_active:true,revision:2,api_key_secret_ref:'00000000-0000-4000-8000-000000000753'}};
+ const rpcCalls=[];
+ const db={from(table){const predicates=[];return {select(){return this;},eq(k,v){predicates.push([k,v]);return this;},async maybeSingle(){const row=rows[table];return {data:row&&predicates.every(([k,v])=>row[k]===v)?structuredClone(row):null,error:null};}};},
+  async rpc(name,args){rpcCalls.push({name,args});assert.equal(name,'kb_binding_secret_v1');assert.deepEqual(args,{p_company:company,p_tenant:tenant});return {data:'fixture-only-not-a-real-key',error:null};}};
+ const input={company,tenant,conversation,operation:'fixture-source:kb',endpoint:managedEndpoint,requestBody:JSON.stringify({company_id:Number(tenant),query:'Published service information'})};
+ const data={success:true,context_found:true,selected_documents:[{document_id:'fixture-doc',title:'Published service information',source_type:'Other',document_score:.9,evidence:[{chunk_id:'fixture-chunk',chunk_type:'full_content',content:'Published service information. Plan Alpha is listed as TWD 888 monthly.',score:.9}]}],citations:[{document_id:'fixture-doc',relevance:'low'}]};
+ return {rows,db,input,data,rpcCalls};
+}
+test('Task3C managed service proof is server-only, tenant-bound and never fabricates currentness',async()=>{
+ const f=managedAuthorityFixture(), read=await prepareManagedRagServiceRead(f.db,f.input);
+ assert.equal(f.rpcCalls.length,1);assert.equal(JSON.stringify(read.authority),'{}');
+ const response=await bindManagedRagApiResponse(Response.json(f.data),read.authority,f.input.requestBody,f.input.endpoint);
+ const parsed=await response.json(),doc=parsed.selected_documents[0];assert.deepEqual(doc,f.data.selected_documents[0]);
+ assert.equal(ragServiceDocument(doc),undefined);bindRagServiceDocument(response,doc);
+ assert.deepEqual(ragServiceDocument(doc),{tenant:'50',relevance:'low'});
+ assert.equal(ragServiceDocument(structuredClone(doc)),undefined);
+ assert.equal(doc.authority,undefined);assert.equal(doc.version,undefined);
+ await assert.rejects(()=>bindManagedRagApiResponse(Response.json(f.data),read.authority,f.input.requestBody,f.input.endpoint));
+});
+for(const [name,alter] of [
+ ['inactive company',f=>f.rows.company.is_active=false],
+ ['wrong conversation owner',f=>f.rows.conversations.company_id='00000000-0000-4000-8000-000000000999'],
+ ['revoked mapping',f=>f.rows.company_kb_tenant_binding.is_active=false],
+ ['wrong tenant',f=>f.rows.company_kb_tenant_binding.kb_tenant_id='51'],
+ ['missing credential reference',f=>f.rows.company_kb_tenant_binding.api_key_secret_ref=null],
+ ['invalid revision',f=>f.rows.company_kb_tenant_binding.revision=0],
+])test('Task3C managed authority rejects '+name+' before credential/network',async()=>{
+ const f=managedAuthorityFixture();alter(f);await assert.rejects(()=>prepareManagedRagServiceRead(f.db,f.input));assert.equal(f.rpcCalls.length,0);
+});
+for(const [name,alter] of [
+ ['revoked in flight',f=>f.rows.company_kb_tenant_binding.is_active=false],
+ ['revision changed in flight',f=>f.rows.company_kb_tenant_binding.revision++],
+ ['secret rotated in flight',f=>f.rows.company_kb_tenant_binding.api_key_secret_ref='00000000-0000-4000-8000-000000000999'],
+ ['company disabled in flight',f=>f.rows.company.is_active=false],
+])test('Task3C managed authority rejects '+name+' after HTTP success',async()=>{
+ const f=managedAuthorityFixture(),read=await prepareManagedRagServiceRead(f.db,f.input);alter(f);
+ await assert.rejects(()=>bindManagedRagApiResponse(Response.json(f.data),read.authority,f.input.requestBody,f.input.endpoint));
+});
+for(const [name,alter] of [
+ ['explicit foreign tenant',d=>d.selected_documents[0].tenant_id='34'],
+ ['draft',d=>d.selected_documents[0].status='draft'],
+ ['staging',d=>d.selected_documents[0].environment='staging'],
+ ['historical',d=>d.selected_documents[0].currentness='historical'],
+ ['wrong document lineage',d=>d.selected_documents[0].evidence[0].document_id='foreign-doc'],
+ ['substituted hash',d=>d.selected_documents[0].evidence[0].content_sha256='a'.repeat(64)],
+ ['invalid citation',d=>d.citations[0].document_id='foreign-doc'],
+])test('Task3C managed response provenance rejects '+name,async()=>{
+ const f=managedAuthorityFixture(),read=await prepareManagedRagServiceRead(f.db,f.input);alter(f.data);
+ await assert.rejects(()=>bindManagedRagApiResponse(Response.json(f.data),read.authority,f.input.requestBody,f.input.endpoint));
+});
+test('Task3C no client token, request substitution, alternate endpoint or remote retry',async()=>{
+ const f=managedAuthorityFixture();await assert.rejects(()=>bindManagedRagApiResponse(Response.json(f.data),{},f.input.requestBody,f.input.endpoint));
+ const a=await prepareManagedRagServiceRead(f.db,f.input);
+ await assert.rejects(()=>bindManagedRagApiResponse(Response.json(f.data),a.authority,JSON.stringify({company_id:51,query:'other'}),f.input.endpoint));
+ await assert.rejects(()=>prepareManagedRagServiceRead(f.db,{...f.input,endpoint:'https://example.test/context-search'}));
+ const b=await prepareManagedRagServiceRead(f.db,f.input);
+ await assert.rejects(()=>bindManagedRagApiResponse(Response.json({error:'unavailable'},{status:503}),b.authority,f.input.requestBody,f.input.endpoint));
+});
