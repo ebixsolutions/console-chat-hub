@@ -171,3 +171,68 @@ Deno.test("P0-1 plan receipt exposes IDs but never raw names, constraints or a s
   assert(!text.includes("Orion-X100") && !text.includes("sq_ft"));
   assert(!Object.hasOwn(receipt, "remote_dispatch_success"));
 });
+
+// Synthetic frames only. Historical provider bytes remain WITHHELD_SENSITIVE.
+for (const source_type of ["unknown","product"] as const) for (const ambiguous of [false,true]) for(const prior of [false,true]) {
+ Deno.test(`subject guard current wording ${source_type} ambiguous=${ambiguous} history=${prior}`,()=>{
+  const text="如何使用LINE快速登入？",label="LINE quick authentication";
+  const f=input(text,[demand(text,null,{source_type,subject_refs:[label],question:label+" Orion-X100 instructions",
+    requested_facts:[label+" Orion-X100 instructions"],constraints:{name:label},
+    ambiguity:{is_ambiguous:ambiguous,reasons:ambiguous?["missing subject"]:[],clarification_question:null}})]);
+  if(prior)f.history=[{id:"old",role:"visitor",content:"Orion-X100 features?"}];
+  const before=JSON.stringify(f),r=resolveCurrentFactualRequest(f);
+  equal(r.needs_subject_clarification,false);equal(factualDemandPlan(r)[0].action,"KB_READ_ELIGIBLE");
+  assert(r.query?.includes(text.normalize("NFKC")));assert(!r.query?.includes(label)&&!r.query?.includes("Orion-X100"));
+  equal(JSON.stringify(f),before);equal(r.demands[0].subject_resolution_evidence?.source_wording_fallback,true);
+  assert(!buildCurrentFactualRequestPrompt(r).includes("subject_resolution_evidence"));
+  assert(!JSON.stringify(r).includes("source_wording_fallback"));
+ });
+}
+for(const [text,history] of [["有冇貨？",[]],["幾錢？",[{id:"old",role:"visitor",content:"進階方案有咩功能？"}]]] as const){
+ Deno.test(`subject guard elliptical provider ambiguity remains clarification: ${text}`,()=>{
+  const f=input(text,[demand(text,null,{source_type:"unknown",requested_facts:[],
+    ambiguity:{is_ambiguous:true,reasons:["missing subject"],clarification_question:"Invented offer?"}})]);
+  f.history=[...history];const r=resolveCurrentFactualRequest(f);
+  equal(r.needs_subject_clarification,true);equal(r.query,"");equal(factualDemandPlan(r)[0].action,"PENDING_SOURCE_OR_SUBJECT");
+ });
+}
+for(const text of ["不要處理『如何使用LINE快速登入？』；只回答電郵登入。","取消如何使用LINE快速登入？"]){
+ Deno.test("subject guard rejected quote scope: "+text,()=>{
+  const f=input(text,[demand("如何使用LINE快速登入？",null,{source_type:"unknown",subject_refs:["LINE quick authentication"]})]);
+  const r=resolveCurrentFactualRequest(f);equal(r.needs_subject_clarification,true);equal(r.query,"");
+ });
+}
+Deno.test("subject guard material unbound condition is not silently removed",()=>{
+ const q="如何使用LINE快速登入？";
+ const f=input(q,[demand(q,null,{source_type:"unknown",subject_refs:["translation"],constraints:{region:"unspoken region"}})]);
+ equal(resolveCurrentFactualRequest(f).needs_subject_clarification,true);
+});
+Deno.test("subject guard no-history stock requires subject even without provider ambiguity",()=>{
+ const q="有冇貨？",f=input(q,[demand(q,null,{source_type:"unknown",requested_facts:["stock"]})]);
+ const r=resolveCurrentFactualRequest(f);equal(r.needs_subject_clarification,true);equal(r.query,"");
+});
+Deno.test("subject guard explicit valid history remains bound for plan price",()=>{
+ const q="幾錢？",f=input(q,[demand(q,null,{source_type:"unknown",subject_refs:["進階方案"],requested_facts:["price"]})]);
+ f.history=[{id:"old",role:"visitor",content:"進階方案有咩功能？"}];
+ const r=resolveCurrentFactualRequest(f);equal(r.needs_subject_clarification,false);
+ equal(r.resolution,"follow_up");equal(r.subject_source_message_ids,["old"]);
+ // Retained existing grammar includes question particles in the bound label;
+ // do not silently enlarge this repair to rename historical references.
+ assert(r.subjects.some(x=>x.startsWith("進階方案")));assert(r.query?.includes(q.normalize("NFKC")));
+});
+for(const condition of ['tenant','source','pointer','unbound-quote','private','material-condition'])Deno.test('subject fallback boundaries '+condition,()=>{
+ const q="如何使用LINE快速登入？",f=input(q,[demand(q,null,{source_type:"unknown",subject_refs:["translated label"]})]);
+ if(condition==='tenant')f.trusted_company_id='';
+ if(condition==='source')f.source_message_id='';
+ if(condition==='pointer')f.question=f.semantic!.demands![0].source_quote="如何使用佢快速登入？";
+ if(condition==='unbound-quote')f.question="我沒有問登入";
+ if(condition==='private')f.question=f.semantic!.demands![0].source_quote="如何使用帳戶 account number 123456 登入？";
+ if(condition==='material-condition')f.semantic!.demands![0].constraints={region:"unspoken region"};
+ const r=resolveCurrentFactualRequest(f);assert(!r.demands[0].subject_resolution_evidence?.source_wording_fallback);
+ assert(!r.query);
+});
+Deno.test("subject guard empty refs cannot smuggle translated subjects through other query fields",()=>{
+ const q="如何使用LINE快速登入？",f=input(q,[demand(q,null,{source_type:"unknown",question:"translated-topic instructions",
+   requested_facts:["translated-topic instructions"],constraints:{}})]);
+ const r=resolveCurrentFactualRequest(f);assert(r.query?.includes(q.normalize("NFKC")));assert(!r.query?.includes("translated-topic"));
+});

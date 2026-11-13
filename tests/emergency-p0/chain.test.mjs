@@ -2445,3 +2445,48 @@ test('Task3C company question with no KB evidence cannot invent a biography',asy
  assert(!f.commits[0].content.includes('NEVER DELIVER'));
  assert.match(f.commits[0].content,/資料|information|evidence/i);
 });
+
+// Agreed subject guard: actual normalizer -> ownership -> resolver -> planner ->
+// handler -> serialized HTTP -> grounding/B2 commit. Transport is isolated, not Hosted.
+for(const shape of ['translated-label','provider-ambiguity','product-history'])for(const prior of [false,true])
+test(`Task3C subject guard full chain ${shape} history=${prior}`,async()=>{
+ const text='如何使用LINE快速登入？', content='LINE快速登入：開啟登入設定，保存後測試登入。';
+ const answer='資料列出的 LINE 快速登入步驟是：開啟登入設定，保存後測試登入。';
+ const stale='Orion-X100',label='LINE quick authentication';
+ const demand={question:`How to use ${label} with ${stale}?`,source_quote:text,
+   subject_refs:[shape==='product-history'?stale:label],source_type:shape==='product-history'?'product':'unknown',
+   requested_facts:[`${label} instructions for ${stale}`],constraints:{name:shape==='product-history'?stale:label},
+   customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:shape==='provider-ambiguity',
+     reasons:shape==='provider-ambiguity'?['subject unclear']:[],clarification_question:null}};
+ const semantic=providerWire({language:'zh-TW',intent:'ask_fact',requested_facts:[],demands:[demand]},'ASK_FACT');
+ const history=prior?[{id:uuid(754),conversation_id:ticket,role:'visitor',content:`${stale} 有咩功能？`,created_at:'2026-11-12T00:00:00.000Z',metadata:{},is_recalled:false}]:[];
+ const f=task3cManagedCase(text,content,answer,'unknown','50',{semantic,history});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));
+ const kb=f.requests.filter(x=>x.url.includes('/api/v1/rag/context-search'));
+ assert.equal(kb.length,1,JSON.stringify({r,commits:f.commits,events:f.events}));
+ assert.equal(kb[0].body.company_id,50);
+ assert(kb[0].body.query.includes(text.normalize('NFKC')));
+ assert(!kb[0].body.query.includes(label)&&!kb[0].body.query.includes(stale),kb[0].body.query);
+ assert.equal(f.commits.length,1);assert.equal(f.commits[0].content,answer);
+ assert.equal(f.commits[0].metadata.source_message_id,source);
+ const receipt=f.tables.rag_trace.filter(row=>row.kb_source==='protected_pipeline_diagnostic'&&row.retrieved_chunks.stage==='knowledge_ownership_routing')
+   .map(row=>JSON.parse(row.retrieved_chunks.payload.body||'{}')).find(x=>x.subject_resolution);
+ assert(receipt?.subject_resolution.demands[0].source_wording_fallback);
+ assert(!JSON.stringify(f.commits[0].metadata).includes('subject_resolution'));
+});
+for(const [text,prior,ambiguous] of [['有冇貨？',false,false],['有冇貨？',false,true],['幾錢？',true,true]])
+test(`Task3C subject guard neutral clarification ${text} history=${prior} ambiguity=${ambiguous}`,async()=>{
+ const d={question:text,source_quote:text,subject_refs:[],source_type:'unknown',requested_facts:[],constraints:{},
+   customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:ambiguous,reasons:ambiguous?['subject unclear']:[],clarification_question:'Invented product FREE refund!'}};
+ const history=prior?[{id:uuid(754),conversation_id:ticket,role:'visitor',content:'進階方案有咩功能？',created_at:'2026-11-12T00:00:00.000Z',metadata:{},is_recalled:false}]:[];
+ const f=task3cManagedCase(text,'','MUST NOT GENERATE','unknown','50',{history,
+   semantic:providerWire({language:'zh-TW',intent:'ask_fact',requested_facts:[],demands:[d]},'ASK_FACT')});
+ const r=await f.run();assert.equal(r.status,200);assert.equal(f.requests.filter(x=>x.url.includes('/rag/context-search')).length,0);
+ assert.equal(f.commits.length,1);assert.equal(f.commits[0].content,'你想查邊一項資料？請補充具體對象。');
+ assert(!f.commits[0].content.includes('Invented'));assert.equal(f.commits[0].metadata.source_message_id,source);
+ const evidence=f.tables.rag_trace.filter(row=>row.kb_source==='protected_pipeline_diagnostic'&&row.retrieved_chunks.stage==='knowledge_ownership_routing')
+   .map(row=>JSON.parse(row.retrieved_chunks.payload.body||'{}')).find(x=>x.subject_resolution);
+ assert(evidence.subject_resolution.missing_evidence.length>0);
+ assert.equal(evidence.subject_resolution.demands[0].source_wording_fallback,false);
+ assert(!JSON.stringify(f.commits[0].metadata).includes('subject_resolution'));
+});

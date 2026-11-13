@@ -24,6 +24,8 @@ export interface CurrentFactualDemand {
   subject_source_message_ids: string[];
   /** Server-derived read-target proof. Never model output or merchant evidence. */
   subject_binding_proof?: CurrentTurnSubjectBindingProof;
+  /** Protected evidence only; never customer-visible metadata. */
+  subject_resolution_evidence?: { proposed_ref_count: number; bound_ref_count: number; source_quote_bound: boolean; source_wording_fallback: boolean };
   source_type: FactualDemandSourceType;
   requested_facts: string[];
   constraints: Record<string, DecisionValue>;
@@ -414,7 +416,7 @@ function resolveDemandSubjects(
     ? {bindings: current.map(subject => ({subject, source_message_id: input.source_message_id ?? null, customer_text: input.question, current: true})), blocked: false}
     : TOPIC_BOUNDARY.test(quote) ? {bindings: [], blocked: true} : recentCustomerDiscourseFocus(input);
   if (focus.blocked || !explicit.length && focus.bindings.length > 1) return {bindings: [], question: quote, unresolved: true};
-  if (!focus.bindings.length) return unchanged();
+  if (!focus.bindings.length) return {...unchanged(),unresolved:subjectlessFactualFollowup || POINTER.test(quote) || refs.length>originalBindings.length};
   const sameSubjects = focus.bindings.length === originalBindings.length && focus.bindings.every(binding =>
     originalBindings.some(original => norm(original.subject) === norm(binding.subject)));
   // A wrong identity may also have caused the model to attach old, unquoted
@@ -935,6 +937,46 @@ function currentTurnSubjectAttempt(
   return make("same_turn_unique_antecedent",subject,unique(anchors.map(anchor=>anchor.quote)));
 }
 
+/** A deterministic fallback for a complete current merchant question. Run only
+ * after ordinary literal/history resolution. This is a local read projection;
+ * provider ambiguity and write-side state authority remain immutable. */
+function independentSourceQuestion(input: ResolveCurrentFactualRequestInput, demand: CommerceSemanticDemand): boolean {
+  const f=input.semantic!, quote=clean(demand.source_quote), full=clean(input.question);
+  if (!clean(input.trusted_company_id) || !clean(input.source_message_id) ||
+      input.memory && input.memory.company_id!==input.trusted_company_id ||
+      !quote || !full.includes(quote) || f.confidence<.62 ||
+      !["product","policy","unknown"].includes(demand.source_type) ||
+      !["ASK_FACT","NO_STATE_CHANGE"].includes(f.operation) || f.additive ||
+      f.customer_correction || demand.customer_correction || demand.explicit_negations.length ||
+      (f.customer_facts?.length??0)>0 ||
+      [f.transaction_state,f.payment_state,f.booking_state,f.fulfillment_state].some(x=>!["none","unknown"].includes(x)) ||
+      POINTER.test(quote) || EXPLICIT_HISTORY_REFERENCE.test(quote) ||
+      LIFECYCLE_BOUNDARY.test(quote) || TOPIC_BOUNDARY.test(quote) ||
+      EXPLICIT_COMPARISON.test(quote) || isPersonalOrderStatusRequest(quote) ||
+      /[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b(?:order|invoice|payment|refund|reservation|account)\s*(?:id|number|#)|(?:訂單|订单|賬戶|账户|付款|退款)(?:編號|编号|號碼|号码)/iu.test(quote)) return false;
+  // Check the containing clause, including controls OUTSIDE the extracted span.
+  // An unrelated declined clause must not block an independently valid demand.
+  const start=full.indexOf(quote);
+  if(full.indexOf(quote,start+1)>=0)return false;
+  const prefix=full.slice(0,start).split(/[;；。!！\n]/u).pop()??"";
+  if (LIFECYCLE_BOUNDARY.test(prefix) || /(?:not|don't|do not|ignore|instead)\b|唔係|不是|並非|并非/iu.test(prefix)) return false;
+  if ((input.commerce?.entities??[]).some(e=>INACTIVE.has(e.status) &&
+      entityNames(e).some(name=>!!literalFactualSubject(quote,[name])))) return false;
+  // No vocabulary of industries/brands. Remove interrogative/facet scaffolding;
+  // what remains must name the topic, not merely ask "how much/in stock".
+  const content=quote.replace(/(?:請問|请问|請|请|一下|如何|怎樣|怎样|怎麼|怎么|使用|介紹|介绍|解釋|解释|什麼|什么|甚麼|幾錢|几钱|多少錢|多少钱|有冇貨|有無貨|有沒有貨|有没有货|庫存|库存|現貨|现货|功能|規格|规格|價格|价格|價錢|价钱|有咩|係咩|是|的|嘅|呢|嗎|吗)/gu, " ")
+    .replace(/\b(?:please|tell|me|about|explain|introduce|how|what|which|much|many|do|does|can|i|we|you|use|is|are|the|a|an|of|for|in|and|or|only|just|price|cost|features?|specs?|specifications?|stock|inventory|availability|available|details?|left)\b/giu," ")
+    .replace(/[^\p{L}\p{N}]/gu,"");
+  if(content.length<2 || !/^(?:請問|请问|請|请)?\s*(?:如何|怎樣|怎样|怎麼|怎么|介紹|介绍|解釋|解释|什麼是|什么是|甚麼是)|^(?:please\s+)?(?:how (?:do|does|can|to)\b|what is\b|explain\b|introduce\b|tell me about\b)/iu.test(quote))return false;
+  // Only discard identity-only unbound constraints. Material conditions must
+  // already be customer-owned; otherwise clarification preserves the unknown.
+  const sourceValue=(v:DecisionValue):boolean=>Array.isArray(v)?v.every(sourceValue):
+    v!==null&&typeof v==="object"?Object.values(v).every(sourceValue):
+    v!==null&&norm(quote).includes(norm(String(v)));
+  return Object.entries(demand.constraints).every(([key,value])=>
+    ["name","model","sku","subject"].includes(key) && typeof value==="string" && demand.subject_refs.includes(value) || sourceValue(value));
+}
+
 function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, proposed: CommerceSemanticDemand[]): CurrentFactualRequest {
   const question = clean(input.question), frame = input.semantic!;
   const missing: FactualRequestMissingEvidence[] = [];
@@ -976,13 +1018,28 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
       ? proposedReferences(trustedFrame(frame)) : [];
     if (quoteBound && demand.source_type === "transaction") privateLocators.set(id,
       refs.filter(ref => norm(sourceQuote).includes(norm(ref))));
-    const resolved = optionDiscovery
+    let resolved = optionDiscovery
       ? {bindings: [], question: criteria?.question ?? sourceOwnedOptionQuestion ?? sourceQuote, unresolved: false}
       : quoteBound && subjectAttempt.kind === "unresolved"
       ? {bindings:[],question:sourceQuote,unresolved:true}
-      : quoteBound && !demand.ambiguity.is_ambiguous
+      : quoteBound
       ? resolveDemandSubjects(input, demand, refs, proof ? proof.subjects : explicitCurrentSubjects)
       : {bindings: [], question: clean(demand.question), unresolved: false};
+    const independent = quoteBound && subjectAttempt.kind !== "unresolved" && !optionDiscovery && independentSourceQuestion(input,demand);
+    const sourceFallback = independent && (resolved.unresolved || !resolved.bindings.length || demand.ambiguity.is_ambiguous ||
+      resolved.bindings.some(binding=>!binding.current && !literalFactualSubject(sourceQuote,[binding.subject])));
+    if (sourceFallback) {
+      // Re-project EVERY query field from the complete customer span. Never
+      // retain translated labels via question/facts/constraints after rejection.
+      const current = resolved.bindings.filter(binding=>binding.current &&
+        !!literalFactualSubject(sourceQuote,[binding.subject]));
+      resolved={bindings:current,question:sourceQuote,unresolved:false};
+      ambiguity.is_ambiguous=false; ambiguity.reasons=[]; ambiguity.clarification_question=null;
+    }
+    // A provider ambiguity not independently disproved remains pending; attempted
+    // bindings must not leak into otherwise valid demands or answer context.
+    if(demand.ambiguity.is_ambiguous && !optionDiscovery && !sourceFallback)
+      resolved={bindings:[],question:clean(demand.question),unresolved:false};
     const located = resolved.bindings;
     // Product/category discovery may intentionally have no specific item.
     // Missing-reference ambiguity belongs to the semantic demand, not to a
@@ -992,12 +1049,12 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
       ambiguity.is_ambiguous = true; ambiguity.reasons.push("subject_not_bound_to_customer_source");
       missing.push({demand_id: id, reason: "subject_unresolved"});
     }
-    if (demand.ambiguity.is_ambiguous && !optionDiscovery) missing.push({demand_id: id, reason: "semantic_ambiguity"});
+    if (demand.ambiguity.is_ambiguous && !optionDiscovery && !sourceFallback) missing.push({demand_id: id, reason: "semantic_ambiguity"});
     if (quoteBound && demand.source_type === "transaction") missing.push({demand_id: id, reason: "live_transaction_unavailable"});
     bindings.push(...located.map(binding => ({...binding, demand_id: id})));
     if (["product", "policy", "unknown"].includes(demand.source_type)) contexts.push(...located.filter(binding => !binding.current && binding.customer_text).map(binding => clean(binding.customer_text)));
     const subjects = unique(located.map(binding => binding.subject));
-    const correctedFacts = optionDiscovery
+    const correctedFacts = sourceFallback ? currentFacets(sourceQuote) : optionDiscovery
       ? unique([...sourceBoundRequestedFacts(sourceQuote,demand.requested_facts),
           "published merchant options matching customer criteria"])
       : quoteBound
@@ -1017,17 +1074,24 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
       ? [subjects.filter(subject => !norm(sourceQuote).includes(norm(subject))).join("; "), sourceQuote]
           .filter(Boolean).join(" ")
       : resolved.question;
-    return {
+    const result: CurrentFactualDemand = {
       id, question: answerQuestion, source_quote: sourceQuote, subjects,
       ...(proof && !unresolved ? {subject_binding_proof:proof} : {}),
       subject_source_message_ids: criteria
         ? unique([...criteria.criteria.scope.map(item => item.source_message_id), criteria.criteria.specification.source_message_id, input.source_message_id ?? ""])
         : unique(located.map(binding => binding.source_message_id ?? "")),
       source_type: demand.source_type, requested_facts: correctedFacts,
-      constraints: mergeDecisionContext(subjectConstraints(subjects, input), criteria?.constraints ?? demand.constraints),
+      constraints: sourceFallback ? {} : mergeDecisionContext(subjectConstraints(subjects, input), criteria?.constraints ?? demand.constraints),
       ...(criteria ? {option_criteria:criteria.criteria} : {}),
       customer_correction: demand.customer_correction, explicit_negations: [...demand.explicit_negations], ambiguity,
     };
+    // Explicit protected-writer access only. JSON prompts, query serialization,
+    // object spreads and public metadata must not inherit diagnostic details.
+    Object.defineProperty(result, "subject_resolution_evidence", {value:{
+      proposed_ref_count:refs.length,bound_ref_count:subjects.length,
+      source_quote_bound:quoteBound,source_wording_fallback:sourceFallback,
+    },enumerable:false});
+    return result;
   });
   // Excluding a transaction demand alone is insufficient when a model quotes
   // the entire mixed message as a KB demand. Keep the request pending instead

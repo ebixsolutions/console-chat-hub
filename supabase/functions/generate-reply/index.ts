@@ -4764,6 +4764,12 @@ async function orchestrationGenerateReply(
           commerce: commerceState,
           request_decision: _customerRequestDecision,
         });
+        if (_criticalE2ExpectedTenantId && _h1SourceMessageId) await writeProtectedPipelineEvidence(supabaseAdmin, {
+          company_id:_criticalE2ExpectedTenantId,conversation_id,source_message_id:_h1SourceMessageId,
+        }, "knowledge_ownership_routing", {subject_resolution:{
+          missing_evidence:_currentFactualRequest.missing_evidence,
+          demands:_currentFactualRequest.demands.map(d=>({demand_id:d.id,...d.subject_resolution_evidence})),
+        }});
       } catch (error) {
         if (!(error instanceof DecisionContextLimitError)) throw error;
         // An incomplete request must not become a shorter, apparently complete lookup.

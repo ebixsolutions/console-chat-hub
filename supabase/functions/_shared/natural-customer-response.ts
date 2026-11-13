@@ -549,13 +549,13 @@ export function renderNaturalImmediateResponse(
   if (intent.kind === "product_factual_clarification") {
     if (intent.candidates.length > 1) {
       const choices = intent.candidates.join(" / ");
-      if (language === "en") return `Which model do you mean: ${choices}?`;
-      if (language === "zh-CN") return `你指的是哪个型号：${choices}？`;
-      return `你指邊個型號：${choices}？`;
+      if (language === "en") return `Which one do you mean: ${choices}?`;
+      if (language === "zh-CN") return `你指的是哪一項：${choices}？`;
+      return `你指邊一項：${choices}？`;
     }
-    if (language === "en") return "Which current product or model do you mean?";
-    if (language === "zh-CN") return "你指的是哪个当前产品或型号？";
-    return "你指邊個現行產品或型號？";
+    if (language === "en") return "What would you like me to check? Please specify the subject.";
+    if (language === "zh-CN") return "你想查询哪一项内容？请补充具体对象。";
+    return "你想查邊一項資料？請補充具體對象。";
   }
   if (intent.kind === "greeting") {
     if (language === "en") return "Hi! How can I help?";
