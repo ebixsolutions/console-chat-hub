@@ -4,28 +4,83 @@ on:
     branches: [director/ai-abc-c3-long-memory-final-cutover]
     paths: [.github/workflows/director-task3c-source-transport.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
   source-transport:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
         with:
-          node-version: '22'
-      - name: Fetch original test SDK only
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Transfer exact locally tested bytes to unreferenced Git objects only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_PARENT: ${{ github.sha }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/edge-sdk"
-          npm install --prefix "$RUNNER_TEMP/edge-sdk" --no-audit --no-fund @supabase/supabase-js@2.45.0
-          cd "$RUNNER_TEMP"
-          tar -czf edge-sdk.tar.gz edge-sdk
-          sha256sum edge-sdk.tar.gz > edge-sdk.sha256
+          python3 <<'PY'
+          import os,json,base64,zlib,hashlib,subprocess,urllib.request,pathlib
+          repo='ebixsolutions/console-chat-hub'
+          base='a0936b7002da343b0d3c7569820bbe34bf8d4e2d'
+          parent=os.environ['EXPECTED_PARENT']
+          workflow='.github/workflows/director-task3c-source-transport.yml'
+          target='9439d30078e5b01e3231912722771a6269e803cc'
+          def git(*args):
+              return subprocess.check_output(['git',*args]).decode().strip()
+          def api(path,data=None):
+              req=urllib.request.Request('https://api.github.com/repos/'+repo+path,
+                  data=None if data is None else json.dumps(data).encode(),
+                  headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json','Content-Type':'application/json','X-GitHub-Api-Version':'2022-11-28'})
+              with urllib.request.urlopen(req,timeout=60) as response:return json.load(response)
+          assert git('rev-parse','HEAD')==parent
+          assert git('diff','--name-only',base,parent)==workflow
+          assert api('/git/ref/heads/director/ai-abc-c3-long-memory-final-cutover')['object']['sha']==parent
+          parts=['5347ff6ba4c4b3b2e72130ab76c6c84158b49f0e','aaaf7eab10b193a273c0605123b7363010274ad9','90f88a8c53dcff338b31e1de803dfc29185ffb6a','5e8d8ea252c4195dcef297bbf1676f8a47c8df22','255e0b161324ec51a20ca67a08ac6feab15bad57']
+          joined=b''
+          for sha in parts:
+              obj=api('/git/blobs/'+sha);content=base64.b64decode(obj['content'])
+              assert hashlib.sha1(b'blob '+str(len(content)).encode()+b'\0'+content).hexdigest()==sha
+              joined+=content
+          compressed=base64.b64decode(joined,validate=True)
+          assert hashlib.sha256(compressed).hexdigest()=='9d4686f2ba17328115706b90ae244ca1ddbd534de52cc02bf44e45f170327473'
+          patch=zlib.decompress(compressed)
+          assert hashlib.sha256(patch).hexdigest()=='96edb1cc6c41a0de1ebef709bf7dc11ae1bab409a25782342548c68f2c9550f8'
+          p=pathlib.Path(os.environ['RUNNER_TEMP'])/'director-source.patch';p.write_bytes(patch)
+          subprocess.run(['git','apply','--check','--index',str(p)],check=True)
+          subprocess.run(['git','apply','--index',str(p)],check=True)
+          subprocess.run(['git','rm',workflow],check=True)
+          assert git('write-tree')==target
+          expected={
+              '.github/scripts/c3_unified_production_profile.json':'50e6f6cb0016e482c95e951c2a4180ccd72a33d6',
+              '.github/scripts/c3_unified_production_source_gate.mjs':'c2bc78c93919d53bb638b01b296d236dc4f889ec',
+              'supabase/functions/_shared/commerce-semantic-frame.ts':'c6fe74d0b66ba2fa9f148e513ddc9eb7c2c6e443',
+              'supabase/functions/_shared/commerce-state-authority.ts':'07de1d1889eb7651d64107e27cccec4a6f9cbed6',
+              'supabase/functions/_shared/kb-client.ts':'4a93f7634bbc6b8ee1f18ccd2a80f10d5a406bc2',
+              'supabase/functions/_shared/preview-kb-query-embedding.ts':'e468798616934247264e28cd6c64e01f5d42d66a',
+              'supabase/functions/generate-reply/index.ts':'0d382a2ace3c516925aa8f8ddb8f0d58282ffa3d',
+              'tests/emergency-p0/chain.test.mjs':'94b1db1988ffdda4149e15a652f2e3f25a46d0a0',
+              'tests/task1-director/source-chain.test.mjs':'a0f86c9499ea0d7143a79c69100b6960f11b5fec'}
+          assert set(git('diff','--cached','--name-only',base).splitlines())==set(expected)
+          entries=[];manifest=[]
+          for path,sha in expected.items():
+              content=pathlib.Path(path).read_bytes()
+              assert content and hashlib.sha1(b'blob '+str(len(content)).encode()+b'\0'+content).hexdigest()==sha
+              assert api('/git/blobs',{'content':base64.b64encode(content).decode(),'encoding':'base64'})['sha']==sha
+              entries.append({'path':path,'mode':'100644','type':'blob','sha':sha})
+              manifest.append({'path':path,'git_blob_sha1':sha,'sha256':hashlib.sha256(content).hexdigest(),'bytes':len(content)})
+          entries.append({'path':workflow,'mode':'100644','type':'blob','sha':None})
+          tree=api('/git/trees',{'base_tree':git('rev-parse',parent+'^{tree}'),'tree':entries})
+          assert tree['sha']==target
+          assert api('/git/ref/heads/director/ai-abc-c3-long-memory-final-cutover')['object']['sha']==parent
+          receipt={'base':base,'parent':parent,'tree':target,'files':manifest,'temporary_workflow_removed':True,'branch_updated':False,'production_actions':0,'paid_calls':0}
+          out=pathlib.Path(os.environ['RUNNER_TEMP'])/'director-tree-receipt.json';out.write_text(json.dumps(receipt,indent=2)+'\n')
+          print('EXACT_SOURCE_TREE_VERIFIED',target,'files',len(manifest),'NO_BRANCH_UPDATE_NO_DEPLOY')
+          PY
       - uses: actions/upload-artifact@v4
         with:
-          name: director-task3c-exact-edge-sdk
-          path: |
-            ${{ runner.temp }}/edge-sdk.tar.gz
-            ${{ runner.temp }}/edge-sdk.sha256
-          retention-days: 3
+          name: director-task3c-d1-d2-exact-tree-receipt
+          path: ${{ runner.temp }}/director-tree-receipt.json
+          retention-days: 7
