@@ -1,5 +1,5 @@
 import test from 'node:test';
-import {transformSync as task1Transpile} from 'esbuild';
+import {transformSync as task1Transpile, buildSync as task3cBuildCanonical} from 'esbuild';
 import {readFileSync as task1SourceRead} from 'node:fs';
 import assert from 'node:assert/strict';
 import {resolveCustomerRequestDecision,isBareCommerceSubjectMention} from '../../supabase/functions/_shared/commerce-state-authority.ts';
@@ -458,7 +458,16 @@ test('Task3C no client token, request substitution, alternate endpoint or remote
 // Agreed D1-C regression: a provider's general label never overrides explicit
 // merchant facts. These synthetic inputs distinguish the rejected external-OR
 // proposal from the guarded helper; they are not captured Hosted model output.
-import {normalizeCommerceSemanticFrame} from '../../supabase/functions/_shared/commerce-semantic-frame.ts';
+// The original C3 runner intentionally uses Node --experimental-strip-types.
+// Bundle the complete canonical TS source and its real imports to in-memory JS;
+// the unchanged source contains a TypeScript parameter property that strip-only
+// cannot load directly. No fixture or normalized output is substituted.
+const task3cCanonicalBundle=task3cBuildCanonical({
+ entryPoints:['supabase/functions/_shared/commerce-semantic-frame.ts'],
+ bundle:true,platform:'node',format:'esm',write:false,logLevel:'silent',
+});
+const {normalizeCommerceSemanticFrame}=await import('data:text/javascript;base64,'+
+ Buffer.from(task3cCanonicalBundle.outputFiles[0].contents).toString('base64'));
 for(const [text,fact] of [
  ['Help me choose a plan and show the current price.','price'],
  ['Help me compare plans and confirm availability.','availability'],

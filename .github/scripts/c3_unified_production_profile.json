@@ -1683,6 +1683,6 @@
     "supabase/functions/_shared/commerce-state-authority.ts": "c46cd2a7ff80a360ba196917ac32dbeba68046cfc83eef22083be1b39412a825",
     "supabase/functions/_shared/preview-kb-query-embedding.ts": "d2afb7a2b140a5d9763a3b5a6b45676206624aff75f72c6a2925be2a77b91006",
     "supabase/functions/generate-reply/index.ts": "d8c069212ae995d7e7539c69e2797e98686fb668b35406199be553729befaf8b",
-    "tests/task1-director/source-chain.test.mjs": "577e8eff628528950bfff3a8167e06530f78e7ac033e2bd11f555220b69a7a46"
+    "tests/task1-director/source-chain.test.mjs": "02e51542a1b887aef222297c6b2b064e4e416d8fbd0a1134da191537f44d80b2"
   }
 }
