@@ -420,7 +420,7 @@ function customerPriorityOnly(clause:string):boolean {
 function guidanceSpeechAct(question: string, semantic: {
   intent: string; confidence: number; requested_facts: string[];
   ambiguity: { is_ambiguous: boolean };
-} | null): boolean {
+} | null, allowDemandCriteria = false): boolean {
   if (!semantic || semantic.confidence < 0.62) return false;
   const lookupText = withoutExcludedLookups(clean(question));
   // A customer's explicit priority ranking is not an assertion/request for a
@@ -464,7 +464,7 @@ function guidanceSpeechAct(question: string, semantic: {
     /\b(?:which|what)\b.{0,64}\b(?:prioriti[sz]e|upgrade first|do first|can wait|could wait|defer|postpone|hold off)\b/iu.test(text);
   // Preserve source-quoted requests for criteria without requiring a question
   // mark or a specific industry; merchant-fact exclusion above still wins.
-  const requestedCriteria = /\b(?:help(?:\s+me)?(?:\s+to)?\s+(?:choose|select|compare)|(?:explain|discuss|compare|consider)\s+(?:the\s+)?(?:general\s+)?(?:selection|decision)\s+(?:criteria|considerations|trade[ -]?offs))\b/iu.test(text);
+  const requestedCriteria = allowDemandCriteria && /\b(?:help(?:\s+me)?(?:\s+to)?\s+(?:choose|select|compare)|(?:explain|discuss|compare|consider)\s+(?:the\s+)?(?:general\s+)?(?:selection|decision)\s+(?:criteria|considerations|trade[ -]?offs))\b/iu.test(text);
   const selectionQuestion = requestedCriteria || specificationCriteria || imperativeComparison || deferrableDecision || priorityTradeoffQuestion || /(?:點(?:樣)?|怎(?:樣|么)|如何).{0,6}(?:揀|選|选|比較|比较|考慮|考虑|取捨|取舍|準備|准备)|(?:從|从|按|依).{0,8}(?:哪些|甚麼|什么|咩).{0,8}(?:方面|因素|條件|条件).{0,8}(?:比較|比较|選|选)|\b(?:how|what).{0,32}(?:choose|select|compare|pick|prioriti[sz]e|balance|weigh|evaluate|assess|prepare|measure)\b/iu.test(text);
   if (!selectionQuestion && !/(?:取捨|取舍|選購|选购|選機|选机|應(?:該)?(?:準備|補充|考虑|考慮)|應該考慮|应该考虑|先問|先问)|(?:現場|现场|量度|量測|量测|測量|测量).{0,24}(?:應|应|要|先).{0,8}(?:記低|记低|記錄|记录|留意|注意|準備|准备|量度|量測|量测)|\b(?:trade[ -]?offs?|selection criteria|what.*(?:ask|prepare|measure)|how.*(?:choose|select))\b/i.test(text)) return false;
   // Requested targets and free labels describe a model interpretation, not
@@ -537,7 +537,7 @@ export function resolveCustomerRequestDecision(question:string, semantic: {
       // no-KB route. Unproven business/how-to/company facts remain lookup needs.
       const merchantOwned=/\byour\b|貴(?:公司|店|平台)|贵(?:公司|店|平台)|你(?:哋|們|们)(?:的|嘅)?|你(?:的|嘅)/iu.test(demand.source_quote);
       const explicitNoLookup=!withoutExcludedLookups(demand.source_quote).trim();
-      const general=guidanceSpeechAct(demand.source_quote,semantic) || customerContinuation;
+      const general=guidanceSpeechAct(demand.source_quote,semantic,true) || customerContinuation;
       if(explicitNoLookup || general && !merchantOwned)return demand;
       return {...demand,source_type:"unknown" as const,question:demand.source_quote,
         requested_facts:demand.requested_facts.length?demand.requested_facts:["published_information"]};

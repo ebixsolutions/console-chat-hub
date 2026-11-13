@@ -1680,9 +1680,9 @@
     "src/lib/widget-live-recovery.ts": "eee044148c962b28caf7e7f910f32bcc351b508614bf755407a2fba22b423c98",
     "tests/console-navigation/widget-recovery.test.mjs": "1f34e53580aa314853f4eda935804a50eb815389d72285844a65e5afce7257ea",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "dbdfede4885e6a6e8cb5f6ce57444b3a6c6415b320c5adb387825146df06ffd8",
-    "supabase/functions/_shared/commerce-state-authority.ts": "d43b36de7d481834a3836ab6d6d6161b566c3c5009e9061504a559ed7953f674",
+    "supabase/functions/_shared/commerce-state-authority.ts": "c46cd2a7ff80a360ba196917ac32dbeba68046cfc83eef22083be1b39412a825",
     "supabase/functions/_shared/preview-kb-query-embedding.ts": "d2afb7a2b140a5d9763a3b5a6b45676206624aff75f72c6a2925be2a77b91006",
     "supabase/functions/generate-reply/index.ts": "d8c069212ae995d7e7539c69e2797e98686fb668b35406199be553729befaf8b",
-    "tests/task1-director/source-chain.test.mjs": "504048dbd9a1e5296cb870139d8fb0d9747eaeecf63207fc0fbf638d9430f557"
+    "tests/task1-director/source-chain.test.mjs": "577e8eff628528950bfff3a8167e06530f78e7ac033e2bd11f555220b69a7a46"
   }
 }

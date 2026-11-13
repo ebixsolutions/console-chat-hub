@@ -454,3 +454,31 @@ test('Task3C no client token, request substitution, alternate endpoint or remote
  const b=await prepareManagedRagServiceRead(f.db,f.input);
  await assert.rejects(()=>bindManagedRagApiResponse(Response.json({error:'unavailable'},{status:503}),b.authority,f.input.requestBody,f.input.endpoint));
 });
+
+// Agreed D1-C regression: a provider's general label never overrides explicit
+// merchant facts. These synthetic inputs distinguish the rejected external-OR
+// proposal from the guarded helper; they are not captured Hosted model output.
+import {normalizeCommerceSemanticFrame} from '../../supabase/functions/_shared/commerce-semantic-frame.ts';
+for(const [text,fact] of [
+ ['Help me choose a plan and show the current price.','price'],
+ ['Help me compare plans and confirm availability.','availability'],
+ ['Help me choose a service and explain the cancellation policy.','policy'],
+ ['Help me choose a product and confirm its warranty.','warranty'],
+])test('Task3C D1-C merchant fact veto survives general misclassification: '+fact,()=>{
+ const input=ownershipFrame(text,{language:'en',intent:'explore_options',requested_facts:[fact]});
+ input.demands[0].requested_facts=[fact];
+ const frame=normalizeCommerceSemanticFrame(input);
+ assert(frame,'negative fixture must be canonically valid');
+ const before=structuredClone(frame);
+ const decision=resolveCustomerRequestDecision(text,frame);
+ assert.equal(decision.kind,'merchant_facts');
+ assert.equal(decision.general_request,null);
+ assert.equal(decision.merchant_request,text);
+ const next=applyCustomerRequestDecision(frame,decision);
+ assert.equal(next.demands[0].source_type,'unknown');
+ assert.equal(next.demands[0].source_quote,text);
+ assert.deepEqual(next.demands[0].requested_facts,[fact]);
+ assert.deepEqual(next.requested_facts,[fact]);
+ assert.notEqual(next.intent,'customer_guidance');
+ assert.deepEqual(frame,before,'decision application must not mutate the provider frame');
+});
