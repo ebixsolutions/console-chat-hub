@@ -1,0 +1,42 @@
+name: Director Task3C exact source transport
+on:
+  push:
+    branches: [director/ai-abc-c3-long-memory-final-cutover]
+    paths: [.github/workflows/director-task3c-source-transport.yml]
+permissions:
+  contents: read
+jobs:
+  source-transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a0936b7002da343b0d3c7569820bbe34bf8d4e2d
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export exact source only, no credentials or runtime operations
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = a0936b7002da343b0d3c7569820bbe34bf8d4e2d
+          if git config --local --get-regexp 'http\..*extraheader'; then exit 1; fi
+          mkdir -p "$RUNNER_TEMP/task3c-source"
+          git rev-parse HEAD > "$RUNNER_TEMP/task3c-source/HEAD.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/task3c-source/TREE.txt"
+          git ls-tree -r HEAD > "$RUNNER_TEMP/task3c-source/TRACKED_FILES.txt"
+          python3 - "$RUNNER_TEMP/task3c-source/source.tar.gz" <<'PY'
+          import subprocess, sys, tarfile
+          paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
+          with tarfile.open(sys.argv[1], 'w:gz') as out:
+              for path in paths:
+                  if path:
+                      out.add(path, arcname=path, recursive=False)
+              out.add('.git', arcname='.git')
+          PY
+          sha256sum "$RUNNER_TEMP/task3c-source/source.tar.gz" > "$RUNNER_TEMP/task3c-source/SHA256.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: director-task3c-source-a0936b
+          path: ${{ runner.temp }}/task3c-source/
+          retention-days: 3
