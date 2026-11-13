@@ -8,42 +8,24 @@ permissions:
 jobs:
   source-transport:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: a0936b7002da343b0d3c7569820bbe34bf8d4e2d
-          fetch-depth: 0
-          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install exact lockfile dependencies for isolated tests only
-        run: npm ci --no-audit --no-fund
-      - name: Export exact source and dependency bytes, no credentials or runtime operations
+      - name: Fetch original test SDK only
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = a0936b7002da343b0d3c7569820bbe34bf8d4e2d
-          if git config --local --get-regexp 'http\..*extraheader'; then exit 1; fi
-          test -z "$(git status --porcelain --untracked-files=no)"
-          mkdir -p "$RUNNER_TEMP/task3c-source"
-          git rev-parse HEAD > "$RUNNER_TEMP/task3c-source/HEAD.txt"
-          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/task3c-source/TREE.txt"
-          git ls-tree -r HEAD > "$RUNNER_TEMP/task3c-source/TRACKED_FILES.txt"
-          python3 - "$RUNNER_TEMP/task3c-source/source.tar.gz" <<'PY'
-          import subprocess, sys, tarfile
-          paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
-          with tarfile.open(sys.argv[1], 'w:gz') as out:
-              for path in paths:
-                  if path:
-                      out.add(path, arcname=path, recursive=False)
-              out.add('.git', arcname='.git')
-          PY
-          tar -czf "$RUNNER_TEMP/task3c-source/node_modules.tar.gz" node_modules
-          sha256sum "$RUNNER_TEMP/task3c-source/"*.tar.gz > "$RUNNER_TEMP/task3c-source/SHA256.txt"
+          mkdir -p "$RUNNER_TEMP/edge-sdk"
+          npm install --prefix "$RUNNER_TEMP/edge-sdk" --no-audit --no-fund @supabase/supabase-js@2.45.0
+          cd "$RUNNER_TEMP"
+          tar -czf edge-sdk.tar.gz edge-sdk
+          sha256sum edge-sdk.tar.gz > edge-sdk.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: director-task3c-source-and-deps-a0936b
-          path: ${{ runner.temp }}/task3c-source/
+          name: director-task3c-exact-edge-sdk
+          path: |
+            ${{ runner.temp }}/edge-sdk.tar.gz
+            ${{ runner.temp }}/edge-sdk.sha256
           retention-days: 3
