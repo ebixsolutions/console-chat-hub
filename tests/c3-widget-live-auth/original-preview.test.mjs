@@ -1657,17 +1657,21 @@ test("managed Preview first Visitor on original served send action: creates sign
   assert.equal(f.provider,1);
   assert.equal(f.rpc.length,0,"never borrowed the synthetic C3 account");
 });
-for(const mode of ['legacy','scoped','body-false','legacy-verdict'])test('V285 actual Assist coverage contract '+mode,async()=>{
+for(const mode of ['legacy','scoped','body-false','legacy-verdict','schema-partial'])test('V285 actual Assist coverage contract '+mode,async()=>{
  const question='How do I configure LINE login?';
  const semantic=providerWireV8({language:'en',intent:'merchant_facts',requested_facts:[],demands:[{question,source_quote:question,subject_refs:[],source_type:'policy',requested_facts:[],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]});
  const text='Open LINE Developers, create a Provider and a LINE Login channel. '+ 'Source details. '.repeat(108);
  const docs=[{document_id:'line-guide',version_id:'line-v1',title:'LINE Login',source_type:'Other',document_score:.99,evidence:[0,2,1].map(i=>({chunk_id:'line-'+i,chunk_index:i,chunk_type:'full_content',score:.99-i*.01,content:text}))}];
- const verifier={grounded:true,unsupported_claims:[],evidence_ids:['E1','E2'],resolution:'supported',demand_resolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1','E2']}],...(mode==='scoped'?{body_scope_valid:true}:mode==='body-false'?{body_scope_valid:false}:{})};
+ const verifier={grounded:true,unsupported_claims:[],evidence_ids:['E1','E2'],resolution:'supported',demand_resolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1','E2']}],...(['scoped','schema-partial'].includes(mode)?{body_scope_valid:true}:mode==='body-false'?{body_scope_valid:false}:{})};
+ if(mode==='schema-partial'){verifier.resolution='partial';verifier.demand_resolutions[0].status='partial';}
  const x=await setupInbox('none',{documents:docs},semantic,{scopeAnswer:mode!=='legacy',suggestions:[{content:mode==='legacy'?'Create the channel and setup is complete.':'The verified initial steps are to open LINE Developers, create a Provider and a LINE Login channel. Remaining settings are not verified.',tone_label:'Informative'}],verifier});
+ f.rows.rag_trace=[];
  f.rows.messages=[{id:crypto.randomUUID(),conversation_id:x.c.id,role:'visitor',content:question,created_at:'2026-11-14T00:00:00Z',metadata:{},is_recalled:false}];
  try{const before=JSON.stringify(f.rows.messages),r=await x.send('suggest_reply',question,'conversation');
- if(mode==='scoped'){assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.grounding_verification.question_resolution,'partial');assert.equal(r.data.grounding_verification.coverage_scope.cap_reason,'status_capped_by_server');assert.match(r.data.result.suggestions[0].content,/This covers only/);}
+ if(['scoped','schema-partial'].includes(mode)){assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.grounding_verification.question_resolution,'partial');assert.equal(r.data.grounding_verification.coverage_scope.cap_reason,mode==='scoped'?'status_capped_by_server':null);assert(!r.data.result.suggestions[0].content.includes('setup or activation'));const schema=x.modelRequests.find(r=>r.generationConfig?.responseSchema?.properties?.grounded).generationConfig.responseSchema;assert.deepEqual(schema.properties.resolution.enum,['partial','unsupported']);assert.match(r.data.result.suggestions[0].content,/This covers only/);}
  else assert(r.status>=400,JSON.stringify(r));
+ if(mode==='body-false'){const trace=f.rows.rag_trace??[];assert(trace.some(row=>row.retrieved_chunks?.stage==='assist_grounding_reviewer_specifics'&&row.retrieved_chunks.payload.body?.includes('answer_body_scope_unverified')));assert(trace.some(row=>row.retrieved_chunks?.stage==='assist_grounding_verdict'&&row.retrieved_chunks.payload.body?.includes('grounding_rejection')));}
+
  assert.equal(JSON.stringify(f.rows.messages),before);assert.equal(x.posts(),1);assert(x.model()<=3);
  }finally{globalThis.fetch=realFetch;}
 });

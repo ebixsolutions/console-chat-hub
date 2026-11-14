@@ -2491,7 +2491,7 @@ test(`Task3C subject guard neutral clarification ${text} history=${prior} ambigu
  assert.equal(evidence.subject_resolution.demands[0].source_wording_fallback,false);
  assert(!JSON.stringify(f.commits[0].metadata).includes('subject_resolution'));
 });
-for(const mode of ['legacy-completion','scoped-partial','scope-body-rejected','scope-legacy-reviewer'])
+for(const mode of ['legacy-completion','scoped-partial','scope-body-rejected','scope-legacy-reviewer','schema-partial','empty-then-valid','raw-inconsistent'])
 test('V285 actual Widget coverage contract '+mode,async()=>{
  const old=`要使用LINE快速登入，請依照以下步驟操作：
 
@@ -2504,18 +2504,34 @@ test('V285 actual Widget coverage contract '+mode,async()=>{
  const content='LINE Developers 登入帳號，建立 Provider，建立 LINE Login channel。'+ '資料內容。'.repeat(345);
  const doc={document_id:'line-article',title:'LINE快速登入',source_type:'Other',document_score:.99,
  evidence:[0,2,1].map(i=>({chunk_id:'line-'+i,chunk_index:i,chunk_type:'full_content',content:content+` STEP-${i}`,score:.99-i*.01}))};
- const approve={grounded:true,unsupported_claims:[],evidence_chunk_ids:['E1','E2'],question_resolution:'supported',demand_resolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1','E2']}],...(mode==='scoped-partial'?{body_scope_valid:true}:mode==='scope-body-rejected'?{body_scope_valid:false}:{})};
+ const approve={grounded:true,unsupported_claims:[],evidence_chunk_ids:['E1','E2'],question_resolution:'supported',demand_resolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1','E2']}],...(['scoped-partial','schema-partial','empty-then-valid','raw-inconsistent'].includes(mode)?{body_scope_valid:true}:mode==='scope-body-rejected'?{body_scope_valid:false}:{})};
+ if(['schema-partial','empty-then-valid','raw-inconsistent'].includes(mode)){approve.demand_resolutions[0].status='partial';approve.question_resolution=mode==='raw-inconsistent'?'supported':'partial';}
+ const first=mode==='empty-then-valid'?{...approve,demand_resolutions:[]}:approve;
  const f=task3cManagedCase('如何使用LINE快速登入？',content,mode==='legacy-completion'?old:'目前已核實的部分是：登入 LINE Developers，建立 Provider 及 LINE Login channel；其他設定步驟仍待核實。','unknown','50',{
  originalRagResponse:{success:true,context_found:true,selected_documents:[doc],citations:[{document_id:'line-article',relevance:'high'}]},
- scopeAnswer:mode!=='legacy-completion',verifierResponses:[approve,approve]});
+ scopeAnswer:mode!=='legacy-completion',verifierResponses:[first,approve]});
  const r=await f.run();assert.equal(r.status,200,JSON.stringify({r,events:f.events}));assert.equal(f.commits.length,1);
  const gen=f.requests.find(r=>r.url.endsWith(':generateContent')&&!r.body.generationConfig?.responseSchema?.properties?.grounded&&!r.body.generationConfig?.responseSchema?.properties?.context_encoding);
  const evidenceText=gen.body.systemInstruction.parts[0].text.split('[KB_EVIDENCE_JSON]')[1].split('[/KB_EVIDENCE_JSON]')[0];
  const selected=JSON.parse(evidenceText);assert.deepEqual(selected.map(e=>e.chunk_index),[0,1]);assert(evidenceText.trim().length<=6000);assert.equal(selected.length,2);
  const meta=f.commits[0].metadata;
- if(mode==='scoped-partial'){assert.match(f.commits[0].content,/以下只涵蓋/);assert.equal(meta.grounding_verification.question_resolution,'partial');assert.equal(meta.grounding_verification.coverage_scope.cap_reason,'status_capped_by_server');}
+ if(['scoped-partial','schema-partial','empty-then-valid'].includes(mode)){assert.match(f.commits[0].content,/以下只涵蓋/);assert.equal(meta.grounding_verification.question_resolution,'partial');assert.equal(meta.grounding_verification.coverage_scope.cap_reason,mode==='scoped-partial'?'status_capped_by_server':null);assert(!f.commits[0].content.includes('完整設定'));}
  else {assert(!f.commits[0].content.includes(old));assert.notEqual(meta.grounding_verification?.question_resolution,'supported');}
  assert.equal(f.requests.filter(r=>r.url.includes('/rag/context-search')).length,1);
  const models=f.requests.filter(r=>r.url.endsWith(':generateContent'));
- assert(models.filter(r=>r.body.generationConfig?.responseSchema?.properties?.grounded).length<=2);
+ const reviewers=models.filter(r=>r.body.generationConfig?.responseSchema?.properties?.grounded);
+ assert(reviewers.length<=2);
+ if(reviewers.length)assert.deepEqual(reviewers[0].body.generationConfig.responseSchema.properties.question_resolution.enum,['partial','unsupported']);
+ if(mode==='empty-then-valid'){assert.equal(reviewers.length,2);assert.match(reviewers[1].body.contents[0].parts[0].text,/demand_count_mismatch/);assert.match(reviewers[1].body.contents[0].parts[0].text,/Server validation feedback/);}
+ if(mode==='schema-partial')assert.equal(reviewers.length,1);
+ if(['raw-inconsistent','scope-body-rejected'].includes(mode)){
+  assert.equal(reviewers.length,1);
+  const reason=mode==='raw-inconsistent'?'question_resolution_demand_inconsistent':'answer_body_scope_unverified';
+  const diagnostics=f.tables.rag_trace.filter(r=>r.kb_source==='protected_pipeline_diagnostic').map(r=>r.retrieved_chunks);
+  assert(diagnostics.some(d=>d.stage==='grounding_reviewer_specifics'&&d.payload.body?.includes(reason)));
+  assert(diagnostics.some(d=>d.stage==='grounding_verdict'&&d.payload.body?.includes(reason)&&d.payload.body?.includes('rejection')));
+  if(mode==='raw-inconsistent')assert(diagnostics.some(d=>d.stage==='grounding_verdict'&&d.payload.body&&JSON.parse(d.payload.body).verdict?.rejection?.question_resolution==='supported'));
+  assert(f.requests.some(r=>r.url.includes('/upstream_call_log')&&r.body?.request_payload?.outcome==='failed'&&r.body?.request_payload?.purpose==='evaluation'&&r.body?.request_payload?.error_code===(mode==='raw-inconsistent'?'GROUNDING_QUESTION_UNRESOLVED':'GROUNDING_BODY_SCOPE_UNVERIFIED')));
+ }
+
 });

@@ -718,7 +718,7 @@ async function verifyGroundedGeneration(
           unsupported_claims: { type: "ARRAY", items: { type: "STRING" } },
           evidence_chunk_ids: { type: "ARRAY", items: { type: "STRING" } },
           ...(call.factualEvidenceAvailable ? {question_resolution:{type:"STRING",enum:["supported","partial","unsupported"]}} : {}),
-          ...(grounding.bound_evidence ? {demand_resolutions: groundingDemandResponseSchema(grounding.bound_evidence), question_resolution:{type:"STRING",enum:["supported","partial","unsupported"]}} : {}),
+          ...(grounding.bound_evidence ? {demand_resolutions: groundingDemandResponseSchema(grounding.bound_evidence), question_resolution:{type:"STRING",enum:grounding.bound_evidence.demands.some(d=>d.blocked||d.source_type==="transaction"||d.missing_reasons.length)?["partial","unsupported"]:["supported","partial","unsupported"]}} : {}),
         },
         required: [...(scopeRequired?["body_scope_valid"]:[]), "grounded", "unsupported_claims", "evidence_chunk_ids", ...(call.factualEvidenceAvailable || grounding.bound_evidence ? ["question_resolution"] : []), ...(grounding.bound_evidence ? ["demand_resolutions"] : [])],
       },
@@ -905,12 +905,14 @@ async function verifyGroundedGeneration(
 
       const usedEvidenceIds=decision.evidence_chunk_ids.filter(id=>verifierEvidence.allowed_ids.includes(id));
       const bodyScopeVerified=!scopeRequired||parseJsonObjectLoose(parsed.text)?.body_scope_valid===true;
-      if(!bodyScopeVerified)return {ok:false,reason:"answer_body_scope_unverified"};
+      if(!bodyScopeVerified){
+        await recordUsage(verifierCall,verifierAdapter.id,verifierAdapter.model,"failed",res.status,verifierUsage,"GROUNDING_BODY_SCOPE_UNVERIFIED");
+        await recordReviewerSpecifics(attempt,"answer_body_scope_unverified",parsed.text,true,decision.unsupported_claims);
+        return {ok:false,reason:"answer_body_scope_unverified",rejection:{version:"grounding-rejection-1",stage:"semantic_claims",reason:"answer_body_scope_unverified",question_resolution:decision.question_resolution??null,used_evidence_ids:usedEvidenceIds,demand_resolutions:[],unsupported_claim_count:decision.unsupported_claims.length}};
+      }
       const rawResolutions=Array.isArray(decision.demand_resolutions)?decision.demand_resolutions:[];
       const demandParse=grounding.bound_evidence?parseGroundingDemandResolutionsDetailed(decision.demand_resolutions,grounding.bound_evidence,usedEvidenceIds,scopeRequired&&bodyScopeVerified&&decision.grounded&&decision.unsupported_claims.length===0):null;
       const rawQuestionResolution=decision.question_resolution;
-      if(grounding.bound_evidence && ((rawQuestionResolution==="supported") !== rawResolutions.every((d:any)=>d?.status==="supported")))return {ok:false,reason:"question_resolution_demand_inconsistent"};
-      if(demandParse?.ok&&scopeRequired&&decision.question_resolution==="supported"&&demandParse.resolutions.some(d=>d.status==="partial"))decision.question_resolution="partial";
       if(grounding.bound_evidence&&demandParse&&!demandParse.ok){const rejection:GroundingRejectionReceipt={version:"grounding-rejection-1",stage:"demand_resolution_shape",reason:demandParse.reason,
         question_resolution:decision.question_resolution??null,used_evidence_ids:usedEvidenceIds,demand_resolutions:[],unsupported_claim_count:decision.unsupported_claims.length,
         demand_parse_failure:{reason:demandParse.reason,...(typeof demandParse.demand_index==="number"?{demand_index:demandParse.demand_index}:{}),...(demandParse.demand_id?{demand_id:demandParse.demand_id}:{})}};
@@ -922,7 +924,7 @@ async function verifyGroundedGeneration(
        return {ok:false,reason:"verifier_demand_resolution_invalid",failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"decode",request_id:call.operationId,http_status:res.status}),rejection};}
       const resolutions=demandParse?.ok?demandParse.resolutions:null;let coverageFailure:string|null=null;
       if(grounding.bound_evidence){if(!decision.question_resolution)coverageFailure="question_resolution_missing";else if(decision.question_resolution==="unsupported")coverageFailure="question_resolution_unsupported";
-       else if((decision.question_resolution==="supported")!==Boolean(resolutions?.every(item=>item.status==="supported")))coverageFailure="question_resolution_demand_inconsistent";}
+       else if((rawQuestionResolution==="supported")!==rawResolutions.every((item:any)=>item?.status==="supported"))coverageFailure="question_resolution_demand_inconsistent";}
       else if(call.factualEvidenceAvailable&&(!decision.question_resolution||decision.question_resolution==="unsupported"||!decision.evidence_chunk_ids.some(id=>verifierEvidence.allowed_ids.includes(id))))
        coverageFailure=!decision.question_resolution?"question_resolution_missing":decision.question_resolution==="unsupported"?"question_resolution_unsupported":"question_resolution_missing_evidence";
       await recordUsage(verifierCall,verifierAdapter.id,verifierAdapter.model,decision.grounded&&!coverageFailure?"success":"failed",res.status,verifierUsage,
@@ -936,6 +938,7 @@ async function verifyGroundedGeneration(
        log(call.tag,{event:"grounding_semantic_rejected",request_id:call.operationId,grounding_authority:grounding.authority,unsupported_claim_count:decision.unsupported_claims.length});
        return {ok:false,reason:"unsupported_semantic_claim",rejection:{version:"grounding-rejection-1",stage:"semantic_claims",reason:"unsupported_semantic_claim",
         question_resolution:decision.question_resolution??null,used_evidence_ids:usedEvidenceIds,demand_resolutions:resolutions??[],unsupported_claim_count:decision.unsupported_claims.length}};}
+      if(demandParse?.ok&&scopeRequired&&decision.question_resolution==="supported"&&demandParse.resolutions.some(d=>d.status==="partial"))decision.question_resolution="partial";
       return {ok:true,...(grounding.bound_evidence&&resolutions?{receipt:{...(coverageContract?{coverage_scope:{digest:coverageContract.digest,raw_verdict:{question_resolution:rawQuestionResolution,demand_resolutions:rawResolutions},cap_reason:resolutions.some(effective=>rawResolutions.some((raw:any)=>raw.demand_id===effective.demand_id&&raw.status==="supported"&&effective.status==="partial"))?"status_capped_by_server":null}}:{}),used_evidence_ids:usedEvidenceIds,question_resolution:decision.question_resolution as "supported"|"partial",demand_resolutions:resolutions}}:{})};
     } catch (error) {
       if (error instanceof ModelAccountingError || error instanceof UatDenied) return { ok: false, reason: "model_accounting_denied",failure:executionFailure(error.code,{request_id:call.operationId}) };

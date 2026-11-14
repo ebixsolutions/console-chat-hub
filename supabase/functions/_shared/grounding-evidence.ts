@@ -184,6 +184,6 @@ export async function acceptCoverageScope(answer:string,evidence:GroundingEviden
  const contract=await groundingCoverageContract(evidence),marker='[ANSWER_SCOPE]'+contract.token+'[/ANSWER_SCOPE]';
  if(!answer.endsWith(marker)||answer.indexOf('[ANSWER_SCOPE]')!==answer.length-marker.length)return null;
  const body=answer.slice(0,-marker.length).trim();if(!body)return null;
- const boundary=/[\u3400-\u9fff]/u.test(body)?'以下只涵蓋目前已核實資料的部分內容；其餘步驟或條件尚未核實，不能視為完整設定或已啟用。':'This covers only the verified part of the available evidence. Remaining steps or conditions are unverified; this does not establish complete setup or activation.';
+ const boundary=/[\u3400-\u9fff]/u.test(body)?'以下只涵蓋目前已核實資料的部分內容，未涵蓋的內容仍待核實。':'This covers only the verified part of the available material; anything not covered remains unverified.';
  return {body,rendered:boundary+'\n\n'+body,digest:contract.digest};
 }

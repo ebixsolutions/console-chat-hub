@@ -214,7 +214,7 @@ async function verifyAssistClaims(
     JSON.stringify({request:content,proposed_claims:claims,
       evidence:boundEvidence ? JSON.parse(groundingEvidenceText(boundEvidence.items)) : evidence.map((e,n)=>({id:`E${n+1}`,full_content:e.content})),
       ...(boundEvidence ? {demand_coverage:coverageContract} : {})}),
-    {...meta,toolType:meta.toolType+"-verify",...(boundEvidence?{responseSchema:{type:"OBJECT",properties:{grounded:{type:"BOOLEAN"},unsupported_claims:{type:"ARRAY",items:{type:"STRING"}},evidence_ids:{type:"ARRAY",items:{type:"STRING"}},resolution:{type:"STRING",enum:["supported","partial","unsupported"]},demand_resolutions:groundingDemandResponseSchema(boundEvidence),...(scopeRequired?{body_scope_valid:{type:"BOOLEAN"}}:{})},required:["grounded","unsupported_claims","evidence_ids","resolution","demand_resolutions",...(scopeRequired?["body_scope_valid"]:[])]}}:{})},
+    {...meta,toolType:meta.toolType+"-verify",...(boundEvidence?{responseSchema:{type:"OBJECT",properties:{grounded:{type:"BOOLEAN"},unsupported_claims:{type:"ARRAY",items:{type:"STRING"}},evidence_ids:{type:"ARRAY",items:{type:"STRING"}},resolution:{type:"STRING",enum:boundEvidence.demands.some(d=>d.blocked||d.source_type==="transaction"||d.missing_reasons.length)?["partial","unsupported"]:["supported","partial","unsupported"]},demand_resolutions:groundingDemandResponseSchema(boundEvidence),...(scopeRequired?{body_scope_valid:{type:"BOOLEAN"}}:{})},required:["grounded","unsupported_claims","evidence_ids","resolution","demand_resolutions",...(scopeRequired?["body_scope_valid"]:[])]}}:{})},
   );
   if(!result.ok || !result.text)return {ok:false,failure:result.failure??executionFailure("LLM_INVALID_OUTPUT"),rejection_stage:"verifier_execution"};
   const v=parseJsonObject(result.text);
@@ -235,13 +235,17 @@ async function verifyAssistClaims(
   const resolution=v?.resolution,normalizedResolution=resolution==="supported"||resolution==="partial"||resolution==="unsupported"?resolution:null;
   const idsValid=!!v&&Array.isArray(v.evidence_ids)&&(v.evidence_ids.length>0||boundEvidence!==undefined)&&v.evidence_ids.length<=15&&new Set(v.evidence_ids).size===v.evidence_ids.length&&v.evidence_ids.every(id=>typeof id==="string"&&evidence.some((_,n)=>id==="E"+(n+1)));
   const baseValid=!!v&&typeof v.grounded==="boolean"&&Array.isArray(v.unsupported_claims)&&(v.grounded===true?v.unsupported_claims.length===0:v.unsupported_claims.length>0)&&idsValid&&(normalizedResolution==="supported"||(!complete&&normalizedResolution==="partial")||normalizedResolution==="unsupported");
+  if(scopeRequired&&v?.body_scope_valid!==true){
+    await recordReviewerSpecifics("answer_body_scope_unverified",true);
+    return {ok:false,failure:executionFailure("LLM_GROUNDING_REJECTED"),rejection_stage:"answer_body_scope_unverified",
+      grounding_rejection:{version:"grounding-rejection-1",stage:"semantic_claims",reason:"answer_body_scope_unverified",question_resolution:normalizedResolution,used_evidence_ids:idsValid?v!.evidence_ids as string[]:[],demand_resolutions:[],unsupported_claim_count:Array.isArray(v?.unsupported_claims)?v.unsupported_claims.length:0}};
+  }
   const demandParse=baseValid&&boundEvidence?parseGroundingDemandResolutionsDetailed(v!.demand_resolutions,boundEvidence,v!.evidence_ids as string[],scopeRequired&&v?.body_scope_valid===true&&v.grounded===true&&Array.isArray(v.unsupported_claims)&&v.unsupported_claims.length===0):null;
   if(boundEvidence&&demandParse&&!demandParse.ok)await recordReviewerSpecifics(demandParse.reason,true,
     demandParse.demand_index,demandParse.demand_id);
   if(boundEvidence&&demandParse&&!demandParse.ok)return {ok:false,failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"decode"}),rejection_stage:"verifier_demand_resolution_shape",
    grounding_rejection:{version:"grounding-rejection-1",stage:"demand_resolution_shape",reason:demandParse.reason,question_resolution:normalizedResolution,used_evidence_ids:idsValid?v!.evidence_ids as string[]:[],demand_resolutions:[],
     unsupported_claim_count:Array.isArray(v!.unsupported_claims)?v!.unsupported_claims.length:0,demand_parse_failure:{reason:demandParse.reason,...(typeof demandParse.demand_index==="number"?{demand_index:demandParse.demand_index}:{}),...(demandParse.demand_id?{demand_id:demandParse.demand_id}:{})}}};
-  if(scopeRequired&&v?.body_scope_valid!==true)return {ok:false,failure:executionFailure("LLM_GROUNDING_REJECTED"),rejection_stage:"answer_body_scope_unverified"};
   const resolutions=demandParse?.ok?demandParse.resolutions:null,coverageFailure=Boolean(boundEvidence&&baseValid&&((normalizedResolution==="supported")!==Boolean((scopeRequired?v?.demand_resolutions as Array<{status:string}>:resolutions)?.every(item=>item.status==="supported"))));
   const supported=baseValid&&v!.grounded===true&&(normalizedResolution==="supported"||(!complete&&normalizedResolution==="partial"))&&!coverageFailure;
   if(!supported){const stage=coverageFailure?"question_resolution":"semantic_claims",reason=coverageFailure?"question_resolution_demand_inconsistent":!baseValid?"verifier_top_level_invalid":"unsupported_semantic_claim";
