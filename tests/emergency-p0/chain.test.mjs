@@ -202,10 +202,9 @@ function fixture(text,options={}) {
     const isRepair=body.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered');
     const verifierShape=verifier&&Array.isArray(options.verifierResponses)?options.verifierResponses[Math.min(verifierIndex++,options.verifierResponses.length-1)]:null;
     let text=verifier?JSON.stringify(verifierShape??{grounded:options.verifierGrounded??true,unsupported_claims:options.verifierGrounded===false?['unsupported merchant claim']:[],evidence_chunk_ids:options.verifierIds??['E1'],...(options.omitQuestionResolution?{}:{question_resolution:options.verifierResolution??'supported'}),...(options.verifierDemandResolutions!==undefined?{demand_resolutions:options.verifierDemandResolutions}:{})}):isRepair&&options.repairAnswer?options.repairAnswer:options.answers?.[generationIndex++]??options.answer??'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
-    if(!verifier&&options.scopeAnswer){const marker=body.systemInstruction.parts[0].text.match(/\[ANSWER_SCOPE\][a-p]{64}\[\/ANSWER_SCOPE\]/)?.[0];assert(marker);text+=marker;}
     if(!verifier && options.humanAfterFirstDraft && generationIndex===1)conversation.status='human_control';
     if(!verifier && options.newSourceAfterFirstDraft && generationIndex===1)tables.messages.unshift({...visitor,id:uuid(999),content:'A newer customer question',created_at:'2026-10-14T01:00:01.000Z'});
-    return Response.json({candidates:[{content:{parts:[{text}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}});
+    return Response.json({candidates:[{content:{parts:[{text}]},finishReason:!verifier?(options.generationFinishReason??'STOP'):'STOP'}],...(!verifier&&options.generationNoUsage?{}:{usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}})});
    }
    assert.equal(body.generationConfig.responseMimeType,'application/json');
    const semanticSchema=body.generationConfig.responseSchema;
@@ -2534,4 +2533,44 @@ test('V285 actual Widget coverage contract '+mode,async()=>{
   assert(f.requests.some(r=>r.url.includes('/upstream_call_log')&&r.body?.request_payload?.outcome==='failed'&&r.body?.request_payload?.purpose==='evaluation'&&r.body?.request_payload?.error_code===(mode==='raw-inconsistent'?'GROUNDING_QUESTION_UNRESOLVED':'GROUNDING_BODY_SCOPE_UNVERIFIED')));
  }
 
+});
+
+// Retained same-call capture, with signed image URL values redacted in the export.
+// Fixture reviewer verdicts exercise mechanisms, never actual model semantics/Hosted.
+const v286Capture=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/v286-line-captured.json'),'utf8'));
+for(const mode of ['accept','reject','empty','empty-unknown','length','truncated','wrong-alias','missing-demand','unsupported-fact'])test('V286 actual Widget final rendering '+mode,async()=>{
+ const answer=mode.startsWith('empty')?'   ':mode==='length'?'資料'.repeat(6100):mode==='unsupported-fact'?'The price is USD 987654.':v286Capture.candidate;
+ const reviewer={grounded:mode!=='reject',unsupported_claims:mode==='reject'?['並將其填入您的ebixPRO後台即可。']:[],evidence_chunk_ids:[mode==='wrong-alias'?'E99':'E1'],question_resolution:mode==='reject'?'unsupported':'partial',body_scope_valid:mode!=='reject',demand_resolutions:mode==='missing-demand'?[]:[{demand_id:'demand-1',status:'partial',evidence_ids:['E1']}]};
+ const rawBefore=JSON.stringify(v286Capture.raw),rawHash=hash(rawBefore);
+ const f=task3cManagedCase('如何使用LINE快速登入？','unused',answer,'policy','50',{originalRagResponse:structuredClone(v286Capture.raw),verifierResponses:[reviewer],generationNoUsage:mode==='empty-unknown',generationFinishReason:mode==='truncated'?'MAX_TOKENS':'STOP'});
+ const result=await f.run();assert.equal(result.status,200,JSON.stringify(result));assert.equal(f.commits.length,1);
+ const models=f.requests.filter(r=>r.url.endsWith(':generateContent')),reviewers=models.filter(r=>r.body.generationConfig?.responseSchema?.properties?.grounded);
+ const gen=models.find(r=>!r.body.generationConfig?.responseSchema?.properties?.context_encoding&&!r.body.generationConfig?.responseSchema?.properties?.grounded);
+ assert.equal(gen.body.generationConfig.responseMimeType,undefined);assert(!gen.body.systemInstruction.parts[0].text.includes('[ANSWER_SCOPE]'));
+ assert.equal(f.requests.filter(r=>r.url.includes('/rag/context-search')).length,1);assert(models.length<=4);
+ const diagnostics=f.tables.rag_trace.filter(r=>r.kb_source==='protected_pipeline_diagnostic').map(r=>r.retrieved_chunks);
+ const modelText=diagnostics.find(d=>d.stage==='model_text'&&d.payload.body?.includes('"selected"'));
+ if(mode==='accept'){
+  assert.equal(reviewers.length,1);const proposed=reviewers[0].body.contents[0].parts[0].text.split('Proposed answer:\n')[1];
+  assert.equal(proposed,f.commits[0].content);assert(proposed.endsWith(v286Capture.candidate));assert.match(proposed,/以下只涵蓋/);
+  assert(reviewers[0].body.systemInstruction.parts[0].text.includes(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/v286-reviewer-instruction.txt'),'utf8').trimEnd()));
+  assert.equal(f.commits[0].metadata.grounding_verification.question_resolution,'partial');
+  const selected=JSON.parse(modelText.payload.body).selected.map(i=>[i.document_id,i.chunk_id,i.chunk_index]);
+  const evidenceText=gen.body.systemInstruction.parts[0].text.split('[KB_EVIDENCE_JSON]')[1].split('[/KB_EVIDENCE_JSON]')[0].trim();
+  console.log('V286_REAL_SHAPE_SELECTION='+JSON.stringify({selected,serialized_length:evidenceText.length}));
+  assert.deepEqual(selected,[['3b2bbf18dd064d068c85d37502a46a41','714842b6e444467f821fe69ee2a802c8',0],['3b2bbf18dd064d068c85d37502a46a41','52df2a9cca7449fbad20c61475debda4',1],['3b2bbf18dd064d068c85d37502a46a41','2c8f00169be740a8ae09f841b7096715',2],['c7a6a52d60e5457283c173bbddb9c56b','366b50ca85c74382bbf637d18ae92314',0],['c7a6a52d60e5457283c173bbddb9c56b','33a864ef7991454297eb01f696501c67',1],['eb68f06ea8914e9e817f73460ff97a29','31a7dd50776245a2bd1364f49ab12323',1]]);
+  assert.equal(evidenceText.length,5733);assert(!selected.some(i=>i[1]==='efb15b3fc86b42588b2e42ff31ccefac'));
+  assert(evidenceText.length<=6000);assert(!evidenceText.includes('googleusercontent.com'));assert(evidenceText.includes('[image: LINE快速登入01]'));
+  assert.equal(hash(JSON.stringify(v286Capture.raw)),rawHash);assert.equal(JSON.stringify(v286Capture.raw),rawBefore);
+  assert(!JSON.parse(modelText.payload.body).selected.some(i=>i.source_authority.currentness!=='unknown'));
+ }else{
+  assert.notEqual(f.commits[0].content,answer);
+  if(['empty','empty-unknown','length','truncated'].includes(mode)){
+   assert.equal(reviewers.length,0);const reason={empty:'empty_output','empty-unknown':'empty_output',length:'answer_rendered_length_exceeded',truncated:'truncated_output'}[mode];
+   assert.equal(f.commits[0].metadata.grounding_rejection_receipt.reason,reason);
+   assert(diagnostics.some(d=>d.stage==='grounding_verdict'&&d.payload.body?.includes(reason)));
+  }
+ }
+ const genUsage=f.requests.filter(r=>r.url.includes('/upstream_call_log')&&r.body?.request_payload?.purpose==='generation');assert.equal(genUsage.length,1,'exactly one generator usage receipt');
+ assert.equal(genUsage[0].body.request_payload.input_tokens,mode==='empty-unknown'?null:40);assert.equal(genUsage[0].body.request_payload.output_tokens,mode==='empty-unknown'?null:30);
 });

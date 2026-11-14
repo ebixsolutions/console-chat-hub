@@ -324,7 +324,6 @@ async function setupInbox(fault='none',documentFixture={},semanticFixture=null,o
   if(text.includes('proposed_claims'))return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(outputFixture.verifier??{grounded:fault!=='unsupported-policy',unsupported_claims:fault==='unsupported-policy'?['unsupported full refund']:[],evidence_ids:['E1'],resolution:fault==='unsupported-policy'?'unsupported':'supported'})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
   let answer={queries:[]};if(text.includes('Text to check:'))answer=fault==='unsupported-policy'?{status:'compliant',summary:'Every cancellation receives an unconditional full refund.',issues:[]}:fault==='invalid-policy'?{status:'violation',summary:'invalid fixture',issues:[]}:{status:'warning',summary:'Isolated policy assessment',issues:[{excerpt:'fixture',policy_label:'Evidence 1',severity:'warning'}]};
   if(text.includes('Customer message:')&&outputFixture.suggestions)answer={suggestions:structuredClone(outputFixture.suggestions)};
-  if(outputFixture.scopeAnswer&&answer.suggestions){const marker=b.systemInstruction.parts[0].text.match(/\[ANSWER_SCOPE\][a-p]{64}\[\/ANSWER_SCOPE\]/)?.[0];assert(marker);for(const suggestion of answer.suggestions)suggestion.content+=marker;}
   return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(answer)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
  };
  const request=async(slug,content='Please assess my subscription cancellation draft.',contextMode='conversation')=>{
@@ -1673,5 +1672,28 @@ for(const mode of ['legacy','scoped','body-false','legacy-verdict','schema-parti
  if(mode==='body-false'){const trace=f.rows.rag_trace??[];assert(trace.some(row=>row.retrieved_chunks?.stage==='assist_grounding_reviewer_specifics'&&row.retrieved_chunks.payload.body?.includes('answer_body_scope_unverified')));assert(trace.some(row=>row.retrieved_chunks?.stage==='assist_grounding_verdict'&&row.retrieved_chunks.payload.body?.includes('grounding_rejection')));}
 
  assert.equal(JSON.stringify(f.rows.messages),before);assert.equal(x.posts(),1);assert(x.model()<=3);
+ }finally{globalThis.fetch=realFetch;}
+});
+
+const v286AssistCapture=JSON.parse(readFileSync(new URL('./fixtures/v286-line-captured.json',import.meta.url),'utf8'));
+for(const mode of ['accept','reject','empty','length'])test('V286 actual Assist final rendering '+mode,async()=>{
+ const question='如何使用LINE快速登入？';
+ const semantic=providerWireV8({language:'zh-TW',intent:'merchant_facts',requested_facts:[],demands:[{question,source_quote:question,subject_refs:[],source_type:'policy',requested_facts:[],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]});
+ const verifier={grounded:mode!=='reject',unsupported_claims:mode==='reject'?['並將其填入您的ebixPRO後台即可。']:[],evidence_ids:['E1'],resolution:mode==='reject'?'unsupported':'partial',body_scope_valid:mode!=='reject',demand_resolutions:[{demand_id:'demand-1',status:'partial',evidence_ids:['E1']}]};
+ const body=mode==='empty'?'   ':mode==='length'?'資料'.repeat(600):v286AssistCapture.candidate;
+ const x=await setupInbox('none',{documents:structuredClone(v286AssistCapture.raw.selected_documents).map(d=>({...d,version_id:'isolated-attestation-version'}))},semantic,{suggestions:[{content:body,tone_label:'Informative'}],verifier});
+ f.rows.rag_trace=[];f.rows.upstream_call_log=[];f.rows.messages=[{id:crypto.randomUUID(),conversation_id:x.c.id,role:'visitor',content:question,created_at:'2026-11-14T00:00:00Z',metadata:{},is_recalled:false}];
+ try{const before=JSON.stringify(f.rows.messages),r=await x.send('suggest_reply',question,'conversation');
+ const reviewers=x.modelRequests.filter(r=>r.generationConfig?.responseSchema?.properties?.grounded);
+ if(mode==='accept'){
+  assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.draft_only,true);const delivered=r.data.result.suggestions;
+  const payload=JSON.parse(reviewers[0].contents[0].parts[0].text);assert.deepEqual(JSON.parse(payload.proposed_claims).suggestions,delivered);
+  assert(delivered[0].content.endsWith(v286AssistCapture.candidate));assert.match(delivered[0].content,/以下只涵蓋/);
+  assert(reviewers[0].systemInstruction.parts[0].text.includes(readFileSync(new URL('./fixtures/v286-reviewer-instruction.txt',import.meta.url),'utf8').trimEnd()));
+ }else{
+  assert(r.status>=400,JSON.stringify(r));if(mode==='empty'||mode==='length'){assert.equal(reviewers.length,0);assert.equal(r.data.grounding_rejection_receipt.reason,mode==='empty'?'empty_output':'answer_rendered_length_exceeded');}
+ }
+ assert.equal(JSON.stringify(f.rows.messages),before);assert.equal(x.posts(),1);assert(x.model()<=3);
+ const usage=f.rows.upstream_call_log.filter(row=>row.request_payload?.request_id?.startsWith('agent-assist:suggest_reply:'));assert.equal(usage.length,1);
  }finally{globalThis.fetch=realFetch;}
 });

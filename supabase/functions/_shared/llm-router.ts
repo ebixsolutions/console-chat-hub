@@ -1,6 +1,6 @@
 import { contradictsAvailableFollowupEvidence, type FactualFollowupContext } from "./conversation-semantic-contract.ts";
 import type { ResolvedFactualRequestContext } from "./factual-request-context.ts";
-import {groundingCoverageContract, needsCoverageScope, coverageScopeInstruction, acceptCoverageScope, GROUNDING_EVIDENCE_LIMITS, groundingEvidenceText, validGroundingEvidence, parseGroundingDemandResolutions,
+import {COVERAGE_SCOPE_REVIEW_INSTRUCTION, groundingCoverageContract, needsCoverageScope, coverageScopeInstruction, acceptCoverageScope, GROUNDING_EVIDENCE_LIMITS, groundingEvidenceText, validGroundingEvidence, parseGroundingDemandResolutions,
   parseGroundingDemandResolutionsDetailed, groundingDemandResponseSchema, type GroundingEvidence,
   type GroundingVerificationReceipt, type GroundingRejectionReceipt} from "./grounding-evidence.ts";
 import { boundedReviewerSpecifics } from "./protected-pipeline-evidence.ts";
@@ -43,6 +43,8 @@ export type LlmFailureCode =
   | "LLM_ACCOUNTING_DENIED";
 
 export interface LlmUsage {
+  /** Absent provider counters are unknown, not measured zero. */
+  token_counts_known?: {input:boolean;output:boolean};
   input_tokens: number;
   output_tokens: number;
   latency_ms: number;
@@ -219,8 +221,8 @@ async function recordUsage(
           company_id: call.companyId,
           outcome,
           error_code: code ?? null,
-          input_tokens: usage.input_tokens,
-          output_tokens: usage.output_tokens,
+          input_tokens: usage.token_counts_known?.input===false?null:usage.input_tokens,
+          output_tokens: usage.token_counts_known?.output===false?null:usage.output_tokens,
           attempts: usage.attempts,
           ...(diagnostic ? { provider_diagnostic: diagnostic } : {}),
         },
@@ -642,7 +644,7 @@ async function verifyGroundedGeneration(
   const coverageContract=grounding.bound_evidence?await groundingCoverageContract(grounding.bound_evidence):null;
   const verifierSystem = [
     "You are a strict factual-grounding verifier.",
-    scopeRequired ? "Also return body_scope_valid:boolean. Verify this exact body is useful within the server coverage contract: no complete-procedure/activation claim across known gaps, including any contradictory completion claim even with a footnote. A scope marker alone is not semantic proof. Missing gaps cannot be erased. Supported with only evidence_budget may be effectively capped after scope/body validation; all other gaps still forbid supported." : "",
+    scopeRequired ? COVERAGE_SCOPE_REVIEW_INSTRUCTION + " Return body_scope_valid:boolean for the complete proposed answer. Supported with only evidence_budget may be effectively capped after scope/body validation; all other gaps still forbid supported." : "",
     grounding.authority === "PRIOR_GROUNDED_ANSWER"
       ? "The authoritative evidence is a previously verified grounded answer. Judge whether product, company, policy, price, date, duration, eligibility, availability, procedure, jurisdiction, model/specification or other external factual claims remain supported by that evidence."
       : "The authoritative evidence is the supplied current Knowledge Base evidence. Product, company, policy, price, date, duration, eligibility, availability, procedure, jurisdiction, model/specification and other external factual claims must be supported by that authoritative evidence.",
@@ -1248,39 +1250,29 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       }
       usage.input_tokens = parsed.input_tokens;
       usage.output_tokens = parsed.output_tokens;
-
-      if (!parsed.text) {
-        lastCode = "LLM_INVALID_OUTPUT";
-        invalidOutputReason = "empty";
-        log(call.tag, {
-          event: "empty_output",
-          request_id: requestId,
-          provider: adapter.id,
-          attempt,
-          finish_reason: parsed.finish_reason ?? null,
-          block_reason: parsed.block_reason ?? null,
-        });
-        break;
-      }
-
-      if (parsed.finish_reason === "MAX_TOKENS") {
-        lastCode = "LLM_INVALID_OUTPUT";
-        invalidOutputReason = "truncated";
-        log(call.tag, {
-          event: "truncated_output",
-          request_id: requestId,
-          provider: adapter.id,
-          attempt,
-          output_tokens: parsed.output_tokens,
-        });
-        break;
-      }
+      const providerUsage=body as {usageMetadata?:{promptTokenCount?:unknown;candidatesTokenCount?:unknown};usage?:{input_tokens?:unknown;output_tokens?:unknown}};
+      const counters=provider==="vertex"?[providerUsage.usageMetadata?.promptTokenCount,providerUsage.usageMetadata?.candidatesTokenCount]:[providerUsage.usage?.input_tokens,providerUsage.usage?.output_tokens];
+      usage.token_counts_known={input:typeof counters[0]==="number"&&Number.isFinite(counters[0]),output:typeof counters[1]==="number"&&Number.isFinite(counters[1])};
 
       const scoped=call.groundingEvidence && needsCoverageScope(call.groundingEvidence)
         ? await acceptCoverageScope(parsed.text,call.groundingEvidence):null;
-      if(call.groundingEvidence && needsCoverageScope(call.groundingEvidence) && call.protectedEvidence){try{await call.protectedEvidence({stage:"grounding_verdict",scope_contract:await groundingCoverageContract(call.groundingEvidence),scope_valid:Boolean(scoped),scope_failure:scoped?null:"answer_scope_missing_or_mismatched"});}catch{/* evidence only */}}
-      if(call.groundingEvidence && needsCoverageScope(call.groundingEvidence) && (!scoped||scoped.rendered.length>GROUNDING_EVIDENCE_LIMITS.answerCharacters))
-        return {ok:false,code:"LLM_GROUNDING_REJECTED",request_id:requestId,usage,grounding_rejection_reason:"answer_scope_missing_or_mismatched"};
+      const deliveredAnswer=scoped?.rendered ?? parsed.text;
+      const outputReason=!parsed.text.trim()?"empty_output":parsed.finish_reason==="MAX_TOKENS"?"truncated_output":
+        call.purpose==="generation"&&call.responseFormat!=="json"&&deliveredAnswer.length>GROUNDING_EVIDENCE_LIMITS.answerCharacters?"answer_rendered_length_exceeded":null;
+      if(outputReason){
+        usage.latency_ms=Date.now()-started;
+        const rejection:GroundingRejectionReceipt={version:"grounding-rejection-1",stage:"generation_output",reason:outputReason,
+          question_resolution:null,used_evidence_ids:[],demand_resolutions:[],unsupported_claim_count:0};
+        const outputCode:LlmFailureCode=outputReason==="answer_rendered_length_exceeded"?"LLM_GROUNDING_REJECTED":"LLM_INVALID_OUTPUT";
+        const failure=executionFailure(outputCode,{stage:"canonical_validation",request_id:requestId,http_status:res.status});
+        await recordUsage(call,provider,adapter.model,"failed",res.status,usage,"GENERATION_OUTPUT:"+outputReason);
+        if(call.protectedEvidence){try{await call.protectedEvidence({stage:"grounding_verdict",request_id:requestId,attempt,
+          scope_contract:call.groundingEvidence?await groundingCoverageContract(call.groundingEvidence):null,
+          rendered_length:deliveredAnswer.length,verdict:{ok:false,reason:outputReason,rejection,failure}});}catch{/* evidence only */}}
+        return {ok:false,code:outputCode,status:res.status,request_id:requestId,usage,failure,
+          invalid_output_reason:outputReason==="empty_output"?"empty":outputReason==="truncated_output"?"truncated":undefined,
+          grounding_rejection_reason:outputReason,grounding_rejection:rejection};
+      }
       let groundingReceipt: GroundingVerificationReceipt | undefined;
       const grounding =
         call.purpose === "generation" && call.responseFormat !== "json"
@@ -1294,10 +1286,12 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         try { groundingDecision = await verifyGroundedGeneration(
           { ...call, operationId: `${call.operationId}:generation-attempt:${attempt}` },
           provider,
-          scoped?.body ?? parsed.text,
+          deliveredAnswer,
           grounding,
           timeoutMs,
         ); } catch(error) { groundingDecision={ok:false,reason:"verifier_unavailable",failure:failureFromError(error,{request_id:requestId})}; }
+        if(!groundingDecision.ok&&!groundingDecision.rejection)groundingDecision.rejection={version:"grounding-rejection-1",stage:"semantic_claims",reason:groundingDecision.reason,
+          question_resolution:null,used_evidence_ids:[],demand_resolutions:[],unsupported_claim_count:0};
         if (call.protectedEvidence) {
           try { await call.protectedEvidence({stage:"grounding_verdict",request_id:requestId,attempt,
             verdict:groundingDecision}); } catch { /* evidence only */ }
@@ -1307,6 +1301,7 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
       const code:LlmFailureCode=propagated==="LLM_INVALID_OUTPUT"||propagated==="LLM_NETWORK"||propagated==="LLM_NON_2XX"||propagated==="LLM_TIMEOUT"||propagated==="LLM_ACCOUNTING_DENIED"
         ?propagated:reason==="model_accounting_denied"?"LLM_ACCOUNTING_DENIED":"LLM_GROUNDING_REJECTED";
       lastCode=code;log(call.tag,{event:"grounding_rejected",request_id:requestId,provider,attempt,reason,rejection_stage:groundingDecision.rejection?.stage??null,rejection_condition:groundingDecision.rejection?.reason??null});
+      usage.latency_ms=Date.now()-started;
       await recordUsage(call,provider,adapter.model,"failed",res.status,usage,code==="LLM_GROUNDING_REJECTED"?"LLM_OUTPUT_UNGROUNDED:"+reason:"GROUNDING_VERIFIER_FAILURE:"+reason);
       return {ok:false,code,status:res.status,grounding_rejection_reason:reason,...(groundingDecision.rejection?{grounding_rejection:groundingDecision.rejection}:{}),
        request_id:requestId,usage,failure:groundingDecision.failure??executionFailure(code,{stage:"canonical_validation",request_id:requestId,http_status:res.status})};

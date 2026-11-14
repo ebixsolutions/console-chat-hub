@@ -1,5 +1,5 @@
 import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer, resolveSourceRecordedPartialRecovery} from "./factual-evidence-selection.ts";
-import {groundingCoverageContract, acceptCoverageScope, parseGroundingDemandResolutionsDetailed, validGroundingEvidence, buildGroundingEvidencePrompt, parseGroundingDemandResolutions, groundingEvidenceText} from "./grounding-evidence.ts";
+import {projectGroundingImageUrls, coverageScopeInstruction, COVERAGE_SCOPE_REVIEW_INSTRUCTION, groundingCoverageContract, acceptCoverageScope, parseGroundingDemandResolutionsDetailed, validGroundingEvidence, buildGroundingEvidencePrompt, parseGroundingDemandResolutions, groundingEvidenceText} from "./grounding-evidence.ts";
 import type {CurrentFactualRequest, CurrentFactualDemand} from "./current-factual-request.ts";
 import type {KBDocumentCandidate} from "./kb-client.ts";
 import {buildFactualKbPriceClaims} from "./factual-kb-price-proof.ts";
@@ -589,10 +589,11 @@ Deno.test('V285 scope is selection-bound and caps only evidence_budget after exp
  const e=select([demand(1,'Delivery terms?')],[document('policy','Delivery rules.')]).grounding;
  e.demands[0].missing_reasons=['evidence_budget'];e.selection_limited=true;
  const c=await groundingCoverageContract(e),old='Create the channel and setup is complete.';
- assert(await acceptCoverageScope(old,e)===null);
- assert(await acceptCoverageScope('Useful steps.[ANSWER_SCOPE]'+c.token+'[/ANSWER_SCOPE]',e));
+ const rendered=await acceptCoverageScope(old,e);assert(rendered?.rendered.endsWith(old));assert(!('body_scope_valid' in rendered!));
+ assert(await acceptCoverageScope('   ',e)===null);
+ assert(!(await coverageScopeInstruction(e)).includes('[ANSWER_SCOPE]'));assert(!(await coverageScopeInstruction(e)).includes(c.token));
  for(const edit of [(x:typeof e)=>x.items[0].content+='Different source',(x:typeof e)=>x.items[0].document_id='other',(x:typeof e)=>x.demands[0].id='demand-2']){
-  const changed=structuredClone(e);edit(changed);assert(await acceptCoverageScope('Useful steps.[ANSWER_SCOPE]'+c.token+'[/ANSWER_SCOPE]',changed)===null);
+  const changed=structuredClone(e);edit(changed);assert((await groundingCoverageContract(changed)).digest!==c.digest);assert((await acceptCoverageScope('Useful steps.',changed))?.digest!==c.digest);
  }
  const raw=[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']}];
  assert(!parseGroundingDemandResolutionsDetailed(raw,e,['E1']).ok);
@@ -602,4 +603,39 @@ Deno.test('V285 scope is selection-bound and caps only evidence_budget after exp
  }
  for(const bad of [[{...raw[0],evidence_ids:['E99']}],[raw[0],raw[0]],[],[{...raw[0],demand_id:'demand-2'}]])assert(!parseGroundingDemandResolutionsDetailed(bad,e,['E1'],true).ok);
  const blocked=structuredClone(e);blocked.demands[0].blocked=true;assert(!parseGroundingDemandResolutionsDetailed(raw,blocked,['E1'],true).ok);
+});
+
+const imageProjectionCases=[
+ ['simple image','before ![alt](https://example.invalid/image.png) after','before [image: alt] after'],
+ ['condition in alt','![只適用企業方案](https://example.invalid/long)','[image: 只適用企業方案]'],
+ ['empty alt','![](https://example.invalid/x)','[image]'],
+ ['ordinary link','[Details](https://example.invalid/details)','[Details](https://example.invalid/details)'],
+ ['image and ordinary link','![logo](https://example.invalid/i) [FAQ](https://example.invalid/faq)','[image: logo] [FAQ](https://example.invalid/faq)'],
+ ['description','![alt](https://example.invalid/i "not applicable to trial")','[image: alt; description: not applicable to trial]'],
+ ['single quoted description',"![alt](https://example.invalid/i 'only plan B')",'[image: alt; description: only plan B]'],
+ ['parenthesised description','![alt](https://example.invalid/i (region A only))','[image: alt; description: region A only]'],
+ ['balanced destination','![alt](https://example.invalid/a(b(c)).png)','[image: alt]'],
+ ['angle destination','![alt](<https://example.invalid/a b.png>)','[image: alt]'],
+ ['nested alt','![rule [B]](https://example.invalid/i)','[image: rule [B]]'],
+ ['escaped close in alt',String.raw`![rule \] B](https://example.invalid/i)`,String.raw`[image: rule \] B]`],
+ ['escaped image',String.raw`\![alt](https://example.invalid/i)`,String.raw`\![alt](https://example.invalid/i)`],
+ ['inline code','`![alt](https://example.invalid/i)`','`![alt](https://example.invalid/i)`'],
+ ['fenced code','```md\n![alt](https://example.invalid/i)\n```\n![actual](https://example.invalid/j)','```md\n![alt](https://example.invalid/i)\n```\n[image: actual]'],
+ ['tilde fence','~~~\n![alt](https://example.invalid/i)\n~~~\n','~~~\n![alt](https://example.invalid/i)\n~~~\n'],
+ ['unterminated fence','```\n![alt](https://example.invalid/i)','```\n![alt](https://example.invalid/i)'],
+ ['reference untouched','![alt][ref]\n[ref]: https://example.invalid/x','![alt][ref]\n[ref]: https://example.invalid/x'],
+ ['html untouched','<img src="https://example.invalid/x" alt="condition">','<img src="https://example.invalid/x" alt="condition">'],
+ ['malformed image','![alt](https://example.invalid/i','![alt](https://example.invalid/i'],
+ ['bad nested destination','![alt](https://example.invalid/a(b)','![alt](https://example.invalid/a(b)'],
+ ['multiple','![a](x) and ![b](y)','[image: a] and [image: b]'],
+ ['empty input','',''],
+];
+for(const [name,input,expected] of imageProjectionCases)Deno.test('V286 image projection '+name,()=>equal(projectGroundingImageUrls(input),expected));
+Deno.test('V286 projection preserves source facts identities hashes and uses same model budget',()=>{
+ const raw='Only paid plan B. ![只適用企業方案](https://example.invalid/'+ 'x'.repeat(8000)+') [ordinary](https://example.invalid/terms)';
+ const e=select([demand(1,'Delivery terms?')],[document('policy','Delivery rules.')]).grounding;e.items[0].content=raw;
+ const before=JSON.stringify(e),projection=groundingEvidenceText(e.items);
+ assert(projection.length<6000);assert(validGroundingEvidence(e));assert(projection.includes('只適用企業方案'));assert(projection.includes('[ordinary](https://example.invalid/terms)'));
+ assert(buildGroundingEvidencePrompt(e).includes(projection));equal(JSON.stringify(e),before);
+ assert(COVERAGE_SCOPE_REVIEW_INSTRUCTION.includes('when rejecting on this ground, quote the specific statement in unsupported_claims.'));
 });
