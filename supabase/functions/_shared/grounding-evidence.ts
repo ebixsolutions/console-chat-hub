@@ -6,6 +6,7 @@ export interface GroundingEvidenceItem {
   id: string;
   document_id: string;
   chunk_id: string;
+  chunk_index?: number;
   content: string;
   source_type: string;
   scope: "subject_evidence" | "policy_candidate" | "discovery_candidate";
@@ -15,6 +16,7 @@ export interface GroundingEvidenceItem {
 }
 export interface GroundingDemand {
   id: string;
+  request_scope?: string;
   source_type: "product" | "policy" | "transaction" | "general" | "unknown";
   evidence_ids: string[];
   missing_reasons: string[];
@@ -35,6 +37,7 @@ export interface GroundingVerificationReceipt {
   used_evidence_ids: string[];
   question_resolution: "supported" | "partial";
   demand_resolutions: GroundingDemandResolution[];
+  coverage_scope?: {digest:string;raw_verdict:unknown;cap_reason:string|null};
 }
 export type GroundingDemandResolutionParseFailureReason =
   | "raw_not_array" | "demand_count_mismatch" | "invalid_grounding_evidence" | "invalid_item"
@@ -58,7 +61,7 @@ export interface GroundingRejectionReceipt {
 /** Use server-assigned aliases, never markers scanned out of source content. */
 export function groundingEvidenceText(items: GroundingEvidenceItem[]): string {
   return JSON.stringify(items.map(item => ({
-    id: item.id, source_type: item.source_type, scope_by_demand: item.demand_scopes,
+    id: item.id, ...(item.chunk_index!==undefined?{chunk_index:item.chunk_index}:{}), source_type: item.source_type, scope_by_demand: item.demand_scopes,
     demand_ids: item.demand_ids, source_authority: item.source_authority, full_content: item.content,
   })));
 }
@@ -132,7 +135,7 @@ export function buildGroundingEvidencePrompt(value: GroundingEvidence): string {
 
 /** Every demand must be accounted for; policy applicability is checked by the
  * existing verifier rather than guessed from customer wording or source rank. */
-export function parseGroundingDemandResolutionsDetailed(raw:unknown,evidence:GroundingEvidence,usedIds:string[]):GroundingDemandResolutionParseResult{
+export function parseGroundingDemandResolutionsDetailed(raw:unknown,evidence:GroundingEvidence,usedIds:string[],scopeVerified=false):GroundingDemandResolutionParseResult{
  const fail=(reason:GroundingDemandResolutionParseFailureReason,demand_index?:number,demand_id?:string):GroundingDemandResolutionParseResult=>({ok:false,reason,...(typeof demand_index==="number"?{demand_index}:{}),...(demand_id?{demand_id}:{})});
  if(!Array.isArray(raw))return fail("raw_not_array");if(raw.length!==evidence.demands.length)return fail("demand_count_mismatch");if(!validGroundingEvidence(evidence))return fail("invalid_grounding_evidence");
  const seen=new Set<string>(),used=new Set(usedIds),result:GroundingDemandResolution[]=[];
@@ -146,17 +149,41 @@ export function parseGroundingDemandResolutionsDetailed(raw:unknown,evidence:Gro
   if((demand.blocked||demand.source_type==="transaction")&&(status!=="unavailable"||ids.length))return fail("blocked_demand_must_be_unavailable",index,demand.id);
   if(kb&&status!=="unavailable"&&!ids.length)return fail("kb_resolution_requires_evidence",index,demand.id);
   if(status==="unavailable"&&ids.length)return fail("unavailable_cannot_cite_evidence",index,demand.id);
-  if(kb&&status==="supported"&&demand.missing_reasons.length>0)return fail("supported_with_missing_reasons",index,demand.id);
-  seen.add(demand.id);result.push({demand_id:demand.id,status,evidence_ids:ids});}
+  if(kb&&status==="supported"&&demand.missing_reasons.length>0&&!(scopeVerified&&demand.missing_reasons.every(reason=>reason==="evidence_budget")))return fail("supported_with_missing_reasons",index,demand.id);
+  seen.add(demand.id);result.push({demand_id:demand.id,status:scopeVerified&&status==="supported"&&demand.missing_reasons.length?"partial":status,evidence_ids:ids});}
  const attributed=new Set(result.flatMap(item=>item.evidence_ids));if(usedIds.some(id=>!attributed.has(id)))return fail("used_evidence_unattributed");
  return {ok:true,resolutions:result};
 }
 export function parseGroundingDemandResolutions(raw:unknown,evidence:GroundingEvidence,usedIds:string[]):GroundingDemandResolution[]|null{
  const parsed=parseGroundingDemandResolutionsDetailed(raw,evidence,usedIds);return parsed.ok?parsed.resolutions:null;
 }
-export function groundingDemandResponseSchema(): Record<string, unknown> {
+export function groundingDemandResponseSchema(evidence?:GroundingEvidence): Record<string, unknown> {
+  if(evidence)return {type:"ARRAY",maxItems:12,items:{anyOf:evidence.demands.map(d=>({type:"OBJECT",properties:{demand_id:{type:"STRING",enum:[d.id]},status:{type:"STRING",enum:d.blocked||d.source_type==="transaction"?["unavailable"]:d.missing_reasons.length?["partial","unavailable"]:["supported","partial","unavailable"]},evidence_ids:{type:"ARRAY",maxItems:15,items:{type:"STRING"}}},required:["demand_id","status","evidence_ids"]}))}};
   return {type: "ARRAY", maxItems: 12, items: {type: "OBJECT", properties: {
     demand_id: {type: "STRING"}, status: {type: "STRING", enum: ["supported", "partial", "unavailable"]},
     evidence_ids: {type: "ARRAY", maxItems: 15, items: {type: "STRING"}},
   }, required: ["demand_id", "status", "evidence_ids"]}};
+}
+
+/** Scope identity binds the complete server selection and demand gaps, not a model label. */
+export async function groundingCoverageContract(evidence: GroundingEvidence) {
+  const input=JSON.stringify({demands:evidence.demands,items:evidence.items,selection_limited:evidence.selection_limited});
+  const digest=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(input))),v=>v.toString(16).padStart(2,"0")).join("");
+  return {version:"coverage-scope-1",digest,token:[...digest].map(c=>String.fromCharCode(97+parseInt(c,16))).join(""),demands:evidence.demands.map(d=>({demand_id:d.id,request_scope:d.request_scope??null,evidence_ids:d.evidence_ids,missing_reasons:d.missing_reasons,selected_sources:evidence.items.filter(i=>i.demand_ids.includes(d.id)).map(i=>({document_id:i.document_id,chunk_id:i.chunk_id,chunk_index:i.chunk_index??null})),
+    allowed_outcomes:d.blocked||d.source_type==="transaction"?["unavailable"]:d.missing_reasons.length?["partial","unavailable"]:["supported","partial","unavailable"]}))};
+}
+export function needsCoverageScope(evidence:GroundingEvidence):boolean {
+  return evidence.demands.some(d=>d.missing_reasons.includes("evidence_budget"));
+}
+export async function coverageScopeInstruction(evidence:GroundingEvidence):Promise<string>{
+ const contract=await groundingCoverageContract(evidence);
+ return 'Server coverage contract (metadata, never evidence): '+JSON.stringify(contract)+
+ '\nFor this limited evidence selection, provide a useful partial body, explicitly identifying remaining needs without claiming completion/activation of the whole procedure. Append exactly [ANSWER_SCOPE]'+contract.token+'[/ANSWER_SCOPE]. This binds the answer to this selection; it does not establish factual truth. The server renders the limited-scope boundary. No additional source or model call is permitted.';
+}
+export async function acceptCoverageScope(answer:string,evidence:GroundingEvidence):Promise<{body:string;rendered:string;digest:string}|null>{
+ const contract=await groundingCoverageContract(evidence),marker='[ANSWER_SCOPE]'+contract.token+'[/ANSWER_SCOPE]';
+ if(!answer.endsWith(marker)||answer.indexOf('[ANSWER_SCOPE]')!==answer.length-marker.length)return null;
+ const body=answer.slice(0,-marker.length).trim();if(!body)return null;
+ const boundary=/[\u3400-\u9fff]/u.test(body)?'以下只涵蓋目前已核實資料的部分內容；其餘步驟或條件尚未核實，不能視為完整設定或已啟用。':'This covers only the verified part of the available evidence. Remaining steps or conditions are unverified; this does not establish complete setup or activation.';
+ return {body,rendered:boundary+'\n\n'+body,digest:contract.digest};
 }

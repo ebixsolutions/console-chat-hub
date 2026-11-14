@@ -12,6 +12,7 @@ export type AggregationChunkType = "rag_summary" | "full_content" | "faq_pair" |
 export interface AggregationChunk {
   document_id: string;
   chunk_id?: string;
+  chunk_index?: number;
   title: string;
   source_type: string;
   content: string;
@@ -26,12 +27,14 @@ export interface AggregationCitation {
   source_type: string;
   document_id: string;
   chunk_id?: string;
+  chunk_index?: number;
   chunk_type: AggregationChunkType;
 }
 
 export interface AggregationEvidence {
   document_id: string;
   chunk_id?: string;
+  chunk_index?: number;
   content: string;
   score: number;
   source_type: string;
@@ -271,6 +274,7 @@ function parseDocumentCandidate(doc: unknown): AggregationDocumentCandidate | nu
     const score = finite(item.score);
     const chunkId = nonEmpty(item.chunk_id) ?? undefined;
     const chunkType = item.chunk_type;
+    const ordinal = Number.isSafeInteger(item.chunk_index) && (item.chunk_index as number) >= 0 ? {chunk_index:item.chunk_index as number} : {};
     if (
       !content ||
       score === null ||
@@ -292,6 +296,7 @@ function parseDocumentCandidate(doc: unknown): AggregationDocumentCandidate | nu
       fullEvidence.push({
         document_id: documentId,
         ...(chunkId ? { chunk_id: chunkId } : {}),
+      ...ordinal,
         content,
         score,
         source_type: sourceType,
@@ -302,6 +307,7 @@ function parseDocumentCandidate(doc: unknown): AggregationDocumentCandidate | nu
     chunks.push({
       document_id: documentId,
       ...(chunkId ? { chunk_id: chunkId } : {}),
+      ...ordinal,
       title,
       source_type: sourceType,
       content,
@@ -315,6 +321,7 @@ function parseDocumentCandidate(doc: unknown): AggregationDocumentCandidate | nu
       source_type: sourceType,
       document_id: documentId,
       ...(chunkId ? { chunk_id: chunkId } : {}),
+      ...ordinal,
       chunk_type: chunkType as AggregationChunkType,
     });
   }

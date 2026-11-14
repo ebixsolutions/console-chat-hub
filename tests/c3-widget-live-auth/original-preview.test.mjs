@@ -323,7 +323,8 @@ async function setupInbox(fault='none',documentFixture={},semanticFixture=null,o
   modelKinds.answer++;
   if(text.includes('proposed_claims'))return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(outputFixture.verifier??{grounded:fault!=='unsupported-policy',unsupported_claims:fault==='unsupported-policy'?['unsupported full refund']:[],evidence_ids:['E1'],resolution:fault==='unsupported-policy'?'unsupported':'supported'})}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
   let answer={queries:[]};if(text.includes('Text to check:'))answer=fault==='unsupported-policy'?{status:'compliant',summary:'Every cancellation receives an unconditional full refund.',issues:[]}:fault==='invalid-policy'?{status:'violation',summary:'invalid fixture',issues:[]}:{status:'warning',summary:'Isolated policy assessment',issues:[{excerpt:'fixture',policy_label:'Evidence 1',severity:'warning'}]};
-  if(text.includes('Customer message:')&&outputFixture.suggestions)answer={suggestions:outputFixture.suggestions};
+  if(text.includes('Customer message:')&&outputFixture.suggestions)answer={suggestions:structuredClone(outputFixture.suggestions)};
+  if(outputFixture.scopeAnswer&&answer.suggestions){const marker=b.systemInstruction.parts[0].text.match(/\[ANSWER_SCOPE\][a-p]{64}\[\/ANSWER_SCOPE\]/)?.[0];assert(marker);for(const suggestion of answer.suggestions)suggestion.content+=marker;}
   return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify(answer)}]}}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:20}});
  };
  const request=async(slug,content='Please assess my subscription cancellation draft.',contextMode='conversation')=>{
@@ -1655,4 +1656,18 @@ test("managed Preview first Visitor on original served send action: creates sign
   assert.equal(f.rows.messages.filter(m=>m.role==="visitor").length,1);
   assert.equal(f.provider,1);
   assert.equal(f.rpc.length,0,"never borrowed the synthetic C3 account");
+});
+for(const mode of ['legacy','scoped','body-false','legacy-verdict'])test('V285 actual Assist coverage contract '+mode,async()=>{
+ const question='How do I configure LINE login?';
+ const semantic=providerWireV8({language:'en',intent:'merchant_facts',requested_facts:[],demands:[{question,source_quote:question,subject_refs:[],source_type:'policy',requested_facts:[],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]});
+ const text='Open LINE Developers, create a Provider and a LINE Login channel. '+ 'Source details. '.repeat(108);
+ const docs=[{document_id:'line-guide',version_id:'line-v1',title:'LINE Login',source_type:'Other',document_score:.99,evidence:[0,2,1].map(i=>({chunk_id:'line-'+i,chunk_index:i,chunk_type:'full_content',score:.99-i*.01,content:text}))}];
+ const verifier={grounded:true,unsupported_claims:[],evidence_ids:['E1','E2'],resolution:'supported',demand_resolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1','E2']}],...(mode==='scoped'?{body_scope_valid:true}:mode==='body-false'?{body_scope_valid:false}:{})};
+ const x=await setupInbox('none',{documents:docs},semantic,{scopeAnswer:mode!=='legacy',suggestions:[{content:mode==='legacy'?'Create the channel and setup is complete.':'The verified initial steps are to open LINE Developers, create a Provider and a LINE Login channel. Remaining settings are not verified.',tone_label:'Informative'}],verifier});
+ f.rows.messages=[{id:crypto.randomUUID(),conversation_id:x.c.id,role:'visitor',content:question,created_at:'2026-11-14T00:00:00Z',metadata:{},is_recalled:false}];
+ try{const before=JSON.stringify(f.rows.messages),r=await x.send('suggest_reply',question,'conversation');
+ if(mode==='scoped'){assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.grounding_verification.question_resolution,'partial');assert.equal(r.data.grounding_verification.coverage_scope.cap_reason,'status_capped_by_server');assert.match(r.data.result.suggestions[0].content,/This covers only/);}
+ else assert(r.status>=400,JSON.stringify(r));
+ assert.equal(JSON.stringify(f.rows.messages),before);assert.equal(x.posts(),1);assert(x.model()<=3);
+ }finally{globalThis.fetch=realFetch;}
 });

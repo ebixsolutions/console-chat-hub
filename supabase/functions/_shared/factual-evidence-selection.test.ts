@@ -1,5 +1,5 @@
 import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer, resolveSourceRecordedPartialRecovery} from "./factual-evidence-selection.ts";
-import {validGroundingEvidence, buildGroundingEvidencePrompt, parseGroundingDemandResolutions, groundingEvidenceText} from "./grounding-evidence.ts";
+import {groundingCoverageContract, acceptCoverageScope, parseGroundingDemandResolutionsDetailed, validGroundingEvidence, buildGroundingEvidencePrompt, parseGroundingDemandResolutions, groundingEvidenceText} from "./grounding-evidence.ts";
 import type {CurrentFactualRequest, CurrentFactualDemand} from "./current-factual-request.ts";
 import type {KBDocumentCandidate} from "./kb-client.ts";
 import {buildFactualKbPriceClaims} from "./factual-kb-price-proof.ts";
@@ -570,4 +570,36 @@ Deno.test("Task3C V6 strict product specification: unquoted numeric SKU field mu
   const buyer=select([d],[doc]);
   assert(!buyer.grounding.demands[0].missing_reasons.includes("requested_specification_not_supported_by_returned_products"),
     "a customer team size was reclassified as an exact plan spec");
+});
+
+Deno.test('V285 fair demand allocation continues best document within whole-chunk 6000/15 budget',()=>{
+ const article=document('main','Initial procedure. '+ 'a'.repeat(1750));
+ const first=article.chunks[0];article.chunks=[0,2,1].map(i=>({...first,chunk_id:'main-'+i,chunk_index:i,content:'Step '+i+'. '+ 'a'.repeat(1750)}));
+ article.llm_context.full_content_evidence=article.chunks.map(c=>({document_id:c.document_id,chunk_id:c.chunk_id,chunk_index:c.chunk_index,content:c.content,score:c.score,source_type:c.source_type}));
+ const alternative=document('lower','Unrelated alternative. '+'b'.repeat(1500));alternative.document_score=.7;
+ const result=select([demand(1,'How to configure?')],[article,alternative]);
+ equal(result.grounding.items.slice(0,2).map(i=>i.chunk_id),['main-0','main-1']);assert(result.grounding.demands[0].missing_reasons.includes('evidence_budget'));assert(groundingEvidenceText(result.grounding.items).length<=6000);
+ for(const indices of [[undefined,undefined,undefined],[-1,2,1],[0,0,1],[0,1.5,2]]){
+  const d=structuredClone(article);d.chunks.forEach((c,i)=>{c.chunk_index=indices[i];});
+  const out=select([demand(1,'How to configure?')],[d]);
+  equal(out.grounding.items.slice(0,2).map(i=>i.chunk_id),['main-0','main-2']);
+ }
+});
+Deno.test('V285 scope is selection-bound and caps only evidence_budget after explicit body acceptance',async()=>{
+ const e=select([demand(1,'Delivery terms?')],[document('policy','Delivery rules.')]).grounding;
+ e.demands[0].missing_reasons=['evidence_budget'];e.selection_limited=true;
+ const c=await groundingCoverageContract(e),old='Create the channel and setup is complete.';
+ assert(await acceptCoverageScope(old,e)===null);
+ assert(await acceptCoverageScope('Useful steps.[ANSWER_SCOPE]'+c.token+'[/ANSWER_SCOPE]',e));
+ for(const edit of [(x:typeof e)=>x.items[0].content+='Different source',(x:typeof e)=>x.items[0].document_id='other',(x:typeof e)=>x.demands[0].id='demand-2']){
+  const changed=structuredClone(e);edit(changed);assert(await acceptCoverageScope('Useful steps.[ANSWER_SCOPE]'+c.token+'[/ANSWER_SCOPE]',changed)===null);
+ }
+ const raw=[{demand_id:'demand-1',status:'supported',evidence_ids:['E1']}];
+ assert(!parseGroundingDemandResolutionsDetailed(raw,e,['E1']).ok);
+ const accepted=parseGroundingDemandResolutionsDetailed(raw,e,['E1'],true);assert(accepted.ok);equal(accepted.resolutions[0].status,'partial');equal(raw[0].status,'supported');
+ for(const gap of ['source_conflict','no_applicable_source','subject_evidence_missing','requested_condition_not_supported_by_source','missing_chunk_identity']){
+  const changed=structuredClone(e);changed.demands[0].missing_reasons.push(gap);assert(!parseGroundingDemandResolutionsDetailed(raw,changed,['E1'],true).ok);
+ }
+ for(const bad of [[{...raw[0],evidence_ids:['E99']}],[raw[0],raw[0]],[],[{...raw[0],demand_id:'demand-2'}]])assert(!parseGroundingDemandResolutionsDetailed(bad,e,['E1'],true).ok);
+ const blocked=structuredClone(e);blocked.demands[0].blocked=true;assert(!parseGroundingDemandResolutionsDetailed(raw,blocked,['E1'],true).ok);
 });

@@ -201,7 +201,8 @@ function fixture(text,options={}) {
     const verifier=body.generationConfig.responseSchema?.properties?.grounded;
     const isRepair=body.systemInstruction?.parts?.[0]?.text?.includes('previous draft was NOT delivered');
     const verifierShape=verifier&&Array.isArray(options.verifierResponses)?options.verifierResponses[Math.min(verifierIndex++,options.verifierResponses.length-1)]:null;
-    const text=verifier?JSON.stringify(verifierShape??{grounded:options.verifierGrounded??true,unsupported_claims:options.verifierGrounded===false?['unsupported merchant claim']:[],evidence_chunk_ids:options.verifierIds??['E1'],...(options.omitQuestionResolution?{}:{question_resolution:options.verifierResolution??'supported'}),...(options.verifierDemandResolutions!==undefined?{demand_resolutions:options.verifierDemandResolutions}:{})}):isRepair&&options.repairAnswer?options.repairAnswer:options.answers?.[generationIndex++]??options.answer??'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
+    let text=verifier?JSON.stringify(verifierShape??{grounded:options.verifierGrounded??true,unsupported_claims:options.verifierGrounded===false?['unsupported merchant claim']:[],evidence_chunk_ids:options.verifierIds??['E1'],...(options.omitQuestionResolution?{}:{question_resolution:options.verifierResolution??'supported'}),...(options.verifierDemandResolutions!==undefined?{demand_resolutions:options.verifierDemandResolutions}:{})}):isRepair&&options.repairAnswer?options.repairAnswer:options.answers?.[generationIndex++]??options.answer??'CW-SUL70BA 的能源效益資料請參閱官方能源標籤；目前文件未列出能源級別，我不會估計。';
+    if(!verifier&&options.scopeAnswer){const marker=body.systemInstruction.parts[0].text.match(/\[ANSWER_SCOPE\][a-p]{64}\[\/ANSWER_SCOPE\]/)?.[0];assert(marker);text+=marker;}
     if(!verifier && options.humanAfterFirstDraft && generationIndex===1)conversation.status='human_control';
     if(!verifier && options.newSourceAfterFirstDraft && generationIndex===1)tables.messages.unshift({...visitor,id:uuid(999),content:'A newer customer question',created_at:'2026-10-14T01:00:01.000Z'});
     return Response.json({candidates:[{content:{parts:[{text}]},finishReason:'STOP'}],usageMetadata:{promptTokenCount:40,candidatesTokenCount:30}});
@@ -2489,4 +2490,32 @@ test(`Task3C subject guard neutral clarification ${text} history=${prior} ambigu
  assert(evidence.subject_resolution.missing_evidence.length>0);
  assert.equal(evidence.subject_resolution.demands[0].source_wording_fallback,false);
  assert(!JSON.stringify(f.commits[0].metadata).includes('subject_resolution'));
+});
+for(const mode of ['legacy-completion','scoped-partial','scope-body-rejected','scope-legacy-reviewer'])
+test('V285 actual Widget coverage contract '+mode,async()=>{
+ const old=`要使用LINE快速登入，請依照以下步驟操作：
+
+1.  前往LINE Developers網站並登入您的LINE帳號。若已登入，請點擊「console」。
+2.  進入畫面後，如果您尚未有任何Provider，請先建立一個。若已設定好串接Messaging API，請選擇對應的Provider。
+3.  點選【Create a LINE Login channel】。
+4.  選擇「LINE Login」功能。
+5.  填寫相關欄位，包括服務地區、公司或擁有者國家/地區、頻道圖示、頻道名稱、頻道描述、應用程式類型（勾選Web app）、電子郵件、隱私政策網址和服務條款網址。
+6.  勾選條款後，點擊「Create」按鈕即可完成。`;
+ const content='LINE Developers 登入帳號，建立 Provider，建立 LINE Login channel。'+ '資料內容。'.repeat(345);
+ const doc={document_id:'line-article',title:'LINE快速登入',source_type:'Other',document_score:.99,
+ evidence:[0,2,1].map(i=>({chunk_id:'line-'+i,chunk_index:i,chunk_type:'full_content',content:content+` STEP-${i}`,score:.99-i*.01}))};
+ const approve={grounded:true,unsupported_claims:[],evidence_chunk_ids:['E1','E2'],question_resolution:'supported',demand_resolutions:[{demand_id:'demand-1',status:'supported',evidence_ids:['E1','E2']}],...(mode==='scoped-partial'?{body_scope_valid:true}:mode==='scope-body-rejected'?{body_scope_valid:false}:{})};
+ const f=task3cManagedCase('如何使用LINE快速登入？',content,mode==='legacy-completion'?old:'目前已核實的部分是：登入 LINE Developers，建立 Provider 及 LINE Login channel；其他設定步驟仍待核實。','unknown','50',{
+ originalRagResponse:{success:true,context_found:true,selected_documents:[doc],citations:[{document_id:'line-article',relevance:'high'}]},
+ scopeAnswer:mode!=='legacy-completion',verifierResponses:[approve,approve]});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify({r,events:f.events}));assert.equal(f.commits.length,1);
+ const gen=f.requests.find(r=>r.url.endsWith(':generateContent')&&!r.body.generationConfig?.responseSchema?.properties?.grounded&&!r.body.generationConfig?.responseSchema?.properties?.context_encoding);
+ const evidenceText=gen.body.systemInstruction.parts[0].text.split('[KB_EVIDENCE_JSON]')[1].split('[/KB_EVIDENCE_JSON]')[0];
+ const selected=JSON.parse(evidenceText);assert.deepEqual(selected.map(e=>e.chunk_index),[0,1]);assert(evidenceText.trim().length<=6000);assert.equal(selected.length,2);
+ const meta=f.commits[0].metadata;
+ if(mode==='scoped-partial'){assert.match(f.commits[0].content,/以下只涵蓋/);assert.equal(meta.grounding_verification.question_resolution,'partial');assert.equal(meta.grounding_verification.coverage_scope.cap_reason,'status_capped_by_server');}
+ else {assert(!f.commits[0].content.includes(old));assert.notEqual(meta.grounding_verification?.question_resolution,'supported');}
+ assert.equal(f.requests.filter(r=>r.url.includes('/rag/context-search')).length,1);
+ const models=f.requests.filter(r=>r.url.endsWith(':generateContent'));
+ assert(models.filter(r=>r.body.generationConfig?.responseSchema?.properties?.grounded).length<=2);
 });

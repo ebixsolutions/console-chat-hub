@@ -124,7 +124,7 @@ export function selectFactualEvidence(
   for (const demand of request.demands) {
     const missing = request.missing_evidence.filter(item => item.demand_id === demand.id).map(item => item.reason);
     const blocked = demand.ambiguity.is_ambiguous || missing.some(reason => reason !== "live_transaction_unavailable");
-    const coverage: GroundingDemand = {id: demand.id, source_type: demand.source_type, evidence_ids: [], missing_reasons: [...missing], blocked};
+    const coverage: GroundingDemand = {id: demand.id, request_scope:JSON.stringify({source_message_id:request.source_message_id,question:demand.source_quote,subjects:demand.subjects,requested_facts:demand.requested_facts,constraints:demand.constraints}), source_type: demand.source_type, evidence_ids: [], missing_reasons: [...missing], blocked};
     demands.push(coverage);
     if (!kbDemand(demand) || blocked) continue;
     const current = [demand.question, ...demand.subjects, JSON.stringify(demand.constraints)].join("\n");
@@ -203,11 +203,24 @@ export function selectFactualEvidence(
   const items: GroundingEvidenceItem[] = [];
   const selectedChunks = new Map<string, KBFullChunk>();
   let limited = false;
-  // Round-robin retains at least the first available chunk from each source
-  // before secondary chunks. Whole chunks are omitted with an explicit gap;
-  // an exception after character 1200 is never silently chopped off.
-  for (let offset = 0; offset < 3; offset++) for (const source of sources) {
-    const chunk = source.selection.chunks.filter(item => item.chunk_type === "full_content")[offset];
+  // One initial whole chunk per demand/subject group, then fair continuation
+  // of its best eligible document, before lower-ranked alternatives. Omitted
+  // exceptions remain explicit coverage gaps; similarity never proves completeness.
+  const groups = new Map<string, typeof sources>();
+  for (const source of sources) {
+    const group = JSON.stringify([source.demand_ids, source.target.entity_ids]);
+    groups.set(group, [...(groups.get(group) ?? []), source]);
+  }
+  const queues = [...groups.values()].map(group => [...group].sort((a,b)=>(b.selection.document?.document_score??0)-(a.selection.document?.document_score??0)).flatMap(source => {
+    const chunks = source.selection.chunks.filter(item => item.chunk_type === "full_content");
+    const indices = chunks.map(chunk => chunk.chunk_index);
+    const ordered = indices.every(index => Number.isSafeInteger(index) && index! >= 0) && new Set(indices).size === indices.length;
+    return (ordered ? [...chunks].sort((a,b)=>a.chunk_index!-b.chunk_index!) : chunks).map(chunk=>({source,chunk}));
+  }));
+  const schedule: Array<(typeof queues)[number][number]> = [];
+  for (let round=0; queues.some(queue=>queue.length>round); round++)
+    for (const queue of queues) if(queue[round]) schedule.push(queue[round]);
+  for (const {source,chunk} of schedule) {
     if (!chunk) continue;
     const ids = source.demand_ids;
     if (!chunk.chunk_id) {
@@ -228,7 +241,7 @@ export function selectFactualEvidence(
       continue;
     }
     const item: GroundingEvidenceItem = {id: "E" + (items.length + 1), document_id: chunk.document_id,
-      chunk_id: chunk.chunk_id, content: chunk.content, source_type: chunk.source_type,
+      chunk_id: chunk.chunk_id, ...(Number.isSafeInteger(chunk.chunk_index)&&chunk.chunk_index!>=0?{chunk_index:chunk.chunk_index}:{}), content: chunk.content, source_type: chunk.source_type,
       scope: source.scope, demand_ids: [...ids], demand_scopes: Object.fromEntries(ids.map(id => [id, source.scope])), source_authority: {
         authority_class: source.selection.authority_decision.selected_authority_class as "CURRENT_KB" | "PUBLISHED_KB_SERVICE",
         currentness: source.selection.authority_decision.provenance.currentness as "current" | "unknown",

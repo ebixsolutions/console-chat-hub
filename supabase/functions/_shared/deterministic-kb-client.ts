@@ -35,6 +35,7 @@ export interface KBFullChunk {
   document_id: string;
   doc_id?: string;
   chunk_id?: string;
+  chunk_index?: number;
   title?: string;
   content: string;
   score: number;
@@ -49,11 +50,13 @@ export interface KBCitationChunk {
   source_type: string;
   document_id?: string;
   chunk_id?: string;
+  chunk_index?: number;
   chunk_type?: string;
 }
 export interface KBLLMContextEvidence {
   document_id: string;
   chunk_id?: string;
+  chunk_index?: number;
   content: string;
   score: number;
   source_type: string;
