@@ -2,6 +2,10 @@
 // INTERNAL ONLY. No CORS. Read-only upstream fetch. No raw PII persistence.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import {
+  isC3NonproductionProject,
+  resolveServerSecret,
+} from "../_shared/nonproduction-secret.ts";
 
 type MaskingLevel = "minimal";
 
@@ -32,6 +36,23 @@ type AdapterSuccess = {
   customer_context_degraded: false;
   handoff_required: false;
   request_id: string;
+  trusted_customer_context: {
+    source: "customer360-adapter";
+    company_id: string;
+    conversation_id: string;
+    customer_ref: string;
+    request_id: string;
+    source_identity: string;
+    degraded: false;
+    entitlements: Array<{
+      name: string;
+      value: string;
+      scope: string;
+      status: "active" | "inactive";
+      valid_from: string;
+      valid_until: string;
+    }>;
+  };
 };
 
 type AdapterFailure = {
@@ -230,6 +251,28 @@ function sanitizeCustomerContext(raw: unknown): MinimalCustomerContext | null {
   return out as MinimalCustomerContext;
 }
 
+function sanitizeEntitlements(raw: unknown): AdapterSuccess["trusted_customer_context"]["entitlements"] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: AdapterSuccess["trusted_customer_context"]["entitlements"] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const row = item as Record<string, unknown>;
+    const name = typeof row.name === "string" ? row.name.trim().slice(0, 80) : "";
+    const value = typeof row.value === "string" ? row.value.trim().slice(0, 120) : "";
+    const scope = typeof row.scope === "string" ? row.scope.trim().slice(0, 120) : "";
+    const status = row.status;
+    const validFrom = typeof row.valid_from === "string" ? row.valid_from.trim() : "";
+    const validUntil = typeof row.valid_until === "string" ? row.valid_until.trim() : "";
+    if (
+      !name || !value || !scope || (status !== "active" && status !== "inactive") ||
+      !validFrom || !validUntil || !Number.isFinite(Date.parse(validFrom)) ||
+      !Number.isFinite(Date.parse(validUntil))
+    ) return null;
+    out.push({ name, value, scope, status, valid_from: validFrom, valid_until: validUntil });
+  }
+  return out;
+}
+
 function serviceClient() {
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -279,7 +322,10 @@ Deno.serve(async (req: Request) => {
     });
   }
 
-  const expectedInternalToken = Deno.env.get("CUSTOMER360_INTERNAL_TOKEN");
+  const expectedInternalToken = await resolveServerSecret(
+    "CUSTOMER360_INTERNAL_TOKEN",
+    "c3_customer360_internal_token",
+  );
   const presentedInternalToken = req.headers.get("X-Internal-Service-Token");
   if (!expectedInternalToken || !presentedInternalToken ||
       presentedInternalToken !== expectedInternalToken) {
@@ -311,6 +357,11 @@ Deno.serve(async (req: Request) => {
     "caller_type",
     "caller_role",
     "masking_level",
+    "tier",
+    "entitlement",
+    "entitlements",
+    "source_identity",
+    "request_id",
   ]) {
     if (forbidden in body) {
       return failure(id, "C360_CALLER_SCOPE_FORBIDDEN", false, "", 400);
@@ -389,10 +440,17 @@ Deno.serve(async (req: Request) => {
   }
   const customerRef = customerRefRaw.trim();
 
-  const enabled =
+  const nonproduction = isC3NonproductionProject();
+  const enabled = nonproduction ||
     (Deno.env.get("ENABLE_CUSTOMER360_ADAPTER") ?? "false").toLowerCase() === "true";
-  const upstreamUrl = Deno.env.get("CUSTOMER360_API_URL")?.trim();
-  const upstreamToken = Deno.env.get("CUSTOMER360_API_TOKEN")?.trim();
+  const projectUrl = Deno.env.get("SUPABASE_URL")?.trim().replace(/\/+$/, "");
+  const upstreamUrl = nonproduction && projectUrl
+    ? `${projectUrl}/functions/v1/customer360-nonproduction-upstream`
+    : Deno.env.get("CUSTOMER360_API_URL")?.trim();
+  const upstreamToken = await resolveServerSecret(
+    "CUSTOMER360_API_TOKEN",
+    "c3_customer360_upstream_token",
+  );
 
   if (!enabled || !upstreamUrl || !upstreamToken) {
     await writeSanitizedLog({
@@ -430,9 +488,13 @@ Deno.serve(async (req: Request) => {
         "Content-Type": "application/json",
         "X-AI-Company-ID": companyId,
         "X-Request-ID": id,
+        "X-Source-Identity": nonproduction
+          ? "ai-chatbot-c3-nonproduction"
+          : "ai-chatbot-customer360-adapter",
       },
       body: JSON.stringify({
         operation: "read_customer_context",
+        conversation_id: conversationId,
         customer_ref: customerRef,
         fields_requested: fieldsRequested,
       }),
@@ -503,6 +565,22 @@ Deno.serve(async (req: Request) => {
   }
 
   if (
+    String(upstream.company_id ?? upstream.ai_company_id ?? "") !== companyId ||
+    String(upstream.conversation_id ?? "") !== conversationId ||
+    String(upstream.request_id ?? "") !== id ||
+    typeof upstream.source_identity !== "string" ||
+    !upstream.source_identity.trim() ||
+    (nonproduction && upstream.source_identity.trim() !== "c3-customer360-db-v1")
+  ) {
+    return failure(id, "C360_TRUST_ENVELOPE_MISMATCH", false, customerRef);
+  }
+
+  const entitlements = sanitizeEntitlements(upstream.entitlements);
+  if (!entitlements) {
+    return failure(id, "C360_ENTITLEMENT_SCHEMA_INVALID", false, customerRef);
+  }
+
+  if (
     upstream.ai_company_id !== undefined &&
     String(upstream.ai_company_id) !== companyId
   ) {
@@ -535,6 +613,16 @@ Deno.serve(async (req: Request) => {
     customer_context_degraded: false,
     handoff_required: false,
     request_id: id,
+    trusted_customer_context: {
+      source: "customer360-adapter",
+      company_id: companyId,
+      conversation_id: conversationId,
+      customer_ref: customerRef,
+      request_id: id,
+      source_identity: upstream.source_identity.trim().slice(0, 160),
+      degraded: false,
+      entitlements,
+    },
   };
   return jsonNoCors(200, out);
 });

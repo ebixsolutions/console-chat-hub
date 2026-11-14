@@ -52,7 +52,7 @@ export type CustomerContextState =
   | { status: "error"; source: CustomerContextErrorSource }
   | { status: "success"; data: CustomerContext };
 
-export function useCustomerContext(visitorSessionId: string | null): CustomerContextState {
+export function useCustomerContext(visitorSessionId: string | null, readRevision = 0): CustomerContextState {
   const [state, setState] = useState<CustomerContextState>({ status: "idle" });
   const reqIdRef = useRef(0);
 
@@ -85,6 +85,11 @@ export function useCustomerContext(visitorSessionId: string | null): CustomerCon
         }
 
         const customer = data.customer as Record<string, unknown>;
+        if (!customer || customer.visitor_session_id !== visitorSessionId ||
+          ![customer.conversations, customer.feedback, customer.evaluations, customer.emotion_points].every(Array.isArray)) {
+          setState({ status: "error", source: "customer360_local" });
+          return;
+        }
         setState({
           status: "success",
           data: {
@@ -106,7 +111,7 @@ export function useCustomerContext(visitorSessionId: string | null): CustomerCon
     })();
 
     return () => { cancelled = true; };
-  }, [visitorSessionId]);
+  }, [visitorSessionId, readRevision]);
 
   return state;
 }

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "292b2cae-b14b-493e-be5b-fd4a4cb965a5",
+    "slug": "ce-evaluation-worker",
+    "name": "ce-evaluation-worker",
+    "status": "ACTIVE",
+    "version": 30,
+    "created_at": 1787983955506,
+    "updated_at": 1791453676750,
+    "verify_jwt": false,
+    "import_map": true,
+    "entrypoint_path": "file:///tmp/user_fn_nrfxhqabwblzxoushgnm_292b2cae-b14b-493e-be5b-fd4a4cb965a5_30/source/ce-evaluation-worker/index.ts",
+    "import_map_path": "file:///tmp/user_fn_nrfxhqabwblzxoushgnm_292b2cae-b14b-493e-be5b-fd4a4cb965a5_30/source/deno.json",
+    "ezbr_sha256": "c9884d6d721b62bdd65cf9ce13dd7ea8d10b9c8992fe45e6385b40efac5d9db8"
+  }
+]

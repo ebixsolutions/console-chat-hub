@@ -1,0 +1,39 @@
+name: C3 F06 isolated native PostgreSQL verification
+on:
+  push:
+    branches: [director/ai-abc-c3-long-memory-final-cutover]
+    paths: ['tests/c3-f06/**', '.github/workflows/c3-f06-isolated-postgres.yml', 'supabase/functions/agent-send-reply/**']
+permissions:
+  contents: read
+jobs:
+  f06-native-race:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: c3-disposable-only
+          POSTGRES_DB: c3_f06_isolated_race
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.sha }}', fetch-depth: 0}
+      - name: Run native sessions and guarded rollback on localhost only
+        env:
+          LOCAL_DATABASE_URL: postgres://postgres:c3-disposable-only@127.0.0.1:5432/c3_f06_isolated_race
+        run: |
+          set -euo pipefail
+          command -v psql
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "${SUPABASE_ACCESS_TOKEN:-}"
+          python tests/c3-f06/native-race.py --database "$LOCAL_DATABASE_URL" > "$RUNNER_TEMP/f06-native-evidence.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: c3-f06-native-${{ github.sha }}
+          path: ${{ runner.temp }}/f06-native-evidence.json
+          if-no-files-found: error
+          retention-days: 30

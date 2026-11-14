@@ -81,6 +81,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "AI Chatbot" },
       { name: "description", content: "AI-powered customer service chatbot platform with a console and embeddable widget." },
       { name: "author", content: "Lovable" },
+      { name: "c3-candidate", content: JSON.stringify(import.meta.env.VITE_C3_CANDIDATE) },
       { property: "og:title", content: "AI Chatbot" },
       { property: "og:description", content: "AI-powered customer service chatbot platform with a console and embeddable widget." },
       { property: "og:type", content: "website" },

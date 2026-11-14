@@ -1,0 +1,153 @@
+{
+  "functions": [
+    {
+      "name": "c2_populate_handoff_package_tg",
+      "md5": "dd75815a825051d7c42d7f9480b6fc0b",
+      "owner": "postgres",
+      "acl": "{postgres=X/postgres}",
+      "security": true,
+      "config": [
+        "search_path=public, pg_temp"
+      ]
+    },
+    {
+      "name": "c3_enrich_handoff_from_memory_tg",
+      "md5": "6ae4c78d456133a5e25241f93b992b96",
+      "owner": "postgres",
+      "acl": "{postgres=X/postgres}",
+      "security": true,
+      "config": [
+        "search_path=\"\""
+      ]
+    },
+    {
+      "name": "explicit_handoff_tx",
+      "md5": "5f3c5df252d3bbac7b75c5f7f9307984",
+      "owner": "postgres",
+      "acl": "{postgres=X/postgres,service_role=X/postgres}",
+      "security": true,
+      "config": [
+        "search_path=public, pg_temp"
+      ]
+    }
+  ],
+  "triggers": [
+    {
+      "name": "c2_handoff_package_before_insert",
+      "enabled": "O",
+      "function": "c2_populate_handoff_package_tg()",
+      "definition": "CREATE TRIGGER c2_handoff_package_before_insert BEFORE INSERT ON public.handoff_event FOR EACH ROW EXECUTE FUNCTION c2_populate_handoff_package_tg()"
+    },
+    {
+      "name": "c3_enrich_handoff_from_memory_before_insert",
+      "enabled": "O",
+      "function": "c3_enrich_handoff_from_memory_tg()",
+      "definition": "CREATE TRIGGER c3_enrich_handoff_from_memory_before_insert BEFORE INSERT ON public.handoff_event FOR EACH ROW EXECUTE FUNCTION c3_enrich_handoff_from_memory_tg()"
+    },
+    {
+      "name": "trg_hf3_handoff_refresh",
+      "enabled": "O",
+      "function": "hf3_handoff_refresh_trigger()",
+      "definition": "CREATE TRIGGER trg_hf3_handoff_refresh AFTER INSERT OR UPDATE OF escalation_rule, handoff_reason ON public.handoff_event FOR EACH ROW EXECUTE FUNCTION hf3_handoff_refresh_trigger()"
+    }
+  ],
+  "tables": [
+    {
+      "acl": "{postgres=arwdDxtm/postgres,authenticated=r/postgres,service_role=r/postgres}",
+      "rls": true,
+      "owner": "postgres",
+      "table": "conversation_commerce_state",
+      "force_rls": false
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres,authenticated=r/postgres,service_role=r/postgres}",
+      "rls": true,
+      "owner": "postgres",
+      "table": "conversation_memory_state",
+      "force_rls": false
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres,anon=ardDxtm/postgres,authenticated=ardDxtm/postgres,service_role=arwdDxtm/postgres}",
+      "rls": true,
+      "owner": "postgres",
+      "table": "conversations",
+      "force_rls": false
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}",
+      "rls": true,
+      "owner": "postgres",
+      "table": "handoff_event",
+      "force_rls": false
+    },
+    {
+      "acl": "{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}",
+      "rls": true,
+      "owner": "postgres",
+      "table": "messages",
+      "force_rls": false
+    }
+  ],
+  "policies": [
+    {
+      "name": "conversation_commerce_state_select_staff",
+      "check": null,
+      "roles": "{authenticated}",
+      "table": "conversation_commerce_state",
+      "using": "((company_id IS NOT NULL) AND is_company_member(company_id, auth.uid()))",
+      "schema": "public",
+      "command": "SELECT",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "conversation_memory_state_select_staff",
+      "check": null,
+      "roles": "{authenticated}",
+      "table": "conversation_memory_state",
+      "using": "((company_id IS NOT NULL) AND is_company_member(company_id, auth.uid()))",
+      "schema": "public",
+      "command": "SELECT",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "conversations_select_staff",
+      "check": null,
+      "roles": "{authenticated}",
+      "table": "conversations",
+      "using": "((company_id IS NOT NULL) AND is_company_member(company_id, auth.uid()))",
+      "schema": "public",
+      "command": "SELECT",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "conversations_update_staff",
+      "check": "((company_id IS NOT NULL) AND is_company_member(company_id, auth.uid()))",
+      "roles": "{authenticated}",
+      "table": "conversations",
+      "using": "((company_id IS NOT NULL) AND is_company_member(company_id, auth.uid()))",
+      "schema": "public",
+      "command": "UPDATE",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "handoff_event_read",
+      "check": null,
+      "roles": "{authenticated}",
+      "table": "handoff_event",
+      "using": "(EXISTS ( SELECT 1\n   FROM ((conversations c\n     JOIN company_membership cm ON (((cm.company_id = c.company_id) AND (cm.user_id = auth.uid()) AND (cm.is_active = true))))\n     JOIN company co ON (((co.id = cm.company_id) AND (co.is_active = true))))\n  WHERE (c.id = handoff_event.conversation_id)))",
+      "schema": "public",
+      "command": "SELECT",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "messages_select_staff",
+      "check": null,
+      "roles": "{authenticated}",
+      "table": "messages",
+      "using": "(EXISTS ( SELECT 1\n   FROM conversations c\n  WHERE ((c.id = messages.conversation_id) AND (c.company_id IS NOT NULL) AND is_company_member(c.company_id, auth.uid()))))",
+      "schema": "public",
+      "command": "SELECT",
+      "permissive": "PERMISSIVE"
+    }
+  ]
+}

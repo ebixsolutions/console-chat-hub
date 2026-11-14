@@ -1,0 +1,65 @@
+{
+  "policies": [
+    {
+      "name": "conversation_commerce_state_select_staff",
+      "check": null,
+      "roles": "{authenticated}",
+      "table": "conversation_commerce_state",
+      "using": "((company_id IS NOT NULL) AND is_company_member(company_id, auth.uid()))",
+      "schema": "public",
+      "command": "SELECT",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "conversation_memory_state_select_staff",
+      "check": null,
+      "roles": "{authenticated}",
+      "table": "conversation_memory_state",
+      "using": "((company_id IS NOT NULL) AND is_company_member(company_id, auth.uid()))",
+      "schema": "public",
+      "command": "SELECT",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "conversations_select_staff",
+      "check": null,
+      "roles": "{authenticated}",
+      "table": "conversations",
+      "using": "((company_id IS NOT NULL) AND is_company_member(company_id, auth.uid()))",
+      "schema": "public",
+      "command": "SELECT",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "conversations_update_staff",
+      "check": "((company_id IS NOT NULL) AND is_company_member(company_id, auth.uid()))",
+      "roles": "{authenticated}",
+      "table": "conversations",
+      "using": "((company_id IS NOT NULL) AND is_company_member(company_id, auth.uid()))",
+      "schema": "public",
+      "command": "UPDATE",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "handoff_event_read",
+      "check": null,
+      "roles": "{authenticated}",
+      "table": "handoff_event",
+      "using": "(EXISTS ( SELECT 1\n   FROM ((conversations c\n     JOIN company_membership cm ON (((cm.company_id = c.company_id) AND (cm.user_id = auth.uid()) AND (cm.is_active = true))))\n     JOIN company co ON (((co.id = cm.company_id) AND (co.is_active = true))))\n  WHERE (c.id = handoff_event.conversation_id)))",
+      "schema": "public",
+      "command": "SELECT",
+      "permissive": "PERMISSIVE"
+    },
+    {
+      "name": "messages_select_staff",
+      "check": null,
+      "roles": "{authenticated}",
+      "table": "messages",
+      "using": "(EXISTS ( SELECT 1\n   FROM conversations c\n  WHERE ((c.id = messages.conversation_id) AND (c.company_id IS NOT NULL) AND is_company_member(c.company_id, auth.uid()))))",
+      "schema": "public",
+      "command": "SELECT",
+      "permissive": "PERMISSIVE"
+    }
+  ],
+  "membership_function": "CREATE OR REPLACE FUNCTION public.is_company_member(p_company_id uuid, p_user_id uuid)\n RETURNS boolean\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO ''\nAS $function$\n  select (\n    (session_user = 'postgres' and auth.uid() is null and auth.role() is null)\n    or auth.role() = 'service_role'\n    or p_user_id = auth.uid()\n  ) and exists (\n    select 1\n    from public.company_membership cm\n    where cm.company_id = p_company_id\n      and cm.user_id = p_user_id\n      and cm.is_active\n  );\n$function$\n"
+}

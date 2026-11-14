@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "c3_real_customer_heldout_dataset_v1.schema.json",
+  "title": "C3 real-customer held-out dataset v1",
+  "type": "object",
+  "required": ["schema_version", "status", "quality_score", "held_out_real_customer", "target", "actual_case_count", "cases"],
+  "properties": {
+    "schema_version": { "const": "c3-real-customer-heldout-dataset-1.0.0" },
+    "status": { "enum": ["READY", "BLOCKED"] },
+    "quality_score": { "const": "NOT_MEASURED" },
+    "held_out_real_customer": { "const": true },
+    "target": {
+      "type": "object",
+      "required": ["case_count", "minimum_corpora", "maximum_cases_per_corpus", "minimum_ecommerce_cases", "families", "languages", "lengths"],
+      "properties": {
+        "case_count": { "const": 100 },
+        "minimum_corpora": { "minimum": 3 },
+        "maximum_cases_per_corpus": { "maximum": 50 },
+        "minimum_ecommerce_cases": { "minimum": 60 },
+        "families": { "type": "array", "minItems": 10, "maxItems": 10, "uniqueItems": true },
+        "languages": { "type": "array", "contains": { "enum": ["zh-Hant-HK", "yue-Hant-HK", "en", "mixed-zh-en"] } },
+        "lengths": { "type": "array", "contains": { "enum": ["short", "medium", "long"] } }
+      }
+    },
+    "actual_case_count": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "cases": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": ["case_id", "source_id", "dialogue_id", "source_file_sha256", "source_record_sha256", "conversation_sha256", "license_binding", "original_language", "transformation_log", "pii_review", "oracle_facts", "p0_labels", "conversation", "family", "domain", "length"],
+        "properties": {
+          "case_id": { "pattern": "^c3-rc-[0-9]{3}$" },
+          "source_file_sha256": { "pattern": "^[0-9a-f]{64}$" },
+          "source_record_sha256": { "pattern": "^[0-9a-f]{64}$" },
+          "conversation_sha256": { "pattern": "^[0-9a-f]{64}$" },
+          "response": false,
+          "grader": false,
+          "human_review": false
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

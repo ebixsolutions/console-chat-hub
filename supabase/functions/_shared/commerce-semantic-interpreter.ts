@@ -1,60 +1,173 @@
+import {captureProtectedDiagnosticText} from "./protected-pipeline-evidence.ts";
+import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
 import { callModel } from "./llm-router.ts";
+import { sha256 } from "./model-attempt-accounting.ts";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
+import { requirementMutationText } from "./commerce-state-authority.ts";
+import { sourceOwnedOptionWording } from "./current-factual-request.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
-  normalizeCommerceSemanticFrame,
+  COMMERCE_SEMANTIC_SYSTEM_PROMPT,
+  COMMERCE_SEMANTIC_PROVIDER_SCHEMA,
+  type SemanticContractRejection,
+  type SemanticContractDiagnostic,
   type CommerceSemanticFrame,
+  decodeCommerceSemanticWire,
+  normalizeCommerceSemanticFrame,
+  recoverSourceQuotedReadOnlyFactualFrame,
+  recoverSourceOwnedOptionAfterEntityTypeFailure,
+  rebindSourceQuotedReadOnlyDemand,
 } from "./commerce-semantic-frame.ts";
+
+/** A missing provider-demand list is not a valid semantic response. For an
+ * independently source-verifiable, single-turn *option discovery* only,
+ * preserve the original rejection but recover one non-mutating KB read target.
+ * No proposed entity, SKU, price, history, transaction or customer state is
+ * accepted. The original strict wire decoder and canonical validator run again
+ * on the bounded candidate. All other missing-demand outputs fail closed. */
+function recoverMissingDemandOptionDiscovery(
+  raw: unknown, latest: string, diagnostic?: SemanticContractDiagnostic,
+): CommerceSemanticFrame | null {
+  if (!diagnostic || !("field_class" in diagnostic) ||
+      diagnostic.container !== "wire_nodes" ||
+      diagnostic.stage !== "canonical_vocabulary" ||
+      diagnostic.field_class !== "demands" || diagnostic.reason !== "required" ||
+      !isRecord(raw) || raw.context_encoding !== "semantic_values_v5" ||
+      raw.operation !== "ASK_FACT" || typeof raw.confidence !== "number" ||
+      !Number.isFinite(raw.confidence) || raw.confidence < 0.85 || raw.confidence > 1 ||
+      Object.keys(raw).some(k => !["context_encoding","operation","confidence","containers","strings","numbers","booleans"].includes(k))) return null;
+  const source=clean(latest,501);
+  if (!source || source.length>500 || /[\u0000-\u001f\u007f<>;；]/u.test(source) ||
+      /(?:取消|撤回|退款|更正|改單|改单|暫緩|暂缓|轉真人|转人工|\b(?:cancel|refund|defer|revise|handoff)\b)/iu.test(source) ||
+      !sourceOwnedOptionWording(source)) return null;
+  const collections=["containers","strings","numbers","booleans"] as const;
+  let count=1;
+  // Do not silently erase a malformed or potentially state-mutating model
+  // proposal. Only benign descriptive labels and option-facet hints are allowed.
+  for (const key of collections) {
+    const rows=raw[key];
+    if (!Array.isArray(rows)) return null;
+    count+=rows.length;
+    if(count>128)return null;
+    for(const row of rows) {
+      if(!isRecord(row)||!Array.isArray(row.path)||row.path.length<1||
+         row.path.length>6||row.path.some(s=>typeof s!=="string")||
+         !["language","intent","topic","requested_facts"].includes(row.path[0]))return null;
+    }
+  }
+  const fact="published merchant options matching customer criteria";
+  const reconstructed={
+    ...raw,
+    containers:[...(raw.containers as unknown[]),
+      {path:["demands"],kind:"array"},{path:["demands","0"],kind:"object"},
+      {path:["demands","0","subject_refs"],kind:"array"},
+      {path:["demands","0","requested_facts"],kind:"array"},
+      {path:["demands","0","constraints"],kind:"object"},
+      {path:["demands","0","explicit_negations"],kind:"array"},
+      {path:["demands","0","ambiguity"],kind:"object"},
+      {path:["demands","0","ambiguity","reasons"],kind:"array"},
+      {path:["demands","0","ambiguity","clarification_question"],kind:"null"}],
+    strings:[...(raw.strings as unknown[]),
+      {path:["demands","0","question"],text:source},
+      {path:["demands","0","source_quote"],text:source},
+      {path:["demands","0","source_type"],text:"product"},
+      {path:["demands","0","requested_facts","0"],text:fact}],
+    booleans:[...(raw.booleans as unknown[]),
+      {path:["demands","0","customer_correction"],boolean:false},
+      {path:["demands","0","ambiguity","is_ambiguous"],boolean:false}],
+  };
+  const frame=normalizeCommerceSemanticFrame(decodeCommerceSemanticWire(reconstructed));
+  if (!frame || frame.operation!=="ASK_FACT" || frame.demands?.length!==1 ||
+      frame.entities.length || frame.referents.length || (frame.customer_facts?.length??0) ||
+      frame.explicit_negations.length || frame.customer_correction || frame.additive ||
+      frame.ambiguity.is_ambiguous || frame.demands[0].source_quote!==source ||
+      frame.demands[0].requested_facts.length!==1 ||
+      frame.demands[0].requested_facts[0]!==fact ||
+      [frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state].some(s=>s!=="none"&&s!=="unknown") ||
+      frame.requested_facts.some(f=>!/(?:model|option|choice|product|plan|service|variant|selection|information|型號|型号|選擇|选择|方案|款式)/iu.test(f)))return null;
+  return {...frame,topic:null,entities:[],referents:[],
+    requested_facts:[fact],demands:[{...frame.demands[0],question:source,
+      source_quote:source,subject_refs:[],requested_facts:[fact],constraints:{}}]};
+}
+
+export const SEMANTIC_CONTEXT_CHAR_LIMIT = 12_000;
+export const SEMANTIC_HISTORY_CHAR_LIMIT = 24_000;
+
+export interface SemanticDiagnosticText {
+  capture_origin: "SEMANTIC_ROUTER_INPUT" | "SEMANTIC_MODEL_TEXT";
+  capture_state: "CAPTURED" | "WITHHELD_OVERSIZED" | "WITHHELD_SENSITIVE";
+  sha256: string;
+  bytes: number;
+  body: string | null;
+}
+
+/** A complete, bounded snapshot for the existing Admin/Tenant evidence sink.
+ * Hashes describe the original bytes even when the body must be withheld.
+ * This is router input/model text, never a claim to capture provider HTTP raw.
+ * Do not put this object in public logs, reply bodies or message metadata. */
+export async function captureSemanticDiagnosticText(value: string, origin: SemanticDiagnosticText["capture_origin"]): Promise<SemanticDiagnosticText> {
+  return {...await captureProtectedDiagnosticText(value,origin),capture_origin:origin};
+}
+
+export interface SemanticFailureEvidence {
+  contract: "c3-semantic-failure-evidence-v1";
+  source_message_id: string;
+  request_id: string;
+  request: SemanticDiagnosticText;
+  response: SemanticDiagnosticText;
+  recovery_outcomes: {
+    source_quoted_read_only: "NOT_RUN" | "NOT_APPLICABLE";
+    source_owned_option: "NOT_RUN" | "NOT_APPLICABLE";
+    missing_demand_option: "NOT_RUN" | "NOT_APPLICABLE";
+  };
+}
 
 export interface CommerceSemanticHistoryTurn {
   role: string;
   content: string;
+  id?: string;
+  created_at?: string;
 }
 
 export interface CommerceSemanticInterpretInput {
   company_id: string;
   conversation_id: string;
   source_message_id: string;
+  source_created_at?: string;
+  source_content?: string;
   latest: string;
   history?: CommerceSemanticHistoryTurn[];
+  /** Server-scoped original customer rows recovered outside the recent window. */
+  recovered_history?: CommerceSemanticHistoryTurn[];
+  history_recovery?: {context_incomplete:boolean;reason?:string};
   persistent_state_summary?: string | null;
+  operation_id?: string;
+  /** Server-created admission capability; never taken from a model or message. */
+  legacy_authority?: object;
+  signal?: AbortSignal;
 }
 
 export interface CommerceSemanticInterpretResult {
   frame: CommerceSemanticFrame | null;
-  source: "llm" | "none";
+  source: "semantic_model" | "none";
   failure_code: string | null;
+  failure_stage?: string;
+  failure?: ExecutionFailure;
+  request_id?: string;
+  contract_rejection?: SemanticContractRejection;
+  contract_diagnostic?: SemanticContractDiagnostic;
+  /** Sensitive in-process evidence: only the existing Admin/Tenant trace writer
+   * may persist it. Never spread this result into a public response or metadata. */
+  failure_evidence?: SemanticFailureEvidence;
+  success_evidence?: Omit<SemanticFailureEvidence,"contract"> & {contract:"c3-semantic-success-evidence-v1"; original_contract:{verdict:"ACCEPTED"|"REJECTED_RECOVERED";rejection:SemanticContractRejection|null;diagnostic:SemanticContractDiagnostic|null}};
+  input_receipt?: {
+    source_message_id: string;
+    recent_source_message_ids: (string | null)[];
+    recovered_source_message_ids: string[];
+    user_sha256: string;
+    system_sha256: string;
+  };
 }
-
-const SYSTEM = `You are a multilingual commerce semantic interpreter.
-Your job is ONLY to understand the customer's commerce meaning and return one JSON object matching the canonical commerce semantic frame.
-Do not answer the customer. Do not invent product facts, prices, availability, policies, T&C, delivery rules or company facts.
-Do not assume an industry taxonomy. Interpret unfamiliar products/services compositionally from the customer's words and context.
-Required JSON fields: version, language, operation, intent, topic, entities, referents, customer_correction, additive, explicit_negations, requested_facts, transaction_state, payment_state, booking_state, fulfillment_state, ambiguity, confidence.
-Each entity must contain: entity_ref, name, kind, category_hint, sku, model, quantity, unit, attributes, constraints, capabilities, confidence.
-ambiguity must contain: is_ambiguous, reasons, clarification_question.
-Allowed operation values: ADD_ITEM, SET_QUANTITY, UPDATE_ITEM, REMOVE_ITEM, CANCEL_ITEM, RESERVE, REQUEST_QUOTE, ASK_FACT, ASK_CALCULATION, CONFIRM, DEFER, NO_STATE_CHANGE.
-Allowed kind values: physical_product, digital_good, service, rental, subscription, ticket, custom_item, b2b_product, unknown.
-Allowed transaction_state values: none, draft, pending_confirmation, confirmed, completed, cancelled, unknown.
-Allowed payment_state values: none, pending_quote, pending_payment, paid, failed, refunded, partially_refunded, unknown.
-Allowed booking_state values: none, requested, pending, booked, completed, cancelled, unknown.
-Allowed fulfillment_state values: none, requested, pending, scheduled, in_progress, fulfilled, cancelled, unknown.
-Capabilities must contain booleans: requires_delivery, supports_pickup, requires_installation, requires_booking, requires_quote, requires_site_check, digital_fulfilment, recurring_billing, rental_return, customization.
-Core rules:
-1. Resolve ellipsis, pronouns and short follow-ups from recent customer context and persistent state only when confidence is sufficient. If two or more plausible referents/meanings remain, set ambiguity.is_ambiguous=true, explain concise reasons, provide a clarification_question, use NO_STATE_CHANGE and do not propose a mutation.
-2. Keep semantics language-neutral even though language records the customer's input language.
-3. name is the clean item/service name, excluding quantity, unit, color/size/date/time and transaction verbs when possible.
-4. Put arbitrary customer-authored properties in attributes and requirements/limits in constraints.
-5. Capabilities describe what the requested commerce object/operation requires; do not infer company support. A customer asking about delivery may imply requires_delivery only if the requested transaction itself needs delivery; asking whether pickup is allowed may set supports_pickup=true as a requested capability, not as a confirmed company fact.
-6. If a fact must come from KB/API (price, FAQ, policy, T&C, warranty, delivery rules, availability), put a concise semantic concept in requested_facts. Do NOT provide the answer.
-7. customer_correction=true only when the latest message supersedes a prior customer-authored fact. additive=true only when quantity/items are explicitly added rather than replaced.
-8. Negated transaction statements such as '未付款', 'not paid yet', 'not booked', 'not confirmed' must appear in explicit_negations and must never become confirmations.
-9. Lifecycle fields are semantic observations, never authority to mutate state. Never emit paid, booked, confirmed, completed, scheduled or fulfilled unless the customer/context contains explicit evidence for that exact state. Future intent such as 'I will pay', 'book it later' or '安排星期五' is not completion evidence.
-10. If the latest turn is only a factual/safety/policy question with no state mutation, use ASK_FACT or NO_STATE_CHANGE and do not invent a new commerce entity merely from the subject of the question when a prior referent is available.
-11. Unknown industries and unseen vocabulary are expected; never fall back to an industry list or synonym dictionary.
-12. Never invent add-ons/options/fees. Only include them when customer-authored context explicitly identifies them or persistent customer-authored state already contains them.
-13. If confidence is below 0.62, set ambiguity.is_ambiguous=true and operation=NO_STATE_CHANGE.
-Return JSON only.`;
 
 function clean(value: unknown, max = 3000): string {
   return typeof value === "string"
@@ -71,19 +184,104 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * model. This is context only: the model cannot persist it and the deterministic
  * A1/A2 reducer remains the sole state mutation authority.
  */
-export function buildPersistentCommerceStateSummary(row: unknown): string | null {
-  if (!isRecord(row) || !isRecord(row.state)) return null;
+export function buildPersistentCommerceStateSummary(
+  row: unknown,
+  memoryRow?: unknown,
+): string | null {
+  if (
+    (!isRecord(row) || !isRecord(row.state)) &&
+    (!isRecord(memoryRow) || !isRecord(memoryRow.memory))
+  ) {
+    return null;
+  }
+  row = isRecord(row) && isRecord(row.state) ? row : { revision: 0, state: {} };
+  if (!isRecord(row)) return null;
   const revision = typeof row.revision === "number"
     ? row.revision
     : Number(row.revision ?? 0);
+  const memory = isRecord(memoryRow) && isRecord(memoryRow.memory) ? memoryRow.memory : null;
   const bounded = {
     revision: Number.isFinite(revision) && revision >= 0 ? revision : 0,
-    state: row.state,
+    // Exclude server receipts and duplicated provenance, retaining every
+    // customer constraint and the identities needed for unique referent binding.
+    state: isRecord(row.state)
+      ? {
+        current_topic: row.state.current_topic,
+        entities: Array.isArray(row.state.entities)
+          ? row.state.entities.map((entity) =>
+            isRecord(entity)
+              ? {
+                entity_id: entity.entity_id,
+                category: entity.category,
+                model: entity.model,
+                status: entity.status,
+                quantity: entity.quantity,
+                attributes: entity.attributes,
+                constraints: entity.constraints,
+              }
+              : entity
+          )
+          : [],
+        customer_constraints: row.state.customer_constraints,
+        delivery: row.state.delivery,
+        installation: row.state.installation,
+      }
+      : {},
+    ...(memory && Array.isArray(memory.current_customer_facts)
+      ? {
+        current_customer_facts: memory.current_customer_facts.map((
+          fact: unknown,
+        ) =>
+          isRecord(fact)
+            ? {
+              key: fact.key,
+              value: fact.value,
+              source_message_id: fact.source_message_id,
+            }
+            : fact
+        ),
+      }
+      : {}),
+    ...(memory ? {memory_context:{
+      revision:isRecord(memoryRow) ? memoryRow.revision ?? memory.memory_revision : memory.memory_revision,
+      current_goal:memory.current_goal,
+      current_goal_source_message_id:memory.current_goal_source_message_id,
+      current_topic:memory.current_topic,
+      current_topic_source_message_id:memory.current_topic_source_message_id,
+      latest_corrections:memory.latest_corrections,
+      open_questions:memory.open_questions,
+      question_lifecycle:memory.question_lifecycle,
+      question_lifecycle_incomplete:memory.question_lifecycle_incomplete,
+      factual_read_anchors:Array.isArray(memory.factual_read_anchors) ? memory.factual_read_anchors.map(anchor => isRecord(anchor) ? {
+        source_message_id:anchor.source_message_id,created_at:anchor.created_at,customer_text:anchor.customer_text,
+        subjects:anchor.subjects,subject_source_message_ids:anchor.subject_source_message_ids,requested_facts:anchor.requested_facts,
+      } : anchor) : [],
+      factual_read_anchors_incomplete:memory.factual_read_anchors_incomplete,
+      // Identity hints only; prior citations never establish current merchant facts.
+      grounded_reference_lineage:memory.grounded_reference_lineage,
+    }} : {}),
   };
   try {
-    return JSON.stringify(bounded).slice(0, 2400);
+    const summary = JSON.stringify(bounded);
+    if (summary.length <= SEMANTIC_CONTEXT_CHAR_LIMIT) return summary;
+    // Keep complete independently bounded sections when another section is too
+    // large. Never clip a fact/value/anchor or present a partial projection as
+    // complete. The recovery caller still owns access to original message rows.
+    const partial: Record<string,unknown> = {
+      revision:bounded.revision,context_incomplete:true,omitted_context:[] as string[],
+    };
+    const omitted = partial.omitted_context as string[];
+    for (const key of ["current_customer_facts","memory_context","state"] as const) {
+      if (bounded[key] === undefined) continue;
+      partial[key] = bounded[key];
+      // Reserve enough room for the fixed omission labels added below.
+      if (JSON.stringify(partial).length > SEMANTIC_CONTEXT_CHAR_LIMIT - 100) {
+        delete partial[key]; omitted.push(key);
+      }
+    }
+    return JSON.stringify(partial);
   } catch {
-    return null;
+    return JSON.stringify({context_incomplete:true});
   }
 }
 
@@ -96,10 +294,16 @@ export function buildPersistentCommerceStateSummary(row: unknown): string | null
 async function loadPersistentCommerceStateSummary(
   input: CommerceSemanticInterpretInput,
 ): Promise<string | null> {
-  const supplied = clean(input.persistent_state_summary, 2400);
-  if (supplied) return supplied;
+  if (input.persistent_state_summary !== undefined) {
+    return input.persistent_state_summary && input.persistent_state_summary.length > SEMANTIC_CONTEXT_CHAR_LIMIT
+      ? JSON.stringify({context_incomplete:true})
+      : clean(input.persistent_state_summary,SEMANTIC_CONTEXT_CHAR_LIMIT) || null;
+  }
 
-  const supabaseUrl = clean(Deno.env.get("SUPABASE_URL"), 600).replace(/\/$/, "");
+  const supabaseUrl = clean(Deno.env.get("SUPABASE_URL"), 600).replace(
+    /\/$/,
+    "",
+  );
   if (!supabaseUrl || !input.conversation_id || !input.company_id) return null;
 
   let adminKey = "";
@@ -116,51 +320,127 @@ async function loadPersistentCommerceStateSummary(
     limit: "1",
   });
   const controller = new AbortController();
+  const abortFromRequest = () => controller.abort(input.signal?.reason);
+  if (input.signal?.aborted) abortFromRequest();
+  else {
+    input.signal?.addEventListener("abort", abortFromRequest, {
+      once: true,
+    });
+  }
   const timer = setTimeout(() => controller.abort(), 800);
   try {
-    const response = await fetch(
-      `${supabaseUrl}/rest/v1/conversation_commerce_state?${params.toString()}`,
-      {
-        method: "GET",
-        headers: {
-          apikey: adminKey,
-          Authorization: `Bearer ${adminKey}`,
-          Accept: "application/json",
-        },
-        signal: controller.signal,
+    const memoryParams = new URLSearchParams({
+      select: "memory",
+      conversation_id: `eq.${input.conversation_id}`,
+      company_id: `eq.${input.company_id}`,
+      limit: "1",
+    });
+    const options = {
+      method: "GET",
+      headers: {
+        apikey: adminKey,
+        Authorization: `Bearer ${adminKey}`,
+        Accept: "application/json",
       },
-    );
-    if (!response.ok) return null;
-    const payload: unknown = await response.json();
-    if (!Array.isArray(payload) || payload.length === 0) return null;
-    return buildPersistentCommerceStateSummary(payload[0]);
+      signal: controller.signal,
+    };
+    // Parallel, read-only and identically tenant scoped within the existing timeout.
+    const [response, memoryResponse] = await Promise.all([
+      fetch(
+        `${supabaseUrl}/rest/v1/conversation_commerce_state?${params.toString()}`,
+        options,
+      ),
+      fetch(
+        `${supabaseUrl}/rest/v1/conversation_memory_state?${memoryParams.toString()}`,
+        options,
+      ),
+    ]);
+    if (!response.ok || !memoryResponse.ok) {
+      return JSON.stringify({ context_incomplete: true });
+    }
+    const [payload, memoryPayload]: unknown[] = await Promise.all([
+      response.json(),
+      memoryResponse.json(),
+    ]);
+    if (!Array.isArray(payload) || !Array.isArray(memoryPayload)) {
+      return JSON.stringify({ context_incomplete: true });
+    }
+    return buildPersistentCommerceStateSummary(payload[0], memoryPayload[0]);
   } catch {
-    return null;
+    return JSON.stringify({ context_incomplete: true });
   } finally {
     clearTimeout(timer);
+    input.signal?.removeEventListener("abort", abortFromRequest);
   }
+}
+
+const fullSemanticText = (value:unknown) => typeof value === "string" ? value.normalize("NFKC").replace(/\s+/g," ").trim() : "";
+
+/** Recovery and the provider must agree on which originals are already visible.
+ * Keep original row objects (including server metadata) for the caller. */
+export function selectSemanticRecentHistory(
+  input: Pick<CommerceSemanticInterpretInput,"history"|"latest"|"source_message_id">,
+): CommerceSemanticHistoryTurn[] {
+  const latest = fullSemanticText(input.latest);
+  return (input.history ?? []).filter((row,index) => {
+    const content = fullSemanticText(row.content);
+    if (!content) return false;
+    // A business projection or staff query can share the source ID but differ
+    // from the actual customer content. That original must remain available.
+    return !(content === latest && (row.id === input.source_message_id || index === 0 && !row.id));
+  }).slice(0,12);
 }
 
 function buildUser(
   input: CommerceSemanticInterpretInput,
   persistentStateSummary: string | null,
-): string {
-  const prior = (input.history ?? [])
-    .filter((x) => clean(x.content) && clean(x.content) !== clean(input.latest))
-    .slice(-12)
-    .map((x, i) => `${i + 1}. ${String(x.role || "unknown")}: ${clean(x.content, 800)}`)
-    .join("\n");
-  return [
+) {
+  const fullText = fullSemanticText;
+  const latest = fullText(input.latest);
+  const prior = selectSemanticRecentHistory(input)
+    .reverse()
+    .map(x => ({message_id:x.id ?? null,created_at:x.created_at ?? null,role:String(x.role || "unknown"),content:fullText(x.content)}));
+  const seen = new Map(prior.filter(row => row.message_id).map(row => [row.message_id!,row.content]));
+  const recovered: {message_id:string;created_at:string|null;role:string;content:string}[] = [];
+  for (const row of input.recovered_history ?? []) {
+    const content = fullText(row.content);
+    if (!row.id || !content || !["visitor","customer","user"].includes(row.role)) return null;
+    if (row.id === input.source_message_id) continue;
+    if (seen.has(row.id)) {
+      if (seen.get(row.id) !== content) return null;
+      continue;
+    }
+    seen.set(row.id,content);
+    recovered.push({message_id:row.id,created_at:row.created_at ?? null,role:row.role,content});
+  }
+  const priorText = JSON.stringify(prior), recoveredText = JSON.stringify(recovered);
+  // Preserve complete selected originals, including constraints after character
+  // 800. Oversized context is an observable input failure before model dispatch,
+  // never a silently clipped customer requirement or a copied partial message.
+  if (priorText.length + recoveredText.length > SEMANTIC_HISTORY_CHAR_LIMIT) return null;
+  const user = [
     `Semantic frame version: ${COMMERCE_SEMANTIC_FRAME_VERSION}`,
-    `Latest customer turn: ${clean(input.latest, 1600)}`,
-    prior
-      ? `Recent conversation turns (oldest to newest):\n${prior}`
+    `Latest customer turn: ${latest}`,
+    prior.length
+      ? `Recent conversation turns (oldest to newest; source-bound discourse, not merchant evidence):\n${priorText}`
       : "Recent conversation turns: none",
+    recovered.length
+      ? `Recovered earlier original customer messages (server-scoped, independent of the recent window):\n${recoveredText}`
+      : "Recovered earlier original customer messages: none",
+    input.history_recovery?.context_incomplete
+      ? "History recovery: context_incomplete=true. A missing or non-unique older reference remains unresolved; do not invent it."
+      : "History recovery: no reported incomplete read.",
     persistentStateSummary
-      ? `Persistent commerce state summary (customer-authored state only; do not treat as external facts):\n${clean(persistentStateSummary, 2400)}`
+      ? `Persistent commerce and Memory context (customer-authored state and read references; do not treat as external facts):\n${
+        clean(
+          persistentStateSummary,
+          SEMANTIC_CONTEXT_CHAR_LIMIT,
+        )
+      }`
       : "Persistent commerce state summary: none",
-    "Return one canonical semantic frame.",
+    "Return one compact current-turn delta, not a state snapshot.",
   ].join("\n\n");
+  return {user,recentIds:prior.map(row=>row.message_id),recoveredIds:recovered.map(row=>row.message_id)};
 }
 
 export async function interpretCommerceSemantics(
@@ -168,38 +448,216 @@ export async function interpretCommerceSemantics(
 ): Promise<CommerceSemanticInterpretResult> {
   const latest = clean(input.latest, 1600);
   if (!latest) return { frame: null, source: "none", failure_code: null };
+  if (
+    String(input.latest).normalize("NFKC").replace(/\s+/g, " ").trim().length >
+      1600
+  ) {
+    return {
+      frame: null,
+      source: "none",
+      failure_code: "SEMANTIC_INPUT_LIMIT",
+      failure_stage: "input_limit",
+    };
+  }
 
-  const persistentStateSummary = await loadPersistentCommerceStateSummary(input);
+  const persistentStateSummary = await loadPersistentCommerceStateSummary(
+    input,
+  );
+  const projection = buildUser(input,persistentStateSummary);
+  if (projection === null) return {frame:null,source:"none",failure_code:"SEMANTIC_INPUT_LIMIT",failure_stage:"input_context"};
+  const {user,recentIds,recoveredIds} = projection;
+  const [userSha,systemSha] = await Promise.all([sha256(user),sha256(COMMERCE_SEMANTIC_SYSTEM_PROMPT)]);
+  const input_receipt = {source_message_id:input.source_message_id,
+    recent_source_message_ids:recentIds,recovered_source_message_ids:recoveredIds,
+    user_sha256:userSha,system_sha256:systemSha};
+  const operationId = input.operation_id ?? `commerce-semantic:${input.source_message_id}`;
 
-  // Vertex's constrained responseSchema rejects our open-ended attributes/constraints
-  // shape (HTTP 400). Keep provider-level JSON mode, then enforce the canonical
-  // semantic contract through normalizeCommerceSemanticFrame before any state event
-  // is accepted. The model still cannot write state directly.
-  const result = await callModel({
+  // Hosted 21745026: outer schema-valid JSON contained an invalid delta_json
+  // document. Generate native JSON once, keeping dynamic customer values native.
+  // Do not repair malformed output or retry paid inference. Strict decoding and
+  // the unchanged canonical validator still precede every proposed state event.
+  let result;
+  try { result = await callModel({
     purpose: "evaluation",
-    system: SYSTEM,
-    user: buildUser(input, persistentStateSummary),
-    maxTokens: 1800,
-    operationId: `commerce-semantic:${input.source_message_id}`,
+    system: COMMERCE_SEMANTIC_SYSTEM_PROMPT,
+    user,
+    maxTokens: 4096,
+    maxProviderAttempts: 1,
+    semanticSource: input.source_created_at ? {messageId:input.source_message_id,createdAt:input.source_created_at,contentSha256:await sha256(input.source_content ?? input.latest)} : undefined,
+    operationId,
+    legacyAuthority:input.legacy_authority,
     companyId: input.company_id,
     conversationId: input.conversation_id,
     tag: "commerce-semantic-interpreter",
     responseFormat: "json",
-  });
+    responseSchema: COMMERCE_SEMANTIC_PROVIDER_SCHEMA,
+    // The small provider grammar constrains native value types. The server
+    // separately enforces the complete semantic vocabulary and canonical bounds.
+    thinkingBudget: 0,
+    signal: input.signal,
+  }); } catch (error) {
+    const failure = failureFromError(error,{request_id:operationId,source_message_id:input.source_message_id});
+    return {input_receipt,frame:null,source:"none",failure_code:failure.code,failure_stage:failure.stage,failure};
+  }
 
   if (!result.ok) {
-    return { frame: null, source: "none", failure_code: result.code };
+    return {
+      input_receipt,frame: null,
+      source: "none",
+      failure_code: result.failure?.code ?? result.code,
+      failure_stage: result.invalid_output_reason ?? result.failure?.stage ?? executionFailure(result.code).stage,
+      failure: executionFailure(result.failure?.code ?? result.code,{stage:result.failure?.stage,request_id:result.request_id,source_message_id:input.source_message_id,http_status:result.status}),
+      request_id: result.request_id,
+    };
   }
+
+  const resultText = result.text;
+  const resultRequestId = result.request_id ?? operationId;
+  const captureFailure = async (recoveryAttempted = false): Promise<SemanticFailureEvidence> => {
+    // The system/schema are fixed Source and legitimately discuss authorization.
+    // Scan the complete untrusted customer/history/state projection, then retain
+    // or withhold the complete router snapshot. Never exempt any customer text.
+    const [userCapture, response] = await Promise.all([
+      captureSemanticDiagnosticText(user, "SEMANTIC_ROUTER_INPUT"),
+      captureSemanticDiagnosticText(resultText, "SEMANTIC_MODEL_TEXT"),
+    ]);
+    const requestBody = JSON.stringify({
+      purpose: "evaluation", tag: "commerce-semantic-interpreter",
+      system: COMMERCE_SEMANTIC_SYSTEM_PROMPT, user,
+      response_format: "json", response_schema: COMMERCE_SEMANTIC_PROVIDER_SCHEMA,
+      max_tokens: 4096, max_provider_attempts: 1, thinking_budget: 0,
+    });
+    const requestBytes = new TextEncoder().encode(requestBody).byteLength;
+    const requestState = requestBytes > 65_536 ? "WITHHELD_OVERSIZED" : userCapture.capture_state;
+    const request: SemanticDiagnosticText = {capture_origin: "SEMANTIC_ROUTER_INPUT",
+      capture_state: requestState, sha256: await sha256(requestBody), bytes: requestBytes,
+      body: requestState === "CAPTURED" ? requestBody : null};
+    const outcome = recoveryAttempted ? "NOT_APPLICABLE" as const : "NOT_RUN" as const;
+    return {contract: "c3-semantic-failure-evidence-v1", source_message_id: input.source_message_id,
+      request_id: resultRequestId, request, response,
+      recovery_outcomes: {source_quoted_read_only: outcome, source_owned_option: outcome,
+        missing_demand_option: outcome}};
+  };
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(result.text);
   } catch {
-    return { frame: null, source: "none", failure_code: "LLM_INVALID_OUTPUT" };
+    return {
+      input_receipt,frame: null,
+      source: "none",
+      failure_code: "LLM_INVALID_OUTPUT",
+      failure_stage: "semantic_json",
+      failure_evidence: await captureFailure(),
+      failure: executionFailure("LLM_INVALID_OUTPUT",{stage:"decode",request_id:result.request_id,source_message_id:input.source_message_id}),
+      request_id: result.request_id,
+    };
   }
-  const frame = normalizeCommerceSemanticFrame(parsed);
+  let contractRejection: SemanticContractRejection | undefined;
+  let contractDiagnostic: SemanticContractDiagnostic | undefined;
+  const rejected = (reason: SemanticContractRejection, diagnostic?: SemanticContractDiagnostic) => {
+    contractRejection ??= reason;
+    contractDiagnostic ??= diagnostic;
+  };
+  const frame = normalizeCommerceSemanticFrame(
+    decodeCommerceSemanticWire(parsed, rejected), rejected,
+  );
   if (!frame) {
-    return { frame: null, source: "none", failure_code: "LLM_INVALID_OUTPUT" };
+    // A malformed optional entity must not suppress a complete independent
+    // merchant-fact question. Only the exact full current customer quote and
+    // separately well-typed, non-mutating demand may locate a fresh KB read.
+    // Invalid entity/transaction/correction data stays rejected; no paid retry.
+    const readOnly = recoverSourceQuotedReadOnlyFactualFrame(parsed, latest, contractDiagnostic);
+    if (readOnly && contractRejection === "wire_context_nodes") {
+      console.warn(JSON.stringify({
+        event:"semantic_source_quoted_read_only_recovery",request_id:result.request_id,
+        source_message_id:input.source_message_id,
+        original_rejection:contractRejection,
+        field_class: "field_class" in (contractDiagnostic ?? {}) ? (contractDiagnostic as {field_class?:string}).field_class : null,
+        original_stage:"canonical_validation",demand_count:readOnly.demands?.length ?? 0,
+        state_mutation:false,additional_model_attempts:0,
+      }));
+      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1",original_contract:{verdict:frame?"ACCEPTED":"REJECTED_RECOVERED",rejection:contractRejection??null,diagnostic:contractDiagnostic??null}},input_receipt,frame:readOnly,source:"semantic_model",failure_code:null,request_id:result.request_id};
+    }
+    // Never coerce the malformed entity or accept its business state. A
+    // source-verifiable first-turn option request may read KB using only the
+    // full customer text, with the original wire rejection still recorded.
+    const sourceOptionRecovery = contractRejection === "wire_context_nodes"
+      ? recoverSourceOwnedOptionAfterEntityTypeFailure(
+          parsed, latest, contractDiagnostic, sourceOwnedOptionWording(latest),
+          recentIds.length === 0 && recoveredIds.length === 0 && !persistentStateSummary,
+        )
+      : null;
+    if (sourceOptionRecovery) {
+      console.warn(JSON.stringify({
+        event:"semantic_entity_type_source_owned_option_recovery",
+        request_id:result.request_id,source_message_id:input.source_message_id,
+        original_rejection:contractRejection,original_field_class:"entity_confidence",
+        original_reason:"type",source_quote_bound:true,demand_count:1,
+        state_mutation:false,additional_model_attempts:0,
+        merchant_evidence_granted:false,
+      }));
+      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1",original_contract:{verdict:frame?"ACCEPTED":"REJECTED_RECOVERED",rejection:contractRejection??null,diagnostic:contractDiagnostic??null}},input_receipt,frame:sourceOptionRecovery,source:"semantic_model",
+        failure_code:null,request_id:result.request_id};
+    }
+    const recoveredOptions = contractRejection === "wire_context_nodes"
+      ? recoverMissingDemandOptionDiscovery(parsed,latest,contractDiagnostic) : null;
+    if (recoveredOptions) {
+      console.warn(JSON.stringify({
+        event:"semantic_missing_demand_option_read_only_recovery",
+        request_id:result.request_id,source_message_id:input.source_message_id,
+        original_rejection:contractRejection,field_class:"demands",
+        source_quote_bound:true,demand_count:1,
+        state_mutation:false,additional_model_attempts:0,merchant_evidence_granted:false,
+      }));
+      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1",original_contract:{verdict:frame?"ACCEPTED":"REJECTED_RECOVERED",rejection:contractRejection??null,diagnostic:contractDiagnostic??null}},input_receipt,frame:recoveredOptions,source:"semantic_model",failure_code:null,request_id:result.request_id};
+    }
+    return {
+      input_receipt,frame: null,
+      source: "none",
+      failure_code: "LLM_INVALID_OUTPUT",
+      failure_stage: "semantic_contract",
+      contract_rejection: contractRejection,
+      contract_diagnostic: contractDiagnostic,
+      failure_evidence: await captureFailure(true),
+      failure: executionFailure("LLM_INVALID_OUTPUT",{stage:"canonical_validation",request_id:result.request_id,source_message_id:input.source_message_id}),
+      request_id: result.request_id,
+    };
   }
-  return { frame, source: "llm", failure_code: null };
+  if ((frame.demands ?? []).some(demand => !latest.includes(demand.source_quote))) {
+    // Default remains strict rejection. An independently complete factual
+    // read can use actual source text, not a translated/model-only quote.
+    const rebound = rebindSourceQuotedReadOnlyDemand(frame, latest);
+    if (rebound) {
+      console.warn(JSON.stringify({event:"semantic_read_only_source_quote_rebound",
+        source_message_id:input.source_message_id,request_id:result.request_id,
+        original_stage:"semantic_source_binding",demand_count:1,
+        state_mutation:false,extra_model_attempts:0}));
+      return {success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1",original_contract:{verdict:frame?"ACCEPTED":"REJECTED_RECOVERED",rejection:contractRejection??null,diagnostic:contractDiagnostic??null}},input_receipt,frame:rebound,source:"semantic_model",failure_code:null,request_id:result.request_id};
+    }
+    return {
+      input_receipt,frame:null,source:"none",failure_code:"LLM_INVALID_OUTPUT",failure_stage:"semantic_source_binding",
+      contract_rejection:"canonical_demand_source_quote",
+      failure_evidence:await captureFailure(),
+      contract_diagnostic:{container:"wire_nodes",stage:"canonical_vocabulary",node_count:0,field_class:"demand_source_quote",reason:"field"},
+      failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"canonical_validation",request_id:result.request_id,source_message_id:input.source_message_id}),
+      request_id:result.request_id,
+    };
+  }
+  // A semantic lifecycle label is only a proposal. An old numeric requirement
+  // being withdrawn cannot authorize cancellation of its commerce entity.
+  if (
+    ["CANCEL_ITEM", "REMOVE_ITEM"].includes(frame.operation) &&
+    requirementMutationText(input.latest) !== input.latest
+  ) {
+    return {
+      input_receipt,frame: null,
+      source: "none",
+      failure_code: "LLM_INVALID_OUTPUT",
+      failure_stage: "requirement_lifecycle_conflict",
+      failure: executionFailure("LLM_INVALID_OUTPUT",{stage:"canonical_validation",request_id:result.request_id,source_message_id:input.source_message_id}),
+      request_id: result.request_id,
+    };
+  }
+  return { success_evidence:{...await captureFailure(),contract:"c3-semantic-success-evidence-v1",original_contract:{verdict:frame?"ACCEPTED":"REJECTED_RECOVERED",rejection:contractRejection??null,diagnostic:contractDiagnostic??null}},input_receipt,frame,source:"semantic_model",failure_code:null,request_id:result.request_id };
 }

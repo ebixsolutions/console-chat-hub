@@ -1,3 +1,4 @@
+import { CeBatchControls } from "@/components/console/ce/CeBatchControls";
 /**
  * Conversation Evaluation console — PR29 Task 2 automatic evaluation UX.
  * Existing CE list/filter/detail design preserved.
@@ -15,12 +16,12 @@ import { CeDetailPanel } from "@/components/console/ce/CeDetailPanel";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { ceExecution, scheduleDwell, parseFunctionResponse, type RequestTuple } from "@/lib/ce-evaluation-execution";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PAGE_SIZE = 25;
-const DWELL_MS = 3000;
 
 type FreshState =
   | "never_evaluated"
@@ -36,6 +37,7 @@ type FreshRow = {
   state: FreshState;
   last_success_at: string | null;
   last_error_code: string | null;
+  revision?: number;
 };
 
 const SEVERITY_PILL: Record<string, string> = {
@@ -81,21 +83,14 @@ async function invokeAuto(
   conversationId: string,
   source: "manual" | "ce_dwell",
 ): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; code: string }> {
-  const { data, error } = await supabase.functions.invoke("ce-evaluation-control", {
-    body: { conversation_id: conversationId, source },
-  });
-  if (error) {
-    const ctx = (error as { context?: { body?: unknown } }).context;
-    try {
-      const parsed = typeof ctx?.body === "string" ? JSON.parse(ctx.body) : ctx?.body;
-      return { ok: false, code: String((parsed as any)?.error ?? "unknown") };
-    } catch {
-      return { ok: false, code: "unknown" };
-    }
-  }
-  const payload = (data ?? {}) as Record<string, unknown>;
-  if (payload.error) return { ok: false, code: String(payload.error) };
-  return { ok: true, data: payload };
+  try {
+    const result = await parseFunctionResponse(await supabase.functions.invoke("ce-evaluation-control", {
+      body: { conversation_id: conversationId, source }, timeout: 15000,
+    }));
+    const body = result.body as Record<string, unknown> | null;
+    if (result.classification !== "success" || !body || body.error) return { ok: false, code: String(body?.error ?? result.classification) };
+    return { ok: true, data: body };
+  } catch { return { ok: false, code: "transport_unknown" }; }
 }
 
 function freshnessLabel(state?: FreshState): string {
@@ -181,10 +176,15 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   const [reloadKey, setReloadKey] = useState(0);
   const [detailReloadKey, setDetailReloadKey] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
+  const [autoEvaluationFor, setAutoEvaluationFor] = useState<string | null>(null);
+  useEffect(() => { if (!canRun) setAutoEvaluationFor(null); }, [canRun]);
   const [runId, setRunId] = useState("");
   const [running, setRunning] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
   const [freshness, setFreshness] = useState<Record<string, FreshRow>>({});
   const dwellGeneration = useRef(0);
+  const viewEpoch = useRef(0);
+  useEffect(() => () => { viewEpoch.current++; dwellGeneration.current++; }, []);
 
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
   const reloadAll = useCallback(() => {
@@ -228,7 +228,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
     void (async () => {
       const { data } = await supabase
         .from("ce_evaluation_state")
-        .select("conversation_id,state,last_success_at,last_error_code")
+        .select("conversation_id,state,last_success_at,last_error_code,revision")
         .in("conversation_id", ids);
       if (cancelled) return;
       const map: Record<string, FreshRow> = {};
@@ -259,7 +259,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   }), [rows, scoreBand, reviewStatus, channel]);
 
   useEffect(() => setPage(0), [pill, search, severity, scoreBand, reviewStatus, channel, fromDate, toDate]);
-  const pageRows = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const pageRows = useMemo(() => filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE), [filtered, page]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
 
   useEffect(() => {
@@ -267,7 +267,10 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
     if (selected && visibleIds.has(selected)) return;
     const next = pageRows[0]?.conversation_id ?? null;
     dwellGeneration.current += 1;
+    viewEpoch.current++;
+    setRunning(false);
     setSelected(next);
+    setAutoEvaluationFor(null);
     setRunId(next ?? "");
   }, [selected, pageRows]);
 
@@ -279,81 +282,70 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
   const targetEvaluationAvailable = targetRow?.evaluation_available === true;
 
   const selectConversation = (conversationId: string) => {
+    setAutoEvaluationFor(null);
     dwellGeneration.current += 1;
+    viewEpoch.current++;
+    setRunning(false);
     setSelected(conversationId);
     setRunId(conversationId);
   };
 
-  const executeEvaluation = useCallback(async (
-    id: string,
-    source: "manual" | "ce_dwell",
-    silent: boolean,
-  ) => {
-    const res = await invokeAuto(id, source);
-    if (!res.ok) {
-      if (!silent) {
-        const key = String(res.code ?? "unknown") as keyof typeof COPY.ce.errors;
-        toast.error(t(COPY.ce.errors[key] ?? COPY.ce.errors.unknown));
+  const executeEvaluation = useCallback(async (tuple: RequestTuple, silent: boolean) => {
+    if (!ceExecution.begin(tuple)) return false;
+    const epoch = viewEpoch.current;
+    const id = tuple.conversationId;
+    setRunning(true);
+    setFreshness(prev => ({ ...prev, [id]: { ...prev[id], conversation_id: id, state: "evaluating",
+      last_success_at: prev[id]?.last_success_at ?? null, last_error_code: null } }));
+    try {
+      const res = await invokeAuto(id, tuple.source);
+      if (epoch !== viewEpoch.current) return false;
+      if (!res.ok) {
+        if (!silent) {
+          const key = res.code as keyof typeof COPY.ce.errors;
+          toast.error(t(COPY.ce.errors[key] ?? COPY.ce.errors.unknown));
+        }
+        setFreshness(prev => ({ ...prev, [id]: { ...prev[id], conversation_id: id, state: "failed",
+          last_success_at: prev[id]?.last_success_at ?? null, last_error_code: res.code } }));
+        return false;
       }
-      setFreshness((prev) => ({
-        ...prev,
-        [id]: { conversation_id: id, state: "failed", last_success_at: prev[id]?.last_success_at ?? null, last_error_code: res.code },
-      }));
-      return false;
-    }
-    const status = String(res.data.status ?? "");
-    if (!silent) {
-      if (status === "up_to_date") toast.info(t(C.run.alreadyEvaluated));
-      else if (status === "queued") toast.info("Evaluation queued");
-      else toast.success(t(C.run.completed));
-    }
-    reloadAll();
-    return true;
+      if (!silent) {
+        const status = String(res.data.status ?? "");
+        if (status === "up_to_date") toast.info(t(C.run.alreadyEvaluated));
+        else if (status === "queued") toast.info("Evaluation queued");
+        else toast.success(t(C.run.completed));
+      }
+      reloadAll(); return true;
+    } finally { ceExecution.finish(tuple); if (epoch === viewEpoch.current) setRunning(false); }
   }, [reloadAll, t]);
 
+  const selectedReady = rows.find(r => r.conversation_id === selected)?.evaluation_available === true;
+  const selectedState = selected ? freshness[selected]?.state : undefined;
+  const selectedRevision = selected ? freshness[selected]?.revision : undefined;
   useEffect(() => {
-    if (!canRun || !selected) return;
-    const row = rows.find((r) => r.conversation_id === selected);
-    if (!row?.evaluation_available) return;
-    const state = freshness[selected]?.state;
-    if (!["never_evaluated","dirty","failed","stale_version"].includes(state ?? "")) return;
-
+    // Failed/unknown outcomes never re-arm automatic work; no whole-object dependency.
+    if (batchBusy || !canRun || !selected || autoEvaluationFor !== selected || !selectedReady || selectedRevision === undefined ||
+        !["never_evaluated", "dirty", "stale_version"].includes(selectedState ?? "")) return;
+    const tuple = ceExecution.capture(selected, String(selectedRevision), "ce_dwell");
+    if (!ceExecution.canAuto(tuple)) return;
     const generation = ++dwellGeneration.current;
-    const timer = window.setTimeout(() => {
-      if (generation !== dwellGeneration.current) return;
-      setFreshness((prev) => ({
-        ...prev,
-        [selected]: {
-          conversation_id: selected,
-          state: "evaluating",
-          last_success_at: prev[selected]?.last_success_at ?? null,
-          last_error_code: null,
-        },
-      }));
-      void executeEvaluation(selected, "ce_dwell", true);
-    }, DWELL_MS);
-    return () => window.clearTimeout(timer);
-  }, [canRun, selected, rows, freshness, executeEvaluation]);
+    const cancel = scheduleDwell(ceExecution, tuple, captured => { void executeEvaluation(captured, true); },
+      { setTimeout: (callback, delay) => window.setTimeout(callback, delay), clearTimeout: timer => window.clearTimeout(timer as number) },
+      () => generation === dwellGeneration.current);
+    return () => { cancel(); dwellGeneration.current++; };
+  }, [batchBusy, canRun, selected, autoEvaluationFor, selectedReady, selectedState, selectedRevision, executeEvaluation]);
 
   const runEvaluation = async () => {
-    const id = runId.trim();
+    const id = runId.trim().toLowerCase();
     if (!UUID_RE.test(id)) { toast.error(t(C.run.invalidId)); return; }
-    const exact = rows.find((r) => r.conversation_id.toLowerCase() === id.toLowerCase());
+    const exact = rows.find(r => r.conversation_id.toLowerCase() === id);
     if (!exact || !exact.evaluation_available) { toast.error(t(C.run.disabled)); return; }
-
-    setSelected(id);
-    setRunning(true);
-    setFreshness((prev) => ({
-      ...prev,
-      [id]: {
-        conversation_id: id,
-        state: "evaluating",
-        last_success_at: prev[id]?.last_success_at ?? null,
-        last_error_code: null,
-      },
-    }));
-    try { await executeEvaluation(id, "manual", false); }
-    finally { setRunning(false); }
+    // Draft is captured once; pending dwell is cancelled before explicit intent.
+    const tuple = ceExecution.capture(exact.conversation_id, String(freshness[exact.conversation_id]?.revision ?? "unknown"), "manual");
+    if (ceExecution.inFlight(tuple)) return;
+    dwellGeneration.current++; viewEpoch.current++;
+    setSelected(exact.conversation_id);
+    await executeEvaluation(tuple, false);
   };
 
   const clearFilters = () => {
@@ -365,6 +357,12 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
     <div className="h-[calc(100vh-4rem)] min-h-0 bg-[#f7f6f2] p-4">
       <div className="flex h-full min-h-0 flex-col gap-4 lg:flex-row">
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto lg:basis-[40%]">
+          <label className="text-xs text-slate-600">
+            <input type="checkbox" disabled={!canRun || !selected || !selectedReady}
+              checked={Boolean(selected && autoEvaluationFor === selected)}
+              onChange={e => setAutoEvaluationFor(e.target.checked ? selected : null)} />
+            {t({ en: "Auto-refresh this conversation with AI", zh: "以 AI 自動更新這張對話評估" })}
+          </label>
           <div className="flex flex-wrap items-center gap-2">
             <TabPill label={t(C.pills.all)} count={error ? null : counts.total} active={pill === "all"} onClick={() => setPill("all")} />
             <TabPill label={t(C.pills.evaluated)} count={error ? null : counts.evaluated} active={pill === "evaluated"} onClick={() => setPill("evaluated")} />
@@ -375,6 +373,11 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
             </span>
           </div>
 
+          <CeBatchControls allowed={canRun} disabled={loading || running}
+            targets={pageRows.map(row=>({id:row.conversation_id,label:row.customer_label+" · "+row.conversation_id.slice(0,8),
+              available:row.evaluation_available===true,revision:String(freshness[row.conversation_id]?.revision??"unknown")}))}
+            onBusy={value=>{setBatchBusy(value);if(value){setAutoEvaluationFor(null);dwellGeneration.current++;}}}
+            execute={target=>executeEvaluation(ceExecution.capture(target.id,target.revision,"manual"),false)} />
           <div className="space-y-2.5 rounded-[10px] border border-[#e8e6e0] bg-white p-3">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
@@ -387,7 +390,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
                 <div className="flex items-center gap-1.5">
                   <input value={runId} onChange={(e) => setRunId(e.target.value)} placeholder={t(C.run.placeholder)}
                     className="h-7 min-w-0 flex-1 rounded-md border border-[#e8e6e0] bg-white px-2 font-mono text-[11px] text-slate-700 outline-none placeholder:text-slate-400 focus:border-slate-300" />
-                  <button type="button" disabled={running || !targetEvaluationAvailable} onClick={() => void runEvaluation()}
+                  <button type="button" disabled={batchBusy || running || !targetEvaluationAvailable} onClick={() => void runEvaluation()}
                     className="h-7 shrink-0 rounded-md bg-slate-900 px-2.5 text-[11px] font-medium text-white disabled:opacity-50">
                     {running ? t(C.run.running) : t(C.run.action)}
                   </button>
@@ -442,7 +445,7 @@ function ReviewConsole({ canRun, canReview }: { canRun: boolean; canReview: bool
             )}
           </div>
 
-          <div className="overflow-hidden rounded-[10px] border border-[#e8e6e0] bg-white">
+          <div className="shrink-0 overflow-hidden rounded-[10px] border border-[#e8e6e0] bg-white">
             {error ? (
               <div className="m-3 rounded-md border border-red-200 bg-red-50 p-3 text-[12px] text-red-700">{t(C.list.loadFailed)} <span className="font-mono">{error}</span></div>
             ) : loading ? (

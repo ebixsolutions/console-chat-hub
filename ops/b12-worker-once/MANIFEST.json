@@ -1,0 +1,185 @@
+{
+  "manifest_version": "c3-b12-authenticated-executor-recovery-v1",
+  "parent_application_head": "42eee3e7b4f7e2960b90b9c71fe2e584cdf7f737",
+  "parent_ops_manifest_sha256": "4b564c8628ca262923d0c68bc5a519e651ec2eed01ed8ea71389d628ab5060d4",
+  "production_activation": "NOT_AUTHORIZED_FOR_THIS_NEW_PAYLOAD",
+  "historical_files": [
+    "DIRECTOR_REVIEW.json",
+    "reviewed-mock-tests.log",
+    "mock-tests.log",
+    "deno-check.log",
+    "tests-and-capabilities.json",
+    "README.md",
+    "activation-request.json",
+    "snapshot-final-actual.json",
+    "request-ledger.json"
+  ],
+  "note": "Historical ops documents/logs are retained original bytes and do not represent this successor validation. Current results are in the separate recovery deliverable. No SQL/executor/index/tombstone bytes changed. Self hash excluded.",
+  "files": [
+    {
+      "path": "ops/b12-worker-once/DIRECTOR_REVIEW.json",
+      "bytes": 2927,
+      "sha256": "5e03e165f001cbbb83825ecbafedcd0434381a807b5db56768faebddba53fa7e"
+    },
+    {
+      "path": "ops/b12-worker-once/README.md",
+      "bytes": 8186,
+      "sha256": "c2b79481b4df24890c49af24902c0e32ad1239c07fe485cf2542370b6851a27e"
+    },
+    {
+      "path": "ops/b12-worker-once/activation-database-payload.json",
+      "bytes": 908,
+      "sha256": "62b7214b510a5d45517c16efb74949b95350532ce978a69144c72d4f41ab0181"
+    },
+    {
+      "path": "ops/b12-worker-once/activation-request.json",
+      "bytes": 3864,
+      "sha256": "ec8b7b97602cf16cc553402c4a64b294f38034e0156ff75c182c76bacf1dddf4"
+    },
+    {
+      "path": "ops/b12-worker-once/activation.sql",
+      "bytes": 790,
+      "sha256": "9f85401e643a7a644188073658a4cbd5aefab8559c5df7cce2b0d8c232b3918f"
+    },
+    {
+      "path": "ops/b12-worker-once/arm.sql",
+      "bytes": 453,
+      "sha256": "39aacdc4529538832af13a3aa00284c30de1055413ee54dd14faed03976675f6"
+    },
+    {
+      "path": "ops/b12-worker-once/deno-check.log",
+      "bytes": 173,
+      "sha256": "6757488db495811f189e19527bba7754ec1248492a8c406b1fa47bd85cbcce28"
+    },
+    {
+      "path": "ops/b12-worker-once/deno.json",
+      "bytes": 76,
+      "sha256": "c04cd8f8b84d0f134d6e61a2f12e46fae8e899607fc83569cf6bea400aa56829"
+    },
+    {
+      "path": "ops/b12-worker-once/deploy-payload.json",
+      "bytes": 21146,
+      "sha256": "73651fd297a0e755495ed96b9dea2f1d73b9a9de860d54f5a008985d95f162b2"
+    },
+    {
+      "path": "ops/b12-worker-once/disable-payload.json",
+      "bytes": 377,
+      "sha256": "f54be0c6bb3673d4e7b4d45d5ee8964b4140b9c2ca5cc3eda3e9dc5afcf480a3"
+    },
+    {
+      "path": "ops/b12-worker-once/disable.sql",
+      "bytes": 214,
+      "sha256": "0bb292a63228053ab5342e8bd519befd5b43cc2d18565e1d87bb3254219ebe79"
+    },
+    {
+      "path": "ops/b12-worker-once/dry-run.json",
+      "bytes": 19,
+      "sha256": "1514c9329556889d139dd40e12b2140eaf9c0166637113fdc438cfa50320ef93"
+    },
+    {
+      "path": "ops/b12-worker-once/execute.json",
+      "bytes": 74,
+      "sha256": "dacfbad1af3f4fa25643bffcafca9082b13828441fe29c622502bdd41d4e801b"
+    },
+    {
+      "path": "ops/b12-worker-once/executor.mjs",
+      "bytes": 6059,
+      "sha256": "77adade2b5d26f2c30d4b62e4ae74fe51ef0b154caec57b219e7e8ff6b1cf8cb"
+    },
+    {
+      "path": "ops/b12-worker-once/executor.test.mjs",
+      "bytes": 14660,
+      "sha256": "dddfc1ff035e00cfa22242db6b532304d036eb1bd71310f5fca30927b4aec098"
+    },
+    {
+      "path": "ops/b12-worker-once/index.mjs",
+      "bytes": 412,
+      "sha256": "a3230f9f165c940197da147fcc95563f70b012a1a6522cdf58d6a31ac54d9c0a"
+    },
+    {
+      "path": "ops/b12-worker-once/mock-tests.log",
+      "bytes": 1532,
+      "sha256": "818c60a5f10aa53cb76727c2deae255a93ed21e5a80669baa57cb4c87564713a"
+    },
+    {
+      "path": "ops/b12-worker-once/read-ledger.sql",
+      "bytes": 240,
+      "sha256": "d7def9594b8040eed8a1a9443912bd1918a626acc9565e7f6edec9947a63ef11"
+    },
+    {
+      "path": "ops/b12-worker-once/request-ledger.json",
+      "bytes": 768,
+      "sha256": "b3b78cdd3318c6deaf3d73a130ed9bcd76f5059949171d75aa714d7097c5285b"
+    },
+    {
+      "path": "ops/b12-worker-once/reviewed-mock-tests.log",
+      "bytes": 4219,
+      "sha256": "cd83165a6456e849d13b74ec76334ece6dc20f256636021bb0f691d237eb23c6"
+    },
+    {
+      "path": "ops/b12-worker-once/runtime.mjs",
+      "bytes": 8751,
+      "sha256": "650635b09c6d2b4636eddb0a98e668c11344e4be234b9e15ac7d1442ff9e7c0c"
+    },
+    {
+      "path": "ops/b12-worker-once/snapshot-final-actual.json",
+      "bytes": 1165,
+      "sha256": "bde6fe00a1975796ed20b0c19bde0bd9540b80b8216ee2676b54c6566119e04c"
+    },
+    {
+      "path": "ops/b12-worker-once/snapshot.mjs",
+      "bytes": 5067,
+      "sha256": "5c5a2afb57fccfb4e690778743b55239ebb7dc8f6ab8119d0506f3c75690b084"
+    },
+    {
+      "path": "ops/b12-worker-once/snapshot.sql",
+      "bytes": 4936,
+      "sha256": "c60e0662bf25488189584b148035a8f824503a4cf401dc7680d7cf7ffa2daeec"
+    },
+    {
+      "path": "ops/b12-worker-once/tests-and-capabilities.json",
+      "bytes": 2065,
+      "sha256": "d36dd707725ff0ab84aa28d39f07aae53cfa6bf59545718c51ed18069fea7fa2"
+    },
+    {
+      "path": "ops/b12-worker-once/tombstone.mjs",
+      "bytes": 167,
+      "sha256": "99bbf061b254bde135aa3ca61c1bc9fba198b0d9cd1d06b84c4a11956001d62f"
+    },
+    {
+      "path": "ops/b12-worker-once/validate.mjs",
+      "bytes": 1286,
+      "sha256": "e4d28c84edcefc4eafed4d3a354cd842303f4ce5edbed63a8fc57fcdda3bdb8c"
+    },
+    {
+      "path": "ops/b12-worker-once/worker-identity.json",
+      "bytes": 646,
+      "sha256": "1662def13ac9950fb7ed46ecd433b875f6bcc3313997fb8f6565aa88b801fa7a"
+    },
+    {
+      "path": "src/components/console/B12VerificationDialog.tsx",
+      "bytes": 5177,
+      "sha256": "42ea4d72a6db6a772b5617f362503205a64a68954e5ecc80e1130ed59f7db255"
+    },
+    {
+      "path": "src/lib/api/b12-worker-operations-client.ts",
+      "bytes": 908,
+      "sha256": "f3ca6fb80748d4a9373f1f50dcc161107c4786146583a8843bcfedb09a7b28ca"
+    },
+    {
+      "path": "src/lib/api/b12-worker-operations.d.mts",
+      "bytes": 894,
+      "sha256": "a11124d452afcc2e44640d12ceb495d367031f42e85ca30ccb6cf1e17ba41af0"
+    },
+    {
+      "path": "src/lib/api/b12-worker-operations.mjs",
+      "bytes": 6163,
+      "sha256": "e6057d2e2df2805b79cae90f6286c1ecc9712b3e61d664a9c73150632240b4da"
+    },
+    {
+      "path": "src/lib/api/b12-worker-operations.test.mjs",
+      "bytes": 5211,
+      "sha256": "293dca6b622830acec5ecfc93cc75d6fbaec60a5f73dc271cfbbf49128170f7b"
+    }
+  ]
+}

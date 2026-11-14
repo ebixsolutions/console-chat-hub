@@ -1,0 +1,173 @@
+{
+  "provenance": {
+    "conversation": "1c419f81-e96b-5a93-ad1c-0aa078397712",
+    "message": "70f15e36-0929-4fdf-9afa-82400e21f698",
+    "trace": "d9fddd36-71cf-475b-b40e-61d76fb0da14",
+    "original_raw_sha256": "05a924ef054224a487e62e33899a087df3b069fb48449cdd385178ea8ac2feca",
+    "original_raw_bytes": 33018,
+    "export_redacted": true,
+    "notice": "Live same-call raw was CAPTURED complete; archive display redacts signed image URL key values. Original bytes/hash refer to original server capture, not this redacted text. No reconstruction."
+  },
+  "raw": {
+    "success": true,
+    "query": "{\"questions\":[{\"question\":\"如何使用LINE快速登入?\",\"subjects\":[],\"requested_facts\":[],\"source_type\":\"policy\",\"scope\":\"merchant_rules_and_subject_exceptions\"}]}",
+    "context_found": true,
+    "selected_documents": [
+      {
+        "document_id": "3b2bbf18dd064d068c85d37502a46a41",
+        "title": "LINE快速登入 - 幫助中心 - ebixPRO",
+        "source_type": "Other",
+        "document_score": 0.9136,
+        "summary": {
+          "chunk_id": "47732237c258446ba13205c0305d8c27",
+          "chunk_index": 7,
+          "chunk_type": "rag_summary",
+          "content": "# LINE快速登入 1\\. 請先至LINE Developers 登入帳號（需要有LINE帳戶），若已經登入可按「console」進入。 ![LINE快速登入01](https://lh7-rt.googleusercontent.com/docsz/AD_4nXeQXJY-SRRTJ86uW8azcCMcm9NxfGnNr2bh24idK1ZJc_2y0VQk-Q5M8kp-T9WPCR6XRw8WNmkH8HbY6_KnOXX6wJnEBbELDMCHK6l9JMN1Ur_uE7qj7wPMUyAghsnCdJJTy-u18RSBNMeW5jCn5kQ?key=[REDACTED]) 2\\. 進入畫面後，若您尚未有任何 Provider，請先按下方建立一個， 若已先設定好 串接 Messaging API了，請選擇對應的 Provider。![LINE快速登入02](https://lh7-rt.googleusercontent.com/docsz/AD_4nXc4fYPUb9-KPiGwrWQZtL9jfj79lDLsOUY-iXn2aQxUOqwU-1Mhm30NoPx12W3wmHwbvuMDOcVLumZ1u7VHqL6lX4fyWYUw58W0ovglQyq4PLvK9WxcpoLqLoKjCh-cIoqoG4BzsHdjFBHWeMi6ltA?key=[REDACTED]) 3\\. 若尚未建立過 Provider的客戶可自行建立一個。",
+          "score": 0.7454
+        },
+        "evidence": [
+          {
+            "chunk_id": "714842b6e444467f821fe69ee2a802c8",
+            "chunk_index": 0,
+            "chunk_type": "full_content",
+            "content": "# LINE快速登入 1\\. 請先至LINE Developers 登入帳號（需要有LINE帳戶），若已經登入可按「console」進入。 ![LINE快速登入01](https://lh7-rt.googleusercontent.com/docsz/AD_4nXeQXJY-SRRTJ86uW8azcCMcm9NxfGnNr2bh24idK1ZJc_2y0VQk-Q5M8kp-T9WPCR6XRw8WNmkH8HbY6_KnOXX6wJnEBbELDMCHK6l9JMN1Ur_uE7qj7wPMUyAghsnCdJJTy-u18RSBNMeW5jCn5kQ?key=[REDACTED]) 2\\. 進入畫面後，若您尚未有任何 Provider，請先按下方建立一個， 若已先設定好 串接 Messaging API了，請選擇對應的 Provider。![LINE快速登入02](https://lh7-rt.googleusercontent.com/docsz/AD_4nXc4fYPUb9-KPiGwrWQZtL9jfj79lDLsOUY-iXn2aQxUOqwU-1Mhm30NoPx12W3wmHwbvuMDOcVLumZ1u7VHqL6lX4fyWYUw58W0ovglQyq4PLvK9WxcpoLqLoKjCh-cIoqoG4BzsHdjFBHWeMi6ltA?key=[REDACTED]) 3\\. 若尚未建立過 Provider的客戶可自行建立一個。 ![LINE快速登入03](https://lh7-rt.googleusercontent.com/docsz/AD_4nXfi2igpHpIcMFxVeNHnOupKTfhWzO8AlyjWUafsHTt21senI0kklmVYT2etFeJN6WCNoG2d3bs52AYU92_rwMJenTGsvy_USeYSLpxbZMQnkiK9m549mBwWBwAKzFkLE6PqtbuMiOLVs0hfVaMQEzU?key=[REDACTED]) 4\\. 點選【Create a LINE Login channel】。 (此設定以原有 Provider 用戶為範例) ![LINE快速登入04](https://lh7-rt.googleusercontent.com/docsz/AD_4nXf2FCwKFQIiR7hT5b7OgKNnxSZycGhTM7nJjZY0H8APk8P_tlUB8PI0SXImq_FmvCJFp9btdBagwChgmmYGWL49tQWqJoc98kT4wcX9BWfTiiFZ4mJhCM4cumzFfmlwH7o8mRrImpayYJsPlPQZIEM?key=[REDACTED]) 5\\. 選擇 LINE Login 功能。 ![LINE快速登入05](https://lh7-rt.googleusercontent.com/docsz/AD_4nXdfRK8UPTNUsTHXX2nHHIMke8FERiC4ss7wGl4cbN2Tvwvl2kJ03_Jp1TCWqaIKB-GjHJHpG0LVsvkzYPwytbBiUV4AAcFr62Dpzn49k-IpX_fthp36RO5RWqtvBDUtyP_ZzSNtQVZCWx1s82S97Jg?key=[REDACTED]) 6\\. 填寫下方欄位。 【Region to provide the service】: Taiwan 【Company or owner’s country or region】 : Taiwan ![LINE快速登入06](https://lh7-rt.googleusercontent.com/docsz/AD_4nXddGvSq0thCpA6un1Q0cIrtM7meu1z8WA-WOv4CC_gHtuoOSEPeyChlRvrA3AG2CVkq5M1Y4QHXO7EZSkYr-5NmbwSCC6a1Gdzr-aQnw-ZNzgLxB5t8HiYYFgObA2KQmIiUXJo43oBd-QmJ0V5AAA?key=[REDACTED])",
+            "score": 0.7645
+          },
+          {
+            "chunk_id": "2c8f00169be740a8ae09f841b7096715",
+            "chunk_index": 2,
+            "chunk_type": "full_content",
+            "content": "the service】: Taiwan 【Company or owner’s country or region】 : Taiwan ![LINE快速登入06](https://lh7-rt.googleusercontent.com/docsz/AD_4nXddGvSq0thCpA6un1Q0cIrtM7meu1z8WA-WOv4CC_gHtuoOSEPeyChlRvrA3AG2CVkq5M1Y4QHXO7EZSkYr-5NmbwSCC6a1Gdzr-aQnw-ZNzgLxB5t8HiYYFgObA2KQmIiUXJo43oBd-QmJ0V5AAA?key=[REDACTED]) 7\\. 【Channel icon】: 上傳網站 Logo 【Channel name】: 輸入商店名稱 【Channel description】: 輸入商店簡述。(內容不可以換行) 【App types】: 勾選 Web app ![LINE快速登入07](https://lh7-rt.googleusercontent.com/docsz/AD_4nXeEjiI0uQ8Ou5fCZIRjlxkx_Go29XGMsc0WIDNCbbI-qepqBnrI2XSsH4gx-mkL6UL1JKHVE2aWc4Tgj2I8mqKO5VjbH43D_OZcVJsSkLD1Ok6aUcLgWOw5pM5OTz78ODfgaikyBQ-DYGpSgRfdreY?key=[REDACTED]) 8\\. 【Email address】: 輸入 email 【Privacy policy URL】: 輸入網站隱私政策網址 【Terms of use URL】: 輸入網站服務條款網址 勾選條款後點擊 Creat 按鈕 ![LINE快速登入08](https://lh7-rt.googleusercontent.com/docsz/AD_4nXe4cPGb6SgWxQJDG95NKk2iwYjquQHnXLCpXSdQCkeYAXTs7WGnNS-kYCtr-4_riLvfJfR5JFJrN725q0muXovMlyPARI452GyV9EgycWWSsCPucFlO05n9vMxDJ9YxD4Kz9a86hkgYau3g5YmjaLQ?key=[REDACTED]) 9\\. 完成設定後，可先將狀態「Developing」轉至「Published」， 選擇頁籤「Basic settings」滑至最下方至「OpenID Connect」。 ![LINE快速登入09](https://lh7-rt.googleusercontent.com/docsz/AD_4nXejFI0DhuJEh0hj5n2ytKm-4C4iXDBqMuxMd9mzZPi_GJ8wPkq358sm4ndHdAdRsZa7vqyMe1GhYh2wXo41eEYKYkyK2cDUXJfQkoATCJ6AlHC12N9DhWFj_2oCWj33T_LEdxTXge03C8fcMAgcpQ?key=[REDACTED]) 10\\. 點開 OpenID Connect 的「Apply」 \\*若未完成設定會導致使用 LINE 快速登入呈現 400。 ![LINE快速登入10](https://lh7-rt.googleusercontent.com/docsz/AD_4nXd8FOdFx3BVfJknxblLKzu9w4S8HubkLbGIp7U5aqKFF4ONy6AsWUeyrc_hahJJhr0Eoc7DClFtzE1VP2H_fOPqfX08cX1Uvnxm9JeW7VTredleZ2mTU4UvgDLOdODb4G17FiZoU9QxMbyPTcKr9lE?key=[REDACTED]) 11\\. 設定【OpenID Connect】欄位資訊，確認狀態為「Applied」， 並勾選裡面的內容，依照需求上傳 商家Logo，並按下「Submit」。",
+            "score": 0.7454
+          },
+          {
+            "chunk_id": "52df2a9cca7449fbad20c61475debda4",
+            "chunk_index": 1,
+            "chunk_type": "full_content",
+            "content": "Provider。![LINE快速登入02](https://lh7-rt.googleusercontent.com/docsz/AD_4nXc4fYPUb9-KPiGwrWQZtL9jfj79lDLsOUY-iXn2aQxUOqwU-1Mhm30NoPx12W3wmHwbvuMDOcVLumZ1u7VHqL6lX4fyWYUw58W0ovglQyq4PLvK9WxcpoLqLoKjCh-cIoqoG4BzsHdjFBHWeMi6ltA?key=[REDACTED]) 3\\. 若尚未建立過 Provider的客戶可自行建立一個。 ![LINE快速登入03](https://lh7-rt.googleusercontent.com/docsz/AD_4nXfi2igpHpIcMFxVeNHnOupKTfhWzO8AlyjWUafsHTt21senI0kklmVYT2etFeJN6WCNoG2d3bs52AYU92_rwMJenTGsvy_USeYSLpxbZMQnkiK9m549mBwWBwAKzFkLE6PqtbuMiOLVs0hfVaMQEzU?key=[REDACTED]) 4\\. 點選【Create a LINE Login channel】。 (此設定以原有 Provider 用戶為範例) ![LINE快速登入04](https://lh7-rt.googleusercontent.com/docsz/AD_4nXf2FCwKFQIiR7hT5b7OgKNnxSZycGhTM7nJjZY0H8APk8P_tlUB8PI0SXImq_FmvCJFp9btdBagwChgmmYGWL49tQWqJoc98kT4wcX9BWfTiiFZ4mJhCM4cumzFfmlwH7o8mRrImpayYJsPlPQZIEM?key=[REDACTED]) 5\\. 選擇 LINE Login 功能。 ![LINE快速登入05](https://lh7-rt.googleusercontent.com/docsz/AD_4nXdfRK8UPTNUsTHXX2nHHIMke8FERiC4ss7wGl4cbN2Tvwvl2kJ03_Jp1TCWqaIKB-GjHJHpG0LVsvkzYPwytbBiUV4AAcFr62Dpzn49k-IpX_fthp36RO5RWqtvBDUtyP_ZzSNtQVZCWx1s82S97Jg?key=[REDACTED]) 6\\. 填寫下方欄位。 【Region to provide the service】: Taiwan 【Company or owner’s country or region】 : Taiwan ![LINE快速登入06](https://lh7-rt.googleusercontent.com/docsz/AD_4nXddGvSq0thCpA6un1Q0cIrtM7meu1z8WA-WOv4CC_gHtuoOSEPeyChlRvrA3AG2CVkq5M1Y4QHXO7EZSkYr-5NmbwSCC6a1Gdzr-aQnw-ZNzgLxB5t8HiYYFgObA2KQmIiUXJo43oBd-QmJ0V5AAA?key=[REDACTED]) 7\\. 【Channel icon】: 上傳網站 Logo 【Channel name】: 輸入商店名稱 【Channel description】: 輸入商店簡述。(內容不可以換行) 【App types】: 勾選 Web app ![LINE快速登入07](https://lh7-rt.googleusercontent.com/docsz/AD_4nXeEjiI0uQ8Ou5fCZIRjlxkx_Go29XGMsc0WIDNCbbI-qepqBnrI2XSsH4gx-mkL6UL1JKHVE2aWc4Tgj2I8mqKO5VjbH43D_OZcVJsSkLD1Ok6aUcLgWOw5pM5OTz78ODfgaikyBQ-DYGpSgRfdreY?key=[REDACTED]) 8\\. 【Email address】: 輸入 email 【Privacy policy URL】: 輸入網站隱私政策網址",
+            "score": 0.7444
+          }
+        ]
+      },
+      {
+        "document_id": "c7a6a52d60e5457283c173bbddb9c56b",
+        "title": "LINE - 幫助中心 - ebixPRO",
+        "source_type": "Other",
+        "document_score": 0.8675,
+        "evidence": [
+          {
+            "chunk_id": "366b50ca85c74382bbf637d18ae92314",
+            "chunk_index": 0,
+            "chunk_type": "full_content",
+            "content": "# LINE 1. 請先至https://developers.line.biz/zh-hant/LINE Developers 登入帳號（需要有LINE帳戶），點擊「Log in」，按截圖步驟操作。 ![1721899500580702.png](https://help.ebixpro.com/upload/image/20240725/1721899500580702.png) ![1721899636147630.png](https://help.ebixpro.com/upload/image/20240725/1721899636147630.png) ![1721899693407149.png](https://help.ebixpro.com/upload/image/20240725/1721899693407149.png) ![1721899743604464.png](https://help.ebixpro.com/upload/image/20240725/1721899743604464.png) 若已經登入可按「console」進入。 ![1721899850835055.png](https://help.ebixpro.com/upload/image/20240725/1721899850835055.png) 2. 進入畫面後，若您尚未有任何 Provider，請先按下方建立一個， 若已先設定好串接 Messaging API了，請選擇對應的 Provider。 ![1721899936245065.png](https://help.ebixpro.com/upload/image/20240725/1721899936245065.png) 若尚未建立過 Provider的客戶可自行建立一個。 ![1721900005252636.png](https://help.ebixpro.com/upload/image/20240725/1721900005252636.png) 3. 點選【Create a LINE Login channel】。 (此設定以原有 Provider 用戶為範例) ![1721900118342633.png](https://help.ebixpro.com/upload/image/20240725/1721900118342633.png) 4. 選擇 LINE Login 功能。 ![1721900222135149.png](https://help.ebixpro.com/upload/image/20240725/1721900222135149.png) 5. 填寫下方欄位。 【Region to provide the service】: Taiwan 【Company or owner’s country or region】 : Taiwan ![1721900317560407.png](https://help.ebixpro.com/upload/image/20240725/1721900317560407.png) 【Channel icon】: 上傳網站 Logo 【Channel name】: 輸入商店名稱 【Channel description】: 輸入商店簡述。(內容不可以換行) 【App types】: 勾選 Web app ![1721900471568749.png](https://help.ebixpro.com/upload/image/20240725/1721900471568749.png) 【Email address】: 輸入 email 【Privacy policy URL】: 輸入網站隱私政策網址 【Terms of use URL】: 輸入網站服務條款網址 勾選條款後點擊 Creat 按鈕",
+            "score": 0.7238
+          },
+          {
+            "chunk_id": "33a864ef7991454297eb01f696501c67",
+            "chunk_index": 1,
+            "chunk_type": "full_content",
+            "content": "country or region】 : Taiwan ![1721900317560407.png](https://help.ebixpro.com/upload/image/20240725/1721900317560407.png) 【Channel icon】: 上傳網站 Logo 【Channel name】: 輸入商店名稱 【Channel description】: 輸入商店簡述。(內容不可以換行) 【App types】: 勾選 Web app ![1721900471568749.png](https://help.ebixpro.com/upload/image/20240725/1721900471568749.png) 【Email address】: 輸入 email 【Privacy policy URL】: 輸入網站隱私政策網址 【Terms of use URL】: 輸入網站服務條款網址 勾選條款後點擊 Creat 按鈕 ![1721900552815412.png](https://help.ebixpro.com/upload/image/20240725/1721900552815412.png) 6. 完成設定後，可先將狀態「Developing」轉至「Published」， 選擇頁籤「Basic settings」滑至最下方至「OpenID Connect」。 ![1721900666544585.png](https://help.ebixpro.com/upload/image/20240725/1721900666544585.png) 7. 點開 OpenID Connect 的「Apply」 \\*若未完成設定會導致使用 LINE 快速登入呈現 400。 ![1721900775428822.png](https://help.ebixpro.com/upload/image/20240725/1721900775428822.png) 8. 設定【OpenID Connect】欄位資訊，確認狀態為「Applied」， 並勾選裡面的內容，依照需求上傳商家Logo，並按下「Submit」。 ![1721900849274519.png](https://help.ebixpro.com/upload/image/20240725/1721900849274519.png) 9.點選頁籤「LINE Login」設定 Callback URL，點選「Edit」。 ![1721900910478435.png](https://help.ebixpro.com/upload/image/20240725/1721900910478435.png) 10.填入商家的 Callback URL，範例 : 我的商店網址 : https://testdomain.tw/， 則可填入 [https://testdomain.tw/login](https://testdomain.tw/customer/auth/line/callback) l 跨境用戶填入網址不需加上 zh-TW 等，僅需填寫一般的網域即可。 l 若未完成此步驟，顧客在前台使用 LINE 帳號註冊/登入時會看到「400」的錯誤提示。 l Callback URL 支援新增多個網域，可將網域以及自有網域都一併設定。 ![1721901014778439.png](https://help.ebixpro.com/upload/image/20240725/1721901014778439.png) 11.請先至LINE Developers 選擇頁籤「Basic settings」，複製【Channel ID】【Channel secret】",
+            "score": 0.7186
+          },
+          {
+            "chunk_id": "efb15b3fc86b42588b2e42ff31ccefac",
+            "chunk_index": 2,
+            "chunk_type": "full_content",
+            "content": "8. 設定【OpenID Connect】欄位資訊，確認狀態為「Applied」， 並勾選裡面的內容，依照需求上傳商家Logo，並按下「Submit」。 ![1721900849274519.png](https://help.ebixpro.com/upload/image/20240725/1721900849274519.png) 9.點選頁籤「LINE Login」設定 Callback URL，點選「Edit」。 ![1721900910478435.png](https://help.ebixpro.com/upload/image/20240725/1721900910478435.png) 10.填入商家的 Callback URL，範例 : 我的商店網址 : https://testdomain.tw/， 則可填入 [https://testdomain.tw/login](https://testdomain.tw/customer/auth/line/callback) l 跨境用戶填入網址不需加上 zh-TW 等，僅需填寫一般的網域即可。 l 若未完成此步驟，顧客在前台使用 LINE 帳號註冊/登入時會看到「400」的錯誤提示。 l Callback URL 支援新增多個網域，可將網域以及自有網域都一併設定。 ![1721901014778439.png](https://help.ebixpro.com/upload/image/20240725/1721901014778439.png) 11.請先至LINE Developers 選擇頁籤「Basic settings」，複製【Channel ID】【Channel secret】 ![1721901144602352.png](https://help.ebixpro.com/upload/image/20240725/1721901144602352.png) 12.填入【帳號ID】、【應用程式密鑰】至 ebixPRO後台 ![1721901191215321.png](https://help.ebixpro.com/upload/image/20240725/1721901191215321.png) [需要協助](https://wa.me/85265963245) \\| [登入ebixPRO](https://www.ebixpro.com/login_ch.html) ebixPRO © All rights reserved * * * - [上一篇：Facebook及Instagram](https://help.ebixpro.com/?m=Article&a=index&id=1&aid=570913698994978816) - [下一篇：Google快速登入](https://help.ebixpro.com/?m=Article&a=index&id=1&aid=781086294640951296)",
+            "score": 0.7029
+          }
+        ]
+      },
+      {
+        "document_id": "eb68f06ea8914e9e817f73460ff97a29",
+        "title": "Apple快速登入 - 幫助中心 - ebixPRO",
+        "source_type": "Other",
+        "document_score": 0.7111,
+        "evidence": [
+          {
+            "chunk_id": "31a7dd50776245a2bd1364f49ab12323",
+            "chunk_index": 1,
+            "chunk_type": "full_content",
+            "content": "# Apple快速登入 1\\. 首先請前往並登入 Apple 開發者後台：🔗 [https://developer.apple.com/account/resources/profiles/list](https://developer.apple.com/account/resources/profiles/list)。登入後，點擊左側選單的「 **Identifiers**」，進入您的專案清單頁面。 ![QQ五笔截图未命名](https://lh7-rt.googleusercontent.com/docsz/AD_4nXdjJA2eAhk3ykTHV1I1rfjHLHea-ZnBsczjuiTLWuFU8PvaEAgM1wY51Ti8p9IVbfdJdNMJgRLlBFfyE9M1Pvk_JyEXGUQmjjdFUztcPU7lz78jPeRYiEUzE2DrJ8kQNmd98yDKulOUP7Mvk4UUQTs?key=[REDACTED]) 2\\. 找到您要設定的 App 專案，點擊進入後，會看到下圖畫面。 ![QQ图片20220802172644](https://lh7-rt.googleusercontent.com/docsz/AD_4nXcGg1cFJfskwKGrTsy3mR3YBuR2UG5sJWKMYAYvdti7YboRVugWr-52m7cBEzI60JOG1phHMamNIppn5lIDqvfBjWzK4nahD27kvexTlp9VeyP6it3qb_ZJ3F1B6WdQBHRhukZsInmwoopI5TogswA?key=[REDACTED]) 3\\. 請勾選 Sign in with Apple（使用 Apple 登入），再點擊右上角的「Edit」按鈕進入設定。 ![QQ五笔截图未命名001](https://lh7-rt.googleusercontent.com/docsz/AD_4nXdbwqaX0Jlz5olZJMXa1gYT31cyvK8LsXGLJJd9bnl0zunZPKKf1jIWh7D_nGmOu8nXsaz1T7N-oPcoz7vpaahJKHLnTBzs3JU-QuTieMveAY03oNHemua4EFOsCzjKEXHviA-zhLdzSfD3r8E4OQ?key=[REDACTED]) 4\\. 在「Web Domain」欄位中輸入您的登入網址（例如：https://www.yourshop.com）。 ![QQ图片20220802173232002](https://lh7-rt.googleusercontent.com/docsz/AD_4nXd5lt3ZxDnYnN54z9GadD9Lw2R7yA-f0KFey975Z9nXuTGujPeHV5IF2bmuSck3JOWP322znv6QJjnwA_P7RZeWFTwFA6NBmDBquxHv9IZPm01IbNZafsIngwKNakBt1kh5Sm2B7XssMm84OImWIM0?key=[REDACTED]) 請再次點擊\"Save\"來確保所有設定都已成功更新！ ![QQ五笔截图未命名003](https://lh7-rt.googleusercontent.com/docsz/AD_4nXcrbKJo7a7dw_RmWf9aajy3WFb5jQRA1gOVQ94aiqmi0l8ZyhuES_XQKrlHj5Rot05FZBmk5La6YH-l0jdlQkC0uiGg3uoDZiEQvTf5sCp_ncAIAhXY-kBVMALHHv3j7V67chviq0_ehkbJcy3vVQ?key=[REDACTED]) * * * - [上一篇：LINE快速登入](https://help.ebixpro.com/?m=Article&a=index&id=1&aid=781401728070189056) - [下一篇：優惠管理](https://help.ebixpro.com/?m=Article&a=index&id=1&aid=576312948683702272)",
+            "score": 0.7111
+          }
+        ]
+      }
+    ],
+    "llm_context": {
+      "summary_count": 1,
+      "evidence_count": 7,
+      "combined_text": "[SUMMARY]\n# LINE快速登入 1\\. 請先至LINE Developers 登入帳號（需要有LINE帳戶），若已經登入可按「console」進入。 ![LINE快速登入01](https://lh7-rt.googleusercontent.com/docsz/AD_4nXeQXJY-SRRTJ86uW8azcCMcm9NxfGnNr2bh24idK1ZJc_2y0VQk-Q5M8kp-T9WPCR6XRw8WNmkH8HbY6_KnOXX6wJnEBbELDMCHK6l9JMN1Ur_uE7qj7wPMUyAghsnCdJJTy-u18RSBNMeW5jCn5kQ?key=[REDACTED]) 2\\. 進入畫面後，若您尚未有任何 Provider，請先按下方建立一個， 若已先設定好 串接 Messaging API了，請選擇對應的 Provider。![LINE快速登入02](https://lh7-rt.googleusercontent.com/docsz/AD_4nXc4fYPUb9-KPiGwrWQZtL9jfj79lDLsOUY-iXn2aQxUOqwU-1Mhm30NoPx12W3wmHwbvuMDOcVLumZ1u7VHqL6lX4fyWYUw58W0ovglQyq4PLvK9WxcpoLqLoKjCh-cIoqoG4BzsHdjFBHWeMi6ltA?key=[REDACTED]) 3\\. 若尚未建立過 Provider的客戶可自行建立一個。\n\n[EVIDENCE 1]\n# LINE快速登入 1\\. 請先至LINE Developers 登入帳號（需要有LINE帳戶），若已經登入可按「console」進入。 ![LINE快速登入01](https://lh7-rt.googleusercontent.com/docsz/AD_4nXeQXJY-SRRTJ86uW8azcCMcm9NxfGnNr2bh24idK1ZJc_2y0VQk-Q5M8kp-T9WPCR6XRw8WNmkH8HbY6_KnOXX6wJnEBbELDMCHK6l9JMN1Ur_uE7qj7wPMUyAghsnCdJJTy-u18RSBNMeW5jCn5kQ?key=[REDACTED]) 2\\. 進入畫面後，若您尚未有任何 Provider，請先按下方建立一個， 若已先設定好 串接 Messaging API了，請選擇對應的 Provider。![LINE快速登入02](https://lh7-rt.googleusercontent.com/docsz/AD_4nXc4fYPUb9-KPiGwrWQZtL9jfj79lDLsOUY-iXn2aQxUOqwU-1Mhm30NoPx12W3wmHwbvuMDOcVLumZ1u7VHqL6lX4fyWYUw58W0ovglQyq4PLvK9WxcpoLqLoKjCh-cIoqoG4BzsHdjFBHWeMi6ltA?key=[REDACTED]) 3\\. 若尚未建立過 Provider的客戶可自行建立一個。 ![LINE快速登入03](https://lh7-rt.googleusercontent.com/docsz/AD_4nXfi2igpHpIcMFxVeNHnOupKTfhWzO8AlyjWUafsHTt21senI0kklmVYT2etFeJN6WCNoG2d3bs52AYU92_rwMJenTGsvy_USeYSLpxbZMQnkiK9m549mBwWBwAKzFkLE6PqtbuMiOLVs0hfVaMQEzU?key=[REDACTED]) 4\\. 點選【Create a LINE Login channel】。 (此設定以原有 Provider 用戶為範例) ![LINE快速登入04](https://lh7-rt.googleusercontent.com/docsz/AD_4nXf2FCwKFQIiR7hT5b7OgKNnxSZycGhTM7nJjZY0H8APk8P_tlUB8PI0SXImq_FmvCJFp9btdBagwChgmmYGWL49tQWqJoc98kT4wcX9BWfTiiFZ4mJhCM4cumzFfmlwH7o8mRrImpayYJsPlPQZIEM?key=[REDACTED]) 5\\. 選擇 LINE Login 功能。 ![LINE快速登入05](https://lh7-rt.googleusercontent.com/docsz/AD_4nXdfRK8UPTNUsTHXX2nHHIMke8FERiC4ss7wGl4cbN2Tvwvl2kJ03_Jp1TCWqaIKB-GjHJHpG0LVsvkzYPwytbBiUV4AAcFr62Dpzn49k-IpX_fthp36RO5RWqtvBDUtyP_ZzSNtQVZCWx1s82S97Jg?key=[REDACTED]) 6\\. 填寫下方欄位。 【Region to provide the service】: Taiwan 【Company or owner’s country or region】 : Taiwan ![LINE快速登入06](https://lh7-rt.googleusercontent.com/docsz/AD_4nXddGvSq0thCpA6un1Q0cIrtM7meu1z8WA-WOv4CC_gHtuoOSEPeyChlRvrA3AG2CVkq5M1Y4QHXO7EZSkYr-5NmbwSCC6a1Gdzr-aQnw-ZNzgLxB5t8HiYYFgObA2KQmIiUXJo43oBd-QmJ0V5AAA?key=[REDACTED])\n\n[EVIDENCE 2]\nthe service】: Taiwan 【Company or owner’s country or region】 : Taiwan ![LINE快速登入06](https://lh7-rt.googleusercontent.com/docsz/AD_4nXddGvSq0thCpA6un1Q0cIrtM7meu1z8WA-WOv4CC_gHtuoOSEPeyChlRvrA3AG2CVkq5M1Y4QHXO7EZSkYr-5NmbwSCC6a1Gdzr-aQnw-ZNzgLxB5t8HiYYFgObA2KQmIiUXJo43oBd-QmJ0V5AAA?key=[REDACTED]) 7\\. 【Channel icon】: 上傳網站 Logo 【Channel name】: 輸入商店名稱 【Channel description】: 輸入商店簡述。(內容不可以換行) 【App types】: 勾選 Web app ![LINE快速登入07](https://lh7-rt.googleusercontent.com/docsz/AD_4nXeEjiI0uQ8Ou5fCZIRjlxkx_Go29XGMsc0WIDNCbbI-qepqBnrI2XSsH4gx-mkL6UL1JKHVE2aWc4Tgj2I8mqKO5VjbH43D_OZcVJsSkLD1Ok6aUcLgWOw5pM5OTz78ODfgaikyBQ-DYGpSgRfdreY?key=[REDACTED]) 8\\. 【Email address】: 輸入 email 【Privacy policy URL】: 輸入網站隱私政策網址 【Terms of use URL】: 輸入網站服務條款網址 勾選條款後點擊 Creat 按鈕 ![LINE快速登入08](https://lh7-rt.googleusercontent.com/docsz/AD_4nXe4cPGb6SgWxQJDG95NKk2iwYjquQHnXLCpXSdQCkeYAXTs7WGnNS-kYCtr-4_riLvfJfR5JFJrN725q0muXovMlyPARI452GyV9EgycWWSsCPucFlO05n9vMxDJ9YxD4Kz9a86hkgYau3g5YmjaLQ?key=[REDACTED]) 9\\. 完成設定後，可先將狀態「Developing」轉至「Published」， 選擇頁籤「Basic settings」滑至最下方至「OpenID Connect」。 ![LINE快速登入09](https://lh7-rt.googleusercontent.com/docsz/AD_4nXejFI0DhuJEh0hj5n2ytKm-4C4iXDBqMuxMd9mzZPi_GJ8wPkq358sm4ndHdAdRsZa7vqyMe1GhYh2wXo41eEYKYkyK2cDUXJfQkoATCJ6AlHC12N9DhWFj_2oCWj33T_LEdxTXge03C8fcMAgcpQ?key=[REDACTED]) 10\\. 點開 OpenID Connect 的「Apply」 \\*若未完成設定會導致使用 LINE 快速登入呈現 400。 ![LINE快速登入10](https://lh7-rt.googleusercontent.com/docsz/AD_4nXd8FOdFx3BVfJknxblLKzu9w4S8HubkLbGIp7U5aqKFF4ONy6AsWUeyrc_hahJJhr0Eoc7DClFtzE1VP2H_fOPqfX08cX1Uvnxm9JeW7VTredleZ2mTU4UvgDLOdODb4G17FiZoU9QxMbyPTcKr9lE?key=[REDACTED]) 11\\. 設定【OpenID Connect】欄位資訊，確認狀態為「Applied」， 並勾選裡面的內容，依照需求上傳 商家Logo，並按下「Submit」。\n\n[EVIDENCE 3]\nProvider。![LINE快速登入02](https://lh7-rt.googleusercontent.com/docsz/AD_4nXc4fYPUb9-KPiGwrWQZtL9jfj79lDLsOUY-iXn2aQxUOqwU-1Mhm30NoPx12W3wmHwbvuMDOcVLumZ1u7VHqL6lX4fyWYUw58W0ovglQyq4PLvK9WxcpoLqLoKjCh-cIoqoG4BzsHdjFBHWeMi6ltA?key=[REDACTED]) 3\\. 若尚未建立過 Provider的客戶可自行建立一個。 ![LINE快速登入03](https://lh7-rt.googleusercontent.com/docsz/AD_4nXfi2igpHpIcMFxVeNHnOupKTfhWzO8AlyjWUafsHTt21senI0kklmVYT2etFeJN6WCNoG2d3bs52AYU92_rwMJenTGsvy_USeYSLpxbZMQnkiK9m549mBwWBwAKzFkLE6PqtbuMiOLVs0hfVaMQEzU?key=[REDACTED]) 4\\. 點選【Create a LINE Login channel】。 (此設定以原有 Provider 用戶為範例) ![LINE快速登入04](https://lh7-rt.googleusercontent.com/docsz/AD_4nXf2FCwKFQIiR7hT5b7OgKNnxSZycGhTM7nJjZY0H8APk8P_tlUB8PI0SXImq_FmvCJFp9btdBagwChgmmYGWL49tQWqJoc98kT4wcX9BWfTiiFZ4mJhCM4cumzFfmlwH7o8mRrImpayYJsPlPQZIEM?key=[REDACTED]) 5\\. 選擇 LINE Login 功能。 ![LINE快速登入05](https://lh7-rt.googleusercontent.com/docsz/AD_4nXdfRK8UPTNUsTHXX2nHHIMke8FERiC4ss7wGl4cbN2Tvwvl2kJ03_Jp1TCWqaIKB-GjHJHpG0LVsvkzYPwytbBiUV4AAcFr62Dpzn49k-IpX_fthp36RO5RWqtvBDUtyP_ZzSNtQVZCWx1s82S97Jg?key=[REDACTED]) 6\\. 填寫下方欄位。 【Region to provide the service】: Taiwan 【Company or owner’s country or region】 : Taiwan ![LINE快速登入06](https://lh7-rt.googleusercontent.com/docsz/AD_4nXddGvSq0thCpA6un1Q0cIrtM7meu1z8WA-WOv4CC_gHtuoOSEPeyChlRvrA3AG2CVkq5M1Y4QHXO7EZSkYr-5NmbwSCC6a1Gdzr-aQnw-ZNzgLxB5t8HiYYFgObA2KQmIiUXJo43oBd-QmJ0V5AAA?key=[REDACTED]) 7\\. 【Channel icon】: 上傳網站 Logo 【Channel name】: 輸入商店名稱 【Channel description】: 輸入商店簡述。(內容不可以換行) 【App types】: 勾選 Web app ![LINE快速登入07](https://lh7-rt.googleusercontent.com/docsz/AD_4nXeEjiI0uQ8Ou5fCZIRjlxkx_Go29XGMsc0WIDNCbbI-qepqBnrI2XSsH4gx-mkL6UL1JKHVE2aWc4Tgj2I8mqKO5VjbH43D_OZcVJsSkLD1Ok6aUcLgWOw5pM5OTz78ODfgaikyBQ-DYGpSgRfdreY?key=[REDACTED]) 8\\. 【Email address】: 輸入 email 【Privacy policy URL】: 輸入網站隱私政策網址\n\n[EVIDENCE 4]\n# LINE 1. 請先至https://developers.line.biz/zh-hant/LINE Developers 登入帳號（需要有LINE帳戶），點擊「Log in」，按截圖步驟操作。 ![1721899500580702.png](https://help.ebixpro.com/upload/image/20240725/1721899500580702.png) ![1721899636147630.png](https://help.ebixpro.com/upload/image/20240725/1721899636147630.png) ![1721899693407149.png](https://help.ebixpro.com/upload/image/20240725/1721899693407149.png) ![1721899743604464.png](https://help.ebixpro.com/upload/image/20240725/1721899743604464.png) 若已經登入可按「console」進入。 ![1721899850835055.png](https://help.ebixpro.com/upload/image/20240725/1721899850835055.png) 2. 進入畫面後，若您尚未有任何 Provider，請先按下方建立一個， 若已先設定好串接 Messaging API了，請選擇對應的 Provider。 ![1721899936245065.png](https://help.ebixpro.com/upload/image/20240725/1721899936245065.png) 若尚未建立過 Provider的客戶可自行建立一個。 ![1721900005252636.png](https://help.ebixpro.com/upload/image/20240725/1721900005252636.png) 3. 點選【Create a LINE Login channel】。 (此設定以原有 Provider 用戶為範例) ![1721900118342633.png](https://help.ebixpro.com/upload/image/20240725/1721900118342633.png) 4. 選擇 LINE Login 功能。 ![1721900222135149.png](https://help.ebixpro.com/upload/image/20240725/1721900222135149.png) 5. 填寫下方欄位。 【Region to provide the service】: Taiwan 【Company or owner’s country or region】 : Taiwan ![1721900317560407.png](https://help.ebixpro.com/upload/image/20240725/1721900317560407.png) 【Channel icon】: 上傳網站 Logo 【Channel name】: 輸入商店名稱 【Channel description】: 輸入商店簡述。(內容不可以換行) 【App types】: 勾選 Web app ![1721900471568749.png](https://help.ebixpro.com/upload/image/20240725/1721900471568749.png) 【Email address】: 輸入 email 【Privacy policy URL】: 輸入網站隱私政策網址 【Terms of use URL】: 輸入網站服務條款網址 勾選條款後點擊 Creat 按鈕\n\n[EVIDENCE 5]\ncountry or region】 : Taiwan ![1721900317560407.png](https://help.ebixpro.com/upload/image/20240725/1721900317560407.png) 【Channel icon】: 上傳網站 Logo 【Channel name】: 輸入商店名稱 【Channel description】: 輸入商店簡述。(內容不可以換行) 【App types】: 勾選 Web app ![1721900471568749.png](https://help.ebixpro.com/upload/image/20240725/1721900471568749.png) 【Email address】: 輸入 email 【Privacy policy URL】: 輸入網站隱私政策網址 【Terms of use URL】: 輸入網站服務條款網址 勾選條款後點擊 Creat 按鈕 ![1721900552815412.png](https://help.ebixpro.com/upload/image/20240725/1721900552815412.png) 6. 完成設定後，可先將狀態「Developing」轉至「Published」， 選擇頁籤「Basic settings」滑至最下方至「OpenID Connect」。 ![1721900666544585.png](https://help.ebixpro.com/upload/image/20240725/1721900666544585.png) 7. 點開 OpenID Connect 的「Apply」 \\*若未完成設定會導致使用 LINE 快速登入呈現 400。 ![1721900775428822.png](https://help.ebixpro.com/upload/image/20240725/1721900775428822.png) 8. 設定【OpenID Connect】欄位資訊，確認狀態為「Applied」， 並勾選裡面的內容，依照需求上傳商家Logo，並按下「Submit」。 ![1721900849274519.png](https://help.ebixpro.com/upload/image/20240725/1721900849274519.png) 9.點選頁籤「LINE Login」設定 Callback URL，點選「Edit」。 ![1721900910478435.png](https://help.ebixpro.com/upload/image/20240725/1721900910478435.png) 10.填入商家的 Callback URL，範例 : 我的商店網址 : https://testdomain.tw/， 則可填入 [https://testdomain.tw/login](https://testdomain.tw/customer/auth/line/callback) l 跨境用戶填入網址不需加上 zh-TW 等，僅需填寫一般的網域即可。 l 若未完成此步驟，顧客在前台使用 LINE 帳號註冊/登入時會看到「400」的錯誤提示。 l Callback URL 支援新增多個網域，可將網域以及自有網域都一併設定。 ![1721901014778439.png](https://help.ebixpro.com/upload/image/20240725/1721901014778439.png) 11.請先至LINE Developers 選擇頁籤「Basic settings」，複製【Channel ID】【Channel secret】\n\n[EVIDENCE 6]\n8. 設定【OpenID Connect】欄位資訊，確認狀態為「Applied」， 並勾選裡面的內容，依照需求上傳商家Logo，並按下「Submit」。 ![1721900849274519.png](https://help.ebixpro.com/upload/image/20240725/1721900849274519.png) 9.點選頁籤「LINE Login」設定 Callback URL，點選「Edit」。 ![1721900910478435.png](https://help.ebixpro.com/upload/image/20240725/1721900910478435.png) 10.填入商家的 Callback URL，範例 : 我的商店網址 : https://testdomain.tw/， 則可填入 [https://testdomain.tw/login](https://testdomain.tw/customer/auth/line/callback) l 跨境用戶填入網址不需加上 zh-TW 等，僅需填寫一般的網域即可。 l 若未完成此步驟，顧客在前台使用 LINE 帳號註冊/登入時會看到「400」的錯誤提示。 l Callback URL 支援新增多個網域，可將網域以及自有網域都一併設定。 ![1721901014778439.png](https://help.ebixpro.com/upload/image/20240725/1721901014778439.png) 11.請先至LINE Developers 選擇頁籤「Basic settings」，複製【Channel ID】【Channel secret】 ![1721901144602352.png](https://help.ebixpro.com/upload/image/20240725/1721901144602352.png) 12.填入【帳號ID】、【應用程式密鑰】至 ebixPRO後台 ![1721901191215321.png](https://help.ebixpro.com/upload/image/20240725/1721901191215321.png) [需要協助](https://wa.me/85265963245) \\| [登入ebixPRO](https://www.ebixpro.com/login_ch.html) ebixPRO © All rights reserved * * * - [上一篇：Facebook及Instagram](https://help.ebixpro.com/?m=Article&a=index&id=1&aid=570913698994978816) - [下一篇：Google快速登入](https://help.ebixpro.com/?m=Article&a=index&id=1&aid=781086294640951296)\n\n[EVIDENCE 7]\n# Apple快速登入 1\\. 首先請前往並登入 Apple 開發者後台：🔗 [https://developer.apple.com/account/resources/profiles/list](https://developer.apple.com/account/resources/profiles/list)。登入後，點擊左側選單的「 **Identifiers**」，進入您的專案清單頁面。 ![QQ五笔截图未命名](https://lh7-rt.googleusercontent.com/docsz/AD_4nXdjJA2eAhk3ykTHV1I1rfjHLHea-ZnBsczjuiTLWuFU8PvaEAgM1wY51Ti8p9IVbfdJdNMJgRLlBFfyE9M1Pvk_JyEXGUQmjjdFUztcPU7lz78jPeRYiEUzE2DrJ8kQNmd98yDKulOUP7Mvk4UUQTs?key=[REDACTED]) 2\\. 找到您要設定的 App 專案，點擊進入後，會看到下圖畫面。 ![QQ图片20220802172644](https://lh7-rt.googleusercontent.com/docsz/AD_4nXcGg1cFJfskwKGrTsy3mR3YBuR2UG5sJWKMYAYvdti7YboRVugWr-52m7cBEzI60JOG1phHMamNIppn5lIDqvfBjWzK4nahD27kvexTlp9VeyP6it3qb_ZJ3F1B6WdQBHRhukZsInmwoopI5TogswA?key=[REDACTED]) 3\\. 請勾選 Sign in with Apple（使用 Apple 登入），再點擊右上角的「Edit」按鈕進入設定。 ![QQ五笔截图未命名001](https://lh7-rt.googleusercontent.com/docsz/AD_4nXdbwqaX0Jlz5olZJMXa1gYT31cyvK8LsXGLJJd9bnl0zunZPKKf1jIWh7D_nGmOu8nXsaz1T7N-oPcoz7vpaahJKHLnTBzs3JU-QuTieMveAY03oNHemua4EFOsCzjKEXHviA-zhLdzSfD3r8E4OQ?key=[REDACTED]) 4\\. 在「Web Domain」欄位中輸入您的登入網址（例如：https://www.yourshop.com）。 ![QQ图片20220802173232002](https://lh7-rt.googleusercontent.com/docsz/AD_4nXd5lt3ZxDnYnN54z9GadD9Lw2R7yA-f0KFey975Z9nXuTGujPeHV5IF2bmuSck3JOWP322znv6QJjnwA_P7RZeWFTwFA6NBmDBquxHv9IZPm01IbNZafsIngwKNakBt1kh5Sm2B7XssMm84OImWIM0?key=[REDACTED]) 請再次點擊\"Save\"來確保所有設定都已成功更新！ ![QQ五笔截图未命名003](https://lh7-rt.googleusercontent.com/docsz/AD_4nXcrbKJo7a7dw_RmWf9aajy3WFb5jQRA1gOVQ94aiqmi0l8ZyhuES_XQKrlHj5Rot05FZBmk5La6YH-l0jdlQkC0uiGg3uoDZiEQvTf5sCp_ncAIAhXY-kBVMALHHv3j7V67chviq0_ehkbJcy3vVQ?key=[REDACTED]) * * * - [上一篇：LINE快速登入](https://help.ebixpro.com/?m=Article&a=index&id=1&aid=781401728070189056) - [下一篇：優惠管理](https://help.ebixpro.com/?m=Article&a=index&id=1&aid=576312948683702272)"
+    },
+    "citations": [
+      {
+        "document_id": "3b2bbf18dd064d068c85d37502a46a41",
+        "label": "LINE快速登入 - 幫助中心 - ebixPRO",
+        "source_type": "Other",
+        "relevance": "high"
+      },
+      {
+        "document_id": "c7a6a52d60e5457283c173bbddb9c56b",
+        "label": "LINE - 幫助中心 - ebixPRO",
+        "source_type": "Other",
+        "relevance": "high"
+      },
+      {
+        "document_id": "eb68f06ea8914e9e817f73460ff97a29",
+        "label": "Apple快速登入 - 幫助中心 - ebixPRO",
+        "source_type": "Other",
+        "relevance": "low"
+      }
+    ],
+    "meta": {
+      "candidate_chunks": 10,
+      "qualified_chunks": 10,
+      "selected_documents": 3,
+      "score_threshold": 0.6
+    }
+  },
+  "request": {
+    "query": "{\"questions\":[{\"question\":\"如何使用LINE快速登入?\",\"subjects\":[],\"requested_facts\":[],\"source_type\":\"policy\",\"scope\":\"merchant_rules_and_subject_exceptions\"}]}",
+    "demands": [
+      {
+        "id": "demand-1",
+        "question": "如何使用LINE快速登入?",
+        "subjects": [],
+        "ambiguity": {
+          "reasons": [],
+          "is_ambiguous": false,
+          "clarification_question": null
+        },
+        "constraints": {},
+        "source_type": "policy",
+        "source_quote": "如何使用LINE快速登入?",
+        "requested_facts": [],
+        "explicit_negations": [],
+        "customer_correction": false,
+        "subject_source_message_ids": []
+      }
+    ],
+    "subject": null,
+    "version": "current-factual-request-1",
+    "question": "如何使用LINE快速登入?",
+    "subjects": [],
+    "applicable": true,
+    "resolution": "none",
+    "kb_required": true,
+    "context_turns": [],
+    "topic_changed": false,
+    "answer_request": "如何使用LINE快速登入?",
+    "requested_facts": [],
+    "merchant_request": "如何使用LINE快速登入?",
+    "missing_evidence": [],
+    "original_question": "如何使用LINE快速登入？",
+    "source_message_id": "70f15e36-0929-4fdf-9afa-82400e21f698",
+    "transaction_required": false,
+    "interpretation_source": "semantic_demands",
+    "unresolved_demand_ids": [],
+    "subject_source_message_id": null,
+    "subject_source_message_ids": [],
+    "needs_subject_clarification": false
+  },
+  "candidate": "您好！要設定LINE快速登入，請依照以下步驟操作：\n\n1.  首先，請登入LINE Developers帳號。\n2.  進入後，若您沒有Provider，請先建立一個；若已有，請選擇對應的Provider。\n3.  接著，點選「Create a LINE Login channel」，並選擇LINE Login功能。\n4.  填寫相關欄位，例如服務地區、公司所在國家（皆為台灣）、上傳網站Logo、輸入商店名稱、簡述，並勾選「Web app」。\n5.  填寫您的Email和隱私政策網址。\n6.  設定「OpenID Connect」欄位，確認狀態為「Applied」並勾選內容。\n7.  在「LINE Login」頁籤中，設定您的Callback URL。\n8.  最後，從LINE Developers的「Basic settings」頁籤複製「Channel ID」和「Channel secret」，並將其填入您的ebixPRO後台即可。\n\n若未設定Callback URL，顧客在前台使用LINE登入時可能會遇到「400」錯誤。"
+}

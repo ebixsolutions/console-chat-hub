@@ -236,7 +236,7 @@ export async function resolveCallerScope(
     return { ok: false, error: "membership_lookup_failed", status: 500 };
   }
 
-  const allMemberships = memberships ?? [];
+  const allMemberships = (memberships ?? []) as { company_id: string | null; is_active: boolean }[];
   const companyIds = [
     ...new Set(
       allMemberships

@@ -1,4 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
+import { resolveEvidenceAdminScope, linkConversationEvidenceTurns, isEvidenceConversationId } from "./evidence-log-scope";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 /**
@@ -180,3 +182,77 @@ export const getLlmRuntimeTelemetryFn = createServerFn({ method: "GET" })
       },
     };
   });
+/** Existing Console service: no new backend or service-role access in browser. */
+export interface EvidenceConversation{id:string;status:string;channelId:string|null;createdAt:string;updatedAt:string;}
+export interface EvidenceListResult{ok:boolean;error?:string;rows?:EvidenceConversation[];}
+export interface EvidenceTurnsResult{ok:boolean;error?:string;conversationId?:string;
+ turns?:ReturnType<typeof linkConversationEvidenceTurns>["turns"];
+unlinkedReplies?:ReturnType<typeof linkConversationEvidenceTurns>["unlinkedReplies"];
+ pageError?:string;nextOffset?:number|null;}
+const evidenceListInput=z.object({conversationId:z.string().refine(isEvidenceConversationId).optional()});
+export const getAdminEvidenceConversationsFn=createServerFn({method:"GET"})
+ .middleware([requireSupabaseAuth]).inputValidator(evidenceListInput)
+ .handler(async({context,data}):Promise<EvidenceListResult>=>{
+  const db=context.supabase as any;
+  const scope=await resolveEvidenceAdminScope(db,String(context.userId));
+  if(!scope.ok)return{ok:false,error:scope.error};
+  let query=db.from("conversations")
+   .select("id,status,channel_config_id,created_at,updated_at")
+   .eq("company_id",scope.companyId);
+  // Full-ID lookups must work for old tickets, without exposing other companies.
+  if(data.conversationId)query=query.eq("id",data.conversationId);
+  const {data:rows,error}=await query.order("updated_at",{ascending:false}).limit(data.conversationId?1:40);
+  if(error)return{ok:false,error:"evidence_conversations_unavailable"};
+  return{ok:true,rows:(rows??[]).map((r:any)=>({id:String(r.id),status:String(r.status??"unknown"),
+    channelId:r.channel_config_id?String(r.channel_config_id):null,
+    createdAt:String(r.created_at),updatedAt:String(r.updated_at)}))};
+ });
+const evidenceTurnInput=z.object({
+ conversationId:z.string().regex(/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i),
+ offset:z.number().int().min(0).max(10000).default(0),
+});
+export const getAdminEvidenceTurnsFn=createServerFn({method:"GET"})
+ .middleware([requireSupabaseAuth]).inputValidator(evidenceTurnInput)
+ .handler(async({context,data}):Promise<EvidenceTurnsResult>=>{
+  const db=context.supabase as any,scope=await resolveEvidenceAdminScope(db,String(context.userId));
+  if(!scope.ok)return{ok:false,error:scope.error};
+  const {data:ticket,error:ticketError}=await db.from("conversations").select("id,company_id")
+   .eq("id",data.conversationId).eq("company_id",scope.companyId).maybeSingle();
+  if(ticketError||!ticket)return{ok:false,error:"conversation_not_in_admin_scope"};
+  const pageLimit=100;
+  const {data:messages,error:messageError}=await db.from("messages")
+   .select("id,role,content,created_at,metadata,is_recalled")
+   .eq("conversation_id",data.conversationId)
+   .order("created_at",{ascending:true}).order("id",{ascending:true})
+   .range(data.offset,data.offset+pageLimit);
+  if(messageError)return{ok:false,error:"evidence_messages_unavailable"};
+  const page=(messages??[]) as Array<{id:string;role:string;content:string;created_at:string;metadata:unknown;is_recalled:boolean}>;
+const hasMore=page.length>pageLimit,selected=page.slice(0,pageLimit);
+ const ids=selected.filter(m=>["visitor","customer","user"].includes(m.role)).map(m=>m.id);
+ let linkedReplies:any[]=[];
+ let traces:any[]=[];
+ if(ids.length){
+   // Same authenticated company/ticket. Read source-linked replies even when
+   // their message position is on a later page. Fail explicitly if truncated.
+   const keys=["source_message_id","b2_source_message_id"] as const;
+   const replyReads=await Promise.all(keys.map(key=>db.from("messages")
+     .select("id,role,content,created_at,metadata,is_recalled")
+     .eq("conversation_id",data.conversationId)
+     .in("role",["assistant","agent"])
+     .in(`metadata->>${key}`,ids).limit(301)));
+   if(replyReads.some(x=>x.error))return{ok:false,error:"evidence_reply_linkage_unavailable"};
+   if(replyReads.some(x=>(x.data??[]).length>300))return{ok:false,error:"evidence_reply_linkage_incomplete"};
+   linkedReplies=replyReads.flatMap(x=>x.data??[]);
+   const read=await db.from("rag_trace")
+    .select("id,message_id,query_sent,retrieved_chunks,top_score,kb_source,created_at")
+    .eq("conversation_id",data.conversationId).in("message_id",ids)
+.order("created_at",{ascending:true}).limit(301);
+   if(read.error)return{ok:false,error:"evidence_trace_unavailable"};
+   if((read.data??[]).length>300)return{ok:false,error:"evidence_trace_incomplete"};
+   traces=read.data??[];
+ }
+ const combined=[...new Map([...selected,...linkedReplies].map(row=>[row.id,row])).values()];
+ const evidence=linkConversationEvidenceTurns(combined,traces);
+  return{ok:true,conversationId:data.conversationId,turns:evidence.turns,
+    unlinkedReplies:evidence.unlinkedReplies,nextOffset:hasMore?data.offset+pageLimit:null};
+ });

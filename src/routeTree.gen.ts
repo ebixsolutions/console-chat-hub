@@ -35,6 +35,7 @@ import { Route as DotlovableOauthConsentRouteImport } from './routes/[.]lovable.
 import { Route as AuthenticatedConsoleConversationsIndexRouteImport } from './routes/_authenticated/console.conversations.index'
 import { Route as AuthenticatedConsoleConversationEvaluationIndexRouteImport } from './routes/_authenticated/console.conversation-evaluation.index'
 import { Route as AuthenticatedConsoleSettingsLlmRuntimeRouteImport } from './routes/_authenticated/console.settings.llm-runtime'
+import { Route as AuthenticatedConsoleSettingsKbBindingRouteImport } from './routes/_authenticated/console.settings.kb-binding'
 import { Route as AuthenticatedConsoleSettingsFeedbackTestRouteImport } from './routes/_authenticated/console.settings.feedback-test'
 import { Route as AuthenticatedConsoleConversationsIdRouteImport } from './routes/_authenticated/console.conversations.$id'
 import { Route as AuthenticatedConsoleConversationEvaluationEvaluationIdRouteImport } from './routes/_authenticated/console.conversation-evaluation.$evaluationId'
@@ -187,6 +188,12 @@ const AuthenticatedConsoleSettingsLlmRuntimeRoute =
     path: '/settings/llm-runtime',
     getParentRoute: () => AuthenticatedConsoleRoute,
   } as any)
+const AuthenticatedConsoleSettingsKbBindingRoute =
+  AuthenticatedConsoleSettingsKbBindingRouteImport.update({
+    id: '/settings/kb-binding',
+    path: '/settings/kb-binding',
+    getParentRoute: () => AuthenticatedConsoleRoute,
+  } as any)
 const AuthenticatedConsoleSettingsFeedbackTestRoute =
   AuthenticatedConsoleSettingsFeedbackTestRouteImport.update({
     id: '/settings/feedback-test',
@@ -233,6 +240,7 @@ export interface FileRoutesByFullPath {
   '/console/conversations/$id': typeof AuthenticatedConsoleConversationsIdRoute
   '/console/settings/feedback-test': typeof AuthenticatedConsoleSettingsFeedbackTestRoute
   '/console/settings/llm-runtime': typeof AuthenticatedConsoleSettingsLlmRuntimeRoute
+  '/console/settings/kb-binding': typeof AuthenticatedConsoleSettingsKbBindingRoute
   '/console/conversation-evaluation/': typeof AuthenticatedConsoleConversationEvaluationIndexRoute
   '/console/conversations/': typeof AuthenticatedConsoleConversationsIndexRoute
 }
@@ -261,6 +269,7 @@ export interface FileRoutesByTo {
   '/console/conversations/$id': typeof AuthenticatedConsoleConversationsIdRoute
   '/console/settings/feedback-test': typeof AuthenticatedConsoleSettingsFeedbackTestRoute
   '/console/settings/llm-runtime': typeof AuthenticatedConsoleSettingsLlmRuntimeRoute
+  '/console/settings/kb-binding': typeof AuthenticatedConsoleSettingsKbBindingRoute
   '/console/conversation-evaluation': typeof AuthenticatedConsoleConversationEvaluationIndexRoute
   '/console/conversations': typeof AuthenticatedConsoleConversationsIndexRoute
 }
@@ -293,6 +302,7 @@ export interface FileRoutesById {
   '/_authenticated/console/conversations/$id': typeof AuthenticatedConsoleConversationsIdRoute
   '/_authenticated/console/settings/feedback-test': typeof AuthenticatedConsoleSettingsFeedbackTestRoute
   '/_authenticated/console/settings/llm-runtime': typeof AuthenticatedConsoleSettingsLlmRuntimeRoute
+  '/_authenticated/console/settings/kb-binding': typeof AuthenticatedConsoleSettingsKbBindingRoute
   '/_authenticated/console/conversation-evaluation/': typeof AuthenticatedConsoleConversationEvaluationIndexRoute
   '/_authenticated/console/conversations/': typeof AuthenticatedConsoleConversationsIndexRoute
 }
@@ -325,6 +335,7 @@ export interface FileRouteTypes {
     | '/console/conversations/$id'
     | '/console/settings/feedback-test'
     | '/console/settings/llm-runtime'
+    | '/console/settings/kb-binding'
     | '/console/conversation-evaluation/'
     | '/console/conversations/'
   fileRoutesByTo: FileRoutesByTo
@@ -353,6 +364,7 @@ export interface FileRouteTypes {
     | '/console/conversations/$id'
     | '/console/settings/feedback-test'
     | '/console/settings/llm-runtime'
+    | '/console/settings/kb-binding'
     | '/console/conversation-evaluation'
     | '/console/conversations'
   id:
@@ -384,6 +396,7 @@ export interface FileRouteTypes {
     | '/_authenticated/console/conversations/$id'
     | '/_authenticated/console/settings/feedback-test'
     | '/_authenticated/console/settings/llm-runtime'
+    | '/_authenticated/console/settings/kb-binding'
     | '/_authenticated/console/conversation-evaluation/'
     | '/_authenticated/console/conversations/'
   fileRoutesById: FileRoutesById
@@ -584,6 +597,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConsoleSettingsLlmRuntimeRouteImport
       parentRoute: typeof AuthenticatedConsoleRoute
     }
+    '/_authenticated/console/settings/kb-binding': {
+      id: '/_authenticated/console/settings/kb-binding'
+      path: '/settings/kb-binding'
+      fullPath: '/console/settings/kb-binding'
+      preLoaderRoute: typeof AuthenticatedConsoleSettingsKbBindingRouteImport
+      parentRoute: typeof AuthenticatedConsoleRoute
+    }
     '/_authenticated/console/settings/feedback-test': {
       id: '/_authenticated/console/settings/feedback-test'
       path: '/settings/feedback-test'
@@ -643,6 +663,7 @@ interface AuthenticatedConsoleRouteChildren {
   AuthenticatedConsoleConversationsIdRoute: typeof AuthenticatedConsoleConversationsIdRoute
   AuthenticatedConsoleSettingsFeedbackTestRoute: typeof AuthenticatedConsoleSettingsFeedbackTestRoute
   AuthenticatedConsoleSettingsLlmRuntimeRoute: typeof AuthenticatedConsoleSettingsLlmRuntimeRoute
+  AuthenticatedConsoleSettingsKbBindingRoute: typeof AuthenticatedConsoleSettingsKbBindingRoute
   AuthenticatedConsoleConversationsIndexRoute: typeof AuthenticatedConsoleConversationsIndexRoute
 }
 
@@ -674,6 +695,8 @@ const AuthenticatedConsoleRouteChildren: AuthenticatedConsoleRouteChildren = {
     AuthenticatedConsoleSettingsFeedbackTestRoute,
   AuthenticatedConsoleSettingsLlmRuntimeRoute:
     AuthenticatedConsoleSettingsLlmRuntimeRoute,
+  AuthenticatedConsoleSettingsKbBindingRoute:
+    AuthenticatedConsoleSettingsKbBindingRoute,
   AuthenticatedConsoleConversationsIndexRoute:
     AuthenticatedConsoleConversationsIndexRoute,
 }

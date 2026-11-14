@@ -320,6 +320,7 @@ async function runRag(
   try {
     result = await fetchKBRag({ query: query.slice(0, 500), top_k: 12 }, tenant.scope, endpoint, {
       timeoutMs: 15000,
+      uatContext:{conversationId,operationId:`kb:ce-grounding:${conversationId}:${crypto.randomUUID()}`},
     });
   } catch {
     return { ok: false, code: "GROUNDING_UNREACHABLE" };

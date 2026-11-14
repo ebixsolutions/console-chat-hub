@@ -1,0 +1,11 @@
+BEGIN;
+DROP POLICY IF EXISTS phase1_conversations_tenant ON public.conversations;
+DROP POLICY IF EXISTS phase1_messages_tenant ON public.messages;
+DROP POLICY IF EXISTS phase1_handoff_tenant ON public.handoff_event;
+DROP POLICY IF EXISTS phase1_queue_tenant ON public.human_support_queue;
+DROP POLICY IF EXISTS phase1_assignment_tenant ON public.conversation_assignment;
+DROP POLICY IF EXISTS phase1_status_tenant ON public.conversation_status_log;
+DROP POLICY IF EXISTS phase1_agents_tenant ON public.agent_profile;
+DROP POLICY IF EXISTS phase1_channels_tenant ON public.channel_config;
+DROP POLICY IF EXISTS phase1_visitors_tenant ON public.visitor_session;
+COMMIT;

@@ -1,0 +1,1384 @@
+import {
+  classifyCanonicalConversationTurn, factualSubject, literalFactualSubject, resolveFactualFollowup,
+  type SemanticHistoryRow,
+} from "./conversation-semantic-contract.ts";
+import {
+  classifyNaturalCustomerIntent, exactProductIdentifiers, productFactualFacets,
+} from "./natural-customer-response.ts";
+import { catalogueFactRequest } from "./kb-product-record.ts";
+import {
+  isCurrentRequirementsRecap, isPersonalOrderStatusRequest,
+  applyCustomerRequestDecision, resolveCustomerRequestDecision, withoutExcludedLookups, type CustomerRequestDecision,
+} from "./commerce-state-authority.ts";
+import type { CommerceSemanticAmbiguity, CommerceSemanticDemand, CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
+import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { DecisionContextLimitError, mergeDecisionContext, normalizeDecisionContext, type DecisionValue } from "./bounded-decision-context.ts";
+
+export type FactualDemandSourceType = "product" | "policy" | "transaction" | "general" | "unknown";
+export interface CurrentFactualDemand {
+  id: string;
+  question: string;
+  source_quote: string;
+  subjects: string[];
+  subject_source_message_ids: string[];
+  /** Server-derived read-target proof. Never model output or merchant evidence. */
+  subject_binding_proof?: CurrentTurnSubjectBindingProof;
+  /** Protected evidence only; never customer-visible metadata. */
+  subject_resolution_evidence?: { proposed_ref_count: number; bound_ref_count: number; source_quote_bound: boolean; source_wording_fallback: boolean };
+  source_type: FactualDemandSourceType;
+  requested_facts: string[];
+  constraints: Record<string, DecisionValue>;
+  option_criteria?: {scope: Array<{label: string; source_message_id: string}>;
+    specification: {value: string; unit: string; source_message_id: string} | null};
+  customer_correction: boolean;
+  explicit_negations: string[];
+  ambiguity: CommerceSemanticAmbiguity;
+}
+export interface FactualRequestMissingEvidence {
+  demand_id: string;
+  reason: "live_transaction_unavailable" | "subject_unresolved" | "semantic_ambiguity" | "source_quote_unbound" | "transaction_scope_overlap";
+}
+
+/** A read target, not merchant evidence, transaction authority or a state delta.
+ * History must already be bounded to the caller's source, ticket and tenant.
+ * Latest customer wording owns the requested facets; history only locates a
+ * missing subject. No prior answer's price, stock or policy is copied here. */
+export interface CurrentFactualRequest {
+  version: "current-factual-request-1";
+  source_message_id: string | null;
+  original_question: string;
+  interpretation_source: "semantic_demands" | "legacy_compatibility";
+  applicable: boolean;
+  question: string;
+  merchant_request: string | null;
+  subject: string | null;
+  subjects: string[];
+  requested_facts: string[];
+  query: string | null;
+  answer_request: string | null;
+  resolution: "explicit" | "follow_up" | "unresolved" | "none";
+  subject_source_message_id: string | null;
+  subject_source_message_ids: string[];
+  demands: CurrentFactualDemand[];
+  kb_required: boolean;
+  transaction_required: boolean;
+  unresolved_demand_ids: string[];
+  missing_evidence: FactualRequestMissingEvidence[];
+  topic_changed: boolean;
+context_turns: string[];
+ clarification_source_message_ids?:string[];
+ needs_subject_clarification: boolean;
+}
+export type FactualRequestHistoryRow = {
+  id?: string | null; role?: string; content?: string | null;
+  created_at?: string | null; metadata?: unknown;
+};
+export interface ResolveCurrentFactualRequestInput {
+  question: string;
+  source_message_id?: string | null;
+  trusted_company_id?: string | null;
+  history?: FactualRequestHistoryRow[];
+  semantic?: CommerceSemanticFrame | null;
+  commerce?: ConversationCommerceState | null;
+  memory?: CanonicalConversationMemory | null;
+  request_decision?: CustomerRequestDecision;
+}
+
+const CUSTOMER = new Set(["visitor", "customer", "user"]);
+const INACTIVE = new Set(["cancelled", "deferred", "superseded"]);
+const clean = (value: unknown): string => typeof value === "string" ? value.normalize("NFKC").replace(/\s+/gu, " ").trim() : "";
+const norm = (value: unknown): string => clean(value).toLowerCase();
+const unique = (values: string[]) => [...new Map(values.filter(Boolean).map(value => [norm(value), value])).values()];
+const STOCK = /(?:庫存|库存|現貨|现货|有冇貨|有無貨|有无货|有沒有貨|有没有货|有貨|有货|剩幾多|剩多少|\b(?:stock|inventory|availability|available)\b|how many.+left)/iu;
+const POINTER = /(?:嗰|呢|這|这|那)(?:一)?(?:款|部|個|个|件|項|项)|佢|它|^其|\b(?:it|its|this|that|these|those|same|previous|earlier)\b/iu;
+const PLURAL_POINTER = /(?:嗰|呢|這|这|那)(?:兩|两|幾|几)(?:款|部|個|个|件|項|项)|\b(?:(?:these|those)\s+(?:models?|products?|items?|options?|services?)|both|all of them)\b/iu;
+const TOPIC_BOUNDARY = /(?:換個話題|换个话题|轉個話題|转个话题|不談|不谈|改問|改问|轉去|转去)|\b(?:different topic|another topic|switch(?:ing)? to|mov(?:e|ing) to|forget that)\b/iu;
+const FACET_ONLY_LABEL = /^(?:price|cost|features?|specs?|specifications?|stock|inventory|availability|available|policy|details?|how much|how many left|in|and|or|only|just|the|what|how|is|are|功能|價錢|价钱|價格|价格|庫存|库存|現貨|现货|規格|规格|呢|呀|嗎|吗|貨|货)$/iu;
+const CONTROL_ONLY = /^(?:好|好的|好呀|明白|知道|多謝|谢谢|謝謝|ok(?:ay)?|thanks?|got it)[.!！。\s]*$/iu;
+const LIFECYCLE_BOUNDARY = /(?:取消|唔要|不要|先擺低|先放低|暫緩|暂缓)|\b(?:cancel(?:led)?|defer(?:red)?|no longer want)\b/iu;
+const EXPLICIT_HISTORY_REFERENCE = /(?:返去|返回|回到|講返|讲回|講回|說回|说回|前者|後者|后者)|(?:最初|原先|第[一二三四五六七八九十]+)(?:嗰|那|的|嘅)?(?:款|部|件|個|个|產品|产品|服務|服务)|\b(?:back to|return(?:ing)? to|the former|the latter)\b|\b(?:earlier|previous|original|first|second)\s+(?:one|item|product|model|service|plan|option)\b/iu;
+const EXPLICIT_COMPARISON = /(?:比較|比较|對比|对比|相比)|\b(?:compar(?:e|ing|ison)|versus|vs\.?|both)\b/iu;
+const POLICY_FACET_LABEL = /^(?:(?:general|merchant|store|the)\s+|(?:一般|通用|全店|商家)(?:嘅|的)?)*(?:退貨政策|退货政策|保養政策|保修政策|付款政策|預約政策|预约政策|取消政策|(?:billing|booking|cancellation|return|warranty)\s+policy)$/iu;
+const UNNAMED_REFERENCE_LABEL = /^(?:the\s+)?(?:current|original|listed|selling|earlier|previous|first|second|former|latter|last)(?:\s+(?:one|item|product|model|service|plan|option|order|price))?$/iu;
+
+function trustedFrame(input: CommerceSemanticFrame | null | undefined): CommerceSemanticFrame | null {
+  return input && input.confidence >= 0.62 && !input.ambiguity.is_ambiguous ? input : null;
+}
+function semanticRows(history: FactualRequestHistoryRow[]): SemanticHistoryRow[] {
+  return history.map(row => ({...row, id: row.id ?? undefined, role: row.role ?? "", content: row.content ?? ""}));
+}
+function entityNames(entity: NonNullable<ResolveCurrentFactualRequestInput["commerce"]>["entities"][number]): string[] {
+  return [entity.entity_id, entity.model, entity.attributes.model, entity.attributes.product_name, entity.attributes.name]
+    .map(clean).filter(Boolean);
+}
+function literalHints(input: ResolveCurrentFactualRequestInput): string[] {
+  return unique([
+    ...(input.semantic?.entities ?? []).filter(entity => entity.confidence >= 0.62).flatMap(entity => [entity.model ?? "", entity.name]),
+    input.semantic?.topic ?? "",
+    ...(input.commerce?.entities ?? []).flatMap(entityNames),
+  ]);
+}
+function validSubject(subject: string | null | undefined): subject is string {
+  return Boolean(subject && subject.length >= 2 && subject.length <= 160 && !FACET_ONLY_LABEL.test(subject) &&
+    !/^(?:it|its|this|that|these|those|the same|佢|它|呢個|嗰個|這個|这个|那個|那个)(?:$|\s)/iu.test(subject));
+}
+function locatingLabel(value: string): string {
+  return value.replace(/^(?:(?:請問|请问|請查|请查|查下|查|只要|只查|只問|只问|幫我查|帮我查|不要|唔要)\s*|(?:only|just|please|check|tell me|show me)\b\s*)+/iu, "")
+    .replace(/(?:呢|呀|嗎|吗)[?？.!！。]*$/u, "").trim();
+}
+function currentFacetText(question: string): string {
+  // Use the existing refusal projection; a declined deliverable may also use
+  // "不要價錢" without repeating a lookup verb. Negative product conditions
+  // such as "not waterproof" or "no stairs" remain untouched.
+  return withoutExcludedLookups(question).split(/[，,;；]|\bbut\b|但(?:係|是)?/iu).map(clause => clause.trim()).filter(Boolean).filter(clause =>
+    !/^\s*(?:不要|唔要|不想知道|(?:I\s+)?(?:do not|don't) want)\s*/iu.test(clause) ||
+    !(productFactualFacets(clause).length || STOCK.test(clause))).join("; ");
+}
+function currentFacets(question: string): string[] {
+  const text = currentFacetText(question);
+  const facts: string[] = [...productFactualFacets(text)];
+  const catalogue = catalogueFactRequest(text);
+  if (catalogue?.price && !facts.includes("price")) facts.push("price");
+  if (STOCK.test(text)) facts.push("stock");
+  return unique(facts);
+}
+/** Cheap route hint only; it neither constructs a query nor admits a read. */
+export function hasCurrentFactualReadHint(question: string): boolean {
+  return currentFacets(question).length > 0 || Boolean(factualSubject(question, false));
+}
+function reconcileFacets(question: string, semantic: CommerceSemanticFrame | null): string[] {
+  const explicit = currentFacets(question);
+  if (!explicit.length) return unique(semantic?.requested_facts ?? []);
+  const descriptive = (semantic?.requested_facts ?? []).filter(fact => {
+    const known = currentFacets(fact.replace(/_/gu, " "));
+    return !known.length;
+  });
+  // A valid model frame can still mislabel a stock request as price. Known
+  // current facets replace its labels; other semantic descriptions remain
+  // read hints, and the complete current question remains the answer contract.
+  return unique([...explicit, ...descriptive]);
+}
+type LocatedSubject = { subjects: string[]; reference: string | null };
+/** Validate a model's fact labels against the actual quoted customer words.
+ * An explicitly named current field outranks a contradictory model label, while
+ * freely described or new industry-specific facts remain intact. This is not a
+ * synonym catalogue, a source field authority, or permission for a paid read. */
+function sourceBoundRequestedFacts(sourceQuote: string, proposedFacts: string[]): string[] {
+  const explicit = currentFacets(sourceQuote);
+  if (!explicit.length) return unique(proposedFacts);
+  const retained = proposedFacts.filter(fact => {
+    const classified = currentFacets(fact.replace(/_/gu, " "));
+    return !classified.length || classified.some(field => explicit.includes(field));
+  });
+  return unique([...explicit, ...retained]);
+}
+function locateSubjects(question: string, hints: string[]): LocatedSubject {
+  const text = clean(currentFacetText(question))
+    .replace(/^(?:不談|不谈|唔講|forget(?: about)?|ignore)\s*[^，,;；]{1,160}[，,;；]\s*/iu, "")
+    .replace(/^(?:(?:另外|改問|改问|轉去|转去|轉睇|转看|換個話題|换个话题|轉個話題|转个话题|回到|返回|講返|讲回|其實係|其实是|改成|改返)[，,;；:：\s]*|(?:actually[,;\s]+(?:i (?:mean|meant)\s+)?|i (?:mean|meant)\s+|switch(?:ing)? to\s+|mov(?:e|ing) to\s+|back to\s+|return to\s+|what about\s+))+/iu, "");
+  const ids = unique(exactProductIdentifiers(text));
+  if (ids.length) return {subjects: ids, reference: ids.length === 1 ? ids[0] : null};
+  const literal = literalFactualSubject(text, hints);
+  if (validSubject(literal)) return {subjects: [literal], reference: literal};
+  const catalogue = catalogueFactRequest(text);
+  const catalogueLabel = catalogue ? locatingLabel(catalogue.label) : "";
+  if (catalogue && validSubject(catalogueLabel) && !POINTER.test(catalogueLabel)) {
+    return {subjects: [catalogueLabel], reference: [catalogueLabel,
+      catalogue.color ? `color: ${catalogue.color}` : null,
+      catalogue.size ? `size: ${catalogue.size}` : null].filter(Boolean).join(" ")};
+  }
+  // The refusal projection serializes sentence boundaries as semicolons. Do
+  // not let a later instruction become part of a definition's locating name.
+  // The complete question still remains in the query and answer contract.
+  const factual = factualSubject(clean(currentFacetText(question.split(/[?？]/u, 1)[0])));
+  if (validSubject(factual) && !POINTER.test(factual)) return {subjects: [factual], reference: factual};
+  const policy = text.match(/(?:退貨政策|退货政策|保養政策|保修政策|付款政策|預約政策|预约政策|取消政策|(?:billing|booking|cancellation|return|warranty)\s+policy)/iu)?.[0];
+  if (policy && !POINTER.test(text)) return {subjects: [policy], reference: policy};
+  const natural = classifyNaturalCustomerIntent(text);
+  if (validSubject(natural.product) && !POINTER.test(natural.product)) return {subjects: [natural.product], reference: natural.product};
+  // The existing product grammar recognizes named model facts. A named
+  // catalogue/service without a model may use the same ordinary feature or
+  // policy construction; retain its literal designation, never infer a name.
+  const named = /^(?:請問|请问|請介紹|请介绍|介紹|介绍|tell me about\s+)?\s*(.+?)\s*(?:嘅|的)?\s*(?:功能|特點|特点|規格|规格|退貨政策|退货政策|保養政策|保修政策)(?:係咩|是什麼|是什么|有哪些|有啲咩|呢|呀|嗎|吗)?[?？.!！。]*$/iu.exec(text)?.[1]?.trim() ??
+    /^(?:what (?:are|is) (?:the )?)?(?:features?|specifications?)\s+(?:of|for)\s+(?:the )?(.+?)[?？.!！。]*$/iu.exec(text)?.[1]?.trim() ??
+    /^(.+?)\s+(?:features?|specifications?|specs?)[?？.!！。]*$/iu.exec(text)?.[1]?.trim();
+  if (validSubject(named) && !POINTER.test(named)) return {subjects: [named], reference: named};
+  return {subjects: [], reference: null};
+}
+
+type SubjectBinding = {subject: string; source_message_id: string | null; customer_text: string | null; current: boolean};
+
+/** A same-company, committed, single-source cited AI recommendation may be
+ * used only to locate a new KB read. No old seller facts are retained. */
+function citedAssistantReadTarget(input: ResolveCurrentFactualRequestInput): SubjectBinding | null {
+  const company=clean(input.trusted_company_id);
+  if(!company||!input.source_message_id)return null;
+  const rows=(input.history??[]).slice(0,12);
+  const obj=(v:unknown):Record<string,unknown>|null =>
+    v&&typeof v==="object"&&!Array.isArray(v)?v as Record<string,unknown>:null;
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i],role=String(r.role??"").toLowerCase();
+    if(r.id===input.source_message_id||r.content==="__THINKING__")continue;
+    if(CUSTOMER.has(role)){
+      const message=clean(r.content);
+      if(message&&currentFacets(message).length>0&&!TOPIC_BOUNDARY.test(message)&&
+         !LIFECYCLE_BOUNDARY.test(message)&&!EXPLICIT_HISTORY_REFERENCE.test(message)&&
+         !locateSubjects(message,literalHints(input)).subjects.length)continue;
+      return null;
+    }
+    if(role!=="assistant"||!r.id)return null;
+    const m=obj(r.metadata);
+    if(!m||m.control_commit!=="ai"||m.b2_expected_company_id!==company||
+       !m.source_message_id||m.source_message_id!==m.b2_source_message_id)return null;
+    if(m.response_route==="kb_no_current_evidence"&&m.rag_api_status==="success"&&!m.factual_request_subject)continue;
+    const name=clean(m.factual_request_subject),auth=obj(m.reference_authority),lineage=obj(m.citation_lineage);
+    const prov=obj(auth?.provenance),ids=lineage?.selected_document_ids,chunks=lineage?.evidence_chunk_ids;
+    const binds=lineage?.source_bindings,source=auth?.selected_source_id;
+    if(m.rag_api_status!=="success"||!validSubject(name)||!literalFactualSubject(clean(r.content),[name])||
+       /[<>\r\n|;；]/u.test(name)||auth?.decision!=="USE_CURRENT_KB"||
+       !["CURRENT_KB","PUBLISHED_KB_SERVICE"].includes(String(auth.selected_authority_class))||
+       !/product|商品|產品|产品/iu.test(String(prov?.source_type??""))||
+       !source||source!==lineage?.selected_document_id||
+       !Array.isArray(ids)||ids.length!==1||ids[0]!==source||
+       !Array.isArray(chunks)||chunks.length!==1||typeof chunks[0]!=="string"||
+       !Array.isArray(binds)||binds.length!==1)return null;
+    const bound=obj(binds[0]),target=obj(bound?.current_target);
+    if(!bound||bound.selected_document_id!==source||
+       !Array.isArray(bound.evidence_chunk_ids)||bound.evidence_chunk_ids.length!==1||
+       bound.evidence_chunk_ids[0]!==chunks[0]||
+       !target||!Array.isArray(target.entity_ids)||target.entity_ids.length!==1||
+       norm(target.entity_ids[0])!==norm(name))return null;
+    const first=rows.slice(i+1).find(item=>CUSTOMER.has(String(item.role??"").toLowerCase()));
+    if(first?.id!==m.source_message_id)return null;
+    return {subject:name,source_message_id:r.id,customer_text:null,current:false};
+  }
+  return null;
+}
+
+const clearAmbiguity = (): CommerceSemanticAmbiguity => ({is_ambiguous: false, reasons: [], clarification_question: null});
+function explicitlyNegatesSubject(text: string, subject: string): boolean {
+  const escaped = subject.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(`(?:\\bnot\\s+|唔係\\s*|不是\\s*|並非\\s*|并非\\s*)${escaped}(?![a-z0-9_-])`, "iu").test(text);
+}
+
+/** A model may propose a referent, but only a customer's actual words bind it.
+ * Recovered rows have already passed the caller's ticket/tenant/source bound.
+ * Retained entities and Memory anchors supply aliases/IDs, never substitute
+ * for the original customer text or carry merchant facts into this contract. */
+function bindSemanticSubject(ref: string, input: ResolveCurrentFactualRequestInput): SubjectBinding | null {
+  const frame = trustedFrame(input.semantic);
+  const aliases = unique([
+    ref,
+    ...(frame?.entities ?? []).filter(entity => entity.confidence >= .62 &&
+      [entity.entity_ref, entity.name, entity.model].some(name => norm(name) === norm(ref)))
+      .flatMap(entity => [entity.model ?? "", entity.name]),
+    ...(input.commerce?.entities ?? []).filter(entity => entityNames(entity).some(name => norm(name) === norm(ref)))
+      .flatMap(entityNames),
+  ]).filter(validSubject).sort((a, b) => b.length - a.length);
+  const current = literalFactualSubject(input.question, aliases);
+  if (current && explicitlyNegatesSubject(input.question, current)) return null;
+  if (validSubject(current)) return {subject: current, source_message_id: input.source_message_id ?? null,
+    customer_text: input.question, current: true};
+  const semanticRef = frame?.referents.find(candidate => norm(candidate.ref) === norm(ref));
+  if (semanticRef?.source === "current_turn" || semanticRef?.source === "unknown") return null;
+  const inactive = new Set((input.commerce?.entities ?? []).filter(entity => INACTIVE.has(entity.status)).flatMap(entityNames).map(norm));
+  if (aliases.some(alias => inactive.has(norm(alias)))) return null;
+  for (const row of input.history ?? []) {
+    if (!CUSTOMER.has(String(row.role ?? "").toLowerCase())) continue;
+    const text = clean(row.content);
+    if (!text || text === clean(input.question) || row.id && row.id === input.source_message_id || CONTROL_ONLY.test(text)) continue;
+    const name = literalFactualSubject(text, aliases);
+    if (!validSubject(name)) continue;
+    // Only an applicable correction/cancellation can invalidate this named
+    // historical reference. An unrelated product or lifecycle turn is not a
+    // global history barrier. The semantic demand owns whether a historical
+    // subject is intended; this function proves it using actual customer text.
+    if (LIFECYCLE_BOUNDARY.test(text) && !/(?:policy|政策|\bif\b|如果|唔好取消|不要取消|do not cancel|don't cancel)/iu.test(text)) return null;
+    if (explicitlyNegatesSubject(text, name)) return null;
+    return {subject: name, source_message_id: row.id ?? null, customer_text: text, current: false};
+  }
+  return null;
+}
+
+function proposedReferences(frame: CommerceSemanticFrame | null): string[] {
+  if (!frame) return [];
+  const refs = frame.referents.filter(ref => ref.confidence >= .62 && ref.source !== "unknown").map(ref => ref.ref);
+  return refs.length ? unique(refs) : unique(frame.entities.filter(entity => entity.confidence >= .62)
+    .map(entity => entity.model ?? entity.name).filter(validSubject));
+}
+
+/** A retained read anchor may help locate a literal name, never establish the
+ * current subject by itself. In particular, a poisoned "How much? -> old SKU"
+ * anchor cannot override the original customer's newer named product. */
+function customerSubjectHints(input: ResolveCurrentFactualRequestInput, row?: FactualRequestHistoryRow): string[] {
+  const anchored = row?.id ? (input.memory?.factual_read_anchors ?? [])
+    .filter(anchor => anchor.source_message_id === row.id && clean(anchor.customer_text) === clean(row.content))
+    .flatMap(anchor => anchor.subjects.filter(subject => literalFactualSubject(row.content ?? "", [subject]))) : [];
+  return unique([...literalHints(input), ...proposedReferences(trustedFrame(input.semantic)), ...anchored]);
+}
+
+function explicitCustomerSubjects(text: string, hints: string[]): string[] {
+  const literal = hints.filter(hint => validSubject(hint) && literalFactualSubject(text, [hint]));
+  const maximalLiteral = unique(literal).filter(subject => !literal.some(other => norm(subject) !== norm(other) && norm(other).includes(norm(subject))));
+  const located = locateSubjects(text, hints).subjects;
+  // A grammar-produced label spanning two separately named products is a
+  // comparison phrase, not a longer alias that can erase those identities.
+  const subjects = maximalLiteral.length > 1 ? unique([...maximalLiteral,
+    ...located.filter(subject => !maximalLiteral.some(name => norm(subject).includes(norm(name))))]) : unique([...located, ...literal]);
+  // A source may supply both an exact full name and its shorter alias. Keep
+  // the maximal literal designation, without translating or inventing aliases.
+  return subjects.filter(subject => !POLICY_FACET_LABEL.test(subject) &&
+    (!UNNAMED_REFERENCE_LABEL.test(subject) || maximalLiteral.some(literal => norm(literal) === norm(subject))) &&
+    !subjects.some(other => norm(subject) !== norm(other) && norm(other).includes(norm(subject))));
+}
+
+type CustomerDiscourseFocus = {bindings: SubjectBinding[]; blocked: boolean};
+function recentCustomerDiscourseFocus(input: ResolveCurrentFactualRequestInput): CustomerDiscourseFocus {
+  const inactive = new Set((input.commerce?.entities ?? []).filter(entity => INACTIVE.has(entity.status)).flatMap(entityNames).map(norm));
+  for (const row of input.history ?? []) {
+    if (!CUSTOMER.has(String(row.role ?? "").toLowerCase())) continue;
+    const text = clean(row.content);
+    if (!text || text === "__THINKING__" || row.id && row.id === input.source_message_id ||
+      !row.id && text === clean(input.question)) continue;
+    const mentioned = explicitCustomerSubjects(text, customerSubjectHints(input, row));
+    const subjects = mentioned.filter(subject => !explicitlyNegatesSubject(text, subject));
+    if (mentioned.length) {
+      if (!subjects.length || subjects.some(subject => inactive.has(norm(subject))) ||
+        LIFECYCLE_BOUNDARY.test(text) && !/(?:policy|政策|\bif\b|如果|唔好取消|不要取消|do not cancel|don't cancel)/iu.test(text)) {
+        return {bindings: [], blocked: true};
+      }
+      return {bindings: subjects.map(subject => ({subject, source_message_id: row.id ?? null, customer_text: text, current: false})), blocked: false};
+    }
+    if (TOPIC_BOUNDARY.test(text) || EXPLICIT_HISTORY_REFERENCE.test(text)) return {bindings: [], blocked: true};
+    const operation = classifyCanonicalConversationTurn(text, []).operation;
+    const committedCustomerContinuation = !!row.id && ((input.memory?.current_customer_facts ?? [])
+      .some(fact => fact.authority === "customer" && fact.source_message_id === row.id) || (input.commerce?.entities ?? [])
+      .some(entity => entity.provenance.source_type === "customer" && entity.provenance.source_message_id === row.id && !INACTIVE.has(entity.status)));
+    // Only proven control/formatting and subject-less factual continuations
+    // preserve the prior focus. An unknown customer statement is a boundary,
+    // not permission to scan backwards for a convenient historical SKU.
+    if (CONTROL_ONLY.test(text) || !currentFacets(text).length &&
+      ["TRIVIAL", "CONVERSATION_MEMORY", "TRANSLATE", "SIMPLIFY", "REPHRASE", "SUMMARIZE"].includes(operation) ||
+      committedCustomerContinuation || currentFacets(text).length ||
+      POINTER.test(text) && ["PRONOUN_OR_ELLIPSIS", "FOLLOW_UP_FACTUAL"].includes(operation)) continue;
+    return {bindings: [], blocked: true};
+  }
+  return {bindings: [], blocked: false};
+}
+
+type DemandSubjectResolution = {bindings: SubjectBinding[]; question: string; unresolved: boolean};
+function resolveDemandSubjects(
+  input: ResolveCurrentFactualRequestInput, demand: CommerceSemanticDemand, refs: string[], currentSubjects: string[],
+): DemandSubjectResolution {
+  const original = refs.map(ref => bindSemanticSubject(ref, input));
+  const originalBindings = original.filter((binding): binding is SubjectBinding => binding !== null);
+  const unchanged = () => ({bindings: originalBindings, question: clean(demand.question), unresolved: refs.length > originalBindings.length});
+  if (!["product", "policy", "unknown"].includes(demand.source_type)) return unchanged();
+  const quote = clean(demand.source_quote);
+  if (demand.source_type === "policy" && refs.length && refs.every(ref => POLICY_FACET_LABEL.test(ref)) &&
+    refs.some(ref => literalFactualSubject(quote, [ref]))) return unchanged();
+  const mentioned = explicitCustomerSubjects(quote, unique([...customerSubjectHints(input), ...refs]));
+  const explicit = mentioned.filter(subject => !explicitlyNegatesSubject(quote, subject));
+  // Empty refs can mean deliberate category discovery. Only a genuinely
+  // subject-less facet or a pronoun gains a missing referent from history;
+  // do not promote a grammar-derived discovery phrase into a named product.
+  // A trusted, source-quoted factual demand can express a previously cited
+  // product follow-up in any language, even when no fixed price/stock word
+  // appears. This locates a NEW read only; it never reuses old seller facts.
+  const semanticFactualFollowup = demand.source_type === "product" &&
+    trustedFrame(input.semantic)?.operation === "ASK_FACT" &&
+    demand.requested_facts.length > 0;
+  const subjectlessFactualFollowup = currentFacets(quote).length > 0 || semanticFactualFollowup;
+  const dependent = refs.length > 0 || POINTER.test(quote) ||
+    demand.source_type !== "policy" && subjectlessFactualFollowup && !mentioned.length;
+  if (!dependent) return unchanged();
+  if (mentioned.length && !explicit.length) return {bindings: [], question: quote, unresolved: true};
+  if (!explicit.length && (EXPLICIT_HISTORY_REFERENCE.test(quote) ||
+    refs.length > 1 && (PLURAL_POINTER.test(quote) || EXPLICIT_COMPARISON.test(quote)))) return unchanged();
+
+  // The prior cited recommendation is a locator for a fresh price/stock
+  // query, not evidence that the current merchant amount or inventory is valid.
+  if(demand.source_type==="product"&&!explicit.length&&!currentSubjects.length&&
+     subjectlessFactualFollowup&&!TOPIC_BOUNDARY.test(quote)&&
+     !EXPLICIT_HISTORY_REFERENCE.test(quote)&&!LIFECYCLE_BOUNDARY.test(quote)&&
+     !PLURAL_POINTER.test(quote)&&!demand.customer_correction&&
+     !demand.explicit_negations.length&&!Object.keys(demand.constraints).length&&refs.length<=1){
+    const prior=citedAssistantReadTarget(input);
+    if(prior)return {bindings:[prior],question:prior.subject+" "+quote,unresolved:false};
+  }
+  // A cancelled, negated or invented semantic identity remains invalid. Focus
+  // repair corrects a stale but source-proven reference, never grants a new
+  // meaning to an unbound identity or revives its lifecycle authority.
+  if (!explicit.length && refs.length > originalBindings.length) return unchanged();
+  const current = explicit.length ? explicit : currentSubjects;
+  const focus = current.length
+    ? {bindings: current.map(subject => ({subject, source_message_id: input.source_message_id ?? null, customer_text: input.question, current: true})), blocked: false}
+    : TOPIC_BOUNDARY.test(quote) ? {bindings: [], blocked: true} : recentCustomerDiscourseFocus(input);
+  if (focus.blocked || !explicit.length && focus.bindings.length > 1) return {bindings: [], question: quote, unresolved: true};
+  if (!focus.bindings.length) return {...unchanged(),unresolved:subjectlessFactualFollowup || POINTER.test(quote) || refs.length>originalBindings.length};
+  const sameSubjects = focus.bindings.length === originalBindings.length && focus.bindings.every(binding =>
+    originalBindings.some(original => norm(original.subject) === norm(binding.subject)));
+  // A wrong identity may also have caused the model to attach old, unquoted
+  // conditions. Do not transfer those conditions to another subject or silently
+  // delete them. A clear simple follow-up can be rebound from customer wording;
+  // a conflicting conditioned request remains unresolved for clarification.
+  const unboundConditions = Object.keys(demand.constraints).length > 0 || demand.explicit_negations.length > 0 || demand.customer_correction;
+  const historicalSubjects = (input.history ?? []).filter(row => CUSTOMER.has(String(row.role ?? "").toLowerCase()))
+    .flatMap(row => explicitCustomerSubjects(clean(row.content), customerSubjectHints(input, row)));
+  const staleLabels = unique([...refs, ...historicalSubjects, ...exactProductIdentifiers(demand.question),
+    ...demand.requested_facts.flatMap(exactProductIdentifiers)]).filter(ref =>
+    !focus.bindings.some(binding => norm(binding.subject) === norm(ref)) && !literalFactualSubject(quote, [ref]));
+  const staleFact = staleLabels.some(ref => demand.requested_facts.some(fact => literalFactualSubject(fact, [ref])));
+  const staleCondition = staleLabels.some(ref => literalFactualSubject(JSON.stringify([demand.constraints, demand.explicit_negations]), [ref]));
+  if (!sameSubjects && unboundConditions || staleFact || staleCondition) return {bindings: [], question: quote, unresolved: true};
+  const staleQuestion = staleLabels.some(ref => literalFactualSubject(demand.question, [ref]));
+  if (sameSubjects && explicit.length && !staleQuestion) return {bindings: focus.bindings, question: clean(demand.question), unresolved: false};
+  return {bindings: focus.bindings,
+    question: `${focus.bindings.map(binding => binding.subject).join("; ")} ${quote}`, unresolved: false};
+}
+
+function subjectConstraints(subjects: string[], input: ResolveCurrentFactualRequestInput): Record<string, DecisionValue> {
+  let result: Record<string, DecisionValue> = {};
+  for (const entity of input.commerce?.entities ?? []) {
+    if (INACTIVE.has(entity.status) || entity.provenance.source_type !== "customer" || !entity.provenance.source_message_id ||
+      !entityNames(entity).some(name => subjects.some(subject => norm(name) === norm(subject)))) continue;
+    const source = (input.history ?? []).find(row => row.id === entity.provenance.source_message_id && CUSTOMER.has(String(row.role ?? "").toLowerCase()));
+    if (!source || !subjects.some(subject => literalFactualSubject(source.content ?? "", [subject]))) continue;
+    result = mergeDecisionContext(result, entity.constraints);
+  }
+  return result;
+}
+
+function isKbDemand(demand: CurrentFactualDemand): boolean {
+  return ["product", "policy", "unknown"].includes(demand.source_type);
+}
+
+/** Structured semantic demands own scope. This layer validates their source
+ * quotes/references and preserves every demand; it does not classify them a
+ * second time using product words or give any demand evidence authority. */
+
+/** A bounded source-only safety recognizer, not an industry taxonomy. It
+ * recognizes the SPEECH ACT of asking for a merchant selection, never decides
+ * what the merchant sells or what any particular product is. The multilingual
+ * semantic frame remains authoritative for other valid languages and intents.
+ * This also permits recovering a historical visitor question for which no
+ * accepted semantic or KB evidence receipt was previously persisted. */
+export function sourceOwnedOptionWording(quote: string): boolean {
+  const q=clean(quote);
+  if(!q||q.length>500||exactProductIdentifiers(q).length>0||
+     LIFECYCLE_BOUNDARY.test(q)||isPersonalOrderStatusRequest(q))return false;
+  // Generic colloquial option-selection speech act, not an industry keyword.
+  // Includes "有冇…款可以睇" for products, subscriptions or services.
+  if (/(?:有冇|有無|有沒有|有没有|有咩|有啲咩|有什麼|有哪些).{0,90}(?:款|種|种|方案|選項|选项)(?:可以|可唔可以|可否|能否)?(?:睇|看|看看|揀|選|选)/iu.test(q)) return true;
+  return /(?:\b(?:what|which|show|list|recommend|suggest|any)\b.{0,90}\b(?:models?|products?|items?|options?|choices?|plans?|packages?|services?|categories?|types?|tiers?|variants?)\b)|(?:\b(?:models?|products?|options?|plans?|packages?|services?|tiers?|variants?)\b.{0,80}\b(?:available|offered|carry|choose|recommend|provide|listed)\b)|(?:有咩|有啲咩|有什麼|有什么|有哪些|邊款|边款|哪款|什麼|什么|推薦|推荐|介紹|介绍|推介|建議|建议).{0,75}(?:型號|型号|款式|選項|选项|選擇|选择|選購|选购|方案|服務|服务|產品|产品|套餐|計劃|计划)|(?:型號|型号|款式|選項|选项|選擇|选择|選購|选购|方案|服務|服务|產品|产品|套餐|計劃|计划).{0,75}(?:有咩|有什么|有哪些|哪款|可選|可选|提供|推薦|推荐|介紹|介绍)|(?:(?:^|[^\p{L}\p{N}])(?:quels?|quelles?|qué|cuál(?:es)?)(?=$|[^\p{L}\p{N}])).{0,80}(?:modèles?|produits?|options?|services?|abonnements?|forfaits?|modelos?|productos?|opciones?|servicios?|planes?)|(?:どの|どんな|何の).{0,65}(?:モデル|商品|プラン|サービス)/iu.test(q)||
+    /(?:想|需要|希望|想買|想买).{0,75}(?:推薦|推荐|推介|介紹|介绍|建議|建议)/iu.test(q);
+}
+
+// These patterns describe how customers ask for an alternative, not what a
+// merchant sells. A bare specification can continue only a single scoped read.
+const OPTION_NUMBER = String.raw`(?:\d{1,8}/\d{1,8}|\d{1,8}(?:\.\d{1,8})?)`;
+const OPTION_UNIT = String.raw`(?:[\p{Script=Han}%°]|[a-z]{1,12})`;
+const OPTION_SPEC = new RegExp(String.raw`(?<![\d./])(${OPTION_NUMBER})\s*(${OPTION_UNIT})(?![a-z\d])`, "giu");
+const ALTERNATIVE_PREFIX = /^(?:咁\s*(?:有冇|有無|有無得)|那(?:有沒有|有没有|有無|有吗)|(?:and|what about|how about|any)\s+)/iu;
+const NO_SPECIFIC_MODEL = /^(.*?)\s*[,，]\s*(?:沒有|没有|冇|無|无)(?:指定|特定)?(?:型號|型号|款式)[,，]\s*(?:你)?(?:有咩|有甚麼|有什么)(?:介紹|介绍|推薦|推荐)[?？.!！。]*$/iu;
+const CATEGORY_QUESTION = /^(?:你哋|你們|你们)?\s*(?:有冇|有沒有|有没有)([\p{L}][\p{L}\s]{1,60})(?:賣|卖)[?？.!！。]*$|^(?:do you (?:sell|offer|carry|provide))\s+([\p{L}][\p{L}\s-]{1,60})[?!.]*$/iu;
+
+function numericRatio(value: string): [bigint, bigint] | null {
+  if (!new RegExp(`^${OPTION_NUMBER}$`, "u").test(value)) return null;
+  if (value.includes("/")) {
+    const [numerator, denominator] = value.split("/").map(BigInt);
+    return denominator ? [numerator, denominator] : null;
+  }
+  const [integer, fractional = ""] = value.split(".");
+  return [BigInt(integer + fractional), 10n ** BigInt(fractional.length)];
+}
+
+function sameOptionNumber(a: string, b: string): boolean {
+  const x = numericRatio(a), y = numericRatio(b);
+  return Boolean(x && y && x[0] * y[1] === y[0] * x[1]);
+}
+
+/** Look for an exact numerical value in the same literal unit, with boundaries
+ * that exclude part numbers, other fractions, and multi-unit combinations. */
+export function optionSpecificationMatches(text: string, spec: {value: string; unit: string}): boolean {
+  const unit = spec.unit.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const pattern = new RegExp(String.raw`(?<![\w./])(${OPTION_NUMBER})\s*${unit}(?![a-z\d])`, "giu");
+  const source = clean(text);
+  return [...source.matchAll(pattern)].some(match => {
+    const start = match.index!, end = start + match[0].length;
+    return !/(?:[+×*]|(?<=[\d\p{Script=Han}])x)\s*$/iu.test(source.slice(0, start)) &&
+      !/^\s*(?:[+×*]|x\s*\d)/iu.test(source.slice(end)) &&
+      sameOptionNumber(spec.value, match[1]);
+  });
+}
+
+function literalOptionSpecifications(text: string) {
+  return [...clean(text).matchAll(OPTION_SPEC)].filter(match => numericRatio(match[1]) !== null &&
+    optionSpecificationMatches(match[0], {value:match[1], unit:match[2]}));
+}
+
+
+/** Buyer-side environmental numbers are requirements for suitability, not
+ * exact product variant attributes. Explicit trusted option_criteria still
+ * carries an actual product specification with its own provenance. */
+function customerContextConstraintKey(key: string): boolean {
+  return /(?:^|_)(?:customer|room|space|site|team|staff|employee|guest|visitor|people|person|user|budget|usage|environment|location|orientation|household|audience|intended|existing)(?:_|$)/iu.test(key);
+}
+
+/** Reject every unbound product-side numeric dimension while excluding typed
+ * customer-environment fields. This restores the original strict spec guard:
+ * a model-proposed SKU quantity cannot become evidence merely by omitting it
+ * from source_quote. Buyer room/team counts cannot pre-reject all documents. */
+export function hasUnboundSourceOwnedOptionSpecification(
+  demand: Pick<CurrentFactualDemand,"constraints"|"source_quote"|"option_criteria">,
+): boolean {
+  if (demand.option_criteria?.specification) return false;
+  const quote=clean(demand.source_quote);
+  if (!quote) return false;
+  return Object.entries(demand.constraints).some(([field,raw]) => {
+    if (customerContextConstraintKey(field)) return false;
+    // Keep the historical fail-closed rule for EVERY unbound numerical
+    // merchant product/variant requirement, including model-proposed values
+    // not quoted by the customer. Only independently source-owned buyer
+    // environment fields may bypass exact product specification matching.
+    return (Array.isArray(raw)?raw:[raw]).some(candidate => {
+      if (!candidate || typeof candidate!=="object" || Array.isArray(candidate)) return false;
+      const v=candidate.value;
+      return typeof v==="number" && Number.isFinite(v) ||
+        typeof v==="string" && /^\d+(?:[./]\d+)?$/u.test(v.trim());
+    });
+  });
+}
+
+/** Structured constraints identify which source-quoted number is material.
+ * A unitless object can bind only when the source states one unambiguous unit. */
+export function customerOptionSpecifications(demand: Pick<CurrentFactualDemand,"constraints"|"source_quote"|"option_criteria">): Array<{value: string; unit: string}> {
+  if (demand.option_criteria?.specification) return [demand.option_criteria.specification];
+  const result = new Map<string, {value: string; unit: string}>();
+  const add = (candidate: DecisionValue) => {
+    if (Array.isArray(candidate)) {
+      for (const value of candidate) add(value);
+      return;
+    }
+    if (candidate && typeof candidate === "object") {
+      const value = typeof candidate.value === "number" ? String(candidate.value) : clean(candidate.value);
+      const unit = clean(candidate.unit);
+      if (!numericRatio(value)) return;
+      if (unit && /^[\p{L}%°]{1,12}$/u.test(unit) && optionSpecificationMatches(demand.source_quote, {value, unit})) {
+        result.set(norm(value + unit), {value, unit});
+      } else if (!unit) {
+        const matches = literalOptionSpecifications(demand.source_quote).filter(match => sameOptionNumber(value, match[1]));
+        if (matches.length === 1) result.set(norm(value + matches[0][2]), {value, unit:matches[0][2]});
+      }
+      return;
+    }
+    if (typeof candidate !== "string") return;
+    const match = literalOptionSpecifications(candidate)[0];
+    if (match?.[0] === clean(candidate) &&
+        optionSpecificationMatches(demand.source_quote,{value:match[1],unit:match[2]})) {
+      result.set(norm(match[1]+match[2]), {value:match[1],unit:match[2]});
+    }
+  };
+  for (const [field,value] of Object.entries(demand.constraints)) {
+    if (!customerContextConstraintKey(field)) add(value);
+  }
+  return [...result.values()];
+}
+
+function alternativeSpecification(text: string): RegExpMatchArray | null {
+  const rest = text.replace(ALTERNATIVE_PREFIX, "").replace(/[?？.!！。]+$/u,"").trim();
+  if (rest === text || !ALTERNATIVE_PREFIX.test(text)) return null;
+  const [spec, ...others] = literalOptionSpecifications(rest);
+  return spec && !others.length && spec[0] === rest ? spec : null;
+}
+
+function namedOptionSpecification(text: string) {
+  const [spec, ...others] = literalOptionSpecifications(text);
+  if (!spec || others.length || !sourceOwnedOptionWording(text) && !/^[^\d,;?？]{2,65}\d/u.test(text)) return null;
+  const label = text.slice(0, spec.index).replace(/^(?:給我有關|给我有关|請介紹|请介绍|想了解|show me|tell me about)\s*/iu,"").trim();
+  if (!validSubject(label) || label.length > 64 || /[,;?？<>@]/u.test(label) || POINTER.test(label) ||
+      /^(?:what|which|any|need|want|compare|show|有咩|有什麼|有什么|有哪些|想要)(?:\b|\s|$)/iu.test(label) ||
+      /\b(?:or|versus)\b|(?:或者|還是|还是|以及)/iu.test(label)) return null;
+  const suffix = text.slice(spec.index! + spec[0].length);
+  const category = /^\s+([\p{L}][\p{L}\s-]{1,60})\s*:/u.exec(suffix)?.[1].trim();
+  return {label, category, value:spec[1], unit:spec[2]};
+}
+
+/** Extend the existing factual request with customer-owned criteria. The
+ * nearest named exploration owns focus; intervening replies are never inputs.
+ * A prior category opener can scope the thread only across compatible option
+ * reads in the same literal unit. Ambiguous, transactional and lifecycle
+ * boundaries stop that scan. */
+function resolveOptionCriteria(input: ResolveCurrentFactualRequestInput, demand: CommerceSemanticDemand) {
+  const frame = input.semantic!, text = clean(demand.source_quote), source = clean(input.source_message_id);
+  if (!input.trusted_company_id || !source || clean(input.question) !== text ||
+      (frame.demands?.length ?? 0) !== 1 || demand.source_type !== "product" ||
+      !["ASK_FACT","NO_STATE_CHANGE"].includes(frame.operation) ||
+      frame.additive || frame.customer_correction || demand.customer_correction ||
+      (frame.customer_facts?.length ?? 0) || frame.explicit_negations.length || demand.explicit_negations.length ||
+      [frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state].some(value => value !== "none" && value !== "unknown") ||
+      TOPIC_BOUNDARY.test(text) || LIFECYCLE_BOUNDARY.test(text) || EXPLICIT_COMPARISON.test(text) ||
+      POINTER.test(text) || EXPLICIT_HISTORY_REFERENCE.test(text) ||
+      isPersonalOrderStatusRequest(text) || exactProductIdentifiers(text).length) return null;
+  if ([frame.ambiguity, demand.ambiguity].some(ambiguity => ambiguity.is_ambiguous &&
+      (!ambiguity.reasons.length || ambiguity.reasons.some(reason =>
+        !/^(?:(?:no (?:specific|single|exact) (?:sku|model)(?: specified)?)|(?:(?:sku|model) not supplied)|(?:missing (?:sku|model)))$/iu.test(reason))))) return null;
+
+  const alternative = alternativeSpecification(text);
+  const named = namedOptionSpecification(text);
+  const noModel = NO_SPECIFIC_MODEL.exec(text);
+  if (!alternative && !named && !noModel) return null;
+  if (noModel && !validSubject(noModel[1].trim())) return null;
+
+  const scope: NonNullable<CurrentFactualDemand["option_criteria"]>["scope"] = [];
+  let specification: NonNullable<CurrentFactualDemand["option_criteria"]>["specification"] = null;
+  if (named && !alternative) {
+    scope.push({label:named.label, source_message_id:source});
+    if (named.category) scope.push({label:named.category,source_message_id:source});
+    specification = {value:named.value, unit:named.unit, source_message_id:source};
+  } else if (alternative) {
+    specification = {value:alternative[1], unit:alternative[2], source_message_id:source};
+  } else if (noModel) {
+    scope.push({label:noModel[1].trim(), source_message_id:source});
+  }
+  const context: string[] = [];
+  let anchored = Boolean(named && sourceOwnedOptionWording(text));
+  let lastHistoricalLabel = "";
+  for (const row of (input.history ?? []).slice(0, 32)) {
+    if (!CUSTOMER.has(String(row.role ?? "").toLowerCase()) || row.id === source) continue;
+    const prior = clean(row.content);
+    if (!row.id || !prior || prior.length > 500 ||
+        TOPIC_BOUNDARY.test(prior) || LIFECYCLE_BOUNDARY.test(prior) ||
+        EXPLICIT_COMPARISON.test(prior) || EXPLICIT_HISTORY_REFERENCE.test(prior) ||
+        isPersonalOrderStatusRequest(prior) || exactProductIdentifiers(prior).length ||
+        /^(?:not\b|唔係|不是|並非|并非)/iu.test(prior)) break;
+    if (alternativeSpecification(prior)) continue;
+    const previous = namedOptionSpecification(prior);
+    const previousNoModel = NO_SPECIFIC_MODEL.exec(prior);
+    if (previous && (!specification || norm(previous.unit) === norm(specification.unit))) {
+      if (!anchored) {
+        if (scope.length && norm(scope[0].label) !== norm(previous.label)) break;
+        if (!scope.length) scope.push({label:previous.label, source_message_id:row.id});
+        if (previous.category && scope.length === 1) scope.push({label:previous.category,source_message_id:row.id});
+        if (!specification) specification = {value:previous.value,unit:previous.unit,source_message_id:row.id};
+        anchored = sourceOwnedOptionWording(prior);
+        context.push(prior);
+      }
+      lastHistoricalLabel = norm(previous.label);
+      continue;
+    }
+    if (previousNoModel && [norm(scope[0]?.label),lastHistoricalLabel].includes(norm(previousNoModel[1]))) continue;
+    const category = CATEGORY_QUESTION.exec(prior);
+    if (category && anchored && scope.length === 1) {
+      scope.push({label:(category[1] ?? category[2]).trim(),source_message_id:row.id});
+      context.push(prior);
+    }
+    break;
+  }
+  if (!anchored || !scope.length || !specification) return null;
+  // A cancelled/deferred customer state cannot be reactivated by a bare
+  // follow-up. Exact newly named alternatives still use normal routing.
+  if ((alternative || noModel) && (input.commerce?.entities ?? []).some(entity =>
+      INACTIVE.has(entity.status) && scope.some(item =>
+        [...entityNames(entity), entity.category].some(label => norm(label) === norm(item.label))))) return null;
+  const constraints = {...demand.constraints};
+  const typed = customerOptionSpecifications({constraints,source_quote:text});
+  if (!typed.some(item => norm(item.unit) === norm(specification.unit) && sameOptionNumber(item.value,specification.value))) {
+    constraints.specification = specification.value + specification.unit;
+  }
+  const labels = scope.map(item => item.label).filter(label => !literalFactualSubject(text,[label]));
+  const spec = specification.value + specification.unit;
+  return {criteria:{scope,specification}, constraints, context,
+    question:[...labels, specification.source_message_id !== source ? spec : "", text].filter(Boolean).join(" ")};
+}
+
+/** Product/plan/service OPTION DISCOVERY is a read of a category with customer
+ * constraints, not a demand for an already-known SKU. Trust the exact current
+ * customer quote and the bounded semantic request, never a model-created
+ * product label. A single-item factual follow-up remains on its own route. */
+function sourceBoundOptionDiscovery(input: ResolveCurrentFactualRequestInput, demand: CommerceSemanticDemand): boolean {
+  const f=input.semantic, quote=clean(demand.source_quote), original=clean(input.question);
+  if (!f || f.confidence<.62 || !quote || !original.includes(quote) ||
+      !["ASK_FACT","NO_STATE_CHANGE"].includes(f.operation) ||
+      demand.source_type!=="product" || f.customer_correction || f.additive ||
+      (f.customer_facts?.length??0)>0 || f.explicit_negations.length>0 ||
+      demand.customer_correction || demand.explicit_negations.length>0 ||
+      !["none","unknown"].includes(f.transaction_state) ||
+      !["none","unknown"].includes(f.payment_state) ||
+      !["none","unknown"].includes(f.booking_state) ||
+      !["none","unknown"].includes(f.fulfillment_state) ||
+      TOPIC_BOUNDARY.test(quote) && LIFECYCLE_BOUNDARY.test(quote) ||
+      LIFECYCLE_BOUNDARY.test(quote) ||
+      isPersonalOrderStatusRequest(quote) ||
+      exactProductIdentifiers(quote).length>0) return false;
+  // Either the interpreter identifies open-ended merchant option selection,
+  // or the customer literally asks for model options (not a particular SKU).
+  // This is a CLASS of facts, never an industry- or brand-specific whitelist.
+  const intent=norm(f.intent);
+  const fromSemantic=["explore_options","recommend_options"].includes(intent);
+  const fromSource=sourceOwnedOptionWording(quote);
+  const fromDemand=demand.requested_facts.some(fact =>
+    /(?:available|offered|current|listed|recommend|select|compare).{0,35}(?:models?|products?|items?|options?|services?|plans?)|(?:models?|products?|items?|options?|services?|plans?).{0,35}(?:available|offered|listed|selection|recommendation)/iu.test(fact));
+  return fromSemantic || fromSource || fromDemand;
+}
+
+
+/** Only a SINGLE source-owned option request can inherit its own customer
+ * category and usage context from the current utterance. A model's expanded
+ * question is never used as merchant authority. Private/other demand prefixes
+ * cannot enter retrieval; source_quote remains the exact customer span. */
+function sourceOwnedSingleOptionContext(input: ResolveCurrentFactualRequestInput,
+  demand: CommerceSemanticDemand): string | null {
+  const full=clean(input.question), quote=clean(demand.source_quote);
+  if (!full || !quote || full===quote || full.length>1600 ||
+      !full.endsWith(quote) || (input.semantic?.demands?.length??0)!==1 ||
+      !sourceBoundOptionDiscovery(input,demand) || isPersonalOrderStatusRequest(full)) return null;
+  const prefix=full.slice(0,-quote.length).trim();
+  if (!prefix || /[?？]/u.test(prefix) || TOPIC_BOUNDARY.test(prefix) ||
+      LIFECYCLE_BOUNDARY.test(prefix)) return null;
+  if (/(?:\b(?:order|invoice|payment|refund|reservation|booking|claim|ticket|account)\b|訂單|订单|付款|支付|退款|退貨|退货|預約|预约|預訂|预订|賬戶|账户|工單|工单|個案|个案)/iu.test(prefix) ||
+      /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/iu.test(prefix)) return null;
+  return full;
+}
+
+/** Same-ticket B2-committed clarification may reopen the customer's ORIGINAL
+ * unresolved OPTION query with the newly supplied reply. No merchant facts,
+ * other-ticket identity or old transaction is inherited. A fresh KB read must
+ * revalidate all returned source/tenant/field evidence. */
+function resolveVerifiedClarificationContinuation(input: ResolveCurrentFactualRequestInput): CurrentFactualRequest | null {
+  const latest=clean(input.question),company=clean(input.trusted_company_id),source=clean(input.source_message_id);
+  const frame=input.semantic,rows=(input.history??[]).filter(row=>row.id!==source && clean(row.content)!=="__THINKING__").slice(0,14);
+  if(!company||!source||!latest||latest.length>160||/[?？;；\n]/u.test(latest)||
+     TOPIC_BOUNDARY.test(latest)||LIFECYCLE_BOUNDARY.test(latest)||
+     isPersonalOrderStatusRequest(latest)||exactProductIdentifiers(latest).length>0||
+     currentFacets(latest).length>0||CONTROL_ONLY.test(latest)||
+     !frame||frame.confidence<.62||
+     !["NO_STATE_CHANGE","ASK_FACT"].includes(frame.operation)||
+     frame.customer_correction||frame.additive||(frame.customer_facts?.length??0)>0||
+     frame.explicit_negations.length>0||
+     !["none","unknown"].includes(frame.transaction_state)||
+     !["none","unknown"].includes(frame.payment_state)||
+     !["none","unknown"].includes(frame.booking_state)||
+     !["none","unknown"].includes(frame.fulfillment_state)||
+     (frame.demands??[]).some(d=>d.source_type==="transaction"||d.customer_correction||d.explicit_negations.length>0||
+       Object.keys(d.constraints).length>0))return null;
+let origin:FactualRequestHistoryRow|null=null,cycles=0;
+ const intermediate:Array<{id:string;text:string}>=[];
+ for(let i=0;i+1<rows.length&&cycles<4;i+=2){
+    const assistant=rows[i],visitor=rows[i+1];
+    if(String(assistant.role??"").toLowerCase()!=="assistant"||!CUSTOMER.has(String(visitor.role??"").toLowerCase())||
+       !assistant.id||!visitor.id)break;
+    const metadata=assistant.metadata&&typeof assistant.metadata==="object"&&!Array.isArray(assistant.metadata)
+      ? assistant.metadata as Record<string,unknown>:null;
+    if(!metadata||metadata.control_commit!=="ai"||
+       metadata.response_route!=="product_referent_clarification"||
+       metadata.b2_expected_company_id!==company||
+       metadata.b2_source_message_id!==visitor.id||
+       metadata.source_message_id!==visitor.id||
+       !Array.isArray(metadata.product_referent_candidates)||
+       metadata.product_referent_candidates.length!==0)break;
+    const original=clean(visitor.content);
+    if(!original||original.length>500||TOPIC_BOUNDARY.test(original)||LIFECYCLE_BOUNDARY.test(original)||
+       isPersonalOrderStatusRequest(original))break;
+    // Source-owned model/category choice request, not a guessed last SKU.
+    const discovery=sourceBoundOptionDiscovery({
+      ...input,question:original,semantic:{
+        ...frame,operation:"ASK_FACT",intent:"unknown",customer_facts:[],
+        demands:[],requested_facts:currentFacets(original),ambiguity:clearAmbiguity(),
+      },
+    },{question:original,source_quote:original,source_type:"product",
+      subject_refs:[],requested_facts:currentFacets(original),constraints:{},
+      customer_correction:false,explicit_negations:[],ambiguity:clearAmbiguity()});
+    if(discovery){origin=visitor;break;}
+    // An answer to an earlier clarification may precede the original query;
+    // never tunnel through an unrelated question, real transaction or topic.
+if(/[?？;；\n]/u.test(original)||currentFacets(original).length>0||
+     exactProductIdentifiers(original).length>0||original.length>160)break;
+   intermediate.unshift({id:visitor.id,text:original});
+   cycles++;
+  }
+  if(!origin?.id)return null;
+  const original=clean(origin.content);
+const requested=unique([...currentFacets(original),"published merchant options matching customer criteria"]);
+ // The middle B2-confirmed customer answers are part of the current need.
+ // Retain all or reject using the existing bounded-query guard.
+ const full=[original,...intermediate.map(x=>x.text),latest].join("\n");
+  const demand:CurrentFactualDemand={id:"demand-1",question:full,source_quote:latest,
+    subjects:[],subject_source_message_ids:[],source_type:"product",
+    requested_facts:requested,constraints:{},customer_correction:false,
+    explicit_negations:[],ambiguity:clearAmbiguity()};
+  const request:CurrentFactualRequest={version:"current-factual-request-1",source_message_id:source,
+    original_question:input.question,interpretation_source:"semantic_demands",
+    applicable:true,question:latest,merchant_request:latest,subject:null,subjects:[],
+    requested_facts:requested,query:null,answer_request:full,resolution:"follow_up",
+subject_source_message_id:null,subject_source_message_ids:[],demands:[demand],
+   kb_required:true,transaction_required:false,unresolved_demand_ids:[],missing_evidence:[],
+   topic_changed:false,context_turns:[original,...intermediate.map(x=>x.text)],
+   clarification_source_message_ids:[origin.id,...intermediate.map(x=>x.id),source],
+   needs_subject_clarification:false};
+  request.query=serializeCurrentFactualQuery(input,request);
+  return request;
+}
+
+/** A source-owned repair of an EMPTY reference representation, not a second
+ * intent classifier. The accepted frame remains immutable. Names supplied in
+ * constraints are only locating hints until the customer's own text proves them.
+ * No history, merchant facts, state mutation, extra model call or KB retry. */
+export interface CurrentTurnSubjectBindingProof {
+  basis: "current_customer_literal" | "same_turn_unique_antecedent";
+  source_message_id: string;
+  subjects: string[];
+  literal_name: string;
+  source_quote: string;
+  antecedent_quotes: string[];
+  text_normalization: "NFKC_WHITESPACE";
+}
+type CurrentTurnSubjectAttempt =
+  | { kind: "not_applicable" }
+  | { kind: "unresolved" }
+  | { kind: "proven"; proof: CurrentTurnSubjectBindingProof };
+
+function currentTurnSubjectAttempt(
+  input: ResolveCurrentFactualRequestInput,
+  demand: CommerceSemanticDemand,
+  proposed: readonly CommerceSemanticDemand[],
+): CurrentTurnSubjectAttempt {
+  const none: CurrentTurnSubjectAttempt = {kind:"not_applicable"};
+  const unresolved: CurrentTurnSubjectAttempt = {kind:"unresolved"};
+  const frame=trustedFrame(input.semantic), full=clean(input.question), quote=clean(demand.source_quote);
+  if (!frame || demand.source_type!=="product" || demand.subject_refs.length ||
+      proposedReferences(frame).length || sourceBoundOptionDiscovery(input,demand)) return none;
+  const hints=(d:CommerceSemanticDemand):string[] => unique(
+    [d.constraints.name,d.constraints.model,d.constraints.sku]
+      .filter((value):value is string=>typeof value==="string").map(clean).filter(validSubject));
+  const declared=hints(demand);
+  const ids=unique(exactProductIdentifiers(quote));
+  // No specific item is required for ordinary model-free option discovery.
+  if (!declared.length && !ids.length && !POINTER.test(quote)) return none;
+  if (!clean(input.trusted_company_id) || !clean(input.source_message_id) ||
+      input.memory && input.memory.company_id!==input.trusted_company_id ||
+      !quote || full.length>2400 || !["ASK_FACT","NO_STATE_CHANGE"].includes(frame.operation) ||
+      frame.customer_correction || frame.additive || demand.customer_correction ||
+      demand.ambiguity.is_ambiguous) return unresolved;
+  const span=(value:string):{start:number;end:number}|null => {
+    const normalized=clean(value);
+    const start=full.indexOf(normalized);
+    if (start<0 || full.indexOf(normalized,start+1)>=0) return null;
+    return {start,end:start+normalized.length};
+  };
+  const here=span(quote);
+  if (!here) return unresolved;
+  // Recovering an omitted reference must not transfer an unquoted quantitative
+  // condition. Check the demand's OWN quote, not another item's number, and
+  // exclude model-code digits. Normalized descriptive values remain semantic
+  // proposals under the original downstream checks, never merchant evidence.
+  let quantitativeSource=quote;
+  for(const identifier of exactProductIdentifiers(quote)) quantitativeSource=quantitativeSource.split(identifier).join(" ");
+  const sourceNumbers=[...quantitativeSource.matchAll(/(?<![A-Za-z0-9_.\/+-])(?:\d{1,3}(?:,\d{3})+|\d{1,8})(?:\.\d{1,8})?(?:\/\d{1,8})?(?![\d.\/])/gu)]
+    .map(match=>match[0].replace(/,/g,""));
+  const quotedNumbers=(value:DecisionValue):boolean => {
+    if(Array.isArray(value))return value.every(quotedNumbers);
+    if(value && typeof value==="object")return Object.entries(value).every(([key,child])=>
+      ["name","model","sku"].includes(key) || quotedNumbers(child));
+    const scalar=typeof value==="number" ? String(value) : typeof value==="string" && /^(?:\d+(?:\.\d+)?|\d+\/\d+)$/.test(value.trim()) ? value.trim() : null;
+    return scalar===null || sourceNumbers.some(number=>sameOptionNumber(number,scalar));
+  };
+  if(!quotedNumbers(demand.constraints))return unresolved;
+  const maximal=(values:string[]) => unique(values).filter(name=>
+    !values.some(other=>norm(name)!==norm(other) && !!literalFactualSubject(other,[name])));
+  const literalNames=(d:CommerceSemanticDemand):string[] => {
+    const q=clean(d.source_quote);
+    if (!q || !span(q) || d.source_type!=="product" || d.ambiguity.is_ambiguous ||
+        sourceBoundOptionDiscovery(input,d) || LIFECYCLE_BOUNDARY.test(q)) return [];
+    const candidates=unique([...d.subject_refs,...hints(d),...exactProductIdentifiers(q)]);
+    return maximal(candidates.filter(name=>validSubject(name) &&
+      !!literalFactualSubject(q,[name]) && !explicitlyNegatesSubject(q,name)));
+  };
+  const direct=literalNames(demand);
+  const inactive=(name:string) => (input.commerce?.entities??[]).some(entity=>INACTIVE.has(entity.status) &&
+    entityNames(entity).some(alias=>norm(alias)===norm(name) || !!literalFactualSubject(name,[alias])));
+  const same=(name:string,other:string) => norm(name)===norm(other) ||
+    !!literalFactualSubject(name,[other]) || !!literalFactualSubject(other,[name]);
+  const make=(basis:CurrentTurnSubjectBindingProof["basis"],subject:string,antecedents:string[]):CurrentTurnSubjectAttempt => ({
+    kind:"proven",proof:{basis,source_message_id:clean(input.source_message_id),
+      // The existing resolver uses exact identifiers as canonical read targets.
+      // A longer literal designation is retained as proof, not a second subject.
+      subjects:exactProductIdentifiers(subject).length===1 ? exactProductIdentifiers(subject) : [subject],
+      literal_name:subject,source_quote:quote,antecedent_quotes:antecedents,text_normalization:"NFKC_WHITESPACE"},
+  });
+  // The proposed expanded English question is deliberately not an evidence input.
+  if (direct.length) {
+    if (direct.length!==1 || ids.some(id=>!same(direct[0],id)) ||
+        declared.some(name=>!same(direct[0],name)) || inactive(direct[0]) ||
+        explicitlyNegatesSubject(full,direct[0]) || LIFECYCLE_BOUNDARY.test(quote)) return unresolved;
+    return make("current_customer_literal",direct[0],[]);
+  }
+  if (!POINTER.test(quote)) return declared.length?unresolved:none;
+  if (PLURAL_POINTER.test(quote) || EXPLICIT_HISTORY_REFERENCE.test(quote) ||
+      EXPLICIT_COMPARISON.test(quote) || TOPIC_BOUNDARY.test(quote) || LIFECYCLE_BOUNDARY.test(quote)) return unresolved;
+  // Only independently located PRECEDING current-turn names participate. A
+  // model-selected name cannot choose among two candidates or point forward.
+  const anchors=proposed.flatMap(d=>{
+    const q=clean(d.source_quote),position=span(q);
+    if (d===demand || !position || position.end>here.start) return [];
+    return literalNames(d).map(subject=>({subject,quote:q,start:position.start}));
+  });
+  if (!anchors.length) return declared.length ? unresolved : none;
+  const subjects=maximal(anchors.map(anchor=>anchor.subject));
+  if (subjects.length!==1) return unresolved;
+  const subject=subjects[0];
+  if (declared.some(name=>!same(subject,name)) || inactive(subject) || explicitlyNegatesSubject(full,subject)) return unresolved;
+  const interval=full.slice(Math.min(...anchors.map(anchor=>anchor.start)),here.end);
+  // Boundaries outside a model's short source_quote cannot be skipped.
+  if (TOPIC_BOUNDARY.test(interval) || LIFECYCLE_BOUNDARY.test(interval) ||
+      EXPLICIT_HISTORY_REFERENCE.test(interval) || EXPLICIT_COMPARISON.test(interval) ||
+      exactProductIdentifiers(interval).some(id=>!same(subject,id))) return unresolved;
+  return make("same_turn_unique_antecedent",subject,unique(anchors.map(anchor=>anchor.quote)));
+}
+
+/** A deterministic fallback for a complete current merchant question. Run only
+ * after ordinary literal/history resolution. This is a local read projection;
+ * provider ambiguity and write-side state authority remain immutable. */
+function independentSourceQuestion(input: ResolveCurrentFactualRequestInput, demand: CommerceSemanticDemand): boolean {
+  const f=input.semantic!, quote=clean(demand.source_quote), full=clean(input.question);
+  if (!clean(input.trusted_company_id) || !clean(input.source_message_id) ||
+      input.memory && input.memory.company_id!==input.trusted_company_id ||
+      !quote || !full.includes(quote) || f.confidence<.62 ||
+      !["product","policy","unknown"].includes(demand.source_type) ||
+      !["ASK_FACT","NO_STATE_CHANGE"].includes(f.operation) || f.additive ||
+      f.customer_correction || demand.customer_correction || demand.explicit_negations.length ||
+      (f.customer_facts?.length??0)>0 ||
+      [f.transaction_state,f.payment_state,f.booking_state,f.fulfillment_state].some(x=>!["none","unknown"].includes(x)) ||
+      POINTER.test(quote) || EXPLICIT_HISTORY_REFERENCE.test(quote) ||
+      LIFECYCLE_BOUNDARY.test(quote) || TOPIC_BOUNDARY.test(quote) ||
+      EXPLICIT_COMPARISON.test(quote) || isPersonalOrderStatusRequest(quote) ||
+      /[\w.+-]+@[\w.-]+\.[a-z]{2,}|\b(?:order|invoice|payment|refund|reservation|account)\s*(?:id|number|#)|(?:訂單|订单|賬戶|账户|付款|退款)(?:編號|编号|號碼|号码)/iu.test(quote)) return false;
+  // Check the containing clause, including controls OUTSIDE the extracted span.
+  // An unrelated declined clause must not block an independently valid demand.
+  const start=full.indexOf(quote);
+  if(full.indexOf(quote,start+1)>=0)return false;
+  const prefix=full.slice(0,start).split(/[;；。!！\n]/u).pop()??"";
+  if (LIFECYCLE_BOUNDARY.test(prefix) || /(?:not|don't|do not|ignore|instead)\b|唔係|不是|並非|并非/iu.test(prefix)) return false;
+  if ((input.commerce?.entities??[]).some(e=>INACTIVE.has(e.status) &&
+      entityNames(e).some(name=>!!literalFactualSubject(quote,[name])))) return false;
+  // No vocabulary of industries/brands. Remove interrogative/facet scaffolding;
+  // what remains must name the topic, not merely ask "how much/in stock".
+  const content=quote.replace(/(?:請問|请问|請|请|一下|如何|怎樣|怎样|怎麼|怎么|使用|介紹|介绍|解釋|解释|什麼|什么|甚麼|幾錢|几钱|多少錢|多少钱|有冇貨|有無貨|有沒有貨|有没有货|庫存|库存|現貨|现货|功能|規格|规格|價格|价格|價錢|价钱|有咩|係咩|是|的|嘅|呢|嗎|吗)/gu, " ")
+    .replace(/\b(?:please|tell|me|about|explain|introduce|how|what|which|much|many|do|does|can|i|we|you|use|is|are|the|a|an|of|for|in|and|or|only|just|price|cost|features?|specs?|specifications?|stock|inventory|availability|available|details?|left)\b/giu," ")
+    .replace(/[^\p{L}\p{N}]/gu,"");
+  if(content.length<2 || !/^(?:請問|请问|請|请)?\s*(?:如何|怎樣|怎样|怎麼|怎么|介紹|介绍|解釋|解释|什麼是|什么是|甚麼是)|^(?:please\s+)?(?:how (?:do|does|can|to)\b|what is\b|explain\b|introduce\b|tell me about\b)/iu.test(quote))return false;
+  // Only discard identity-only unbound constraints. Material conditions must
+  // already be customer-owned; otherwise clarification preserves the unknown.
+  const sourceValue=(v:DecisionValue):boolean=>Array.isArray(v)?v.every(sourceValue):
+    v!==null&&typeof v==="object"?Object.values(v).every(sourceValue):
+    v!==null&&norm(quote).includes(norm(String(v)));
+  return Object.entries(demand.constraints).every(([key,value])=>
+    ["name","model","sku","subject"].includes(key) && typeof value==="string" && demand.subject_refs.includes(value) || sourceValue(value));
+}
+
+function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, proposed: CommerceSemanticDemand[]): CurrentFactualRequest {
+  const question = clean(input.question), frame = input.semantic!;
+  const missing: FactualRequestMissingEvidence[] = [];
+  const contexts: string[] = [];
+  const bindings: Array<SubjectBinding & {demand_id: string}> = [];
+  const privateLocators = new Map<string, string[]>();
+  const subjectAttempts = proposed.map(demand => currentTurnSubjectAttempt(input,demand,proposed));
+  // A local consumer view only: never mutate or relabel the accepted provider frame.
+  const boundProposals = proposed.map((demand,index) => subjectAttempts[index].kind === "proven"
+    ? {...demand,subject_refs:(subjectAttempts[index] as Extract<CurrentTurnSubjectAttempt,{kind:"proven"}>).proof.subjects}
+    : demand);
+  const explicitCurrentSubjects = unique(boundProposals.filter(demand => !sourceBoundOptionDiscovery(input,demand) &&
+    ["product", "policy", "unknown"].includes(demand.source_type) &&
+    (demand.subject_refs.length > 0 || proposedReferences(trustedFrame(input.semantic)).some(ref => literalFactualSubject(demand.source_quote, [ref]))) &&
+    (demand.source_type !== "policy" || demand.subject_refs.some(ref => !POLICY_FACET_LABEL.test(ref) && literalFactualSubject(demand.source_quote, [ref]))) &&
+    !!clean(demand.source_quote) && norm(question).includes(norm(demand.source_quote)))
+    .flatMap(demand => explicitCustomerSubjects(clean(demand.source_quote), unique([...customerSubjectHints(input), ...demand.subject_refs]))
+      .filter(subject => !explicitlyNegatesSubject(clean(demand.source_quote), subject))));
+  const demands = proposed.map((demand, index): CurrentFactualDemand => {
+    const id = `demand-${index + 1}`;
+    const sourceQuote = clean(demand.source_quote);
+    const quoteBound = !!sourceQuote && norm(question).includes(norm(sourceQuote));
+    const criteria = quoteBound ? resolveOptionCriteria(input,demand) : null;
+    const optionDiscovery = quoteBound && (Boolean(criteria) || sourceBoundOptionDiscovery(input,demand));
+    const sourceOwnedOptionQuestion = optionDiscovery && !criteria
+      ? sourceOwnedSingleOptionContext(input,demand) : null;
+    if (criteria) contexts.push(...criteria.context);
+    const ambiguity: CommerceSemanticAmbiguity = optionDiscovery ? clearAmbiguity() : {
+      is_ambiguous: demand.ambiguity.is_ambiguous,
+      reasons: [...demand.ambiguity.reasons], clarification_question: demand.ambiguity.clarification_question,
+    };
+    if (!quoteBound) {
+      ambiguity.is_ambiguous = true; ambiguity.reasons.push("source_quote_unbound");
+      missing.push({demand_id: id, reason: "source_quote_unbound"});
+    }
+    const subjectAttempt = subjectAttempts[index];
+    const proof = subjectAttempt.kind === "proven" ? subjectAttempt.proof : null;
+    const refs = optionDiscovery ? [] : demand.subject_refs.length ? demand.subject_refs : proof ? proof.subjects : demand.source_type === "product"
+      ? proposedReferences(trustedFrame(frame)) : [];
+    if (quoteBound && demand.source_type === "transaction") privateLocators.set(id,
+      refs.filter(ref => norm(sourceQuote).includes(norm(ref))));
+    let resolved = optionDiscovery
+      ? {bindings: [], question: criteria?.question ?? sourceOwnedOptionQuestion ?? sourceQuote, unresolved: false}
+      : quoteBound && subjectAttempt.kind === "unresolved"
+      ? {bindings:[],question:sourceQuote,unresolved:true}
+      : quoteBound
+      ? resolveDemandSubjects(input, demand, refs, proof ? proof.subjects : explicitCurrentSubjects)
+      : {bindings: [], question: clean(demand.question), unresolved: false};
+    const independent = quoteBound && subjectAttempt.kind !== "unresolved" && !optionDiscovery && independentSourceQuestion(input,demand);
+    const sourceFallback = independent && (resolved.unresolved || !resolved.bindings.length || demand.ambiguity.is_ambiguous ||
+      resolved.bindings.some(binding=>!binding.current && !literalFactualSubject(sourceQuote,[binding.subject])));
+    if (sourceFallback) {
+      // Re-project EVERY query field from the complete customer span. Never
+      // retain translated labels via question/facts/constraints after rejection.
+      const current = resolved.bindings.filter(binding=>binding.current &&
+        !!literalFactualSubject(sourceQuote,[binding.subject]));
+      resolved={bindings:current,question:sourceQuote,unresolved:false};
+      ambiguity.is_ambiguous=false; ambiguity.reasons=[]; ambiguity.clarification_question=null;
+    }
+    // A provider ambiguity not independently disproved remains pending; attempted
+    // bindings must not leak into otherwise valid demands or answer context.
+    if(demand.ambiguity.is_ambiguous && !optionDiscovery && !sourceFallback)
+      resolved={bindings:[],question:clean(demand.question),unresolved:false};
+    const located = resolved.bindings;
+    // Product/category discovery may intentionally have no specific item.
+    // Missing-reference ambiguity belongs to the semantic demand, not to a
+    // new rule that every product read must name a SKU before searching.
+    const unresolved = resolved.unresolved;
+    if (quoteBound && unresolved && !demand.ambiguity.is_ambiguous) {
+      ambiguity.is_ambiguous = true; ambiguity.reasons.push("subject_not_bound_to_customer_source");
+      missing.push({demand_id: id, reason: "subject_unresolved"});
+    }
+    if (demand.ambiguity.is_ambiguous && !optionDiscovery && !sourceFallback) missing.push({demand_id: id, reason: "semantic_ambiguity"});
+    if (quoteBound && demand.source_type === "transaction") missing.push({demand_id: id, reason: "live_transaction_unavailable"});
+    bindings.push(...located.map(binding => ({...binding, demand_id: id})));
+    if (["product", "policy", "unknown"].includes(demand.source_type)) contexts.push(...located.filter(binding => !binding.current && binding.customer_text).map(binding => clean(binding.customer_text)));
+    const subjects = unique(located.map(binding => binding.subject));
+    const correctedFacts = sourceFallback ? currentFacets(sourceQuote) : optionDiscovery
+      ? unique([...sourceBoundRequestedFacts(sourceQuote,demand.requested_facts),
+          "published merchant options matching customer criteria"])
+      : quoteBound
+      ? sourceBoundRequestedFacts(sourceQuote, demand.requested_facts)
+      : unique(demand.requested_facts);
+    const quotedFacets = currentFacets(sourceQuote);
+    const modelFacets = unique(demand.requested_facts.flatMap(fact =>
+      currentFacets(fact.replace(/_/gu, " "))));
+    const factConflict = quoteBound && !ambiguity.is_ambiguous && quotedFacets.length > 0 &&
+      (quotedFacets.some(fact => !modelFacets.includes(fact)) ||
+        modelFacets.some(fact => !quotedFacets.includes(fact)));
+    // Once the actual customer quote disproves a model's fact type, never
+    // retain the model's stale expanded question (e.g. price vs stock). Only
+    // add source-validated subjects absent from the original quote; a second
+    // synthetic question must not be allowed to revive an older SKU or field.
+    const answerQuestion = !criteria && factConflict
+      ? [subjects.filter(subject => !norm(sourceQuote).includes(norm(subject))).join("; "), sourceQuote]
+          .filter(Boolean).join(" ")
+      : resolved.question;
+    const result: CurrentFactualDemand = {
+      id, question: answerQuestion, source_quote: sourceQuote, subjects,
+      ...(proof && !unresolved ? {subject_binding_proof:proof} : {}),
+      subject_source_message_ids: criteria
+        ? unique([...criteria.criteria.scope.map(item => item.source_message_id), criteria.criteria.specification.source_message_id, input.source_message_id ?? ""])
+        : unique(located.map(binding => binding.source_message_id ?? "")),
+      source_type: demand.source_type, requested_facts: correctedFacts,
+      constraints: sourceFallback ? {} : mergeDecisionContext(subjectConstraints(subjects, input), criteria?.constraints ?? demand.constraints),
+      ...(criteria ? {option_criteria:criteria.criteria} : {}),
+      customer_correction: demand.customer_correction, explicit_negations: [...demand.explicit_negations], ambiguity,
+    };
+    // Explicit protected-writer access only. JSON prompts, query serialization,
+    // object spreads and public metadata must not inherit diagnostic details.
+    Object.defineProperty(result, "subject_resolution_evidence", {value:{
+      proposed_ref_count:refs.length,bound_ref_count:subjects.length,
+      source_quote_bound:quoteBound,source_wording_fallback:sourceFallback,
+    },enumerable:false});
+    return result;
+  });
+  // Excluding a transaction demand alone is insufficient when a model quotes
+  // the entire mixed message as a KB demand. Keep the request pending instead
+  // of forwarding the overlapping private clause or identifier to retrieval.
+  const transactions = demands.filter(demand => demand.source_type === "transaction" &&
+    !missing.some(item => item.demand_id === demand.id && item.reason === "source_quote_unbound"));
+  for (const demand of demands.filter(isKbDemand)) {
+    const overlaps = transactions.some(transaction => {
+      const a = norm(demand.source_quote), b = norm(transaction.source_quote);
+      return !!a && !!b && (a.includes(b) || b.includes(a)) || [...transaction.subjects, ...(privateLocators.get(transaction.id) ?? [])].some(subject =>
+        !demand.subjects.some(value => norm(value) === norm(subject)) &&
+        norm(JSON.stringify([demand.question, demand.source_quote, demand.subjects, demand.constraints,
+          demand.requested_facts, demand.explicit_negations])).includes(norm(subject)));
+    });
+    if (overlaps) {
+      demand.ambiguity.is_ambiguous = true;
+      demand.ambiguity.reasons.push("transaction_scope_overlap");
+      missing.push({demand_id: demand.id, reason: "transaction_scope_overlap"});
+    }
+  }
+  const boundDemands = demands.filter(demand => !missing.some(item => item.demand_id === demand.id && item.reason === "source_quote_unbound"));
+  const kbDemands = boundDemands.filter(isKbDemand);
+  const subjects = unique(kbDemands.flatMap(demand => demand.subjects));
+  const allSourceIds = unique(demands.flatMap(demand => demand.subject_source_message_ids));
+  const kbIds = new Set(kbDemands.map(demand => demand.id));
+  const kbBindings = [...new Map(bindings.filter(binding => kbIds.has(binding.demand_id)).map(binding =>
+    [JSON.stringify([norm(binding.subject), binding.source_message_id]), binding])).values()];
+  const currentSubjects = kbBindings.filter(binding => binding.current);
+  const priorSubjects = kbBindings.filter(binding => !binding.current);
+  const needsSubject = kbDemands.length > 0 && kbDemands.every(demand => demand.ambiguity.is_ambiguous);
+  // Preserve the entire original request for answer generation/verification;
+  // only the retrieval projection excludes guidance and private transactions.
+  const resolvedContext = unique(priorSubjects.map(binding => binding.subject));
+  const optionRequest = kbDemands.find(demand => demand.option_criteria);
+  const optionFollowup = optionRequest?.subject_source_message_ids.some(id => id !== input.source_message_id);
+  const answerRequest = kbDemands.length
+    ? [optionRequest?.question ?? question, resolvedContext.length ? `[Resolved subjects: ${resolvedContext.join("; ")}]` : null].filter(Boolean).join("\n") : null;
+  const request: CurrentFactualRequest = {
+    version: "current-factual-request-1", source_message_id: input.source_message_id ?? null,
+    original_question: input.question, interpretation_source: "semantic_demands",
+    applicable: kbDemands.length > 0, question, merchant_request: kbDemands.map(demand => demand.source_quote).join("; ") || null,
+    subject: subjects.length === 1 ? subjects[0] : null, subjects,
+    requested_facts: unique(kbDemands.flatMap(demand => demand.requested_facts)), query: null, answer_request: answerRequest,
+    resolution: subjects.length ? currentSubjects.length ? "explicit" : "follow_up" : needsSubject ? "unresolved" : optionFollowup ? "follow_up" : optionRequest ? "explicit" : "none",
+    subject_source_message_id: priorSubjects.length === 1 ? priorSubjects[0].source_message_id : currentSubjects.length === 1 ? currentSubjects[0].source_message_id : null,
+    subject_source_message_ids: allSourceIds, demands,
+    kb_required: kbDemands.length > 0, transaction_required: boundDemands.some(demand => demand.source_type === "transaction"),
+    unresolved_demand_ids: unique(missing.map(item => item.demand_id)), missing_evidence: missing,
+    // This flag records an explicit switch/correction marker. The source-bound
+    // subjects above establish focus even when a new name has no such marker.
+    topic_changed: TOPIC_BOUNDARY.test(question) || frame.customer_correction,
+    context_turns: unique(contexts), needs_subject_clarification: needsSubject,
+  };
+  if (request.applicable) request.query = serializeCurrentFactualQuery(input, request);
+  return request;
+}
+
+/** Shared legacy serializer. It retains typed, bounded customer requirements;
+ * a resolved current subject narrows state matching instead of appending every
+ * retained entity or an unrelated historical topic. */
+export function serializeCurrentFactualQuery(
+  input: ResolveCurrentFactualRequestInput, request: CurrentFactualRequest, forceContext = false,
+): string {
+  if (request.interpretation_source === "semantic_demands" && request.applicable) {
+    const demands = request.demands.filter(demand => isKbDemand(demand) && !demand.ambiguity.is_ambiguous &&
+      !request.missing_evidence.some(missing => missing.demand_id === demand.id && missing.reason === "source_quote_unbound"));
+    // Keep the complete request as the answer contract, while the retrieval
+    // projection contains only KB needs. No transaction identifier/history or
+    // declined general-guidance clause is appended merely to fill a query.
+    const query = JSON.stringify({questions: demands.map(demand => ({
+      question: demand.question, ...(demand.question !== demand.source_quote ? {customer_text: demand.source_quote} : {}), subjects: demand.subjects,
+      requested_facts: demand.requested_facts, source_type: demand.source_type,
+      ...(demand.source_type === "policy" ? {scope: "merchant_rules_and_subject_exceptions"} : {}),
+      ...(Object.keys(demand.constraints).length ? {constraints: demand.constraints} : {}),
+      ...(demand.explicit_negations.length ? {explicit_negations: demand.explicit_negations} : {}),
+    }))});
+    return demands.length ? assertFactualQueryBudget(query) : "";
+  }
+  if (request.needs_subject_clarification && !forceContext) {
+    const query = request.merchant_request ?? request.question;
+    return assertFactualQueryBudget(query);
+  }
+  const semantic = trustedFrame(input.semantic), state = input.commerce;
+  const scope = new Set(request.subjects.map(norm));
+  const semanticEntities = semantic?.entities.filter(entity => entity.confidence >= 0.62) ?? [];
+  const topic = request.subject ?? (!request.topic_changed && !scope.size ? semantic?.topic ?? state?.current_topic : null) ?? null;
+  const refs = new Set(semantic?.referents.filter(ref => ref.confidence >= 0.62 && ref.source !== "unknown").map(ref => norm(ref.ref)) ?? []);
+  const semanticSubjects = new Set(semanticEntities.flatMap(entity => [entity.entity_ref, entity.name, entity.model].map(norm)).filter(Boolean));
+  const active = (state?.entities ?? []).filter(entity => !INACTIVE.has(entity.status));
+  const identity = (entity: typeof active[number]) => entityNames(entity).map(norm);
+  const entities = active.filter(entity => scope.size ? identity(entity).some(value => scope.has(value))
+    : request.topic_changed ? false
+    : refs.size ? identity(entity).some(value => refs.has(value))
+    : semanticSubjects.size ? identity(entity).some(value => semanticSubjects.has(value)) || semanticSubjects.has(norm(entity.category))
+    : norm(entity.category) === norm(topic) || identity(entity).includes(norm(topic)));
+  const current = semanticEntities.filter(entity => {
+    const names = [entity.entity_ref, entity.name, entity.model].map(norm).filter(Boolean);
+    if ((state?.entities ?? []).some(prior => INACTIVE.has(prior.status) && identity(prior).some(value => names.includes(value)))) return false;
+    if (scope.size) return names.some(value => scope.has(value));
+    return !request.topic_changed || names.some(value => Boolean(literalFactualSubject(request.merchant_request ?? request.question, [value])));
+  });
+  const matches = (entity: typeof entities[number], next: typeof current[number]) =>
+    [next.entity_ref, next.name, next.model].map(norm).some(value => value && identity(entity).includes(value));
+  const readEntity = (entity: typeof entities[number]) => ({
+    subject: entity.model ?? entity.attributes.model ?? entity.attributes.product_name ?? entity.attributes.name ?? entity.category,
+    unit: typeof entity.attributes.unit === "string" ? clean(entity.attributes.unit) : null,
+    quantity: entity.attributes.quantity_basis === "customer_explicit" ? entity.quantity : null,
+    constraints: normalizeDecisionContext(entity.constraints), attributes: normalizeDecisionContext(entity.attributes.semantic_attributes),
+  });
+  const prior = entities.filter(entity => !current.some(next => matches(entity, next))).map(readEntity);
+  const projected = current.map(entity => {
+    const candidates = entities.filter(previous => matches(previous, entity));
+    const previous = candidates.length === 1 ? candidates[0] : null;
+    return {subject: entity.model ?? entity.name, unit: entity.unit ?? previous?.attributes.unit ?? null,
+      quantity: entity.quantity ?? (previous?.attributes.quantity_basis === "customer_explicit" ? previous.quantity : null),
+      constraints: mergeDecisionContext(previous?.constraints, entity.constraints),
+      attributes: mergeDecisionContext(previous?.attributes.semantic_attributes, entity.attributes)};
+  });
+  const needsContext = forceContext || prior.length > 0 || projected.some(entity =>
+    entity.quantity !== null || entity.unit !== null || Object.keys(entity.constraints).length || Object.keys(entity.attributes).length) ||
+    Boolean(semantic?.explicit_negations.length) || (!request.subject && Boolean(topic)) ||
+    request.requested_facts.some(fact => !currentFacets(fact.replace(/_/gu, " ")).length && !norm(request.question).includes(norm(fact)));
+  if (!needsContext) {
+    const query = request.answer_request ?? request.merchant_request ?? request.question;
+    return assertFactualQueryBudget(query);
+  }
+  const context = {
+    ...(request.resolution === "follow_up" && request.subject ? {resolved_subject: request.subject} : {}),
+    question: request.merchant_request ?? request.question,
+    topic: topic ? clean(topic) : null,
+    requested_facts: request.requested_facts,
+    explicit_negations: semantic?.explicit_negations ?? [],
+    current: projected, prior,
+  };
+  const query = JSON.stringify(context);
+  return assertFactualQueryBudget(query);
+}
+
+/** Matches the existing adapter/admission budgets before any paid dispatch. */
+export function assertFactualQueryBudget(query: string): string {
+  if (query.length > 1000 || new TextEncoder().encode(query).length > 2048) throw new DecisionContextLimitError();
+  return query;
+}
+
+function resolveLegacyCurrentFactualRequest(input: ResolveCurrentFactualRequestInput): CurrentFactualRequest {
+  const question = clean(input.question), history = input.history ?? [];
+  const rows = semanticRows(history), semantic = trustedFrame(input.semantic);
+  const decision = input.request_decision ?? resolveCustomerRequestDecision(question, input.semantic ?? null,
+    rows.map(row => ({...row, role: row.role ?? "", content: row.content ?? ""})));
+  const turn = classifyCanonicalConversationTurn(question, rows);
+  const topicChanged = TOPIC_BOUNDARY.test(question) || turn.topic_action === "SWITCH" || turn.topic_action === "CORRECT";
+  const empty: CurrentFactualRequest = {version: "current-factual-request-1", source_message_id: input.source_message_id ?? null,
+    original_question: input.question, interpretation_source: "legacy_compatibility", applicable: false, question,
+    merchant_request: null, subject: null, subjects: [], requested_facts: [], query: null, answer_request: null,
+    resolution: "none", subject_source_message_id: null, subject_source_message_ids: [], demands: [], kb_required: false,
+    transaction_required: false, unresolved_demand_ids: [], missing_evidence: [],
+    topic_changed: topicChanged, context_turns: [], needs_subject_clarification: false};
+  const transform = ["CONVERSATION_MEMORY", "SIMPLIFY", "REPHRASE", "TRANSLATE", "SUMMARIZE", "TRIVIAL", "EXPLICIT_HANDOFF"].includes(turn.operation);
+  if (!question || decision.kind === "guidance" || isCurrentRequirementsRecap(question) || isPersonalOrderStatusRequest(question) ||
+    transform && !(semantic?.operation === "ASK_FACT" && decision.kind === "mixed")) return empty;
+  const merchant = decision.kind === "mixed" && decision.merchant_request ? clean(decision.merchant_request) : question;
+  const literalFacts = currentFacets(merchant);
+  const hints = literalHints(input);
+  const located = locateSubjects(merchant, hints);
+  const semanticRead = Boolean(semantic && (semantic.operation === "ASK_FACT" || semantic.requested_facts.length ||
+    ["explore_options", "recommend_options", "compare_options"].includes(semantic.intent)));
+  const dependentFactual = POINTER.test(merchant) &&
+    ["PRONOUN_OR_ELLIPSIS", "FOLLOW_UP_FACTUAL"].includes(turn.operation);
+  // Broad assessment language can describe the customer's draft or supplied
+  // requirements. Without a located product, dependency or semantic read,
+  // "assess" alone must not force a product lookup/clarification. Likewise a
+  // correction may locate a subject but is not itself a factual speech act.
+  const literalRead = literalFacts.some(fact => fact !== "suitability" || located.subjects.length > 0 || dependentFactual);
+  if (!literalRead && !factualSubject(merchant, false) && !dependentFactual && !semanticRead &&
+    !["merchant_facts", "mixed"].includes(decision.kind)) return empty;
+  const request: CurrentFactualRequest = {...empty, applicable: true, merchant_request: merchant,
+    requested_facts: reconcileFacets(merchant, semantic), subjects: located.subjects,
+    subject: located.subjects.length === 1 ? located.subjects[0] : null,
+    resolution: located.subjects.length ? "explicit" : "unresolved", answer_request: merchant};
+  const inactive = new Set((input.commerce?.entities ?? []).filter(entity => INACTIVE.has(entity.status)).flatMap(entityNames).map(norm));
+  const semanticRefs = semanticRead ? proposedReferences(semantic) : [];
+  const needsSubject = !located.subjects.length && (POINTER.test(merchant) ||
+    literalFacts.some(fact => fact !== "policy") || semanticRefs.length > 0);
+  // An explicit current subject always wins. Only dependent questions search
+  // history, and a changed/ambiguous topic never revives an older candidate.
+  if (needsSubject && !topicChanged && !PLURAL_POINTER.test(merchant)) {
+    let skippedCurrent = false;
+    let historyBoundary = false;
+    // Validated semantic dependencies are not restricted to price/stock
+    // wording. For any requested fact, the proposed reference still needs an
+    // actual customer mention; no model-only entity can manufacture a target.
+    const semanticBindings = semanticRefs.map(ref => bindSemanticSubject(ref, input));
+    const semanticBinding = semanticBindings.length === 1 ? semanticBindings[0] : null;
+    if (semanticBinding) {
+      request.subject = semanticBinding.subject; request.subjects = [semanticBinding.subject];
+      request.resolution = semanticBinding.current ? "explicit" : "follow_up";
+      request.subject_source_message_id = semanticBinding.source_message_id;
+      request.context_turns = semanticBinding.current || !semanticBinding.customer_text ? [] : [clean(semanticBinding.customer_text)];
+      request.answer_request = `${semanticBinding.subject} ${merchant}`;
+    } else if (semanticBindings.length > 1) historyBoundary = true;
+    // Preserve the existing source-bound generic service/policy locator. Its
+    // cited name must match a customer turn; the old answer is never copied.
+    // This also handles natural first-turn wording that does not fit a product
+    // grammar, and narrows descriptive scheme names via the existing anchor.
+    const grounded = resolveFactualFollowup(merchant, rows.slice(0, 32));
+    if (!request.subject && !historyBoundary && grounded && validSubject(grounded.subject) && !POINTER.test(grounded.subject)) {
+      const prior = locateSubjects(grounded.prior_question, unique([...hints, grounded.subject]));
+      historyBoundary = inactive.has(norm(grounded.subject)) || prior.subjects.length > 1;
+      if (!historyBoundary) {
+        request.subject = grounded.subject; request.subjects = [grounded.subject];
+        request.resolution = "follow_up"; request.subject_source_message_id = grounded.source_message_id;
+        request.context_turns = [clean(grounded.prior_question)];
+        request.answer_request = `${grounded.subject} ${merchant}`;
+      }
+    }
+    for (const row of request.subject || historyBoundary ? [] : history.slice(0, 32)) {
+      if (!CUSTOMER.has(String(row.role ?? "").toLowerCase())) continue;
+      const text = clean(row.content);
+      if (!text || text === "__THINKING__") continue;
+      if (!skippedCurrent && text === question) { skippedCurrent = true; continue; }
+      if (CONTROL_ONLY.test(text)) continue;
+      if (LIFECYCLE_BOUNDARY.test(text) && !/(?:policy|政策|\bif\b|如果|唔好取消|不要取消|do not cancel|don't cancel)/iu.test(text)) { historyBoundary = true; break; }
+      const prior = locateSubjects(text, hints);
+      if (prior.subjects.length === 1 && !inactive.has(norm(prior.subjects[0]))) {
+        request.subject = prior.subjects[0]; request.subjects = prior.subjects;
+        request.resolution = "follow_up"; request.subject_source_message_id = row.id ?? null;
+        request.context_turns = [text];
+        request.answer_request = `${prior.reference ?? request.subject} ${merchant}`;
+        break;
+      }
+      if (prior.subjects.length || TOPIC_BOUNDARY.test(text)) { historyBoundary = true; break; }
+      // Skip only another subject-less factual follow-up, never an unrelated
+      // customer topic or unknown statement to reach a convenient old item.
+      if (!currentFacets(text).length && !POINTER.test(text)) { historyBoundary = true; break; }
+    }
+  }
+  if(needsSubject&&!request.subject&&!topicChanged&&currentFacets(merchant).length>0&&
+     !TOPIC_BOUNDARY.test(merchant)&&!LIFECYCLE_BOUNDARY.test(merchant)&&
+     !EXPLICIT_HISTORY_REFERENCE.test(merchant)){
+    const prior=citedAssistantReadTarget(input);
+    if(prior){
+      request.subject=prior.subject;request.subjects=[prior.subject];
+      request.subject_source_message_id=prior.source_message_id;
+      request.resolution="follow_up";request.answer_request=prior.subject+" "+merchant;
+    }
+  }
+  request.needs_subject_clarification = needsSubject && !request.subject;
+  request.query = serializeCurrentFactualQuery(input, request);
+  return request;
+}
+
+export function resolveCurrentFactualRequest(input: ResolveCurrentFactualRequestInput): CurrentFactualRequest {
+  const pending=resolveVerifiedClarificationContinuation(input);
+  if(pending)return pending;
+  if (input.semantic && input.semantic.confidence >= .62 &&
+    (input.semantic.demands?.length || input.request_decision?.semantic_demands !== undefined)) {
+    const decision = input.request_decision?.semantic_demands !== undefined ? input.request_decision :
+      resolveCustomerRequestDecision(input.question, input.semantic,
+        (input.history ?? []).map(row => ({...row, role: row.role ?? "", content: row.content ?? ""})));
+    const frame = applyCustomerRequestDecision(input.semantic, decision);
+    const proposed = (input.semantic.demands ?? []).filter(demand => !(decision.excluded_lookup_quotes ?? []).includes(demand.source_quote));
+    return resolveSemanticDemands({...input, semantic: frame, request_decision: decision}, proposed);
+  }
+  // Old/manual callers retain their bounded behavior. Their interpretation is
+  // explicitly marked compatibility data; it must not masquerade as a newly
+  // source-validated semantic decomposition of every possible customer need.
+  const request = resolveLegacyCurrentFactualRequest(input);
+  request.kb_required = request.applicable;
+  request.transaction_required = isPersonalOrderStatusRequest(input.question);
+  request.subject_source_message_ids = unique([
+    request.subject_source_message_id ?? "",
+    ...(request.resolution === "explicit" && request.subjects.length ? [input.source_message_id ?? ""] : []),
+  ]);
+  const sourceType: FactualDemandSourceType = request.transaction_required ? "transaction" : request.applicable ? "unknown" : "general";
+  request.demands = [{id: "demand-1", question: request.question, source_quote: request.original_question,
+    subjects: request.subjects, subject_source_message_ids: request.subject_source_message_ids,
+    source_type: sourceType, requested_facts: request.requested_facts,
+    constraints: subjectConstraints(request.subjects, input), customer_correction: input.semantic?.customer_correction ?? false,
+    explicit_negations: [...(input.semantic?.explicit_negations ?? [])],
+    ambiguity: request.needs_subject_clarification
+      ? {is_ambiguous: true, reasons: ["subject_not_bound_to_customer_source"], clarification_question: null}
+      : clearAmbiguity()}];
+  if (request.transaction_required) request.missing_evidence.push({demand_id: "demand-1", reason: "live_transaction_unavailable"});
+  if (request.needs_subject_clarification) request.missing_evidence.push({demand_id: "demand-1", reason: "subject_unresolved"});
+  request.unresolved_demand_ids = unique(request.missing_evidence.map(item => item.demand_id));
+  if (request.applicable && request.answer_request && request.merchant_request !== request.question) {
+    request.answer_request = [request.question, request.subject && request.resolution === "follow_up" ? `[Resolved subject: ${request.subject}]` : null].filter(Boolean).join("\n");
+  }
+  return request;
+}
