@@ -2583,6 +2583,27 @@ function v287Case(raw=v287B.response.body,text='如何使用LINE快速登入？'
  const history=v287B.history.map(r=>({...r,id:r.message_id,conversation_id:ticket,is_recalled:false,metadata:{}}));
  return task3cManagedCase(text,'LINE 快速登入：在後台開啟登入設定並保存。','資料列出：在後台開啟登入設定並保存。','general','50',{previous,history,semantic:JSON.parse(raw),semanticRaw:raw});
 }
+function assertV287Receipts(f, expectedLength) {
+ const rows=f.tables.rag_trace.map(r=>r.retrieved_chunks).filter(Boolean);
+ const forbidden=['如何使用LINE快速登入？',...v287B.history.map(r=>r.content).filter(Boolean)];
+ for(const row of rows.filter(r=>r.decision_receipt)) {
+  const receipt=row.decision_receipt, serialized=JSON.stringify(receipt);
+  for(const text of forbidden)assert(!serialized.includes(text),'decision receipt must exclude customer/history text');
+  assert.deepEqual(Object.keys(receipt.source_binding).sort(),['company_id','conversation_id','runtime_source_identity','source_message_id','state_revision'].sort());
+ }
+ const gates=rows.filter(r=>r.stage==='semantic_validation');
+ assert.equal(gates.length,1,'exactly one semantic validation gate');
+ assert.equal(gates[0].decision_receipt.outcome,'accepted');
+ const diagnostics=rows.filter(r=>r.stage==='semantic_normalization');
+ assert.equal(diagnostics.length,expectedLength>200?1:0,'normalization is conditional diagnostic, not a gate');
+ if(expectedLength>200){
+  const row=diagnostics[0];assert.equal(row.decision_receipt,undefined);assert.equal(row.payload.capture_state,'CAPTURED');
+  const payload=JSON.parse(row.payload.body);
+  assert.deepEqual(payload,{contract:'c3-demand-reason-normalization-v1',normalization_receipts:[{field_path:'demands[0].ambiguity.reasons[0]',demand_index:0,reason_index:0,normalized_length:expectedLength,limit:200,stored_length:200,action:'clamped'}]});
+  for(const text of [...forbidden,'source_content','latest','recent_history'])assert(!row.payload.body.includes(text));
+ }
+ return rows;
+}
 test('V287 B original captured output and Memory4 commerce1 reach one tenant50 KB through actual handler',async()=>{
  assert.equal(hash(v287B.response.body),v287B.response.sha256);
  assert.equal(v287B.states.memory.revision,4);assert.equal(v287B.states.commerce.revision,1);
@@ -2592,6 +2613,7 @@ test('V287 B original captured output and Memory4 commerce1 reach one tenant50 K
  assert.equal(f.commits.length,1);assert.equal(f.commits[0].content,'資料列出：在後台開啟登入設定並保存。');
  assert.equal(f.commits[0].metadata.b2_commit_source,'commit_ai_reply_tx');
  assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,3);
+ assertV287Receipts(f,276);
  const evidence=JSON.stringify(f.tables.rag_trace);assert(evidence.includes('normalization_receipts'));assert(evidence.includes('normalized_length'));assert(evidence.includes('276'));
  assert(!JSON.stringify(f.commits[0].metadata).includes('normalization_receipts'));
  assert.equal(hash(v287B.response.body),v287B.response.sha256);
@@ -2606,7 +2628,7 @@ for(const [name,mutate] of [
  ['quote1601',d=>d.source_quote='x'.repeat(1601)],
  ['unknown field',d=>d.ambiguity.extra=true],
 ])test('V287 B strict negative '+name,async()=>{const raw=JSON.parse(v287B.response.body);mutate(raw.demands[0]);const f=v287Case(JSON.stringify(raw));await f.run();assert.equal(f.requests.filter(x=>x.url.includes('/rag/context-search')).length,0);assert.equal(f.commits[0].metadata.source_error_code,'LLM_INVALID_OUTPUT');});
-for(const reason of ['x'.repeat(200),'x'.repeat(201),'x'.repeat(6000),'㍿'.repeat(51)])test('V287 B reason normalization length '+reason.length,async()=>{const raw=JSON.parse(v287B.response.body);raw.demands[0].ambiguity.reasons=[reason];const f=v287Case(JSON.stringify(raw));await f.run();assert.equal(f.requests.filter(x=>x.url.includes('/rag/context-search')).length,1);assert.equal(f.commits[0].metadata.degraded,undefined);});
+for(const reason of ['x'.repeat(200),'x'.repeat(201),'x'.repeat(6000),'㍿'.repeat(51)])test('V287 B reason normalization length '+reason.length,async()=>{const raw=JSON.parse(v287B.response.body);raw.demands[0].ambiguity.reasons=[reason];const f=v287Case(JSON.stringify(raw));await f.run();assert.equal(f.requests.filter(x=>x.url.includes('/rag/context-search')).length,1);assert.equal(f.commits[0].metadata.degraded,undefined);assertV287Receipts(f,reason.normalize('NFKC').length);});
 test('V287 B genuine ambiguous pointer remains clarification with history',async()=>{
  const raw=JSON.parse(v287B.response.body);raw.demands[0].question='Which one?';raw.demands[0].source_quote='嗰個呢?';raw.demands[0].ambiguity.clarification_question='你指邊個產品？';
  const f=v287Case(JSON.stringify(raw),'嗰個呢？');await f.run();assert.equal(f.requests.filter(x=>x.url.includes('/rag/context-search')).length,0);assert.equal(f.commits.length,1);assert.notEqual(f.commits[0].metadata.degraded,true);
@@ -2623,4 +2645,13 @@ test('V287 B numeric receipts and provider hints preserve raw and strict default
  }
  const schema=mod.COMMERCE_SEMANTIC_PROVIDER_SCHEMA.properties.demands.items.properties.ambiguity.properties;
  assert.equal(schema.reasons.maxItems,12);assert.match(schema.reasons.description,/200/);assert.equal(schema.reasons.items.maxLength,undefined);assert.match(schema.clarification_question.description,/400/);
+});
+
+test('V287 B sensitive raw snapshot withheld while numeric normalization remains captured',async()=>{
+ const raw=JSON.parse(v287B.response.body);raw.demands[0].ambiguity.reasons=['synthetic@example.test '+ 'x'.repeat(220)];
+ const f=v287Case(JSON.stringify(raw));await f.run();
+ assert.equal(f.requests.filter(x=>x.url.includes('/rag/context-search')).length,1);
+ const rows=assertV287Receipts(f,raw.demands[0].ambiguity.reasons[0].length);
+ const accepted=rows.find(r=>r.stage==='semantic_accepted');assert(accepted);
+ assert.equal(accepted.payload.capture_state,'WITHHELD_SENSITIVE');assert.equal(accepted.payload.body,null);
 });

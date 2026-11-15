@@ -1560,7 +1560,7 @@
     "tests/c3-widget-live-auth/semantic-provider-transport.test.mjs": "8888445cd689d6b76bae1a35b7720f4922b514e0bbc59c84d9f54a9b5ba5e09a",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "59e4083523f90522fc81380e11fd2066be2f598e96be16749f6e29483859bda2",
     "tests/c3-widget-live-auth/semantic-bounds.test.mjs": "a764ae1384288498ac27b6f397687b92328e7cfd394943f51d627854fe9d954f",
-    "tests/emergency-p0/chain.test.mjs": "6f8027a39c05633f0f3b4e4e001c7a11ba40d1c76cd0148c758f4d5617188c00",
+    "tests/emergency-p0/chain.test.mjs": "0db3dff9b6a81c56beb568db7c666591148440b7777a48913ce4074fbbebef3c",
     "supabase/functions/_shared/f13-runtime-recovery.test.ts": "bed0bbe205fdf9530907158e44f026cd0dc2732813fda43d70fe6f70ce3d879f",
     "supabase/functions/_shared/vertex-generation-config.ts": "5e691ab14d0b80af7f07c79da1810eabcfdde4fc00f03bfe4a101b177a86a2d1",
     "supabase/functions/_shared/commerce-state-authority.ts": "f58a50eb9c24c210e1fea267da131e831dc227583b47a2461d3ad7b05b2f45dc",
@@ -1578,7 +1578,7 @@
     "supabase/functions/_shared/current-factual-request.ts": "87e76f3a2c63a88ac0168d292766eaa5d2c4c8fd5876c359e5025431ca746bdc",
     "supabase/functions/_shared/factual-request-context.ts": "c4c379524c51c1befbe69bb16e8ae2e78d38a35ac4d28f72d1c7c7c0c374a53d",
     "supabase/functions/_shared/llm-router.ts": "194d2ac22d36afbd4db087afd09f7f661e33062f3974c4015d69461d224e391b",
-    "supabase/functions/_shared/prepare-semantic-request.ts": "0f624953e1e5cfb1d1386161168278b704866521de778b006f74d1a438e08cb0",
+    "supabase/functions/_shared/prepare-semantic-request.ts": "c78946723109ab50e64ce675953f61c29a886b86753c4e7f8dd6a543cff677ab",
     "supabase/functions/agent-assist/index.ts": "726233d024794e2432e669005e007a1ecb2176079bad33b7465dc10769bea9c6",
     "supabase/functions/_shared/protected-pipeline-evidence.ts": "f73e131cb3a53026ee1336917355255690683d54a39423901f27cd4403aca9e9",
     "tests/emergency-p0/protected-evidence.test.ts": "50df4a5f9176c19659dafb850b7d245a3697be8c3e079dac4326b84df5937683",
@@ -1662,7 +1662,7 @@
     "supabase/functions/_shared/kb-client.ts": "873f47282fd302cc5c8fca10d9d6ac37bc212b209edd563748a37d246bc3b82e",
     "tests/console-navigation/kb-binding-dev.test.mjs": "753f85ec67b8ebd52459c0502af14441e6da4533d25f6e01b475e5224720a685",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "87992e177dd8f89b585088345668df4a672b3c83247c707c099fe7883e3e2f55",
-    "tests/emergency-p0/chain.test.mjs": "6f8027a39c05633f0f3b4e4e001c7a11ba40d1c76cd0148c758f4d5617188c00",
+    "tests/emergency-p0/chain.test.mjs": "0db3dff9b6a81c56beb568db7c666591148440b7777a48913ce4074fbbebef3c",
     "src/routeTree.gen.ts": "f9722928ec193944bdb1679d15780f6c921ea5fbb900bcafce6380ae366323ef",
     "vite.config.ts": "0b13b6f2a2a7b13ecfbe3654013c8e1d86ca57d296c22e8910770d96e23e50f3",
     "supabase/migrations/20261111183000_task3c_dev_kb_bootstrap.sql": "558aa244c905a62d1b8815c3df4aa4d9a0aad74caa538611d98d19000a26add9",
@@ -1697,7 +1697,7 @@
     "tests/c3-widget-live-auth/fixtures/v286-line-captured.json": "1980dab8c1dd8ba280fb88fe5e0f9734e8bf89b7bb86a4eeeaf48eee5d342f20",
     "tests/c3-widget-live-auth/fixtures/v286-reviewer-instruction.txt": "797904420cab73c4e21ad329021c378c96686c6fc73c10c621afe6a9df86a481",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "2df081954c3105c166d58b13f6d40b08aa46ca1c696f92fd8d2e92f1e5569f19",
-    "supabase/functions/_shared/prepare-semantic-request.ts": "0f624953e1e5cfb1d1386161168278b704866521de778b006f74d1a438e08cb0",
+    "supabase/functions/_shared/prepare-semantic-request.ts": "c78946723109ab50e64ce675953f61c29a886b86753c4e7f8dd6a543cff677ab",
     "tests/c3-widget-live-auth/fixtures/v287-b-captured.json": "447a802b325981b9110297e61d2fa1128112559791a36a44179654a64fbaa847"
   }
 }

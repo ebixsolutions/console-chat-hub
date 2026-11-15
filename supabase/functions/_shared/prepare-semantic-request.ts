@@ -137,7 +137,7 @@ export async function prepareSemanticRequest(
     consumer_result:"FRAME_ACCEPTED",
     input_state:{commerce:commerce ? {revision:commerceRow.revision,source_message_id:commerceRow.source_message_id}:null,
       memory:memory ? {revision:memoryRow.revision,source_message_id:memoryRow.source_message_id}:null}});
-  if (semantic.success_evidence?.normalization_receipts?.length) await writeProtectedPipelineEvidence(client, input, "semantic_validation", {
+  if (semantic.success_evidence?.normalization_receipts?.length) await writeProtectedPipelineEvidence(client, {company_id:input.company_id,conversation_id:input.conversation_id,source_message_id:input.source_message_id}, "semantic_normalization", {
     contract:"c3-demand-reason-normalization-v1", normalization_receipts:semantic.success_evidence.normalization_receipts,
   });
   // Raw capture is private and must never escape through a caller result.
