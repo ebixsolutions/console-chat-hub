@@ -1,0 +1,211 @@
+{
+  "response": {
+    "body": "{\"context_encoding\":\"semantic_demands_v8\",\"operation\":\"NO_STATE_CHANGE\",\"confidence\":0.62,\"demands\":[{\"question\":\"How to use LINE quick login?\",\"source_quote\":\"如何使用LINE快速登入?\",\"subject_refs\":[],\"source_type\":\"unknown\",\"requested_facts\":[],\"customer_correction\":false,\"explicit_negations\":[],\"ambiguity\":{\"is_ambiguous\":true,\"reasons\":[\"The user is asking a question that has been asked and clarified before. The previous clarification question was about which application or website the user wants to use LINE quick login on. The user is repeating the same question without providing the requested clarification.\"],\"clarification_question\":\"您是指在哪個應用程式或網站上使用LINE快速登入呢?\"},\"constraints\":{\"containers\":[],\"strings\":[],\"numbers\":[],\"booleans\":[]}}],\"containers\":[],\"strings\":[],\"numbers\":[],\"booleans\":[]}",
+    "bytes": 857,
+    "sha256": "006816fe6669feaa0273eb3e904ec312a3870ad14f3ab339898df9e964a1e9f7",
+    "capture_state": "CAPTURED",
+    "capture_origin": "SEMANTIC_MODEL_TEXT"
+  },
+  "history": [
+    {
+      "message_id": "e27a6a4b-babe-4f23-9017-3c71da98a9a0",
+      "created_at": "2026-11-13T02:12:08.705852+00:00",
+      "role": "visitor",
+      "content": "如何使用LINE快速登入?"
+    },
+    {
+      "message_id": "f1f4661b-8147-4117-9255-57ae084c177b",
+      "created_at": "2026-11-13T02:12:23.462334+00:00",
+      "role": "assistant",
+      "content": "您想了解如何使用LINE快速登入嗎?請問您是指在哪個應用程式或網站上使用LINE快速登入呢?"
+    },
+    {
+      "message_id": "35de0e6a-9483-4afa-a775-54f0a453dda8",
+      "created_at": "2026-11-13T08:21:51.711574+00:00",
+      "role": "visitor",
+      "content": "如何使用LINE快速登入?"
+    },
+    {
+      "message_id": "906855ac-a3c5-4722-b33e-5820f04e24c5",
+      "created_at": "2026-11-13T08:22:09.800889+00:00",
+      "role": "assistant",
+      "content": "你指邊個現行產品或型號?"
+    }
+  ],
+  "context": {
+    "revision": 1,
+    "state": {
+      "current_topic": null,
+      "entities": [],
+      "customer_constraints": {},
+      "delivery": {
+        "confirmed": false
+      },
+      "installation": {
+        "items": [],
+        "pending_checks": [],
+        "site_conditions": {}
+      }
+    },
+    "current_customer_facts": [],
+    "memory_context": {
+      "revision": 4,
+      "current_goal": "如何使用LINE快速登入?",
+      "current_goal_source_message_id": "35de0e6a-9483-4afa-a775-54f0a453dda8",
+      "current_topic": "如何使用LINE快速登入?",
+      "current_topic_source_message_id": "35de0e6a-9483-4afa-a775-54f0a453dda8",
+      "latest_corrections": [],
+      "open_questions": [],
+      "question_lifecycle": [
+        {
+          "text": "如何使用LINE快速登入?",
+          "status": "resolved",
+          "entity_id": null,
+          "resolution": "customer_guidance",
+          "source_message_id": "e27a6a4b-babe-4f23-9017-3c71da98a9a0",
+          "resolution_source_message_id": "f1f4661b-8147-4117-9255-57ae084c177b"
+        },
+        {
+          "text": "如何使用LINE快速登入?",
+          "status": "resolved",
+          "entity_id": null,
+          "resolution": "product_referent_clarification",
+          "source_message_id": "35de0e6a-9483-4afa-a775-54f0a453dda8",
+          "resolution_source_message_id": "906855ac-a3c5-4722-b33e-5820f04e24c5"
+        }
+      ],
+      "factual_read_anchors": [
+        {
+          "source_message_id": "35de0e6a-9483-4afa-a775-54f0a453dda8",
+          "created_at": "2026-11-13T08:21:51.711574+00:00",
+          "customer_text": "如何使用LINE快速登入?",
+          "subjects": [],
+          "subject_source_message_ids": [],
+          "requested_facts": []
+        }
+      ],
+      "grounded_reference_lineage": []
+    }
+  },
+  "states": {
+    "memory": {
+      "memory": {
+        "version": "conversation-memory-1.0.0",
+        "company_id": "bdb07806-be44-499c-bfcb-b08afac2d213",
+        "updated_at": "2026-11-13T08:21:51.711574+00:00",
+        "current_goal": "如何使用LINE快速登入？",
+        "prior_topics": [],
+        "current_topic": "如何使用LINE快速登入？",
+        "open_questions": [],
+        "active_entities": [],
+        "conversation_id": "4d4d9601-4e09-5ca7-abca-7c1682e878bf",
+        "current_regions": [],
+        "memory_revision": 4,
+        "pending_actions": [],
+        "historical_facts": [],
+        "source_message_id": "35de0e6a-9483-4afa-a775-54f0a453dda8",
+        "updated_from_turn": 2,
+        "active_constraints": [],
+        "latest_corrections": [],
+        "question_lifecycle": [
+          {
+            "text": "如何使用LINE快速登入?",
+            "status": "resolved",
+            "entity_id": null,
+            "resolution": "customer_guidance",
+            "source_message_id": "e27a6a4b-babe-4f23-9017-3c71da98a9a0",
+            "resolution_source_message_id": "f1f4661b-8147-4117-9255-57ae084c177b"
+          },
+          {
+            "text": "如何使用LINE快速登入?",
+            "status": "resolved",
+            "entity_id": null,
+            "resolution": "product_referent_clarification",
+            "source_message_id": "35de0e6a-9483-4afa-a775-54f0a453dda8",
+            "resolution_source_message_id": "906855ac-a3c5-4722-b33e-5820f04e24c5"
+          }
+        ],
+        "transaction_summary": {
+          "order": "none",
+          "payment": "none",
+          "delivery": "not_confirmed",
+          "quotation": "none",
+          "installation": "unknown"
+        },
+        "customer_preferences": [],
+        "factual_read_anchors": [
+          {
+            "subjects": [],
+            "created_at": "2026-11-13T08:21:51.711574+00:00",
+            "customer_text": "如何使用LINE快速登入?",
+            "requested_facts": [],
+            "source_message_id": "35de0e6a-9483-4afa-a775-54f0a453dda8",
+            "subject_source_message_ids": []
+          }
+        ],
+        "current_customer_facts": [],
+        "handoff_relevant_state": {
+          "current_goal": "如何使用LINE快速登入？",
+          "open_questions": [],
+          "pending_actions": [],
+          "active_entity_ids": []
+        },
+        "cancelled_or_superseded": [],
+        "commerce_state_revision": 1,
+        "grounded_reference_lineage": [],
+        "current_goal_source_message_id": "35de0e6a-9483-4afa-a775-54f0a453dda8",
+        "current_topic_source_message_id": "35de0e6a-9483-4afa-a775-54f0a453dda8"
+      },
+      "revision": 4,
+      "company_id": "bdb07806-be44-499c-bfcb-b08afac2d213",
+      "created_at": "2026-11-13T02:12:19.250261+00:00",
+      "updated_at": "2026-11-13T08:22:12.207244+00:00",
+      "memory_hash": "f0bdd286708a8d9b2755399d8a8be7c29c6f276333737c3dd4b61045b45f925a",
+      "conversation_id": "4d4d9601-4e09-5ca7-abca-7c1682e878bf",
+      "source_message_id": "35de0e6a-9483-4afa-a775-54f0a453dda8",
+      "updated_from_turn": 2,
+      "markdown_projection": "### Current Goal\n如何使用LINE快速登入？\n\n### Active Entities\n- —\n\n### Latest Corrections\n- —\n\n### Current Customer Facts\n- —\n\n### Transaction State\n- Quotation: none\n- Order: none\n- Payment: none\n- Delivery: not_confirmed\n- Installation: unknown\n\n### Open Questions\n- —\n\n### Pending Actions\n- —\n\n### Historical / Superseded\n- —",
+      "commerce_state_revision": 1
+    },
+    "commerce": {
+      "state": {
+        "quotes": [],
+        "version": "commerce-state-1.0.0",
+        "delivery": {
+          "confirmed": false
+        },
+        "entities": [],
+        "language": "zh-TW",
+        "metadata": {},
+        "conversion": {
+          "funnel_stage": "discovery",
+          "order_status": "none",
+          "payment_status": "none",
+          "next_best_action": null,
+          "quotation_status": "none",
+          "cancelled_entity_ids": [],
+          "confirmed_entity_ids": [],
+          "tentative_entity_ids": []
+        },
+        "installation": {
+          "items": [],
+          "pending_checks": [],
+          "site_conditions": {}
+        },
+        "current_topic": null,
+        "current_intent": null,
+        "current_industry": null,
+        "unresolved_items": [],
+        "latest_corrections": [],
+        "customer_constraints": {}
+      },
+      "revision": 1,
+      "company_id": "bdb07806-be44-499c-bfcb-b08afac2d213",
+      "created_at": "2026-11-13T02:12:18.667791+00:00",
+      "state_hash": "08fd16cc235e93eae37c1cba38222618e43d63c694f8ced72ce655c4396e34db",
+      "updated_at": "2026-11-13T02:12:18.667791+00:00",
+      "conversation_id": "4d4d9601-4e09-5ca7-abca-7c1682e878bf",
+      "source_message_id": "e27a6a4b-babe-4f23-9017-3c71da98a9a0"
+    }
+  }
+}

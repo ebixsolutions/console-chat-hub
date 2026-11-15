@@ -713,7 +713,7 @@ orderSemanticTransport(COMMERCE_SEMANTIC_PROVIDER_V5_SCHEMA);
 const semanticDemandFixedSchema = structuredClone(semanticDemandSchema);
 delete (semanticDemandFixedSchema.properties as Record<string,unknown>).constraints;
 semanticDemandFixedSchema.required = semanticDemandFixedSchema.required.filter(key => key !== "constraints");
-function fixedDemandProviderSchema(schema: Record<string,any>): Record<string,any> {
+function fixedDemandProviderSchema(schema: Record<string,any>, path: string[] = []): Record<string,any> {
   // Vertex's supported schema subset has nullable rather than a type array,
   // and no minLength/maxLength/additionalProperties. Do not compile the large
   // canonical list bounds into the provider grammar; the decoder still checks
@@ -726,11 +726,16 @@ function fixedDemandProviderSchema(schema: Record<string,any>): Record<string,an
   };
   if (schema.properties) {
     out.properties = Object.fromEntries(Object.entries(schema.properties).map(([key,child]) =>
-      [key,fixedDemandProviderSchema(child as Record<string,any>)]));
+      [key,fixedDemandProviderSchema(child as Record<string,any>, [...path,key])]));
     out.required = Object.keys(out.properties);
     out.propertyOrdering = [...out.required];
   }
-  if (schema.items) out.items = fixedDemandProviderSchema(schema.items);
+  if (schema.items) out.items = fixedDemandProviderSchema(schema.items, [...path,"items"]);
+  if (path.join(".") === "ambiguity.reasons") {
+    out.maxItems = 12;
+    out.description = "At most 12 concise explanatory reasons, each at most 200 normalized characters (not the 300-character context limit).";
+  }
+  if (path.join(".") === "ambiguity.clarification_question") out.description = "At most 400 normalized characters; longer questions are rejected.";
   return out;
 }
 export const COMMERCE_SEMANTIC_PROVIDER_V6_SCHEMA: Record<string,unknown> = {
@@ -945,6 +950,24 @@ function semanticFieldClass(path: string[]): SemanticFieldClass {
  * intentionally supplies defaults. Return only a safe reason and field class.
  * Provider checks also close every fixed object and enforce scalar/list ranges;
  * canonical context bounds retain their original detailed validator below. */
+function isDemandReasonPath(path: string[]): boolean {
+  return path.length === 5 && path[0] === "demands" && /^(0|[1-9]\d*)$/.test(path[1]) &&
+    path[2] === "ambiguity" && path[3] === "reasons" && /^(0|[1-9]\d*)$/.test(path[4]);
+}
+/** Mechanical receipts only; caller retains the original model bytes in the protected sink. */
+export function demandReasonNormalizationReceipts(raw: unknown, frame: CommerceSemanticFrame) {
+  if (!isRecord(raw) || !Array.isArray(raw.demands)) return [];
+  return raw.demands.slice(0,12).flatMap((d: any, demand_index: number) => {
+    if (!isRecord(d) || !isRecord(d.ambiguity) || !Array.isArray(d.ambiguity.reasons)) return [];
+    return d.ambiguity.reasons.slice(0,12).flatMap((reason: unknown, reason_index: number) => {
+      if (typeof reason !== "string") return [];
+      const normalized = reason.normalize("NFKC").replace(/\s+/g," ").trim();
+      if (normalized.length <= 200 || !frame.demands?.[demand_index]?.ambiguity.reasons.includes(clean(reason,200))) return [];
+      return [{field_path:`demands[${demand_index}].ambiguity.reasons[${reason_index}]`,
+        demand_index,reason_index,normalized_length:normalized.length,limit:200,stored_length:clean(reason,200).length,action:"clamped" as const}];
+    });
+  });
+}
 function semanticSchemaMismatch(value: unknown, schema: any, path: string[] = [], provider = false): SemanticVocabularyDiagnostic | null {
   const mismatch = (reason: SemanticVocabularyDiagnostic["reason"], at = path): SemanticVocabularyDiagnostic => ({field_class:semanticFieldClass(at),reason});
   if (value === null && schema.nullable === true) return null;
@@ -963,7 +986,8 @@ function semanticSchemaMismatch(value: unknown, schema: any, path: string[] = []
     // Check that same representation before any bounded clean() can slice it.
     const text = (value as string).normalize("NFKC").replace(/\s+/g," ").trim();
     if (schema.minLength !== undefined && text.length < schema.minLength ||
-        schema.maxLength !== undefined && text.length > schema.maxLength) return mismatch("bounds");
+        schema.maxLength !== undefined && text.length > schema.maxLength &&
+        !isDemandReasonPath(path)) return mismatch("bounds");
   }
   if (type === "number" && provider &&
       (schema.minimum !== undefined && (value as number) < schema.minimum || schema.maximum !== undefined && (value as number) > schema.maximum)) return mismatch("range");
@@ -1878,7 +1902,7 @@ Core rules:
 20. Recent dialogue, server-recovered original customer messages and persistent factual_read_anchors are complementary context. Resolve references across them while preserving actual source IDs only as server context, never as invented output provenance. Read-only product/service references are not purchase entities. Latest explicit corrections supersede the same older customer requirement; a topic change does not cancel an unrelated requirement.
 21. Preserve every independently answerable clause in demands. source_quote must be an exact nonempty span of the latest customer turn, while question states its complete meaning with relevant context. Retain mixed personal-order progress, published policy/product facts and general guidance as separate demands, with their own subjects, constraints, negations and ambiguity. Do not let an ambiguous clause erase a clear separate clause or turn all clauses into one source type.
 22. Classify knowledge ownership, not industry. A question about the merchant's company, service, software feature, named integration, setup, usage procedure or plan requires that merchant's published knowledge: retain its subject and procedural/factual need in requested_facts, use product/policy when applicable or unknown when taxonomy is uncertain. Unknown is a lookup scope, not permission to guess. Do not use general/customer_guidance for merchant biography or feature instructions just because no price/model is mentioned. general is only evidence-independent decision criteria/trade-offs or customer-owned context. A question may be understood and ASK_FACT while still requiring KB; canonical validity alone is not a grounding verdict. Preserve the exact source_quote in its original language; do not resolve unfamiliar terms or typos into an unrelated industry. Do not invent company identity, capabilities, policies or instructions.
-Output budget: 4096 tokens. Return compact JSON without prose, markdown or reasoning. Do not repeat the transcript or persistent state. Include only entities changed or referenced by THIS turn; never reproduce an entire historical portfolio. Keep intent/topic/reasons concise. Do not copy already retained attributes merely to acknowledge or recap them. Empty entities/referents/requested_facts arrays are valid for a customer-only acknowledgement or read-only recap; omitted customer facts are NOT deletion events. Preserve every newly supplied decision-relevant value, unit, correction and explicit negation. If this turn itself cannot fit completely, return NO_STATE_CHANGE with ambiguity.is_ambiguous=true and a concise context-limit reason; do not silently truncate or invent a KB-insufficient reason.
+Output budget: 4096 tokens. Return compact JSON without prose, markdown or reasoning. Do not repeat the transcript or persistent state. Include only entities changed or referenced by THIS turn; never reproduce an entire historical portfolio. Keep intent/topic/reasons concise. Demand ambiguity.reasons: at most 12 strings, each 200 normalized characters; clarification_question: at most 400. The 300-character context bound does not apply to reasons. Do not copy already retained attributes merely to acknowledge or recap them. Empty entities/referents/requested_facts arrays are valid for a customer-only acknowledgement or read-only recap; omitted customer facts are NOT deletion events. Preserve every newly supplied decision-relevant value, unit, correction and explicit negation. If this turn itself cannot fit completely, return NO_STATE_CHANGE with ambiguity.is_ambiguous=true and a concise context-limit reason; do not silently truncate or invent a KB-insufficient reason.
 Return JSON only.`;
 export const COMMERCE_SEMANTIC_SYSTEM_PROMPT = SEMANTIC_INTERPRETER_SYSTEM +
   COMMERCE_SEMANTIC_PROVIDER_INSTRUCTIONS_V8 +
