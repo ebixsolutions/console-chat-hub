@@ -13,6 +13,7 @@ import {
   type TrustedPersistedMemoryReadback,
 } from "../_shared/conversation-recall.ts";
 import { classifyHumanServiceDiscussion } from "../_shared/handoff-intent.ts";
+import {w1HumanPossible,w1Decision,w1Locale,w1Affirms,w1Declines,w1Confirmation,w1Acknowledgement,w1HandoffReply,type W1Locale} from "../_shared/human-control-w1.ts";
 import {
   applyServiceTone,
   buildServicePlanPromptBlock,
@@ -2774,6 +2775,11 @@ async function legacyGenerateReply(
   }
 
   const lastVisitorMsg = sourceVisitorMessage.content;
+  // W1: the legacy branch has no separate semantic interpreter. For a bounded
+  // unrecognized human-control utterance reuse the original orchestration
+  // understanding path, never a new Function or model-only transfer.
+  if(w1HumanPossible(lastVisitorMsg)) return await orchestrationGenerateReply(conversation_id,
+    {ENABLE_KB:false,ENABLE_COACH:false,ENABLE_C360:false,ENABLE_TOOL_EXEC:false},source_message_id,requestSignal);
   const handoffLang = detectHandoffLanguage(lastVisitorMsg);
 
   if (handoffLang) {
@@ -4038,8 +4044,12 @@ async function persistExplicitR1IfRequested(
   source_message_id: string | null,
   latestMessage: string,
   runtimeSignals: HF1RuntimeSignals = {},
+  verifiedNow?: {source_message_id:string;locale:W1Locale},
 ): Promise<Response | null> {
-  const classified = classifyExplicitHandoff(latestMessage);
+  const trusted=!!verifiedNow && verifiedNow.source_message_id === source_message_id;
+  const base=classifyExplicitHandoff(latestMessage);
+  const classified=trusted ? {...base,rule:"R1" as const,language:verifiedNow!.locale==="yue-Hant"?"zh-TW" as const:verifiedNow!.locale} : base;
+  const w1Reply=trusted ? w1HandoffReply(verifiedNow!.locale) : SAFE_HANDOFF_WORDING[classified.language];
   const { data: handoffHistory, error: handoffHistoryError } =
     await supabaseAdmin.from("messages").select(
       "id, role, content, metadata, created_at",
@@ -4104,14 +4114,14 @@ async function persistExplicitR1IfRequested(
     {
       conversation_id,
       source_message_id,
-      proposed_response: SAFE_HANDOFF_WORDING[classified.language],
+      proposed_response: w1Reply,
       persistence_kind: "explicit_handoff",
       metadata: { escalation_rule: "R1", handoff_required: true },
     },
     async () =>
       await supabaseAdmin.rpc("explicit_handoff_tx", {
         p_conversation_id: conversation_id,
-        p_safe_reply_content: SAFE_HANDOFF_WORDING[classified.language],
+        p_safe_reply_content: w1Reply,
         p_source_message_id: source_message_id,
       }),
   );
@@ -4365,6 +4375,7 @@ async function orchestrationGenerateReply(
     _pr5HistoryRows ?? [],
   );
   const _explicitHandoffRequested = isHandoffIntent(_h1LastMsg);
+  const _w1HumanPossible = !_explicitHandoffRequested && w1HumanPossible(_h1LastMsg);
   // Short merchant questions use the same semantic and evidence path as paraphrases.
   // P0 critical preflight: E2 must run before customer-context and generic clarification early returns.
   const _criticalE2ExpectedTenantId =
@@ -4396,6 +4407,55 @@ async function orchestrationGenerateReply(
       },
     );
     if (_criticalE2Response) return _criticalE2Response;
+  }
+
+  // W1 pending confirmation: use ONLY the immediately preceding SERVER-written,
+  // B2-committed, unrecalled assistant row from the same Company and ticket.
+  // A bare affirmative without that authoritative readback remains ordinary text.
+  const w1Previous=(_pr5HistoryRows??[]).find((row:any)=>row.id!==_h1SourceMessageId);
+  const w1PreviousMeta=(w1Previous?.role==="assistant" &&
+    w1Previous.is_recalled===false && w1Previous.metadata &&
+    typeof w1Previous.metadata==="object") ? w1Previous.metadata as Record<string,unknown> : null;
+  const w1Pending=!!w1PreviousMeta &&
+    w1PreviousMeta.response_route==="w1_human_confirmation" &&
+    w1PreviousMeta.w1_human_confirmation===true &&
+    w1PreviousMeta.b2_commit_source==="commit_ai_reply_tx" &&
+    w1PreviousMeta.w1_company_id===conversation.company_id &&
+    w1PreviousMeta.w1_confirmation_source_id===w1PreviousMeta.b2_source_message_id &&
+    typeof w1PreviousMeta.w1_confirmation_source_id==="string" &&
+    w1PreviousMeta.w1_confirmation_source_id!==_h1SourceMessageId &&
+    typeof w1PreviousMeta.w1_confirmation_revision==="number" &&
+    Number.isSafeInteger(w1PreviousMeta.w1_confirmation_revision) &&
+    ["en","zh-TW","zh-CN","yue-Hant"].includes(String(w1PreviousMeta.w1_confirmation_locale));
+  if(w1Pending && (w1Affirms(_h1LastMsg)||w1Declines(_h1LastMsg))){
+    const check=await supabaseAdmin.from("conversation_commerce_state")
+      .select("revision").eq("conversation_id",conversation_id)
+      .eq("company_id",conversation.company_id).maybeSingle();
+    if(check.error)return new Response(JSON.stringify({success:false,error:"w1_confirmation_state_unavailable"}),
+      {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    if((check.data?.revision??0)!==w1PreviousMeta!.w1_confirmation_revision)
+      return new Response(JSON.stringify({success:false,error:"w1_confirmation_stale_revision"}),
+        {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    const locale=w1PreviousMeta!.w1_confirmation_locale as W1Locale;
+    if(w1Affirms(_h1LastMsg)){
+      const transfer=await persistExplicitR1IfRequested(supabaseAdmin,conversation_id,
+        _h1SourceMessageId,_h1LastMsg,{},{source_message_id:_h1SourceMessageId,locale});
+      if(transfer)return transfer;
+      return new Response(JSON.stringify({success:false,error:"w1_confirmed_transfer_unavailable"}),
+        {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    }
+    const reply=w1Acknowledgement(locale);
+    const committed=await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,
+      _h1SourceMessageId,reply,{response_route:"w1_human_confirmation_declined",
+        handoff_required:false,factual_grounding_required:false});
+    await cleanupThinking(supabaseAdmin,conversation_id,_h1SourceMessageId);
+    if(!committed.ok)return new Response(JSON.stringify({success:false,
+      error:"w1_decline_commit_"+committed.result}),
+      {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    return new Response(JSON.stringify({success:true,reply,
+      response_route:"w1_human_confirmation_declined",handoff_required:false,
+      idempotent:committed.idempotent}),
+      {headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
   // Section15: an authenticated, source-bound explicit request for a human
   // takes the existing B2-supervised R1 control transaction BEFORE optional
@@ -4447,7 +4507,7 @@ async function orchestrationGenerateReply(
   // Only a whole, validated service-control/process turn can take this route.
   // Genuine factual/mixed turns continue through semantic interpretation and
   // CURRENT KB. High-risk E1 turns retain the original governed call chain.
-  if (!_explicitHandoffRequested && !(isE1LiveActivationEnabled(Deno.env) &&
+  if (!_explicitHandoffRequested && !_w1HumanPossible && !(isE1LiveActivationEnabled(Deno.env) &&
     classifyLocalTopicRisk(_h1LastMsg)?.level === "high" && flags.ENABLE_KB)) {
     const serviceDiscussionReply = await persistHumanServiceDiscussion(
       supabaseAdmin, conversation_id, _h1SourceMessageId, _h1LastMsg, _visitorLang,
@@ -4496,7 +4556,7 @@ async function orchestrationGenerateReply(
   let _semanticHistory = (_pr5HistoryRows ?? []) as MemoryHistoryRow[];
   let _semanticFailure: string | null = null;
   let _semanticDiagnostic: ExecutionFailure | undefined;
-  const _semanticBusinessText = customerBusinessText(_h1LastMsg);
+  const _semanticBusinessText = _w1HumanPossible ? _h1LastMsg : customerBusinessText(_h1LastMsg);
   // Only the existing scoped readback resolver may own a pure recap turn.
   // Mixed/unbound/negated requests keep their complete Semantic input.
   const _provenRecap = _criticalE2ExpectedTenantId && await hasProvenCurrentRequirementsRecap(supabaseAdmin, {
@@ -4597,6 +4657,60 @@ async function orchestrationGenerateReply(
       })(),
     });
     return response;
+  }
+
+  // W1: bind the accepted model proposal to the SERVER-owned current visitor
+  // source, company and existing R1 transaction. This is after canonical
+  // validation, before product/KB clarification, and does not authorize a
+  // model-driven write by itself.
+  if (_w1HumanPossible && _a3SemanticFrame && _criticalE2ExpectedTenantId) {
+    const w1 = w1Decision(_h1LastMsg,_a3SemanticFrame.intent,
+      _semanticPrepared?.semantic.frame === _a3SemanticFrame &&
+      sourceVisitorMessage.id === _h1SourceMessageId &&
+      conversation.company_id === _criticalE2ExpectedTenantId &&
+      !isHumanControlState(conversation.status,conversation.assigned_agent_id??null));
+    if(w1.action==="r1"){
+      if(isE1LiveActivationEnabled(Deno.env) &&
+         classifyLocalTopicRisk(_h1LastMsg)?.level==="high" && flags.ENABLE_KB){
+        const e1=await evaluateAndPersistRequiredRulesLive(supabaseAdmin,{
+          conversation_id,source_message_id:_h1SourceMessageId,
+          latest_message_content:_h1LastMsg,conversation_status:conversation.status,
+          assigned_agent_id:conversation.assigned_agent_id??null,
+          greeting_or_trivial:false,visitor_language:_visitorLang,
+          expected_tenant_id:_criticalE2ExpectedTenantId,
+          topic_risk_level:"high",rag_match_state:"not_checked",
+          verified_local_risk_classification:true
+        });
+        if(e1)return e1;
+      }
+      const control=await persistExplicitR1IfRequested(supabaseAdmin,conversation_id,
+        _h1SourceMessageId,_h1LastMsg,{},{
+          source_message_id:_h1SourceMessageId,locale:w1.locale
+        });
+      if(control)return control;
+      return new Response(JSON.stringify({success:false,error:"w1_r1_control_unavailable"}),
+        {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    }
+    if(w1.action==="confirm"){
+      const reply=w1Confirmation(w1.locale);
+      const committed=await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,
+        _h1SourceMessageId,reply,{
+          response_route:"w1_human_confirmation",
+          w1_human_confirmation:true,w1_company_id:_criticalE2ExpectedTenantId,
+          w1_confirmation_source_id:_h1SourceMessageId,
+          w1_confirmation_locale:w1.locale,
+          w1_confirmation_revision:_semanticPrepared?.input_state?.commerce?.revision??0,
+          handoff_required:false,factual_grounding_required:false
+        });
+      await cleanupThinking(supabaseAdmin,conversation_id,_h1SourceMessageId);
+      if(!committed.ok)return new Response(JSON.stringify({
+        success:false,error:"w1_confirmation_commit_"+committed.result
+      }),{status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+      return new Response(JSON.stringify({success:true,reply,
+        response_route:"w1_human_confirmation",handoff_required:false,
+        idempotent:committed.idempotent}),
+        {headers:{...corsHeaders,"Content-Type":"application/json"}});
+    }
   }
   const _semanticRoutingHistory = _semanticHistory.map(row => ({...row, role:String(row.role ?? ""), content:String(row.content ?? "")}));
   const _catalogueFollowup = _criticalE2ExpectedTenantId && source_message_id

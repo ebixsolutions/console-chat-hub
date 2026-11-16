@@ -2655,3 +2655,41 @@ test('V287 B sensitive raw snapshot withheld while numeric normalization remains
  const accepted=rows.find(r=>r.stage==='semantic_accepted');assert(accepted);
  assert.equal(accepted.payload.capture_state,'WITHHELD_SENSITIVE');assert.equal(accepted.payload.body,null);
 });
+
+
+// W1 Source integration: actual handler with isolated semantics/DB/provider.
+for(const text of ["I want to talk to a human","I would like to speak with a human agent, please.",
+  "get me a human","lemme talk to someone real","can I chat with a real person?",
+  "agent please","可以請專人協助嗎？","叫個人嚟同我講","麻煩幫我找專人",
+  "Could I speak to someone, please?","可唔可以轉真人",
+  "please transfer me to a live agent if possible"]){
+  test("W1 canonical understood present-tense human request invokes original R1: "+text,async()=>{
+    const f=fixture(text,{semantic:providerWire({intent:"request_human_now",requested_facts:[]},
+      "NO_STATE_CHANGE")});
+    const r=await f.run();
+    assert.equal(r.body.escalation_rule,"R1",JSON.stringify({response:r,events:f.events.slice(-8)}));
+    assert.equal(r.body.handoff_persisted,true);
+    assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,1);
+    assert.equal(f.requests.filter(x=>x.url.includes("/rag/context-search")).length,0);
+    assert.equal(f.requests.filter(x=>x.url.endsWith(":generateContent")).length,1);
+  });
+}
+for(const text of ["don't transfer me to a human",
+  "what are your human support hours?","my friend said 'I want a human'",
+  "之後可以轉真人嗎","If the booking fails, connect me to a human"]){
+  test("W1 excluded human mention cannot induce original R1: "+text,async()=>{
+    const f=fixture(text,{semantic:providerWire({intent:"request_human_now",requested_facts:[]},"NO_STATE_CHANGE")});
+    await f.run();
+    assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
+  });
+}
+for(const text of ["有冇真人呀","representative"]){
+  test("W1 indirect wish is a server-authored persisted one-time clarification: "+text,async()=>{
+    const f=fixture(text,{semantic:providerWire({intent:"request_human_now",requested_facts:[]},"NO_STATE_CHANGE")});
+    const r=await f.run();
+    assert.equal(r.body.response_route,"w1_human_confirmation",JSON.stringify({r,events:f.events.slice(-5)}));
+    assert.equal(f.commits.length,1);
+    assert.equal(f.commits[0].metadata.w1_human_confirmation,true);
+    assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
+  });
+}

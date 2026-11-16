@@ -80,6 +80,7 @@
     "supabase/functions/_shared/grounding-evidence.ts",
     "supabase/functions/_shared/handoff-decision.ts",
     "supabase/functions/_shared/handoff-intent.ts",
+    "supabase/functions/_shared/human-control-w1.ts",
     "supabase/functions/_shared/industry-agent-registry.ts",
     "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts",
     "supabase/functions/_shared/industry-runtime-adapter.ts",
@@ -449,6 +450,7 @@
     "supabase/functions/_shared/generation-terminal-guard.ts",
     "supabase/functions/_shared/grounding-evidence.ts",
     "supabase/functions/_shared/handoff-intent.ts",
+    "supabase/functions/_shared/human-control-w1.ts",
     "supabase/functions/_shared/industry-agent-registry.ts",
     "supabase/functions/_shared/industry-profiles/home-appliance-v1.ts",
     "supabase/functions/_shared/industry-runtime-adapter.ts",
@@ -1699,5 +1701,11 @@
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "2df081954c3105c166d58b13f6d40b08aa46ca1c696f92fd8d2e92f1e5569f19",
     "supabase/functions/_shared/prepare-semantic-request.ts": "c78946723109ab50e64ce675953f61c29a886b86753c4e7f8dd6a543cff677ab",
     "tests/c3-widget-live-auth/fixtures/v287-b-captured.json": "447a802b325981b9110297e61d2fa1128112559791a36a44179654a64fbaa847"
+  },
+  "authorized_w1_source_sha256": {
+    "supabase/functions/_shared/human-control-w1.ts": "754626032da0de0c99c2285afd4ff40258eb7ec738123caf651045b9d2aa53b1",
+    "supabase/functions/_shared/commerce-semantic-frame.ts": "7ebd8f74ff68d934b47da5940eb5075d6910bfed997f7ce98638585b25f6f5a2",
+    "supabase/functions/generate-reply/index.ts": "54dc928fc0c577c2dbf3fa3e0c3173ff0405156a0e2c60be95266d3cd1a72ef8",
+    "tests/emergency-p0/chain.test.mjs": "66e87af16f00d9fe91787f979991b53b8085bf5fd7855f08596149c826a8ee9f"
   }
 }
