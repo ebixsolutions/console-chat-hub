@@ -115,7 +115,7 @@ export function w1NoLabelFallbackEligible(input:{
  pendingConfirmation:boolean; semanticOperation:string|null;
  semanticDemandCount:number; requestedFactCount:number; hasBusinessRequest:boolean;
  plan:{action:string; handoff_context?:string|null; knowledge_state?:string|null;
-   kb_query?:string|null; clarification_target?:string|null};
+   kb_query?:string|null; clarification_target?:string|null; issue_kind?:string|null};
 }):boolean{
  if(!input.sourceVerified||!input.humanPossible||input.acceptedModelIntent||
     input.pendingConfirmation||input.hasBusinessRequest||
@@ -128,8 +128,11 @@ export function w1NoLabelFallbackEligible(input:{
  // Unrecognised non-canonical human wording (e.g. 個人) may otherwise
  // dead-end in a generic product/goal question. No commercial demand allowed.
  return input.semanticOperation==="NO_STATE_CHANGE" &&
-   input.plan.action==="targeted_clarification" &&
-   ["customer_goal","specific_product_or_item","specific_item_or_time"].includes(String(input.plan.clarification_target));
+   (input.plan.action==="targeted_clarification" &&
+      ["customer_goal","specific_product_or_item","specific_item_or_time"].includes(String(input.plan.clarification_target)) ||
+    // A human-only service question may otherwise enter the generic issue
+    // fallback. This is not an answerable merchant/transactional issue.
+    input.plan.action==="customer_issue_next_step" && input.plan.issue_kind==="general_customer_issue");
 }
 export function w1Decision(
  text:string, acceptedIntent:unknown, sourceVerified:boolean, verifiedLocale?:W1Locale|null

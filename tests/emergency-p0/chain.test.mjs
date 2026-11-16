@@ -2893,7 +2893,11 @@ for(const [industry,question] of [
 ]){
  test("W1 N1 business question retains KB routing: "+industry+" / "+question,async()=>{
    const f=fixture(question,{originalPreview:true,fullChain:true,
-     semantic:providerWire({intent:"merchant_policy",requested_facts:["merchant published fact"]},"ASK_FACT"),
+     semantic:task1SemanticContextWire([
+       task1SemanticContextDemand(question,{
+         source_type:"unknown",requested_facts:["published_information"]
+       })
+     ],{language:/[\\u4e00-\\u9fff]/u.test(question)?"zh-TW":"en"}),
      answer:"Published merchant evidence must be verified for the requested service fact."});
    const r=await f.run();
    assert.equal(r.status,200,JSON.stringify(r));

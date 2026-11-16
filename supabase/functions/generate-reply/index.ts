@@ -4763,6 +4763,57 @@ async function orchestrationGenerateReply(
   if (_a3SemanticFrame) _a3SemanticFrame=applyCustomerRequestDecision(_a3SemanticFrame,_customerRequestDecision);
   const _mixedRequest=_customerRequestDecision.kind==="mixed";
   if(_mixedRequest && _customerRequestDecision.merchant_request) _productFactualRequest=_customerRequestDecision.merchant_request;
+  // W1 N1: source/tenant-bound no-label handling occurs after the ORIGINAL
+  // semantic and business-request decision but BEFORE any Commerce/Memory
+  // mutation. The early model-labelled R1 path above remains unchanged.
+  // A person noun is never evidence to override a merchant KB demand.
+  const _w1NoLabelBusinessDemand=Boolean(
+    _a3SemanticFrame?.demands?.length || _a3SemanticFrame?.requested_facts?.length ||
+    _customerRequestDecision.kind==="guidance" || _customerRequestDecision.kind==="mixed" ||
+    _customerRequestDecision.merchant_request || _customerRequestDecision.general_request ||
+    _customerRequestDecision.semantic_demands?.length ||
+    requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent));
+  const _w1CandidatePlan=(!_explicitHandoffRequested && !_w1ProposedNow &&
+      _w1HumanPossible && !w1Pending && _w1SourceVerified &&
+      !_w1NoLabelBusinessDemand)
+    ? planConversationService({
+      question:_h1LastMsg,language:_visitorLang,
+      semantic_frame:_a3SemanticFrame,
+      request_decision:_customerRequestDecision,
+      memory:null,commerce:null,
+      recent_messages:_semanticRoutingHistory,
+      recall:{handled:false,reason:"NOT_A_RECALL_QUERY",detail:"NO_SUPPORTED_FACT_SLOT"},
+      explicit_handoff:false,
+    }) : null;
+  if(_w1CandidatePlan && w1NoLabelFallbackEligible({
+    sourceVerified:_w1SourceVerified && !!_criticalE2ExpectedTenantId,
+    humanPossible:_w1HumanPossible,acceptedModelIntent:_w1ProposedNow,
+    pendingConfirmation:w1Pending,semanticOperation:_a3SemanticFrame?.operation??null,
+    semanticDemandCount:_a3SemanticFrame?.demands?.length??0,
+    requestedFactCount:_a3SemanticFrame?.requested_facts?.length??0,
+    hasBusinessRequest:_w1NoLabelBusinessDemand,
+    plan:_w1CandidatePlan
+  })){
+    const locale=w1Locale(_h1LastMsg,_w1PreferredLocale);
+    const reply=w1Confirmation(locale);
+    const committed=await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,
+      _h1SourceMessageId,reply,{
+        response_route:"w1_human_confirmation",
+        w1_human_confirmation:true,w1_company_id:_criticalE2ExpectedTenantId,
+        w1_confirmation_source_id:_h1SourceMessageId,
+        w1_confirmation_locale:locale,
+        w1_confirmation_revision:_semanticPrepared?.input_state?.commerce?.revision??0,
+        handoff_required:false,factual_grounding_required:false
+      });
+    await cleanupThinking(supabaseAdmin,conversation_id,_h1SourceMessageId);
+    if(!committed.ok)return new Response(JSON.stringify({success:false,
+      error:"w1_confirmation_commit_"+committed.result}),
+      {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    return new Response(JSON.stringify({success:true,reply,
+      response_route:"w1_human_confirmation",handoff_required:false,
+      idempotent:committed.idempotent}),
+      {headers:{...corsHeaders,"Content-Type":"application/json"}});
+  }
   // ===== TASK A3: persistent commerce state runtime =====
   // Runs AFTER the critical E2 safety branch and BEFORE CUSTOMER_CONTEXT_UPDATE,
   // generic clarification, conversation-memory shortcut and KB retrieval.
@@ -5174,50 +5225,6 @@ async function orchestrationGenerateReply(
     _c3ServicePlan.knowledge_state = "tool_failure";
     _c3ServicePlan.kb_query = null;
     _c3ServicePlan.safe_assumptions = [...new Set([..._c3ServicePlan.safe_assumptions,"query_context_limit"])];
-  }
-  // W1 N1: only the existing service planner may expose a no-business
-  // fallback for an unlabelled human wish. An answerable business/KB request
-  // continues unchanged; person words and the model's missing label cannot
-  // preempt the C1/KB route. Labelled R1 and existing trusted confirmations
-  // remain in their original earlier safety/control sequence.
-  const _w1NoLabelCanConfirm = !_factualContextLimit &&
-    !(_c3ServicePlan.safe_assumptions ?? []).includes("query_context_limit") &&
-    w1NoLabelFallbackEligible({
-      sourceVerified:_w1SourceVerified && !!_criticalE2ExpectedTenantId,
-      humanPossible:_w1HumanPossible,acceptedModelIntent:_w1ProposedNow,
-      pendingConfirmation:w1Pending,
-      semanticOperation:_a3SemanticFrame?.operation ?? null,
-      semanticDemandCount:_a3SemanticFrame?.demands?.length ?? 0,
-      requestedFactCount:_a3SemanticFrame?.requested_facts?.length ?? 0,
-      hasBusinessRequest:Boolean(_currentFactualRequest?.applicable ||
-        _customerRequestDecision?.merchant_request ||
-        _customerRequestDecision?.general_request ||
-        _customerRequestDecision?.semantic_demands?.length ||
-        _customerRequestDecision?.kind==="guidance" ||
-        _customerRequestDecision?.kind==="mixed"),
-      plan:_c3ServicePlan,
-    });
-  if(_w1NoLabelCanConfirm && !_explicitHandoffRequested){
-    const locale=w1Locale(_h1LastMsg,_w1PreferredLocale);
-    const reply=w1Confirmation(locale);
-    const committed=await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,
-      _h1SourceMessageId,reply,{
-        response_route:"w1_human_confirmation",
-        w1_human_confirmation:true,w1_company_id:_criticalE2ExpectedTenantId,
-        w1_confirmation_source_id:_h1SourceMessageId,
-        w1_confirmation_locale:locale,
-        w1_confirmation_revision:_c3CommerceSnapshot?.revision ??
-          _semanticPrepared?.input_state?.commerce?.revision ?? 0,
-        handoff_required:false,factual_grounding_required:false
-      });
-    await cleanupThinking(supabaseAdmin,conversation_id,_h1SourceMessageId);
-    if(!committed.ok)return new Response(JSON.stringify({
-      success:false,error:"w1_confirmation_commit_"+committed.result
-    }),{status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
-    return new Response(JSON.stringify({success:true,reply,
-      response_route:"w1_human_confirmation",handoff_required:false,
-      idempotent:committed.idempotent}),
-      {headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
   const _c3ResolvedAddressCorrection = resolveCommittedAddressCorrection({
     text: _h1LastMsg,
