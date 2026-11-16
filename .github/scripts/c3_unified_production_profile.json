@@ -1709,7 +1709,7 @@
     "tests/emergency-p0/chain.test.mjs": "676fb5d7e9eb2b4bd9d73c1989b1fca11dbdd5d0d4c3859d62fe733d0a722f51"
   },
   "authorized_w2_source_sha256": {
-    "supabase/functions/_shared/current-factual-request.ts": "3caa3b899b83439c5dc47ccab2057a7a6df72317c03c1a02599f78a1a64dd833",
+    "supabase/functions/_shared/current-factual-request.ts": "17e39fccc7d6b4bdf2eaf8db0a1a7715266ef2f2e5c0d7c7f3a6d8d21ce073c3",
     "supabase/functions/generate-reply/index.ts": "fc3fab6c481268d3dfb5c7d0209fb249717da6dd2160b5b4c59ec0fbca572b86",
     "supabase/functions/_shared/customer-money-facts.ts": "3a736ce2821e9bfec270c820d790901c767318667584176ceef6c6c8df182e49",
     "supabase/functions/_shared/customer-money-facts.test.ts": "5f718ffc88601ac995ff643ed58d2670532ca3a17cdf51378247757ac6ed02bc",

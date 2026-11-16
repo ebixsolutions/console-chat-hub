@@ -967,6 +967,9 @@ function independentSourceQuestion(input: ResolveCurrentFactualRequestInput, dem
   const content=quote.replace(/(?:請問|请问|請|请|一下|如何|怎樣|怎样|怎麼|怎么|使用|介紹|介绍|解釋|解释|什麼|什么|甚麼|幾錢|几钱|多少錢|多少钱|有冇貨|有無貨|有沒有貨|有没有货|庫存|库存|現貨|现货|功能|規格|规格|價格|价格|價錢|价钱|有咩|係咩|是|的|嘅|呢|嗎|吗)/gu, " ")
     .replace(/\b(?:please|tell|me|about|explain|introduce|how|what|which|much|many|do|does|can|i|we|you|use|is|are|the|a|an|of|for|in|and|or|only|just|price|cost|features?|specs?|specifications?|stock|inventory|availability|available|details?|left)\b/giu," ")
     .replace(/[^\p{L}\p{N}]/gu,"");
+  // An indefinite "anything left?" is elliptical and inherits a prior item.
+  // A named existential question ("Are there any service plans?") remains valid.
+  if (/^(?:(?:is|are|was|were)\s+there\s+(?:anything|something)\b|(?:is|are)\s+(?:anything|something|any\s+left)\b|(?:is|are)\s+there\s+any\s+left\b)/iu.test(quote)) return false;
   // A full source-quoted service or subscription question need not contain a
   // product identifier. Existing tenant, quote, privacy, lifecycle and B2
   // restrictions apply before any independent KB read.
