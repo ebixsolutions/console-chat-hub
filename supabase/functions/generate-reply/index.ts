@@ -13,7 +13,7 @@ import {
   type TrustedPersistedMemoryReadback,
 } from "../_shared/conversation-recall.ts";
 import { classifyHumanServiceDiscussion } from "../_shared/handoff-intent.ts";
-import {w1HumanPossible,w1Decision,w1Locale,w1Affirms,w1Declines,w1Confirmation,w1Acknowledgement,w1HandoffReply,type W1Locale} from "../_shared/human-control-w1.ts";
+import {w1HumanPossible,w1Decision,w1HistoryLocale,w1Locale,w1Affirms,w1Declines,w1Confirmation,w1Acknowledgement,w1HandoffReply,type W1Locale} from "../_shared/human-control-w1.ts";
 import {
   applyServiceTone,
   buildServicePlanPromptBlock,
@@ -4383,6 +4383,7 @@ async function orchestrationGenerateReply(
       ? conversation.company_id
       : undefined;
   const _w1HumanPossible = !_explicitHandoffRequested && typeof w1HumanPossible === "function" && w1HumanPossible(_h1LastMsg);
+  const _w1PreferredLocale = w1HistoryLocale(_h1LastMsg, _pr5HistoryRows ?? []);
   const _criticalE2ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
   if (isE2LiveActivationEnabled(Deno.env) && (_criticalE2ThreatSignal ||
     resolveAuthoritativeComplianceReview(_criticalE2ExpectedTenantId))) {
@@ -4453,6 +4454,8 @@ async function orchestrationGenerateReply(
       conversation_id,
       source_message_id,
       _h1LastMsg,
+      {},
+      _w1PreferredLocale ? {source_message_id:_h1SourceMessageId,locale:_w1PreferredLocale}:undefined,
     );
     if (earlyR1) return earlyR1;
   }
@@ -4669,7 +4672,8 @@ async function orchestrationGenerateReply(
       _semanticPrepared?.semantic.frame === _a3SemanticFrame &&
       sourceVisitorMessage.id === _h1SourceMessageId &&
       conversation.company_id === _criticalE2ExpectedTenantId &&
-      !isHumanControlState(conversation.status,conversation.assigned_agent_id??null));
+      !isHumanControlState(conversation.status,conversation.assigned_agent_id??null),
+      _w1PreferredLocale);
     if(w1.action==="r1"){
       if(isE1LiveActivationEnabled(Deno.env) &&
          classifyLocalTopicRisk(_h1LastMsg)?.level==="high" && flags.ENABLE_KB){

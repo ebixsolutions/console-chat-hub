@@ -26,31 +26,79 @@ export function w1Locale(text:string, verified?:W1Locale|null):W1Locale{
  if(/[转们队为说刚迟边这吗员请帮]/u.test(x))return "zh-CN";
  return "zh-TW";
 }
+
+/** Only explicit visitor language choices may override the current utterance.
+ * The caller obtains history from its authenticated, source-bounded ticket.
+ * Merchant/KB text, staff notes and assistant proposals are not preferences. */
+function w1LocaleInstruction(text:string):W1Locale|null{
+ const raw=norm(text).replace(QUOTE," ");
+ const tests:Array<[W1Locale,RegExp]>=[
+  ["en",/(?:\b(?:reply|answer|respond|write|speak|use)\s+(?:(?:to\s+me\s+)?in\s+)?english\b|\b(?:i\s+prefer|language\s*[:=])\s*english\b|(?:請|请|麻煩|麻烦|用|以|答|回覆|回复).{0,7}(?:英文|英語|英语))/giu],
+  ["yue-Hant",/(?:\b(?:reply|answer|respond|speak|use)\s+(?:in\s+)?cantonese\b|(?:請|请|用|以|講|说|說|答|回覆|回复).{0,7}(?:廣東話|广东话|粵語|粤语))/giu],
+  ["zh-CN",/(?:\b(?:reply|answer|respond|use)\s+(?:in\s+)?simplified\s+chinese\b|(?:請|请|用|以|答|回覆|回复).{0,7}(?:简体中文|簡體中文|普通话|普通話))/giu],
+  ["zh-TW",/(?:\b(?:reply|answer|respond|use)\s+(?:in\s+)?traditional\s+chinese\b|(?:請|请|用|以|答|回覆|回复).{0,7}(?:繁體中文|繁体中文|臺灣國語|台灣國語))/giu]
+ ];
+ let selected:W1Locale|null=null,at=-1;
+ for(const [locale,pattern] of tests){for(const match of raw.matchAll(pattern)){
+  const prior=raw.slice(Math.max(0,match.index-12),match.index);
+  if(/(?:\bdon't\s*$|\bdo\s+not\s*$|唔好\s*$|不要\s*$|不用\s*$|勿\s*$)/iu.test(prior))continue;
+  if(match.index>=at){selected=locale;at=match.index;}
+ }}
+ return selected;
+}
+export function w1HistoryLocale(
+ current:string, history:readonly {role?:unknown;content?:unknown;is_recalled?:unknown}[]
+):W1Locale|null{
+ const direct=w1LocaleInstruction(current);if(direct)return direct;
+ // Source-bound history is newest first; a later explicit preference wins.
+ for(const row of history){if(row.role!=="visitor"||row.is_recalled!==false||typeof row.content!=="string")continue;
+  const preferred=w1LocaleInstruction(row.content);if(preferred)return preferred;
+ }
+ return null;
+}
 export const w1Affirms=(s:string)=>YES.test(norm(s));
 export const w1Declines=(s:string)=>NO.test(norm(s));
-export function w1HumanPossible(text:string):boolean{
- const raw=norm(text), c=classifyHandoffIntent(raw);
- if(c.explicit_request)return false;
- const active=raw.replace(QUOTE," ");
- if(!PERSON.test(active) && !BOT_WISH.test(active))return false;
- if(REPORTED.test(active)||NEGATED.test(active))return false;
- const courtesy=active.replace(/\bif\s+possible\b/giu," ");
- return !CONDITION.test(courtesy) && !LATER.test(courtesy) && !INFO.test(courtesy);
+/** Mixed demand isolation. Negation, quotation, condition and information
+ * checks apply to the actual human-request clause, not a separate business
+ * question in the same message. Keep conditional antecedents attached across
+ * commas: "if X, transfer me" is NOT a present R1 request. */
+const W1_INDEPENDENT_BREAK=/[。.!！?？;；\n]+|[,，](?=\s*(?:另外|仲有|還有|还有|同時|同时|what\b|how\b|when\b|why\b|where\b|also\b|and\b|幾時|幾點|幾錢|多少|有冇|有沒有|有没有|請問|请问))|\b(?:and|also)\b(?=\s*(?:what|how|when|why|where|can|could|does|do|is|are|I\s+(?:want|need)\s+to\s+(?:know|ask))\b)/iu;
+type W1ClauseVerdict="r1"|"confirm"|"excluded"|"none";
+function w1EffectiveClauses(text:string):string[]{
+ return norm(text).replace(QUOTE," ").split(W1_INDEPENDENT_BREAK).map(s=>s.trim()).filter(Boolean);
 }
-export function w1Decision(text:string, acceptedIntent:unknown, sourceVerified:boolean):W1Decision{
- const raw=norm(text),locale=w1Locale(raw),active=raw.replace(QUOTE," ");
+function w1ClauseVerdict(text:string):W1ClauseVerdict{
+ const active=norm(text);
+ if(!PERSON.test(active)&&!BOT_WISH.test(active))return "none";
+ if(REPORTED.test(active))return "excluded";
+ // Reject a human transfer negation but not "I don't want a bot, I want a human".
+ const humanNegationText=active.replace(/\b(?:don't|do not)\s+(?:want|need|use)\s+(?:a\s+|an\s+)?(?:bot|robot|ai|app)(?=\s*[,，])/giu," ");
+ if(NEGATED.test(humanNegationText))return "excluded";
+ const courtesy=active.replace(/\bif\s+possible\b/giu," ");
+ if(CONDITION.test(courtesy)||LATER.test(courtesy)||INFO.test(courtesy))return "excluded";
+ if(INDIRECT.test(active)||!PERSON.test(active))return "confirm";
+ return "r1";
+}
+export function w1HumanPossible(text:string):boolean{
+ const raw=norm(text), classified=classifyHandoffIntent(raw);
+ if(classified.explicit_request)return false; // Existing zero-extra-model R1.
+ return w1EffectiveClauses(raw).some(clause=>{
+  const decision=w1ClauseVerdict(clause);return decision==="r1"||decision==="confirm";
+ });
+}
+export function w1Decision(
+ text:string, acceptedIntent:unknown, sourceVerified:boolean, verifiedLocale?:W1Locale|null
+):W1Decision{
+ const raw=norm(text),locale=w1Locale(raw,verifiedLocale);
  const out=(action:W1Action,reason:string):W1Decision=>({action,locale,reason});
  if(!sourceVerified)return out("excluded","unverified_current_source");
- if(REPORTED.test(active) && !/[。.!！]\s*(?:I (?:want|need)|please|我(?:而家|現在|现在)?(?:要|想|需要)|請|请)/iu.test(raw))return out("excluded","reported_speech");
- if(!PERSON.test(active) && !BOT_WISH.test(active) && acceptedIntent!==W1_HUMAN_INTENT)return out("continue","no_current_human_referent");
- const humanNegationText=active.replace(/\b(?:don't|do not)\s+(?:want|need|use)\s+(?:a\s+|an\s+)?(?:bot|robot|ai|app)(?=\s*[,，])/giu," ");
- if(NEGATED.test(humanNegationText))return out("excluded","human_negation");
- const courtesy=active.replace(/\bif\s+possible\b/giu," ");
- if(CONDITION.test(courtesy)||LATER.test(courtesy))return out("excluded","genuine_condition_or_later");
- if(INFO.test(courtesy))return out("excluded","support_information");
  if(acceptedIntent!==W1_HUMAN_INTENT)return out("continue","no_accepted_human_intent");
- if(INDIRECT.test(active)||!PERSON.test(active))return out("confirm","indirect_or_unbound_human_wish");
- return out("r1","source_bound_human_request_now");
+ const clauses=w1EffectiveClauses(raw).map(w1ClauseVerdict);
+ if(clauses.includes("r1"))return out("r1","source_bound_human_request_now");
+ if(clauses.includes("confirm"))return out("confirm","indirect_or_unbound_human_wish");
+ return clauses.includes("excluded")
+  ?out("excluded","current_human_request_excluded")
+  :out("continue","no_current_human_referent");
 }
 export function w1Confirmation(locale:W1Locale):string{
  return {en:"Would you like me to connect you with a human support agent now?","zh-TW":"需要我現在為您轉接真人客服嗎？","zh-CN":"需要我现在为您转接人工客服吗？","yue-Hant":"你想我而家幫你轉真人客服嗎？"}[locale];
