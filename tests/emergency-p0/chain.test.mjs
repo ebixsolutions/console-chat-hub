@@ -2908,6 +2908,11 @@ for(const [industry,question] of [
      model_calls:f.requests.filter(x=>x.url.endsWith(":generateContent")).length,
      handoff_calls:f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,
      kb_calls:kbCalls,
+     service_action:f.commits[0]?.metadata?.service_action??null,
+     knowledge_state:f.commits[0]?.metadata?.knowledge_state??null,
+     safe_assumptions:f.commits[0]?.metadata?.safe_assumptions??null,
+     request_class:f.commits[0]?.metadata?.kb_request_contract?.requested_fact_classes??null,
+     response_preview:String(r.body?.reply??"").slice(0,120),
    }));
    assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
    assert.equal(f.commits.filter(x=>x.metadata?.w1_human_confirmation).length,0);

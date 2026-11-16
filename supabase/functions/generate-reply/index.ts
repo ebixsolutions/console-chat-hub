@@ -5220,6 +5220,25 @@ async function orchestrationGenerateReply(
       explicit_handoff: _explicitHandoffRequested,
     }, _c3RuntimeInputs),
   );
+  // W1 N1: a source-validated current merchant KB read is not a human
+  // service/process question, a product-referent shortcut, or a tool failure.
+  // Preserve the original resolver's subject/ambiguity/size guards and B2.
+  // This is a *read route*, not evidence of any merchant fact or permission.
+  const _n1CurrentKbDemandReady = _currentFactualRequest?.kb_required === true &&
+    _currentFactualRequest.applicable === true &&
+    !_currentFactualRequest.needs_subject_clarification &&
+    typeof _currentFactualRequest.query === "string" &&
+    _currentFactualRequest.query.length > 0 &&
+    !_factualContextLimit &&
+    !_c3ServicePlan.safe_assumptions.includes("query_context_limit");
+  if (_n1CurrentKbDemandReady && _c3ServicePlan.knowledge_state !== "lookup_required" &&
+      _c3ServicePlan.knowledge_state !== "tool_failure") {
+    _c3ServicePlan.action = "published_kb_lookup";
+    _c3ServicePlan.knowledge_state = "lookup_required";
+    _c3ServicePlan.kb_query = _currentFactualRequest.query;
+    _c3ServicePlan.missing_slots = [];
+    _c3ServicePlan.clarification_target = null;
+  }
   if (_factualContextLimit) {
     _c3ServicePlan.action = "offer_handoff_or_reframe";
     _c3ServicePlan.knowledge_state = "tool_failure";
@@ -5853,7 +5872,8 @@ Latest applicable corrections replace old values; an answered clarification is n
   // than routing the question through KB/LLM grounding, where absence of an
   // authoritative schedule could incorrectly become S0.
   const _humanSupportIntent = classifyHandoffIntent(_h1LastMsg);
-  if (_humanSupportIntent.kind === "question_about_human_support") {
+  if (_humanSupportIntent.kind === "question_about_human_support" &&
+      !_n1CurrentKbDemandReady && _c3ServicePlan.knowledge_state !== "lookup_required") {
     const infoReply = HUMAN_SUPPORT_INFO_WORDING[_humanSupportIntent.language];
     const committed = await commitAiReplyWithControlGate(
       supabaseAdmin,
