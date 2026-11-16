@@ -391,7 +391,7 @@ export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs
    const fixtureOmitted=sourceOnly&&root!==process.cwd()&&
      !fs.existsSync(local)&&f!=='supabase/functions/_shared/kb-client.ts';
    const checkedRoot=fixtureOmitted?process.cwd():root;
-   must(fs.existsSync(path.join(checkedRoot,f))&&sha(fs.readFileSync(path.join(checkedRoot,f)))===h,
+   must(fs.existsSync(path.join(checkedRoot,f))&&sha(fs.readFileSync(path.join(checkedRoot,f)))===(TASK3C_W1_SOURCE[f]??h),
      'task3c_kb_binding_hash_drift:'+f);
  }
 
