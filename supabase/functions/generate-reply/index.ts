@@ -4375,7 +4375,6 @@ async function orchestrationGenerateReply(
     _pr5HistoryRows ?? [],
   );
   const _explicitHandoffRequested = isHandoffIntent(_h1LastMsg);
-  const _w1HumanPossible = !_explicitHandoffRequested && typeof w1HumanPossible === "function" && w1HumanPossible(_h1LastMsg);
   // Short merchant questions use the same semantic and evidence path as paraphrases.
   // P0 critical preflight: E2 must run before customer-context and generic clarification early returns.
   const _criticalE2ExpectedTenantId =
@@ -4383,6 +4382,7 @@ async function orchestrationGenerateReply(
       conversation.company_id.length > 0
       ? conversation.company_id
       : undefined;
+  const _w1HumanPossible = !_explicitHandoffRequested && typeof w1HumanPossible === "function" && w1HumanPossible(_h1LastMsg);
   const _criticalE2ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
   if (isE2LiveActivationEnabled(Deno.env) && (_criticalE2ThreatSignal ||
     resolveAuthoritativeComplianceReview(_criticalE2ExpectedTenantId))) {
