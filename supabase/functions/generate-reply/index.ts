@@ -4522,7 +4522,7 @@ async function orchestrationGenerateReply(
 
   // Safety/control checks above and B2 persistence still apply. A whole social
   // turn must never reach a semantic state writer or replace the business goal.
-  if (!_explicitHandoffRequested && classifySocialTurn(_h1LastMsg)) {
+  if (!_explicitHandoffRequested && !w1Pending && classifySocialTurn(_h1LastMsg)) {
     return (await persistNaturalImmediateResponse(supabaseAdmin,conversation_id,_h1SourceMessageId,
       {kind:"greeting",product:null},_visitorLang,_h1LastMsg,
       {unresolved: [...(_pr5HistoryRows ?? [])].filter((row: any)=>row.role === "assistant").sort((a:any,b:any)=>String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""))).slice(0,1).some((row: any)=>row.metadata?.degraded === true || row.metadata?.generation_success === false || row.metadata?.response_route === "terminal_failure_recovery" || row.metadata?.social_context_unresolved === true)}))!;
