@@ -5871,53 +5871,51 @@ Latest applicable corrections replace old values; an answered clarification is n
   // than routing the question through KB/LLM grounding, where absence of an
   // authoritative schedule could incorrectly become S0.
   const _humanSupportIntent = classifyHandoffIntent(_h1LastMsg);
-  if (_humanSupportIntent.kind === "question_about_human_support" &&
-      !_n1CurrentKbDemandReady && _c3ServicePlan.knowledge_state === "not_needed" &&
-      !_c3ServicePlan.safe_assumptions.includes("query_context_limit")) {
+  // W1: a missing KB answer for genuine human-support opening hours should
+  // retain the original optional-human guidance. Business uses of person or
+  // agent, including pricing and seat-count questions, must not take this route.
+  const _humanSupportInfoNoEvidence =
+    _humanSupportIntent.kind === "question_about_human_support" &&
+    classifyHumanServiceDiscussion(_h1LastMsg).kind === "merchant_evidence" &&
+    /(?:\bhours?\b|\bopening\s+(?:times?|hours?)\b|(?:真人客服|人工客服|客服).{0,12}(?:幾點|几点|幾時|几时|上班|服務時間|服务时间|辦公時間|办公时间|24\s*(?:小時|小时)))/i.test(_h1LastMsg) &&
+    !_mixedRequest &&
+    !_c3ServicePlan.safe_assumptions.includes("query_context_limit");
+  const _commitHumanSupportInfo = async (kbNoMatch: boolean): Promise<Response> => {
     const infoReply = HUMAN_SUPPORT_INFO_WORDING[_humanSupportIntent.language];
     const committed = await commitAiReplyWithControlGate(
-      supabaseAdmin,
-      conversation_id,
-      source_message_id,
-      infoReply,
-      {
+      supabaseAdmin, conversation_id, source_message_id, infoReply, {
         response_route: "human_support_information",
         handoff_required: false,
         escalation_rule: null,
         handoff_intent_kind: _humanSupportIntent.kind,
+        ...(kbNoMatch ? {
+          knowledge_state: "no_match",
+          grounding_state: "no_current_evidence",
+          factual_grounding_required: true,
+        } : {}),
       },
     );
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     if (!committed.ok) {
-      if (
-        committed.result === "human_control" ||
-        committed.result === "resolved" ||
-        committed.result === "superseded_source"
-      ) {
-        return new Response(
-          JSON.stringify({ success: true, skipped: committed.result }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-        );
+      if (committed.result === "human_control" || committed.result === "resolved" ||
+          committed.result === "superseded_source") {
+        return new Response(JSON.stringify({ success: true, skipped: committed.result }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-      return new Response(
-        JSON.stringify({
-          success: false,
-          error: `human_support_info_commit_${committed.result}`,
-        }),
-        {
-          status: 409,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
-      );
+      return new Response(JSON.stringify({
+        success: false, error: `human_support_info_commit_${committed.result}`,
+      }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
-    return new Response(
-      JSON.stringify({
-        success: true,
-        response_route: "human_support_information",
-        handoff_required: false,
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
+    return new Response(JSON.stringify({
+      success: true, reply: infoReply,
+      response_route: "human_support_information", handoff_required: false,
+      idempotent: committed.idempotent,
+    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  };
+  if (_humanSupportIntent.kind === "question_about_human_support" &&
+      !_n1CurrentKbDemandReady && _c3ServicePlan.knowledge_state === "not_needed" &&
+      !_c3ServicePlan.safe_assumptions.includes("query_context_limit")) {
+    return await _commitHumanSupportInfo(false);
   }
 
   // Pure positive-recovery acknowledgements are non-factual and must not enter KB/LLM grounding.
@@ -6388,6 +6386,7 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
           ragResult={...ragResult,chunks:[],documents:[],llm_context:undefined,no_answer:true};
           break kbRetrieval;
         }
+        if (_humanSupportInfoNoEvidence) return await _commitHumanSupportInfo(true);
         return await persistBoundedNoCurrentEvidence(
           supabaseAdmin,
           conversation_id,
@@ -6599,6 +6598,7 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
           ragResult={...ragResult,chunks:[],documents:[],llm_context:undefined,no_answer:true};
           break kbRetrieval;
         }
+        if (_humanSupportInfoNoEvidence) return await _commitHumanSupportInfo(true);
         return await persistBoundedNoCurrentEvidence(
           supabaseAdmin,
           conversation_id,
@@ -6786,6 +6786,7 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
           ragResult={...ragResult,chunks:[],documents:[],llm_context:undefined,no_answer:true};
           break kbRetrieval;
         }
+        if (_humanSupportInfoNoEvidence) return await _commitHumanSupportInfo(true);
         return await persistBoundedNoCurrentEvidence(
           supabaseAdmin,
           conversation_id,
