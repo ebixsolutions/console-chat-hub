@@ -3187,6 +3187,7 @@ const S0_LLM_FAILURE_SAFE_TEXT: Record<string, string> = {
 
 function detectVisitorLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
   if (/(?:reply|respond|explain|answer|summari[sz]e|please|請|请|用|改用).{0,28}(?:in\s+English|英文)/i.test(text)) return "en";
+  if (/(?:用|改用|以|使用|請|请|reply|respond|answer|explain).{0,20}(?:普通話|普通话|國語|国语|簡體中文|简体中文|mandarin|simplified chinese)/i.test(text)) return "zh-CN";
   if (/(?:用|改用|以).{0,12}(?:廣東話|粤語|粵語)/i.test(text)) return "zh-TW";
   if (!text) return "zh-TW";
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
