@@ -4328,14 +4328,6 @@ async function orchestrationGenerateReply(
       {status:202,headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
 
-  const _closureResponse = await handleConversationClosureIfNeeded(
-    supabaseAdmin,
-    conversation_id,
-    source_message_id,
-    _h1LastMsg,
-  );
-  if (_closureResponse) return _closureResponse;
-
   const [
     { data: _pr5HistoryRows },
     { count: _pr5VisitorTurnCount },
@@ -4359,6 +4351,34 @@ async function orchestrationGenerateReply(
       .neq("content", "__THINKING__")
       .or(sourceBoundaryFilter(sourceVisitorMessage)),
   ]);
+
+  // W1 pending confirmation: use ONLY the immediately preceding SERVER-written,
+  // B2-committed, unrecalled assistant row from the same Company and ticket.
+  // A bare affirmative without that authoritative readback remains ordinary text.
+  const w1Previous=(_pr5HistoryRows??[]).find((row:any)=>row.id!==_h1SourceMessageId);
+  const w1PreviousMeta=(w1Previous?.role==="assistant" &&
+    w1Previous.is_recalled===false && w1Previous.metadata &&
+    typeof w1Previous.metadata==="object") ? w1Previous.metadata as Record<string,unknown> : null;
+  const w1Pending=!!w1PreviousMeta &&
+    w1PreviousMeta.response_route==="w1_human_confirmation" &&
+    w1PreviousMeta.w1_human_confirmation===true &&
+    w1PreviousMeta.b2_commit_source==="commit_ai_reply_tx" &&
+    w1PreviousMeta.w1_company_id===conversation.company_id &&
+    w1PreviousMeta.w1_confirmation_source_id===w1PreviousMeta.b2_source_message_id &&
+    typeof w1PreviousMeta.w1_confirmation_source_id==="string" &&
+    w1PreviousMeta.w1_confirmation_source_id!==_h1SourceMessageId &&
+    typeof w1PreviousMeta.w1_confirmation_revision==="number" &&
+    Number.isSafeInteger(w1PreviousMeta.w1_confirmation_revision) &&
+    ["en","zh-TW","zh-CN","yue-Hant"].includes(String(w1PreviousMeta.w1_confirmation_locale));
+  // Preserve original C2 closure priority except for an actual preceding
+  // server-authored, B2-committed W1 question. Short 'no thanks' answers to
+  // that question are not a request to close the customer conversation.
+  // The pending branch still rechecks canonical Commerce revision and R1.
+  const _closureResponse = w1Pending && (w1Affirms(_h1LastMsg) || w1Declines(_h1LastMsg))
+    ? null : await handleConversationClosureIfNeeded(
+      supabaseAdmin, conversation_id, source_message_id, _h1LastMsg,
+    );
+  if (_closureResponse) return _closureResponse;
 
   const _pr5History = deriveConversationHistorySignals(
     _pr5HistoryRows ?? [],
@@ -4471,24 +4491,6 @@ async function orchestrationGenerateReply(
     if (serviceDiscussionReply) return serviceDiscussionReply;
   }
   const _naturalCustomerIntent = classifyNaturalCustomerIntent(_h1LastMsg);
-  // W1 pending confirmation: use ONLY the immediately preceding SERVER-written,
-  // B2-committed, unrecalled assistant row from the same Company and ticket.
-  // A bare affirmative without that authoritative readback remains ordinary text.
-  const w1Previous=(_pr5HistoryRows??[]).find((row:any)=>row.id!==_h1SourceMessageId);
-  const w1PreviousMeta=(w1Previous?.role==="assistant" &&
-    w1Previous.is_recalled===false && w1Previous.metadata &&
-    typeof w1Previous.metadata==="object") ? w1Previous.metadata as Record<string,unknown> : null;
-  const w1Pending=!!w1PreviousMeta &&
-    w1PreviousMeta.response_route==="w1_human_confirmation" &&
-    w1PreviousMeta.w1_human_confirmation===true &&
-    w1PreviousMeta.b2_commit_source==="commit_ai_reply_tx" &&
-    w1PreviousMeta.w1_company_id===conversation.company_id &&
-    w1PreviousMeta.w1_confirmation_source_id===w1PreviousMeta.b2_source_message_id &&
-    typeof w1PreviousMeta.w1_confirmation_source_id==="string" &&
-    w1PreviousMeta.w1_confirmation_source_id!==_h1SourceMessageId &&
-    typeof w1PreviousMeta.w1_confirmation_revision==="number" &&
-    Number.isSafeInteger(w1PreviousMeta.w1_confirmation_revision) &&
-    ["en","zh-TW","zh-CN","yue-Hant"].includes(String(w1PreviousMeta.w1_confirmation_locale));
   if(w1Pending && (w1Affirms(_h1LastMsg)||w1Declines(_h1LastMsg))){
     const check=await supabaseAdmin.from("conversation_commerce_state")
       .select("revision").eq("conversation_id",conversation_id)

@@ -88,6 +88,12 @@ function w1ClauseVerdict(text:string):W1ClauseVerdict{
  const active=norm(text);
  if(!PERSON.test(active)&&!BOT_WISH.test(active))return "none";
  if(REPORTED.test(active))return "excluded";
+ // A staff count / workforce attribute is not a customer request to speak
+ // with support staff. Preserve clear contact requests and short "staff?".
+ if(/\bstaff\b/iu.test(active) &&
+   !/(?:\b(?:talk|speak|chat|connect|transfer|contact|reach|call|consult|support|help|get)\b.{0,36}\bstaff\b|\bstaff\b.{0,36}\b(?:support|help|agent|human|connect|transfer|talk|speak|chat)\b|^staff[?？.!！\s]*$)/iu.test(active) &&
+   !PERSON.test(active.replace(/\bstaff\b/giu," ")) &&
+   !BOT_WISH.test(active))return "none";
  // Reject a human transfer negation but not "I don't want a bot, I want a human".
  const humanNegationText=active.replace(/\b(?:don't|do not)\s+(?:want|need|use)\s+(?:a\s+|an\s+)?(?:bot|robot|ai|app)(?=\s*[,，])/giu," ");
  if(NEGATED.test(humanNegationText))return "excluded";

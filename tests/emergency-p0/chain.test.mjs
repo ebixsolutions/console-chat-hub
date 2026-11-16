@@ -2826,6 +2826,25 @@ for(const text of ["Don't transfer me to a human","I don't need an agent","I don
   await f.run();assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
  });
 }
+// Prevent ordinary SaaS staffing/roster facts from triggering W1 transfer.
+for(const text of [
+ "We have eight staff. Explain which SaaS permissions fit our team.",
+ "Our three staff need a shift roster; which permissions should we compare?",
+ "Correction: eight staff and automatic renewal off. Explain training and permissions."
+])test("W1 workforce mention stays a business question: "+text,async()=>{
+ const f=fixture(text,{originalPreview:true,fullChain:true,
+   answer:"Compare workforce needs and permissions without assuming any transfer.",
+   semantic:{operation:"ASK_FACT",confidence:.97,intent:"customer_guidance",requested_facts:[]}});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));
+ assert.notEqual(f.commits[0]?.metadata.response_route,"w1_human_confirmation");
+ assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
+});
+test("W1 explicit request for support staff retains atomic R1",async()=>{
+ const f=fixture("Can I speak with your support staff now?",{
+   semantic:providerWire({intent:"request_human_now",requested_facts:[]},"NO_STATE_CHANGE")});
+ const r=await f.run();assert.equal(r.body.escalation_rule,"R1",JSON.stringify(r));
+ assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,1);
+});
 for(const text of ["需要","要","想","對","嗯","要呀","麻煩你了","好，謝謝","yes, please","yes pls","yes thanks","yup","y","please"]){
  test("W1 trusted confirmation accepts natural positive once: "+text,async()=>{
   const f=fixture(text,{source:uuid(9700),history:w1CommittedConfirmationHistory(),handoffSetsHumanControl:true});
