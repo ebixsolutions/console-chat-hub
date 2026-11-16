@@ -95,7 +95,7 @@ function w1ClauseVerdict(text:string):W1ClauseVerdict{
  if(CONDITION.test(courtesy)||LATER.test(courtesy))return "excluded";
  const directHumanAction=/(?:\b(?:talk|speak|chat)\s+(?:to|with)\s+(?:(?:an?|the)\s+)?(?:human|person|agent|representative|someone)\b|\b(?:transfer|connect|get|put)\s+(?:me\s+(?:to\s+)?)?(?:(?:an?|the)\s+)?(?:human|person|agent|representative|someone)\b|(?:請|请|麻煩|麻烦|要|想|搵|找|轉|转|叫|幫|帮|給|给).{0,15}(?:真人|人工|專人|专人|個人|个人|客服))/iu.test(active);
  if(INFO.test(courtesy) && !directHumanAction)return "excluded";
- if(INFO.test(courtesy) && /^(?:when|幾時|几时|何時|何时)\b?/iu.test(courtesy))return "confirm";
+ if(INFO.test(courtesy) && /^(?:when\b|幾時|几时|何時|何时)/iu.test(courtesy))return "confirm";
  if(INDIRECT.test(active)||!PERSON.test(active))return "confirm";
  return "r1";
 }
