@@ -5231,7 +5231,7 @@ async function orchestrationGenerateReply(
     _currentFactualRequest.query.length > 0 &&
     !_factualContextLimit &&
     !_c3ServicePlan.safe_assumptions.includes("query_context_limit");
-  if (_n1CurrentKbDemandReady && _c3ServicePlan.knowledge_state === "not_needed") {
+  if (_currentFactualRequest && _n1CurrentKbDemandReady && _c3ServicePlan.knowledge_state === "not_needed") {
     _c3ServicePlan.action = "published_kb_lookup";
     _c3ServicePlan.knowledge_state = "lookup_required";
     _c3ServicePlan.kb_query = _currentFactualRequest.query;

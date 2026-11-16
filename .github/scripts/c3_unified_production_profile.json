@@ -1705,7 +1705,7 @@
   "authorized_w1_source_sha256": {
     "supabase/functions/_shared/human-control-w1.ts": "5a7d8e3ee9f9786041478dcb9b3d7e503aeffd7cb561ef0ee5d0a5fdb2c01c7d",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "7ebd8f74ff68d934b47da5940eb5075d6910bfed997f7ce98638585b25f6f5a2",
-    "supabase/functions/generate-reply/index.ts": "7900c93ce3002fc6213787ef53211805fefa1f61998adbfaff085243581609b4",
+    "supabase/functions/generate-reply/index.ts": "b6165f75979dd18b4f36c1a6a3f9803437dbf015db81cb33787bb5eac96b0565",
     "tests/emergency-p0/chain.test.mjs": "676fb5d7e9eb2b4bd9d73c1989b1fca11dbdd5d0d4c3859d62fe733d0a722f51"
   }
 }
