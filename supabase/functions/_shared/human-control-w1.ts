@@ -10,7 +10,7 @@ const PERSON=/(?:真人|人工(?:客服|服務|服务)?|客服(?:人員|人员)?
 const BOT_WISH=/(?:唔想|不想|不要|不願|不愿).{0,8}(?:機械人|机器人|bot|ai)|\b(?:don't|do not)\s+want\s+(?:a\s+)?bot\b/iu;
 const QUOTE=/「[^」]*」|『[^』]*』|“[^”]*”|"[^"]*"|‘[^’]*’|(?<!\w)'[^']*'(?!\w)/gu;
 const REPORTED=/^(?:(?:my|the|a)\s+)?(?:friend|customer|client|user|colleague|he|she|they)\s+(?:said|asked|wrote|mentioned)\b|^(?:佢|他|她|同事|朋友|客人|顧客|顾客).{0,8}(?:話|话|說|说|表示|提到)/iu;
-const NEGATED=/(?:\b(?:don't|do not|never|not)\s+(?:(?:want|need|require|ask\s+for)\s+(?:(?:to\s+)?(?:talk|speak|chat)\s+(?:to|with)\s+)?(?:a\s+|an\s+|any\s+)?(?:human|agent|person|someone|representative)\b|(?:transfer|connect|put|route|handoff|hand\s+off|get)\b.{0,26}\b(?:human|agent|person|someone|representative)\b)|\bnot\s+asking\s+for\s+(?:a\s+)?(?:human|agent|person)\b|\b(?:human|agent|person|representative)\b.{0,12}\b(?:not\s+needed|not\s+required|no\s+need)\b|(?:唔好|不要|不用|不需要|唔需要|不想|唔想|唔使|未叫|冇叫|沒要求|没要求|取消|撤回|禁止)\s*(?:(?:而家|現在|现在|再)?(?:跟|同|與|与)\s*)?(?:要|請|请|幫|帮|轉|转|接|搵|找|聯絡|联系|給|给|安排)?\s*(?:真人|人工(?:客服)?|客服(?:人員|人员)?|專人|专人|職員|职员|個人|个人)|(?:真人|人工|專人|专人).{0,8}(?:唔使|不需要|不要|不用))/iu;
+const NEGATED=/(?:\b(?:don't|do not|never|not)\s+(?:(?:want|need|require|ask\s+for)\s+(?:(?:to\s+)?(?:talk|speak|chat)\s+(?:to|with)\s+)?(?:a\s+|an\s+|any\s+)?(?:human|agent|person|someone|representative)\b|(?:transfer|connect|put|route|handoff|hand\s+off|get)\b.{0,26}\b(?:human|agent|person|someone|representative)\b)|\bnot\s+(?:asking|requesting|looking)(?:\s+for)?\s+(?:(?:an?|any)\s+)?(?:human|agent|person)\b|\b(?:human|agent|person|representative)\b.{0,12}\b(?:not\s+needed|not\s+required|no\s+need)\b|(?:唔好|不要|不用|不需要|唔需要|不想|唔想|唔使|未叫|冇叫|沒要求|没要求|取消|撤回|禁止)\s*(?:(?:而家|現在|现在|再)?(?:跟|同|與|与)\s*)?(?:要|請|请|幫|帮|轉|转|接|搵|找|聯絡|联系|給|给|安排)?\s*(?:真人|人工(?:客服)?|客服(?:人員|人员)?|專人|专人|職員|职员|個人|个人)|(?:真人|人工|專人|专人).{0,8}(?:唔使|不需要|不要|不用))/iu;
 const CONDITION=/\b(?:if|unless|in case|hypothetically|suppose|imagine|assuming)\b|如果|若果|假如|假設|假设|萬一|万一|除非|答唔到|答不到|查唔到|查不到/iu;
 const LATER=/\b(?:later|afterwards|eventually|in the future|tomorrow|next\s+(?:week|month|day|time|year))\b|之後|之后|遲啲|迟点|稍後|稍后|聽日|听日|明天|下次|日後|日后/iu;
 const INFO=/\b(?:what\s+(?:are|is|time)|when|how\s+(?:long|much)|opening\s+hours|support\s+hours|service\s+hours|process|workflow|eligibility)\b|(?:服務|服务|營業|营业|辦公|办公)(?:時間|时间)|(?:幾點|几点|幾時|何時|何时|多久|幾耐|流程|收費|收费|資格|资格)/iu;
@@ -93,7 +93,7 @@ function w1ClauseVerdict(text:string):W1ClauseVerdict{
  if(NEGATED.test(humanNegationText))return "excluded";
  const courtesy=active.replace(/\bif\s+possible\b/giu," ");
  if(CONDITION.test(courtesy)||LATER.test(courtesy))return "excluded";
- const directHumanAction=/(?:\b(?:talk|speak|chat)\s+(?:to|with)\s+(?:(?:an?|the)\s+)?(?:human|person|agent|representative|someone)\b|\b(?:transfer|connect|get|put)\s+(?:me\s+(?:to\s+)?)?(?:(?:an?|the)\s+)?(?:human|person|agent|representative|someone)\b|(?:請|请|麻煩|麻烦|要|想|搵|找|轉|转|叫|幫|帮|給|给).{0,15}(?:真人|人工|專人|专人|個人|个人|客服))/iu.test(active);
+ const directHumanAction=/(?:\b(?:talk|speak|chat)\s+(?:to|with)\s+(?:(?:an?|the)\s+)?(?:real\s+)?(?:human|person|agent|representative|someone)\b|\b(?:transfer|connect|get|put)\s+(?:me\s+(?:to\s+)?)?(?:(?:an?|the)\s+)?(?:human|person|agent|representative|someone)\b|(?:請|请|麻煩|麻烦|要|想|搵|找|轉|转|叫|幫|帮|給|给).{0,15}(?:真人|人工|專人|专人|個人|个人|客服))/iu.test(active);
  if(INFO.test(courtesy) && !directHumanAction)return "excluded";
  if(INFO.test(courtesy) && /^(?:when\b|幾時|几时|何時|何时)/iu.test(courtesy))return "confirm";
  if(INDIRECT.test(active)||!PERSON.test(active))return "confirm";
