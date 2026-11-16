@@ -96,9 +96,10 @@ export function w1Decision(
  const clauses=w1EffectiveClauses(raw).map(w1ClauseVerdict);
  if(clauses.includes("r1"))return out("r1","source_bound_human_request_now");
  if(clauses.includes("confirm"))return out("confirm","indirect_or_unbound_human_wish");
- return clauses.includes("excluded")
-  ?out("excluded","current_human_request_excluded")
-  :out("continue","no_current_human_referent");
+ if(clauses.includes("excluded"))return out("excluded","current_human_request_excluded");
+ // A validated understanding proposal without a recognized person referent
+ // must receive one neutral question; it never grants R1 itself.
+ return out("confirm","model_proposal_without_current_human_referent");
 }
 export function w1Confirmation(locale:W1Locale):string{
  return {en:"Would you like me to connect you with a human support agent now?","zh-TW":"需要我現在為您轉接真人客服嗎？","zh-CN":"需要我现在为您转接人工客服吗？","yue-Hant":"你想我而家幫你轉真人客服嗎？"}[locale];
