@@ -288,6 +288,12 @@ const HUMAN_SUPPORT_INFO_WORDING: Record<"zh-TW" | "zh-CN" | "en", string> = {
     "I don't currently have confirmed human-support service hours. If you want a human agent now, you can tell me directly.",
 };
 
+const HUMAN_SUPPORT_CONTACT_INFO_WORDING: Record<"zh-TW" | "zh-CN" | "en", string> = {
+  "zh-TW": "我目前沒有已確認的真人客服聯絡方式或即時可用狀態資料。如果你想在這個對話要求轉真人客服，可以直接告訴我；目前尚未轉交。",
+  "zh-CN": "我目前没有已确认的人工客服联系方式或实时在线状态资料。如果你想在这里要求转人工客服，可以直接告诉我；目前尚未转接。",
+  en: "I don't currently have verified contact details or live availability for human support. You can ask to be connected with a human agent in this chat; no transfer has been made yet.",
+};
+
 const REQUIRED_ESCALATION_SAFE_WORDING: Record<
   "E2" | "E1" | "R2",
   Record<"zh-TW" | "zh-CN" | "en", string>
@@ -5874,14 +5880,22 @@ Latest applicable corrections replace old values; an answered clarification is n
   // W1: a missing KB answer for genuine human-support opening hours should
   // retain the original optional-human guidance. Business uses of person or
   // agent, including pricing and seat-count questions, must not take this route.
+  const _humanSupportDiscussion = classifyHumanServiceDiscussion(_h1LastMsg);
+  const _humanSupportHoursQuestion =
+    /(?:\bhours?\b|\bopening\s+(?:times?|hours?)\b|(?:真人客服|人工客服|客服).{0,12}(?:幾點|几点|幾時|几时|上班|服務時間|服务时间|辦公時間|24\s*(?:小時|小时)))/i.test(_h1LastMsg);
+  // W2 N2: a question about contact or availability is not a transfer.
+  // A commercial "agent/person" mention cannot create a human handoff.
   const _humanSupportInfoNoEvidence =
     _humanSupportIntent.kind === "question_about_human_support" &&
-    classifyHumanServiceDiscussion(_h1LastMsg).kind === "merchant_evidence" &&
-    /(?:\bhours?\b|\bopening\s+(?:times?|hours?)\b|(?:真人客服|人工客服|客服).{0,12}(?:幾點|几点|幾時|几时|上班|服務時間|服务时间|辦公時間|办公时间|24\s*(?:小時|小时)))/i.test(_h1LastMsg) &&
+    (_humanSupportDiscussion.kind === "merchant_evidence" ||
+      _humanSupportDiscussion.kind === "control_or_process" ||
+      /\bhow\s+(?:can|do|could)\s+i\s+(?:reach|contact)\s+(?:a\s+)?(?:human|live)\s+(?:agent|representative)\b/i.test(_h1LastMsg)) &&
     !_mixedRequest &&
     !_c3ServicePlan.safe_assumptions.includes("query_context_limit");
   const _commitHumanSupportInfo = async (kbNoMatch: boolean): Promise<Response> => {
-    const infoReply = HUMAN_SUPPORT_INFO_WORDING[_humanSupportIntent.language];
+    const infoReply = _humanSupportHoursQuestion
+      ? HUMAN_SUPPORT_INFO_WORDING[_humanSupportIntent.language]
+      : HUMAN_SUPPORT_CONTACT_INFO_WORDING[_humanSupportIntent.language];
     const committed = await commitAiReplyWithControlGate(
       supabaseAdmin, conversation_id, source_message_id, infoReply, {
         response_route: "human_support_information",

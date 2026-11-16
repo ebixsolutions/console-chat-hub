@@ -1707,5 +1707,15 @@
     "supabase/functions/_shared/commerce-semantic-frame.ts": "7ebd8f74ff68d934b47da5940eb5075d6910bfed997f7ce98638585b25f6f5a2",
     "supabase/functions/generate-reply/index.ts": "b6165f75979dd18b4f36c1a6a3f9803437dbf015db81cb33787bb5eac96b0565",
     "tests/emergency-p0/chain.test.mjs": "676fb5d7e9eb2b4bd9d73c1989b1fca11dbdd5d0d4c3859d62fe733d0a722f51"
+  },
+  "authorized_w2_source_sha256": {
+    "supabase/functions/_shared/current-factual-request.ts": "3caa3b899b83439c5dc47ccab2057a7a6df72317c03c1a02599f78a1a64dd833",
+    "supabase/functions/generate-reply/index.ts": "fc3fab6c481268d3dfb5c7d0209fb249717da6dd2160b5b4c59ec0fbca572b86",
+    "supabase/functions/_shared/customer-money-facts.ts": "3a736ce2821e9bfec270c820d790901c767318667584176ceef6c6c8df182e49",
+    "supabase/functions/_shared/customer-money-facts.test.ts": "5f718ffc88601ac995ff643ed58d2670532ca3a17cdf51378247757ac6ed02bc",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "d6ef96b3eff7f4bccc6321d4523e3bcbca1fa26a9ac753f9aac54b383aa06eae",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "db72ed14de811eddab0cca9bc0c4be7a929c42bc8024db7e24de272c28c027c8",
+    "supabase/functions/_shared/natural-customer-response.ts": "e7ce4962601be0d9607cf0c5da8ca5a1b9d8c1a32239edefb73887cc5cfe6996",
+    "tests/emergency-p0/chain.test.mjs": "528f23d1c211d43e970017db8351104163b0f72ad1729eaf900c36be9bd66263"
   }
 }

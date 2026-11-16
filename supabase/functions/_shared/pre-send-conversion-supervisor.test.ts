@@ -1683,6 +1683,12 @@ Deno.test("B2 actual bound repeated request never commits; justified original pl
   assertEquals(decision("Current price is HKD 5000.",empty).decision,"block","price guard intact");
 });
 
+Deno.test("W2 current price NTD/NT$ and unscoped dollar require verified authority",()=>{
+  const empty=createEmptyConversationCommerceState();
+  for(const draft of ["Current price is NTD 888.","Current price is NT$888.","Current price is $888.","現時售價為 NTD 888。"]){
+    assertEquals(decision(draft,empty).decision,"block","unsupported current-price claim blocked: "+draft);
+  }
+});
 Deno.test("B2 absent defaults do not forbid first collection and superseded fields cannot bind",()=>{
   const empty=createEmptyConversationCommerceState();
   assertEquals(decision("What is the delivery confirmation status?",empty).decision,"allow","unknown default is collectable");

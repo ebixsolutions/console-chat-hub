@@ -2881,13 +2881,8 @@ for(const [text,semanticIntent,expected] of [
 }
 // W1 N1: an ordinary business turn cannot become a human-confirmation
 // prompt. Six cases use the existing tenant-bound managed KB fixture.
-// Three generic referent clarification defects predate W1; they remain W2
-// known failing business inputs, not artificial W1 business-answer PASS.
-const W1_N1_W2_REFERENT_KNOWN_FAILURES = new Set([
- "請問客服人員排班功能怎麼設定",
- "Can a specialist do the facial for sensitive skin?",
- "Is the plan priced per person?",
-]);
+// W2: formerly unresolved source-owned business reads must now return
+// tenant-bound KB evidence, never merely avoid W1 handoff.
 for(const [industry,question] of [
  ["retail","I'm buying a gift for someone, what do you recommend?"],
  ["saas","How many agent seats are included in the Pro plan?"],
@@ -2897,7 +2892,10 @@ for(const [industry,question] of [
  ["beauty","Can a specialist do the facial for sensitive skin?"],
  ["education","課程可以一個人報名嗎"],
  ["installation","請問有沒有專人到府安裝服務"],
- ["pricing","Is the plan priced per person?"]
+ ["pricing","Is the plan priced per person?"],
+ ["operations","請問排班功能怎麼設定"],
+ ["beauty","Can the treatment work for sensitive skin?"],
+ ["pricing","Is the subscription priced per seat?"]
 ]){
  test("W1 N1 business query not hijacked to handoff: "+industry+" / "+question,async()=>{
    const answer="Published tenant knowledge is available for this ordinary business question.";
@@ -2913,14 +2911,11 @@ for(const [industry,question] of [
    const r=await f.run();
    assert.equal(r.status,200,JSON.stringify(r));
    const kbCalls=f.requests.filter(x=>x.url.includes("/rag/context-search")).length;
-   if(!W1_N1_W2_REFERENT_KNOWN_FAILURES.has(question)){
-     assert.equal(kbCalls,1,JSON.stringify({industry,question,route:r.body?.response_route,
-       service_action:f.commits[0]?.metadata?.service_action,
-       knowledge_state:f.commits[0]?.metadata?.knowledge_state}));
-     assert.equal(f.commits[0]?.content,answer,
-       "W1 business case must use the published fixture, not tool-error fallback");
-   }
-   // W2 entries are only tested here for the W1 non-handoff property.
+   assert.equal(kbCalls,1,JSON.stringify({industry,question,route:r.body?.response_route,
+     service_action:f.commits[0]?.metadata?.service_action,
+     knowledge_state:f.commits[0]?.metadata?.knowledge_state}));
+   assert.equal(f.commits[0]?.content,answer,
+     "W2 independent factual question must use bound published evidence");
    assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
    assert.equal(f.commits.filter(x=>x.metadata?.w1_human_confirmation).length,0);
    assert.notEqual(f.commits[0]?.metadata.response_route,"w1_human_confirmation");
@@ -2936,6 +2931,10 @@ for(const [question,language,hasEvidence] of [
  ["真人客服幾點上班？","zh-TW",true],
  ["真人客服幾點上班？","zh-TW",false],
  ["How many agent seats are included in the Pro plan?","en",false],
+ ["How can I reach a human agent?","en",false],
+ ["When is your human support available?","en",false],
+ ["Is a live agent available on weekends?","en",false],
+ ["How can I reach a human agent?","en",true],
 ]){
  test("W1 KB support-hours fallback is scoped: "+question+" evidence="+hasEvidence,async()=>{
    const answer="The published record says support hours are Monday to Friday, 09:00–18:00.";
@@ -2966,8 +2965,9 @@ for(const [question,language,hasEvidence] of [
    } else {
      assert.equal(f.commits[0].metadata.response_route,"human_support_information");
      assert.match(f.commits[0].content,
-       language==="en"?/don't currently have confirmed human-support service hours.*human agent now/i:
-       /沒有已確認的真人客服服務時間資料.*可以直接告訴我/);
+       question.includes("hours") || question.includes("幾點")
+         ? language==="en"?/don't currently have confirmed human-support service hours.*human agent now/i:/沒有已確認的真人客服服務時間資料.*可以直接告訴我/
+         : /don't currently have verified contact details or live availability.*no transfer has been made/i);
      assert.equal(f.commits[0].metadata.handoff_required,false);
    }
  });

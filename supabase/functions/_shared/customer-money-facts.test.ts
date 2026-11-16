@@ -18,6 +18,15 @@ Deno.test("COMPONENT: monetary role and basis follow words, independent of the a
   equal(deriveTypedCustomerCalculation({question:"假設機價 HK$4,137，試算幾多？"}).status,"missing_explicit_basis");
   equal(deriveTypedCustomerCalculation({question:"假設每部 USD 100，再加整單 HKD 50，兩部試算？"}).status,"mixed_currency");
 });
+Deno.test("W2 explicit Taiwan currency vs unscoped dollar stays source-bound",()=>{
+  for(const amount of ["NTD 888","TWD 888","NT$888","888 NTD","888 TWD"]){
+    const facts=deriveTypedCustomerMoneyFacts("假設每部 "+amount+"，兩部合共多少？").facts;
+    equal(facts.map(f=>[f.amount,f.currency,f.charge_basis]),[[888,"TWD","per_unit"]]);
+  }
+  equal(deriveTypedCustomerMoneyFacts("假設每部 $888，兩部合共多少？").facts.map(f=>f.currency),["UNKNOWN"]);
+  const unknown=deriveTypedCustomerCalculation({question:"假設每部 $888，兩部合共多少？"});
+  if(unknown.status==="ready"&&unknown.current_price_authority!=="NONE")throw Error("bare dollar current quote promoted");
+});
 Deno.test("COMPONENT: historical acknowledgement never invents installation or a unit basis", () => {
   for (const question of ["之前機價 HK$5,788，送貨 HK$550。","之前兩部合共 HK$5,600。","之前四部合共 HK$9,312。"] ) {
     const plan=planConversationService({question,language:"zh-TW",recall:{handled:false,reason:"NOT_A_RECALL_QUERY"},memory:null,commerce:null});

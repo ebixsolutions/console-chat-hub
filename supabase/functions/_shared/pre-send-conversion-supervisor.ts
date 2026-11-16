@@ -711,7 +711,7 @@ function extractMoneyMentions(text: string): MoneyMention[] {
     return ranges;
   });
   const pattern =
-    /(?:\b(HKD|USD|TWD)\b\s*|((?:HK|US|NT)\$|\$)\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.([0-9]{1,2}))?\s*(元|蚊|dollars?)?/gi;
+    /(?:\b(HKD|USD|TWD|NTD)\b\s*|((?:HK|US|NT)\$|\$)\s*)?([0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,10})(?:\.([0-9]{1,2}))?\s*(元|蚊|dollars?)?/gi;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
     // Model identifiers and measurements are never prices, even when a
@@ -739,12 +739,11 @@ function extractMoneyMentions(text: string): MoneyMention[] {
     const currency =
       marker.includes("USD") || marker.includes("US$")
         ? "USD"
-        : marker.includes("TWD") || marker.includes("NT$")
+        : marker.includes("TWD") || marker.includes("NTD") || marker.includes("NT$")
           ? "TWD"
           : marker.includes("HKD") ||
               marker.includes("HK$") ||
-              marker.includes("$") ||
-              /元|蚊/.test(marker)
+              /蚊/.test(marker)
             ? "HKD"
             : null;
     results.push({ amount, currency });
@@ -862,7 +861,7 @@ function hasVerifiedKbSellingPriceClause(input: B2EvaluationInput, clause: strin
 
 // Task1 B2: only affirmative *current* quote clauses require quote authority.
 // Refusals, unknown prices and no-price advice must not be mistaken for quotes.
-const STATED_CURRENT_PRICE = /(?:現時售價|现时售价|現行售價|现行售价|現價|现价|即時售價|即时售价|(?:current|latest|today(?:'s)?|now)\s+(?:selling\s+)?(?:price|quote|quotation)|(?:selling\s+)?price\s*(?:is|=|:)\s*(?:(?:HKD|USD|TWD|HK\$|US\$|NT\$|\$)\s*)?\d|(?:售價|售价|價格|价格)\s*(?:是|為|为|:|：)\s*(?:(?:HKD|USD|TWD|HK\$|US\$|NT\$|\$)\s*)?\d)/i;
+const STATED_CURRENT_PRICE = /(?:現時售價|现时售价|現行售價|现行售价|現價|现价|即時售價|即时售价|(?:current|latest|today(?:'s)?|now)\s+(?:selling\s+)?(?:price|quote|quotation)|(?:selling\s+)?price\s*(?:is|=|:)\s*(?:(?:HKD|USD|TWD|NTD|HK\$|US\$|NT\$|\$)\s*)?\d|(?:售價|售价|價格|价格)\s*(?:是|為|为|:|：)\s*(?:(?:HKD|USD|TWD|NTD|HK\$|US\$|NT\$|\$)\s*)?\d)/i;
 function quoteClauseParts(text: string): string[] {
   return text.split(/(?:[。！？!?；;\n]|，|(?<!\d),(?!\d)|\.(?!\d))/u)
     .map((part) => part.trim()).filter(Boolean);

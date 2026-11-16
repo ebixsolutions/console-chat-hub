@@ -9,7 +9,7 @@ export interface CustomerMoneyFact {
   source: "customer_message";
 }
 
-const MONEY = /\b(HKD|USD|TWD)\b\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|((?:HK|US|NT)\$|\$)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(HKD|USD|TWD)\b/gi;
+const MONEY = /\b(HKD|USD|TWD|NTD)\b\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|((?:HK|US|NT)\$|\$)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)|([0-9][0-9,]*(?:\.[0-9]{1,2})?)\s*(HKD|USD|TWD|NTD)\b/gi;
 const UNIT = /每\s*(?:部|台|件|個|个|份|位|晚|夜|日|天|次|堂|節|节)|per\s+(?:unit|item|piece|session|night|day|booking|seat)|\beach\b/i;
 const ORDER = /每\s*(?:單|单)|整\s*(?:單|单)|合共|合計|合计|總共|总共|總額|总额|per\s+order|one[- ]?off|一次性|subtotal|sub-total|\btotal\b|altogether/i;
 const ADD = /再加|加上|加埋|另外加|加多|另加|\bplus\b|\badd(?:ed)?\b/i;
@@ -51,7 +51,7 @@ export function deriveTypedCustomerMoneyFacts(text: string): {
       const count = clause.match(/(\d+|一|二|兩|两|三|四|五|六|七|八|九|十)\s*(?:部|台|件|units?|items?)/i)?.[1];
       const quantity = count ? Number(count) || ({一:1,二:2,兩:2,两:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10} as Record<string,number>)[count] : undefined;
       const role = ({delivery:"delivery",installation:"installation",bracket:"bracket","unit price":"unit_price"} as Record<string,CustomerMoneyFact["role"]>)[labels[2]] ?? "amount";
-      facts.push({ amount, currency: /US/.test(marker) ? "USD" : /TW|NT/.test(marker) ? "TWD" : "HKD",
+      facts.push({ amount, currency: /US/.test(marker) ? "USD" : /TW|NT/.test(marker) ? "TWD" : /HK/.test(marker) ? "HKD" : "UNKNOWN",
         charge_basis: basis, role, ...(quantity ? {quantity} : {}), labels, source: "customer_message" });
     }
   }

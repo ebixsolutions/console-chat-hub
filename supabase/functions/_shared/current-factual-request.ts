@@ -967,7 +967,13 @@ function independentSourceQuestion(input: ResolveCurrentFactualRequestInput, dem
   const content=quote.replace(/(?:請問|请问|請|请|一下|如何|怎樣|怎样|怎麼|怎么|使用|介紹|介绍|解釋|解释|什麼|什么|甚麼|幾錢|几钱|多少錢|多少钱|有冇貨|有無貨|有沒有貨|有没有货|庫存|库存|現貨|现货|功能|規格|规格|價格|价格|價錢|价钱|有咩|係咩|是|的|嘅|呢|嗎|吗)/gu, " ")
     .replace(/\b(?:please|tell|me|about|explain|introduce|how|what|which|much|many|do|does|can|i|we|you|use|is|are|the|a|an|of|for|in|and|or|only|just|price|cost|features?|specs?|specifications?|stock|inventory|availability|available|details?|left)\b/giu," ")
     .replace(/[^\p{L}\p{N}]/gu,"");
-  if(content.length<2 || !/^(?:請問|请问|請|请)?\s*(?:如何|怎樣|怎样|怎麼|怎么|介紹|介绍|解釋|解释|什麼是|什么是|甚麼是)|^(?:please\s+)?(?:how (?:do|does|can|to)\b|what is\b|explain\b|introduce\b|tell me about\b)/iu.test(quote))return false;
+  // A full source-quoted service or subscription question need not contain a
+  // product identifier. Existing tenant, quote, privacy, lifecycle and B2
+  // restrictions apply before any independent KB read.
+  const independentQuestion =
+    /^(?:請問|请问|請|请)?\s*(?:(?:如何|怎樣|怎样|怎麼|怎么|介紹|介绍|解釋|解释|什麼是|什么是|甚麼是)|.{2,160}(?:怎麼|怎么|如何|是否|能否|可否|會不會|会不会))/iu.test(quote) ||
+    /^(?:please\s+)?(?:how (?:do|does|can|to)\b|what is\b|explain\b|introduce\b|tell me about\b|(?:can|could|does|do|is|are|when|where|which|will)\s+\S)/iu.test(quote);
+  if(content.length<2 || !independentQuestion)return false;
   // Only discard identity-only unbound constraints. Material conditions must
   // already be customer-owned; otherwise clarification preserves the unknown.
   const sourceValue=(v:DecisionValue):boolean=>Array.isArray(v)?v.every(sourceValue):
