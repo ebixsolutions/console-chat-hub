@@ -2693,3 +2693,17 @@ for(const text of ["有冇真人呀","representative"]){
     assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
   });
 }
+
+// New W1 wording must re-use the existing model proposal and cannot grant
+// R1 merely from a model boolean when the original source is not bound.
+test('W1 new human wording without pre-listed referent commits a safe clarification',async()=>{
+ const f=fixture('I would like someone from your team to take over this chat',{semantic:providerWire({intent:'request_human_now',requested_facts:[]},'NO_STATE_CHANGE')});
+ const r=await f.run();assert.equal(r.body.response_route,'w1_human_confirmation',JSON.stringify(r));
+ assert.equal(f.commits.length,1);
+ assert.equal(f.requests.filter(x=>x.url.includes('explicit_handoff_tx')).length,0);
+});
+test('W1 bot refusal does not negate current explicit human request',async()=>{
+ const f=fixture("I don't want a bot, I want to talk to a human.",{semantic:providerWire({intent:'request_human_now',requested_facts:[]},'NO_STATE_CHANGE')});
+ const r=await f.run();assert.equal(r.body.escalation_rule,'R1',JSON.stringify(r));
+ assert.equal(r.body.handoff_persisted,true);
+});

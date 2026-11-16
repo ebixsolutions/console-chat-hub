@@ -41,9 +41,10 @@ export function w1Decision(text:string, acceptedIntent:unknown, sourceVerified:b
  const raw=norm(text),locale=w1Locale(raw),active=raw.replace(QUOTE," ");
  const out=(action:W1Action,reason:string):W1Decision=>({action,locale,reason});
  if(!sourceVerified)return out("excluded","unverified_current_source");
- if(REPORTED.test(active))return out("excluded","reported_speech");
- if(!PERSON.test(active) && !BOT_WISH.test(active))return out("continue","no_current_human_referent");
- if(NEGATED.test(active))return out("excluded","human_negation");
+ if(REPORTED.test(active) && !/[。.!！]\s*(?:I (?:want|need)|please|我(?:而家|現在|现在)?(?:要|想|需要)|請|请)/iu.test(raw))return out("excluded","reported_speech");
+ if(!PERSON.test(active) && !BOT_WISH.test(active) && acceptedIntent!==W1_HUMAN_INTENT)return out("continue","no_current_human_referent");
+ const humanNegationText=active.replace(/\b(?:don't|do not)\s+(?:want|need|use)\s+(?:a\s+|an\s+)?(?:bot|robot|ai|app)(?=\s*[,，])/giu," ");
+ if(NEGATED.test(humanNegationText))return out("excluded","human_negation");
  const courtesy=active.replace(/\bif\s+possible\b/giu," ");
  if(CONDITION.test(courtesy)||LATER.test(courtesy))return out("excluded","genuine_condition_or_later");
  if(INFO.test(courtesy))return out("excluded","support_information");

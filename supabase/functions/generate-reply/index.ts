@@ -4375,7 +4375,7 @@ async function orchestrationGenerateReply(
     _pr5HistoryRows ?? [],
   );
   const _explicitHandoffRequested = isHandoffIntent(_h1LastMsg);
-  const _w1HumanPossible = !_explicitHandoffRequested && w1HumanPossible(_h1LastMsg);
+  const _w1HumanPossible = !_explicitHandoffRequested && typeof w1HumanPossible === "function" && w1HumanPossible(_h1LastMsg);
   // Short merchant questions use the same semantic and evidence path as paraphrases.
   // P0 critical preflight: E2 must run before customer-context and generic clarification early returns.
   const _criticalE2ExpectedTenantId =
@@ -4409,54 +4409,6 @@ async function orchestrationGenerateReply(
     if (_criticalE2Response) return _criticalE2Response;
   }
 
-  // W1 pending confirmation: use ONLY the immediately preceding SERVER-written,
-  // B2-committed, unrecalled assistant row from the same Company and ticket.
-  // A bare affirmative without that authoritative readback remains ordinary text.
-  const w1Previous=(_pr5HistoryRows??[]).find((row:any)=>row.id!==_h1SourceMessageId);
-  const w1PreviousMeta=(w1Previous?.role==="assistant" &&
-    w1Previous.is_recalled===false && w1Previous.metadata &&
-    typeof w1Previous.metadata==="object") ? w1Previous.metadata as Record<string,unknown> : null;
-  const w1Pending=!!w1PreviousMeta &&
-    w1PreviousMeta.response_route==="w1_human_confirmation" &&
-    w1PreviousMeta.w1_human_confirmation===true &&
-    w1PreviousMeta.b2_commit_source==="commit_ai_reply_tx" &&
-    w1PreviousMeta.w1_company_id===conversation.company_id &&
-    w1PreviousMeta.w1_confirmation_source_id===w1PreviousMeta.b2_source_message_id &&
-    typeof w1PreviousMeta.w1_confirmation_source_id==="string" &&
-    w1PreviousMeta.w1_confirmation_source_id!==_h1SourceMessageId &&
-    typeof w1PreviousMeta.w1_confirmation_revision==="number" &&
-    Number.isSafeInteger(w1PreviousMeta.w1_confirmation_revision) &&
-    ["en","zh-TW","zh-CN","yue-Hant"].includes(String(w1PreviousMeta.w1_confirmation_locale));
-  if(w1Pending && (w1Affirms(_h1LastMsg)||w1Declines(_h1LastMsg))){
-    const check=await supabaseAdmin.from("conversation_commerce_state")
-      .select("revision").eq("conversation_id",conversation_id)
-      .eq("company_id",conversation.company_id).maybeSingle();
-    if(check.error)return new Response(JSON.stringify({success:false,error:"w1_confirmation_state_unavailable"}),
-      {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
-    if((check.data?.revision??0)!==w1PreviousMeta!.w1_confirmation_revision)
-      return new Response(JSON.stringify({success:false,error:"w1_confirmation_stale_revision"}),
-        {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
-    const locale=w1PreviousMeta!.w1_confirmation_locale as W1Locale;
-    if(w1Affirms(_h1LastMsg)){
-      const transfer=await persistExplicitR1IfRequested(supabaseAdmin,conversation_id,
-        _h1SourceMessageId,_h1LastMsg,{},{source_message_id:_h1SourceMessageId,locale});
-      if(transfer)return transfer;
-      return new Response(JSON.stringify({success:false,error:"w1_confirmed_transfer_unavailable"}),
-        {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
-    }
-    const reply=w1Acknowledgement(locale);
-    const committed=await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,
-      _h1SourceMessageId,reply,{response_route:"w1_human_confirmation_declined",
-        handoff_required:false,factual_grounding_required:false});
-    await cleanupThinking(supabaseAdmin,conversation_id,_h1SourceMessageId);
-    if(!committed.ok)return new Response(JSON.stringify({success:false,
-      error:"w1_decline_commit_"+committed.result}),
-      {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
-    return new Response(JSON.stringify({success:true,reply,
-      response_route:"w1_human_confirmation_declined",handoff_required:false,
-      idempotent:committed.idempotent}),
-      {headers:{...corsHeaders,"Content-Type":"application/json"}});
-  }
   // Section15: an authenticated, source-bound explicit request for a human
   // takes the existing B2-supervised R1 control transaction BEFORE optional
   // commerce semantic LLM interpretation.  E2 has already run above, and an
@@ -4515,6 +4467,55 @@ async function orchestrationGenerateReply(
     if (serviceDiscussionReply) return serviceDiscussionReply;
   }
   const _naturalCustomerIntent = classifyNaturalCustomerIntent(_h1LastMsg);
+  // W1 pending confirmation: use ONLY the immediately preceding SERVER-written,
+  // B2-committed, unrecalled assistant row from the same Company and ticket.
+  // A bare affirmative without that authoritative readback remains ordinary text.
+  const w1Previous=(_pr5HistoryRows??[]).find((row:any)=>row.id!==_h1SourceMessageId);
+  const w1PreviousMeta=(w1Previous?.role==="assistant" &&
+    w1Previous.is_recalled===false && w1Previous.metadata &&
+    typeof w1Previous.metadata==="object") ? w1Previous.metadata as Record<string,unknown> : null;
+  const w1Pending=!!w1PreviousMeta &&
+    w1PreviousMeta.response_route==="w1_human_confirmation" &&
+    w1PreviousMeta.w1_human_confirmation===true &&
+    w1PreviousMeta.b2_commit_source==="commit_ai_reply_tx" &&
+    w1PreviousMeta.w1_company_id===conversation.company_id &&
+    w1PreviousMeta.w1_confirmation_source_id===w1PreviousMeta.b2_source_message_id &&
+    typeof w1PreviousMeta.w1_confirmation_source_id==="string" &&
+    w1PreviousMeta.w1_confirmation_source_id!==_h1SourceMessageId &&
+    typeof w1PreviousMeta.w1_confirmation_revision==="number" &&
+    Number.isSafeInteger(w1PreviousMeta.w1_confirmation_revision) &&
+    ["en","zh-TW","zh-CN","yue-Hant"].includes(String(w1PreviousMeta.w1_confirmation_locale));
+  if(w1Pending && (w1Affirms(_h1LastMsg)||w1Declines(_h1LastMsg))){
+    const check=await supabaseAdmin.from("conversation_commerce_state")
+      .select("revision").eq("conversation_id",conversation_id)
+      .eq("company_id",conversation.company_id).maybeSingle();
+    if(check.error)return new Response(JSON.stringify({success:false,error:"w1_confirmation_state_unavailable"}),
+      {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    if((check.data?.revision??0)!==w1PreviousMeta!.w1_confirmation_revision)
+      return new Response(JSON.stringify({success:false,error:"w1_confirmation_stale_revision"}),
+        {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    const locale=w1PreviousMeta!.w1_confirmation_locale as W1Locale;
+    if(w1Affirms(_h1LastMsg)){
+      const transfer=await persistExplicitR1IfRequested(supabaseAdmin,conversation_id,
+        _h1SourceMessageId,_h1LastMsg,{},{source_message_id:_h1SourceMessageId,locale});
+      if(transfer)return transfer;
+      return new Response(JSON.stringify({success:false,error:"w1_confirmed_transfer_unavailable"}),
+        {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    }
+    const reply=w1Acknowledgement(locale);
+    const committed=await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,
+      _h1SourceMessageId,reply,{response_route:"w1_human_confirmation_declined",
+        handoff_required:false,factual_grounding_required:false});
+    await cleanupThinking(supabaseAdmin,conversation_id,_h1SourceMessageId);
+    if(!committed.ok)return new Response(JSON.stringify({success:false,
+      error:"w1_decline_commit_"+committed.result}),
+      {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    return new Response(JSON.stringify({success:true,reply,
+      response_route:"w1_human_confirmation_declined",handoff_required:false,
+      idempotent:committed.idempotent}),
+      {headers:{...corsHeaders,"Content-Type":"application/json"}});
+  }
+
   // Safety/control checks above and B2 persistence still apply. A whole social
   // turn must never reach a semantic state writer or replace the business goal.
   if (!_explicitHandoffRequested && classifySocialTurn(_h1LastMsg)) {
@@ -4663,7 +4664,7 @@ async function orchestrationGenerateReply(
   // source, company and existing R1 transaction. This is after canonical
   // validation, before product/KB clarification, and does not authorize a
   // model-driven write by itself.
-  if (_w1HumanPossible && _a3SemanticFrame && _criticalE2ExpectedTenantId) {
+  if (!_explicitHandoffRequested && _a3SemanticFrame?.intent === "request_human_now" && _criticalE2ExpectedTenantId) {
     const w1 = w1Decision(_h1LastMsg,_a3SemanticFrame.intent,
       _semanticPrepared?.semantic.frame === _a3SemanticFrame &&
       sourceVisitorMessage.id === _h1SourceMessageId &&
