@@ -121,7 +121,10 @@ export function w1NoLabelFallbackEligible(input:{
     input.pendingConfirmation||input.hasBusinessRequest||
     input.semanticDemandCount>0||input.requestedFactCount>0||
     input.plan.knowledge_state==="lookup_required"||!!input.plan.kb_query) return false;
- if(!["ASK_FACT","NO_STATE_CHANGE"].includes(String(input.semanticOperation)))return false;
+ // A factual/question frame is a business turn, even when a person noun
+ // appears and the decoder has not retained a typed business demand.
+ // The unlabelled confirmation safety net is strictly NO_STATE_CHANGE.
+ if(input.semanticOperation!=="NO_STATE_CHANGE")return false;
  // Existing canonical mention-only control route, not a merchant answer.
  if(input.plan.action==="handoff_context_acknowledgement")
    return input.plan.handoff_context==="mention_only";

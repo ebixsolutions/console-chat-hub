@@ -2901,8 +2901,14 @@ for(const [industry,question] of [
      answer:"Published merchant evidence must be verified for the requested service fact."});
    const r=await f.run();
    assert.equal(r.status,200,JSON.stringify(r));
-   assert.equal(f.requests.filter(x=>x.url.includes("/rag/context-search")).length,1,
-     "N1 person-word business question must reach the canonical KB once");
+   const kbCalls=f.requests.filter(x=>x.url.includes("/rag/context-search")).length;
+   assert.equal(kbCalls,1,JSON.stringify({
+     n1_case:industry,route:r.body?.response_route??null,response_error:r.body?.error??null,
+     commit_routes:f.commits.map(x=>x.metadata?.response_route??null),
+     model_calls:f.requests.filter(x=>x.url.endsWith(":generateContent")).length,
+     handoff_calls:f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,
+     kb_calls:kbCalls,
+   }));
    assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
    assert.equal(f.commits.filter(x=>x.metadata?.w1_human_confirmation).length,0);
    assert.notEqual(f.commits[0]?.metadata.response_route,"w1_human_confirmation");
