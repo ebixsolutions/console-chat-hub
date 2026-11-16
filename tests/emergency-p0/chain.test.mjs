@@ -2914,8 +2914,16 @@ for(const [industry,question] of [
    assert.equal(kbCalls,1,JSON.stringify({industry,question,route:r.body?.response_route,
      service_action:f.commits[0]?.metadata?.service_action,
      knowledge_state:f.commits[0]?.metadata?.knowledge_state}));
-   assert.equal(f.commits[0]?.content,answer,
-     "W2 independent factual question must use bound published evidence");
+   if(question==="Can the treatment work for sensitive skin?"){
+     // Generic merchant text never proves clinical/personal suitability.
+     // Preserve C1/B2 fail-closed and optional human assistance, without an
+     // actual handoff. This is an explicit negative oracle, not an exemption.
+     assert.match(f.commits[0]?.content??"",/can't reliably verify product suitability/i);
+     assert.doesNotMatch(f.commits[0]?.content??"",/definitely suitable|guaranteed safe|suitable for all/i);
+   } else {
+     assert.equal(f.commits[0]?.content,answer,
+       "W2 independent factual question must use bound published evidence");
+   }
    assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
    assert.equal(f.commits.filter(x=>x.metadata?.w1_human_confirmation).length,0);
    assert.notEqual(f.commits[0]?.metadata.response_route,"w1_human_confirmation");
