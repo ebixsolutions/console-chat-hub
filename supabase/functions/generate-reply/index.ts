@@ -5231,8 +5231,7 @@ async function orchestrationGenerateReply(
     _currentFactualRequest.query.length > 0 &&
     !_factualContextLimit &&
     !_c3ServicePlan.safe_assumptions.includes("query_context_limit");
-  if (_n1CurrentKbDemandReady && _c3ServicePlan.knowledge_state !== "lookup_required" &&
-      _c3ServicePlan.knowledge_state !== "tool_failure") {
+  if (_n1CurrentKbDemandReady && _c3ServicePlan.knowledge_state === "not_needed") {
     _c3ServicePlan.action = "published_kb_lookup";
     _c3ServicePlan.knowledge_state = "lookup_required";
     _c3ServicePlan.kb_query = _currentFactualRequest.query;
@@ -5873,7 +5872,8 @@ Latest applicable corrections replace old values; an answered clarification is n
   // authoritative schedule could incorrectly become S0.
   const _humanSupportIntent = classifyHandoffIntent(_h1LastMsg);
   if (_humanSupportIntent.kind === "question_about_human_support" &&
-      !_n1CurrentKbDemandReady && _c3ServicePlan.knowledge_state !== "lookup_required") {
+      !_n1CurrentKbDemandReady && _c3ServicePlan.knowledge_state === "not_needed" &&
+      !_c3ServicePlan.safe_assumptions.includes("query_context_limit")) {
     const infoReply = HUMAN_SUPPORT_INFO_WORDING[_humanSupportIntent.language];
     const committed = await commitAiReplyWithControlGate(
       supabaseAdmin,
