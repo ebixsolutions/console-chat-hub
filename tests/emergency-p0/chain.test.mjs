@@ -2879,6 +2879,32 @@ for(const [text,semanticIntent,expected] of [
   assert.equal(f.requests.filter(x=>x.url.includes("/rag/context-search")).length,0);
  });
 }
+// N1: cross-industry commercial uses of person terms must not hijack KB.
+for(const [industry,question] of [
+ ["retail","I'm buying a gift for someone, what do you recommend?"],
+ ["saas","How many agent seats are included in the Pro plan?"],
+ ["saas","請問客服人員排班功能怎麼設定"],
+ ["saas","職員可以用不同帳號登入嗎"],
+ ["saas","個人版同商業版有咩分別"],
+ ["beauty","Can a specialist do the facial for sensitive skin?"],
+ ["education","課程可以一個人報名嗎"],
+ ["installation","請問有沒有專人到府安裝服務"],
+ ["pricing","Is the plan priced per person?"]
+]){
+ test("W1 N1 business question retains KB routing: "+industry+" / "+question,async()=>{
+   const f=fixture(question,{originalPreview:true,fullChain:true,
+     semantic:providerWire({intent:"merchant_policy",requested_facts:["merchant published fact"]},"ASK_FACT"),
+     answer:"Published merchant evidence must be verified for the requested service fact."});
+   const r=await f.run();
+   assert.equal(r.status,200,JSON.stringify(r));
+   assert.equal(f.requests.filter(x=>x.url.includes("/rag/context-search")).length,1,
+     "N1 person-word business question must reach the canonical KB once");
+   assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
+   assert.equal(f.commits.filter(x=>x.metadata?.w1_human_confirmation).length,0);
+   assert.notEqual(f.commits[0]?.metadata.response_route,"w1_human_confirmation");
+   assert.equal(f.commits.length,1);
+ });
+}
 test("W1 trusted confirmation with canonical intent proposal may transfer once without a second question",async()=>{
  const f=fixture("Absolutely",{source:uuid(9703),history:w1CommittedConfirmationHistory(),handoffSetsHumanControl:true,
    semantic:providerWire({intent:"request_human_now",requested_facts:[]},"NO_STATE_CHANGE")});

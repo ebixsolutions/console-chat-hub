@@ -1703,9 +1703,9 @@
     "tests/c3-widget-live-auth/fixtures/v287-b-captured.json": "447a802b325981b9110297e61d2fa1128112559791a36a44179654a64fbaa847"
   },
   "authorized_w1_source_sha256": {
-    "supabase/functions/_shared/human-control-w1.ts": "715b2dfec925ae13b3124cf907cd16fd851bfeea866e7648923e794c10461383",
+    "supabase/functions/_shared/human-control-w1.ts": "27e23b3a0365a65acb3da997c0d1579951fc274af72967e4d568dab8ed95528f",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "7ebd8f74ff68d934b47da5940eb5075d6910bfed997f7ce98638585b25f6f5a2",
-    "supabase/functions/generate-reply/index.ts": "93aeb354cdabbac50bad2cae4a00be3938fc060e83757ca0e4eabb86494f7345",
-    "tests/emergency-p0/chain.test.mjs": "6f6a384b041b24fcf603c1946ab8a1aebfbc08363bfff115344d45f03ab8729d"
+    "supabase/functions/generate-reply/index.ts": "154931ad233b8cbc68bead2b30f390850da9210d380ddb8a643a8c690d115815",
+    "tests/emergency-p0/chain.test.mjs": "6b893be54cc2fe1d5de0a5ef58d53667401753a6abd85f47689637d389216943"
   }
 }

@@ -88,12 +88,6 @@ function w1ClauseVerdict(text:string):W1ClauseVerdict{
  const active=norm(text);
  if(!PERSON.test(active)&&!BOT_WISH.test(active))return "none";
  if(REPORTED.test(active))return "excluded";
- // A staff count / workforce attribute is not a customer request to speak
- // with support staff. Preserve clear contact requests and short "staff?".
- if(/\bstaff\b/iu.test(active) &&
-   !/(?:\b(?:talk|speak|chat|connect|transfer|contact|reach|call|consult|support|help|get)\b.{0,36}\bstaff\b|\bstaff\b.{0,36}\b(?:support|help|agent|human|connect|transfer|talk|speak|chat)\b|^staff[?？.!！\s]*$)/iu.test(active) &&
-   !PERSON.test(active.replace(/\bstaff\b/giu," ")) &&
-   !BOT_WISH.test(active))return "none";
  // Reject a human transfer negation but not "I don't want a bot, I want a human".
  const humanNegationText=active.replace(/\b(?:don't|do not)\s+(?:want|need|use)\s+(?:a\s+|an\s+)?(?:bot|robot|ai|app)(?=\s*[,，])/giu," ");
  if(NEGATED.test(humanNegationText))return "excluded";
@@ -111,6 +105,31 @@ export function w1HumanPossible(text:string):boolean{
  return w1EffectiveClauses(raw).some(clause=>{
   const decision=w1ClauseVerdict(clause);return decision==="r1"||decision==="confirm";
  });
+}
+/** The unlabelled W1 safety net is NOT a second handoff classifier.
+ * It is allowed only after the original, complete service planner has failed
+ * to find an answerable business path, on a trusted current-source turn.
+ * Model-only or a person-word alone never grants transfer/confirmation. */
+export function w1NoLabelFallbackEligible(input:{
+ sourceVerified:boolean; humanPossible:boolean; acceptedModelIntent:boolean;
+ pendingConfirmation:boolean; semanticOperation:string|null;
+ semanticDemandCount:number; requestedFactCount:number; hasBusinessRequest:boolean;
+ plan:{action:string; handoff_context?:string|null; knowledge_state?:string|null;
+   kb_query?:string|null; clarification_target?:string|null};
+}):boolean{
+ if(!input.sourceVerified||!input.humanPossible||input.acceptedModelIntent||
+    input.pendingConfirmation||input.hasBusinessRequest||
+    input.semanticDemandCount>0||input.requestedFactCount>0||
+    input.plan.knowledge_state==="lookup_required"||!!input.plan.kb_query) return false;
+ if(!["ASK_FACT","NO_STATE_CHANGE"].includes(String(input.semanticOperation)))return false;
+ // Existing canonical mention-only control route, not a merchant answer.
+ if(input.plan.action==="handoff_context_acknowledgement")
+   return input.plan.handoff_context==="mention_only";
+ // Unrecognised non-canonical human wording (e.g. 個人) may otherwise
+ // dead-end in a generic product/goal question. No commercial demand allowed.
+ return input.semanticOperation==="NO_STATE_CHANGE" &&
+   input.plan.action==="targeted_clarification" &&
+   ["customer_goal","specific_product_or_item","specific_item_or_time"].includes(String(input.plan.clarification_target));
 }
 export function w1Decision(
  text:string, acceptedIntent:unknown, sourceVerified:boolean, verifiedLocale?:W1Locale|null
