@@ -13,7 +13,7 @@ import {
   type TrustedPersistedMemoryReadback,
 } from "../_shared/conversation-recall.ts";
 import { classifyHumanServiceDiscussion } from "../_shared/handoff-intent.ts";
-import {w1HumanPossible,w1Decision,w1HistoryLocale,w1Locale,w1Affirms,w1Declines,w1Confirmation,w1Acknowledgement,w1HandoffReply,type W1Locale} from "../_shared/human-control-w1.ts";
+import {w1HumanPossible,w1Decision,w1HistoryLocale,w1HumanIntentAccepted,w1PendingIntentEligible,w1Locale,w1Affirms,w1Declines,w1Confirmation,w1Acknowledgement,w1HandoffReply,type W1Locale} from "../_shared/human-control-w1.ts";
 import {
   applyServiceTone,
   buildServicePlanPromptBlock,
@@ -4383,7 +4383,8 @@ async function orchestrationGenerateReply(
       ? conversation.company_id
       : undefined;
   const _w1HumanPossible = !_explicitHandoffRequested && typeof w1HumanPossible === "function" && w1HumanPossible(_h1LastMsg);
-  const _w1PreferredLocale = w1HistoryLocale(_h1LastMsg, _pr5HistoryRows ?? []);
+  const _w1PreferredLocale = typeof w1HistoryLocale === "function"
+    ? w1HistoryLocale(_h1LastMsg, _pr5HistoryRows ?? []) : null;
   const _criticalE2ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
   if (isE2LiveActivationEnabled(Deno.env) && (_criticalE2ThreatSignal ||
     resolveAuthoritativeComplianceReview(_criticalE2ExpectedTenantId))) {
@@ -4667,14 +4668,38 @@ async function orchestrationGenerateReply(
   // source, company and existing R1 transaction. This is after canonical
   // validation, before product/KB clarification, and does not authorize a
   // model-driven write by itself.
-  if (!_explicitHandoffRequested && _a3SemanticFrame?.intent === "request_human_now" && _criticalE2ExpectedTenantId) {
-    const w1 = w1Decision(_h1LastMsg,_a3SemanticFrame.intent,
+  const _w1ProposedNow = w1HumanIntentAccepted(_a3SemanticFrame?.intent);
+  // A missed literal model marker can only produce a *single* source-bound
+  // neutral confirmation, never an automatic R1 transfer.
+  if (!_explicitHandoffRequested && (_w1ProposedNow || _w1HumanPossible) && _criticalE2ExpectedTenantId) {
+    const w1 = w1Decision(_h1LastMsg,_a3SemanticFrame?.intent,
       _semanticPrepared?.semantic.frame === _a3SemanticFrame &&
       sourceVisitorMessage.id === _h1SourceMessageId &&
       conversation.company_id === _criticalE2ExpectedTenantId &&
       !isHumanControlState(conversation.status,conversation.assigned_agent_id??null),
       _w1PreferredLocale);
-    if(w1.action==="r1"){
+    // A pending trusted confirmation is used once, not repeated as a new ask.
+    // For non-literal affirmative replies the existing understanding model can
+    // propose the same intent, but current source/tenant and revision are
+    // rechecked before invoking the original atomic R1.
+    if(w1Pending && _w1ProposedNow && w1PendingIntentEligible(_h1LastMsg) &&
+        w1.action!=="excluded" && w1.action!=="continue"){
+      const check=await supabaseAdmin.from("conversation_commerce_state")
+        .select("revision").eq("conversation_id",conversation_id)
+        .eq("company_id",conversation.company_id).maybeSingle();
+      if(check.error)return new Response(JSON.stringify({success:false,error:"w1_confirmation_state_unavailable"}),
+        {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
+      if((check.data?.revision??0)!==w1PreviousMeta!.w1_confirmation_revision)
+        return new Response(JSON.stringify({success:false,error:"w1_confirmation_stale_revision"}),
+          {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+      const transfer=await persistExplicitR1IfRequested(supabaseAdmin,conversation_id,
+        _h1SourceMessageId,_h1LastMsg,{},{source_message_id:_h1SourceMessageId,
+          locale:w1PreviousMeta!.w1_confirmation_locale as W1Locale});
+      if(transfer)return transfer;
+      return new Response(JSON.stringify({success:false,error:"w1_confirmed_transfer_unavailable"}),
+        {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    }
+    if(!w1Pending && _w1ProposedNow && w1.action==="r1"){
       if(isE1LiveActivationEnabled(Deno.env) &&
          classifyLocalTopicRisk(_h1LastMsg)?.level==="high" && flags.ENABLE_KB){
         const e1=await evaluateAndPersistRequiredRulesLive(supabaseAdmin,{
@@ -4696,7 +4721,11 @@ async function orchestrationGenerateReply(
       return new Response(JSON.stringify({success:false,error:"w1_r1_control_unavailable"}),
         {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
     }
-    if(w1.action==="confirm"){
+    if(!w1Pending && (w1.action==="confirm" || (!_w1ProposedNow && _w1HumanPossible &&
+        w1.action==="continue" && _semanticPrepared?.semantic.frame===_a3SemanticFrame &&
+        sourceVisitorMessage.id===_h1SourceMessageId &&
+        conversation.company_id===_criticalE2ExpectedTenantId &&
+        !isHumanControlState(conversation.status,conversation.assigned_agent_id??null)))){
       const reply=w1Confirmation(w1.locale);
       const committed=await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,
         _h1SourceMessageId,reply,{

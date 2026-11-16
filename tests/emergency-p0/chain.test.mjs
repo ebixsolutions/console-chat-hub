@@ -2727,7 +2727,8 @@ for(const text of [
   assert.equal(r.body.escalation_rule,"R1",JSON.stringify(r));
   assert.equal(r.body.handoff_persisted,true);
   assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,1);
-  assert.equal(f.requests.filter(x=>x.url.endsWith(":generateContent")).length,1);
+  assert.equal(f.requests.filter(x=>x.url.endsWith(":generateContent")).length,
+    text==="我想搵真人，另外幾時有貨？" ? 0 : 1);
   assert.equal(f.requests.filter(x=>x.url.includes("/rag/context-search")).length,0);
  });
 }
@@ -2802,3 +2803,82 @@ for(const changes of [{companyId:uuid(9400)},{role:"visitor"}]){
   await f.run();assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
  });
 }
+
+
+// Supervisor 9c604873 same-task R1-R4 four-class repair. Source-only
+// full actual handler with isolated Auth/DB/Vertex; never a Hosted claim.
+for(const text of [
+ "I don't understand, can I talk to a person?",
+ "I do not want to keep typing, get me a human",
+ "我不想再跟機器人講了，請給我真人",
+ "I don't know what you mean, let me talk to someone"
+]) test("W1 frustration is NOT a negation of a current human request: "+text,async()=>{
+ const f=fixture(text,{semantic:providerWire({intent:"request_human_now",requested_facts:[]},"NO_STATE_CHANGE")});
+ const r=await f.run();assert.equal(r.body.escalation_rule,"R1",JSON.stringify(r));
+ assert.equal(r.body.handoff_persisted,true);
+ assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,1);
+ assert.equal(f.requests.filter(x=>x.url.includes("/rag/context-search")).length,0);
+ if(text.startsWith("我不想"))assert.match(f.requests.find(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).body.p_safe_reply_content,/已將本對話轉交真人客服/);
+});
+for(const text of ["Don't transfer me to a human","I don't need an agent","I don't want to talk to a person","不要轉真人","我不需要真人","如果冇貨先搵真人","What are the human support hours?"]){
+ test("W1 original negative/condition/info keeps original no-transfer rule: "+text,async()=>{
+  const f=fixture(text,{semantic:providerWire({intent:"request_human_now",requested_facts:[]},"NO_STATE_CHANGE")});
+  await f.run();assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
+ });
+}
+for(const text of ["需要","要","想","對","嗯","要呀","麻煩你了","好，謝謝","yes, please","yes pls","yes thanks","yup","y","please"]){
+ test("W1 trusted confirmation accepts natural positive once: "+text,async()=>{
+  const f=fixture(text,{source:uuid(9700),history:w1CommittedConfirmationHistory(),handoffSetsHumanControl:true});
+  const r=await f.run();assert.equal(r.body.escalation_rule,"R1",JSON.stringify(r));
+  assert.equal(r.body.handoff_persisted,true);assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,1);
+  assert.equal(f.requests.filter(x=>x.url.endsWith(":generateContent")).length,0);
+  const replay=await f.run();assert.equal(replay.body.skipped,"human_handling");
+  assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,1);
+ });
+}
+for(const text of ["不用了，謝謝","nope","no thanks"]){
+ test("W1 trusted confirmation rejects natural negative and no R1: "+text,async()=>{
+  const f=fixture(text,{source:uuid(9701),history:w1CommittedConfirmationHistory()});
+  const r=await f.run();assert.equal(r.body.response_route,"w1_human_confirmation_declined",JSON.stringify(r));
+  assert.equal(f.commits.length,1);assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
+  assert.equal(f.requests.filter(x=>x.url.endsWith(":generateContent")).length,0);
+ });
+}
+for(const [text,semanticIntent,expected] of [
+ ["Could I speak to someone, please?","Request_Human_Now","R1"],
+ ["I want to talk to a human","other","w1_human_confirmation"],
+ ["叫個人嚟同我講","other","w1_human_confirmation"],
+ ["可以請專人協助嗎？","other","w1_human_confirmation"]
+]){
+ test("W1 model intent label recovery without model-only R1: "+text+" / "+semanticIntent,async()=>{
+  const f=fixture(text,{semantic:providerWire({intent:semanticIntent,requested_facts:[]},"NO_STATE_CHANGE")});
+  const r=await f.run();
+  if(expected==="R1"){assert.equal(r.body.escalation_rule,"R1",JSON.stringify(r));assert.equal(r.body.handoff_persisted,true);}
+  else{assert.equal(r.body.response_route,"w1_human_confirmation",JSON.stringify(r));assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.w1_human_confirmation,true);}
+  assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,expected==="R1"?1:0);
+  assert.equal(f.requests.filter(x=>x.url.endsWith(":generateContent")).length,1);
+  assert.equal(f.requests.filter(x=>x.url.includes("/rag/context-search")).length,0);
+ });
+}
+test("W1 trusted confirmation with canonical intent proposal may transfer once without a second question",async()=>{
+ const f=fixture("Absolutely",{source:uuid(9703),history:w1CommittedConfirmationHistory(),handoffSetsHumanControl:true,
+   semantic:providerWire({intent:"request_human_now",requested_facts:[]},"NO_STATE_CHANGE")});
+ const r=await f.run();assert.equal(r.body.escalation_rule,"R1",JSON.stringify(r));
+ assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,1);
+ assert.equal(f.commits.length,0);assert.equal(f.requests.filter(x=>x.url.endsWith(":generateContent")).length,1);
+});
+for(const [text,semanticIntent] of [["maybe later","request_human_now"],["What is the order price?","request_human_now"],["I am not requesting a human","request_human_now"]]){
+ test("W1 pending confirmation does not repeat or auto-transfer non-affirmative content: "+text,async()=>{
+  const f=fixture(text,{source:uuid(9704),history:w1CommittedConfirmationHistory(),
+    semantic:providerWire({intent:semanticIntent,requested_facts:[]},"NO_STATE_CHANGE")});
+  await f.run();assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
+  assert.equal(f.commits.filter(x=>x.metadata?.w1_human_confirmation===true).length,0);
+ });
+}
+test("W1 stale confirmation with natural affirmative fails closed before original R1",async()=>{
+ const previous={conversation_commerce_state:[{conversation_id:ticket,company_id:company,revision:1,state:{}}],
+ conversation_memory_state:[],conversation_commerce_state_event:[],conversation_memory_state_event:[]};
+ const f=fixture("需要",{source:uuid(9705),history:w1CommittedConfirmationHistory(),previous});
+ const r=await f.run();assert.equal(r.status,409);assert.equal(r.body.error,"w1_confirmation_stale_revision");
+ assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
+});
