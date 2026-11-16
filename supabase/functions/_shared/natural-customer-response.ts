@@ -544,7 +544,7 @@ export function renderNaturalImmediateResponse(
       return "Which product or model would you like me to check?";
     }
     if (language === "zh-CN") return "你想查哪类产品或哪个型号？";
-    return "你想查哪一類產品或哪個型號？";
+    return "你想查邊類產品或邊個型號？";
   }
   if (intent.kind === "product_factual_clarification") {
     if (intent.candidates.length > 1) {
@@ -555,7 +555,7 @@ export function renderNaturalImmediateResponse(
     }
     if (language === "en") return "What would you like me to check? Please specify the subject.";
     if (language === "zh-CN") return "你想查询哪一项内容？请补充具体对象。";
-    return "你想查詢哪一項資料？請補充具體對象。";
+    return "你想查邊一項資料？請補充具體對象。";
   }
   if (intent.kind === "greeting") {
     if (language === "en") return "Hi! How can I help?";
@@ -610,7 +610,7 @@ export function renderNaturalNoCurrentEvidence(
     if (language === "zh-CN") {
       return `我目前找不到 ${model} 的可核实当前产品资料，所以无法确认功能或适用情况。我不会猜测。`;
     }
-    return `目前找不到 ${model} 的可核實現行產品資料，因此無法確認功能或適用情況，也不會猜測。`;
+    return `我而家搵唔到 ${model} 嘅可核實現行產品資料，所以未能確認功能或適用情況。我唔會估。`;
   }
   if (intent.kind !== "product_availability") return null;
   const product = intent.product;
