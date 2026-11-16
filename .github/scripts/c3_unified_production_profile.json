@@ -1715,7 +1715,7 @@
     "supabase/functions/_shared/customer-money-facts.test.ts": "5f718ffc88601ac995ff643ed58d2670532ca3a17cdf51378247757ac6ed02bc",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "d6ef96b3eff7f4bccc6321d4523e3bcbca1fa26a9ac753f9aac54b383aa06eae",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "db72ed14de811eddab0cca9bc0c4be7a929c42bc8024db7e24de272c28c027c8",
-    "supabase/functions/_shared/natural-customer-response.ts": "d447437588d93217e29177d761a0858f1513a47d9cf50956f97789fdf11e0b9c",
+    "supabase/functions/_shared/natural-customer-response.ts": "c2c560e577b9092672c819319facd1a23ace4bef3cbb82be1347d2024a8fd278",
     "tests/emergency-p0/chain.test.mjs": "528f23d1c211d43e970017db8351104163b0f72ad1729eaf900c36be9bd66263"
   }
 }
