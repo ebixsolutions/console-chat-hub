@@ -24,7 +24,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = b374e98528499a9e0908abf7d01fda96809bf41e
           test "$(git rev-parse HEAD^{tree})" = 7b0452ae3bd0d10fe28d3c7a21e07a879d5dad51
-          node -e 'if(require("./package.json").version!=="2.7.1")process.exit(1)'
+          test "$(git hash-object package.json)" = 9cd32b21d414c853259e416510c745b56049443c
           npm ci
       - name: Preserve original isolated baseline evidence
         run: |
@@ -40,6 +40,7 @@ jobs:
           cd "$RUNNER_TEMP/task3c-workspace"
           sha256sum source.bundle dependencies.tgz > SHA256SUMS
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: task3c-authoritative-workspace-b374e985
           path: ${{ runner.temp }}/task3c-workspace/
