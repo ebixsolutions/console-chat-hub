@@ -1,0 +1,47 @@
+name: Task3C source workspace operation
+on:
+  push:
+    branches: [director/ai-abc-c3-long-memory-final-cutover]
+    paths: [.github/workflows/task3c-source-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  transfer:
+    if: github.repository == 'ebixsolutions/console-chat-hub' && github.actor == 'ebixsolutions'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b374e98528499a9e0908abf7d01fda96809bf41e
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact original source and install its unchanged lockfile
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = b374e98528499a9e0908abf7d01fda96809bf41e
+          test "$(git rev-parse HEAD^{tree})" = 7b0452ae3bd0d10fe28d3c7a21e07a879d5dad51
+          node -e 'if(require("./package.json").version!=="2.7.1")process.exit(1)'
+          npm ci
+      - name: Preserve original isolated baseline evidence
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/task3c-workspace/evidence"
+          node --test tests/emergency-p0/chain.test.mjs > "$RUNNER_TEMP/task3c-workspace/evidence/handler-before.log" 2>&1
+          node --test tests/section15/human-service-routing.test.mjs > "$RUNNER_TEMP/task3c-workspace/evidence/section15-before.log" 2>&1
+          git diff --exit-code
+          git bundle create "$RUNNER_TEMP/task3c-workspace/source.bundle" HEAD
+          node --version > "$RUNNER_TEMP/task3c-workspace/evidence/node-version.txt"
+          cp package-lock.json "$RUNNER_TEMP/task3c-workspace/evidence/package-lock.json"
+          tar -czf "$RUNNER_TEMP/task3c-workspace/dependencies.tgz" node_modules
+          cd "$RUNNER_TEMP/task3c-workspace"
+          sha256sum source.bundle dependencies.tgz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: task3c-authoritative-workspace-b374e985
+          path: ${{ runner.temp }}/task3c-workspace/
+          if-no-files-found: error
+          retention-days: 3
