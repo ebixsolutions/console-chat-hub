@@ -3187,7 +3187,8 @@ const S0_LLM_FAILURE_SAFE_TEXT: Record<string, string> = {
 
 function detectVisitorLanguage(text: string): "zh-TW" | "zh-CN" | "en" {
   if (/(?:reply|respond|explain|answer|summari[sz]e|please|請|请|用|改用).{0,28}(?:in\s+English|英文)/i.test(text)) return "en";
-  if (/(?:用|改用|以|使用|請|请|reply|respond|answer|explain).{0,20}(?:普通話|普通话|國語|国语|簡體中文|简体中文|mandarin|simplified chinese)/i.test(text)) return "zh-CN";
+  if (/(?:用|改用|以|使用|請|请|reply|respond|answer|explain).{0,20}(?:普通话|国语|簡體中文|简体中文|simplified chinese)/i.test(text)) return "zh-CN";
+  if (/(?:用|改用|以|使用|請|请|reply|respond|answer|explain).{0,20}(?:普通話|國語|mandarin)/i.test(text)) return "zh-TW";
   if (/(?:用|改用|以).{0,12}(?:廣東話|粤語|粵語)/i.test(text)) return "zh-TW";
   if (!text) return "zh-TW";
   if (!/[\u4e00-\u9fff]/.test(text)) return "en";
@@ -3412,10 +3413,14 @@ async function persistBoundedNoCurrentEvidence(
   traceMetadata: Record<string, unknown>,
   naturalIntent: NaturalCustomerIntent = { kind: "none", product: null },
   factualRequest?: CurrentFactualRequest | null,
+  presentationLocale?: W1Locale | null,
 ): Promise<Response> {
-  const content = (factualRequest ? renderUnverifiedFactualNextStep(factualRequest,language) : null) ??
-    renderNaturalNoCurrentEvidence(naturalIntent, language) ??
-    renderBoundedNoCurrentEvidence(language);
+  const neutralTraditional = presentationLocale === "zh-TW";
+  const content = neutralTraditional
+    ? "我目前找不到足夠的現行資料，因此暫時無法確認。舊資料不能當作現況，我也不會猜測。"
+    : (factualRequest ? renderUnverifiedFactualNextStep(factualRequest,language) : null) ??
+      renderNaturalNoCurrentEvidence(naturalIntent, language) ??
+      renderBoundedNoCurrentEvidence(language);
   const metadata = {
     ...traceMetadata,
     response_route: NO_CURRENT_EVIDENCE_ROUTE,
@@ -4412,6 +4417,12 @@ async function orchestrationGenerateReply(
   const _w1HumanPossible = !_explicitHandoffRequested && typeof w1HumanPossible === "function" && w1HumanPossible(_h1LastMsg);
   const _w1PreferredLocale = typeof w1HistoryLocale === "function"
     ? w1HistoryLocale(_h1LastMsg, _pr5HistoryRows ?? []) : null;
+  // W2 G3: one request-scoped presentation decision for fixed messages.
+  // "國語" in Traditional writing is neutral Traditional, never Simplified.
+  // Human-control authorisation and raw KB evidence are unchanged.
+  const _w2PresentationLocale: W1Locale = _w1PreferredLocale ?? w1Locale(_h1LastMsg);
+  const _w2FixedLanguage: "en" | "zh-CN" | "zh-TW" = _w2PresentationLocale === "en"
+    ? "en" : _w2PresentationLocale === "zh-CN" ? "zh-CN" : "zh-TW";
   const _criticalE2ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
   if (isE2LiveActivationEnabled(Deno.env) && (_criticalE2ThreatSignal ||
     resolveAuthoritativeComplianceReview(_criticalE2ExpectedTenantId))) {
@@ -5888,15 +5899,12 @@ Latest applicable corrections replace old values; an answered clarification is n
   // A commercial "agent/person" mention cannot create a human handoff.
   const _humanSupportInfoNoEvidence =
     _humanSupportIntent.kind === "question_about_human_support" &&
-    (_humanSupportDiscussion.kind === "merchant_evidence" ||
-      _humanSupportDiscussion.kind === "control_or_process" ||
-      /\bhow\s+(?:can|do|could)\s+i\s+(?:reach|contact)\s+(?:a\s+)?(?:human|live)\s+(?:agent|representative)\b/i.test(_h1LastMsg)) &&
     !_mixedRequest &&
     !_c3ServicePlan.safe_assumptions.includes("query_context_limit");
   const _commitHumanSupportInfo = async (kbNoMatch: boolean): Promise<Response> => {
     const infoReply = _humanSupportHoursQuestion
-      ? HUMAN_SUPPORT_INFO_WORDING[_humanSupportIntent.language]
-      : HUMAN_SUPPORT_CONTACT_INFO_WORDING[_humanSupportIntent.language];
+      ? HUMAN_SUPPORT_INFO_WORDING[_w2FixedLanguage]
+      : HUMAN_SUPPORT_CONTACT_INFO_WORDING[_w2FixedLanguage];
     const committed = await commitAiReplyWithControlGate(
       supabaseAdmin, conversation_id, source_message_id, infoReply, {
         response_route: "human_support_information",
@@ -6414,6 +6422,8 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
             evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
           },
           _effectiveNaturalCustomerIntent,
+          null,
+          _w2PresentationLocale,
         );
       }
       const clarification = await attemptFirstNoMatchClarification(
@@ -6627,6 +6637,7 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
           _effectiveNaturalCustomerIntent,
           _factualEvidenceBundle?.grounding.demands.some(demand=>demand.missing_reasons.includes(
             "requested_specification_not_supported_by_returned_products")) ? _currentFactualRequest : null,
+          _w2PresentationLocale,
         );
       }
       if (_c1AuthorityDecision?.decision === "CONFLICT_UNRESOLVED") {
@@ -6814,6 +6825,8 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
             evidence_decision: _boundedNoCurrentEvidenceDecision.kind,
           },
           _effectiveNaturalCustomerIntent,
+          null,
+          _w2PresentationLocale,
         );
       }
       const clarification = await attemptFirstNoMatchClarification(
@@ -7423,7 +7436,10 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
     }
     if (llm.code === "LLM_GROUNDING_REJECTED" || llm.code === "LLM_INVALID_OUTPUT" && Boolean(llm.grounding_rejection)) {
       const clarificationReply = _factualFollowup || _c1AuthorityDecision?.decision === "USE_CURRENT_KB"
-        ? (_visitorLang === "en" ? "I found relevant source material, but could not reliably validate this answer. This does not mean the information is unavailable." : "我搵到相關資料，但今次未能可靠核實回答；呢個唔代表資料不存在。")
+        ? (_w2PresentationLocale === "en" ? "I found relevant source material, but could not reliably validate this answer. This does not mean the information is unavailable." :
+          _w2PresentationLocale === "zh-CN" ? "我找到了相关资料，但这次未能可靠核实回答；这不代表资料不存在。" :
+          _w2PresentationLocale === "zh-TW" ? "我找到相關資料，但這次未能可靠核實回答；不代表資料不存在。" :
+          "我搵到相關資料，但今次未能可靠核實回答；呢個唔代表資料不存在。")
         : GROUNDING_RECOVERY_WORDING[_visitorLang] ?? GROUNDING_RECOVERY_WORDING.en;
       const partial = !_priorGroundedTransform && !_mixedRequest && _factualEvidenceBundle && _currentFactualRequest &&
           _generationCompanyId && source_message_id && _canonicalKbTenantId

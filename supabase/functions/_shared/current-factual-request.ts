@@ -195,6 +195,11 @@ function locateSubjects(question: string, hints: string[]): LocatedSubject {
   if (validSubject(factual) && !POINTER.test(factual)) return {subjects: [factual], reference: factual};
   const policy = text.match(/(?:退貨政策|退货政策|保養政策|保修政策|付款政策|預約政策|预约政策|取消政策|(?:billing|booking|cancellation|return|warranty)\s+policy)/iu)?.[0];
   if (policy && !POINTER.test(text)) return {subjects: [policy], reference: policy};
+  // A source-quoted category/service name in an introduction request is a
+  // locating topic, even without an SKU or any industry vocabulary.
+  const intro = /^(?:請|请)?(?:介紹|介绍|解釋|解释)(?:一下|一下子|下)?\s*(.{2,120}?)(?:[?？.!！。]|$)/iu.exec(text)?.[1]?.trim();
+  if (validSubject(intro) && !POINTER.test(intro) && !currentFacets(intro).length)
+    return {subjects:[intro],reference:intro};
   const natural = classifyNaturalCustomerIntent(text);
   if (validSubject(natural.product) && !POINTER.test(natural.product)) return {subjects: [natural.product], reference: natural.product};
   // The existing product grammar recognizes named model facts. A named
@@ -937,6 +942,16 @@ function currentTurnSubjectAttempt(
   return make("same_turn_unique_antecedent",subject,unique(anchors.map(anchor=>anchor.quote)));
 }
 
+/** An omitted-subject facet must never turn into an independent product
+ * read or an unscoped search. Apply before provider ambiguity is consumed.
+ * Price/period is the concrete class; no SKU/industry wordlist is used. */
+function isSubjectlessPriceFacet(quote: string): boolean {
+  const q=clean(quote).replace(/[?？。.!！]+$/gu,"").trim();
+  const prefix=/^(?:(?:請問|请问|請|请|那|咁|then|so|and|what\s+about)\s*)*/iu;
+  const bare=q.replace(prefix,"").replace(/^(?:what\s+(?:is|about)\s+(?:the\s+)?)?/iu,"").trim();
+  return /^(?:(?:how\s+much|what\s+(?:is\s+)?(?:the\s+)?(?:price|cost)|price|cost)(?:\s+(?:is\s+it|does\s+it\s+cost|per\s+(?:person|seat|month|session|class|year)))?|(?:幾錢|几钱|多少錢|多少钱|價錢|价钱|價格|价格|收費|收费)(?:\s*(?:一個月|一个月|每月|一堂|一節|一节|一位|每人|一年|每年))?)(?:\s*(?:per\s+(?:month|session|seat|person|class|year)|a\s+(?:month|session|class)|一個月|一个月|一堂|一節|一节|每月|每年|一年))?$/iu.test(bare);
+}
+
 /** A deterministic fallback for a complete current merchant question. Run only
  * after ordinary literal/history resolution. This is a local read projection;
  * provider ambiguity and write-side state authority remain immutable. */
@@ -976,7 +991,22 @@ function independentSourceQuestion(input: ResolveCurrentFactualRequestInput, dem
   const independentQuestion =
     /^(?:請問|请问|請|请)?\s*(?:(?:如何|怎樣|怎样|怎麼|怎么|介紹|介绍|解釋|解释|什麼是|什么是|甚麼是)|.{2,160}(?:怎麼|怎么|如何|是否|能否|可否|會不會|会不会))/iu.test(quote) ||
     /^(?:please\s+)?(?:how (?:do|does|can|to)\b|what is\b|explain\b|introduce\b|tell me about\b|(?:can|could|does|do|is|are|when|where|which|will)\s+\S)/iu.test(quote);
-  if(content.length<2 || !independentQuestion)return false;
+  const currentTopic = explicitCustomerSubjects(quote,customerSubjectHints(input));
+  const semanticTopic = clean(input.semantic?.topic);
+  const quotedSemanticTopic = validSubject(semanticTopic) &&
+    Boolean(literalFactualSubject(quote,[semanticTopic]));
+  const genuineTopic = currentTopic.length === 1 || quotedSemanticTopic ||
+    // Source-quoted category/service wording can describe a subject without an
+    // SKU. Reject pure amounts, time units and price facets before this path.
+    content.length >= 2 && !isSubjectlessPriceFacet(quote) &&
+    !/^(?:per\s+)?(?:month|year|seat|person|class|session|price|cost|a\s+month|一個月|一个月|每月|一堂|一節|一节|一年|每年)$/iu.test(content);
+  // Question-only category labels and referential brand questions are NOT
+  // independent source evidence. Their existing context resolution has priority.
+  const nominalOnly = /^[^?？!！。]{2,60}[?？]$/u.test(quote) &&
+    !/(?:怎|點|点|邊度|边度|如何|介紹|介绍|解釋|解释|設定|设置|查|睇|看|有冇|有沒有|有没有|收費|收费|多少|幾錢|几钱|怎麼|怎么|是否|能否|可否|\b(?:how|what|when|where|which|can|does|is|are|do|tell|explain|introduce)\b)/iu.test(quote);
+  const missingReferent = /^(?:邊個|边个|哪個|哪个|哪種|哪种|which|what)\s*(?:牌子|品牌|brand)/iu.test(quote) &&
+    currentTopic.length===0 && !quotedSemanticTopic;
+  if(!genuineTopic || nominalOnly || missingReferent || isSubjectlessPriceFacet(quote))return false;
   // Only discard identity-only unbound constraints. Material conditions must
   // already be customer-owned; otherwise clarification preserves the unknown.
   const sourceValue=(v:DecisionValue):boolean=>Array.isArray(v)?v.every(sourceValue):
@@ -1044,6 +1074,27 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
         !!literalFactualSubject(sourceQuote,[binding.subject]));
       resolved={bindings:current,question:sourceQuote,unresolved:false};
       ambiguity.is_ambiguous=false; ambiguity.reasons=[]; ambiguity.clarification_question=null;
+    }
+    // G1: a bare facet/period has no independent merchant subject. Existing
+    // paths could have emitted KB searches with subjects:[] (even after a
+    // prior topic). Reuse ONLY the nearest source-proven, non-cancelled unique
+    // customer focus, otherwise require one clarification; never broaden KB.
+    if (quoteBound && !optionDiscovery && !demand.ambiguity.is_ambiguous && isSubjectlessPriceFacet(sourceQuote) &&
+        ["product","policy","unknown"].includes(demand.source_type) &&
+        !TOPIC_BOUNDARY.test(sourceQuote) && !LIFECYCLE_BOUNDARY.test(sourceQuote) &&
+        !demand.customer_correction && !demand.explicit_negations.length &&
+        !Object.keys(demand.constraints).length) {
+      const focus=recentCustomerDiscourseFocus(input);
+      if (!focus.blocked && focus.bindings.length===1 &&
+          !focus.bindings[0].current && validSubject(focus.bindings[0].subject)) {
+        resolved={bindings:focus.bindings,question:focus.bindings[0].subject+" "+sourceQuote,unresolved:false};
+        ambiguity.is_ambiguous=false; ambiguity.reasons=[]; ambiguity.clarification_question=null;
+      } else {
+        resolved={bindings:[],question:sourceQuote,unresolved:true};
+        ambiguity.is_ambiguous=true;
+        ambiguity.reasons.push("subject_missing_for_facet");
+        ambiguity.clarification_question=null;
+      }
     }
     // A provider ambiguity not independently disproved remains pending; attempted
     // bindings must not leak into otherwise valid demands or answer context.

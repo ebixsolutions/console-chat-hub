@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { classifyHumanServiceDiscussion, classifyHandoffIntent } from '../../supabase/functions/_shared/handoff-intent.ts';
+import { w1Locale, w1HistoryLocale } from '../../supabase/functions/_shared/human-control-w1.ts';
 import { planConversationService, renderServicePlanReply } from '../../supabase/functions/_shared/conversation-service-planner.ts';
 import { isDirectViolentThreat } from '../../supabase/functions/_shared/e2-direct-threat.ts';
 
@@ -149,7 +150,7 @@ for (const question of ['CW-SUL70BA 最新價錢？', '總結之前要求', '它
 const preflight = source.slice(source.indexOf('  const _criticalE2ExpectedTenantId ='), source.indexOf('  const _naturalCustomerIntent ='));
 async function runPreflight(question, { compliance = false, commitResult = { ok: true, idempotent: false } } = {}) {
   const calls = [];
-  const bindings = { question, sourceMessageId: 'source', classifyHumanServiceDiscussion, classifyHandoffIntent,
+  const bindings = { question, sourceMessageId: 'source', classifyHumanServiceDiscussion, classifyHandoffIntent, w1Locale, w1HistoryLocale,
     isDirectViolentThreat, E2_LOCAL_THREAT_CLASSIFIER_VERSION: 'e2-local-threat-v1.0',
     planConversationService, renderServicePlanReply, corsHeaders: {}, Deno: { env: {} },
     isE2LiveActivationEnabled: () => true, isE1LiveActivationEnabled: () => true,
@@ -170,7 +171,7 @@ async function runPreflight(question, { compliance = false, commitResult = { ok:
     const _h1LastMsg=question, _explicitHandoffRequested=classifyHandoffIntent(question).explicit_request;
     const conversation={company_id:'tenant',status:'open',assigned_agent_id:null}, supabaseAdmin={};
     const conversation_id='ticket', source_message_id=sourceMessageId, _h1SourceMessageId=sourceMessageId;
-    const _visitorLang='zh-TW', _pr5History={}, flags={ENABLE_KB:true};
+    const _visitorLang='zh-TW', _pr5HistoryRows=[], _pr5History={}, flags={ENABLE_KB:true};
     ${preflight}
     return new Response(JSON.stringify({continuation:'semantic_KB_memory'}));
   })()`, bindings);

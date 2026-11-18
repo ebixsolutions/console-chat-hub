@@ -392,6 +392,11 @@ function classifyHandoffClause(text: string): HandoffIntentClassification {
     return {...base,category:"conditional_or_future"};
   if (REFERENCE_ZH.test(raw) || REFERENCE_EN.test(raw))
     return {...base,category:"reference_or_report"};
+  // Agent/person can also be a *business billing seat*, not human support.
+  // Do not turn per-seat / included-agent pricing into an informational human
+  // handoff merely because the sentence contains "how many agent".
+  if (/(?:\b(?:agent|staff|person)\b.{0,24}\b(?:seats?|licenses?|subscriptions?|plans?)\b|\b(?:seats?|licenses?|per\s+(?:agent|seat|person))\b.{0,28}\b(?:agent|staff|person|plan)\b)/iu.test(raw))
+    return {...base,category:"mention_only"};
   // Asking for information ABOUT human support is not asking for a human.
   // Direct transfer/contact actions retain their existing interpretation; a
   // separately explicit clause is classified independently below.
@@ -399,7 +404,8 @@ function classifyHandoffClause(text: string): HandoffIntentClassification {
   const directContactAction = /(?:轉|转|接駁|接驳|聯絡|联系|搵|找).{0,8}(?:真人|人工|客服)|\b(?:transfer|connect|contact|speak to|talk to).{0,16}\b(?:human|agent|person|someone)\b/i.test(raw);
   if (!directContactAction && /(?:請|请|想|要).{0,8}(?:介紹|介绍|解釋|解释|總結|总结|了解).{0,12}(?:真人|人工|客服).{0,12}(?:流程|時間|时间|渠道)|\b(?:explain|describe|summari[sz]e)\b.{0,30}\b(?:human|support)\b.{0,20}\b(?:process|workflow|hours)\b/i.test(raw))
     return {...base,category:"informational_question"};
-  if ((!directContactAction && asksServiceInformation) || QUESTION_ZH.test(raw) || QUESTION_EN.test(raw))
+  const humanSupportAvailabilityQuestion = /(?:有冇|有無|有沒有|有没有|有无|你們有|你们有|週末有|周末有).{0,20}(?:真人|人工客服|客服)(?:.{0,12}(?:可以|可唔可以|聯絡|联系|搵|找|嗎|吗))?|(?:真人客服|人工客服|客服).{0,18}(?:有冇|有沒有|有没有|有無|有无|幾時|几时|何時|何时|週末|周末|有冇人|嗎|吗)|\b(?:how|where|when|is there|do you have)\b.{0,48}\b(?:real person|human|live agent|support agent|human support)\b/iu.test(raw);
+  if ((!directContactAction && asksServiceInformation) || QUESTION_ZH.test(raw) || QUESTION_EN.test(raw) || humanSupportAvailabilityQuestion)
     return {...base,category:"informational_question"};
   const request = EXPLICIT_ZH.test(raw) || EXPLICIT_EN.test(raw) ||
     DIRECT_HANDOFF_IMPERATIVE_ZH.test(raw) || FIRST_PERSON_HANDOFF_ACTION_ZH.test(raw) ||

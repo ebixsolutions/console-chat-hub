@@ -1712,3 +1712,18 @@ Deno.test("B2 declared committed planner progress cannot fall through without it
   assert(result.snapshot,"snapshot retained");
   assertEquals(b2KnownContextRepair(result.decision,result.snapshot),null,"missing authorization cannot trigger a draft repair");
 });
+
+Deno.test("W2 G5 English non-current price caveat is not an affirmative quote",()=>{
+  const empty=createEmptyConversationCommerceState();
+  for(const answer of [
+    "Basic plan at USD 79 per month; it is not a verified current price or formal quote.",
+    "The Basic plan was listed at USD 79 per month; the record does not state an effective date, so it is not a verified current price.",
+    "The source lists USD 79 monthly, but please confirm it is still valid before buying.",
+    "The Basic plan is USD 79 per month; please confirm it is still valid.",
+  ])assertEquals(decision(answer,empty).decision,"allow","grounded recorded price caveat must not become quote: "+answer);
+  for(const answer of [
+    "The current price is USD 79 per month.",
+    "The latest price is USD 79 today; the old fee may not apply.",
+    "The current price is USD 79 and support hours are not verified.",
+  ])assertEquals(decision(answer,empty).decision,"block","affirmative current price without quote authority must block: "+answer);
+});

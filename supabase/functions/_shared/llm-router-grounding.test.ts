@@ -85,3 +85,28 @@ Deno.test("verifier parser tolerates harmless omissions but stays fail-closed", 
     "unknown evidence id must fail",
   );
 });
+
+Deno.test("W2 G4 exact monetary grounding preserves marker/list and refuses changed amounts/currencies", () => {
+  const truth: Array<[string,string,boolean]> = [
+    ["台幣 (NTD) 910 / 1,280 / 2,170 元/月", "NT$910", true],
+    ["台幣 (NTD) 910 / 1,280 / 2,170 元/月", "NT$1,280", true],
+    ["台幣 (NTD) 910 / 1,280 / 2,170 元/月", "TWD 2,170", true],
+    ["台幣 (NTD) 910 / 1,280 / 2,170 元/月", "HK$1,280", false],
+    ["台幣 (NTD) 910 / 1,280 / 2,170 元/月", "NT$1,290", false],
+    ["NT$910", "NT$91", false],
+    ["1,910 元", "910 元", false],
+    ["NT$910", "HK$910", false],
+    ["NT$910", "US$910", false],
+    ["$79", "US$79", false],
+    ["NT$910", "TWD 910", true],
+    ["NT$910", "每月 910 元", true],
+    ["NT$1,280", "NT$1280", true],
+    ["NT$910.50", "NT$910.5", true],
+    ["12 個月 NT$9,100", "NT$910", false],
+    ["NT$910，HK$750", "HK$910", false],
+    ["NT$910，HK$750", "HK$750", true],
+  ];
+  for (const [source, answer, allowed] of truth)
+    assert(validateExactFactGrounding(answer, source).ok === allowed,
+      `amount and currency authority mismatch: ${source} → ${answer}`);
+});

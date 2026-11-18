@@ -48,8 +48,8 @@ function w1LocaleInstruction(text:string):W1Locale|null{
  const tests:Array<[W1Locale,RegExp]>=[
   ["en",/(?:\b(?:reply|answer|respond|write|speak|use)\s+(?:(?:to\s+me\s+)?in\s+)?english\b|\b(?:i\s+prefer|language\s*[:=])\s*english\b|(?:請|请|麻煩|麻烦|用|以|答|回覆|回复).{0,7}(?:英文|英語|英语))/giu],
   ["yue-Hant",/(?:\b(?:reply|answer|respond|speak|use)\s+(?:in\s+)?cantonese\b|(?:請|请|用|以|講|说|說|答|回覆|回复).{0,7}(?:廣東話|广东话|粵語|粤语))/giu],
-  ["zh-CN",/(?:\b(?:reply|answer|respond|use)\s+(?:in\s+)?simplified\s+chinese\b|(?:請|请|用|以|答|回覆|回复).{0,7}(?:简体中文|簡體中文|普通话|普通話))/giu],
-  ["zh-TW",/(?:\b(?:reply|answer|respond|use)\s+(?:in\s+)?traditional\s+chinese\b|(?:請|请|用|以|答|回覆|回复).{0,7}(?:繁體中文|繁体中文|臺灣國語|台灣國語))/giu]
+  ["zh-CN",/(?:\b(?:reply|answer|respond|use)\s+(?:in\s+)?simplified\s+chinese\b|(?:請|请|用|以|答|回覆|回复).{0,7}(?:简体中文|簡體中文|普通话|国语))/giu],
+  ["zh-TW",/(?:\b(?:reply|answer|respond|use)\s+(?:in\s+)?traditional\s+chinese\b|(?:請|请|用|以|答|回覆|回复).{0,7}(?:繁體中文|繁体中文|臺灣國語|台灣國語|普通話|國語))/giu]
  ];
  let selected:W1Locale|null=null,at=-1;
  for(const [locale,pattern] of tests){for(const match of raw.matchAll(pattern)){

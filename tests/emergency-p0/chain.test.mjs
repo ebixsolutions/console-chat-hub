@@ -3002,3 +3002,64 @@ test("W1 stale confirmation with natural affirmative fails closed before origina
  const r=await f.run();assert.equal(r.status,409);assert.equal(r.body.error,"w1_confirmation_stale_revision");
  assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
 });
+
+// W2 post-consensus: real canonical handler / authorized managed KB fixture,
+// never a hosted/paid call. Original 484 tests are retained untouched.
+for(const [industry,question] of [
+ ["saas-hk","排班功能點樣設定"],
+ ["policy-hk","邊度可以睇到退貨政策"],
+ ["saas-tw","請問排班功能怎麼設定"],
+ ["saas-en","How do I set up staff scheduling?"],
+])test("W2 G1 named source topic queries published KB without SKU: "+industry,async()=>{
+ const f=task3cManagedCase(question,"Published merchant instructions for the requested topic are available.",
+   "Published merchant instructions for the requested topic are available.","unknown","50",{
+   semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:"unknown",requested_facts:["published_information"]})],{language:industry.endsWith('en')?'en':'zh-TW'})
+ });
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));
+ assert.equal(f.requests.filter(x=>x.url.includes('/rag/context-search')).length,1,JSON.stringify({route:r.body?.response_route,reply:f.commits}));
+ assert.equal(f.commits.length,1);
+ assert.notEqual(f.commits[0].metadata.response_route,'subject_clarification');
+ assert.equal(f.requests.filter(x=>x.url.includes('/rpc/explicit_handoff_tx')).length,0);
+});
+for(const [question,prior] of [
+ ["How much per month?","介紹一下 Pro 方案"],
+ ["多少錢一個月？","介紹一下 Pro 方案"],
+ ["幾錢一堂？","介紹一下瑜伽班"],
+])for(const withPrior of [false,true])test("W2 G1 omitted topic: "+question+" history="+withPrior,async()=>{
+ const history=withPrior?[{id:uuid(754),conversation_id:ticket,role:'visitor',content:prior,created_at:'2026-11-12T00:00:00.000Z',metadata:{},is_recalled:false}]:[];
+ const f=task3cManagedCase(question,'Published product/service information is in the tenant KB.',
+   'Published product/service information is in the tenant KB.',"unknown","50",{history,
+   semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'unknown',requested_facts:['price']})],{language:question.startsWith('How')?'en':'zh-TW'})});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));
+ const calls=f.requests.filter(x=>x.url.includes('/rag/context-search'));
+ if(withPrior){
+   assert.equal(calls.length,1,JSON.stringify({question,route:r.body?.response_route,reply:f.commits}));
+   const target=prior.includes('Pro')?'Pro 方案':'瑜伽班';
+   assert(calls[0].body.query.includes(target),'query lost prior lawful topic: '+calls[0].body.query);
+ }else{
+   assert.equal(calls.length,0,JSON.stringify({question,route:r.body?.response_route,reply:f.commits}));
+   assert.equal(f.commits.length,1);
+   assert.match(f.commits[0].content,/具體對象|which (?:product|plan|service)|specify the subject|哪一項|哪個|邊一項/i);
+ }
+});
+for(const [question,lang] of [
+ ["請問你們的退貨政策是什麼","zh-TW"],
+ ["週末可以預約嗎","zh-TW"],
+ ["請用國語回答，退貨政策是什麼","zh-TW"],
+ ["How do I get in touch with a real person?","en"],
+ ["有冇真人客服可以搵","zh-TW"],
+ ["你們有真人客服嗎","zh-TW"],
+])test("W2 G3/G2 presentation and human information: "+question,async()=>{
+ const f=task3cManagedCase(question,'','NO_UNSUPPORTED_ANSWER','unknown','50',{
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'unknown',requested_facts:['published_information']})],{language:lang}),
+  originalRagResponse:{success:true,context_found:false,selected_documents:[],citations:[],llm_context:{summary_count:0,evidence_count:0}}
+ });
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));
+ assert.equal(f.commits.length,1,JSON.stringify({question,route:r.body?.response_route,events:f.events}));
+ assert.equal(f.requests.filter(x=>x.url.endsWith('/rpc/explicit_handoff_tx')).length,0);
+ if(lang==='zh-TW' && !question.includes('有冇'))assert.doesNotMatch(f.commits[0].content,/我而家|搵唔到|嘅現行|咩資料/);
+ if(question.includes('真人') || question.includes('real person')){
+  assert.equal(f.commits[0].metadata.response_route,'human_support_information',JSON.stringify({question,reply:f.commits[0]}));
+  assert.doesNotMatch(f.commits[0].content,/產品資料|product (?:for sale|details)|有冇售賣/);
+ }
+});

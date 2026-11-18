@@ -437,6 +437,62 @@ function canonicalExactToken(value: string): string {
     .trim();
 }
 
+/** W2 G4: exact monetary lexemes. The source's explicit currency is
+ * preserved before normalization. A marker may govern only consecutive amounts
+ * in its own list; bare "$" / "元" never gain a currency by locale. */
+type ExactMoney = { amount: string; currency: string | null };
+const MONEY_MARKER = String.raw`(?:NT\$|HK\$|US\$|NTD|TWD|HKD|USD|新台幣|台幣|港幣|港元|美元|美金|\$)`;
+const MONEY_NUMBER = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?`;
+const MONEY_RE = new RegExp(
+  String.raw`(?<![A-Za-z0-9])(?:(?<marker>${MONEY_MARKER})(?:\s*\((?:NTD|TWD|HKD|USD)\))?\s*)?(?<number>${MONEY_NUMBER})(?![A-Za-z0-9])`, "giu");
+const EXACT_ID_RE = /\b(?=[A-Z0-9-]*[A-Z])(?=[A-Z0-9-]*\d)[A-Z0-9-]{4,}\b/giu;
+const EXACT_NONMONEY_UNIT_RE = /(?<![A-Za-z0-9])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(?:%|percent|days?|hours?|minutes?|years?|months?|kg|g|lb|lbs|mm|cm|km|ml|公升|毫升|公斤|克|天|日|小時|小时|分鐘|分钟|年|月)/giu;
+function exactCurrency(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const m = raw.normalize("NFKC").toUpperCase();
+  if (["NT$", "NTD", "TWD", "新台幣", "台幣"].includes(m)) return "TWD";
+  if (["HK$", "HKD", "港幣", "港元"].includes(m)) return "HKD";
+  if (["US$", "USD", "美元", "美金"].includes(m)) return "USD";
+  return m === "$" ? "BARE_DOLLAR" : null;
+}
+function exactDecimal(raw: string): string {
+  const [whole, fraction] = raw.replace(/,/g, "").split(".");
+  const integer = whole.replace(/^0+(?=\d)/, "");
+  const decimals = fraction?.replace(/0+$/, "");
+  return decimals ? integer + "." + decimals : integer;
+}
+function monetaryFacts(text: string): ExactMoney[] {
+  const facts: ExactMoney[] = [];
+  const parts = text.normalize("NFKC").split(/[。！？!?；;\n]|\.(?!\d)/u);
+  for (const part of parts) {
+    let active: string | null = null;
+    let previousEnd = 0;
+    for (const match of part.matchAll(MONEY_RE)) {
+      const index = match.index ?? 0;
+      const marker = exactCurrency(match.groups?.marker);
+      // Only a syntactically connected list inherits its preceding marker.
+      // Never carry it across product/plan text, a second marker or a sentence.
+      const joiner = part.slice(previousEnd, index);
+      const list = /^(?:\s*(?:\/|、|，|,|及|和|或|and|or)\s*)+$/iu.test(joiner);
+      const currency = marker ?? (list ? active : null);
+      active = currency;
+      const number = match.groups?.number;
+      if (!number) continue;
+      facts.push({amount:exactDecimal(number),currency});
+      previousEnd = index + match[0].length;
+    }
+  }
+  return facts;
+}
+function currencyClaimGrounded(
+  answerFact: ExactMoney, source: readonly ExactMoney[], visitor: readonly ExactMoney[],
+): boolean {
+  if (answerFact.currency) return source.some(f=>f.currency===answerFact.currency && f.amount===answerFact.amount);
+  // A bare amount doesn't assert a currency. It still must be the exact same
+  // amount in a legitimate source or visitor-owned fact, never a substring.
+  return [...source,...visitor].some(f=>f.amount===answerFact.amount);
+}
+
 /** Customer-authored evidence only; assistant turns never become authority. */
 export function extractCustomerConversationEvidence(input: string): string {
   const raw = typeof input === "string" ? input : "";
@@ -539,15 +595,29 @@ export function validateExactFactGrounding(
       };
     }
   }
-  const evidenceNorm = canonicalExactToken(
-    `${evidenceText}\n${conversationEvidenceText}`,
-  );
+  const sourceFacts = monetaryFacts(evidenceText);
+  const visitorFacts = monetaryFacts(conversationEvidenceText);
   const unsupported = new Set<string>();
-  for (const match of answer.matchAll(EXACT_FACT_TOKEN_RE)) {
-    const token = canonicalExactToken(match[0] ?? "");
-    if (!token || /^\d$/.test(token)) continue;
-    if (!evidenceNorm.includes(token)) unsupported.add(token);
+  for (const mention of monetaryFacts(answer)) {
+    // Previous code excluded isolated one-digit bare numbers; retain that
+    // compatibility for prose but never exempt an explicit price/currency.
+    if (mention.currency === null && /^\d$/.test(mention.amount)) continue;
+    if (!currencyClaimGrounded(mention,sourceFacts,visitorFacts))
+      unsupported.add(`${mention.currency ?? "number"}:${mention.amount}`);
   }
+  // Model/product identifiers are checked separately so their embedded digits
+  // cannot be mistaken for independently evidenced prices.
+  const evidenceIds = new Set([...evidenceText.matchAll(EXACT_ID_RE),...conversationEvidenceText.matchAll(EXACT_ID_RE)]
+    .map(m=>canonicalExactToken(m[0] ?? "")));
+  for (const match of answer.matchAll(EXACT_ID_RE)) {
+    const token = canonicalExactToken(match[0] ?? "");
+    if (token && !evidenceIds.has(token)) unsupported.add(token);
+  }
+  // Preserve non-money quantitative units, using the exact amount and unit.
+  const quantified = (s: string) => [...s.matchAll(EXACT_NONMONEY_UNIT_RE)]
+    .map(m=>canonicalExactToken(m[0] ?? ""));
+  const allowedUnits = new Set([...quantified(evidenceText),...quantified(conversationEvidenceText)]);
+  for (const token of quantified(answer)) if (!allowedUnits.has(token)) unsupported.add(token);
   return unsupported.size === 0 ? { ok: true } : {
     ok: false,
     reason: "unsupported_exact_fact",

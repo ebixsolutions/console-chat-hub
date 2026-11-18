@@ -1717,5 +1717,17 @@
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "db72ed14de811eddab0cca9bc0c4be7a929c42bc8024db7e24de272c28c027c8",
     "supabase/functions/_shared/natural-customer-response.ts": "c2c560e577b9092672c819319facd1a23ace4bef3cbb82be1347d2024a8fd278",
     "tests/emergency-p0/chain.test.mjs": "84ebfec97f54d9de8924e59b815f31da6d277829901f177d991fc9e7028b8765"
+  },
+  "authorized_w2_consensus_source_sha256": {
+    "supabase/functions/_shared/current-factual-request.ts": "2fdaece0994956ed0d4554cd3d51941b1ad5de87a84f145fdb25bdbac6be94e5",
+    "supabase/functions/_shared/handoff-intent.ts": "48240c7361e3b24ca39ab881f019e26615e11d3e1feeb8109b251eaf7f51925e",
+    "supabase/functions/_shared/human-control-w1.ts": "88081a292e26beb818ee40d2a1d96fa3ec87451830dcaf45699b526d32cb670d",
+    "supabase/functions/_shared/llm-router-grounding.test.ts": "ad7544e3993118d6c6f352903d3cfa9663800ceb7720e06bbfe003ece0cda098",
+    "supabase/functions/_shared/llm-router.ts": "206ab57470ad16611574bed606ce709bec8d3e4d1d9e006c6341d1f96cbd0462",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "c5fe6314456e65b3ab583b73279d344ace125a2595c5ec304dab29da799b0732",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "0125e56f1a57dccfca9ac18367f0fe26ef2f2c126cae7be998e44e795c8be75e",
+    "supabase/functions/generate-reply/index.ts": "52fa2b450b8b1fa66f5c9103327fc5928808165059839d4813ec6927274103a3",
+    "tests/emergency-p0/chain.test.mjs": "541ebdc13aab0d43e6fa5c1a66e199391d9eb0cf6ee1ce4feb67d692c83e0994",
+    "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
   }
 }
