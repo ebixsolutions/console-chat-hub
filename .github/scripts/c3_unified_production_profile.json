@@ -239,6 +239,7 @@
     ".github/scripts/c3_director_candidate_scope.json": "37ea44991bbd0cfa0fe9be81593231fb58b7d10318c59243affc775e78beedad"
   },
   "authorized_changes": [
+    "supabase/functions/_shared/llm-router-grounding.test.ts",
     ".env.development",
     ".github/scripts/c3_candidate_identity_build_check.mjs",
     ".github/scripts/c3_director_generic_core_final_gate.mjs",
@@ -1729,5 +1730,14 @@
     "supabase/functions/generate-reply/index.ts": "52fa2b450b8b1fa66f5c9103327fc5928808165059839d4813ec6927274103a3",
     "tests/emergency-p0/chain.test.mjs": "541ebdc13aab0d43e6fa5c1a66e199391d9eb0cf6ee1ce4feb67d692c83e0994",
     "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
+  }
+,
+  "authorized_task3c_t06_source_sha256": {
+    "supabase/functions/_shared/llm-router.ts": "ed1f1c6cf80af79b657feacda2c14b6e005a856e7474ab7a3804175d061766bd",
+    "supabase/functions/_shared/execution-failure.ts": "f26fdca50840b07bfb2e136d977b48302f8b873f4924541b11cda78ba40635f9",
+    "supabase/functions/_shared/commerce-semantic-interpreter.ts": "00461f0f15bc144847d0b621763eb86941e703380d553ea6b5993c1f002214be",
+    "supabase/functions/_shared/prepare-semantic-request.ts": "619494906c8a818d62df5a88fa2a2e54b21304f9acaf75211f43b3e915b75eba",
+    "supabase/functions/generate-reply/index.ts": "09ea402c944306e1fb26524c9a12571288630ac5a7e2cec425446b85b4b198f2",
+    "supabase/functions/_shared/llm-router-grounding.test.ts": "1fd9bd743b3eeadea4949401c7fcdcc99f6dfb7a03cd12ba4f619eadb3f71deb"
   }
 }

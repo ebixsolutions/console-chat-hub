@@ -1,5 +1,6 @@
 import {
   extractCustomerConversationEvidence,
+  createModelTurnBudget,
   parseGroundingVerifierDecision,
   validateExactFactGrounding,
 } from "./llm-router.ts";
@@ -109,4 +110,17 @@ Deno.test("W2 G4 exact monetary grounding preserves marker/list and refuses chan
   for (const [source, answer, allowed] of truth)
     assert(validateExactFactGrounding(answer, source).ok === allowed,
       `amount and currency authority mismatch: ${source} → ${answer}`);
+});
+
+Deno.test("Task3C T06 request-scoped budget admits three attempts, rejects fourth",()=>{
+ const b=createModelTurnBudget(3),other=createModelTurnBudget(3);
+ assert(b.reserve()&&b.reserve()&&b.reserve(),"three legal slots");
+ assert(b.used===3&&!b.reserve()&&b.used===3,"fourth provider dispatch blocked");
+ assert(other.reserve()&&other.used===1,"separate visitor budget isolation");
+ for(const invalid of [0,4,1.5,Infinity]){let denied=false;try{createModelTurnBudget(invalid)}catch{denied=true}assert(denied,"unapproved budget cannot be accepted");}
+});
+Deno.test("T06 contradictory reviewer remains fail-closed, positive claim-free reply is valid",()=>{
+ assert(parseGroundingVerifierDecision('{"grounded":true,"unsupported_claims":[],"evidence_chunk_ids":[],"question_resolution":"partial"}',["E1","C1"])?.grounded===true,"claim-free verdict");
+ assert(parseGroundingVerifierDecision('{"grounded":false,"unsupported_claims":[]}',["E1","C1"])===null,"do not coerce negative verdict");
+ assert(parseGroundingVerifierDecision('{"grounded":true,"unsupported_claims":["invented current price"],"evidence_chunk_ids":["E1"]}',["E1","C1"])===null,"invented claim cannot pass");
 });

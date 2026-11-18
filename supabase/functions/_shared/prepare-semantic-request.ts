@@ -1,4 +1,5 @@
 import {writeProtectedPipelineEvidence} from "./protected-pipeline-evidence.ts";
+import type {ModelTurnBudget} from "./llm-router.ts";
 import {
   buildPersistentCommerceStateSummary,
   interpretCommerceSemantics,
@@ -29,6 +30,7 @@ export interface PrepareSemanticRequestInput {
   recent_history: MemoryHistoryRow[];
   operation_id?: string;
   legacy_authority?: object;
+  modelTurnBudget?: ModelTurnBudget;
   signal?: AbortSignal;
 }
 
@@ -130,6 +132,7 @@ export async function prepareSemanticRequest(
     persistent_state_summary: persistentSummary,
     operation_id: input.operation_id,
     legacy_authority: input.legacy_authority,
+    modelTurnBudget:input.modelTurnBudget,
     signal: input.signal,
   });
   if (semantic.success_evidence) await writeProtectedPipelineEvidence(client, input, "semantic_accepted", {

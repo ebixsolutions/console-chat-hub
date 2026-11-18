@@ -1,6 +1,6 @@
 import {captureProtectedDiagnosticText} from "./protected-pipeline-evidence.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
-import { callModel } from "./llm-router.ts";
+import { callModel, type ModelTurnBudget } from "./llm-router.ts";
 import { sha256 } from "./model-attempt-accounting.ts";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { requirementMutationText } from "./commerce-state-authority.ts";
@@ -145,6 +145,7 @@ export interface CommerceSemanticInterpretInput {
   operation_id?: string;
   /** Server-created admission capability; never taken from a model or message. */
   legacy_authority?: object;
+  modelTurnBudget?: ModelTurnBudget;
   signal?: AbortSignal;
 }
 
@@ -484,6 +485,7 @@ export async function interpretCommerceSemantics(
     user,
     maxTokens: 4096,
     maxProviderAttempts: 1,
+    modelTurnBudget:input.modelTurnBudget,
     semanticSource: input.source_created_at ? {messageId:input.source_message_id,createdAt:input.source_created_at,contentSha256:await sha256(input.source_content ?? input.latest)} : undefined,
     operationId,
     legacyAuthority:input.legacy_authority,
