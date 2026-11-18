@@ -1498,6 +1498,7 @@ export function toCeErrorCode(code: LlmFailureCode): string {
     case "LLM_INVALID_OUTPUT":
       return "CE_PROVIDER_INVALID_OUTPUT";
     case "LLM_ACCOUNTING_DENIED":
+    case "LLM_DISPATCH_BUDGET_EXHAUSTED":
       return "CE_MODEL_ACCOUNTING_DENIED";
     case "LLM_GROUNDING_REJECTED":
       return "CE_PROVIDER_INVALID_OUTPUT";

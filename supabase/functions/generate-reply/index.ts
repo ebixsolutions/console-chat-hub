@@ -522,6 +522,8 @@ function routerFailureToS0(code: LlmFailureCode): string {
       return "LLM_INVALID_OUTPUT";
     case "LLM_ACCOUNTING_DENIED":
       return "LLM_ACCOUNTING_DENIED";
+    case "LLM_DISPATCH_BUDGET_EXHAUSTED":
+      return "LLM_DISPATCH_BUDGET_EXHAUSTED";
     case "LLM_GROUNDING_REJECTED":
       return "LLM_GROUNDING_REJECTED";
   }
