@@ -3080,11 +3080,21 @@ const t06Unsupported={grounded:true,unsupported_claims:[],evidence_chunk_ids:[],
 function t06RealHandlerFixture({preview,verdicts,sourceOffset=0,question=t06ExactVisitor,reply=t06Question,language='zh-TW'}){
  const doc=task1cModelDocument({id:'t06-claim-free-source',currentness:'unknown'});
  doc.evidence[0].content='已發布商家提供冷氣產品資料。單一房間的適用規格需要知道實際房間大小和條件，現有文檔沒有確認此客戶房間的面積。';
+ const sameHostedNeed=question===t06ExactVisitor;
+ // The actual T06 provider frame was an ADD_ITEM with one product demand,
+ // no requested merchant fact and three room constraints. A generic ASK_FACT
+ // fixture incorrectly selected the ordinary no-fact early route (one call)
+ // and never exercised the reviewer. Use the captured source-owned shape.
+ const semantic=sameHostedNeed?providerWireV5({
+   language,intent:'merchant_facts',requested_facts:[],topic:'冷氣',
+   entities:[{name:'冷氣',kind:'physical_product',quantity:3,unit:'部',confidence:0.98}],
+   demands:[t06NoFactDemand(question)],
+ },'ADD_ITEM'):task1SemanticContextWire([t06NoFactDemand(question)],{language,intent:'merchant_facts'});
  return fixture(question,{
+  company:'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493',
   source:uuid(8600+sourceOffset),originalPreview:preview,fullChain:true,captureEvidence:true,
   originalRagResponse:task1cRagDocuments(doc),
-  answer:reply,verifierResponses:verdicts,
-  semantic:task1SemanticContextWire([t06NoFactDemand(question)],{language,intent:'merchant_facts'}),
+  answer:reply,verifierResponses:verdicts,semantic,
  });
 }
 for(const preview of [false,true])for(const [variant,verdicts,count,delivered] of [
@@ -3099,7 +3109,10 @@ for(const preview of [false,true])for(const [variant,verdicts,count,delivered] o
   const result=await f.run();
   const model=f.requests.filter(row=>row.url.endsWith(':generateContent'));
   assert(model.length<=4,'model dispatch exceeded shared four-call source bound');
-  assert.equal(model.length,count,'actual model call-chain must be counted, not inferred');
+  assert.equal(model.length,count,'actual model call-chain must be counted, not inferred: '+JSON.stringify({
+    route:result.body?.response_route,commits:f.commits.map(row=>({route:row.metadata?.response_route,content:row.content})),
+    requests:f.requests.map(row=>new URL(row.url).pathname),event_tail:f.events.slice(-5),
+  }));
   assert.equal(result.status,200,JSON.stringify({result,commits:f.commits,events:f.events.slice(-6)}));
   assert.equal(f.commits.length,1,'exactly one persisted assistant reply');
   assert.equal(f.requests.filter(row=>row.url.includes('/rag/context-search')).length,1,'same genuine KB route, no routing bypass');
