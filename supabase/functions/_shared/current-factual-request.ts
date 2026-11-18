@@ -1084,16 +1084,28 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
         !TOPIC_BOUNDARY.test(sourceQuote) && !LIFECYCLE_BOUNDARY.test(sourceQuote) &&
         !demand.customer_correction && !demand.explicit_negations.length &&
         !Object.keys(demand.constraints).length) {
-      const focus=recentCustomerDiscourseFocus(input);
-      if (!focus.blocked && focus.bindings.length===1 &&
-          !focus.bindings[0].current && validSubject(focus.bindings[0].subject)) {
-        resolved={bindings:focus.bindings,question:focus.bindings[0].subject+" "+sourceQuote,unresolved:false};
-        ambiguity.is_ambiguous=false; ambiguity.reasons=[]; ambiguity.clarification_question=null;
-      } else {
-        resolved={bindings:[],question:sourceQuote,unresolved:true};
-        ambiguity.is_ambiguous=true;
-        ambiguity.reasons.push("subject_missing_for_facet");
-        ambiguity.clarification_question=null;
+      // Existing authoritative resolution has priority over the new omitted-
+      // subject fallback: another CURRENT clause may name the product, the
+      // model may embed an incompatible stale fact, or a same-tenant/same-
+      // source published-KB recommendation may legitimately locate a NEW read.
+      // These are independent, previously accepted P0 invariants.
+      const currentNamed = resolved.bindings.some(binding => binding.current &&
+        validSubject(binding.subject) && literalFactualSubject(question,[binding.subject]));
+      const conflictingModelFact = resolved.unresolved && demand.requested_facts.some(fact =>
+        exactProductIdentifiers(fact).some(ref => !literalFactualSubject(sourceQuote,[ref])));
+      const cited = citedAssistantReadTarget(input);
+      if (!currentNamed && !conflictingModelFact && !cited) {
+        const focus=recentCustomerDiscourseFocus(input);
+        if (!focus.blocked && focus.bindings.length===1 &&
+            !focus.bindings[0].current && validSubject(focus.bindings[0].subject)) {
+          resolved={bindings:focus.bindings,question:focus.bindings[0].subject+" "+sourceQuote,unresolved:false};
+          ambiguity.is_ambiguous=false; ambiguity.reasons=[]; ambiguity.clarification_question=null;
+        } else {
+          resolved={bindings:[],question:sourceQuote,unresolved:true};
+          ambiguity.is_ambiguous=true;
+          ambiguity.reasons.push("subject_missing_for_facet");
+          ambiguity.clarification_question=null;
+        }
       }
     }
     // A provider ambiguity not independently disproved remains pending; attempted
