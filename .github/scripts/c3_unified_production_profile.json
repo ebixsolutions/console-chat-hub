@@ -1732,11 +1732,11 @@
   }
 ,
   "authorized_task3c_t06_source_sha256": {
-    "supabase/functions/_shared/llm-router.ts": "6125ec648c998f448de199f0c5360923d683f3693ce4a33ec23c0ce993c4b823",
+    "supabase/functions/_shared/llm-router.ts": "c8f224aef05c81407d609e8c3712a873586e178d696c6bb1c4230298c53d282e",
     "supabase/functions/_shared/execution-failure.ts": "f26fdca50840b07bfb2e136d977b48302f8b873f4924541b11cda78ba40635f9",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "00461f0f15bc144847d0b621763eb86941e703380d553ea6b5993c1f002214be",
     "supabase/functions/_shared/prepare-semantic-request.ts": "619494906c8a818d62df5a88fa2a2e54b21304f9acaf75211f43b3e915b75eba",
-    "supabase/functions/generate-reply/index.ts": "5624dfd47cab8bebb9f20971cd8e9994650663b1f84adc0f1e83218dc4bce2eb",
-    "supabase/functions/_shared/llm-router-grounding.test.ts": "38a1183ea2231ea30e7ab56ee6bd3d00fbaa54778374b95bd4601d99271acf7c"
+    "supabase/functions/generate-reply/index.ts": "d144eef95829cee5d636d181871b0311216e7c27e05f366060a58d200155c615",
+    "supabase/functions/_shared/llm-router-grounding.test.ts": "f7081210c3053e4c7c32a3302599368dd275fd97d417800d44ce35ec0f2b80dd"
   }
 }

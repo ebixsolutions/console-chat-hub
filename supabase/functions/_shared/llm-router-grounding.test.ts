@@ -130,9 +130,10 @@ Deno.test("T06 contradictory reviewer remains fail-closed, positive claim-free r
 // Preview; ordinary legacy support stays governed by its original retry gates.
 Deno.test("Task3C scoped approved Preview budget cannot be browser-selected or applied to ordinary service",()=>{
   const original={source:"widget_live_test",widget_live_test:true,execution_class:"authenticated_admin_preview"};
-  const active=boundedPreviewModelTurnBudget(original);
+  const active=boundedPreviewModelTurnBudget(original,true);
   assert(active!==undefined&&active.reserve()&&active.reserve()&&active.reserve()&&!active.reserve(),"original Preview cannot send fourth model request");
-  assert(boundedPreviewModelTurnBudget({source:"widget_live_test",widget_live_test:true})===undefined,"partial marker is not a signed original preview classification");
-  assert(boundedPreviewModelTurnBudget({source:"widget_live_test",widget_live_test:true,execution_class:"untrusted"})===undefined,"untrusted preview class denied");
-  assert(boundedPreviewModelTurnBudget({source:"ordinary_widget",widget_live_test:false})===undefined,"ordinary customer traffic retains original positive paths");
+  assert(boundedPreviewModelTurnBudget(original,false)===undefined,"unbound Preview never inherits UAT model cap");
+  assert(boundedPreviewModelTurnBudget({source:"widget_live_test",widget_live_test:true},true)===undefined,"partial marker is not a signed original preview classification");
+  assert(boundedPreviewModelTurnBudget({source:"widget_live_test",widget_live_test:true,execution_class:"untrusted"},true)===undefined,"untrusted preview class denied");
+  assert(boundedPreviewModelTurnBudget({source:"ordinary_widget",widget_live_test:false},true)===undefined,"ordinary customer traffic retains original positive paths");
 });

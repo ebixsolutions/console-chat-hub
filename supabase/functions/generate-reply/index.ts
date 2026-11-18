@@ -3,6 +3,7 @@ import { resolveCatalogueVariantFollowup } from "../_shared/kb-product-record.ts
 import { resolveFactualFollowup, buildFactualFollowupPrompt, factualSubject, literalFactualSubject } from "../_shared/conversation-semantic-contract.ts";
 import { originalPreviewEnabled } from "../_shared/original-widget-preview.ts";
 import { executionFailure, failureFromError, safeB2FailureCode, type ExecutionFailure } from "../_shared/execution-failure.ts";
+import { uatRun } from "../_shared/uat-execution-contract.ts";
 import { resolveIndustryProfile } from "../_shared/industry-runtime-adapter.ts";
 import { phase1CoachAllowed } from "../_shared/remote-model-accounting.ts";
 import {
@@ -2710,7 +2711,9 @@ async function legacyGenerateReply(
   // Original signed Preview metadata is loaded from the server's conversation,
   // never from the visitor JSON. Normal merchant traffic keeps existing
   // bounded internal retry contracts; the approved Preview max is <=3.
-  const modelTurnBudget=boundedPreviewModelTurnBudget((conversation as {metadata_source?:unknown}).metadata_source);
+  let serverRunBound=false;
+  try { serverRunBound=Boolean(uatRun(conversation.company_id)); } catch { /* ordinary service retains prior execution; no new grant */ }
+  const modelTurnBudget=boundedPreviewModelTurnBudget((conversation as {metadata_source?:unknown}).metadata_source,serverRunBound);
   if (conversation.status === "resolved") {
     return new Response(
       JSON.stringify({ success: true, skipped: "resolved" }),
@@ -4275,7 +4278,9 @@ async function orchestrationGenerateReply(
     });
   }
 
-  const modelTurnBudget=boundedPreviewModelTurnBudget(conversation.metadata_source);
+  let serverRunBound=false;
+  try { serverRunBound=Boolean(uatRun(conversation.company_id)); } catch { /* no valid server UAT run: never derive a test grant from browser metadata */ }
+  const modelTurnBudget=boundedPreviewModelTurnBudget(conversation.metadata_source,serverRunBound);
   // Sealed server preview binding is the authority; no extra dependency for normal customer conversations.
   if (conversation.metadata_source?.source === "ordinary_widget_control_preview") {
     const scope=await supabaseAdmin.rpc("widget_control_preview_excluded",{p_conversation_id:conversation_id});
