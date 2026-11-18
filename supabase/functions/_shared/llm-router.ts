@@ -474,7 +474,7 @@ function monetaryFacts(text: string): ExactMoney[] {
       // Never carry it across product/plan text, a second marker or a sentence.
       const joiner = part.slice(previousEnd, index);
       const list = /^(?:\s*(?:\/|、|，|,|及|和|或|and|or)\s*)+$/iu.test(joiner);
-      const currency = marker ?? (list ? active : null);
+      const currency: string | null = marker ?? (list ? active : null);
       active = currency;
       const number = match.groups?.number;
       if (!number) continue;

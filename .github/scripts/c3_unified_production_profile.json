@@ -1723,7 +1723,7 @@
     "supabase/functions/_shared/handoff-intent.ts": "48240c7361e3b24ca39ab881f019e26615e11d3e1feeb8109b251eaf7f51925e",
     "supabase/functions/_shared/human-control-w1.ts": "88081a292e26beb818ee40d2a1d96fa3ec87451830dcaf45699b526d32cb670d",
     "supabase/functions/_shared/llm-router-grounding.test.ts": "ad7544e3993118d6c6f352903d3cfa9663800ceb7720e06bbfe003ece0cda098",
-    "supabase/functions/_shared/llm-router.ts": "206ab57470ad16611574bed606ce709bec8d3e4d1d9e006c6341d1f96cbd0462",
+    "supabase/functions/_shared/llm-router.ts": "5a172c113eb47a89266e8ccba7fdbf10f36c18a2f66befdf763c7f1bf3e693b5",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts": "c5fe6314456e65b3ab583b73279d344ace125a2595c5ec304dab29da799b0732",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "0125e56f1a57dccfca9ac18367f0fe26ef2f2c126cae7be998e44e795c8be75e",
     "supabase/functions/generate-reply/index.ts": "52fa2b450b8b1fa66f5c9103327fc5928808165059839d4813ec6927274103a3",
