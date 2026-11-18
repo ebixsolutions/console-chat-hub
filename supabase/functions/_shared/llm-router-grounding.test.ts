@@ -1,6 +1,7 @@
 import {
   extractCustomerConversationEvidence,
   createModelTurnBudget,
+  boundedPreviewModelTurnBudget,
   parseGroundingVerifierDecision,
   validateExactFactGrounding,
 } from "./llm-router.ts";
@@ -123,4 +124,15 @@ Deno.test("T06 contradictory reviewer remains fail-closed, positive claim-free r
  assert(parseGroundingVerifierDecision('{"grounded":true,"unsupported_claims":[],"evidence_chunk_ids":[],"question_resolution":"partial"}',["E1","C1"])?.grounded===true,"claim-free verdict");
  assert(parseGroundingVerifierDecision('{"grounded":false,"unsupported_claims":[]}',["E1","C1"])===null,"do not coerce negative verdict");
  assert(parseGroundingVerifierDecision('{"grounded":true,"unsupported_claims":["invented current price"],"evidence_chunk_ids":["E1"]}',["E1","C1"])===null,"invented claim cannot pass");
+});
+
+// T06 must use <=3 across all provider stages only for server-verified original
+// Preview; ordinary legacy support stays governed by its original retry gates.
+Deno.test("Task3C scoped approved Preview budget cannot be browser-selected or applied to ordinary service",()=>{
+  const original={source:"widget_live_test",widget_live_test:true,execution_class:"authenticated_admin_preview"};
+  const active=boundedPreviewModelTurnBudget(original);
+  assert(active!==undefined&&active.reserve()&&active.reserve()&&active.reserve()&&!active.reserve(),"original Preview cannot send fourth model request");
+  assert(boundedPreviewModelTurnBudget({source:"widget_live_test",widget_live_test:true})===undefined,"partial marker is not a signed original preview classification");
+  assert(boundedPreviewModelTurnBudget({source:"widget_live_test",widget_live_test:true,execution_class:"untrusted"})===undefined,"untrusted preview class denied");
+  assert(boundedPreviewModelTurnBudget({source:"ordinary_widget",widget_live_test:false})===undefined,"ordinary customer traffic retains original positive paths");
 });

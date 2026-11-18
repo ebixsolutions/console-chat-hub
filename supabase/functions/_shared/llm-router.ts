@@ -60,6 +60,17 @@ export function createModelTurnBudget(limit=3):ModelTurnBudget {
  return Object.freeze({limit,get used(){return used;},reserve(){if(used>=limit)return false;used++;return true;}});
 }
 
+/** Only the original server-owned authenticated Widget Preview workload has
+ * the Director's specific <=3 dispatch scope. This is a request budget, not
+ * auth permission and not a cap on unrelated legacy merchant service. */
+export function boundedPreviewModelTurnBudget(meta: unknown): ModelTurnBudget | undefined {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) return undefined;
+  const m = meta as Record<string, unknown>;
+  return m.source === "widget_live_test" && m.widget_live_test === true &&
+    m.execution_class === "authenticated_admin_preview" ?
+    createModelTurnBudget(3) : undefined;
+}
+
 export type LlmResult =
   | {
     ok: true;

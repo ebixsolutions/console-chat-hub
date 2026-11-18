@@ -105,7 +105,7 @@ import {
 } from "../_shared/escalation-p1.ts";
 import {
   callModel,
-  createModelTurnBudget,
+  boundedPreviewModelTurnBudget,
   type LlmFailureCode,
   resolveGenerationMaxTokens,
 } from "../_shared/llm-router.ts";
@@ -2689,7 +2689,6 @@ async function legacyGenerateReply(
   source_message_id: string | null,
   requestSignal?: AbortSignal,
 ): Promise<Response> {
-  const modelTurnBudget=createModelTurnBudget(3);
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     getSupabaseAdminKey(),
@@ -2708,6 +2707,10 @@ async function legacyGenerateReply(
     });
   }
 
+  // Original signed Preview metadata is loaded from the server's conversation,
+  // never from the visitor JSON. Normal merchant traffic keeps existing
+  // bounded internal retry contracts; the approved Preview max is <=3.
+  const modelTurnBudget=boundedPreviewModelTurnBudget((conversation as {metadata_source?:unknown}).metadata_source);
   if (conversation.status === "resolved") {
     return new Response(
       JSON.stringify({ success: true, skipped: "resolved" }),
@@ -4256,7 +4259,6 @@ async function orchestrationGenerateReply(
   source_message_id: string | null,
   requestSignal?: AbortSignal,
 ): Promise<Response> {
-  const modelTurnBudget=createModelTurnBudget(3);
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL") ?? "",
     getSupabaseAdminKey(),
@@ -4273,6 +4275,7 @@ async function orchestrationGenerateReply(
     });
   }
 
+  const modelTurnBudget=boundedPreviewModelTurnBudget(conversation.metadata_source);
   // Sealed server preview binding is the authority; no extra dependency for normal customer conversations.
   if (conversation.metadata_source?.source === "ordinary_widget_control_preview") {
     const scope=await supabaseAdmin.rpc("widget_control_preview_excluded",{p_conversation_id:conversation_id});
