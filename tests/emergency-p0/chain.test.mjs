@@ -3090,6 +3090,16 @@ function t06RealHandlerFixture({preview,verdicts,sourceOffset=0,question=t06Exac
    entities:[{name:'冷氣',kind:'physical_product',quantity:3,unit:'部',confidence:0.98}],
    demands:[t06NoFactDemand(question)],
  },'ADD_ITEM'):task1SemanticContextWire([t06NoFactDemand(question)],{language,intent:'merchant_facts'});
+ // The ordinary isolated harness has no original Preview authorization.
+ // A legitimate merchant KB tenant binding is required for an ordinary
+ // published-knowledge read; otherwise the handler correctly returns
+ // kb_no_current_evidence after Semantic, never dispatches the reviewer.
+ // Reuse the canonical existing managed-tenant fixture rather than faking a
+ // signed Preview session or bypassing the authority checks.
+ if(!preview)return task3cManagedCase(question,doc.evidence[0].content,reply,'general','50',{
+   source:uuid(8600+sourceOffset),semantic,verifierResponses:verdicts,
+   captureEvidence:true,
+ });
  return fixture(question,{
   company:'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493',
   source:uuid(8600+sourceOffset),originalPreview:preview,fullChain:true,captureEvidence:true,

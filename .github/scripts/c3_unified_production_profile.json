@@ -1738,6 +1738,6 @@
     "supabase/functions/_shared/prepare-semantic-request.ts": "619494906c8a818d62df5a88fa2a2e54b21304f9acaf75211f43b3e915b75eba",
     "supabase/functions/generate-reply/index.ts": "9edb65081e327915e102f5fa67b103d68537e1f02f9f6f6cefdda1cdb8916b47",
     "supabase/functions/_shared/llm-router-grounding.test.ts": "d31defbf02ce8775ba42b5e796b039f26258024ec66d40fa6e2b4c7007a77c0d",
-    "tests/emergency-p0/chain.test.mjs": "9633efb5a03ad1371fa8c86ae6082545feb2c1f685cd093be8f594ec9b9c1a04"
+    "tests/emergency-p0/chain.test.mjs": "e50d39cc9c35c2c842395f4dc96d40bc646073a2f9b05dd9c9ff5d833ef247a1"
   }
 }
