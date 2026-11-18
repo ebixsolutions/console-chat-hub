@@ -239,7 +239,6 @@
     ".github/scripts/c3_director_candidate_scope.json": "37ea44991bbd0cfa0fe9be81593231fb58b7d10318c59243affc775e78beedad"
   },
   "authorized_changes": [
-    "supabase/functions/_shared/llm-router-grounding.test.ts",
     ".env.development",
     ".github/scripts/c3_candidate_identity_build_check.mjs",
     ".github/scripts/c3_director_generic_core_final_gate.mjs",
