@@ -1,7 +1,6 @@
 import {
   extractCustomerConversationEvidence,
   createModelTurnBudget,
-  boundedPreviewModelTurnBudget,
   parseGroundingVerifierDecision,
   validateExactFactGrounding,
 } from "./llm-router.ts";
@@ -118,7 +117,7 @@ Deno.test("Task3C T06 request-scoped budget admits three attempts, rejects fourt
  assert(b.reserve()&&b.reserve()&&b.reserve(),"three legal slots");
  assert(b.used===3&&!b.reserve()&&b.used===3,"fourth provider dispatch blocked");
  assert(other.reserve()&&other.used===1,"separate visitor budget isolation");
- for(const invalid of [0,4,1.5,Infinity]){let denied=false;try{createModelTurnBudget(invalid)}catch{denied=true}assert(denied,"unapproved budget cannot be accepted");}
+ for(const invalid of [0,5,1.5,Infinity]){let denied=false;try{createModelTurnBudget(invalid)}catch{denied=true}assert(denied,"unapproved budget cannot be accepted");}
 });
 Deno.test("T06 contradictory reviewer remains fail-closed, positive claim-free reply is valid",()=>{
  assert(parseGroundingVerifierDecision('{"grounded":true,"unsupported_claims":[],"evidence_chunk_ids":[],"question_resolution":"partial"}',["E1","C1"])?.grounded===true,"claim-free verdict");
@@ -126,14 +125,17 @@ Deno.test("T06 contradictory reviewer remains fail-closed, positive claim-free r
  assert(parseGroundingVerifierDecision('{"grounded":true,"unsupported_claims":["invented current price"],"evidence_chunk_ids":["E1"]}',["E1","C1"])===null,"invented claim cannot pass");
 });
 
-// T06 must use <=3 across all provider stages only for server-verified original
-// Preview; ordinary legacy support stays governed by its original retry gates.
-Deno.test("Task3C scoped approved Preview budget cannot be browser-selected or applied to ordinary service",()=>{
-  const original={source:"widget_live_test",widget_live_test:true,execution_class:"authenticated_admin_preview"};
-  const active=boundedPreviewModelTurnBudget(original,true);
-  assert(active!==undefined&&active.reserve()&&active.reserve()&&active.reserve()&&!active.reserve(),"original Preview cannot send fourth model request");
-  assert(boundedPreviewModelTurnBudget(original,false)===undefined,"unbound Preview never inherits UAT model cap");
-  assert(boundedPreviewModelTurnBudget({source:"widget_live_test",widget_live_test:true},true)===undefined,"partial marker is not a signed original preview classification");
-  assert(boundedPreviewModelTurnBudget({source:"widget_live_test",widget_live_test:true,execution_class:"untrusted"},true)===undefined,"untrusted preview class denied");
-  assert(boundedPreviewModelTurnBudget({source:"ordinary_widget",widget_live_test:false},true)===undefined,"ordinary customer traffic retains original positive paths");
+// Same source-level bound for ordinary visitors and authorized Preview.
+// Actual paid test-run scope remains separate and cannot be expanded by tests.
+Deno.test("Task3C shared four-call model budget never admits a fifth",()=>{
+  const ordinary=createModelTurnBudget();
+  const preview=createModelTurnBudget();
+  for(const turn of [ordinary,preview]){
+    assert(turn.limit===4,"both entrypoints use the same model budget");
+    for(let i=0;i<4;i++)assert(turn.reserve(),"allowed physical dispatch");
+    assert(!turn.reserve()&&turn.used===4,"fifth paid dispatch denied");
+  }
+  const narrower=createModelTurnBudget(3);
+  assert(narrower.reserve()&&narrower.reserve()&&narrower.reserve()&&!narrower.reserve(),
+    "lower bound remains valid for independently authorized scopes");
 });

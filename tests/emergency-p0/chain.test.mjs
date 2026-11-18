@@ -3063,3 +3063,84 @@ for(const [question,lang] of [
   assert.doesNotMatch(f.commits[0].content,/產品資料|product (?:for sale|details)|有冇售賣/);
  }
 });
+
+
+// T06 exact multi-stage original Hosted replay — isolated real generate-reply
+// handler/import graph and actual transport request counts. These are NOT
+// claims of fresh Hosted acceptance. The original committed visitor remains
+// spent and is never sent from this fixture.
+const t06ExactVisitor='我要為兩間睡房同一個客廳選購冷氣，即合共三部；這是測試資料。';
+const t06Question='您好！為了能為您推薦最合適的冷氣機，請問兩間睡房和客廳的面積大約是多少平方呎呢？';
+const t06NoFactDemand=(text)=>task1SemanticContextDemand(text,{source_type:'product',requested_facts:[]});
+const t06Unavailable={demand_id:'demand-1',status:'unavailable',evidence_ids:[]};
+const t06Invalid={grounded:false,unsupported_claims:[],evidence_chunk_ids:[],question_resolution:'partial',demand_resolutions:[t06Unavailable]};
+const t06Valid={grounded:true,unsupported_claims:[],evidence_chunk_ids:[],question_resolution:'partial',demand_resolutions:[t06Unavailable]};
+const t06C1={grounded:true,unsupported_claims:[],evidence_chunk_ids:['C1'],question_resolution:'partial',demand_resolutions:[{demand_id:'demand-1',status:'partial',evidence_ids:['E1']}]};
+const t06Unsupported={grounded:true,unsupported_claims:[],evidence_chunk_ids:[],question_resolution:'unsupported',demand_resolutions:[t06Unavailable]};
+function t06RealHandlerFixture({preview,verdicts,sourceOffset=0,question=t06ExactVisitor,reply=t06Question,language='zh-TW'}){
+ const doc=task1cModelDocument({id:'t06-claim-free-source',currentness:'unknown'});
+ doc.evidence[0].content='已發布商家提供冷氣產品資料。單一房間的適用規格需要知道實際房間大小和條件，現有文檔沒有確認此客戶房間的面積。';
+ return fixture(question,{
+  source:uuid(8600+sourceOffset),originalPreview:preview,fullChain:true,captureEvidence:true,
+  originalRagResponse:task1cRagDocuments(doc),
+  answer:reply,verifierResponses:verdicts,
+  semantic:task1SemanticContextWire([t06NoFactDemand(question)],{language,intent:'merchant_facts'}),
+ });
+}
+for(const preview of [false,true])for(const [variant,verdicts,count,delivered] of [
+ ['captured-two-invalid',[t06Invalid,t06Invalid],4,false],
+ ['first-invalid-second-consistent',[t06Invalid,t06Valid],4,true],
+ ['first-consistent',[t06Valid],3,true],
+ ['source-C1-partial',[t06C1],3,true],
+ ['reviewer-unresolved',[t06Unsupported],3,false],
+]){
+ test('Task3C T06 exact reviewer replay: '+variant+' / '+(preview?'authenticated Preview':'ordinary customer'),async()=>{
+  const f=t06RealHandlerFixture({preview,verdicts,sourceOffset:(preview?20:0)+['captured-two-invalid','first-invalid-second-consistent','first-consistent','source-C1-partial','reviewer-unresolved'].indexOf(variant)});
+  const result=await f.run();
+  const model=f.requests.filter(row=>row.url.endsWith(':generateContent'));
+  assert(model.length<=4,'model dispatch exceeded shared four-call source bound');
+  assert.equal(model.length,count,'actual model call-chain must be counted, not inferred');
+  assert.equal(result.status,200,JSON.stringify({result,commits:f.commits,events:f.events.slice(-6)}));
+  assert.equal(f.commits.length,1,'exactly one persisted assistant reply');
+  assert.equal(f.requests.filter(row=>row.url.includes('/rag/context-search')).length,1,'same genuine KB route, no routing bypass');
+  const message=f.commits[0];
+  assert.doesNotMatch(message.content,/系統設定或處理出現問題|A system configuration or processing problem/i,'retry exhaustion must preserve safe reviewer recovery');
+  assert.doesNotMatch(message.content,/已下單|已付款|確認適合|現價已確認/i,'no invented commercial outcome');
+  if(delivered)assert.equal(message.content,t06Question,'verified claim-free clarification must survive');
+  else assert.notEqual(message.content,t06Question,'unsupported/invalid verdict must not be coerced');
+  const before=model.length;
+  await f.run();
+  assert.equal(f.commits.length,1,'idempotent replay cannot add another assistant reply');
+  assert.equal(f.requests.filter(row=>row.url.endsWith(':generateContent')).length,before,'duplicate may not spend another model call');
+ });
+}
+// Non-factual need statements in multiple markets/industries still go through
+// the same handler authority and remain within the four-call limit.
+for(const [kind,question,language,answer] of [
+ ['retail-en','I need three cooling units for two bedrooms and a living room.','en','What is the approximate area of each room?'],
+ ['saas-tw','我們需要為三個部門挑選訂閱方案，尚未確認人數。','zh-TW','請問各部門大概有多少位使用者？'],
+ ['service-hk','我想幫三個地方預約服務，仲未講日期。','zh-HK','想先了解三個地方打算安排邊一日？'],
+])test('Task3C T06 multi-industry claim-free need: '+kind,async()=>{
+ const f=t06RealHandlerFixture({preview:false,verdicts:[t06Valid],question,reply:answer,language,sourceOffset:40+['retail-en','saas-tw','service-hk'].indexOf(kind)});
+ const r=await f.run();
+ assert.equal(r.status,200,JSON.stringify(r));
+ assert.equal(f.commits.length,1,'real handler must commit one reply');
+ assert(f.requests.filter(x=>x.url.endsWith(':generateContent')).length<=4,'shared bound across languages');
+ assert(!/已確認訂單|現價已核實|已付款|guaranteed/.test(f.commits[0].content),'claim-free need cannot invent an outcome');
+});
+// Actual safety-negative classes: unsupported nonnumeric merchant claim and
+// an exact number not provided by the selected authoritative KB evidence.
+for(const [kind,answer,verdicts] of [
+ ['nonnumeric-unsupported','商戶保證呢三部機完全適合你；請問房間大小？',
+  [{grounded:false,unsupported_claims:['merchant suitability guarantee'],evidence_chunk_ids:[],question_resolution:'partial',demand_resolutions:[t06Unavailable]}]],
+ ['unsupported-number','三個房間均可用 400 平方呎冷氣，現價 HK$999。',
+  [t06Valid]],
+])test('Task3C T06 negative real handler never commits ungrounded '+kind,async()=>{
+ const f=t06RealHandlerFixture({preview:true,reply:answer,verdicts,sourceOffset:50+(kind==='unsupported-number'?1:0)});
+ const r=await f.run();
+ assert.equal(r.status,200,JSON.stringify(r));
+ assert.equal(f.commits.length,1);
+ assert.notEqual(f.commits[0].content,answer,'ungrounded candidate cannot become customer-visible');
+ assert(f.requests.filter(row=>row.url.endsWith(':generateContent')).length<=4);
+ assert.doesNotMatch(f.commits[0].content,/商戶保證|400 平方呎|HK\$999/,'unsupported claim leaks through fallback');
+});

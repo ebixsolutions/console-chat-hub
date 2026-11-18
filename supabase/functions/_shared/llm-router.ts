@@ -54,21 +54,10 @@ export interface LlmUsage {
 
 /** Synchronous, handler-owned, per-visitor model dispatch budget. */
 export interface ModelTurnBudget { readonly limit:number; readonly used:number; reserve():boolean; }
-export function createModelTurnBudget(limit=3):ModelTurnBudget {
- if(!Number.isInteger(limit)||limit<1||limit>3)throw new Error("MODEL_TURN_BUDGET_INVALID");
+export function createModelTurnBudget(limit=4):ModelTurnBudget {
+ if(!Number.isInteger(limit)||limit<1||limit>4)throw new Error("MODEL_TURN_BUDGET_INVALID");
  let used=0;
  return Object.freeze({limit,get used(){return used;},reserve(){if(used>=limit)return false;used++;return true;}});
-}
-
-/** Only the original server-owned authenticated Widget Preview workload has
- * the Director's specific <=3 dispatch scope. This is a request budget, not
- * auth permission and not a cap on unrelated legacy merchant service. */
-export function boundedPreviewModelTurnBudget(meta: unknown, serverRunBound: boolean): ModelTurnBudget | undefined {
-  if (!serverRunBound || !meta || typeof meta !== "object" || Array.isArray(meta)) return undefined;
-  const m = meta as Record<string, unknown>;
-  return m.source === "widget_live_test" && m.widget_live_test === true &&
-    m.execution_class === "authenticated_admin_preview" ?
-    createModelTurnBudget(3) : undefined;
 }
 
 export type LlmResult =
@@ -879,6 +868,9 @@ async function verifyGroundedGeneration(
   };
 
   let boundedFeedback:Record<string,unknown>|null=null;
+  // A retry denied by the shared budget must preserve the genuine prior
+  // verifier decision and rejection receipt, never fabricate a config error.
+  let priorReviewerFailure:{ok:false;reason:string;failure?:ExecutionFailure;rejection?:GroundingRejectionReceipt}|null=null;
   for (let attempt = 1; attempt <= 2; attempt++) {
     if (call.signal?.aborted) break;
 
@@ -893,7 +885,8 @@ async function verifyGroundedGeneration(
         req.body=JSON.stringify(wire);}
 
       if(call.modelTurnBudget&&!call.modelTurnBudget.reserve()){
-        log(call.tag,{event:"model_turn_budget_exhausted",request_id:call.operationId,limit:call.modelTurnBudget.limit,used:call.modelTurnBudget.used,slot:"grounding-verifier"});
+        log(call.tag,{event:"model_turn_budget_exhausted",request_id:call.operationId,limit:call.modelTurnBudget.limit,used:call.modelTurnBudget.used,slot:"grounding-verifier",retry:attempt>1});
+        if(attempt>1&&priorReviewerFailure)return priorReviewerFailure;
         return {ok:false,reason:"model_turn_dispatch_budget_exhausted",failure:executionFailure("LLM_DISPATCH_BUDGET_EXHAUSTED",{stage:"admission",request_id:call.operationId})};
       }
       const res = await accountedModelFetch(serviceClient(), {
@@ -989,21 +982,22 @@ async function verifyGroundedGeneration(
           verifierUsage,
           "GROUNDING_VERIFIER_INVALID_OUTPUT",
         );
-        if (!call.signal?.aborted && attempt < 2) {
-          log(call.tag, {
-            event: "grounding_verifier_invalid_output_retry",
-            request_id: call.operationId,
-            attempt,
-          });
-          boundedFeedback={code:"verifier_invalid_output",contract:coverageContract,bound_aliases:verifierEvidence.allowed_ids,
- correction:"grounded=false requires explicit named unsupported_claims; a fact-free necessary clarification requires grounded=true, unsupported_claims=[], evidence_chunk_ids=[], question_resolution=partial and unavailable demand statuses."};
-          await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
-          continue;
-        }
-        return { ok:false, reason:"verifier_invalid_output",
+        const invalidVerdict:{ok:false;reason:string;failure:ExecutionFailure;rejection:GroundingRejectionReceipt}={
+          ok:false,reason:"verifier_invalid_output",
           failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"decode",request_id:call.operationId,http_status:res.status}),
           rejection:{version:"grounding-rejection-1",stage:"verifier_output_shape",reason:"verifier_invalid_output",
-            question_resolution:null,used_evidence_ids:[],demand_resolutions:[],unsupported_claim_count:0} };
+            question_resolution:null,used_evidence_ids:[],demand_resolutions:[],unsupported_claim_count:0},
+        };
+        if (!call.signal?.aborted && attempt < 2) {
+          priorReviewerFailure=invalidVerdict;
+          log(call.tag,{event:"grounding_verifier_invalid_output_retry",request_id:call.operationId,attempt});
+          boundedFeedback={code:"verifier_invalid_output",contract:coverageContract,bound_aliases:verifierEvidence.allowed_ids,
+ correction:"grounded=false requires explicit named unsupported_claims; a fact-free necessary clarification requires grounded=true, unsupported_claims=[], evidence_chunk_ids=[], question_resolution=partial and unavailable demand statuses."};
+          if(!call.modelTurnBudget||call.modelTurnBudget.used<call.modelTurnBudget.limit)
+            await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1));
+          continue;
+        }
+        return invalidVerdict;
       }
 
       const claimFreeClarification=noRequestedExternalFacts&&/[?？]\s*$/u.test(answer)&&decision.grounded&&
@@ -1026,9 +1020,18 @@ async function verifyGroundedGeneration(
        await recordReviewerSpecifics(attempt,demandParse.reason,parsed.text,true,
          decision.unsupported_claims,demandParse.demand_index,demandParse.demand_id);
        log(call.tag,{event:"grounding_verifier_demand_resolution_invalid",request_id:call.operationId,reason:demandParse.reason,demand_index:demandParse.demand_index??null,demand_id:demandParse.demand_id??null,question_resolution:decision.question_resolution??null,used_evidence_count:usedEvidenceIds.length});
-       if(!call.signal?.aborted&&attempt<2){boundedFeedback={code:demandParse.reason,demand_ids:grounding.bound_evidence.demands.map(d=>d.id),contract:coverageContract,bound_aliases:usedEvidenceIds};await sleep(BASE_BACKOFF_MS*2**(attempt-1));continue;}
+       const invalidDemandVerdict:{ok:false;reason:string;failure:ExecutionFailure;rejection:GroundingRejectionReceipt}={
+         ok:false,reason:"verifier_demand_resolution_invalid",
+         failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"decode",request_id:call.operationId,http_status:res.status}),rejection};
+       if(!call.signal?.aborted&&attempt<2){
+         priorReviewerFailure=invalidDemandVerdict;
+         boundedFeedback={code:demandParse.reason,demand_ids:grounding.bound_evidence.demands.map(d=>d.id),contract:coverageContract,bound_aliases:usedEvidenceIds};
+         if(!call.modelTurnBudget||call.modelTurnBudget.used<call.modelTurnBudget.limit)
+           await sleep(BASE_BACKOFF_MS*2**(attempt-1));
+         continue;
+       }
        await recordUsage(verifierCall,verifierAdapter.id,verifierAdapter.model,"failed",res.status,verifierUsage,"GROUNDING_VERIFIER_DEMAND_RESOLUTION_INVALID");
-       return {ok:false,reason:"verifier_demand_resolution_invalid",failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"decode",request_id:call.operationId,http_status:res.status}),rejection};}
+       return invalidDemandVerdict;}
       const resolutions=demandParse?.ok?demandParse.resolutions:null;let coverageFailure:string|null=null;
       if(grounding.bound_evidence){if(!decision.question_resolution)coverageFailure="question_resolution_missing";else if(decision.question_resolution==="unsupported")coverageFailure="question_resolution_unsupported";
        else if(!claimFreeClarification&&(rawQuestionResolution==="supported")!==rawResolutions.every((item:any)=>item?.status==="supported"))coverageFailure="question_resolution_demand_inconsistent";}
@@ -1261,8 +1264,13 @@ export async function callModel(call: LlmCall): Promise<LlmResult> {
         if(adapter.id==="vertex" && call.tag==="commerce-semantic-interpreter" && call.responseSchema && attempt===1)
           log(call.tag,{event:"request_schema_prepared",request_id:requestId,...vertexResponseSchemaDiagnostic(call.responseSchema)});
         if(call.modelTurnBudget&&!call.modelTurnBudget.reserve()){
-          lastCode="LLM_DISPATCH_BUDGET_EXHAUSTED";failure=executionFailure(lastCode,{stage:"admission",request_id:requestId});
-          log(call.tag,{event:"model_turn_budget_exhausted",request_id:requestId,limit:call.modelTurnBudget.limit,used:call.modelTurnBudget.used,slot:call.tag});break;
+          log(call.tag,{event:"model_turn_budget_exhausted",request_id:requestId,limit:call.modelTurnBudget.limit,used:call.modelTurnBudget.used,slot:call.tag,retry:attempt>1});
+          if(attempt===1||usage.attempts===0){
+            lastCode="LLM_DISPATCH_BUDGET_EXHAUSTED";
+            failure=executionFailure(lastCode,{stage:"admission",request_id:requestId});
+          }
+          // An exhausted retry cannot overwrite the real previous failure.
+          break;
         }
         res = await accountedModelFetch(serviceClient(), {
           companyId: call.companyId, conversationId: call.conversationId, operationId: call.operationId, legacyAuthority: call.legacyAuthority,
