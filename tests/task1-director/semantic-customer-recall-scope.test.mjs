@@ -1,3 +1,9 @@
+import { mkdtempSync, existsSync, symlinkSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { reduceTurn, buildCommerceEntityHints } from '../../supabase/functions/_shared/commerce-state-runtime-base.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {prepareConversationRecall} from '../../supabase/functions/_shared/conversation-recall.ts';
@@ -103,4 +109,93 @@ for(const [id,key,value,ownSource,foreignSource,question] of [
  assert.equal(own.decision.handled,true,JSON.stringify(own));assert.equal(own.decision.value,value);
  const foreign=prepareConversationRecall(fixture({key,value,source:foreignSource,question}),'en');
  assert.equal(foreign.decision.handled,false,JSON.stringify(foreign));
+});
+
+/** F1/S3 and F3/S4 — same-input baseline/candidate source differential,
+ * one clean deterministic state per original case; no model or KB dispatch.
+ * It is not the original full-handler, real-provider or Hosted acceptance. */
+test('Task3C N1/N3 exact 13-case clean-source differential versus deployed-v289 source', async()=>{
+ const root=fileURLToPath(new URL('../../',import.meta.url));
+ const baseline='0821ce02a7e43b2aa2da32a07f2abb20cece7444';
+ const tmp=mkdtempSync(join(tmpdir(),'c3-source-baseline-'));
+ let attached=false;
+ try{
+  execFileSync('git',['worktree','add','--detach',tmp,baseline],{cwd:root,timeout:30000,stdio:'pipe'});
+  attached=true;
+  if(existsSync(join(root,'node_modules')))symlinkSync(join(root,'node_modules'),join(tmp,'node_modules'),'dir');
+  const old=await import(pathToFileURL(join(tmp,'supabase/functions/_shared/conversation-recall.ts')).href);
+  const matrix=JSON.parse(readFileSync(new URL('./fixtures/task3c-replay/original-33-turns.json',import.meta.url),'utf8'));
+  assert.equal(matrix.scope.case_count,13);
+  assert.equal(matrix.scope.turn_count,33);
+  const caseGroups=new Map();
+  for(const turn of matrix.turns){
+   if(!caseGroups.has(turn.case_id))caseGroups.set(turn.case_id,[]);
+   caseGroups.get(turn.case_id).push(turn);
+  }
+  const semanticKeys={
+   'T17':['quantity'],'T40':['address'],'T50':['room_size'],'T57':['address'],
+   'T58':['delivery_status'],'T68':['horsepower'],'T69':['brand_constraint'],
+   'T71':[],'T96':['recipient','contact'],'T98':['quotation_status','order_status'],
+   'C3-CONTROL-12':[],'C3-CONTROL-13':['horsepower'],'C3-CONTROL-14':[]
+  };
+  let compared=0,regressions=0;
+  for(const [caseId,turns] of caseGroups){
+   const setup=turns.filter(t=>t.kind==='setup'),asserted=turns.filter(t=>t.kind==='asserted');
+   assert.equal(asserted.length,1,caseId+' must keep one original asserted turn');
+   const company_id='82000000-0000-4000-8000-000000000001';
+   const conversation_id='82000000-0000-4000-8000-'+String(++compared).padStart(12,'0');
+   let state=createEmptyConversationCommerceState();
+   const earlier=[];
+   for(const turn of setup){
+    const id='82000000-0000-4000-8000-'+String(1000*compared+turn.turn).padStart(12,'0');
+    state=reduceTurn(state,{company_id,conversation_id,source_message_id:id,text:turn.text,
+      language:'zh-TW',history:earlier.map(x=>({role:'visitor',content:x.content}))},
+      buildCommerceEntityHints([turn.text,...earlier.map(x=>x.content).reverse()]));
+    earlier.push({id,content:turn.text,created_at:new Date(Date.UTC(2026,10,19,6,turn.turn)).toISOString()});
+   }
+   const source_message_id='82000000-0000-4000-8000-'+String(1000*compared+asserted[0].turn).padStart(12,'0');
+   const newest_first=[
+    {id:source_message_id,role:'visitor',content:asserted[0].text,created_at:'2026-11-19T07:00:00Z'},
+    ...earlier.slice().reverse().map(x=>({...x,role:'visitor'}))
+   ];
+   const memory=buildCanonicalConversationMemory({
+    company_id,conversation_id,source_message_id,commerce_state_revision:setup.length,
+    commerce_state:state,newest_first,visitor_turn_count:turns.length,
+    next_memory_revision:turns.length,source_created_at:'2026-11-19T07:00:00Z'
+   });
+   const baseInput={company_id,conversation_id,source_message_id,question:asserted[0].text,
+    memory,commerce:{company_id,conversation_id,source_message_id:earlier.at(-1)?.id??source_message_id,
+      revision:setup.length,state},
+    trusted_visitor_source_rows:earlier.slice().reverse().map(x=>({id:x.id,content:x.content}))};
+   const before=old.resolveConversationRecall(baseInput);
+   const keys=semanticKeys[caseId]??[];
+   const currentInput={...baseInput,
+    customer_recall_proposal:keys.length?{company_id,conversation_id,source_message_id,
+      intent:'customer_fact_recall',requested_facts:keys,subject_refs:[]}:undefined};
+   const after=prepareConversationRecall(currentInput,'zh-TW').decision;
+   const equal=before.handled===after.handled &&
+      (!before.handled||JSON.stringify(before.value)===JSON.stringify(after.value));
+   // Source route decisions only: report concise path/why without disclosing
+   // preserved fixture addresses, recipient names or contact numbers.
+   const status={
+    case_id:caseId,baseline:before.handled?'ANSWER':before.reason,
+    baseline_detail:before.handled?'SOURCE_BOUND':before.detail,
+    candidate:after.handled?'ANSWER':after.reason,
+    candidate_detail:after.handled?'SOURCE_BOUND':after.detail,
+    baseline_fact:before.handled?before.fact_type:null,
+    candidate_fact:after.handled?after.fact_type:null,
+    value_equal:before.handled&&after.handled?equal:null,
+    independent_setup_turns:setup.length,
+    result:before.handled&&!equal?'REGRESSION':after.handled?'SOURCE_ANSWER':'SOURCE_UNRESOLVED'
+   };
+   console.log('C3_N1_N3_DIFFERENTIAL|'+JSON.stringify(status));
+   if(before.handled&&!equal)regressions++;
+  }
+  assert.equal(compared,13);
+  assert.equal(regressions,0,'new semantic route may not be worse than the baseline on a canonical source-proven case');
+  console.log('C3_N1_N3_SOURCE_COMPARISON|baseline='+baseline+'|cases=13|regressions=0|kind=ISOLATED_NO_PROVIDER|hosted=NOT_RUN');
+ }finally{
+  if(attached)execFileSync('git',['worktree','remove','--force',tmp],{cwd:root,timeout:30000,stdio:'pipe'});
+  rmSync(tmp,{recursive:true,force:true});
+ }
 });
