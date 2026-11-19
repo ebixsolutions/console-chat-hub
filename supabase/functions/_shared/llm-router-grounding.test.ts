@@ -166,7 +166,7 @@ for(const [id,source,answer,expected] of [
 ] as Array<[string,string,string,boolean]>) Deno.test('Task3C private-field output authority: '+id,()=>{
  const result=validateExactFactGrounding(answer,source,[],'How much does it cost?');
  assert(result.ok === expected, JSON.stringify(result));
- if(!expected) assert(result.reason === 'internal_cost_field_disclosure', 'private field rejection reason');
+  if(!expected) assert(!result.ok && result.reason === 'internal_cost_field_disclosure', 'private field rejection reason');
 });
 
 // The local Assist verifier receives these serialized envelopes. Equal retail

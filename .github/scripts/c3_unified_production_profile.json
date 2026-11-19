@@ -1744,7 +1744,7 @@
     "supabase/functions/_shared/generation-terminal-guard.ts": "f2c5d97f4174f35d6d09c046b88c7fc5a3eabb9451667fd5e62e274ae08d07ac",
     "supabase/functions/_shared/handoff-intent.ts": "d85ea12bc9407736d7266bc3c4befae49c0b47cd16a2738ef657d04f45a96db7",
     "supabase/functions/_shared/industry-runtime-adapter.ts": "030fab57d8c03f3e07f6865f60949781b7ca73421c72111b250f3bd712e7c829",
-    "supabase/functions/_shared/llm-router-grounding.test.ts": "5f1d6be37489e41b2712794eda86ab102c7ef55820824ac43aa1726345411957",
+    "supabase/functions/_shared/llm-router-grounding.test.ts": "59cc38f33e998355ea7e2123011a8d3c1878e5184c53ee6690a3cd21be373f4e",
     "supabase/functions/_shared/llm-router.ts": "98fd65bc5d3fef3596326d37ec21c5b7db073c7c8d4aef3be764231cb8cfe7e9",
     "supabase/functions/_shared/natural-customer-response.ts": "a34bcc7924b5238f512bdb16cbfc0711f11bdae4d68382a808e4f15f0a5c64da",
     "tests/task1-director/fixtures/task3c-replay/README.md": "79e18d2010d4527c3ae9d304492c14b2285df5597d20356d4b9cf68bb817db13",
