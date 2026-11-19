@@ -1,0 +1,34 @@
+ORIGINAL SYNTHETIC KNOWLEDGE — NOT A REAL COMPANY FACT
+Shape reference: tests/emergency-p0/chain.test.mjs :: task3cManagedCase.
+Published/currentness values below are fixture data only. They do not attest any real source.
+{
+  "success": true,
+  "context_found": true,
+  "selected_documents": [
+    {
+      "document_id": "synthetic-education-instructions-v1",
+      "title": "Synthetic Language Grove — 課程報名",
+      "source_type": "Other",
+      "document_score": 0.95,
+      "authority": {
+        "tenant_id": "9505",
+        "publication_state": "published",
+        "currentness": "unknown"
+      },
+      "evidence": [
+        {
+          "chunk_id": "synthetic-education-instructions-v1-c1",
+          "chunk_type": "full_content",
+          "content": "測試教育中心的報名說明要求先選課程，再提供偏好上課時段，收到中心確認後才完成登記。此文件沒有保證名額、即時學費、退款權利或學習成果。",
+          "score": 0.95
+        }
+      ]
+    }
+  ],
+  "citations": [
+    {
+      "document_id": "synthetic-education-instructions-v1",
+      "relevance": "high"
+    }
+  ]
+}

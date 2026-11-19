@@ -1,0 +1,109 @@
+{
+  "purpose": "Optional original synthetic profile/knowledge/tasks seeds only; not an added gate or replacement of original 33 turns",
+  "real_model_calls": 0,
+  "real_kb_calls": 0,
+  "profile_model_effect_claim": "NOT_TESTED",
+  "tracked_source_modified": false,
+  "industries": [
+    {
+      "industry": "retail",
+      "original_authored": true,
+      "task_count": 5,
+      "execution_status": "NOT_RUN",
+      "files": [
+        {
+          "path": "retail/policy.txt",
+          "sha256": "1edc89933f41811878abefbb40a92386cb6401866d8c25d176ae12f4776a570e"
+        },
+        {
+          "path": "retail/knowledge.txt",
+          "sha256": "290799dd5909497450a4898ba360ba2b63e645383a6af7da414966aa7c0df834"
+        },
+        {
+          "path": "retail/tasks.json",
+          "sha256": "7951e61466f308166d4b836183fb72121e2745266db8b50edd7e1807f171d413"
+        }
+      ]
+    },
+    {
+      "industry": "saas",
+      "original_authored": true,
+      "task_count": 5,
+      "execution_status": "NOT_RUN",
+      "files": [
+        {
+          "path": "saas/policy.txt",
+          "sha256": "091575c02fb07e8430ac2c47888f59282b29681a564f93ad31b915715cd3da4a"
+        },
+        {
+          "path": "saas/knowledge.txt",
+          "sha256": "5acc19dcf3af562126a4bb8a2d15ffe1d80f76ea08c12251ae450a6ebd2a4231"
+        },
+        {
+          "path": "saas/tasks.json",
+          "sha256": "e81dcced7eb92cbf329bbd83dd0ff467fa30edc93504749111d75f690bad6bb4"
+        }
+      ]
+    },
+    {
+      "industry": "beauty",
+      "original_authored": true,
+      "task_count": 5,
+      "execution_status": "NOT_RUN",
+      "files": [
+        {
+          "path": "beauty/policy.txt",
+          "sha256": "50cfcc8d3d4c884a6b788fd1e6352b7a32e15a4720b1e3c33487ecd884ebd18c"
+        },
+        {
+          "path": "beauty/knowledge.txt",
+          "sha256": "b1620b882c7b8a633df68336100744d4aaee81bdee3a2254e4ad0c6cfe869cee"
+        },
+        {
+          "path": "beauty/tasks.json",
+          "sha256": "9eddb73e92dbce928bba519d6435f1e7d646138cbe8db872a8c3c9ff794304d4"
+        }
+      ]
+    },
+    {
+      "industry": "restaurant",
+      "original_authored": true,
+      "task_count": 5,
+      "execution_status": "NOT_RUN",
+      "files": [
+        {
+          "path": "restaurant/policy.txt",
+          "sha256": "7664aaeacf7d572c43bbaa4ac7543d7e7a68f23b925a375854391b48d574e26f"
+        },
+        {
+          "path": "restaurant/knowledge.txt",
+          "sha256": "76ff2095fd62b59f0f40fe8beb109ad5a4f84d801a2cdd7dd0db9d432a41dcee"
+        },
+        {
+          "path": "restaurant/tasks.json",
+          "sha256": "462d4c536213f0758f9462ce8a879213418b0823119ef8f94d40855b92362d13"
+        }
+      ]
+    },
+    {
+      "industry": "education",
+      "original_authored": true,
+      "task_count": 5,
+      "execution_status": "NOT_RUN",
+      "files": [
+        {
+          "path": "education/policy.txt",
+          "sha256": "16deeaa3a6a0d055649c5dd10af37514b33399af4bf69244c5c76927fefed8f8"
+        },
+        {
+          "path": "education/knowledge.txt",
+          "sha256": "80c52748ec78cc27ef393d79e607286991136084b757e9b085dfa7b35b5df80b"
+        },
+        {
+          "path": "education/tasks.json",
+          "sha256": "5b32a6281de94d3a7da15502a66a8171ac87da844b750ba88183b06c86b037e7"
+        }
+      ]
+    }
+  ]
+}

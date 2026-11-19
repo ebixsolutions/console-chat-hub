@@ -3229,3 +3229,197 @@ test('Task3C T06 turn2 source-attested recall bypasses irrelevant merchant KB bu
   assert.equal(second.commits.length,1);
   assert.equal(second.requests.filter(r=>r.url.endsWith(':generateContent')).length,1);
 });
+
+
+// Supervisor 65c follow-up: complete original handler, isolated external IO.
+// Expected results express customer-source ownership, never Hosted acceptance.
+const supervisorRecallCases = [
+ ['S1-TW','我要三部冷氣。','我剛剛說要幾部冷氣？','quantity',3,'zh-TW'],
+ ['S2-HK','我要三部冷氣。','我啱啱話要幾多部？','quantity',3,'zh-HK'],
+ ['S3-EN','I need 3 units.','How many units did I ask for just now?','quantity',3,'en'],
+ ['S4-restaurant','我想訂三位。','我之前話要訂幾多位？','quantity',3,'zh-HK'],
+ ['S5-beauty','我要三個療程。','我之前提過要幾多個療程？','quantity',3,'zh-TW'],
+ ['S6-budget','我嘅預算係5000。','我頭先講嘅預算係幾多？','budget',5000,'zh-HK'],
+ ['S8-date','我想預約2026-12-03。','Which date did I request?','preferred_date','2026-12-03','en'],
+ ['S9-name','Please call me Morgan.','Remind me of my name.','name','Morgan','en'],
+ ['S10-preference','我偏好安靜的環境。','我剛剛提過甚麼偏好？','preferences','安靜的環境','zh-TW'],
+ ['S11-time','My preferred time is 14:30.','What time did I request?','preferred_time','14:30','en'],
+ ['S12-size','My preferred size is L.','Which size did I ask for?','preferred_size','L','en'],
+];
+async function supervisorRecallFixture(row, variant='valid') {
+ const [id,priorText,question,key,value,language]=row;
+ const first=t06RealHandlerFixture({preview:true,verdicts:[t06Valid],sourceOffset:190});
+ const seedResult=await first.run();
+ assert.equal(seedResult.status,200,JSON.stringify(seedResult));
+ const prior=first.tables,oldSource=uuid(8790),newSource=uuid(8791);
+ const commerce=prior.conversation_commerce_state[0],memory=prior.conversation_memory_state[0];
+ assert(commerce && memory,JSON.stringify({seedResult,events:first.events}));
+ const original=prior.messages.find(m=>m.id===oldSource&&m.role==='visitor');
+ assert(original,'original source row');original.content=priorText;
+ const entity=commerce.state.entities[0];entity.quantity=6;
+ entity.provenance={source_type:'customer',source_message_id:oldSource};
+ memory.memory.current_customer_facts=[{key,value,authority:'customer',source_message_id:oldSource}];
+ memory.memory.commerce_state_revision=commerce.revision;
+ if(variant==='wrong-value')original.content=priorText.replace(String(value),'999').replace(/三/g,'九').replace('Morgan','Taylor').replace('安靜的環境','熱鬧的環境');
+ if(variant==='wrong-subject')original.content=key==='quantity'?'我嘅預算係3，電腦開3個分頁。':key==='budget'?'我想要5000個樣品，預算未定。':'This is a different customer statement.';
+ memory.memory_hash=hash(JSON.stringify(memory.memory));
+ const f=fixture(question,{company:'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493',source:newSource,
+   previous:prior,history:prior.messages,fullChain:true,originalPreview:true,captureEvidence:true,
+   semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'general',requested_facts:[]})],
+     {intent:'customer_fact_recall',requested_facts:[],language}),
+   answer:'UNTRUSTED_GENERATED_ANSWER_MUST_NOT_REPLACE_CUSTOMER_EVIDENCE',
+ });
+ return {f,value,prior:structuredClone(commerce.state),key,id};
+}
+for(const row of supervisorRecallCases)for(const variant of ['valid','wrong-value','wrong-subject'])
+ test('Supervisor recall class '+row[0]+' '+variant,async()=>{
+  const {f,value,prior}=await supervisorRecallFixture(row,variant); const result=await f.run();
+  assert.equal(result.status,200,JSON.stringify({result,events:f.events.slice(-5)}));
+  assert.equal(f.commits.length,1,'one controlled reply');
+  const reply=f.commits[0];
+  assert.equal(f.requests.filter(r=>r.url.includes('/rag/context-search')).length,0,'pure customer recall does not query merchant KB');
+  assert.equal(f.requests.filter(r=>r.url.endsWith(':generateContent')).length,1,'one understanding call only');
+  if(variant==='valid'){
+    assert.match(reply.content,new RegExp(String(value).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),'must answer known customer value');
+    assert.equal(reply.metadata.response_route,'canonical_memory_recall');
+    assert(reply.metadata.recall_provenance.some(e=>e.source_kind==='attested_customer_utterance'));
+    assert.equal(f.tables.conversation_memory_state[0].memory.question_lifecycle.find(item=>item.source_message_id===reply.metadata.source_message_id)?.status,'resolved','proved recall resolves this source question');
+  }else{
+    assert.equal(reply.metadata.response_route,'canonical_memory_clarification','unproved source requires clarification');
+    assertTask3cQuestionStillPending(f);
+    assert.doesNotMatch(reply.content,/數量[：:]\s*6|quantity[：:]\s*6|UNTRUSTED_GENERATED/i,'clarification must not reinsert unproved canonical value');
+  }
+  assert.equal(reply.metadata.b2_commit_source,'commit_ai_reply_tx');
+  assert.deepEqual(f.tables.conversation_commerce_state[0].state,prior,'read must not mutate historic state');
+ });
+
+function assertTask3cQuestionStillPending(f) {
+ const source=f.commits[0]?.metadata?.source_message_id;
+ const memory=f.tables.conversation_memory_state[0]?.memory;
+ assert(memory,'canonical Memory persisted');
+ const item=memory.question_lifecycle?.find(row=>row.source_message_id===source);
+ assert.equal(item?.status,'pending','clarification/fallback cannot resolve the current source');
+ assert(memory.open_questions.includes(item.text),'pending question must remain available to handoff');
+ assert.notEqual(f.tables.conversations[0]?.status,'resolved');
+}
+// Same Task3C W2 residuals and internal-field disclosure negatives.
+// Synthetic model/reviewer outputs; complete isolated handler, NOT Hosted evidence.
+test('Task3C W2 Mandarin omitted-subject clarification uses request presentation locale',async()=>{
+ const question='多少錢一個月？';
+ const f=task3cManagedCase(question,'Published product information.','UNUSED','unknown','50',{
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'unknown',requested_facts:['price']})],{language:'zh-TW'})});
+ const r=await f.run();assert.equal(r.status,200);assert.equal(f.commits.length,1);
+ assert.equal(f.requests.filter(x=>x.url.includes('/rag/context-search')).length,0);
+ assert.match(f.commits[0].content,/哪|對象/);assert.doesNotMatch(f.commits[0].content,/邊|嘅|唔/);
+ assertTask3cQuestionStillPending(f);
+});
+for(const question of ['真人客服什麼時候有人','真人客服什麼時候有人？'])test('Task3C W2 Taiwan support-time information is not a transfer: '+question,async()=>{
+ const f=task3cManagedCase(question,'','UNUSED','unknown','50',{
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'unknown',requested_facts:['published_information']})],{language:'zh-TW'}),
+  originalRagResponse:{success:true,context_found:false,selected_documents:[],citations:[],llm_context:{summary_count:0,evidence_count:0}}});
+ const r=await f.run();assert.equal(r.status,200);assert.equal(f.commits.length,1);
+ assert.equal(f.commits[0].metadata.response_route,'human_support_information');
+ assert.match(f.commits[0].content,/沒有已確認.*服務時間/);
+ assert.equal(f.requests.filter(x=>x.url.endsWith('/rpc/explicit_handoff_tx')).length,0);
+ assert.equal(f.commits[0].metadata.handoff_required,false);
+});
+test('Task3C W2 unsupported current-price rejection explains price authority, not a system misconfiguration',async()=>{
+ const question='What is the Pro subscription price?';
+ const f=task3cManagedCase(question,'Pro subscription: USD 79 per month. This record has no price-effective date.',
+  'The current price of the Pro subscription is USD 79 per month.','product','50',{
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'product',requested_facts:['price']})],{language:'en'})});
+ const r=await f.run();assert.equal(r.status,200);assert.equal(f.commits.length,1);
+ assert.doesNotMatch(f.commits[0].content,/system configuration|processing problem|current price.*USD 79/i);
+ assertTask3cQuestionStillPending(f);
+ assert.match(f.commits[0].content,/verify|verified|confirm/i);
+ assert.equal(f.commits[0].metadata.b2_commit_source,'commit_ai_reply_tx');
+ assert.equal(f.requests.filter(x=>x.url.endsWith('/rpc/explicit_handoff_tx')).length,0);
+});
+for(const [kind,question,content,answer,allowed] of [
+ ['service','Please explain the facial treatment prices','Facial treatment. Internal cost: HKD 3210. Selling price: HKD 4560. This record has no price-effective date.','The document lists an internal cost of HKD 3,210 and a selling price of HKD 4,560. This is recorded information, not a verified current price.',false],
+ ['sku','What is the price of AX-QZ81?','product_model: AX-QZ81\ncost_price: HKD 3210\nselling_price: HKD 4560\ndescription: household appliance','The document lists an internal cost of HKD 3,210 and a selling price of HKD 4,560. This is recorded information, not a verified current price.',false],
+ ['public-price','What is the price of AX-QZ81?','product_model: AX-QZ81\ncost_price: HKD 3210\nselling_price: HKD 4560\ndescription: household appliance','The document lists a selling price of HKD 4,560. This is recorded information, not a verified current price.',true],
+ ['same-number-safe','What is the price of AX-QZ81?','product_model: AX-QZ81\ncost_price: HKD 4560\nselling_price: HKD 4560\ndescription: household appliance','The document lists a selling price of HKD 4,560. This is recorded information, not a verified current price.',true],
+ ['same-number-private-label','What is the price of AX-QZ81?','product_model: AX-QZ81\ncost_price: HKD 4560\nselling_price: HKD 4560\ndescription: household appliance','The document lists an internal cost of HKD 4,560. This is recorded information, not a verified current price.',false],
+ ['public-cost-wording','What does AX-QZ81 cost?','product_model: AX-QZ81\ncost_price: HKD 3210\nselling_price: HKD 4560\ndescription: household appliance','The document lists a selling price of HKD 4,560. This is recorded information, not a verified current price.',true],
+])test('Task3C W2 internal cost fields cannot become visitor facts even with supported reviewer: '+kind,async()=>{
+ const f=task3cManagedCase(question,content,answer,kind==='service'?'general':'product','50',{
+  semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:kind==='service'?'general':'product',requested_facts:kind==='service'?[]:['price']})],{language:'en'})});
+ const r=await f.run();assert.equal(r.status,200);assert.equal(f.commits.length,1);
+ assert.doesNotMatch(f.commits[0].content,/3,?210|internal cost|cost_price/iu);
+ if(allowed)assert.equal(f.commits[0].content,answer,'safe source-recorded selling price should remain usable');
+ else assertTask3cQuestionStillPending(f);
+ assert.equal(f.commits[0].metadata.b2_commit_source,'commit_ai_reply_tx');
+});
+
+// Deliberately incomplete model proposal: a pure-recall shortcut cannot erase
+// a separate action. These are rejection/safety cases, not successful service.
+for (const [id,priorText,question] of [
+ ['cancel','My budget is 5000.','What budget did I mention? Cancel my subscription.'],
+ ['buy','My budget is 5000.','What budget did I mention? Buy that one for me.'],
+ ['book','我預算係5000。','我頭先講嘅預算係幾多？幫我book埋星期六。'],
+]) test('Task3C incomplete recall proposal cannot resolve a mixed action: '+id,async()=>{
+ const {f,prior}=await supervisorRecallFixture([id,priorText,question,'budget',5000,'en']);
+ const result=await f.run();assert.equal(result.status,200);assert.equal(f.commits.length,1);
+ assert.notEqual(f.commits[0].metadata.response_route,'canonical_memory_recall');
+ assertTask3cQuestionStillPending(f);
+ assert.deepEqual(f.tables.conversation_commerce_state[0].state,prior,'unproved action cannot mutate canonical facts');
+ assert.equal(f.requests.filter(r=>r.url.endsWith('/rpc/explicit_handoff_tx')).length,0);
+});
+
+// Current effective state and a quoted earlier statement have different proofs.
+// Reuse the complete handler transport and source runtime; all row IDs are synthetic.
+for(const kind of ['retained-checkpoint','canonical-active','current-conflict'])
+ test('Task3C temporal handler preserves current quantity proof: '+kind,async()=>{
+  const initial='我要為兩間睡房同一個客廳選購冷氣，即合共三部；這是測試資料。';
+  const question=kind==='current-conflict'?'目前實際保留幾多部冷氣？':'現在實際保留幾多部冷氣？只回答數量和被取消項目。';
+  const {f}=await supervisorRecallFixture([kind,initial,question,'quantity',3,'zh-TW']);
+  if(kind!=='current-conflict'){
+   const cr=f.tables.conversation_commerce_state[0],mr=f.tables.conversation_memory_state[0],current=f.tables.messages[0];
+   const {createEmptyConversationCommerceState}=f.load(path.join(root,'supabase/functions/_shared/commerce-state-contract.ts'));
+   const {reduceTurn,buildCommerceEntityHints}=f.load(path.join(root,'supabase/functions/_shared/commerce-state-runtime.ts'));
+   const {buildCanonicalConversationMemory}=f.load(path.join(root,'supabase/functions/_shared/conversation-long-memory.ts'));
+   const history=['我要三部冷氣：細房、大房和客廳各一部。','更正：客廳那部暫時取消，只保留兩間房的兩部。'].map((content,index)=>({
+    id:uuid(9100+index),conversation_id:ticket,role:'visitor',content,is_recalled:false,metadata:{},
+    created_at:new Date(Date.parse(current.created_at)-(2-index)*1000).toISOString(),
+   }));
+   let state=createEmptyConversationCommerceState();
+   for(const [index,row] of history.entries())state=reduceTurn(state,{
+    company_id:cr.company_id,conversation_id:ticket,source_message_id:row.id,text:row.content,
+    language:'zh-TW',history:history.slice(0,index),
+   },buildCommerceEntityHints(history.slice(0,index+1).reverse().map(row=>row.content)));
+   assert.equal(state.entities.length,1,'retain the original collapsed T17 state');
+   assert.equal(state.entities[0].status,'cancelled');
+   if(kind==='canonical-active')state.entities.push({...structuredClone(state.entities[0]),
+    entity_id:'air_conditioner:unscoped',status:'tentative',quantity:2,
+    provenance:{source_type:'customer',source_message_id:history[1].id},
+   });
+   cr.state=state;cr.revision=2;cr.source_message_id=history[1].id;
+   mr.memory=buildCanonicalConversationMemory({
+    company_id:cr.company_id,conversation_id:ticket,source_message_id:history[1].id,
+    commerce_state_revision:2,commerce_state:state,newest_first:history.slice().reverse(),
+    visitor_turn_count:2,source_created_at:history[1].created_at,next_memory_revision:2,
+   });
+   mr.revision=2;mr.source_message_id=history[1].id;mr.commerce_state_revision=2;mr.memory_hash=hash(JSON.stringify(mr.memory));
+   f.tables.messages.splice(0,f.tables.messages.length,current,...history.slice().reverse());
+  }
+  const prior=structuredClone(f.tables.conversation_commerce_state[0].state);
+  const result=await f.run();assert.equal(result.status,200,JSON.stringify({result,events:f.events.slice(-8)}));
+  assert.equal(f.commits.length,1);const reply=f.commits[0];
+  assert.equal(reply.metadata.b2_commit_source,'commit_ai_reply_tx');
+  assert.deepEqual(f.tables.conversation_commerce_state[0].state,prior,'current read must not mutate canonical state');
+  assert.equal(f.requests.filter(r=>r.url.includes('/rag/context-search')).length,0);
+  assert.equal(f.requests.filter(r=>r.url.endsWith(':generateContent')).length,1,'understanding only');
+  assert.doesNotMatch(reply.content,/[36]|三|六|UNTRUSTED_GENERATED/);
+  if(kind==='current-conflict'){
+   assert.equal(reply.metadata.response_route,'canonical_memory_clarification');
+   assertTask3cQuestionStillPending(f);
+  }else{
+   assert.equal(reply.metadata.response_route,'canonical_memory_recall');
+   assert.match(reply.content,/[2兩两]/);assert.match(reply.content,/客廳.*取消/);
+   assert(reply.metadata.recall_provenance.some(e=>e.fact_type==='entity_status'&&e.source_kind==='canonical_state'));
+   assert(reply.metadata.recall_provenance.some(e=>e.fact_type==='quantity'&&
+    e.source_kind===(kind==='canonical-active'?'canonical_state':'retained_customer_correction_checkpoint')));
+   assert.equal(f.tables.conversation_memory_state[0].memory.question_lifecycle.find(item=>item.source_message_id===reply.metadata.source_message_id)?.status,'resolved');
+  }
+ });

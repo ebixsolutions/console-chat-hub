@@ -404,7 +404,7 @@ function classifyHandoffClause(text: string): HandoffIntentClassification {
   const directContactAction = /(?:轉|转|接駁|接驳|聯絡|联系|搵|找).{0,8}(?:真人|人工|客服)|\b(?:transfer|connect|contact|speak to|talk to).{0,16}\b(?:human|agent|person|someone)\b/i.test(raw);
   if (!directContactAction && /(?:請|请|想|要).{0,8}(?:介紹|介绍|解釋|解释|總結|总结|了解).{0,12}(?:真人|人工|客服).{0,12}(?:流程|時間|时间|渠道)|\b(?:explain|describe|summari[sz]e)\b.{0,30}\b(?:human|support)\b.{0,20}\b(?:process|workflow|hours)\b/i.test(raw))
     return {...base,category:"informational_question"};
-  const humanSupportAvailabilityQuestion = /(?:有冇|有無|有沒有|有没有|有无|你們有|你们有|週末有|周末有).{0,20}(?:真人|人工客服|客服)(?:.{0,12}(?:可以|可唔可以|聯絡|联系|搵|找|嗎|吗))?|(?:真人客服|人工客服|客服).{0,18}(?:有冇|有沒有|有没有|有無|有无|幾時|几时|何時|何时|週末|周末|有冇人|嗎|吗)|\b(?:how|where|when|is there|do you have)\b.{0,48}\b(?:real person|human|live agent|support agent|human support)\b/iu.test(raw);
+  const humanSupportAvailabilityQuestion = /(?:有冇|有無|有沒有|有没有|有无|你們有|你们有|週末有|周末有).{0,20}(?:真人|人工客服|客服)(?:.{0,12}(?:可以|可唔可以|聯絡|联系|搵|找|嗎|吗))?|(?:真人客服|人工客服|客服).{0,18}(?:有冇|有沒有|有没有|有無|有无|幾時|几时|何時|何时|什麼時候|什么时候|週末|周末|有冇人|嗎|吗)|\b(?:how|where|when|is there|do you have)\b.{0,48}\b(?:real person|human|live agent|support agent|human support)\b/iu.test(raw);
   if ((!directContactAction && asksServiceInformation) || QUESTION_ZH.test(raw) || QUESTION_EN.test(raw) || humanSupportAvailabilityQuestion)
     return {...base,category:"informational_question"};
   const request = EXPLICIT_ZH.test(raw) || EXPLICIT_EN.test(raw) ||

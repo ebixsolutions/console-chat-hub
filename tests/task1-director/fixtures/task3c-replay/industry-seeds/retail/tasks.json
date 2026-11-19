@@ -1,0 +1,118 @@
+{
+  "profile": {
+    "fixture_only": true,
+    "industry": "retail",
+    "company_label": "Synthetic Desk Studio",
+    "company_id": "00000000-0000-4000-8000-000000004101",
+    "kb_tenant_id": "9501",
+    "languages": [
+      "zh-HK",
+      "zh-TW",
+      "en"
+    ],
+    "claim_authority": false
+  },
+  "semantic_fixture_status": "NOT_SUPPLIED; any future authored proposal must be labelled SCRIPTED_NOT_REAL_MODEL",
+  "reviewer_fixture_status": "NOT_SUPPLIED; no generated reply can earn a model-quality PASS",
+  "tasks": [
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-retail-recall",
+      "original_contract_case_ids": [
+        "T06"
+      ],
+      "turns": [
+        "我要三張書枱。",
+        "我之前提過要幾多張書枱？"
+      ],
+      "expected": {
+        "customer_value": 3,
+        "customer_unit": "張",
+        "prior_source_required": true,
+        "merchant_kb_required": false
+      },
+      "existing_test": "Task3C customer quantity source proof is industry-neutral: retail"
+    },
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-retail-correction",
+      "original_contract_case_ids": [
+        "T17",
+        "C3-CONTROL-14"
+      ],
+      "turns": [
+        "我要三張書枱。",
+        "更正，只保留兩張書枱，第三張暫時取消。",
+        "現在保留幾張書枱？哪一張取消了？"
+      ],
+      "expected": {
+        "retained_count": 2,
+        "cancelled_or_deferred_count": 1,
+        "do_not_merge_current_and_future": true
+      },
+      "existing_test": "C3 semantic T17 corrected active quantity excludes deferred item"
+    },
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-retail-merchant-topic",
+      "original_contract_case_ids": [],
+      "turns": [
+        "你們送貨政策是甚麼？"
+      ],
+      "expected": {
+        "merchant_kb_required": true,
+        "retain_document_id": "synthetic-retail-instructions-v1",
+        "retain_chunk_id": "synthetic-retail-instructions-v1-c1",
+        "no_sku_requirement": true,
+        "no_live_availability_claim": true
+      },
+      "existing_test": "Task3C managed combined routing and published-service handler"
+    },
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-retail-mixed-known-unknown",
+      "original_contract_case_ids": [
+        "T71",
+        "C3-CONTROL-12"
+      ],
+      "turns": [
+        "我要三張書枱。",
+        "我只記得以前有人說每張港幣700元，這是舊資料。",
+        "我之前提過幾張書枱？另外目前每張官方售價是多少？"
+      ],
+      "expected": {
+        "answer_known_customer_count": true,
+        "requery_merchant_price": true,
+        "historical_price_is_not_current": true,
+        "no_current_price_without_evidence": true
+      },
+      "existing_test": "Task3C cross-industry customer-owned count has a different source type from merchant price"
+    },
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-retail-transaction",
+      "original_contract_case_ids": [
+        "T58",
+        "T98"
+      ],
+      "turns": [
+        "我只要求書枱報價，尚未下單或付款。",
+        "目前只是查詢報價，還是已完成交易？"
+      ],
+      "expected": {
+        "no_order_payment_booking_or_entitlement_fabrication": true
+      },
+      "existing_test": "C3 semantic T98 quotation is not an order"
+    }
+  ]
+}

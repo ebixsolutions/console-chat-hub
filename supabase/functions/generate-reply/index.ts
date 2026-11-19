@@ -7,6 +7,7 @@ import { resolveIndustryProfile } from "../_shared/industry-runtime-adapter.ts";
 import { phase1CoachAllowed } from "../_shared/remote-model-accounting.ts";
 import {
   prepareConversationRecall,
+  isCurrentEffectiveQuantityRecall,
   hasProvenCurrentRequirementsRecap,
   renderCanonicalCustomerFactRecap,
   type RecallCommerceSnapshot,
@@ -3523,12 +3524,13 @@ async function persistNaturalImmediateResponse(
   language: "zh-TW" | "zh-CN" | "en",
   socialText?: string,
   socialContext?: {unresolved:boolean},
+  presentationLocale?: W1Locale,
 ): Promise<Response | null> {
   // Product guidance can establish durable Commerce entities/constraints.
   // It therefore renders only after the shared Commerce writer has run.
   if (intent.kind === "product_guidance" ||
     (intent.kind === "product_shopping" && intent.product)) return null;
-  const content = socialText ? renderSocialTurn(socialText,language,socialContext) : renderNaturalImmediateResponse(intent, language);
+  const content = socialText ? renderSocialTurn(socialText,language,socialContext) : renderNaturalImmediateResponse(intent, language, presentationLocale === "zh-TW" ? "neutral" : "cantonese");
   if (!content) return null;
   const socialKind = socialText ? classifySocialTurn(socialText) : null;
   const responseRoute = socialKind === "identity" ? "natural_ai_identity"
@@ -4457,7 +4459,8 @@ async function orchestrationGenerateReply(
   // W2 G3: one request-scoped presentation decision for fixed messages.
   // "國語" in Traditional writing is neutral Traditional, never Simplified.
   // Human-control authorisation and raw KB evidence are unchanged.
-  const _w2PresentationLocale: W1Locale = _w1PreferredLocale ?? w1Locale(_h1LastMsg);
+  const _w2PresentationLocale: W1Locale = _w1PreferredLocale ??
+    (/(?:幾錢|幾多錢|几钱|几多钱)/u.test(_h1LastMsg) ? "yue-Hant" : w1Locale(_h1LastMsg));
   const _w2FixedLanguage: "en" | "zh-CN" | "zh-TW" = _w2PresentationLocale === "en"
     ? "en" : _w2PresentationLocale === "zh-CN" ? "zh-CN" : "zh-TW";
   const _criticalE2ThreatSignal = classifyAuthoritativeThreat(_h1LastMsg);
@@ -4819,6 +4822,23 @@ async function orchestrationGenerateReply(
     _a3SemanticFrame.demands?.[0]?.source_type === "general" &&
     _a3SemanticFrame.demands?.[0]?.requested_facts.length === 0 &&
     _a3SemanticFrame.requested_facts.length === 0);
+  const _c3SemanticCustomerRecall = _a3SemanticFrame &&
+    _a3SemanticFrame.intent === "customer_fact_recall" &&
+    _a3SemanticFrame.operation === "ASK_FACT" && _a3SemanticFrame.confidence >= 0.72 &&
+    !_a3SemanticFrame.ambiguity.is_ambiguous && !_a3SemanticFrame.customer_correction &&
+    !_a3SemanticFrame.additive && _a3SemanticFrame.customer_facts.length === 0 &&
+    [_a3SemanticFrame.transaction_state, _a3SemanticFrame.payment_state,
+      _a3SemanticFrame.booking_state, _a3SemanticFrame.fulfillment_state]
+      .every(state => state === "none" || state === "unknown") &&
+    _a3SemanticFrame.demands?.length === 1 &&
+    _a3SemanticFrame.demands[0].source_type === "general" &&
+    !_a3SemanticFrame.demands[0].ambiguity.is_ambiguous &&
+    !_explicitHandoffRequested && classifyLocalTopicRisk(_h1LastMsg)?.level !== "high"
+      ? {intent: "customer_fact_recall" as const, conversation_id,
+        company_id:_criticalE2ExpectedTenantId ?? "",source_message_id:_h1SourceMessageId,
+        requested_facts:[...new Set([..._a3SemanticFrame.requested_facts,..._a3SemanticFrame.demands[0].requested_facts])],
+        subject_refs:_a3SemanticFrame.demands[0].subject_refs}
+      : undefined;
   const _customerRequestDecision = resolveCustomerRequestDecision(_semanticRequestQuestion,_a3SemanticFrame,_semanticRoutingHistory);
   if(_criticalE2ExpectedTenantId&&_h1SourceMessageId)await writeProtectedPipelineEvidence(supabaseAdmin,{
     company_id:_criticalE2ExpectedTenantId,conversation_id,source_message_id:_h1SourceMessageId,
@@ -5212,7 +5232,8 @@ async function orchestrationGenerateReply(
     conversation_id,
     company_id: _criticalE2ExpectedTenantId ?? "",
     source_message_id: _h1SourceMessageId,
-    question: _productFactualRequest,
+    question: _c3SemanticCustomerRecall ? _h1LastMsg : _productFactualRequest,
+    customer_recall_proposal: _c3SemanticCustomerRecall,
     memory: _c3Memory,
     commerce: _c3CommerceSnapshot,
     trusted_persisted_memory_readback: _c3TrustedPersistedMemoryReadback,
@@ -5228,9 +5249,9 @@ async function orchestrationGenerateReply(
       .slice(0, 100).map((row) => ({ id: String(row.id), content: String(row.content) })),
   }, _visitorLang);
   const _c3SourceAttestedCustomerRecall = Boolean(
-    _c3OriginalGeneralRecallCandidate && _criticalE2ExpectedTenantId &&
+    (_c3OriginalGeneralRecallCandidate || _c3SemanticCustomerRecall) && _criticalE2ExpectedTenantId &&
     !_explicitHandoffRequested && !_mixedRequest &&
-    _c3Recall.decision.handled && _c3Recall.decision.fact_type === "quantity" &&
+    _c3Recall.decision.handled &&
     _c3Recall.decision.provenance.conversation_id === conversation_id &&
     _c3Recall.decision.provenance.company_id === _criticalE2ExpectedTenantId &&
     _c3Recall.decision.provenance.evidence.length === 1 &&
@@ -5240,7 +5261,28 @@ async function orchestrationGenerateReply(
   // A source-attested customer quote is not a merchant price/policy/stock fact.
   // Preserve the KB demand for every other case, including ambiguous, mixed,
   // inferred, unbound and transaction requests.
-  const _c3AttestedRequestDecision = _c3SourceAttestedCustomerRecall
+  const _c3CurrentEffectiveRecall = Boolean(
+    _c3SemanticCustomerRecall && isCurrentEffectiveQuantityRecall(_h1LastMsg) &&
+    !_mixedRequest && !_explicitHandoffRequested && !_currentFactualRequest?.transaction_required &&
+    _c3CommerceSnapshot && _c3Memory && _c3Recall.decision.handled &&
+    _c3Recall.decision.provenance.company_id === _criticalE2ExpectedTenantId &&
+    _c3Recall.decision.provenance.conversation_id === conversation_id &&
+    _c3Recall.decision.provenance.source_message_id === _h1SourceMessageId &&
+    _c3Recall.decision.provenance.memory_revision === _c3Memory.memory_revision &&
+    _c3Recall.decision.provenance.commerce_state_revision === _c3CommerceSnapshot.revision &&
+    _c3Memory.commerce_state_revision === _c3CommerceSnapshot.revision &&
+    _c3Recall.decision.provenance.commerce_source_message_id === _c3CommerceSnapshot.source_message_id &&
+    _c3Recall.decision.provenance.evidence.some(e => e.fact_type === "quantity") &&
+    _c3Recall.decision.provenance.evidence.every(e =>
+      ["quantity", "entity_status"].includes(e.fact_type) && e.temporal_scope === "current" &&
+      (e.authority === "CANONICAL_COMMERCE_STATE" && e.source_kind === "canonical_state" ||
+       e.fact_type === "quantity" && e.authority === "CURRENT_CUSTOMER_MEMORY" &&
+       e.source_kind === "retained_customer_correction_checkpoint")));
+  const _c3CustomerRecallRoute = _c3SourceAttestedCustomerRecall || _c3CurrentEffectiveRecall || Boolean(
+    _c3SemanticCustomerRecall && !_mixedRequest && !_explicitHandoffRequested &&
+    !_c3Recall.decision.handled && _c3Recall.decision.reason === "AMBIGUOUS" &&
+    !_currentFactualRequest?.transaction_required);
+  const _c3AttestedRequestDecision = _c3CustomerRecallRoute
     ? { ..._customerRequestDecision, kind: "guidance" as const, merchant_request: null }
     : _customerRequestDecision;
   const _c3RecentServiceMessages =
@@ -5283,12 +5325,12 @@ async function orchestrationGenerateReply(
     applyServiceRuntimeDerivation({
       question: _productFactualRequest,
       request_decision: _c3AttestedRequestDecision,
-      factual_request: _c3SourceAttestedCustomerRecall ? undefined : (_currentFactualRequest ?? undefined),
+      factual_request: _c3CustomerRecallRoute ? undefined : (_currentFactualRequest ?? undefined),
       semantic_frame: _a3SemanticFrame,
       committed_source_message_id: _c3CommerceSnapshot?.source_message_id === _h1SourceMessageId ? _h1SourceMessageId : undefined,
       language: _visitorLang,
       recall:
-        !_c3SourceAttestedCustomerRecall &&
+        !_c3CustomerRecallRoute &&
         requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
           (_effectiveNaturalCustomerIntent.kind === "product_factual_query" ||
             !_c3Recall.decision.handled)
@@ -5314,7 +5356,7 @@ async function orchestrationGenerateReply(
   // service/process question, a product-referent shortcut, or a tool failure.
   // Preserve the original resolver's subject/ambiguity/size guards and B2.
   // This is a *read route*, not evidence of any merchant fact or permission.
-  const _n1CurrentKbDemandReady = !_c3SourceAttestedCustomerRecall &&
+  const _n1CurrentKbDemandReady = !_c3CustomerRecallRoute &&
     _currentFactualRequest?.kb_required === true &&
     _currentFactualRequest.applicable === true &&
     !_currentFactualRequest.needs_subject_clarification &&
@@ -5379,7 +5421,7 @@ async function orchestrationGenerateReply(
   if (!_explicitHandoffRequested && !_customerGuidance && _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")) {
     const immediate = await persistNaturalImmediateResponse(
       supabaseAdmin, conversation_id, _h1SourceMessageId,
-      _effectiveNaturalCustomerIntent, _visitorLang,
+      _effectiveNaturalCustomerIntent, _w2FixedLanguage, undefined, undefined, _w2PresentationLocale,
     );
     if (immediate) return immediate;
   }
@@ -5488,7 +5530,10 @@ Latest applicable corrections replace old values; an answered clarification is n
     Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
   const _c3CustomerOnlyReply = _c3IsGroundedReadOnlyRecap && _c3CommerceSnapshot?.state.entities.length === 0
     ? renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang) : null;
-  const _c3PlannedReply = (_customerGuidance || _mixedRequest || _purePriorGroundedTransform) &&
+  // An unproved customer quotation must not be embellished with the very
+  // canonical value whose source is in conflict. Keep the attested reply or
+  // its single neutral clarification; original B2 still governs persistence.
+  const _c3PlannedReply = _c3CustomerRecallRoute ? _c3Recall.reply : (_customerGuidance || _mixedRequest || _purePriorGroundedTransform) &&
     !_c3ServicePlan.safe_assumptions.includes("query_context_limit") ? null : _c3IsGroundedReadOnlyRecap
     ? _c3CustomerOnlyReply ?? _c3Recall.reply
     : _c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")
@@ -5967,7 +6012,7 @@ Latest applicable corrections replace old values; an answered clarification is n
   // agent, including pricing and seat-count questions, must not take this route.
   const _humanSupportDiscussion = classifyHumanServiceDiscussion(_h1LastMsg);
   const _humanSupportHoursQuestion =
-    /(?:\bhours?\b|\bopening\s+(?:times?|hours?)\b|(?:真人客服|人工客服|客服).{0,12}(?:幾點|几点|幾時|几时|上班|服務時間|服务时间|辦公時間|24\s*(?:小時|小时)))/i.test(_h1LastMsg);
+    /(?:\bhours?\b|\bopening\s+(?:times?|hours?)\b|(?:真人客服|人工客服|客服).{0,12}(?:幾點|几点|幾時|几时|什麼時候|什么时候|上班|服務時間|服务时间|辦公時間|24\s*(?:小時|小时)))/i.test(_h1LastMsg);
   // W2 N2: a question about contact or availability is not a transfer.
   // A commercial "agent/person" mention cannot create a human handoff.
   const _humanSupportInfoNoEvidence =

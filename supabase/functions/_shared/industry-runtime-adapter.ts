@@ -1,6 +1,6 @@
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
-import type { ContextualCandidate } from "./contextual-customer-update.ts";
+import { unresolvedScopedQuantityCandidate, type ContextualCandidate } from "./contextual-customer-update.ts";
 import type { CustomerJourneySignal } from "./customer-journey-orchestration.ts";
 import type { CommerceTurnEntityHint } from "./commerce-state-reducer.ts";
 import { createIndustryRegistry, matchesReferenceLabel, type IndustryProfile } from "./industry-agent-registry.ts";
@@ -27,13 +27,9 @@ export function resolveIndustryContextualCandidate(input: {
     texts: [input.text, ...input.history],
     industry_identifier: input.state.current_industry,
   }).profile;
-  if (profile && profile.id !== HOME_APPLIANCE_PROFILE_V1.id) return null;
-  const candidate = homeApplianceContextualCandidate(input);
-  // A room-only phrase without a selected profile can request clarification,
-  // but cannot authoritatively bind to an unknown product or service domain.
-  return !profile && candidate?.action === "scoped_update"
-    ? { ...candidate, context_sufficient: false }
-    : candidate;
+  if (!profile) return unresolvedScopedQuantityCandidate(input);
+  if (profile.id !== HOME_APPLIANCE_PROFILE_V1.id) return null;
+  return homeApplianceContextualCandidate(input);
 }
 
 /** A historical industry is not a licence to mutate that industry's state on
@@ -65,7 +61,7 @@ export function resolveIndustryCustomerJourney(input: {
     texts: [input.text],
     industry_identifier: input.state.current_industry,
   }).profile;
-  if (profile && profile.id !== HOME_APPLIANCE_PROFILE_V1.id) return null;
+  if (!profile || profile.id !== HOME_APPLIANCE_PROFILE_V1.id) return null;
   return homeApplianceCustomerJourneySignal(input);
 }
 

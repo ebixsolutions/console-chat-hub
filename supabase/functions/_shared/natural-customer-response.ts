@@ -538,24 +538,25 @@ export function renderSocialTurn(text: string, language: NaturalResponseLanguage
 export function renderNaturalImmediateResponse(
   intent: NaturalCustomerIntent,
   language: NaturalResponseLanguage,
+  traditionalStyle: "cantonese" | "neutral" = "cantonese",
 ): string | null {
   if (intent.kind === "product_availability" && !intent.product) {
     if (language === "en") {
       return "Which product or model would you like me to check?";
     }
     if (language === "zh-CN") return "你想查哪类产品或哪个型号？";
-    return "你想查邊類產品或邊個型號？";
+    return traditionalStyle === "neutral" ? "你想查哪類產品或哪個型號？" : "你想查邊類產品或邊個型號？";
   }
   if (intent.kind === "product_factual_clarification") {
     if (intent.candidates.length > 1) {
       const choices = intent.candidates.join(" / ");
       if (language === "en") return `Which one do you mean: ${choices}?`;
       if (language === "zh-CN") return `你指的是哪一項：${choices}？`;
-      return `你指邊一項：${choices}？`;
+      return traditionalStyle === "neutral" ? `你指哪一項：${choices}？` : `你指邊一項：${choices}？`;
     }
     if (language === "en") return "What would you like me to check? Please specify the subject.";
     if (language === "zh-CN") return "你想查询哪一项内容？请补充具体对象。";
-    return "你想查邊一項資料？請補充具體對象。";
+    return traditionalStyle === "neutral" ? "你想查哪一項資料？請補充具體對象。" : "你想查邊一項資料？請補充具體對象。";
   }
   if (intent.kind === "greeting") {
     if (language === "en") return "Hi! How can I help?";

@@ -107,6 +107,18 @@ export function terminalRecoveryReply(
   language: "zh-TW" | "zh-CN" | "en",
   failure?: ExecutionFailure,
 ): string {
+  // A closed price-authority rejection is an unresolved price question, not
+  // evidence of a provider/configuration fault. Preserve the B2 block and do
+  // not repeat the amount, promise a transfer, or retry an unverified quote.
+  if (failure?.code === "B2_SUPERVISION_BLOCKED" && [
+    "CURRENT_KB_PRICE_FACT_MISMATCH", "CURRENT_KB_PRICE_LINEAGE_INVALID",
+    "CURRENT_KB_PRICE_PROOF_MISSING", "CURRENT_KB_PRICE_RESPONSE_MISMATCH",
+    "CURRENT_QUOTE_NOT_PROVEN", "CURRENT_QUOTE_WITHOUT_VERIFIED_AMOUNT",
+  ].includes(failure.b2_code ?? "")) {
+    if (language === "en") return "I cannot verify the current price for this request. You can ask a human support agent to confirm the applicable price; no transfer has been made.";
+    if (language === "zh-CN") return "我目前无法核实这项收费的现行价格。你可以要求人工客服确认适用价格；目前尚未转交。";
+    return "我目前無法核實這項收費的現行價格。你可以要求真人客服確認適用價格；目前尚未轉交。";
+  }
   if (failure && !failure.retryable) {
     if (language === "en") return "A system configuration or processing problem prevented this reply. Your question has not been resolved. You can request human support here; no transfer has been made yet.";
     if (language === "zh-CN") return "系统配置或处理出现问题，这次未能完成回复，你的问题仍未解决。你可以在这里要求人工客服；目前尚未转交。";

@@ -1,0 +1,246 @@
+{
+  "schema_version": "task3c-original-turn-inventory-v1",
+  "provenance": {
+    "authoritative_source_path": ".github/scripts/c3_validation_scenarios.json",
+    "source_sha256": "aa6af37507fcd00d698c7a0b3f0488a834186929b4731e632223d8b5f9c6f9c0",
+    "contract_version": "ai-abc-c3-release-acceptance-2026-09-16.1",
+    "transformation": "Exact projection of setup_turns then input for the listed original case IDs, in original order; texts and case IDs unchanged.",
+    "preserved_contract_examples": "Names, addresses and phone text in T40/T57/T96 originate in the existing versioned test contract, not a new live-customer capture.",
+    "live_snapshot_included": false,
+    "live_ticket_or_company_ids_included": false,
+    "provider_capture_included": false,
+    "credentials_included": false
+  },
+  "scope": {
+    "case_ids": [
+      "T17",
+      "T40",
+      "T50",
+      "T57",
+      "T58",
+      "T68",
+      "T69",
+      "T71",
+      "T96",
+      "T98",
+      "C3-CONTROL-12",
+      "C3-CONTROL-13",
+      "C3-CONTROL-14"
+    ],
+    "case_count": 13,
+    "turn_count": 33,
+    "excluded_from_this_remaining_inventory": [
+      "T06",
+      "C3-CONTROL-15"
+    ],
+    "original_full_contract_is_unchanged": true
+  },
+  "evidence": {
+    "kind": "ORIGINAL_CONTRACT_FIXTURE_INVENTORY",
+    "model_result": "NOT_RUN",
+    "hosted_result": "NOT_RUN",
+    "full_contract_result": "NOT_RUN",
+    "required_authored_semantic_label": "SCRIPTED_NOT_REAL_MODEL",
+    "answers_supplied": false
+  },
+  "turns": [
+    {
+      "case_id": "T17",
+      "turn": 1,
+      "kind": "setup",
+      "text": "我要三部冷氣：細房、大房和客廳各一部。"
+    },
+    {
+      "case_id": "T17",
+      "turn": 2,
+      "kind": "setup",
+      "text": "更正：客廳那部暫時取消，只保留兩間房的兩部。"
+    },
+    {
+      "case_id": "T17",
+      "turn": 3,
+      "kind": "asserted",
+      "text": "現在實際保留幾多部冷氣？只回答數量和被取消項目。"
+    },
+    {
+      "case_id": "T40",
+      "turn": 1,
+      "kind": "setup",
+      "text": "送貨地址是長沙灣幸福邨A座12樓。"
+    },
+    {
+      "case_id": "T40",
+      "turn": 2,
+      "kind": "setup",
+      "text": "更正地址：不是A座，是B座12樓。"
+    },
+    {
+      "case_id": "T40",
+      "turn": 3,
+      "kind": "asserted",
+      "text": "讀回最新送貨地址。"
+    },
+    {
+      "case_id": "T50",
+      "turn": 1,
+      "kind": "setup",
+      "text": "細房80平方呎，大房100平方呎。"
+    },
+    {
+      "case_id": "T50",
+      "turn": 2,
+      "kind": "setup",
+      "text": "我們先談送貨時間，之後再回來談房間。"
+    },
+    {
+      "case_id": "T50",
+      "turn": 3,
+      "kind": "asserted",
+      "text": "兩間房的面積分別是多少？"
+    },
+    {
+      "case_id": "T57",
+      "turn": 1,
+      "kind": "setup",
+      "text": "地址是幸福邨A座12樓。"
+    },
+    {
+      "case_id": "T57",
+      "turn": 2,
+      "kind": "setup",
+      "text": "更正為幸福邨B座12樓。"
+    },
+    {
+      "case_id": "T57",
+      "turn": 3,
+      "kind": "setup",
+      "text": "另外我想比較雪櫃容量。"
+    },
+    {
+      "case_id": "T57",
+      "turn": 4,
+      "kind": "asserted",
+      "text": "回到送貨資料，最新地址是哪裡？"
+    },
+    {
+      "case_id": "T58",
+      "turn": 1,
+      "kind": "setup",
+      "text": "我偏好星期六送貨，但仍未確認或預約。"
+    },
+    {
+      "case_id": "T58",
+      "turn": 2,
+      "kind": "asserted",
+      "text": "目前送貨安排是甚麼狀態？"
+    },
+    {
+      "case_id": "T68",
+      "turn": 1,
+      "kind": "setup",
+      "text": "細房要1匹，大房要1.5匹，這是我的需求，不是產品規格。"
+    },
+    {
+      "case_id": "T68",
+      "turn": 2,
+      "kind": "asserted",
+      "text": "我要求的兩部冷氣匹數是甚麼？"
+    },
+    {
+      "case_id": "T69",
+      "turn": 1,
+      "kind": "setup",
+      "text": "品牌不是必須，格力、美的或Panasonic都可以。"
+    },
+    {
+      "case_id": "T69",
+      "turn": 2,
+      "kind": "asserted",
+      "text": "我是否指定必須購買某一個品牌？"
+    },
+    {
+      "case_id": "T71",
+      "turn": 1,
+      "kind": "setup",
+      "text": "我以前聽同事說兩部時可能每部港幣5600元，但那是舊口頭報價。"
+    },
+    {
+      "case_id": "T71",
+      "turn": 2,
+      "kind": "asserted",
+      "text": "現在可以把港幣5600元當作已核實的現售價嗎？"
+    },
+    {
+      "case_id": "T96",
+      "turn": 1,
+      "kind": "setup",
+      "text": "聯絡人原本是陳大文，電話6123 4567。"
+    },
+    {
+      "case_id": "T96",
+      "turn": 2,
+      "kind": "setup",
+      "text": "更正：收貨人是陳太，聯絡電話6987 6543。"
+    },
+    {
+      "case_id": "T96",
+      "turn": 3,
+      "kind": "asserted",
+      "text": "只讀回最新收貨人姓名和聯絡電話。"
+    },
+    {
+      "case_id": "T98",
+      "turn": 1,
+      "kind": "setup",
+      "text": "我只是要求報價，還沒有落單、付款或確認訂單。"
+    },
+    {
+      "case_id": "T98",
+      "turn": 2,
+      "kind": "asserted",
+      "text": "目前是報價還是已確認訂單？"
+    },
+    {
+      "case_id": "C3-CONTROL-12",
+      "turn": 1,
+      "kind": "setup",
+      "text": "我以前記得某型號售價是港幣8000元，但這只是歷史印象。"
+    },
+    {
+      "case_id": "C3-CONTROL-12",
+      "turn": 2,
+      "kind": "asserted",
+      "text": "請核對該型號目前的官方售價；如果沒有目前證據，請明確說不知道。"
+    },
+    {
+      "case_id": "C3-CONTROL-13",
+      "turn": 1,
+      "kind": "setup",
+      "text": "我同時比較型號ALPHA和型號BETA。ALPHA放細房，BETA放大房。"
+    },
+    {
+      "case_id": "C3-CONTROL-13",
+      "turn": 2,
+      "kind": "asserted",
+      "text": "它要幾多匹？"
+    },
+    {
+      "case_id": "C3-CONTROL-14",
+      "turn": 1,
+      "kind": "setup",
+      "text": "香港這次目前要買兩部冷氣。"
+    },
+    {
+      "case_id": "C3-CONTROL-14",
+      "turn": 2,
+      "kind": "setup",
+      "text": "Taiwan next year may need one refrigerator, but that is only a future discussion."
+    },
+    {
+      "case_id": "C3-CONTROL-14",
+      "turn": 3,
+      "kind": "asserted",
+      "text": "請分開說明香港目前交易與台灣未來討論。"
+    }
+  ]
+}

@@ -631,7 +631,18 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
     }
     if (row.role !== "assistant" || !meta || meta.control_commit !== "ai" || typeof meta.source_message_id !== "string") continue;
     let item = items.get(meta.source_message_id);
-    const clarification = /^(?:targeted_clarification|partial_answer_then_question|offer_handoff_or_reframe|customer_issue_next_step)$/.test(String(meta.service_action)) && /[?？]$/.test(content.trim());
+    // A committed clarification/recovery label is an unresolved outcome,
+    // irrespective of question marks or a courteous final sentence.
+    const route = String(meta.response_route ?? "");
+    const clarification = [
+      "product_availability_clarification", "product_referent_clarification",
+      "product_shopping_intent", "conversational_clarification",
+      "canonical_memory_clarification", "w1_human_confirmation",
+      "warm_handoff_data_collection", "kb_no_match_recovery",
+    ].includes(route) || meta.escalation_action === "clarification" ||
+      /^(?:targeted_clarification|partial_answer_then_question|offer_handoff_or_reframe|customer_issue_next_step)$/.test(String(meta.service_action));
+    const incompleteGeneration = meta.degraded === true || meta.generation_success === false ||
+      route === "terminal_failure_recovery";
     const site = meta.response_route === "canonical_kb_direct_answer" && /cannot confirm|未能確認|不能确认/i.test(content) && /suitable room|適用面積|适用面积|site assessment|現場評估/i.test(content);
     const stockUnknown = meta.response_route === "canonical_kb_direct_answer" && (meta.answer_kind === "stock_unknown" ||
       Array.isArray(meta.unresolved_fact_fields) && meta.unresolved_fact_fields.includes("stock"));
@@ -639,9 +650,13 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
       (meta.answer_kind === "price_unknown" || meta.identity_confirmation_required===true || Array.isArray(meta.unresolved_fact_fields) &&
         meta.unresolved_fact_fields.some(field=>["price","variant","product_identity"].includes(String(field))));
     const missingCustomerDecision = meta.response_route === "product_guidance" && /[?？]$/.test(content);
-    const missingMerchantEvidence=meta.merchant_evidence_unavailable===true || meta.grounding_state==="no_current_evidence" ||
+    const missingMerchantEvidence=meta.merchant_evidence_unavailable===true ||
+      ["no_current_evidence","authority_conflict_unresolved"].includes(String(meta.grounding_state)) ||
+      ["no_match","tool_failure","conflict"].includes(String(meta.knowledge_state)) ||
+      ["grounding_recovery_clarification","canonical_kb_partial_recovery","kb_no_current_evidence",
+        "c1_authority_conflict_clarification","c3_service_no_match","c3_service_tool_failure","c3_service_conflict"].includes(route) ||
       Array.isArray(meta.unresolved_fact_fields) && meta.unresolved_fact_fields.length > 0;
-    if (!item && (clarification || site || stockUnknown || cataloguePending || missingCustomerDecision || missingMerchantEvidence)) {
+    if (!item && (clarification || site || stockUnknown || cataloguePending || missingCustomerDecision || missingMerchantEvidence || incompleteGeneration)) {
       const source=rows.find(row=>row.id===meta.source_message_id && CUSTOMER_ROLES.has(String(row.role)));
       if (!source || classifySocialTurn(clean(source.content)) || isCurrentRequirementsRecap(String(source.content))) continue;
       const matches=entities.filter(entity=>[entity.model,entity.attributes.product_name,entity.category.replace(/_/g," "),industryEntityLabel(entity.entity_id,"zh-TW"),industryEntityLabel(entity.entity_id,"en")]
@@ -650,7 +665,7 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
       items.set(item.source_message_id,item);
     }
     if (!item) continue;
-    item.status = clarification || site || stockUnknown || cataloguePending || missingCustomerDecision || missingMerchantEvidence || meta.degraded === true ? "pending" : "resolved";
+    item.status = clarification || site || stockUnknown || cataloguePending || missingCustomerDecision || missingMerchantEvidence || incompleteGeneration ? "pending" : "resolved";
     item.resolution_source_message_id = row.id ?? null;
     item.resolution = cataloguePending ? "catalogue source price or product/variant confirmation pending" : missingMerchantEvidence ? "merchant information requires current evidence" : stockUnknown ? "merchant stock confirmation pending" : site ? "professional/site confirmation pending" : clarification || missingCustomerDecision ? "customer information required" : String(meta.response_route ?? "delivered_answer");
     if (site) {

@@ -65,7 +65,7 @@ import {
   semanticFrameToStateEvents,
   sourceBoundMixedCustomerFactEvents,
 } from "./commerce-semantic-adapter.ts";
-import { industryEntityLabel, resolveIndustryContextualCandidate, resolveIndustryCustomerJourney, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
+import { industryEntityLabel, industryEntityQuantityUnit, resolveIndustryContextualCandidate, resolveIndustryCustomerJourney, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
 import { contextualUpdateEvents, resolveContextualCustomerUpdate } from "./contextual-customer-update.ts";
 import { deriveTypedCustomerCalculation, isHistoricalOrConditionalCustomerCalculationRequest } from "./conversation-service-runtime.ts";
 import type { ContextualDecision } from "./contextual-customer-update.ts";
@@ -897,6 +897,14 @@ function parseCount(text: string): number | null {
   return countTokenValue(m[1]);
 }
 
+/** Same source parser used by the existing specification-allocation reducer.
+ * The numbers before 部/台 count items; the following 匹 values are attributes. */
+const EXPLICIT_HORSEPOWER_ALLOCATION = /([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台)\s*\d+(?:\.\d+)?\s*匹/giu;
+function parseExplicitHorsepowerAllocationQuantity(text: string): number | null {
+  const units = [...clean(text).matchAll(EXPLICIT_HORSEPOWER_ALLOCATION)];
+  return units.length > 1 ? units.reduce((sum, match) => sum + (countTokenValue(match[1]) ?? 0), 0) : null;
+}
+
 function looksInterrogative(text: string): boolean {
   const t = clean(text);
   return /[?？]/.test(t) ||
@@ -1035,7 +1043,7 @@ function detectEntityReactivation(text: string): boolean {
   if (!t || looksInterrogative(t) || detectCancellation(t) || detectDeferral(t)) {
     return false;
   }
-  return /(?:恢復|恢复|加返|要返|裝返|装返|都係(?:要|買|买|裝|装)|都要(?:買|买|裝|装)|裝埋|装埋|重新(?:加入|安裝|安装)|reactivate|restore|add (?:it|that|the .+?) back|include (?:it|that|the .+?)|go ahead with)/i.test(t);
+  return /(?:恢復|恢复|加返|要返|裝返|装返|都係(?:要|買|买|裝|装)|都要(?:買|买|裝|装)|裝埋|装埋|重新(?:要|加入|安裝|安装)|reactivate|restore|add (?:it|that|the .+?) back|include (?:it|that|the .+?)|go ahead with)/i.test(t);
 }
 
 const SITE_CHECK_PATTERNS: Array<[RegExp, string]> = [
@@ -1465,11 +1473,11 @@ function deriveA3RuntimeEvents(
 
   // Explicit machine/spec allocations provide their own total; never carry
   // forward a room-plan default or treat the first allocation as the total.
-  const specifiedUnits = [...text.matchAll(/([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台)\s*\d+(?:\.\d+)?\s*匹/giu)];
+  const specificationQuantity = parseExplicitHorsepowerAllocationQuantity(text);
   const allocationTarget = previous.entities.filter(e=>e.category === "air_conditioner" && !["cancelled","deferred"].includes(e.status));
-  if (correction && specifiedUnits.length > 1 && allocationTarget.length === 1) {
+  if (correction && specificationQuantity !== null && allocationTarget.length === 1) {
     events.push({type:"SET_ENTITY_QUANTITY",entity_id:allocationTarget[0].entity_id,
-      quantity:specifiedUnits.reduce((sum,m)=>sum+(countTokenValue(m[1]) ?? 0),0),provenance});
+      quantity:specificationQuantity,provenance});
   }
 
   if (
@@ -1927,6 +1935,167 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
   return reduced;
 }
 
+
+/** A numeric customer fact is not quantity authority for another entity.
+ * Bind the count to one customer-authored clause and the actual target. The
+ * anonymous form is limited to a pure, unambiguous contextual count update;
+ * a provider's repeated old entity is never sufficient by itself. */
+function hasSourceBoundQuantityMutation(
+  event: Extract<CommerceStateEvent, { type: "SET_ENTITY_QUANTITY" }>,
+  input: CommerceRuntimeInput,
+  previous: ConversationCommerceState,
+  hints: CommerceTurnEntityHint[],
+): boolean {
+  const active = previous.entities.filter(entity =>
+    !["cancelled", "deferred", "superseded"].includes(entity.status));
+  const target = active.find(entity => entity.entity_id === event.entity_id);
+  const identities = new Map<string, string[]>();
+  for (const hint of hints) identities.set(hint.entity_id,
+    [hint.model, hint.category, hint.attributes?.sku, hint.attributes?.product_name,
+      ...(hint.aliases ?? [])].filter((value): value is string =>
+        typeof value === "string" && value.length >= 2));
+  for (const entity of active) identities.set(entity.entity_id,
+    [...(identities.get(entity.entity_id) ?? []), entity.model, entity.category,
+      entity.attributes.sku, entity.attributes.product_name].filter((value): value is string =>
+        typeof value === "string" && value.length >= 2));
+  const namedTargets = (clause: string): string[] => {
+    const categories = new Set(detectCategories(clause).map(category => category.key));
+    const rooms = detectReferencedRooms(clause);
+    const specific = [...identities.keys()].filter(id => {
+      const stored = previous.entities.find(entity => entity.entity_id === id);
+      const hint = hints.find(candidate => candidate.entity_id === id);
+      return [stored?.model, stored?.attributes.sku, stored?.attributes.product_name,
+        hint?.model, hint?.attributes?.sku, hint?.attributes?.product_name]
+        .some(value => typeof value === "string" && value.length >= 2 && matchesReferenceLabel(clause, value));
+    });
+    return [...identities].filter(([id, labels]) => {
+      if (specific.length && !specific.includes(id)) return false;
+      // A room explicitly names its own scope; an inactive room must not be
+      // redirected to the remaining active aggregate of the same category.
+      if (!id.startsWith("generic:") && rooms.length &&
+        !rooms.some(room => id.endsWith(":" + room.key))) return false;
+      const stored = previous.entities.find(entity => entity.entity_id === id);
+      // Historical inactive hints cannot make a generic category correction
+      // ambiguous, or act as authority to revive the cancelled item.
+      if (stored && ["cancelled", "deferred", "superseded"].includes(stored.status) &&
+        !detectEntityReactivation(clause)) return false;
+      return labels.some(label => matchesReferenceLabel(clause, label)) ||
+        active.some(entity => entity.entity_id === id && categories.has(entity.category)) ||
+        hints.some(hint => hint.entity_id === id && categories.has(hint.category));
+    }).map(([id]) => id);
+  };
+  const normalizeWords = (text: string): string => text.replace(
+    /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/giu,
+    word => String(["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].indexOf(word.toLowerCase())),
+  );
+  const frame = input.semantic_frame;
+  const acceptedFrame = Boolean(frame && frame.confidence >= 0.72 && !frame.ambiguity.is_ambiguous);
+  const semanticTargets = acceptedFrame ? (frame?.entities ?? []).filter(entity =>
+    entity.confidence >= 0.72 && [entity.entity_ref, entity.name, entity.model, entity.sku]
+      .some(value => typeof value === "string" &&
+        (value === event.entity_id || (identities.get(event.entity_id) ?? []).some(label =>
+          clean(label).toLowerCase() === clean(value).toLowerCase())))) : [];
+  const frameTopic = clean(frame?.topic).toLowerCase().replace(/[_\s-]+/g, "_");
+  const currentTopic = clean(previous.current_topic).toLowerCase().replace(/[_\s-]+/g, "_");
+  const topicalContinuation = !acceptedFrame || !frameTopic || !currentTopic || frameTopic === currentTopic;
+  // An echoed model unit is a proposal, not the target's declared dimension.
+  // A known entity unit or an actually selected industry supplies that basis.
+  const unit = target?.attributes.unit ?? (target
+    ? industryEntityQuantityUnit(target.entity_id, input.language, target.quantity) : null);
+  const extraUnits = [unit]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map(value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const units = [...extraUnits, COUNT_UNIT].join("|");
+  const countPattern = new RegExp(`(${COUNT_TOKEN})\\s*(${units})`, "giu");
+  const clauses = splitCustomerOperationClauses(input.text);
+  const fullTargets = namedTargets(input.text);
+  const specificationQuantity = parseExplicitHorsepowerAllocationQuantity(input.text);
+  if (specificationQuantity !== null && target?.category === "air_conditioner" &&
+    active.filter(entity => entity.category === target.category).length === 1 &&
+    topicalContinuation && detectQuantityCorrectionSignal(input.text) &&
+    !isReadOnlyCommerceQuestion(input.text) &&
+    (fullTargets.length === 0 || fullTargets.every(id => id === event.entity_id))) {
+    // Each allocation clause must contain only this subject and operation
+    // grammar. A foreign noun cannot borrow an echoed AC frame or a count.
+    const targetLabels = [...(identities.get(event.entity_id) ?? []),
+      ...CATEGORY_SPECS.filter(spec => spec.key === target.category).flatMap(spec => [...spec.aliases])];
+    const bound = clauses.filter(clause => [...clause.matchAll(EXPLICIT_HORSEPOWER_ALLOCATION)].length > 0)
+      .every(clause => {
+        let residue = clause.replace(EXPLICIT_HORSEPOWER_ALLOCATION, "");
+        for (const label of targetLabels) if (matchesReferenceLabel(residue, label)) {
+          residue = residue.replace(new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu"), "");
+        }
+        return !residue.replace(/(?:可唔可以|可不可以|可以|麻煩|麻烦|請|请|幫我|帮我|將|将|把|改(?:做|成|為|为|返)?|更正|另外|另|要|先|就好|便可|即可|嗎|吗|呢|同埋|同|及)/gu, "")
+          .replace(/[\s:：,，.。;；!！?？]+/gu, "");
+      });
+    // Reuse the source-computed aggregate, never the event/model number or
+    // the first allocation's count. Other subjects and dimensions stay bound.
+    return bound && event.quantity === specificationQuantity;
+  }
+  const unitKind = (value: string): string => {
+    const normalized = clean(value).toLowerCase();
+    for (const [kind, pattern] of [
+      ["generic", /^(?:部|台|件|個|个|units?|items?|pieces?|pcs?)$/iu],
+      ["seat", /^(?:位|席|seats?|people|persons?)$/iu],
+      ["session", /^(?:堂|課|课|次|sessions?|lessons?)$/iu],
+      ["night", /^(?:晚|nights?)$/iu],
+      ["box", /^(?:盒|箱|box(?:es)?)$/iu],
+      ["pack", /^(?:包|packs?)$/iu],
+      ["set", /^(?:套|sets?)$/iu],
+      ["bottle", /^(?:樽|瓶|bottles?)$/iu],
+      ["pair", /^(?:對|对|雙|双|pairs?)$/iu],
+    ] as const) if (pattern.test(normalized)) return kind;
+    return normalized;
+  };
+  for (const clause of clauses) {
+    if (isReadOnlyCommerceQuestion(clause) ||
+      /(?:數量|数量|quantity|count).{0,12}(?:不變|不变|唔變|unchanged|same)|(?:keep|leave).{0,50}(?:unchanged|the same)/iu.test(clause)) continue;
+    const normalized = normalizeWords(clause);
+    const matches = [...normalized.matchAll(countPattern)];
+    const localQuantity = parseSpaceScopedCommerceQuantity(normalized) ?? parseCount(normalized) ??
+      (matches.length === 1 ? countTokenValue(matches[0][1]) : null);
+    if (localQuantity === null) continue;
+    const additive = detectAdditiveEntityCreationSignal(clause);
+    const expected = additive && target ? target.quantity + localQuantity : localQuantity;
+    if (event.quantity !== expected) continue;
+    const literal = matches.filter(match => countTokenValue(match[1]) === localQuantity).at(-1);
+    if (!literal) continue;
+    const ids = namedTargets(clause);
+    // A bare 個/个 followed by a different noun is a background count, even
+    // if the product happens to be mentioned elsewhere in the same clause.
+    const tail = normalized.slice((literal.index ?? 0) + literal[0].length).trim();
+    if (/^(?:個|个)$/u.test(literal[2]) && tail &&
+      !/^(?:就好|便可|即可|先|please\b|only\b)/iu.test(tail) &&
+      !(identities.get(event.entity_id) ?? []).some(label => matchesReferenceLabel(tail, label))) continue;
+    if (ids.length === 1 && ids[0] === event.entity_id) return true;
+    // A total clause directly accompanying one named subject shares that
+    // subject, but a separately named background noun never does.
+    if (ids.length === 0 && fullTargets.length === 1 && fullTargets[0] === event.entity_id &&
+      /^(?:即|所以|that is\b|in total\b|total(?:\s+of)?\b|合共|總共|总共|一共|總數|总数|共計|共计)/iu.test(normalized) &&
+      !tail) return true;
+    if (ids.length > 0 || !target || active.length !== 1 || !topicalContinuation) continue;
+    const observedUnit = unitKind(literal[2]);
+    if (observedUnit !== "generic" &&
+      (typeof unit !== "string" || observedUnit !== unitKind(unit))) continue;
+    if (frame && (!acceptedFrame || semanticTargets.length !== 1 ||
+      !(frame.customer_correction || frame.additive || ["SET_QUANTITY", "UPDATE_ITEM"].includes(frame.operation)))) continue;
+    // Removing the one count may leave only operation grammar and pronouns.
+    // "now only 6 tabs" and "change browser tabs to 6" cannot satisfy this.
+    const residue = (normalized.slice(0, literal.index) + tail)
+      .replace(/^(?:(?:可唔可以|可不可以|可以|能不能|能否|可否|麻煩|麻烦|請|请|幫我|帮我|替我|協助我|协助我)\s*)+/u, "")
+      .replace(/^(?:can|could|would|will)\s+you(?:\s+please)?\s+/iu, "")
+      .replace(/(?:好嗎|好吗|得唔得|嗎|吗|呢)[?？.!！。]*$/u, "")
+      .replace(/(?:請|请|麻煩|麻烦|再加|加多|另外加|增加|加|再|更正|數量|数量|改(?:做|成|為|为|返)?|變成|变成|要|只(?:要|係|是)?|合共|總共|总共|一共|先|就好|便可|即可)/gu, "")
+      .replace(/\b(?:please|actually|correction|change|set|make|it|that|the|quantity|count|to|now|only|need|want|add|another|more|in|total|of)\b/giu, "")
+      .replace(/[\s:：,，.。;；!！?？]+/gu, "");
+    if (!residue) return true;
+  }
+  // Existing scoped allocation parsing supplies an explicit aggregate. It is
+  // separate from an unrelated numeric customer_facts value.
+  const allocated = parseSpaceScopedCommerceQuantity(input.text);
+  return allocated === event.quantity && fullTargets.length === 1 && fullTargets[0] === event.entity_id;
+}
+
 function reduceSingleTurn(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
@@ -2102,22 +2271,30 @@ function reduceSingleTurn(
     const entity = previous.entities.find(e => e.entity_id === id);
     return scopedProductReferences.has(id) || Boolean(entity && explicitProductCategories.has(entity.category));
   };
-  // A bare counter of some other named thing (six browser tabs, three people)
-  // is not authority to rewrite an older, unmentioned commerce entity. Domain
-  // knowledge is not guessed from the stale current topic or an old model.
-  const genericCounterWithoutProductSource =
-    /(?:\d{1,4}|[一二兩两三四五六七八九十])\s*(?:個|个)\s*[\p{L}]{1,30}/u.test(input.text) &&
-    explicitProductCategories.size === 0 && scopedProductReferences.size === 0;
   const quantityEvents = [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents].filter(event => {
-    if (event.type === "SET_ENTITY_QUANTITY" && genericCounterWithoutProductSource &&
-        !isSourceBoundEntity(event.entity_id)) return false;
+    if (event.type === "SET_ENTITY_STATUS" && !["cancelled", "deferred", "superseded"].includes(event.status)) {
+      const stored = previous.entities.find(entity => entity.entity_id === event.entity_id);
+      // Changing an active quantity must not revive an unrelated cancelled
+      // scope. The existing explicit restoration path still needs one target.
+      if (stored && ["cancelled", "deferred", "superseded"].includes(stored.status) &&
+        !(detectEntityReactivation(input.text) && mentioned.length === 1 &&
+          mentioned[0].entity_id === event.entity_id)) return false;
+    }
     if (event.type === "SET_ENTITY_QUANTITY" &&
-        sourceNumbers.has(event.quantity) && !isSourceBoundEntity(event.entity_id)) return false;
+        !hasSourceBoundQuantityMutation(event, input, previous, hints)) return false;
+    // A rejected background count must not rewrite the old entity's source
+    // merely because the generic extractor also repeated its current status.
+    if (event.type === "SET_ENTITY_STATUS" && machineQuantity !== null &&
+        previous.entities.some(entity => entity.entity_id === event.entity_id && entity.status === event.status) &&
+        !hasSourceBoundQuantityMutation({type:"SET_ENTITY_QUANTITY", entity_id:event.entity_id,
+          quantity:machineQuantity, provenance:event.provenance}, input, previous, hints)) return false;
     // A provider may echo stale entity metadata with a customer-only update;
     // an unmentioned product may not be revised by such a preference change.
     if (sourceNumbers.size > 0 && (event.type === "SET_ENTITY_ATTRIBUTE" ||
         event.type === "SET_ENTITY_CONSTRAINT" || event.type === "REMOVE_ENTITY_CONSTRAINT") &&
-        !isSourceBoundEntity(event.entity_id)) return false;
+        !isSourceBoundEntity(event.entity_id) &&
+        !hasSourceBoundQuantityMutation({type:"SET_ENTITY_QUANTITY", entity_id:event.entity_id,
+          quantity: parseCount(input.text) ?? -1, provenance:{source_type:"customer"}}, input, previous, hints)) return false;
     // A room count describes spatial scope, never machine count. The frozen
     // generic reducer still supports room-based products in their own domain.
     if (event.type !== "SET_ENTITY_QUANTITY" || machineQuantity !== null) return true;

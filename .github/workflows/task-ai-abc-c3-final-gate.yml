@@ -306,7 +306,7 @@ jobs:
           node --test src/lib/widget-message-merge.test.mjs
           # Same Task 1 native Source-chain repair; no paid calls or Hosted substitutions.
           node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/source-chain.test.mjs
-          node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/hosted-cross-topic-p0.test.mjs
+          node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/hosted-cross-topic-p0.test.mjs tests/task1-director/quantity-source-scope.test.mjs tests/task1-director/semantic-customer-recall-scope.test.mjs
           node --disable-warning=ExperimentalWarning --experimental-transform-types tests/task1-director/local-deno-shim.mjs \
             supabase/functions/_shared/conversation-long-memory.test.ts \
             supabase/functions/_shared/semantic-history-recovery.test.ts \
@@ -1553,7 +1553,7 @@ jobs:
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/generate-reply/index.ts supabase/functions/widget-live-ai-test/index.ts supabase/functions/receive-widget-message/index.ts supabase/functions/widget-poll-messages/index.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --allow-env --node-modules-dir=auto tests/quality95/retained-failures.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno check --no-lock --node-modules-dir=auto supabase/functions/agent-assist/index.ts)
-          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-env --allow-read --node-modules-dir=auto supabase/functions/_shared/factual-evidence-selection.test.ts tests/edge/task2-2-output-grounding-router.test.ts)
+          (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-env --allow-read --node-modules-dir=auto supabase/functions/_shared/factual-evidence-selection.test.ts tests/edge/task2-2-output-grounding-router.test.ts supabase/functions/_shared/llm-router-grounding.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --node-modules-dir=auto supabase/functions/_shared/conversation-long-memory.test.ts supabase/functions/_shared/conversation-long-memory.integration.test.ts supabase/functions/_shared/generation-terminal-guard.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock supabase/functions/_shared/deterministic-commerce-engine.test.ts)
           (cd "$RUNNER_TEMP/c3-deno-checkout" && deno test --no-lock --allow-read --node-modules-dir=auto \
@@ -2104,7 +2104,7 @@ jobs:
           set -euo pipefail
           node .github/scripts/c3_director_generic_core_final_gate.mjs
           node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/source-chain.test.mjs
-          node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/hosted-cross-topic-p0.test.mjs
+          node --disable-warning=ExperimentalWarning --experimental-strip-types --test tests/task1-director/hosted-cross-topic-p0.test.mjs tests/task1-director/quantity-source-scope.test.mjs tests/task1-director/semantic-customer-recall-scope.test.mjs
           node --disable-warning=ExperimentalWarning --experimental-transform-types tests/task1-director/local-deno-shim.mjs \
             supabase/functions/_shared/conversation-long-memory.test.ts \
             supabase/functions/_shared/conversation-recall.test.ts \

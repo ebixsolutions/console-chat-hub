@@ -1,0 +1,34 @@
+ORIGINAL SYNTHETIC KNOWLEDGE — NOT A REAL COMPANY FACT
+Shape reference: tests/emergency-p0/chain.test.mjs :: task3cManagedCase.
+Published/currentness values below are fixture data only. They do not attest any real source.
+{
+  "success": true,
+  "context_found": true,
+  "selected_documents": [
+    {
+      "document_id": "synthetic-restaurant-instructions-v1",
+      "title": "Synthetic Table Orchard — 用餐預訂",
+      "source_type": "Other",
+      "document_score": 0.95,
+      "authority": {
+        "tenant_id": "9504",
+        "publication_state": "published",
+        "currentness": "unknown"
+      },
+      "evidence": [
+        {
+          "chunk_id": "synthetic-restaurant-instructions-v1-c1",
+          "chunk_type": "full_content",
+          "content": "測試餐廳的預訂說明要求提供日期、人數與飲食需要，職員核對後另行確認。此文件不證明訂位已成功，也沒有即時菜單價格或食材供應資料。",
+          "score": 0.95
+        }
+      ]
+    }
+  ],
+  "citations": [
+    {
+      "document_id": "synthetic-restaurant-instructions-v1",
+      "relevance": "high"
+    }
+  ]
+}

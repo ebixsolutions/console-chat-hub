@@ -139,3 +139,53 @@ Deno.test("Task3C shared four-call model budget never admits a fifth",()=>{
   assert(narrower.reserve()&&narrower.reserve()&&narrower.reserve()&&!narrower.reserve(),
     "lower bound remains valid for independently authorized scopes");
 });
+
+// Source-grounded internal merchant fields do not grant visitor disclosure.
+for(const [id,source,answer,expected] of [
+ ['internal-currency-prose','Internal cost: HKD 3210. Selling price: HKD 4560.','Internal cost is HKD 3,210.',false],
+ ['internal-relabelled-price','Internal cost: HKD 3210. Selling price: HKD 4560.','The recorded price is HKD 3,210.',false],
+ ['public-sale','Internal cost: HKD 3210. Selling price: HKD 4560.','The recorded selling price is HKD 4,560.',true],
+ ['same-number-safe','Internal cost: HKD 4560. Selling price: HKD 4560.','The recorded selling price is HKD 4,560.',true],
+ ['same-number-private-label','Internal cost: HKD 4560. Selling price: HKD 4560.','Internal cost is HKD 4,560.',false],
+ ['public-cost-question-word','Plan cost: HKD 4560.','It costs HKD 4,560.',true],
+ ['public-unit-cost-word','Unit cost: HKD 4560.','The unit cost is HKD 4,560.',true],
+ ['public-cost-question-as-context','Selling price: HKD 4560.','It costs HKD 4,560.',true],
+ ['internal-price-no-public-substring','Internal price: HKD 3210.','The price is HKD 3,210.',false],
+ ['json-field','{"cost_price":"HKD 3210","selling_price":"HKD 4560"}','The recorded price is HKD 3,210.',false],
+ ['json-sale','{"cost_price":"HKD 3210","selling_price":"HKD 4560"}','The recorded selling price is HKD 4,560.',true],
+ ['markdown-column','| cost_price | selling_price |\n| --- | --- |\n| HKD 3210 | HKD 4560 |','The recorded price is HKD 3,210.',false],
+ ['markdown-key-value','| cost_price | HKD 3210 |\n| selling_price | HKD 4560 |','The recorded price is HKD 3,210.',false],
+ ['chinese-private','成本價：HKD 3210；售價：HKD 4560','成本為 HKD 3,210。',false],
+ ['chinese-public','成本價：HKD 3210；售價：HKD 4560','記錄售價為 HKD 4,560。',true],
+ ['ordinary-number','Internal cost: HKD 3. Selling price: HKD 5.','The recorded selling price is HKD 5.',true],
+ ['cost-zero','cost_price: HKD 0\nselling_price: HKD 50','Internal cost is HKD 0.',false],
+ ['typed-json-escaped-newlines',JSON.stringify([{id:'E1',full_content:'product_model: AX-QZ81\ncost_price: HKD 3210\nselling_price: HKD 4560'}]),'Internal cost is HKD 3,210.',false],
+ ['typed-json-table',JSON.stringify([{id:'E1',full_content:'| cost_price | selling_price |\n| --- | --- |\n| HKD 3210 | HKD 4560 |'}]),'The recorded price is HKD 3,210.',false],
+ ['camelcase-field','internalCost: HKD 3210\nsellingPrice: HKD 4560','The recorded price is HKD 3,210.',false],
+ ['cny-cost','cost_price: CNY 3210\nselling_price: CNY 4560','The recorded price is CNY 3210.',false],
+] as Array<[string,string,string,boolean]>) Deno.test('Task3C private-field output authority: '+id,()=>{
+ const result=validateExactFactGrounding(answer,source,[],'How much does it cost?');
+ assert(result.ok === expected, JSON.stringify(result));
+ if(!expected) assert(result.reason === 'internal_cost_field_disclosure', 'private field rejection reason');
+});
+
+// The local Assist verifier receives these serialized envelopes. Equal retail
+// and internal values remain distinguishable by their decoded semantic labels.
+for (const [label, answer, expected] of [
+  ["suggestion newline private", JSON.stringify({suggestions:[{content:"Record:\ninternal_cost: HKD 4,560.",tone_label:"Informative"}]}), false],
+  ["suggestion newline retail", JSON.stringify({suggestions:[{content:"Record:\nselling_price: HKD 4,560.",tone_label:"Informative"}]}), true],
+  ["suggestion quoted private", JSON.stringify({suggestions:[{content:'Record: "internal_cost": "HKD 4560"',tone_label:"Informative"}]}), false],
+  ["policy summary private", JSON.stringify({status:"compliant",summary:"Record:\ninternal_cost: HKD 4,560.",issues:[]}), false],
+  ["policy issue private", JSON.stringify({status:"warning",summary:"Review required.",issues:[{excerpt:"Record:\ninternal_cost: HKD 4,560.",policy_label:"Evidence 1",severity:"warning"}]}), false],
+  ["policy retail", JSON.stringify({status:"compliant",summary:"Recorded selling price: HKD 4,560.",issues:[]}), true],
+  ["root JSON string", JSON.stringify("Record:\ninternal_cost: HKD 4,560."), false],
+  ["scalar property label", JSON.stringify({internal_cost:"HKD4560"}), false],
+  ["numeric property label", JSON.stringify({internal_cost:4560}), false],
+  ["array property label", JSON.stringify({internal_cost:["HKD4560"]}), false],
+  ["retail property label", JSON.stringify({selling_price:"HKD 4560"}), true],
+  ["public cost phrase", JSON.stringify({suggestions:[{content:"It costs HKD 4,560.",tone_label:"Informative"}]}), true],
+] as const) Deno.test("Task3C cost guard decodes answer JSON: " + label, () => {
+  const result = validateExactFactGrounding(answer, "Internal cost: HKD 4560. Selling price: HKD 4560.");
+  assert(result.ok === expected, label + ": " + JSON.stringify(result));
+  if (!expected) assert(!result.ok && result.reason === "internal_cost_field_disclosure", label + ": wrong rejection reason");
+});

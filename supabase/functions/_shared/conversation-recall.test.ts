@@ -1036,3 +1036,40 @@ for(const text of ['70 x 55 cm','70W x55H','-70(W)x55(H)cm','CW-SUL70BA'])Deno.t
 for(const text of ['有冇西斜？','全屋有沒有西斜','不是沒有西斜','I am not sure about afternoon sun','如果沒有西斜呢？','If there is no afternoon sun'])Deno.test('uncertain sunlight is not affirmative or an absence: '+text,()=>{assert(customerSunExposure(text)===null);});
 
 for(const [text,expected] of [["另外個廳下晝西斜幾勁，揀機時要點考慮？","strong_afternoon_sun"],["全屋都沒有西斜，應該量度哪些尺寸？","none"],["The living room has strong afternoon sun. How should I choose?","strong_afternoon_sun"],["There is no afternoon sun, what should I measure?","none"],["如果沒有西斜，應該點揀？",null]] as const)Deno.test("explicit site observation survives a separate follow-up question: "+text,()=>{assert(customerSunExposure(text)===expected);});
+
+Deno.test("Task3C semantic recall preserves T17 effective quantity and cancellation proof",()=>{
+  const input=t17ProductionFailureFixture();
+  const expected=resolveConversationRecall(input);
+  assert(expected.handled,JSON.stringify(expected));
+  for(const requested_facts of [["quantity"],[]]){
+    const result=resolveConversationRecall({...input,customer_recall_proposal:{
+      company_id:input.company_id,conversation_id:input.conversation_id,source_message_id:input.source_message_id,
+      intent:"customer_fact_recall",requested_facts,subject_refs:[],
+    }});
+    assert(JSON.stringify(result)===JSON.stringify(expected),JSON.stringify(result));
+  }
+});
+Deno.test("Task3C current quantity conflict remains unresolved under a semantic recall label",()=>{
+  for(const question of ["目前實際保留幾多部冷氣？","現在實際要幾多部冷氣？"]){
+    const input=t06Turn2SourceConflictFixture();input.question=question;
+    const expected=resolveConversationRecall(input);
+    assert(!expected.handled&&expected.detail==="CONFLICTING_CUSTOMER_QUANTITY_SOURCE",JSON.stringify(expected));
+    for(const requested_facts of [["quantity"],[]]){
+      const result=resolveConversationRecall({...input,customer_recall_proposal:{
+        company_id:input.company_id,conversation_id:input.conversation_id,source_message_id:input.source_message_id,
+        intent:"customer_fact_recall",requested_facts,subject_refs:[],
+      }});
+      assert(JSON.stringify(result)===JSON.stringify(expected),JSON.stringify(result));
+    }
+  }
+});
+Deno.test("Task3C quoted prior total still uses customer source after effective-state routing",()=>{
+  const input=t06Turn2SourceConflictFixture();
+  for(const requested_facts of [["quantity"],[]]){
+    const result=resolveConversationRecall({...input,customer_recall_proposal:{
+      company_id:input.company_id,conversation_id:input.conversation_id,source_message_id:input.source_message_id,
+      intent:"customer_fact_recall",requested_facts,subject_refs:[],
+    }});
+    assert(result.handled&&result.value===3&&result.provenance.evidence[0].source_kind==="attested_customer_utterance",JSON.stringify(result));
+  }
+});

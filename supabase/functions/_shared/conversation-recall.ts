@@ -8,9 +8,16 @@ import { splitCustomerOperationClauses, hasRequirementsRecapCue, isCurrentRequir
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { industryEntityLabel, industryEntityQuantityUnit } from "./industry-runtime-adapter.ts";
 import { renderEnglishRequirement } from "./commerce-capability-runtime.ts";
+import { classifyCanonicalConversationTurn } from "./conversation-semantic-contract.ts";
 
 export type RecallFact =
   | "quantity"
+  | "budget"
+  | "date"
+  | "time"
+  | "name"
+  | "size"
+  | "customer_fact"
   | "address"
   | "recipient"
   | "contact"
@@ -55,6 +62,8 @@ export interface RecallEvidence {
   evidence_source_message_id: string | null;
   temporal_scope: "current" | "excluded" | "historical";
   source_kind: string;
+  /** Customer field label only; never a merchant or transaction authority. */
+  attribute_key?: string;
 }
 export interface RecallProvenance extends RecallScope {
   memory_revision: number | null;
@@ -85,9 +94,17 @@ export interface ConversationRecallInput extends RecallScope {
   referents?: Array<{ ref: string; confidence: number; source?: string }>;
   recent_questions?: string[];
   /** Server-read, unrecalled Visitor messages from this same authorized conversation.
+   * Required order: newest first, using created_at DESC then id DESC.
    * Source text is proof to compare with current customer Memory, not a new value authority.
    * Never accept rows supplied by a widget, model output or client metadata. */
   trusted_visitor_source_rows?: ReadonlyArray<{ id: string; content: string }>;
+  /** Existing accepted understanding result, bound to this server-owned turn.
+   * Selects a recall field only; fact values still require Visitor-source proof. */
+  customer_recall_proposal?: RecallScope & {
+    intent: "customer_fact_recall";
+    requested_facts: readonly string[];
+    subject_refs: readonly string[];
+  };
   explicit_handoff?: boolean;
   /** True only after both scoped DB reads succeed and return no row. */
   empty_state_verified?: boolean;
@@ -1000,6 +1017,289 @@ function resolvedRoomSizeCollection(
   };
 }
 
+/** Scalar customer-owned fields. These map concepts/keys, not industries or
+ * accepted customer sentences. Unknown fields can be selected by the existing
+ * semantic requested_facts only when the same key exists in current Memory. */
+const CUSTOMER_RECALL_FIELDS: Array<{fact: RecallFact; keys: string[]; words: string[]}> = [
+  {fact:"budget",keys:["budget","budget_amount","maximum_budget","max_budget"],words:["budget","預算","预算"]},
+  {fact:"date",keys:["date","preferred_date","requested_date","appointment_date","delivery_date"],words:["date","日期","哪天","邊日","哪一天"]},
+  {fact:"time",keys:["time","preferred_time","requested_time","appointment_time","preferred_window"],words:["time","時間","时间","幾點","几点","時段","时段"]},
+  {fact:"name",keys:["name","customer_name","preferred_name"],words:["name","姓名","稱呼","称呼","call me"]},
+  {fact:"size",keys:["size","requested_size","preferred_size"],words:["size","尺寸","大小"]},
+  {fact:"preferences",keys:["preference","preferences","customer_preference","preferred_environment"],words:["preference","preferences","prefer","偏好","喜好"]},
+  {fact:"quantity",keys:["quantity","requested_quantity","item_quantity","count"],words:["quantity","count","how many","數量","数量"]},
+];
+const UNSAFE_CUSTOMER_RECALL_KEY = /(?:price|cost|stock|inventory|policy|entitlement|refund|status|payment|order|booking_state|confirmed|availability|現價|售价|售價|庫存|库存|退款|權益|权益)/iu;
+function sourceClauses(text: string): string[] {
+  return text.normalize("NFKC").split(/(?<!\d)[,，]|[,，](?!\d)|[;；。!?！？\n]+|\.(?!\d)/u).map(x=>x.trim()).filter(Boolean);
+}
+function literalNumber(token: string): number | null {
+  if (/^\d+(?:,\d{3})*(?:\.\d+)?$/.test(token)) return Number(token.replace(/,/g,""));
+  const digits:Record<string,number>={"零":0,"〇":0,"一":1,"二":2,"兩":2,"两":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9};
+  const scales:Record<string,number>={"十":10,"百":100,"千":1000,"萬":10000,"万":10000};
+  let value=0,part=0,current=0;
+  for(const ch of token){
+    if(ch in digits){current=digits[ch];continue;}
+    const scale=scales[ch];if(!scale)return null;
+    if(scale===10000){value+=(part+current)*scale;part=0;current=0;}
+    else{part+=(current||1)*scale;current=0;}
+  }
+  return value+part+current;
+}
+function numberTokens(text:string):Array<{value:number;start:number;end:number}> {
+  return [...text.matchAll(/(?<![\dA-Za-z_])(?:\d+(?:,\d{3})*(?:\.\d+)?|[零〇一二兩两三四五六七八九十百千萬万]+)(?![\dA-Za-z_])/gu)]
+    .map(m=>({value:literalNumber(m[0]),start:m.index!,end:m.index!+m[0].length}))
+    .filter((m):m is {value:number;start:number;end:number}=>m.value!==null&&Number.isFinite(m.value));
+}
+function quantitySubject(question:string):string|null {
+  const english=question.match(/\bhow\s+many\s+(.{1,70}?)(?=\s+(?:did|do|have|was|were|are|is|would|will|i|we|you|the|there)\b|[?!.,]|$)/iu)?.[1]?.trim();
+  const chinese=question.match(/(?:幾多|几多|多少|幾|几)\s*([\p{Script=Han}A-Za-z][\p{Script=Han}A-Za-z0-9_-]{0,24})(?=[?？。，,；;！!]|$)/u)?.[1]?.trim();
+  return english||chinese||null;
+}
+function scalarInSource(value:unknown,clause:string):boolean {
+  if(typeof value==="number")return numberTokens(clause).some(n=>n.value===value);
+  return typeof value==="string" && value.trim().length>0 && value.length<=300 && phrase(clause,value);
+}
+type CustomerRecallField = typeof CUSTOMER_RECALL_FIELDS[number];
+/** Clause speech acts are checked independently: a recall question cannot erase
+ * a later imperative. Reuse the canonical classifier for corrections/updates;
+ * the remaining vocabulary names transaction/lifecycle actions, not fixtures. */
+function customerRecallHasAction(text: string): boolean {
+  const action = /\b(?:buy|purchase|book|reserve|schedule|order|subscribe|renew|upgrade|downgrade|pay|checkout|cancel|remove|delete|defer|pause|postpone|reschedule|change|replace|update|add|set)\b|購買|购买|買|买|預約|预约|訂購|订购|下單|下单|落單|落单|續訂|续订|續約|续约|付款|支付|取消|刪除|删除|移除|暫緩|暂缓|暫停|暂停|改期|更正|改做|改成|改為|改为|新增|加多|再加/iu;
+  const historical = /^(?:what|which|how many|how much|when|where|did|had|have)\b.{0,70}\b(?:i|we)\b|^(?:我|我們|我们).{0,12}(?:之前|頭先|头先|剛才|刚才|啱啱|曾經|曾经).{0,65}(?:幾|几|多少|邊|哪|甚麼|什麼|什么|咩|有冇|是否)|^(?:remind me|do you remember)\b/iu;
+  const imperative = /^(?:(?:and|also|then|please|kindly)\s+)*(?:(?:can|could|would|will)\s+you\s+|(?:i|we)\s+(?:want|need|would like)\s+(?:you\s+)?to\s+)?(?:buy|purchase|book|reserve|schedule|order|subscribe|renew|upgrade|downgrade|pay|checkout|cancel|remove|delete|defer|pause|postpone|reschedule|change|replace|update|add|set)\b|(?:幫我|帮我|替我|請|请|麻煩|麻烦|同埋|並且|并且|我要|我想|我需要).{0,16}(?:book\b|order\b|buy\b|cancel\b|購買|购买|買|买|預約|预约|訂|订|下單|下单|落單|落单|續|续|付款|支付|取消|刪除|删除|移除|暫緩|暂缓|暫停|暂停|改期|更正|改做|改成|改為|改为|新增|加多|再加)|^(?:先|而家|現在|现在)?(?:取消|暫緩|暂缓|暫停|暂停|改期|更正|改做|改成|改為|改为|新增|加多|再加)/iu;
+  // Conjunctions before actions delimit speech acts without splitting noun lists.
+  const separated = text.replace(/\b(?:and|also|then)\s+(?=(?:(?:please|kindly)\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:buy|purchase|book|reserve|schedule|order|subscribe|renew|upgrade|downgrade|pay|checkout|cancel|remove|delete|defer|pause|postpone|reschedule|change|replace|update|add|set)\b)/giu, "; ")
+    .replace(/(?:同埋|並且|并且)(?=(?:幫我|帮我|請|请|預約|预约|訂|订|取消|更正|改|暫|暂|加))/gu, "；");
+  return splitCustomerOperationClauses(separated).some(clause => {
+    const speech = classifyCanonicalConversationTurn(clause, []);
+    if (["CORRECTION", "CUSTOMER_CONTEXT_UPDATE"].includes(speech.operation)) return true;
+    // Passive lifecycle labels describe a retained state, not a new command.
+    const actionClause = clause.replace(/(?:被|已(?:經|经)?)\s*(?:取消|暫緩|暂缓|暫停|暂停)/gu, "retained status");
+    if (!action.test(actionClause)) return false;
+    if (imperative.test(clause)) return true;
+    // A historical action in a pure question remains a read. Unclear action
+    // clauses fail closed here; this function never authorizes a transaction.
+    return !historical.test(clause) && !/[?？]/u.test(clause) &&
+      !/^(?:i|we)\s+(?:already|previously|earlier|had|have|did)\b|^(?:我|我們|我们).{0,8}(?:之前|頭先|头先|剛才|刚才|已經|已经|曾經|曾经)/iu.test(clause);
+  });
+}
+function scalarSourceSpans(value: unknown, text: string): Array<{start: number; end: number}> {
+  if (typeof value === "number") return numberTokens(text).filter(token => token.value === value);
+  if (typeof value !== "string" || !value.trim() || value.length > 300) return [];
+  const source = text.normalize("NFKC").toLowerCase(), needle = value.normalize("NFKC").toLowerCase();
+  const found: Array<{start: number; end: number}> = [];
+  for (let at = source.indexOf(needle); at >= 0; at = source.indexOf(needle, at + needle.length)) {
+    if (/^[a-z0-9]/iu.test(needle) && /[a-z0-9]/iu.test(source[at - 1] ?? "")) continue;
+    if (/[a-z0-9]$/iu.test(needle) && /[a-z0-9]/iu.test(source[at + needle.length] ?? "")) continue;
+    found.push({start: at, end: at + needle.length});
+  }
+  return found;
+}
+/** A field label and value must share an assignment, not merely a sentence.
+ * This verifies the existing Memory value; it never extracts a replacement. */
+function scalarFieldSourceBound(field: CustomerRecallField, value: unknown, clause: string): boolean {
+  const text = clause.normalize("NFKC");
+  const labels = [...new Set([...field.words, ...field.keys.map(k => k.replace(/_/g, " "))])];
+  if (field.fact === "name") labels.push("call me", "我叫", "叫我", "稱呼我", "称呼我");
+  const assignment = /^\s*(?:(?:is|was|are|be|of|at|to|now|currently|exactly|about|around|approximately|maximum|max|up to|no more than|should be|will be)\b\s*|[:=]|係|是|為|为|要|有|改為|改为|改做|改成|大約|大约|約|约|最多|上限|\s)*(?:(?:HK\$|HKD|USD|TWD|NTD|CNY|[$€£¥]|港幣|港币|台幣|台币)\s*)?$/iu;
+  return scalarSourceSpans(value, text).some(span => {
+    const prefix = text.slice(0, span.start), suffix = text.slice(span.end);
+    if (/(?:\b(?:but|instead|actually|correction|change|now)\b|但係|但是|但|不過|不过|改為|改为|改成|改做|而家|現在|现在).{0,60}(?:\d|[一二兩两三四五六七八九十]|budget|date|time|name|size|預算|预算|日期|時間|时间|姓名|尺寸)/iu.test(suffix)) return false;
+    for (const label of labels) {
+      for (const anchor of scalarSourceSpans(label, prefix)) {
+        if (!assignment.test(prefix.slice(anchor.end))) continue;
+        const owner = prefix.slice(0, anchor.start).trim();
+        // Every general scalar requires the customer's own field assignment.
+        // Name/date/time retain their stricter ownership rules below.
+        if (!["name", "date", "time"].includes(field.fact) &&
+            !/^(?:(?:my|our)(?:\s+|$))?(?:(?:current|total|monthly|annual|yearly|maximum|max|preferred|requested|desired)(?:\s+|$))*$|^(?:i|we)(?:\s+(?:have|need|want|prefer|request|specified)(?:\s+(?:a|the))?)?$|^(?:(?:我|我們|我们)(?:嘅|的)?(?:希望|要求|想要|要|有)?)?(?:目前|最新|總|总|每月|每年|最大|首選|首选|偏好)*$/iu.test(owner)) continue;
+        if (field.fact === "name" && /^(?:call me|我叫|叫我|稱呼我|称呼我)$/iu.test(label) &&
+            !/^(?:please|kindly|請|请|麻煩|麻烦)?$/iu.test(owner)) continue;
+        if (field.fact === "name" && !/^(?:call me|我叫|叫我|稱呼我|称呼我)$/iu.test(label) &&
+            !/^(?:my|our)(?:\s+(?:preferred|customer))?$|^(?:我|我們|我们)(?:嘅|的)?(?:首選|首选)?$/iu.test(owner) &&
+            !(owner === "" && /^\s*[:=]/u.test(prefix.slice(anchor.end)))) continue;
+        if (["date", "time"].includes(field.fact) &&
+            !/^(?:(?:my|our)(?:\s+|$))?(?:(?:preferred|requested|appointment|delivery|booking)(?:\s+|$))*$|^(?:我|我們|我们)(?:嘅|的)?(?:首選|首选|希望|要求|預約|预约)?$/iu.test(owner)) continue;
+        return true;
+      }
+    }
+    // A requested scheduling value is customer-owned; an expiry/end date is not.
+    if (["date", "time"].includes(field.fact) &&
+        /^(?:(?:please\s+)?(?:book|schedule|reserve)\s+(?:me\s+)?(?:for|on|at)?\s*|(?:i|we)\s+(?:prefer|request|would like|want|need)\s+(?:(?:to\s+)?(?:book|schedule|reserve)\s+)?(?:for|on|at)?\s*|(?:我|我們|我们)(?:想|要|希望|需要|要求|偏好)(?:預約|预约|安排|訂|订)?(?:喺|在|於|于)?\s*)$/iu.test(prefix.trim())) return true;
+    return false;
+  });
+}
+/** Raw subject slots supplement entity/referent selection when the model omits
+ * a named subject. A missing/unknown subject cannot silently become old focus. */
+function explicitRecallSubjects(question: string, field: CustomerRecallField): string[] {
+  const refs: string[] = [];
+  const add = (ref: string | undefined) => {
+    const v = ref?.trim().replace(/^(?:the|my|our)\s+/iu, "");
+    if (v && v.length <= 160 && !/^(?:me|us|myself|ourselves|just now|now|earlier|before|previously|today|yesterday|我|我們|我们)$/iu.test(v) &&
+        !/^(?:我|我們|我们)(?:(?:之前|頭先|头先|剛才|刚才|啱啱|目前|而家|現在|现在|最後|最后|先前|早前)?(?:講|讲|說|说|提|提過|提过|提供|要求|需要|要|講過|讲过|記錄|记录))$/u.test(v)) refs.push(v);
+  };
+  add(question.match(/\b(?:for|about|regarding)\s+([^?？.!。;,，；]{1,100}?)(?=\s*(?:[?？.!。;,，；]|$))/iu)?.[1]);
+  for (const label of field.words) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    add(question.match(new RegExp("\\b" + escaped + "\\s+(?:of|for)\\s+(.{1,80}?)(?=\\s+(?:did|do|have|was|were|are|is|would|will|i|we|you)\\b|[?!.,;]|$)", "iu"))?.[1]);
+    if (/[\p{Script=Han}]/u.test(label)) add(question.match(new RegExp("([^?？。;,，；]{1,50}?)(?:的|嘅)" + escaped, "u"))?.[1]?.replace(/^(?:請|请|提醒我|我之前講|我之前讲|我剛才講|我刚才讲)/u, ""));
+  }
+  if (field.fact === "quantity") add(quantitySubject(question) ?? undefined);
+  return [...new Set(refs)];
+}
+function laterCustomerSourceConflicts(input: ConversationRecallInput, sourceId: string, field: CustomerRecallField,
+  subjects: string[], entity: CommerceEntity | null, applicableClause: string, remainingClauses: string[]): boolean {
+  const rows = input.trusted_visitor_source_rows!;
+  const sourceIndex = rows.findIndex(row => row.id === sourceId);
+  // Caller supplies authenticated server rows in created_at/id DESC order.
+  // Later messages only veto stale evidence; none may supply an answer value.
+  const later = [...remainingClauses, ...rows.slice(0, sourceIndex).map(row => row.content)];
+  const currentAliases = entity ? entityAliases(entity) : subjects;
+  const otherEntities = input.commerce?.state.entities.filter(e => e.entity_id !== entity?.entity_id) ?? [];
+  const sourceUnits = field.fact === "quantity" ? numberTokens(applicableClause).flatMap(token => {
+    const unit = applicableClause.slice(token.end).trim().match(/^[\p{Script=Han}]|^[a-z]+\b/iu)?.[0];
+    return unit ? [unit] : [];
+  }) : [];
+  return later.some(text => sourceClauses(text).some(clause => {
+    if (!clause.trim() || /[?？]/u.test(clause)) return false;
+    const mentionsCandidate = currentAliases.some(ref => phrase(clause, ref));
+    const mentionsOther = otherEntities.some(e => entityAliases(e).some(ref => phrase(clause, ref)));
+    if (mentionsOther && !mentionsCandidate) return false;
+    const fieldMention = any(clause, [...field.words, ...field.keys.map(k => k.replace(/_/g, " "))]);
+    const otherField = CUSTOMER_RECALL_FIELDS.some(f => f.fact !== field.fact && any(clause, f.words));
+    const correction = classifyCanonicalConversationTurn(clause, []).operation === "CORRECTION" ||
+      /\b(?:actually|instead|correction|change|cancel|remove|delete|defer|pause|postpone|no longer)\b|更正|改做|改成|改為|改为|改返|取消|刪除|删除|移除|暫緩|暂缓|暫停|暂停|唔要|不要/iu.test(clause);
+    if (fieldMention) return true;
+    if (otherField && !mentionsCandidate) return false;
+    if (field.fact === "quantity" && numberTokens(clause).length &&
+        (mentionsCandidate || sourceUnits.some(unit => phrase(clause, unit)))) return true;
+    // Unresolved corrections/cancellations cannot certify an older value.
+    return correction && (mentionsCandidate || !mentionsOther);
+  }));
+}
+
+/** Keep effective quantities on the existing canonical/lifecycle proof path.
+ * The parser owns the fact and read-only scope; temporal words distinguish the
+ * present retained state from the customer's earlier quoted statement. */
+export function isCurrentEffectiveQuantityRecall(question: string): boolean {
+  const parsed = parseQuery(question);
+  if (parsed.stop || !parsed.facts.includes("quantity") ||
+      !isReadOnlyMemoryOrCurrentStateRecall(question) || customerRecallHasAction(question)) return false;
+  return asksRetainedQuantity(question) ||
+    /(?:目前|現在|现在|而家|現時|现时|實際|实际|最新|更正後|更正后|取消後|取消后)|\b(?:current|currently|now|actual|latest|remaining)\b/iu
+      .test(question.replace(/\bjust\s+now\b/giu, ""));
+}
+
+/** The semantic label opens this read route, but never supplies a value/source.
+ * Keep transactions, merchant claims and mixed requests on their original path. */
+function resolveSemanticCustomerRecall(input:ConversationRecallInput):ConversationRecallDecision|null {
+  const proposal=input.customer_recall_proposal;
+  if(!proposal||proposal.intent!=="customer_fact_recall")return null;
+  if(proposal.company_id!==input.company_id || proposal.conversation_id!==input.conversation_id ||
+     proposal.source_message_id!==input.source_message_id || !input.company_id || !input.conversation_id || !input.source_message_id)
+    return fail("AMBIGUOUS","CUSTOMER_RECALL_PROPOSAL_SCOPE_MISMATCH");
+  const q=withoutExcludedLookups(input.question);
+  if(customerRecallHasAction(input.question)||any(q,EXTERNAL)|| /(?:幾錢|几钱|多少錢|多少钱|how much does|can you book|place (?:an? )?order|幫我(?:預約|下單)|帮我(?:预约|下单))/iu.test(q)||
+     proposal.requested_facts.some(k=>UNSAFE_CUSTOMER_RECALL_KEY.test(k)))return fail("CURRENT_KB_REQUIRED","EXTERNAL_OR_MIXED_FACT");
+  // A semantic recall label cannot replace effective state with a quote.
+  // The original resolver keeps canonical conflict and lifecycle checks.
+  if(isCurrentEffectiveQuantityRecall(input.question))return null;
+  const m=input.memory,c=input.commerce,rows=input.trusted_visitor_source_rows;
+  if(!m||m.version!=="conversation-memory-1.0.0"||m.company_id!==input.company_id||m.conversation_id!==input.conversation_id||
+     m.source_message_id!==input.source_message_id||!Number.isInteger(m.memory_revision)||m.memory_revision<1)
+    return fail("AMBIGUOUS","MEMORY_SCOPE_OR_SOURCE_MISMATCH");
+  if(!c) return fail("AMBIGUOUS","MISSING_COMMERCE_REVISION");
+  if(c&&(c.company_id!==input.company_id||c.conversation_id!==input.conversation_id||
+     c.state.version!=="commerce-state-1.0.0"||!Number.isInteger(c.revision)||c.revision<0||m.commerce_state_revision!==c.revision))
+    return fail("AMBIGUOUS","STALE_COMMERCE_MEMORY_REVISION");
+  if(!rows?.length||rows.length>500)return fail("AMBIGUOUS","CUSTOMER_SOURCE_NOT_AVAILABLE");
+  const requested=proposal.requested_facts.map(keyNorm);
+  let fields=CUSTOMER_RECALL_FIELDS.filter(field=>requested.length
+    ? field.keys.some(key=>requested.includes(keyNorm(key)))
+    : any(q,field.words));
+  if(!requested.length&&!fields.length&&/(?:幾多|几多|多少|幾|几|how many)/iu.test(q))
+    fields=CUSTOMER_RECALL_FIELDS.filter(f=>f.fact==="quantity");
+  // Existing typed Memory keys may name other scalar customer attributes.
+  // A model-proposed field can select an existing key, never create one.
+  for(const key of proposal.requested_facts){
+    if(!UNSAFE_CUSTOMER_RECALL_KEY.test(key)&&!fields.some(f=>f.keys.some(k=>keyNorm(k)===keyNorm(key)))&&
+       m.current_customer_facts.some(f=>f.authority==="customer"&&keyNorm(f.key)===keyNorm(key)))
+      fields.push({fact:"customer_fact",keys:[key],words:[key]});
+  }
+  if(fields.length!==1)return fail("AMBIGUOUS","CUSTOMER_RECALL_FIELD_AMBIGUOUS");
+  const field=fields[0],evidence:RecallEvidence[]=[];
+  const named=[...new Set([...proposal.subject_refs.filter(ref=>ref.length>0&&ref.length<=160&&phrase(q,ref)), ...explicitRecallSubjects(q,field)])];
+  const activeEntities=c?.state.entities.filter(isCurrentEntity)??[];
+  const selection=summarySelection(input,activeEntities);
+  for(let i=0;i<m.current_customer_facts.length;i++){
+    const fact=m.current_customer_facts[i];
+    if(fact.authority!=="customer"||!field.keys.some(k=>keyNorm(k)===keyNorm(fact.key))||
+       UNSAFE_CUSTOMER_RECALL_KEY.test(fact.key)||!fact.source_message_id||fact.source_message_id===input.source_message_id||
+       !["string","number"].includes(typeof fact.value))continue;
+    if(m.cancelled_or_superseded.some(old=>old.authority==="customer" &&
+      field.keys.some(k=>keyNorm(k)===keyNorm(old.key.replace(/^(?:superseded|cancelled)_/u,""))) &&
+      old.value===fact.value && (old.source_message_id===fact.source_message_id ||
+        (!old.source_message_id && old.entity_id===fact.entity_id))))continue;
+    const matching=rows.filter(row=>row.id===fact.source_message_id&&typeof row.content==="string"&&row.content.length>0&&row.content.length<=2400);
+    if(matching.length!==1)continue;
+    const source=matching[0].content.normalize("NFKC");
+    const clauses=sourceClauses(source);
+    const entity=fact.entity_id?activeEntities.find(e=>e.entity_id===fact.entity_id):null;
+    if(fact.entity_id&&!entity)continue;
+    if(selection.provenance!=="global" && (selection.entities.length!==1 ||
+      entity && selection.entities[0].entity_id!==entity.entity_id))continue;
+    if(entity && selection.provenance==="global" && activeEntities.length>1 && !named.length)continue;
+    const subjects=named.length?named:entity?entityAliases(entity):[];
+    const matchesSubject=(clause:string,ref:string)=>phrase(clause,ref) || Boolean(entity &&
+      entityAliases(entity).some(alias=>keyNorm(alias)===keyNorm(ref)) && entityAliases(entity).some(alias=>phrase(clause,alias)));
+    const scopedSubject=(clause:string)=>named.length?named.every(ref=>matchesSubject(clause,ref)):
+      !subjects.length||subjects.some(ref=>matchesSubject(clause,ref));
+    const applicable=clauses.filter(clause=>{
+      if(!scalarInSource(fact.value,clause))return false;
+      if(field.fact==="quantity"){
+        if(typeof fact.value!=="number"||!Number.isInteger(fact.value)||fact.value<0||fact.value>1000)return false;
+        // Exclude another field's number in this clause (budget, size, date,
+        // time, phone), even when it happens to equal the stored quantity.
+        if(CUSTOMER_RECALL_FIELDS.some(f=>f.fact!=="quantity"&&any(clause,f.words))||any(clause,["phone","電話","电话","匹","sqft"]))return false;
+        const total=/(?:合共|總共|总共|共計|共计|一共|總數|总数|in total|altogether|total(?: of)?)/iu.test(clause);
+        const numbers=numberTokens(clause);
+        if(new Set(numbers.map(n=>n.value)).size!==1)return false;
+        const valueToken=numbers.find(n=>n.value===fact.value)!;
+        const after=clause.slice(valueToken.end).trim();
+        const before=clause.slice(0,valueToken.start);
+        if(/(?:[$€£¥]|HKD|USD|TWD|NTD|CNY)\s*$/iu.test(before)||/^(?:元|蚊|%|percent|dollars?|港幣|港币|台幣|台币)/iu.test(after))return false;
+        // Unit/subject is read from this question/source, not a unit whitelist.
+        // A total may inherit the one explicitly named subject in the same row.
+        const sourceHasSubject = (ref:string):boolean => phrase(source,ref) ||
+          (/^[\p{Script=Han}]{2,}/u.test(ref) && after.startsWith([...ref][0]) &&
+            phrase(source,ref.slice([...ref][0].length)));
+        const totalSubject = total && (named.length ? subjects.every(sourceHasSubject) : subjects.some(sourceHasSubject));
+        const crossLanguageGenericUnit = subjects.length === 1 && /^(?:units?|items?)$/iu.test(subjects[0]) &&
+          activeEntities.filter(e=>e.provenance.source_message_id===fact.source_message_id &&
+            entityAliases(e).some(alias=>phrase(source,alias))).length === 1 && total;
+        if(subjects.length && !scopedSubject(clause) &&
+           !totalSubject && !crossLanguageGenericUnit)return false;
+        if(!subjects.length&&!any(clause,field.words))return false;
+        return /[\p{L}]/u.test(after)||any(before,field.words);
+      }
+      if(!scopedSubject(clause))return false;
+      return scalarFieldSourceBound(field,fact.value,clause);
+    });
+    if(applicable.length!==1)continue;
+    if(laterCustomerSourceConflicts(input,fact.source_message_id,field,subjects,entity??null,
+      applicable[0],clauses.slice(clauses.indexOf(applicable[0])+1)))continue;
+    evidence.push({fact_type:field.fact,state_path:`current_customer_facts.${i}.value`,value:fact.value,
+      authority:"CURRENT_CUSTOMER_MEMORY",entity_id:fact.entity_id??null,region:fact.region??null,
+      evidence_source_message_id:fact.source_message_id,temporal_scope:"current",source_kind:"attested_customer_utterance",attribute_key:fact.key});
+  }
+  if(evidence.length!==1)return fail("AMBIGUOUS",evidence.length?"CUSTOMER_RECALL_SOURCE_AMBIGUOUS":"CUSTOMER_RECALL_SOURCE_NOT_ATTESTED",[field.fact]);
+  return {handled:true,authority:"CURRENT_CUSTOMER_MEMORY",fact_type:field.fact,state_path:evidence[0].state_path,value:evidence[0].value,
+    provenance:{conversation_id:input.conversation_id,company_id:input.company_id,source_message_id:input.source_message_id,
+      memory_revision:m.memory_revision,commerce_state_revision:c?.revision??m.commerce_state_revision,
+      commerce_source_message_id:c?.source_message_id??null,evidence}};
+}
+
 /** Verify a customer-owned count against the actual earlier Visitor utterance.
  * This is an evidence type, not a phrase-triggered answer. The model cannot
  * supply a count or source ID here, and a stale/conflicting canonical aggregate
@@ -1405,6 +1705,8 @@ export function resolveConversationRecall(
   if (input.explicit_handoff) {
     return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
   }
+  const semanticRecall = resolveSemanticCustomerRecall(input);
+  if (semanticRecall) return semanticRecall;
   const retainedTargets = input.commerce ? retainedRecapTargets(input.commerce.state) : [];
   const resolved = summarySelection(input, input.commerce?.state.entities ?? []);
   if (resolved.provenance === "trusted_referent" && resolved.entities.length === 1) retainedTargets.push("it", "that", "this");
@@ -1737,6 +2039,12 @@ export function resolveConversationRecall(
 
 const LABELS: Partial<Record<RecallFact, [string, string, string]>> = {
   quantity: ["數量", "数量", "Quantity"],
+  budget: ["你之前提供的預算", "你之前提供的预算", "Budget you stated"],
+  date: ["你之前提供的日期", "你之前提供的日期", "Date you requested"],
+  time: ["你之前提供的時間", "你之前提供的时间", "Time you requested"],
+  name: ["你之前提供的稱呼", "你之前提供的称呼", "Name you provided"],
+  size: ["你之前提供的尺寸", "你之前提供的尺寸", "Size you requested"],
+  customer_fact: ["你之前提供的資料", "你之前提供的资料", "Information you provided"],
   address: ["收貨地址", "收货地址", "Delivery address"],
   recipient: ["收貨人", "收货人", "Recipient"],
   contact: ["聯絡電話", "联系电话", "Contact number"],
@@ -1859,6 +2167,10 @@ export function renderConversationRecall(
         retainedNumberWords[e.value]
       ? retainedNumberWords[e.value][l]
       : display(e.value);
+    if (e.source_kind === "attested_customer_utterance") {
+      lines.push(`${LABELS[e.fact_type]?.[l] ?? e.attribute_key ?? "Customer information"}: ${v}`);
+      continue;
+    }
     if (e.temporal_scope === "historical") v = ["歷史記錄：", "历史记录：", "Historical record: "][l] + v;
     if (e.fact_type.endsWith("_status") && typeof e.value === "string") {
       v = STATUS_TEXT[e.value]?.[l] ?? v;

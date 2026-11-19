@@ -1,0 +1,118 @@
+{
+  "profile": {
+    "fixture_only": true,
+    "industry": "restaurant",
+    "company_label": "Synthetic Table Orchard",
+    "company_id": "00000000-0000-4000-8000-000000004104",
+    "kb_tenant_id": "9504",
+    "languages": [
+      "zh-HK",
+      "zh-TW",
+      "en"
+    ],
+    "claim_authority": false
+  },
+  "semantic_fixture_status": "NOT_SUPPLIED; any future authored proposal must be labelled SCRIPTED_NOT_REAL_MODEL",
+  "reviewer_fixture_status": "NOT_SUPPLIED; no generated reply can earn a model-quality PASS",
+  "tasks": [
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-restaurant-recall",
+      "original_contract_case_ids": [
+        "T06"
+      ],
+      "turns": [
+        "我想要三份套餐。",
+        "我之前提過要幾多份套餐？"
+      ],
+      "expected": {
+        "customer_value": 3,
+        "customer_unit": "份",
+        "prior_source_required": true,
+        "merchant_kb_required": false
+      },
+      "existing_test": "Task3C customer quantity source proof is industry-neutral: restaurant"
+    },
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-restaurant-correction",
+      "original_contract_case_ids": [
+        "T17",
+        "C3-CONTROL-14"
+      ],
+      "turns": [
+        "我想要三份套餐。",
+        "更正，只保留兩份套餐，第三份取消。",
+        "現在保留幾份套餐？取消了哪一份？"
+      ],
+      "expected": {
+        "retained_count": 2,
+        "cancelled_or_deferred_count": 1,
+        "do_not_merge_current_and_future": true
+      },
+      "existing_test": "C3 semantic T17 corrected active quantity excludes deferred item"
+    },
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-restaurant-merchant-topic",
+      "original_contract_case_ids": [],
+      "turns": [
+        "用餐預訂要怎樣做？"
+      ],
+      "expected": {
+        "merchant_kb_required": true,
+        "retain_document_id": "synthetic-restaurant-instructions-v1",
+        "retain_chunk_id": "synthetic-restaurant-instructions-v1-c1",
+        "no_sku_requirement": true,
+        "no_live_availability_claim": true
+      },
+      "existing_test": "Task3C managed combined routing and published-service handler"
+    },
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-restaurant-mixed-known-unknown",
+      "original_contract_case_ids": [
+        "T71",
+        "C3-CONTROL-12"
+      ],
+      "turns": [
+        "我想要三份套餐。",
+        "我記得去年套餐好像港幣180元，但現在未核實。",
+        "我之前提過幾份套餐？今天每份官方售價是多少？"
+      ],
+      "expected": {
+        "answer_known_customer_count": true,
+        "requery_merchant_price": true,
+        "historical_price_is_not_current": true,
+        "no_current_price_without_evidence": true
+      },
+      "existing_test": "Task3C cross-industry customer-owned count has a different source type from merchant price"
+    },
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-restaurant-transaction",
+      "original_contract_case_ids": [
+        "T58",
+        "T98"
+      ],
+      "turns": [
+        "我只是查詢兩份套餐，沒有確認訂位、落單或付款。",
+        "目前只是查詢報價，還是已完成交易？"
+      ],
+      "expected": {
+        "no_order_payment_booking_or_entitlement_fabrication": true
+      },
+      "existing_test": "C3 semantic T98 quotation is not an order"
+    }
+  ]
+}

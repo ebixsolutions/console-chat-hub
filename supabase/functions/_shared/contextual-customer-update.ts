@@ -24,6 +24,36 @@ export interface ContextualCandidate {
   clarification: string;
 }
 
+
+/** Domain-neutral clarification for a distributed quantity with no selected
+ * industry. It cannot choose a product, invent an aggregate, or mutate state. */
+export function unresolvedScopedQuantityCandidate(input: {
+  text: string;
+  language: "zh-TW" | "zh-CN" | "en";
+}): ContextualCandidate | null {
+  const text = input.text.normalize("NFKC").trim();
+  if (!text || /[?？]/u.test(text) ||
+    !/(?:各|每|\beach\b|\bper\b)/iu.test(text) ||
+    !/(?:\d+|[零〇一二兩两三四五六七八九十]+|\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\b)/iu.test(text)) return null;
+  const rooms = /(?:房|room|bedroom)/iu.test(text);
+  // This fallback covers a source that contains scopes and counts only. A
+  // named product/service belongs to the ordinary generic semantic path.
+  // Room vocabulary identifies a location, never an appliance industry.
+  const residue = text
+    .replace(/(?:客廳|客厅|廳|厅|廤|睡房|臥室|卧室|房間|房间|房|living\s+rooms?|lounges?|bedrooms?|rooms?)/giu, "")
+    .replace(/(?:\d+|[零〇一二兩两三四五六七八九十]+|\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\b)/giu, "")
+    .replace(/(?:每|各|間|间|個|个|要|需|放|裝|装|部|台|\b(?:for|in|the|of|each|per|units?|gets?|needs?|has)\b)/giu, "")
+    .replace(/[\s,，.。;；:：]+/gu, "");
+  if (!rooms || residue) return null;
+  const clarification = input.language === "en"
+    ? `Which product or service is this for? Please identify ${rooms ? "how many rooms and " : ""}the quantity for each scope.`
+    : input.language === "zh-CN"
+    ? `你指哪种产品或服务？请确认${rooms ? "有几间房，以及" : ""}各个范围所需的数量。`
+    : `你講緊邊種產品或服務？請確認${rooms ? "有幾間房，同埋" : ""}各個範圍需要嘅數量。`;
+  return {topic:"",topic_source:"profile",action:"scoped_update",values:[],
+    context_sufficient:false,reply:"",clarification};
+}
+
 export type ContextualDecision =
   | { route: "none"; reason: string; updates: [] }
   | { route: "targeted_clarification"; reason: string; reply: string; updates: [] }

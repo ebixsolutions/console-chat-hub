@@ -495,6 +495,103 @@ function monetaryFacts(text: string): ExactMoney[] {
   }
   return facts;
 }
+/** Published evidence may contain merchant-only costs. Presence in a selected
+ * chunk is not authority to disclose those fields to a visitor. Keep raw
+ * evidence and citation lineage unchanged; reject the generated answer here.
+ * A customer's ordinary “what does it cost?” wording is never a private-field
+ * label. Only explicit internal-cost fields in the selected evidence qualify. */
+const INTERNAL_COST_LABEL = String.raw`(?:internal[ _-]*(?:cost(?:[ _-]*price)?|price)|cost[ _-]*price|採購成本|采购成本|內部成本(?:價)?|内部成本(?:价)?|成本價|成本价|成本)`;
+const PUBLIC_PRICE_LABEL = String.raw`(?:(?:selling|sales?|retail|list|public|unit)[ _-]*price|price|銷售價|销售价|零售價|零售价|售價|售价|價格|价格|價錢|价钱|單價|单价)`;
+type LabelledMoneyField = ExactMoney & { start: number; end: number };
+function labelledPriceFields(text: string): { internal: ExactMoney[]; public: ExactMoney[] } {
+  const raw = text.normalize("NFKC");
+  const matches = (labels: string): LabelledMoneyField[] => {
+    const pattern = new RegExp(String.raw`(?<![A-Za-z0-9_-])(?:${labels})(?![A-Za-z0-9_-])[\s"'\x60*]*(?:(?:[:=|]|\b(?:is|was|of)\b|為|为|是)[\s"'\x60*]*)?(?<value>(?:(?:${MONEY_MARKER}|[A-Z]{3}|[€£¥]|人民幣|人民币)\s*)?${MONEY_NUMBER})(?![\d,])`, "giu");
+    return [...raw.matchAll(pattern)].flatMap(match => monetaryFacts(match.groups?.value ?? "")
+      .map(fact => ({ ...fact, start: match.index ?? 0, end: (match.index ?? 0) + match[0].length })));
+  };
+  const internalFields = matches(INTERNAL_COST_LABEL);
+  // "price" nested inside "internal price" / "cost price" is not a second,
+  // independently public field merely because the amount happens to match.
+  const publicFields = matches(PUBLIC_PRICE_LABEL).filter(field =>
+    !internalFields.some(privateField => field.start >= privateField.start && field.end <= privateField.end));
+  const internal: ExactMoney[] = [...internalFields], publicFacts: ExactMoney[] = [...publicFields];
+  // Imported Markdown tables retain typed column labels. Recognize those
+  // columns without joining unrelated prose or altering their source content.
+  const lines = raw.split(/\r?\n/u);
+  const cells = (line: string) => line.trim().replace(/^\||\|$/gu, "").split("|").map(cell => cell.trim());
+  const internalKey = new RegExp(`^(?:${INTERNAL_COST_LABEL})$`, "iu");
+  const publicKey = new RegExp(`^(?:${PUBLIC_PRICE_LABEL})$`, "iu");
+  for (let i = 0; i + 2 < lines.length; i++) {
+    if (!lines[i].includes("|") || !/^\s*\|?[\s:|-]+\|[\s:|-]*\|?\s*$/u.test(lines[i + 1])) continue;
+    const keys = cells(lines[i]);
+    for (let row = i + 2; row < lines.length && lines[row].includes("|"); row++) {
+      const values = cells(lines[row]);
+      if (values.length !== keys.length) break;
+      keys.forEach((key, column) => {
+        const target = internalKey.test(key) ? internal : publicKey.test(key) ? publicFacts : null;
+        if (target) target.push(...monetaryFacts(values[column]));
+      });
+    }
+  }
+  return { internal, public: publicFacts };
+}
+/** Assist verifies a JSON suggestions/policy envelope, while generation
+ * verifies plain text. Inspect decoded string values in either case: JSON
+ * escaping is not a semantic boundary that can hide an internal field label.
+ * Retain property names for scalar/array values, e.g. {internal_cost: "HKD 4"}.
+ * Iterative traversal avoids adding a nesting-depth truncation bypass. */
+function decodedAnswerText(answer: string): string {
+  let parsed: unknown;
+  try { parsed = JSON.parse(answer); } catch { return answer; }
+  const lines: string[] = [];
+  const pending: Array<{value: unknown; label?: string}> = [{value: parsed}];
+  while (pending.length) {
+    const entry = pending.pop()!;
+    if (typeof entry.value === "string" || typeof entry.value === "number") {
+      lines.push((entry.label ? entry.label + ": " : "") + String(entry.value));
+    } else if (Array.isArray(entry.value)) {
+      for (let i = entry.value.length - 1; i >= 0; i--) {
+        pending.push({value: entry.value[i], label: entry.label});
+      }
+    } else if (entry.value && typeof entry.value === "object") {
+      const entries = Object.entries(entry.value);
+      for (let i = entries.length - 1; i >= 0; i--) {
+        pending.push({value: entries[i][1], label: entries[i][0]});
+      }
+    }
+  }
+  return lines.join("\n");
+}
+
+function disclosesInternalCostField(answer: string, evidenceText: string): boolean {
+  // The bound-evidence formatter serializes content in a typed JSON array.
+  // Decode only that text projection, so escaped newlines / quotes cannot hide
+  // a field label. Do not add metadata or change the retained source item.
+  let sourceText = evidenceText;
+  try {
+    const parsed: unknown = JSON.parse(evidenceText);
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed.every(item =>
+      item && typeof item === "object" && typeof item.id === "string" &&
+      /^E[1-9]\d*$/u.test(item.id) && typeof item.full_content === "string")) {
+      sourceText = parsed.map(item => item.full_content).join("\n");
+    }
+  } catch { /* Direct source strings remain direct source strings. */ }
+  const source = labelledPriceFields(sourceText);
+  if (!source.internal.length) return false;
+  const sameAmount = (a: ExactMoney, b: ExactMoney) => a.amount === b.amount &&
+    (!a.currency || !b.currency || a.currency === b.currency);
+  const privateInSource = (fact: ExactMoney) => source.internal.some(value => sameAmount(fact, value));
+  // Explicitly naming an internal cost is disclosure even when a public price
+  // has the same number. An ordinary selling-price answer at that same number
+  // remains usable; equality alone must not reject legitimate retail facts.
+  const answerText = decodedAnswerText(answer);
+  if (labelledPriceFields(answerText).internal.some(privateInSource)) return true;
+  return monetaryFacts(answerText).some(fact => privateInSource(fact) &&
+    !source.public.some(value => sameAmount(fact, value)));
+}
+
+
 function currencyClaimGrounded(
   answerFact: ExactMoney, source: readonly ExactMoney[], visitor: readonly ExactMoney[],
 ): boolean {
@@ -606,6 +703,11 @@ export function validateExactFactGrounding(
       };
     }
   }
+  if (disclosesInternalCostField(answer, evidenceText)) return {
+    ok: false,
+    reason: "internal_cost_field_disclosure",
+    unsupported_tokens: ["internal_cost_field"],
+  };
   const sourceFacts = monetaryFacts(evidenceText);
   const visitorFacts = monetaryFacts(conversationEvidenceText);
   const unsupported = new Set<string>();

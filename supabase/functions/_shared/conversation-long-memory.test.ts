@@ -477,3 +477,55 @@ Deno.test("pending-question capacity overflow is explicit rather than silently c
   assert((memory.question_lifecycle?.length ?? 0) <= 24, "unbounded pending memory");
   equal(build({previous: memory, memoryRevision: 2, rows: []}).question_lifecycle_incomplete, true, "compaction falsely cleared incomplete context");
 });
+
+// These are actual committed route/action labels, never words guessed from
+// the answer. A courteous final full stop cannot turn clarification into success.
+for (const responseRoute of [
+  "product_availability_clarification", "product_referent_clarification",
+  "product_shopping_intent", "conversational_clarification",
+  "canonical_memory_clarification", "w1_human_confirmation",
+  "warm_handoff_data_collection", "kb_no_match_recovery",
+  "grounding_recovery_clarification", "canonical_kb_partial_recovery",
+  "kb_no_current_evidence", "c1_authority_conflict_clarification",
+  "c3_service_no_match", "c3_service_tool_failure", "c3_service_conflict",
+  "terminal_failure_recovery",
+]) Deno.test("Task3C unresolved lifecycle follows committed route: " + responseRoute, () => {
+  const memory = build({sourceFactualTurn:true, rows:[
+    {id:"pending-reply",role:"assistant",content:"請補充具體對象，之後才能確認。",metadata:{control_commit:"ai",source_message_id:MID,response_route:responseRoute}},
+    {id:MID,role:"visitor",content:"Please check this item"},
+  ]});
+  equal(memory.question_lifecycle?.find(item=>item.source_message_id===MID)?.status,"pending","non-answer closed source question");
+  const item=memory.question_lifecycle?.find(item=>item.source_message_id===MID);
+  assert(Boolean(item?.text) && memory.open_questions.includes(item!.text),"pending question was discarded from open questions");
+  const compacted=build({previous:memory,memoryRevision:2,rows:[]});
+  equal(compacted.question_lifecycle?.find(item=>item.source_message_id===MID)?.status,"pending","compaction closed pending question");
+});
+for (const metadata of [
+  {service_action:"targeted_clarification"},
+  {service_action:"partial_answer_then_question"},
+  {service_action:"offer_handoff_or_reframe"},
+  {service_action:"customer_issue_next_step"},
+  {escalation_action:"clarification"},
+  {unresolved_fact_fields:["price"]},
+  {grounding_state:"authority_conflict_unresolved"},
+  {knowledge_state:"no_match"},
+  {knowledge_state:"tool_failure"},
+  {knowledge_state:"conflict"},
+  {degraded:true},
+  {generation_success:false},
+]) Deno.test("Task3C unresolved lifecycle follows structured signal: " + JSON.stringify(metadata), () => {
+  const memory=build({sourceFactualTurn:true,rows:[
+    {id:"incomplete-reply",role:"assistant",content:"This still needs confirmation.",metadata:{control_commit:"ai",source_message_id:MID,...metadata}},
+    {id:MID,role:"visitor",content:"Please confirm the applicable details"},
+  ]});
+  equal(memory.question_lifecycle?.find(item=>item.source_message_id===MID)?.status,"pending","structured pending signal ignored");
+  assert(memory.open_questions.length>0,"unresolved question removed");
+});
+Deno.test("Task3C verified completed answer still resolves its source question",()=>{
+  const memory=build({sourceFactualTurn:true,rows:[
+    {id:"complete-reply",role:"assistant",content:"The source lists a weight of 200 g.",metadata:{control_commit:"ai",source_message_id:MID,response_route:"canonical_kb_direct_answer",answer_kind:"specification",service_action:"direct_answer",unresolved_fact_fields:[],generation_success:true}},
+    {id:MID,role:"visitor",content:"What is the listed weight?"},
+  ]});
+  equal(memory.question_lifecycle?.find(item=>item.source_message_id===MID)?.status,"resolved","complete factual answer stayed pending");
+  equal(memory.open_questions,[],"complete question remained open");
+});
