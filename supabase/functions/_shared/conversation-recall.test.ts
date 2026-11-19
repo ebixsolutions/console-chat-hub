@@ -1073,3 +1073,44 @@ Deno.test("Task3C quoted prior total still uses customer source after effective-
     assert(result.handled&&result.value===3&&result.provenance.evidence[0].source_kind==="attested_customer_utterance",JSON.stringify(result));
   }
 });
+
+// Task3C N1/N2 differential: the old canonical route on the same source
+// fixture must not be shadowed by a new, value-free semantic recall proposal.
+// F1/S3 & F3/S4; this is NOT an actual old-version Hosted/33-turn replay.
+Deno.test("C3 semantic proposal preserves canonical address, multiple fields and status", () => {
+  const cases: Array<[string,string,string[],string[]]> = [
+    ["T40", "我更正後的收貨地址是什麼？", ["address"], ["B block"]],
+    ["T50", "之前提供的房間面積是多少？", ["room_size"], ["180 sqft"]],
+    ["T57", "What is my corrected delivery address?", ["address"], ["B block"]],
+    ["T58", "目前送貨安排是甚麼狀態？", ["delivery_status"], ["尚未確認"]],
+    ["T68", "我之前冷氣要求幾匹？", ["horsepower"], ["1.5"]],
+    ["T69", "我要求的冷氣品牌是否一定要指定？", ["brand_constraint"], ["品牌並非必要"]],
+    ["T96", "請讀回我的收貨人和聯絡電話？", ["recipient","contact"], ["測試收件人甲","90000001"]],
+    ["T98", "我現在是報價階段還是正式訂單？", ["quotation_status","order_status"], ["草擬","尚未形成正式訂單"]],
+  ];
+  for (const [id,question,requested_facts,expected] of cases) {
+    const input=recallFixture(question);
+    const before=resolveConversationRecall(input);
+    assert(before.handled, id+" original route not handled "+JSON.stringify(before));
+    input.customer_recall_proposal={company_id:input.company_id,conversation_id:input.conversation_id,
+      source_message_id:input.source_message_id,intent:"customer_fact_recall",requested_facts,subject_refs:[]};
+    const after=resolveConversationRecall(input);
+    assert(after.handled, id+" shadowed "+JSON.stringify(after));
+    assert(JSON.stringify(after.value)===JSON.stringify(before.value), id+" value changed");
+    const reply=renderConversationRecall(after,"zh-TW")??"";
+    for(const phrase of expected)assert(reply.includes(phrase),id+" missing "+phrase+": "+reply);
+  }
+});
+Deno.test("C3 semantic fallback preserves hard scope and integrity stops",()=>{
+ for(const what of ["foreign-proposal","foreign-memory","stale-revision","mixed-order"]){
+  const input=recallFixture("我更正後的收貨地址是什麼？");
+  input.customer_recall_proposal={company_id:input.company_id,conversation_id:input.conversation_id,
+    source_message_id:input.source_message_id,intent:"customer_fact_recall",requested_facts:["address"],subject_refs:[]};
+  if(what==="foreign-proposal") input.customer_recall_proposal.company_id="foreign";
+  if(what==="foreign-memory") input.memory!.company_id="foreign";
+  if(what==="stale-revision") input.memory!.commerce_state_revision=19;
+  if(what==="mixed-order") input.question="讀回地址，同時幫我下單。";
+  const result=resolveConversationRecall(input);
+  assert(!result.handled,what+" wrongly answered "+JSON.stringify(result));
+ }
+});

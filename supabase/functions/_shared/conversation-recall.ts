@@ -1699,14 +1699,46 @@ function hasSourceBoundCompletedRecap(input: ConversationRecallInput): boolean {
   return changed;
 }
 
+/** Semantic understanding proposes a field, not an exclusive answer route.
+ * F1/S3 + F3/S4: preserve the preexisting typed resolver for unsupported
+ * or compound recalls, while scope/source/merchant protections fail closed. */
 export function resolveConversationRecall(
+  input: ConversationRecallInput,
+): ConversationRecallDecision {
+  if (input.explicit_handoff) return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
+  const semantic = resolveSemanticCustomerRecall(input);
+  if (!semantic) return resolveConversationRecallLegacy(input);
+  if (semantic.handled) return semantic;
+  const soft = new Set([
+    "CUSTOMER_RECALL_FIELD_AMBIGUOUS",
+    "CUSTOMER_RECALL_SOURCE_NOT_ATTESTED",
+    "CUSTOMER_RECALL_SOURCE_AMBIGUOUS",
+  ]);
+  if (semantic.reason === "AMBIGUOUS" && !soft.has(semantic.detail)) return semantic;
+  // The prior resolver runs its own tenant/source/revision and intent checks.
+  const previous = resolveConversationRecallLegacy(input);
+  if (!previous.handled) return semantic.reason === "CURRENT_KB_REQUIRED" ? semantic : previous;
+  const canonical = previous.provenance.evidence.length > 0 &&
+    previous.provenance.evidence.every(e => e.authority === "CANONICAL_COMMERCE_STATE");
+  if (semantic.reason === "CURRENT_KB_REQUIRED") {
+    // A pure persisted transaction-status readback is not a request to
+    // transact, nor evidence for a merchant's price, stock or policy.
+    const statusOnly = canonical && previous.provenance.evidence.every(e =>
+      ["quotation_status", "order_status", "payment_status",
+       "delivery_status", "installation_status"].includes(e.fact_type));
+    return statusOnly && !customerRecallHasAction(input.question) ? previous : semantic;
+  }
+  // Do not downgrade an unproven customer-owned scalar to memory-only
+  // evidence. Canonical state is independently scoped and revision-bound.
+  return canonical ? previous : semantic;
+}
+/** Original typed canonical resolver: its existing checks stay intact. */
+function resolveConversationRecallLegacy(
   input: ConversationRecallInput,
 ): ConversationRecallDecision {
   if (input.explicit_handoff) {
     return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
   }
-  const semanticRecall = resolveSemanticCustomerRecall(input);
-  if (semanticRecall) return semanticRecall;
   const retainedTargets = input.commerce ? retainedRecapTargets(input.commerce.state) : [];
   const resolved = summarySelection(input, input.commerce?.state.entities ?? []);
   if (resolved.provenance === "trusted_referent" && resolved.entities.length === 1) retainedTargets.push("it", "that", "this");
