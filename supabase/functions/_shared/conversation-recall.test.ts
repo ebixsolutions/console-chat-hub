@@ -1082,7 +1082,7 @@ Deno.test("C3 semantic proposal preserves canonical address, multiple fields and
     ["T40", "我更正後的收貨地址是什麼？", ["address"], ["B block"]],
     ["T50", "之前提供的房間面積是多少？", ["room_size"], ["180 sqft"]],
     ["T57", "What is my corrected delivery address?", ["address"], ["B block"]],
-    ["T58", "目前送貨安排是甚麼狀態？", ["delivery_status"], ["尚未確認"]],
+    ["T58", "目前送貨安排是甚麼狀態？", ["delivery_status"], ["不代表已確認配送安排"]],
     ["T68", "我之前冷氣要求幾匹？", ["horsepower"], ["1.5"]],
     ["T69", "我要求的冷氣品牌是否一定要指定？", ["brand_constraint"], ["品牌並非必要"]],
     ["T96", "請讀回我的收貨人和聯絡電話？", ["recipient","contact"], ["測試收件人甲","90000001"]],

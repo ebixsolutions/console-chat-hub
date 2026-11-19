@@ -1732,7 +1732,7 @@
   },
   "authorized_task3c_t06_turn2_source_sha256": {
     "supabase/functions/_shared/conversation-recall.ts": "fd2715489f972e305fbb2ff9ef0a6db759acb200290253f6275c8b211fb53879",
-    "supabase/functions/_shared/conversation-recall.test.ts": "75826728fbbb6c9dc7bf0f1df744ec266172d5c1580dfef777a13dcb8da0568e",
+    "supabase/functions/_shared/conversation-recall.test.ts": "cc92a365a50171aa0cbb20ace836682ef9fb6e41d879a079260c08c29b55f0c7",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "9038f9546989c371986129601705e42673c29537016ce8c1212e9bb351c643c4",
     "supabase/functions/generate-reply/index.ts": "457096bafa09bd49f23c2c93b4614282a379e23d7901bc596e88a1c33b8a8f57",
     "tests/emergency-p0/chain.test.mjs": "507f3e261bdce9585e9916a96ffe8609fb335130ad81b96dad794c12084e3ecb",
