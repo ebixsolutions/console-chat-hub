@@ -1721,24 +1721,52 @@ export function resolveConversationRecall(
       !CUSTOMER_RECALL_FIELDS.some(f => f.keys.some(k =>
         keyNorm(k) === keyNorm(key))));
   const canConsultLegacy = semantic.detail === "CUSTOMER_RECALL_FIELD_AMBIGUOUS" ||
-    (semantic.detail === "CUSTOMER_SOURCE_NOT_AVAILABLE" && unsupportedTypedField);
+    (unsupportedTypedField && [
+      "CUSTOMER_SOURCE_NOT_AVAILABLE",
+      "CUSTOMER_RECALL_SOURCE_NOT_ATTESTED",
+    ].includes(semantic.detail));
   if (semantic.reason === "AMBIGUOUS" && !canConsultLegacy) return semantic;
-  // The prior resolver runs its own tenant/source/revision and intent checks.
+  // The legacy resolver does its own intent, tenant and revision checks.
   const previous = resolveConversationRecallLegacy(input);
   if (!previous.handled) return semantic.reason === "CURRENT_KB_REQUIRED" ? semantic : previous;
-  const canonical = previous.provenance.evidence.length > 0 &&
-    previous.provenance.evidence.every(e => e.authority === "CANONICAL_COMMERCE_STATE");
+  const visitor = input.trusted_visitor_source_rows ?? [];
+  const originalSource = (e: RecallEvidence) => {
+    if (e.temporal_scope !== "current") return false;
+    if (e.evidence_source_message_id) {
+      const row = visitor.find(x => x.id === e.evidence_source_message_id);
+      return !!row && hasField(row.content, e.fact_type);
+    }
+    const part = /^(customer_preferences|active_constraints|latest_corrections)\.(\d+)/u.exec(e.state_path);
+    if (!part) return false;
+    const index = Number(part[2]);
+    const text = input.memory?.[part[1] as "customer_preferences" | "active_constraints" | "latest_corrections"]?.[index];
+    return typeof text === "string" && text.length > 0 &&
+      visitor.some(x => x.content.includes(text));
+  };
+  const canonicalProof = previous.provenance.evidence.length > 0 &&
+    previous.provenance.evidence.every(e =>
+      e.authority === "CANONICAL_COMMERCE_STATE" ||
+      (e.source_kind === "customer_owned_canonical_property" && originalSource(e)));
+  const legacyPersonalProof = unsupportedTypedField &&
+    previous.provenance.evidence.length > 0 &&
+    previous.provenance.evidence.every(e => e.authority === "CURRENT_CUSTOMER_MEMORY" && originalSource(e));
+  const readOnly = !customerRecallHasAction(input.question);
   if (semantic.reason === "CURRENT_KB_REQUIRED") {
-    // A pure persisted transaction-status readback is not a request to
-    // transact, nor evidence for a merchant's price, stock or policy.
-    const statusOnly = canonical && previous.provenance.evidence.every(e =>
+    // Never take price, stock, merchant policy or a requested transaction
+    // from customer memory. A read-only customer delivery preference is
+    // partial information and explicitly does NOT promise a booking.
+    const statusOnly = canonicalProof && previous.provenance.evidence.every(e =>
       ["quotation_status", "order_status", "payment_status",
        "delivery_status", "installation_status"].includes(e.fact_type));
-    return statusOnly && !customerRecallHasAction(input.question) ? previous : semantic;
+    const preferenceOnly = previous.fact_type === "delivery_preference" &&
+      previous.provenance.evidence.every(e => originalSource(e)) &&
+      legacyPersonalProof;
+    return readOnly && (statusOnly || preferenceOnly) ? previous : semantic;
   }
-  // Do not downgrade an unproven customer-owned scalar to memory-only
-  // evidence. Canonical state is independently scoped and revision-bound.
-  return canonical ? previous : semantic;
+  // Unsupported typed customer facts may reuse the old source-checked
+  // canonical or current customer-text resolver. A selected quantity,
+  // budget/date/name scalar with missing or mismatched Visitor proof may not.
+  return readOnly && (canonicalProof || legacyPersonalProof) ? previous : semantic;
 }
 /** Original typed canonical resolver: its existing checks stay intact. */
 function resolveConversationRecallLegacy(
