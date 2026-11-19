@@ -1709,11 +1709,20 @@ export function resolveConversationRecall(
   const semantic = resolveSemanticCustomerRecall(input);
   if (!semantic) return resolveConversationRecallLegacy(input);
   if (semantic.handled) return semantic;
-  // Only unsupported / compound field selection is a compatibility gap.
-  // A selected scalar with missing, conflicting or wrong-subject Visitor
-  // attestation must remain rejected, even if canonical state has a value.
-  if (semantic.reason === "AMBIGUOUS" &&
-      semantic.detail !== "CUSTOMER_RECALL_FIELD_AMBIGUOUS") return semantic;
+  // A missing Visitor-source list cannot certify a supported scalar.
+  // An independently authenticated canonical field is different: allow
+  // the original resolver to verify unsupported typed fields (address,
+  // room, contact, constraints) or compound fields without extra model/KB.
+  const supportedScalar = (fact: RecallFact) =>
+    CUSTOMER_RECALL_FIELDS.some(field => field.fact === fact);
+  const parsedFields = parseQuery(input.question).facts;
+  const unsupportedTypedField = parsedFields.some(f => !supportedScalar(f)) ||
+    (input.customer_recall_proposal?.requested_facts ?? []).some(key =>
+      !CUSTOMER_RECALL_FIELDS.some(f => f.keys.some(k =>
+        keyNorm(k) === keyNorm(key))));
+  const canConsultLegacy = semantic.detail === "CUSTOMER_RECALL_FIELD_AMBIGUOUS" ||
+    (semantic.detail === "CUSTOMER_SOURCE_NOT_AVAILABLE" && unsupportedTypedField);
+  if (semantic.reason === "AMBIGUOUS" && !canConsultLegacy) return semantic;
   // The prior resolver runs its own tenant/source/revision and intent checks.
   const previous = resolveConversationRecallLegacy(input);
   if (!previous.handled) return semantic.reason === "CURRENT_KB_REQUIRED" ? semantic : previous;
