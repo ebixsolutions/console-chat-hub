@@ -2102,7 +2102,15 @@ function reduceSingleTurn(
     const entity = previous.entities.find(e => e.entity_id === id);
     return scopedProductReferences.has(id) || Boolean(entity && explicitProductCategories.has(entity.category));
   };
+  // A bare counter of some other named thing (six browser tabs, three people)
+  // is not authority to rewrite an older, unmentioned commerce entity. Domain
+  // knowledge is not guessed from the stale current topic or an old model.
+  const genericCounterWithoutProductSource =
+    /(?:\d{1,4}|[一二兩两三四五六七八九十])\s*(?:個|个)\s*[\p{L}]{1,30}/u.test(input.text) &&
+    explicitProductCategories.size === 0 && scopedProductReferences.size === 0;
   const quantityEvents = [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents].filter(event => {
+    if (event.type === "SET_ENTITY_QUANTITY" && genericCounterWithoutProductSource &&
+        !isSourceBoundEntity(event.entity_id)) return false;
     if (event.type === "SET_ENTITY_QUANTITY" &&
         sourceNumbers.has(event.quantity) && !isSourceBoundEntity(event.entity_id)) return false;
     // A provider may echo stale entity metadata with a customer-only update;
@@ -2133,9 +2141,35 @@ function reduceSingleTurn(
   });
   // An authorized materialization must precede field updates. Unknown targets
   // still throw; no proposed mutation is silently dropped or guessed.
+  const explicitGoalTotal = input.text.match(
+    /(?:合共|總共|总共|一共|總數|总数|共計|共计|in total|total of)\s*(?:要|需|有|為|为|是|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|套|份|盒|箱|包|堂|課|课|units?|pieces?|items?|sets?|boxes?|packs?|lessons?|sessions?)/iu,
+  );
+  const explicitGoalNumber = explicitGoalTotal ? countTokenValue(explicitGoalTotal[1]) : null;
+  const sourceGoalCategories = detectCategories(input.text);
+  const goalTargets = sourceGoalCategories.length === 1
+    ? previous.entities.filter(entity => entity.category === sourceGoalCategories[0].key &&
+      !["deferred", "cancelled", "superseded"].includes(entity.status)) : [];
+  const isFreshGoal = Boolean(explicitGoalNumber !== null &&
+    /(?:選購|选购|購入|購買|购买|想買|想买|要買|要买|want to buy|need to purchase|shopping for)/iu.test(input.text) &&
+    !looksInterrogative(input.text) && goalTargets.length === 1 &&
+    !input.semantic_frame?.customer_correction && !input.semantic_frame?.additive &&
+    (!input.semantic_frame || ["ADD_ITEM", "UPDATE_ITEM", "NO_STATE_CHANGE"].includes(input.semantic_frame.operation)));
+  const chosenGoal = goalTargets[0];
+  const staleProductName = typeof chosenGoal?.model === "string" && chosenGoal.model.length > 0 &&
+    !matchesReferenceLabel(input.text, chosenGoal.model);
+  const newGoalEvents: CommerceStateEvent[] = isFreshGoal && chosenGoal && explicitGoalNumber !== null
+    ? [{ type: "UPDATE_ENTITY", entity_id: chosenGoal.entity_id,
+        patch: { quantity: explicitGoalNumber, ...(staleProductName ? { model: null,
+          attributes: { quantity_basis: "customer_explicit", product_name: null,
+            sku: null, semantic_attributes: {}, installation_type: null, room_sizes: {},
+            room_window_openings: {}, window_opening_observation: null }, } : {
+          attributes: { quantity_basis: "customer_explicit" } }) },
+        provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } }]
+    : [];
   const orderedEvents = [
     ...quantityEvents.filter(event => event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY"),
     ...quantityEvents.filter(event => event.type !== "ENSURE_ENTITY" && event.type !== "ADD_ENTITY"),
+    ...newGoalEvents,
   ];
   const withoutCorrections=orderedEvents.filter(event=>event.type!=="ADD_CORRECTION");
   const candidate=reduceCommerceState(previous,withoutCorrections);

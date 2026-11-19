@@ -247,6 +247,38 @@ Deno.test("C3 semantic T06 initial AC quantity", () => {
   assert(reply.includes("3"));
 });
 
+
+Deno.test("Task3C original Ticket source sequence stops six-browser-tabs from becoming three-AC quantity",()=>{
+  const conversation_id="70000000-0000-4000-8000-000000000001";
+  const company_id="70000000-0000-4000-8000-000000000002";
+  const turns=[
+    "早晨，我間書房大約95呎，想揀部窗口冷氣。見到樂聲 CW-SUL70BA，呢款係幾多匹，同埋有咩主要功能？",
+    "更正，實際只係8個分頁，預算想慳啲。請比較 RAM、CPU、SSD 升級優先次序，邊啲可以暫緩？暫時唔使查店舖售價或庫存。",
+    "再更正，依家只會開6個分頁，其他文書、視像會議同慳錢要求不變。",
+    "我要為兩間睡房同一個客廳選購冷氣，即合共三部；這是測試資料。",
+  ];
+  const expected=[1,1,1,3];
+  let state=createEmptyConversationCommerceState();
+  for(let index=0;index<turns.length;index++){
+    const source_message_id="70000000-0000-4000-8000-"+String(index+1).padStart(12,"0");
+    state=reduceTurn(state,{
+      conversation_id,company_id,source_message_id,text:turns[index],
+      language:"zh-TW",history:turns.slice(0,index).map(content=>({role:"visitor",content})),
+    },buildCommerceEntityHints(turns.slice(0,index+1).reverse()));
+    const active=state.entities.filter(e=>e.category==="air_conditioner"&&
+      !["deferred","cancelled","superseded"].includes(e.status));
+    assert(active.length===1 && active[0].quantity===expected[index],
+      JSON.stringify({index,expected:expected[index],actual:active.map(e=>({quantity:e.quantity,model:e.model}))}));
+    if(index===2)assert(active[0].model==="CW-SUL70BA","tabs must not replace the earlier SKU");
+    if(index===3){
+      assert(active[0].model===null,"new general goal cannot inherit old study SKU");
+      assert(Object.keys((active[0].attributes.room_sizes ?? {}) as Record<string,unknown>).length===0,
+        "new multiple-room goal cannot inherit unrelated old room size");
+      assert(active[0].provenance.source_message_id===source_message_id,
+        "new customer-owned goal must retain actual source");
+    }
+  }
+});
 // Task3C T06 v289 actual-source shaped regression (isolated, redacted).
 // This keeps the observed six-versus-three contradiction, original customer
 // source, old legacy SKU and exact fresh question. It is not a Hosted PASS.

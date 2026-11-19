@@ -1732,10 +1732,11 @@
   },
   "authorized_task3c_t06_turn2_source_sha256": {
     "supabase/functions/_shared/conversation-recall.ts": "ccbbcc326615339b586965fb0d98699043156c7457e5467a4c9cc2cc59c6043f",
-    "supabase/functions/_shared/conversation-recall.test.ts": "9ba4b68351532aa2c28ad4ed795e77cd8ca1f1da6859ed3bef163775ec7dd9ff",
+    "supabase/functions/_shared/conversation-recall.test.ts": "ae51c69749c9a9db85bffe0915897024441590ba385677cccc89ea0c4c1abb15",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "f1a95427c64634d9751066348525f7226366fa3197187573e602c015b621af7f",
     "supabase/functions/generate-reply/index.ts": "8fce61493465dd9c5538c81465eab7b0636fe78783f7ad5ec967e6788e33b956",
-    "tests/emergency-p0/chain.test.mjs": "9af28094a9c530ccf93c90f604e06f35ebe1ca24b96b62056e3d3bd32f941abf"
+    "tests/emergency-p0/chain.test.mjs": "9af28094a9c530ccf93c90f604e06f35ebe1ca24b96b62056e3d3bd32f941abf",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "a173fa5112d96d47561defa2800e233e9e255b9a2f092596b46805c6c9a0ea25"
   },
   "authorized_task3c_t06_source_sha256": {
     "supabase/functions/_shared/llm-router.ts": "6be4633b8efc5d2c181b509c2b38c7aee3240e1c65c86e5a52995881dbc00c9f",
