@@ -1796,10 +1796,30 @@ export function resolveConversationRecall(
           return !!needle && row.content.normalize("NFKC").toLowerCase().includes(needle);
         }));
   };
+  // Original typed-recall contract also accepts an authenticated,
+  // source-revision-bound canonical customer field when the isolated fixture
+  // has no separate Visitor-row projection. Do NOT use this exception if a
+  // Visitor source list was provided but failed the independent check.
+  const persistedOwnedField = (e: RecallEvidence): boolean => {
+    if (e.source_kind !== "customer_owned_canonical_property") return false;
+    const path = /^entities\.(\d+)\.(attributes|constraints)\.([A-Za-z0-9_]+)$/u.exec(e.state_path);
+    if (!path) return false;
+    const entity = input.commerce?.state.entities[Number(path[1])];
+    if (!entity || !isCurrentEntity(entity) ||
+        entity.entity_id !== e.entity_id ||
+        entity.provenance.source_type !== "customer" ||
+        !entity.provenance.source_message_id ||
+        entity.provenance.source_message_id !== e.evidence_source_message_id ||
+        !keyMatches(path[3], e.fact_type)) return false;
+    const record = path[2] === "attributes" ? entity.attributes : entity.constraints;
+    return Object.prototype.hasOwnProperty.call(record, path[3]) &&
+      JSON.stringify(fieldValue(e.fact_type, path[3], record[path[3]])) === JSON.stringify(e.value);
+  };
   const canonicalProof = previous.provenance.evidence.length > 0 &&
     previous.provenance.evidence.every(e =>
       e.authority === "CANONICAL_COMMERCE_STATE" ||
-      (e.source_kind === "customer_owned_canonical_property" && originalSource(e)));
+      (e.source_kind === "customer_owned_canonical_property" &&
+        (originalSource(e) || (!visitor.length && persistedOwnedField(e)))));
   const legacyPersonalProof = unsupportedTypedField &&
     previous.provenance.evidence.length > 0 &&
     previous.provenance.evidence.every(e => e.authority === "CURRENT_CUSTOMER_MEMORY" && originalSource(e));
