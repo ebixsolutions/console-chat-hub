@@ -4826,7 +4826,7 @@ async function orchestrationGenerateReply(
     _a3SemanticFrame.intent === "customer_fact_recall" &&
     _a3SemanticFrame.operation === "ASK_FACT" && _a3SemanticFrame.confidence >= 0.72 &&
     !_a3SemanticFrame.ambiguity.is_ambiguous && !_a3SemanticFrame.customer_correction &&
-    !_a3SemanticFrame.additive && _a3SemanticFrame.customer_facts.length === 0 &&
+    !_a3SemanticFrame.additive && _a3SemanticFrame.customer_facts?.length === 0 &&
     [_a3SemanticFrame.transaction_state, _a3SemanticFrame.payment_state,
       _a3SemanticFrame.booking_state, _a3SemanticFrame.fulfillment_state]
       .every(state => state === "none" || state === "unknown") &&
