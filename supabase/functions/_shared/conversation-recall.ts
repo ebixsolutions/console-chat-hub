@@ -1709,12 +1709,11 @@ export function resolveConversationRecall(
   const semantic = resolveSemanticCustomerRecall(input);
   if (!semantic) return resolveConversationRecallLegacy(input);
   if (semantic.handled) return semantic;
-  const soft = new Set([
-    "CUSTOMER_RECALL_FIELD_AMBIGUOUS",
-    "CUSTOMER_RECALL_SOURCE_NOT_ATTESTED",
-    "CUSTOMER_RECALL_SOURCE_AMBIGUOUS",
-  ]);
-  if (semantic.reason === "AMBIGUOUS" && !soft.has(semantic.detail)) return semantic;
+  // Only unsupported / compound field selection is a compatibility gap.
+  // A selected scalar with missing, conflicting or wrong-subject Visitor
+  // attestation must remain rejected, even if canonical state has a value.
+  if (semantic.reason === "AMBIGUOUS" &&
+      semantic.detail !== "CUSTOMER_RECALL_FIELD_AMBIGUOUS") return semantic;
   // The prior resolver runs its own tenant/source/revision and intent checks.
   const previous = resolveConversationRecallLegacy(input);
   if (!previous.handled) return semantic.reason === "CURRENT_KB_REQUIRED" ? semantic : previous;
