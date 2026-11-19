@@ -587,6 +587,11 @@ function parseQuery(
     f !== "summary" && hasField(q, f)
   );
   if (summary) facts = ["summary"];
+  // Domain-neutral quantity slots across commerce and service industries.
+  // This identifies a fact type, never a customer source or its value;
+  // ownership, external-fact and same-ticket provenance remain mandatory.
+  if (!facts.length && owner && question &&
+      /(?:幾多|几多|多少|幾|几|how many)\s*(?:部|台|件|套|份|盒|箱|堂|課|课|位|張|张|units?|items?|pieces?|sets?|boxes?|sessions?|lessons?|licenses?|licences?|seats?|nights?)/iu.test(q)) facts = ["quantity"];
   if (!facts.length && /[?？][\s\S]+[?？]/u.test(q)) {
     return { facts: [], stop: fail("NOT_A_RECALL_QUERY", "MULTIPLE_UNRESOLVED_QUESTIONS") };
   }

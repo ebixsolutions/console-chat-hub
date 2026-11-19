@@ -4815,9 +4815,9 @@ async function orchestrationGenerateReply(
     !_a3SemanticFrame.ambiguity.is_ambiguous &&
     !_a3SemanticFrame.customer_correction &&
     !_a3SemanticFrame.additive &&
-    _a3SemanticFrame.demands.length === 1 &&
-    _a3SemanticFrame.demands[0].source_type === "general" &&
-    _a3SemanticFrame.demands[0].requested_facts.length === 0 &&
+    _a3SemanticFrame.demands?.length === 1 &&
+    _a3SemanticFrame.demands?.[0]?.source_type === "general" &&
+    _a3SemanticFrame.demands?.[0]?.requested_facts.length === 0 &&
     _a3SemanticFrame.requested_facts.length === 0);
   const _customerRequestDecision = resolveCustomerRequestDecision(_semanticRequestQuestion,_a3SemanticFrame,_semanticRoutingHistory);
   if(_criticalE2ExpectedTenantId&&_h1SourceMessageId)await writeProtectedPipelineEvidence(supabaseAdmin,{
@@ -5283,7 +5283,7 @@ async function orchestrationGenerateReply(
     applyServiceRuntimeDerivation({
       question: _productFactualRequest,
       request_decision: _c3AttestedRequestDecision,
-      factual_request: _c3SourceAttestedCustomerRecall ? null : _currentFactualRequest,
+      factual_request: _c3SourceAttestedCustomerRecall ? undefined : (_currentFactualRequest ?? undefined),
       semantic_frame: _a3SemanticFrame,
       committed_source_message_id: _c3CommerceSnapshot?.source_message_id === _h1SourceMessageId ? _h1SourceMessageId : undefined,
       language: _visitorLang,

@@ -1729,9 +1729,14 @@
     "supabase/functions/generate-reply/index.ts": "52fa2b450b8b1fa66f5c9103327fc5928808165059839d4813ec6927274103a3",
     "tests/emergency-p0/chain.test.mjs": "541ebdc13aab0d43e6fa5c1a66e199391d9eb0cf6ee1ce4feb67d692c83e0994",
     "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
-  }
-,
-  "authorized_task3c_t06_turn2_source_sha256": {"supabase/functions/_shared/conversation-recall.ts":"769ecb4809e7e20d4790599733d393483144e4a4ae3c6ccfc197ef7c63461981","supabase/functions/_shared/conversation-recall.test.ts":"9ba4b68351532aa2c28ad4ed795e77cd8ca1f1da6859ed3bef163775ec7dd9ff","supabase/functions/_shared/commerce-semantic-frame.ts":"f1a95427c64634d9751066348525f7226366fa3197187573e602c015b621af7f","supabase/functions/generate-reply/index.ts":"005515a01f0659be7c5d8a2d78b9e13d73ccb997538afad8c849b5a0e5aa2bcd","tests/emergency-p0/chain.test.mjs":"9af28094a9c530ccf93c90f604e06f35ebe1ca24b96b62056e3d3bd32f941abf"},
+  },
+  "authorized_task3c_t06_turn2_source_sha256": {
+    "supabase/functions/_shared/conversation-recall.ts": "ccbbcc326615339b586965fb0d98699043156c7457e5467a4c9cc2cc59c6043f",
+    "supabase/functions/_shared/conversation-recall.test.ts": "9ba4b68351532aa2c28ad4ed795e77cd8ca1f1da6859ed3bef163775ec7dd9ff",
+    "supabase/functions/_shared/commerce-semantic-frame.ts": "f1a95427c64634d9751066348525f7226366fa3197187573e602c015b621af7f",
+    "supabase/functions/generate-reply/index.ts": "8fce61493465dd9c5538c81465eab7b0636fe78783f7ad5ec967e6788e33b956",
+    "tests/emergency-p0/chain.test.mjs": "9af28094a9c530ccf93c90f604e06f35ebe1ca24b96b62056e3d3bd32f941abf"
+  },
   "authorized_task3c_t06_source_sha256": {
     "supabase/functions/_shared/llm-router.ts": "6be4633b8efc5d2c181b509c2b38c7aee3240e1c65c86e5a52995881dbc00c9f",
     "supabase/functions/_shared/execution-failure.ts": "f26fdca50840b07bfb2e136d977b48302f8b873f4924541b11cda78ba40635f9",
