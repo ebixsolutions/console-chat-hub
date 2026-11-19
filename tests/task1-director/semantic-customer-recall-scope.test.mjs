@@ -173,6 +173,26 @@ test('Task3C N1/N3 exact 13-case clean-source differential versus deployed-v289 
     customer_recall_proposal:keys.length?{company_id,conversation_id,source_message_id,
       intent:'customer_fact_recall',requested_facts:keys,subject_refs:[]}:undefined};
    const after=prepareConversationRecall(currentInput,'zh-TW').decision;
+   if(caseId==='T68'){
+    assert(after.handled,'T68 two room/horsepower requirements must be source-attested');
+    const wrong=structuredClone(currentInput);
+    const fact=wrong.memory.current_customer_facts.find(f=>f.key==='horsepower');
+    assert(fact && Array.isArray(fact.value) && fact.value.length===2,
+      'T68 requires retained room/horsepower pairs');
+    fact.value=fact.value.map((v,i)=>i===1?String(v).replace('1.5匹','2匹'):v);
+    assert.equal(prepareConversationRecall(wrong,'zh-TW').decision.handled,false,
+      'wrong second-room horsepower must not match the first room');
+    const spec=structuredClone(currentInput);
+    spec.trusted_visitor_source_rows=spec.trusted_visitor_source_rows.map(row=>({
+      ...row,content:'細房產品規格1匹，大房產品規格1.5匹。'
+    }));
+    assert.equal(prepareConversationRecall(spec,'zh-TW').decision.handled,false,
+      'product specs must not prove customer-owned requirements');
+    const duplicate=structuredClone(currentInput);
+    duplicate.trusted_visitor_source_rows.push({...duplicate.trusted_visitor_source_rows[0]});
+    assert.equal(prepareConversationRecall(duplicate,'zh-TW').decision.handled,false,
+      'duplicate Visitor-source IDs are not unique evidence');
+   }
    const equal=before.handled===after.handled &&
       (!before.handled||JSON.stringify(before.value)===JSON.stringify(after.value));
    // Source route decisions only: report concise path/why without disclosing

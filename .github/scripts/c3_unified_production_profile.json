@@ -1731,7 +1731,7 @@
     "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
-    "supabase/functions/_shared/conversation-recall.ts": "77606c292fc3d0c3352e6cbfcc668e4492becf45f3214dac2859077bc1933ef6",
+    "supabase/functions/_shared/conversation-recall.ts": "32c45bb31aeec1684694e2250084b752d1ad80706b8478a01698ffb380188246",
     "supabase/functions/_shared/conversation-recall.test.ts": "75826728fbbb6c9dc7bf0f1df744ec266172d5c1580dfef777a13dcb8da0568e",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "9038f9546989c371986129601705e42673c29537016ce8c1212e9bb351c643c4",
     "supabase/functions/generate-reply/index.ts": "457096bafa09bd49f23c2c93b4614282a379e23d7901bc596e88a1c33b8a8f57",
@@ -1766,7 +1766,7 @@
     "tests/task1-director/fixtures/task3c-replay/industry-seeds/saas/tasks.json": "e81dcced7eb92cbf329bbd83dd0ff467fa30edc93504749111d75f690bad6bb4",
     "tests/task1-director/fixtures/task3c-replay/original-33-turns.json": "d069e7bb4e8100fe97f331e1fe56ccec3e3e09f72f24a0c605f3cca9adfd2542",
     "tests/task1-director/quantity-source-scope.test.mjs": "5e7a308cf6a573e76dbb9040bffa4efe3fcbfecb706ae39fad1e6444ee321412",
-    "tests/task1-director/semantic-customer-recall-scope.test.mjs": "ef9a6249f3821cf194cfa4964d70baaa0d74fee2ba0edc438327c75f90201391"
+    "tests/task1-director/semantic-customer-recall-scope.test.mjs": "02eb123521f1c4af520e6236659a279cf9ac7358da0daf48eae2d7fdc41dad38"
   },
   "authorized_task3c_t06_source_sha256": {
     "supabase/functions/_shared/llm-router.ts": "6be4633b8efc5d2c181b509c2b38c7aee3240e1c65c86e5a52995881dbc00c9f",

@@ -1733,10 +1733,34 @@ export function resolveConversationRecall(
   const originalSource = (e: RecallEvidence) => {
     if (e.temporal_scope !== "current") return false;
     if (e.evidence_source_message_id) {
-      const row = visitor.find(x => x.id === e.evidence_source_message_id);
-      // Source ID is server-bound; the original typed resolver has already
-      // selected the matching field/subject, including room/unit variants.
-      return !!row && hasField(row.content, e.fact_type);
+      // T68/F1 (S3): independently verify the retained field against exactly
+      // one server-read Visitor utterance; duplicate source IDs are unsafe.
+      const matching = visitor.filter(x => x.id === e.evidence_source_message_id);
+      if (matching.length !== 1) return false;
+      const row = matching[0];
+      if (e.fact_type === "horsepower" && Array.isArray(e.value)) {
+        // Memory stores room/unit pairs, e.g. "small room 1匹". Verify each
+        // pair against an original customer request, not a product spec or
+        // an unrelated occurrence of the same number.
+        if (!e.value.length || e.value.length > 8) return false;
+        const source = sourceClauses(row.content);
+        return e.value.every(raw => {
+          if (typeof raw !== "string") return false;
+          const pair = raw.normalize("NFKC").match(/^(.{1,60}?)\s+(\d+(?:\.\d+)?)\s*匹$/u);
+          if (!pair) return false;
+          const subject = pair[1].trim(), amount = pair[2].replace(".", "\\.");
+          if (!subject) return false;
+          const requested = new RegExp(
+            "(?:要|需要|想要|指定|要求|預計|期望|希望|need|want|request)\\s*" +
+              amount + "\\s*匹(?![\\d.])", "iu",
+          );
+          return source.some(clause => {
+            const at = clause.indexOf(subject);
+            return at >= 0 && requested.test(clause.slice(at + subject.length));
+          });
+        });
+      }
+      return hasField(row.content, e.fact_type);
     }
     const part = /^(customer_preferences|active_constraints|latest_corrections)\.(\d+)/u.exec(e.state_path);
     if (part) {
