@@ -246,6 +246,89 @@ Deno.test("C3 semantic T06 initial AC quantity", () => {
   });
   assert(reply.includes("3"));
 });
+
+// Task3C T06 v289 actual-source shaped regression (isolated, redacted).
+// This keeps the observed six-versus-three contradiction, original customer
+// source, old legacy SKU and exact fresh question. It is not a Hosted PASS.
+function t06Turn2SourceConflictFixture(): ConversationRecallInput {
+  const input = recallFixture("我剛才說總共要幾多部冷氣？只回答數量。");
+  const sourceId = "60000000-0000-4000-8000-000000000100";
+  const entity = input.commerce!.state.entities[0];
+  entity.entity_id = "air_conditioner:unscoped";
+  entity.category = "air_conditioner";
+  entity.model = "CW-SUL70BA";
+  entity.quantity = 6;
+  entity.provenance = { source_type: "customer", source_message_id: sourceId };
+  entity.attributes = { ...entity.attributes, product_name:"CW-SUL70BA", room_sizes:{study:"95平方呎"} };
+  input.memory!.active_entities = [{
+    ...input.memory!.active_entities[0],
+    entity_id:"air_conditioner:unscoped",type:"air_conditioner",
+    quantity:6, model:"CW-SUL70BA",
+  }];
+  input.memory!.current_customer_facts = [{
+    key:"quantity",value:3,authority:"customer",
+    entity_id:null,region:null,source_message_id:sourceId,
+  }];
+  input.trusted_visitor_source_rows = [{
+    id:sourceId,
+    content:"我要為兩間睡房同一個客廳選購冷氣，即合共三部；這是測試資料。",
+  }];
+  return input;
+}
+Deno.test("Task3C v289 T06 quoted customer total uses original Visitor evidence, not stale canonical six", () => {
+  const input=t06Turn2SourceConflictFixture();
+  const before=JSON.stringify(input);
+  const result=prepareConversationRecall(input,"zh-TW");
+  assert(JSON.stringify(input)===before,"recall cannot mutate canonical state");
+  assert(result.decision.handled&&result.decision.value===3,JSON.stringify(result.decision));
+  assert(result.decision.provenance.evidence.length===1 &&
+    result.decision.provenance.evidence[0].source_kind==="attested_customer_utterance",JSON.stringify(result.decision));
+  assert((result.reply??"").includes("3")&&!(result.reply??"").includes("6"),String(result.reply));
+  assert(input.commerce!.state.entities[0].quantity===6,"read must not mutate legacy bad commerce state");
+});
+for(const [label,change] of [
+  ["missing source", (x:ConversationRecallInput)=>{x.trusted_visitor_source_rows=[];}],
+  ["wrong quoted number", (x:ConversationRecallInput)=>{x.trusted_visitor_source_rows![0].content="客人合共四部。";}],
+  ["wrong source ID", (x:ConversationRecallInput)=>{x.trusted_visitor_source_rows![0].id="60000000-0000-4000-8000-000000000999";}],
+  ["tenant changed", (x:ConversationRecallInput)=>{x.company_id="other-tenant";}],
+  ["not actually a prior-speech request", (x:ConversationRecallInput)=>{x.question="現在實際要幾多部冷氣？";}],
+] as const)Deno.test("Task3C v289 T06 unverified quantity fails closed: "+label,()=>{
+  const input=t06Turn2SourceConflictFixture();change(input);
+  const result=resolveConversationRecall(input);
+  assert(!result.handled && result.reason==="AMBIGUOUS",JSON.stringify(result));
+});
+Deno.test("Task3C cross-industry customer-owned count has a different source type from merchant price",()=>{
+  const input=t06Turn2SourceConflictFixture();
+  input.question="How many licenses did I mention earlier?";
+  input.trusted_visitor_source_rows![0].content="We need 3 licenses for the new service.";
+  const recall=resolveConversationRecall(input);
+  assert(recall.handled && recall.value===3,JSON.stringify(recall));
+  input.question="What is the current official price of those licenses?";
+  const merchant=resolveConversationRecall(input);
+  assert(!merchant.handled && merchant.reason==="CURRENT_KB_REQUIRED",JSON.stringify(merchant));
+});
+
+
+for (const [industry,sourceText,question] of [
+  ["retail","我之前說合共要三件商品。","我之前說要幾多件商品？"],
+  ["saas","We need 3 licenses for the new service.","How many licenses did I mention earlier?"],
+  ["beauty","我之前提過要三堂美容療程。","我之前提過幾多堂美容療程？"],
+  ["restaurant","我先前說想要三份套餐。","我先前說要幾多份套餐？"],
+  ["education","我之前要求三課英語課程。","我之前要求幾多課英語課程？"],
+] as const) Deno.test("Task3C customer quantity source proof is industry-neutral: "+industry,()=>{
+  const input=t06Turn2SourceConflictFixture();
+  input.question=question;
+  input.trusted_visitor_source_rows![0].content=sourceText;
+  const result=resolveConversationRecall(input);
+  assert(result.handled && result.value===3,JSON.stringify(result));
+});
+Deno.test("Task3C customer source number cannot cross into a different service/product subject",()=>{
+  const input=t06Turn2SourceConflictFixture();
+  input.question="How many licenses did I mention earlier?";
+  input.trusted_visitor_source_rows![0].content="We need 3 refrigerators.";
+  const result=resolveConversationRecall(input);
+  assert(!result.handled&&result.reason==="AMBIGUOUS",JSON.stringify(result));
+});
 Deno.test("C3 semantic T17 corrected active quantity excludes deferred item", () => {
   const { d, reply } = answer("更正後冷氣數量是多少？");
   assert(d.value === 2 && !reply.includes("3"));

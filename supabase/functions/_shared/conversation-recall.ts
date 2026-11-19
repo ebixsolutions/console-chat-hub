@@ -84,6 +84,10 @@ export interface ConversationRecallInput extends RecallScope {
   /** Hints may select an existing entity; they can never supply a fact value. */
   referents?: Array<{ ref: string; confidence: number; source?: string }>;
   recent_questions?: string[];
+  /** Server-read, unrecalled Visitor messages from this same authorized conversation.
+   * Source text is proof to compare with current customer Memory, not a new value authority.
+   * Never accept rows supplied by a widget, model output or client metadata. */
+  trusted_visitor_source_rows?: ReadonlyArray<{ id: string; content: string }>;
   explicit_handoff?: boolean;
   /** True only after both scoped DB reads succeed and return no row. */
   empty_state_verified?: boolean;
@@ -134,6 +138,10 @@ const FIELDS: Partial<Record<RecallFact, string[]>> = {
     "几件",
     "幾多部",
     "几多部",
+    "幾多件", "几多件", "幾多份", "几多份",
+    "幾多堂", "几多堂", "幾多課", "几多课",
+    "幾多套", "几多套", "幾多盒", "几多盒",
+    "幾堂", "几堂", "幾課", "几课", "幾份", "几份",
   ],
   address: ["address", "地址", "邊座", "哪座", "邊度收貨", "哪里收货", "收貨資料", "收货资料", "delivery details"],
   recipient: ["recipient", "收貨人", "收货人", "收件人", "誰收", "誰人收", "收貨資料", "收货资料", "delivery details"],
@@ -986,6 +994,76 @@ function resolvedRoomSizeCollection(
     })),
   };
 }
+
+/** Verify a customer-owned count against the actual earlier Visitor utterance.
+ * This is an evidence type, not a phrase-triggered answer. The model cannot
+ * supply a count or source ID here, and a stale/conflicting canonical aggregate
+ * is never used to overwrite the literal customer statement. */
+function attestedCustomerQuantity(
+  input: ConversationRecallInput,
+): Candidate | null {
+  const memory = input.memory;
+  const rows = input.trusted_visitor_source_rows;
+  if (!memory || !rows?.length || rows.length > 500 ||
+      !any(input.question, OWNER) ||
+      !/(?:剛才|刚才|頭先|头先|之前|先前|曾經|曾经|講過|讲过|說過|说过|提過|提过|記得|记得|提到|mentioned|previously|earlier|told you|did (?:i|we) say|(?:i|we) said)/iu.test(input.question)) return null;
+  const readNumber = (token: string): number | null => {
+    const numerals: Record<string, number> = {
+      "零":0,"〇":0,"一":1,"二":2,"兩":2,"两":2,"三":3,
+      "四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10,
+    };
+    const n = /^[0-9]{1,4}$/.test(token) ? Number(token) : numerals[token];
+    return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 1000 ? n : null;
+  };
+  const countsIn = (value: string): number[] => {
+    const tokens = [...value.matchAll(
+      /([0-9]{1,4}|[零〇一二兩两三四五六七八九十])\s*(?:部|台|件|套|份|盒|箱|堂|課|课|張|张|units?|items?|pieces?|sets?|boxes?|sessions?|lessons?|licenses?|licences?|seats?|nights?)(?![a-z])/giu,
+    )].map((m) => readNumber(m[1])).filter((x): x is number => x !== null);
+    const total = value.match(
+      /(?:合共|總共|总共|共計|共计|一共|總數|总数|in total|altogether|total(?: of)?)\s*(?:需|要|有|是|為|为|:|：)?\s*([0-9]{1,4}|[零〇一二兩两三四五六七八九十])\s*(?:部|台|件|套|份|盒|箱|堂|課|课|units?|items?|pieces?|sets?|boxes?|sessions?|lessons?|licenses?|licences?|seats?|nights?)/iu,
+    );
+    const exact = total ? readNumber(total[1]) : null;
+    return exact === null ? [...new Set(tokens)] : [exact];
+  };
+  const candidates: Candidate[] = [];
+  for (let i = 0; i < memory.current_customer_facts.length; i++) {
+    const fact = memory.current_customer_facts[i];
+    if (fact.authority !== "customer" || keyNorm(fact.key) !== "quantity" ||
+        typeof fact.value !== "number" || !Number.isInteger(fact.value) ||
+        fact.value < 0 || fact.value > 1000 ||
+        !fact.source_message_id || fact.source_message_id === input.source_message_id) continue;
+    const matching = rows.filter((row) =>
+      row.id === fact.source_message_id && typeof row.content === "string" &&
+      row.content.length > 0 && row.content.length <= 2400,
+    );
+    if (matching.length !== 1) continue;
+    const exact = countsIn(matching[0].content);
+    if (exact.length !== 1 || exact[0] !== fact.value) continue;
+    // Bind an explicit quantified subject to the same Visitor utterance.
+    // A generic quantity from an AC discussion must never answer a separate
+    // course/license/booking question. Unresolvable cross-language synonyms
+    // remain ambiguous rather than becoming invented equivalence.
+    const namedEnglish = input.question.match(/\bhow\s+many\s+(.{2,70}?)(?=\s+(?:did|do|have|was|were|are|is|would|will|i|we|you|the|there)\b|[?!.,]|$)/iu)?.[1]?.trim();
+    const namedChinese = input.question.match(/(?:幾多|几多|多少)\s*(?:[0-9一二兩两三四五六七八九十]+\s*)?(?:部|台|件|套|份|盒|箱|堂|課|课|張|张|個|个)?\s*([\p{Script=Han}A-Za-z][\p{Script=Han}A-Za-z0-9_-]{1,22})/u)?.[1]?.trim();
+    const namedSubject = namedEnglish || namedChinese;
+    if (namedSubject && !matching[0].content.normalize("NFKC").toLowerCase()
+      .includes(namedSubject.normalize("NFKC").toLowerCase())) continue;
+    candidates.push({
+      fact_type: "quantity", value: fact.value,
+      state_path: "current_customer_facts." + i + ".value",
+      authority: "CURRENT_CUSTOMER_MEMORY",
+      entity_id: fact.entity_id ?? null,
+      region: fact.region ?? null,
+      evidence_source_message_id: fact.source_message_id,
+      temporal_scope: "current", source_kind: "attested_customer_utterance",
+      rank: -2,
+    });
+  }
+  // Multiple valid, distinct customer totals need a newer entity/source
+  // disambiguation; a broad history search must never silently pick one.
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
 function canonicalCandidates(
   input: ConversationRecallInput,
   f: RecallFact,
@@ -1579,6 +1657,29 @@ export function resolveConversationRecall(
       ...canonicalCandidates(input, f, selected),
       ...memoryCandidates(input, f, selected),
     ].sort((a, b) => a.rank - b.rank);
+    if (f === "quantity") {
+      const spoken = attestedCustomerQuantity(input);
+      if (spoken) {
+        const quoted: RecallEvidence = { ...spoken };
+        delete (quoted as Partial<Candidate>).rank;
+        evidence.push(quoted);
+        continue;
+      }
+      // If the same source has contradictory stored quantities, a mere
+      // canonical ranking must not manufacture a safe answer. This condition
+      // intentionally does not change historical/current Commerce state.
+      const canonical = candidates.find((c) =>
+        c.authority === "CANONICAL_COMMERCE_STATE" && c.rank === 0);
+      const customer = candidates.find((c) =>
+        c.authority === "CURRENT_CUSTOMER_MEMORY" &&
+        c.source_kind === "retained_customer_fact" &&
+        !!c.evidence_source_message_id);
+      if (canonical && customer &&
+          canonical.evidence_source_message_id === customer.evidence_source_message_id &&
+          canonical.value !== customer.value) {
+        return fail("AMBIGUOUS", "CONFLICTING_CUSTOMER_QUANTITY_SOURCE", facts);
+      }
+    }
     if (!candidates.length) {
       return fail("AMBIGUOUS", `MISSING_${f.toUpperCase()}`, facts);
     }

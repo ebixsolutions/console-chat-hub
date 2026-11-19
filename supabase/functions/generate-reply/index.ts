@@ -4806,6 +4806,19 @@ async function orchestrationGenerateReply(
     ? resolveCatalogueVariantFollowup(_h1LastMsg, _semanticRoutingHistory, {conversation_id,company_id:_criticalE2ExpectedTenantId,source_message_id}) : null;
   const _semanticRequestQuestion = _a3SemanticFrame?.demands?.length
     ? _h1LastMsg : _catalogueFollowup?.request ?? _h1LastMsg;
+  // T06: preserve the accepted provider's general/customer-recall proposal
+  // before the legacy ownership projection promotes it to a merchant KB demand.
+  // This is only a candidate; no source or value is trusted until the scoped,
+  // server-read Memory/Visitor evidence independently proves it below.
+  const _c3OriginalGeneralRecallCandidate = Boolean(_a3SemanticFrame &&
+    _a3SemanticFrame.operation === "ASK_FACT" &&
+    !_a3SemanticFrame.ambiguity.is_ambiguous &&
+    !_a3SemanticFrame.customer_correction &&
+    !_a3SemanticFrame.additive &&
+    _a3SemanticFrame.demands.length === 1 &&
+    _a3SemanticFrame.demands[0].source_type === "general" &&
+    _a3SemanticFrame.demands[0].requested_facts.length === 0 &&
+    _a3SemanticFrame.requested_facts.length === 0);
   const _customerRequestDecision = resolveCustomerRequestDecision(_semanticRequestQuestion,_a3SemanticFrame,_semanticRoutingHistory);
   if(_criticalE2ExpectedTenantId&&_h1SourceMessageId)await writeProtectedPipelineEvidence(supabaseAdmin,{
     company_id:_criticalE2ExpectedTenantId,conversation_id,source_message_id:_h1SourceMessageId,
@@ -5209,7 +5222,27 @@ async function orchestrationGenerateReply(
     recent_questions: ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
       .filter((row) => row.role === "visitor" && row.id !== _h1SourceMessageId)
       .slice(0, 12).map((row) => String(row.content ?? "")),
+    trusted_visitor_source_rows: ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
+      .filter((row) => row.role === "visitor" && row.id !== _h1SourceMessageId &&
+        typeof row.id === "string" && typeof row.content === "string")
+      .slice(0, 100).map((row) => ({ id: String(row.id), content: String(row.content) })),
   }, _visitorLang);
+  const _c3SourceAttestedCustomerRecall = Boolean(
+    _c3OriginalGeneralRecallCandidate && _criticalE2ExpectedTenantId &&
+    !_explicitHandoffRequested && !_mixedRequest &&
+    _c3Recall.decision.handled && _c3Recall.decision.fact_type === "quantity" &&
+    _c3Recall.decision.provenance.conversation_id === conversation_id &&
+    _c3Recall.decision.provenance.company_id === _criticalE2ExpectedTenantId &&
+    _c3Recall.decision.provenance.evidence.length === 1 &&
+    _c3Recall.decision.provenance.evidence[0].source_kind === "attested_customer_utterance" &&
+    _c3Recall.decision.provenance.evidence[0].evidence_source_message_id &&
+    !_currentFactualRequest?.transaction_required);
+  // A source-attested customer quote is not a merchant price/policy/stock fact.
+  // Preserve the KB demand for every other case, including ambiguous, mixed,
+  // inferred, unbound and transaction requests.
+  const _c3AttestedRequestDecision = _c3SourceAttestedCustomerRecall
+    ? { ..._customerRequestDecision, kind: "guidance" as const, merchant_request: null }
+    : _customerRequestDecision;
   const _c3RecentServiceMessages =
     ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
       .map((row) => ({
@@ -5249,12 +5282,13 @@ async function orchestrationGenerateReply(
   const _c3ServicePlan: ServiceDialoguePlan = planConversationService(
     applyServiceRuntimeDerivation({
       question: _productFactualRequest,
-      request_decision: _customerRequestDecision,
-      factual_request: _currentFactualRequest,
+      request_decision: _c3AttestedRequestDecision,
+      factual_request: _c3SourceAttestedCustomerRecall ? null : _currentFactualRequest,
       semantic_frame: _a3SemanticFrame,
       committed_source_message_id: _c3CommerceSnapshot?.source_message_id === _h1SourceMessageId ? _h1SourceMessageId : undefined,
       language: _visitorLang,
       recall:
+        !_c3SourceAttestedCustomerRecall &&
         requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
           (_effectiveNaturalCustomerIntent.kind === "product_factual_query" ||
             !_c3Recall.decision.handled)
@@ -5280,7 +5314,8 @@ async function orchestrationGenerateReply(
   // service/process question, a product-referent shortcut, or a tool failure.
   // Preserve the original resolver's subject/ambiguity/size guards and B2.
   // This is a *read route*, not evidence of any merchant fact or permission.
-  const _n1CurrentKbDemandReady = _currentFactualRequest?.kb_required === true &&
+  const _n1CurrentKbDemandReady = !_c3SourceAttestedCustomerRecall &&
+    _currentFactualRequest?.kb_required === true &&
     _currentFactualRequest.applicable === true &&
     !_currentFactualRequest.needs_subject_clarification &&
     typeof _currentFactualRequest.query === "string" &&

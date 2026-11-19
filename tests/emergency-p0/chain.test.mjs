@@ -3167,3 +3167,65 @@ for(const [kind,answer,verdicts] of [
  assert(f.requests.filter(row=>row.url.endsWith(':generateContent')).length<=4);
  assert.doesNotMatch(f.commits[0].content,/商戶保證|400 平方呎|HK\$999/,'unsupported claim leaks through fallback');
 });
+
+
+// Task3C v289 T06 customer-owned turn2: original full handler with a redacted
+// source-shaped prior Ticket state. The recorded 6/3 conflict is deliberately
+// retained; only server-observed Visitor wording can attest a quoted count.
+// This fixture does NOT create a live session, paid request or Hosted PASS.
+test('Task3C T06 turn2 source-attested recall bypasses irrelevant merchant KB but not original B2',async()=>{
+  const first=t06RealHandlerFixture({preview:true,verdicts:[t06Valid],sourceOffset:90});
+  const firstResult=await first.run();
+  assert.equal(firstResult.status,200,JSON.stringify(firstResult));
+  const prior=first.tables;
+  const commerce=prior.conversation_commerce_state[0];
+  const memory=prior.conversation_memory_state[0];
+  assert(commerce?.state?.entities?.length>0 && memory?.memory,'first turn must persist real state');
+  const originalSource=uuid(8690);
+  const entity=commerce.state.entities.find(e=>e.category==='air_conditioner')??commerce.state.entities[0];
+  entity.entity_id='air_conditioner:unscoped';entity.quantity=6;
+  entity.model='CW-SUL70BA';
+  entity.attributes={...entity.attributes,product_name:'CW-SUL70BA',room_sizes:{study:'95平方呎'}};
+  entity.provenance={source_type:'customer',source_message_id:originalSource};
+  memory.memory.active_entities=[{
+    ...(memory.memory.active_entities[0]??{}),
+    entity_id:'air_conditioner:unscoped',type:'air_conditioner',quantity:6,
+    model:'CW-SUL70BA',status:'active',current_requirements:{...entity.attributes},
+  }];
+  memory.memory.current_customer_facts=[
+    ...(memory.memory.current_customer_facts??[]).filter(f=>f.key!=='quantity'),
+    {key:'quantity',value:3,authority:'customer',source_message_id:originalSource},
+  ];
+  memory.memory.commerce_state_revision=commerce.revision;
+  memory.memory_hash=hash(JSON.stringify(memory.memory));
+  const latest='我剛才說總共要幾多部冷氣？只回答數量。';
+  const second=fixture(latest,{
+    company:'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493',
+    source:uuid(8691),previous:prior,history:prior.messages,
+    fullChain:true,originalPreview:true,captureEvidence:true,
+    semantic:task1SemanticContextWire([
+      task1SemanticContextDemand('What is the total number of air conditioners I mentioned?',{
+        source_quote:'我剛才說總共要幾多部冷氣',
+        source_type:'general',requested_facts:[],
+      }),
+    ],{intent:'customer_fact_recall',requested_facts:[],language:'zh-HK'}),
+    answer:'您剛才提到的是3部。',
+  });
+  const result=await second.run();
+  assert.equal(result.status,200,JSON.stringify({result,events:second.events.slice(-10)}));
+  assert.equal(second.commits.length,1,'one B2-governed Assistant');
+  assert.match(second.commits[0].content,/3|三/,'known customer number omitted');
+  assert.doesNotMatch(second.commits[0].content,/未能可靠核實回答|6\s*部|六部/);
+  assert.equal(second.requests.filter(r=>r.url.endsWith(':generateContent')).length,1,
+    'source-grounded customer recall must not spend generation/reviewer calls');
+  assert.equal(second.requests.filter(r=>r.url.includes('/rag/context-search')).length,0,
+    'customer quotation must not be sent to merchant knowledge base');
+  assert.equal(second.commits[0].metadata.b2_commit_source,'commit_ai_reply_tx');
+  const priorCommerce=JSON.stringify(commerce.state);
+  assert.equal(JSON.stringify(second.tables.conversation_commerce_state[0].state),priorCommerce,
+    'read-only customer quote must not change commerce or silently correct historic six');
+  const same=await second.run();
+  assert.equal(same.status,200);assert.equal(same.body.idempotent,true);
+  assert.equal(second.commits.length,1);
+  assert.equal(second.requests.filter(r=>r.url.endsWith(':generateContent')).length,1);
+});
