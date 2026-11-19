@@ -1736,7 +1736,7 @@
     "supabase/functions/_shared/execution-failure.ts": "f26fdca50840b07bfb2e136d977b48302f8b873f4924541b11cda78ba40635f9",
     "supabase/functions/_shared/commerce-semantic-interpreter.ts": "00461f0f15bc144847d0b621763eb86941e703380d553ea6b5993c1f002214be",
     "supabase/functions/_shared/prepare-semantic-request.ts": "619494906c8a818d62df5a88fa2a2e54b21304f9acaf75211f43b3e915b75eba",
-    "supabase/functions/generate-reply/index.ts": "9edb65081e327915e102f5fa67b103d68537e1f02f9f6f6cefdda1cdb8916b47",
+    "supabase/functions/generate-reply/index.ts": "94bd133451f3bd1fac03158558375ef4fcf448c1211aae0e5878d0aa51cb109e",
     "supabase/functions/_shared/llm-router-grounding.test.ts": "d31defbf02ce8775ba42b5e796b039f26258024ec66d40fa6e2b4c7007a77c0d",
     "tests/emergency-p0/chain.test.mjs": "e50d39cc9c35c2c842395f4dc96d40bc646073a2f9b05dd9c9ff5d833ef247a1"
   }

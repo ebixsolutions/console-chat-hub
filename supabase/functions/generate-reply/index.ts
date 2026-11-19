@@ -2686,6 +2686,32 @@ async function handleConversationClosureIfNeeded(
   );
 }
 
+// Source-bound durable B2 readback precedes every model/KB dispatch on
+// ordinary and authenticated Preview paths. The existing transaction RPC
+// remains the atomic exactly-once writer across concurrent invocations.
+async function readCommittedReplyBeforeGeneration(
+  supabaseAdmin: SupabaseAdminClient,
+  conversationId: string,
+  sourceMessageId: string,
+  authenticatedPreview = false,
+): Promise<Response | null> {
+  const delivered = await supabaseAdmin.from("messages").select("id")
+    .eq("conversation_id", conversationId)
+    .eq("role", "assistant")
+    .eq("is_recalled", false)
+    .eq("metadata->>b2_source_message_id", sourceMessageId)
+    .limit(1).maybeSingle();
+  if (delivered.error) return new Response(JSON.stringify({
+    success: false,
+    error: authenticatedPreview
+      ? "preview_reply_receipt_unavailable" : "reply_receipt_unavailable",
+  }), {status: 503, headers: {...corsHeaders, "Content-Type": "application/json"}});
+  if (delivered.data?.id) return new Response(JSON.stringify({
+    success: true, idempotent: true, message_id: delivered.data.id,
+  }), {headers: {...corsHeaders, "Content-Type": "application/json"}});
+  return null;
+}
+
 async function legacyGenerateReply(
   conversation_id: string,
   source_message_id: string | null,
@@ -2754,6 +2780,10 @@ async function legacyGenerateReply(
   );
   if (!sourceResult.ok) return sourceMessageErrorResponse(sourceResult);
   const sourceVisitorMessage = sourceResult.message;
+  const durableReply = await readCommittedReplyBeforeGeneration(
+    supabaseAdmin, conversation_id, sourceVisitorMessage.id,
+  );
+  if (durableReply) return durableReply;
 
   const { data: newestMessages } = await supabaseAdmin
     .from("messages")
@@ -4334,21 +4364,18 @@ async function orchestrationGenerateReply(
   const _h1SourceMessageId = sourceVisitorMessage.id;
   const _h1LastMsg = sourceVisitorMessage.content;
 
-  if (conversation.metadata_source?.execution_class === "authenticated_admin_preview") {
-    const deliveredRepair = await supabaseAdmin.from("messages").select("id")
-      .eq("conversation_id",conversation_id).eq("role","assistant").eq("is_recalled",false)
-      .eq("metadata->>b2_source_message_id",_h1SourceMessageId)
-      .limit(1).maybeSingle();
-    if (deliveredRepair.error) return new Response(JSON.stringify({success:false,error:"preview_reply_receipt_unavailable"}),
-      {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
-    if (deliveredRepair.data?.id) return new Response(JSON.stringify({success:true,idempotent:true,message_id:deliveredRepair.data.id}),
-      {headers:{...corsHeaders,"Content-Type":"application/json"}});
-    // A reservation without a durable answer is pending/unknown, never a
-    // reason to dispatch again. This check also covers another isolate.
-    if (sourceVisitorMessage.metadata?.original_preview_draft_repair) return new Response(
-      JSON.stringify({success:true,pending:true,skipped:"draft_repair_delivery_pending"}),
-      {status:202,headers:{...corsHeaders,"Content-Type":"application/json"}});
-  }
+  const authenticatedPreview =
+    conversation.metadata_source?.execution_class === "authenticated_admin_preview";
+  const durableReply = await readCommittedReplyBeforeGeneration(
+    supabaseAdmin, conversation_id, _h1SourceMessageId, authenticatedPreview,
+  );
+  if (durableReply) return durableReply;
+  // A Preview reservation without a durable answer remains pending/unknown;
+  // it must not trigger a second model dispatch.
+  if (authenticatedPreview &&
+    sourceVisitorMessage.metadata?.original_preview_draft_repair) return new Response(
+    JSON.stringify({success:true,pending:true,skipped:"draft_repair_delivery_pending"}),
+    {status:202,headers:{...corsHeaders,"Content-Type":"application/json"}});
 
   const [
     { data: _pr5HistoryRows },
