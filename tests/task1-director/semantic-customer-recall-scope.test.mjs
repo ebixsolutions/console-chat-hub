@@ -184,6 +184,11 @@ test('Task3C N1/N3 exact 13-case clean-source differential versus deployed-v289 
     candidate_detail:after.handled?'SOURCE_BOUND':after.detail,
     baseline_fact:before.handled?before.fact_type:null,
     candidate_fact:after.handled?after.fact_type:null,
+    baseline_evidence:before.handled?before.provenance.evidence.map(e=>({
+      authority:e.authority,source_kind:e.source_kind,
+      has_source_id:!!e.evidence_source_message_id,
+      path_category:e.state_path.split('.')[0]
+    })):null,
     value_equal:before.handled&&after.handled?equal:null,
     independent_setup_turns:setup.length,
     result:before.handled&&!equal?'REGRESSION':after.handled?'SOURCE_ANSWER':'SOURCE_UNRESOLVED'

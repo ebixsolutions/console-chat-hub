@@ -1734,14 +1734,43 @@ export function resolveConversationRecall(
     if (e.temporal_scope !== "current") return false;
     if (e.evidence_source_message_id) {
       const row = visitor.find(x => x.id === e.evidence_source_message_id);
+      // Source ID is server-bound; the original typed resolver has already
+      // selected the matching field/subject, including room/unit variants.
       return !!row && hasField(row.content, e.fact_type);
     }
     const part = /^(customer_preferences|active_constraints|latest_corrections)\.(\d+)/u.exec(e.state_path);
-    if (!part) return false;
-    const index = Number(part[2]);
-    const text = input.memory?.[part[1] as "customer_preferences" | "active_constraints" | "latest_corrections"]?.[index];
-    return typeof text === "string" && text.length > 0 &&
-      visitor.some(x => x.content.includes(text));
+    if (part) {
+      const text = input.memory?.[part[1] as "customer_preferences" | "active_constraints" | "latest_corrections"]?.[Number(part[2])];
+      if (typeof text === "string" && text.length > 0 &&
+          visitor.some(x => x.content.includes(text))) return true;
+    }
+    // Retained per-entity requirements may omit a copied source ID.
+    // Recover its original canonical entity provenance before any answer.
+    const inherited = /^active_entities\.(\d+)\./u.exec(e.state_path);
+    if (inherited) {
+      const entityId = input.memory?.active_entities[Number(inherited[1])]?.entity_id;
+      const entity = input.commerce?.state.entities.find(x => x.entity_id === entityId);
+      if (entity?.provenance.source_type === "customer" &&
+          entity.provenance.source_message_id &&
+          visitor.some(x => x.id === entity.provenance.source_message_id &&
+            hasField(x.content, e.fact_type))) return true;
+    }
+    // For unsupported typed fields only, a current value may also be
+    // independently attested by the prior Visitor utterance itself.
+    // Require both the corresponding field and every primitive value in
+    // a single row; mere number equality in an unrelated topic is not proof.
+    const primitives = (v: unknown): unknown[] =>
+      Array.isArray(v) ? v.flatMap(primitives) :
+      v && typeof v === "object" ? Object.values(v).flatMap(primitives) : [v];
+    const values = primitives(e.value);
+    return unsupportedTypedField && values.length > 0 && values.length <= 8 &&
+      values.every(v => typeof v === "number" || typeof v === "string") &&
+      visitor.some(row => hasField(row.content, e.fact_type) &&
+        values.every(v => {
+          if (typeof v === "number") return numberTokens(row.content).some(n => n.value === v);
+          const needle = v.trim().normalize("NFKC").toLowerCase();
+          return !!needle && row.content.normalize("NFKC").toLowerCase().includes(needle);
+        }));
   };
   const canonicalProof = previous.provenance.evidence.length > 0 &&
     previous.provenance.evidence.every(e =>
@@ -1759,8 +1788,10 @@ export function resolveConversationRecall(
       ["quotation_status", "order_status", "payment_status",
        "delivery_status", "installation_status"].includes(e.fact_type));
     const preferenceOnly = previous.fact_type === "delivery_preference" &&
-      previous.provenance.evidence.every(e => originalSource(e)) &&
-      legacyPersonalProof;
+      previous.provenance.evidence.length > 0 &&
+      previous.provenance.evidence.every(e => e.temporal_scope === "current" &&
+        (e.authority === "CANONICAL_COMMERCE_STATE" || originalSource(e))) &&
+      (canonicalProof || legacyPersonalProof);
     return readOnly && (statusOnly || preferenceOnly) ? previous : semantic;
   }
   // Unsupported typed customer facts may reuse the old source-checked
