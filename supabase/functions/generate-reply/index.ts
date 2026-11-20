@@ -5247,8 +5247,10 @@ async function orchestrationGenerateReply(
   const _c3R1Unlabelled = Boolean(_c3R1Probe&&!_c3R1Probe.decision.handled&&
     _c3R1Probe.decision.reason==="AMBIGUOUS"&&
     _c3R1Probe.decision.detail==="CUSTOMER_SOURCE_NOT_VERIFIED");
-  const _c3R1Question=_c3R1Unlabelled?_h1LastMsg:
-    _c3SemanticCustomerRecall?_h1LastMsg:_productFactualRequest;
+  // This original Visitor query is authoritative for read-only recall.
+  // A semantic merchant label must not rewrite customer speech into a KB
+  // question before independent source proof; mixed actions stay separate.
+  const _c3R1Question=_mixedRequest?_productFactualRequest:_h1LastMsg;
   // Task3C D3 (F1/F3/S3): one bounded, server-owned Visitor-source lookup
   // for BOTH semantic and canonical recall. A failed or empty DB read is never
   // silently treated as a verified empty source list.
@@ -5261,7 +5263,10 @@ async function orchestrationGenerateReply(
     memory: _c3Memory,
     commerce: _c3CommerceSnapshot,
     requested_facts: _c3SemanticCustomerRecall?.requested_facts,
-    enabled: Boolean(_c3SemanticCustomerRecall || _c3OriginalGeneralRecallCandidate || _c3R1Unlabelled),
+    // Source admission is independent of an external model's intent label.
+    // Only missing IDs (max five) trigger a scoped DB lookup; this never
+    // dispatches a KB or model request.
+    enabled: true,
     recent_rows: _pr5HistoryReadError || !Array.isArray(_pr5HistoryRows)
       ? null : ((_pr5HistoryRows ?? []) as MemoryHistoryRow[]).map(row => ({
         id: String(row.id ?? ""),
@@ -5311,7 +5316,7 @@ async function orchestrationGenerateReply(
     trusted_visitor_source_status: _c3RecallSources.status,
   };
   const _c3Recall = prepareConversationRecall(_c3RecallInput,_visitorLang);
-  const _c3R1Verified = Boolean(_c3R1Unlabelled&&!_mixedRequest&&!_explicitHandoffRequested&&
+  const _c3R1Verified = Boolean(!_mixedRequest&&!_explicitHandoffRequested&&
     !_currentFactualRequest?.transaction_required&&
     hasAttestedUnlabelledCustomerRecall(_c3RecallInput,_c3Recall.decision));
   const _c3SourceAttestedCustomerRecall = Boolean(
