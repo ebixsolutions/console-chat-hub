@@ -224,3 +224,67 @@ test('Task3C N1/N3 exact 13-case clean-source differential versus deployed-v289 
   rmSync(tmp,{recursive:true,force:true});
  }
 });
+
+/** Task3C D3 six cases (F1/F3/F8, S3/S2/S4), no model or KB. */
+import { loadScopedRecallVisitorSources } from '../../supabase/functions/_shared/conversation-recall.ts';
+const d3Source=(content='My budget is 5000.',id='original-source',conversation_id='ticket-a')=>({
+ id,conversation_id,role:'visitor',is_recalled:false,content,
+ created_at:'2026-11-19T05:01:00Z'
+});
+async function d3Read(input,fetch_missing,recent_rows=[],enabled=true){
+ return loadScopedRecallVisitorSources({
+   company_id:input.company_id,conversation_id:input.conversation_id,
+   source_message_id:input.source_message_id,question:input.question,
+   memory:input.memory,commerce:input.commerce,
+   requested_facts:input.customer_recall_proposal?.requested_facts,
+   enabled,recent_rows,fetch_missing
+ });
+}
+test('D3 outside 50 recent rows uses one bounded original Visitor source read',async()=>{
+ const input=fixture(),many=Array.from({length:50},(_,i)=>d3Source('Earlier unrelated request '+i,'history-'+i));
+ let attempts=0;
+ const out=await d3Read(input,async ids=>{attempts++;assert.deepEqual(ids,['original-source']);return {rows:[d3Source()]};},many);
+ assert.equal(out.status,'verified');assert.equal(out.targeted_count,1);assert.equal(attempts,1);
+ const result=prepareConversationRecall({...input,trusted_visitor_source_rows:out.rows,trusted_visitor_source_status:out.status},'en');
+ assert.equal(result.decision.handled,true,JSON.stringify(result));
+ assert.equal(result.decision.value,5000);
+});
+test('D3 a recalled original Visitor source cannot attest a customer fact',async()=>{
+ const input=fixture();const out=await d3Read(input,async()=>({rows:[{...d3Source(),is_recalled:true}]}));
+ assert.notEqual(out.status,'verified');
+ const answer=prepareConversationRecall({...input,trusted_visitor_source_rows:out.rows,trusted_visitor_source_status:out.status},'en');
+ assert.equal(answer.decision.handled,false);
+});
+test('D3 source read error is not an empty trusted-source read',async()=>{
+ const input=fixture();const out=await d3Read(input,async()=>({rows:null,error:{code:'PGRST_READ_FAILURE'}}));
+ assert.equal(out.status,'failed');
+ assert.equal(prepareConversationRecall({...input,trusted_visitor_source_rows:out.rows,trusted_visitor_source_status:out.status},'en').decision.handled,false);
+ const recentFailure=await d3Read(input,async()=>{throw Error('must not run')},null);
+ assert.equal(recentFailure.status,'failed');
+});
+test('D3 wrong tenant or conversation source is denied',async()=>{
+ const input=fixture();
+ const out=await d3Read(input,async()=>({rows:[d3Source('My budget is 5000.','original-source','other-conversation')]}));
+ assert.equal(out.status,'failed');
+ const foreign=structuredClone(input);foreign.memory.company_id='other-company';
+ assert.equal((await d3Read(foreign,async()=>({rows:[d3Source()]}))).status,'failed');
+});
+test('D3 canonical 6 cannot replace Visitor-attested 3',async()=>{
+ const input=fixture({key:'quantity',value:6,source:'I requested 3 units.',question:'How many units did I say I needed earlier?'});
+ const out=await d3Read(input,async()=>({rows:[d3Source('I requested 3 units.')]}));
+ assert.equal(out.status,'verified');
+ const decision=prepareConversationRecall({...input,trusted_visitor_source_rows:out.rows,trusted_visitor_source_status:out.status},'en').decision;
+ assert.equal(decision.handled,false,'wrong stored value must not pass original attestation');
+});
+test('D3 duplicate original message IDs and >5 targeted IDs fail closed',async()=>{
+ const input=fixture();
+ const out=await d3Read(input,async()=>({rows:[d3Source(),d3Source()]}));
+ assert.equal(out.status,'failed');
+ const overflow=structuredClone(input);
+ for(let i=1;i<=6;i++)overflow.memory.current_customer_facts.push({
+   key:'budget',value:i,authority:'customer',source_message_id:'extra-'+i,entity_id:null
+ });
+ let dispatched=false;
+ const capped=await d3Read(overflow,async()=>{dispatched=true;return {rows:[]};});
+ assert.equal(capped.status,'over_cap');assert.equal(dispatched,false);
+});

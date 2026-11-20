@@ -7,6 +7,7 @@ import { resolveIndustryProfile } from "../_shared/industry-runtime-adapter.ts";
 import { phase1CoachAllowed } from "../_shared/remote-model-accounting.ts";
 import {
   prepareConversationRecall,
+  loadScopedRecallVisitorSources,
   isCurrentEffectiveQuantityRecall,
   hasProvenCurrentRequirementsRecap,
   renderCanonicalCustomerFactRecap,
@@ -4380,7 +4381,7 @@ async function orchestrationGenerateReply(
     {status:202,headers:{...corsHeaders,"Content-Type":"application/json"}});
 
   const [
-    { data: _pr5HistoryRows },
+    { data: _pr5HistoryRows, error: _pr5HistoryReadError },
     { count: _pr5VisitorTurnCount },
   ] = await Promise.all([
     supabaseAdmin
@@ -5226,6 +5227,43 @@ async function orchestrationGenerateReply(
     return new Response(JSON.stringify({success:false,error:"canonical_memory_commit_failed",retryable:true}),
       {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
+  // Task3C D3 (F1/F3/S3): one bounded, server-owned Visitor-source lookup
+  // for BOTH semantic and canonical recall. A failed or empty DB read is never
+  // silently treated as a verified empty source list.
+  const _c3RecallSourceStart = Date.now();
+  const _c3RecallSources = await loadScopedRecallVisitorSources({
+    company_id: _criticalE2ExpectedTenantId ?? "",
+    conversation_id,
+    source_message_id: _h1SourceMessageId,
+    question: _c3SemanticCustomerRecall ? _h1LastMsg : _productFactualRequest,
+    memory: _c3Memory,
+    commerce: _c3CommerceSnapshot,
+    requested_facts: _c3SemanticCustomerRecall?.requested_facts,
+    enabled: Boolean(_c3SemanticCustomerRecall || _c3OriginalGeneralRecallCandidate),
+    recent_rows: _pr5HistoryReadError || !Array.isArray(_pr5HistoryRows)
+      ? null : ((_pr5HistoryRows ?? []) as MemoryHistoryRow[]).map(row => ({
+        id: String(row.id ?? ""), conversation_id: String(row.conversation_id ?? ""),
+        role: String(row.role ?? ""), is_recalled: row.is_recalled === true,
+        content: String(row.content ?? ""), created_at: row.created_at,
+      })),
+    fetch_missing: async (ids) => {
+      const { data, error } = await supabaseAdmin.from("messages")
+        .select("id, conversation_id, role, content, created_at, is_recalled")
+        .eq("conversation_id", conversation_id)
+        .eq("role", "visitor")
+        .eq("is_recalled", false)
+        .neq("content", "__THINKING__")
+        .or(sourceBoundaryFilter(sourceVisitorMessage))
+        .in("id", [...ids])
+        .limit(5);
+      return { rows: data, error };
+    },
+  });
+  console.info("[generate-reply] c3_scoped_recall_source_read", {
+    status: _c3RecallSources.status,
+    targeted_count: _c3RecallSources.targeted_count,
+    elapsed_ms: Date.now() - _c3RecallSourceStart,
+  });
   // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
   // reply shortcuts, context clarification and current-KB/C1 resolution.
   const _c3Recall = prepareConversationRecall({
@@ -5243,10 +5281,8 @@ async function orchestrationGenerateReply(
     recent_questions: ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
       .filter((row) => row.role === "visitor" && row.id !== _h1SourceMessageId)
       .slice(0, 12).map((row) => String(row.content ?? "")),
-    trusted_visitor_source_rows: ((_pr5HistoryRows ?? []) as MemoryHistoryRow[])
-      .filter((row) => row.role === "visitor" && row.id !== _h1SourceMessageId &&
-        typeof row.id === "string" && typeof row.content === "string")
-      .slice(0, 100).map((row) => ({ id: String(row.id), content: String(row.content) })),
+    trusted_visitor_source_rows: _c3RecallSources.rows,
+    trusted_visitor_source_status: _c3RecallSources.status,
   }, _visitorLang);
   const _c3SourceAttestedCustomerRecall = Boolean(
     (_c3OriginalGeneralRecallCandidate || _c3SemanticCustomerRecall) && _criticalE2ExpectedTenantId &&

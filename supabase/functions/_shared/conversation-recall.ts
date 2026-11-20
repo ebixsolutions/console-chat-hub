@@ -98,6 +98,8 @@ export interface ConversationRecallInput extends RecallScope {
    * Source text is proof to compare with current customer Memory, not a new value authority.
    * Never accept rows supplied by a widget, model output or client metadata. */
   trusted_visitor_source_rows?: ReadonlyArray<{ id: string; content: string }>;
+  /** Explicit server-owned read result, never supplied by a model or widget. */
+  trusted_visitor_source_status?: TrustedRecallReadStatus;
   /** Existing accepted understanding result, bound to this server-owned turn.
    * Selects a recall field only; fact values still require Visitor-source proof. */
   customer_recall_proposal?: RecallScope & {
@@ -1191,6 +1193,109 @@ export function isCurrentEffectiveQuantityRecall(question: string): boolean {
       .test(question.replace(/\bjust\s+now\b/giu, ""));
 }
 
+
+/** Task3C D3: the only source-admission read used by both recall resolvers.
+ * The caller must pass actual server-fetched history, never widget or model
+ * rows. No model/KB traffic, at most five missing Visitor IDs in one DB read.
+ * F1/F3/F8; S3/S2/S4. */
+export type TrustedRecallReadStatus =
+  "verified" | "not_requested" | "missing" | "failed" | "over_cap";
+export interface TrustedRecallVisitorRow {
+  id: string;
+  conversation_id: string;
+  role: string;
+  is_recalled: boolean;
+  content: string;
+  created_at?: string | null;
+}
+export async function loadScopedRecallVisitorSources(input: {
+  company_id: string;
+  conversation_id: string;
+  source_message_id: string;
+  question: string;
+  memory: CanonicalConversationMemory | null;
+  commerce: RecallCommerceSnapshot | null;
+  requested_facts?: readonly string[];
+  enabled: boolean;
+  recent_rows: readonly TrustedRecallVisitorRow[] | null;
+  fetch_missing: (ids: readonly string[]) => Promise<{
+    rows: readonly TrustedRecallVisitorRow[] | null;
+    error?: unknown;
+  }>;
+}): Promise<{
+  status: TrustedRecallReadStatus;
+  rows: ReadonlyArray<{ id: string; content: string }>;
+  targeted_count: number;
+}> {
+  const denied = (status: TrustedRecallReadStatus, targeted_count = 0) =>
+    ({ status, rows: [] as Array<{ id: string; content: string }>, targeted_count });
+  const scope = input;
+  if (!scope.company_id || !scope.conversation_id || !scope.source_message_id ||
+      (scope.memory && (scope.memory.company_id !== scope.company_id ||
+        scope.memory.conversation_id !== scope.conversation_id)) ||
+      (scope.commerce && (scope.commerce.company_id !== scope.company_id ||
+        scope.commerce.conversation_id !== scope.conversation_id)) ||
+      (scope.memory && scope.commerce &&
+        scope.memory.commerce_state_revision !== scope.commerce.revision)) {
+    return denied("failed");
+  }
+  if (!Array.isArray(scope.recent_rows)) return denied("failed");
+  const validRow = (row: TrustedRecallVisitorRow) =>
+    row && typeof row.id === "string" && row.id !== scope.source_message_id &&
+    row.conversation_id === scope.conversation_id && row.role === "visitor" &&
+    row.is_recalled === false && typeof row.content === "string" &&
+    row.content.length > 0 && row.content.length <= 2400 &&
+    row.content !== "__THINKING__";
+  const recent = scope.recent_rows.filter(validRow).map(row =>
+    ({ id: row.id, content: row.content }));
+  if (new Set(recent.map(row => row.id)).size !== recent.length) return denied("failed");
+  if (!scope.enabled) return { status: "not_requested", rows: recent, targeted_count: 0 };
+
+  const originalFacts = parseQuery(scope.question).facts;
+  const names = new Set([...(scope.requested_facts ?? []).map(keyNorm),
+    ...originalFacts.map(keyNorm)]);
+  const interested = (key: string) => !names.size ||
+    names.has(keyNorm(key)) || originalFacts.some(f => keyMatches(key, f));
+  const ids: string[] = [];
+  const add = (id: string | null | undefined) => {
+    if (id && id !== scope.source_message_id && !ids.includes(id)) ids.push(id);
+  };
+  for (const fact of scope.memory?.current_customer_facts ?? []) {
+    if (fact.authority === "customer" && interested(fact.key)) add(fact.source_message_id);
+  }
+  for (const entity of scope.commerce?.state.entities ?? []) {
+    if (isCurrentEntity(entity) && originalFacts.some(f =>
+      ["quantity", "room_size", "horsepower", "brand_constraint",
+       "constraints", "preferences"].includes(f))) {
+      add(entity.provenance.source_type === "customer"
+        ? entity.provenance.source_message_id : null);
+    }
+  }
+  if (originalFacts.some(f => ["address", "contact", "recipient",
+      "delivery_preference", "delivery_status"].includes(f))) {
+    add(scope.commerce?.state.delivery.provenance?.source_message_id);
+  }
+  if (ids.length > 5) return denied("over_cap");
+  const needed = ids.filter(id => !recent.some(row => row.id === id));
+  if (!needed.length) return { status: ids.length ? "verified" : "missing",
+    rows: recent, targeted_count: 0 };
+  let fetched: Awaited<ReturnType<typeof scope.fetch_missing>>;
+  try {
+    fetched = await scope.fetch_missing(needed);
+  } catch {
+    return denied("failed", needed.length);
+  }
+  if (fetched.error || !Array.isArray(fetched.rows)) return denied("failed", needed.length);
+  if (fetched.rows.some(row => !validRow(row) || !needed.includes(row.id)) ||
+      new Set(fetched.rows.map(row => row.id)).size !== fetched.rows.length) {
+    return denied("failed", needed.length);
+  }
+  if (fetched.rows.length !== needed.length) return denied("missing", needed.length);
+  return { status: "verified",
+    rows: [...recent, ...fetched.rows.map(row => ({ id: row.id, content: row.content }))],
+    targeted_count: needed.length };
+}
+
 /** The semantic label opens this read route, but never supplies a value/source.
  * Keep transactions, merchant claims and mixed requests on their original path. */
 function resolveSemanticCustomerRecall(input:ConversationRecallInput):ConversationRecallDecision|null {
@@ -1706,8 +1811,23 @@ export function resolveConversationRecall(
   input: ConversationRecallInput,
 ): ConversationRecallDecision {
   if (input.explicit_handoff) return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
+  // Historical customer speech must not fall back to an unverified stored
+  // number (the original 6 vs 3 defect). Operational current status/quantity
+  // is separately governed by canonical lifecycle and revision controls.
+  const historicalCustomerQuantity = any(input.question, OWNER) &&
+    hasField(input.question, "quantity") &&
+    /(?:剛才|刚才|頭先|头先|之前|先前|曾經|曾经|說過|说过|講過|讲过|提過|提过|previously|earlier|did (?:i|we) say|told you)/iu.test(input.question);
+  if (historicalCustomerQuantity && input.trusted_visitor_source_status &&
+      input.trusted_visitor_source_status !== "verified") {
+    return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");
+  }
   const semantic = resolveSemanticCustomerRecall(input);
-  if (!semantic) return resolveConversationRecallLegacy(input);
+  if (!semantic) {
+    const legacy = resolveConversationRecallLegacy(input);
+    if (historicalCustomerQuantity && legacy.handled &&
+        !attestedCustomerQuantity(input)) return fail("AMBIGUOUS", "CUSTOMER_QUANTITY_NOT_ATTESTED");
+    return legacy;
+  }
   if (semantic.handled) return semantic;
   // A missing Visitor-source list cannot certify a supported scalar.
   // An independently authenticated canonical field is different: allow
@@ -1720,6 +1840,9 @@ export function resolveConversationRecall(
     (input.customer_recall_proposal?.requested_facts ?? []).some(key =>
       !CUSTOMER_RECALL_FIELDS.some(f => f.keys.some(k =>
         keyNorm(k) === keyNorm(key))));
+  if (input.trusted_visitor_source_status &&
+      ["failed", "missing", "over_cap"].includes(input.trusted_visitor_source_status) &&
+      input.customer_recall_proposal) return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");
   const canConsultLegacy = semantic.detail === "CUSTOMER_RECALL_FIELD_AMBIGUOUS" ||
     (unsupportedTypedField && [
       "CUSTOMER_SOURCE_NOT_AVAILABLE",
@@ -1796,30 +1919,13 @@ export function resolveConversationRecall(
           return !!needle && row.content.normalize("NFKC").toLowerCase().includes(needle);
         }));
   };
-  // Original typed-recall contract also accepts an authenticated,
-  // source-revision-bound canonical customer field when the isolated fixture
-  // has no separate Visitor-row projection. Do NOT use this exception if a
-  // Visitor source list was provided but failed the independent check.
-  const persistedOwnedField = (e: RecallEvidence): boolean => {
-    if (e.source_kind !== "customer_owned_canonical_property") return false;
-    const path = /^entities\.(\d+)\.(attributes|constraints)\.([A-Za-z0-9_]+)$/u.exec(e.state_path);
-    if (!path) return false;
-    const entity = input.commerce?.state.entities[Number(path[1])];
-    if (!entity || !isCurrentEntity(entity) ||
-        entity.entity_id !== e.entity_id ||
-        entity.provenance.source_type !== "customer" ||
-        !entity.provenance.source_message_id ||
-        entity.provenance.source_message_id !== e.evidence_source_message_id ||
-        !keyMatches(path[3], e.fact_type)) return false;
-    const record = path[2] === "attributes" ? entity.attributes : entity.constraints;
-    return Object.prototype.hasOwnProperty.call(record, path[3]) &&
-      JSON.stringify(fieldValue(e.fact_type, path[3], record[path[3]])) === JSON.stringify(e.value);
-  };
+  // A null/empty source list never certifies a customer-owned canonical
+  // attribute. Existing verified operational CANONICAL_COMMERCE_STATE
+  // projections remain under the original tenant/revision/lifecycle guards.
   const canonicalProof = previous.provenance.evidence.length > 0 &&
     previous.provenance.evidence.every(e =>
       e.authority === "CANONICAL_COMMERCE_STATE" ||
-      (e.source_kind === "customer_owned_canonical_property" &&
-        (originalSource(e) || (!visitor.length && persistedOwnedField(e)))));
+      (e.source_kind === "customer_owned_canonical_property" && originalSource(e)));
   const legacyPersonalProof = unsupportedTypedField &&
     previous.provenance.evidence.length > 0 &&
     previous.provenance.evidence.every(e => e.authority === "CURRENT_CUSTOMER_MEMORY" && originalSource(e));
