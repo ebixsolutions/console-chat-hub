@@ -1867,7 +1867,7 @@ function originalSourceAttests(input:ConversationRecallInput,e:RecallEvidence,un
             .filter(f=>f.authority==="customer" && keyMatches(f.key,"room_size") &&
               f.source_message_id===e.evidence_source_message_id)
             .flatMap(f=>Array.isArray(f.value)?f.value:[]);
-          const normalize=(s:string)=>s.normalize("NFKC").replace(/\s+/gu,"").toLowerCase();
+          const normalize=(s:string)=>s.normalize("NFKC").replace(/(?:sq\s*ft|sqft|平方[呎尺])/giu,"平方呎").replace(/\s+/gu,"").toLowerCase();
           const clauses=sourceClauses(row.content).map(normalize);
           return e.value.every(raw=>{
             const member=object(raw);
@@ -2368,7 +2368,39 @@ function resolveConversationRecallLegacy(
            !e.evidence_source_message_id &&
              /^active_entities\.\d+\.current_requirements\./u.test(e.state_path) &&
              !!e.entity_id && entities.has(e.entity_id)));
-      if (!equivalent) {
+      // Single-customer-source numeric/unit projection: long Memory may
+      // retain a customer statement as ["1.5匹"] while canonical Commerce
+      // carries numeric 1.5. This is not competing customer evidence when
+      // the one actual Visitor request and all three current projections
+      // independently agree. Multi-unit, multi-source or value disagreement
+      // remains a hard conflict, not a loose numeric match.
+      const hpNumber = f === "horsepower" && selected.length === 1 &&
+        input.trusted_visitor_source_status === "verified"
+        ? best.find(e => e.source_kind === "customer_owned_canonical_property" &&
+            typeof e.value === "number" && Number.isFinite(e.value) &&
+            e.value > 0 && e.value <= 100 && e.entity_id === selected[0].entity_id &&
+            !!e.evidence_source_message_id && originalSourceAttests(input,e,false))
+        : undefined;
+      const hpSource = hpNumber && input.trusted_visitor_source_rows?.filter(
+        row => row.id === hpNumber.evidence_source_message_id &&
+          typeof row.content === "string" && row.content.length <= 2400);
+      const hpSourceUnits = hpSource?.length === 1
+        ? [...hpSource[0].content.matchAll(/(\d+(?:\.\d+)?)\s*匹(?![\d.])/gu)]
+        : [];
+      const hpEquivalent = !!hpNumber && hpSource?.length === 1 &&
+        hpSourceUnits?.length === 1 && Number(hpSourceUnits[0][1]) === hpNumber.value &&
+        best.every(e => e.temporal_scope === "current" &&
+          ["customer_owned_canonical_property","retained_customer_fact"].includes(e.source_kind) &&
+          (!e.entity_id || e.entity_id === hpNumber.entity_id) &&
+          (e.evidence_source_message_id === hpNumber.evidence_source_message_id ||
+            !e.evidence_source_message_id && e.entity_id === hpNumber.entity_id &&
+            /^active_entities\.\d+\.current_requirements\./u.test(e.state_path)) &&
+          (typeof e.value === "number" ? e.value === hpNumber.value :
+            Array.isArray(e.value) && e.value.length === 1 &&
+            typeof e.value[0] === "string" &&
+            (e.value[0].match(/(?:^|\s)(\d+(?:\.\d+)?)\s*匹$/u) !== null) &&
+            Number(e.value[0].match(/(?:^|\s)(\d+(?:\.\d+)?)\s*匹$/u)![1]) === hpNumber.value));
+      if (!equivalent && !hpEquivalent) {
         // R1/D3: source-only, value-free conflict trace for actual failed
         // candidate sets. Do not relax the ambiguity/tenant/subject guards.
         if (f === "horsepower") console.info("[conversation-recall] c3_horsepower_candidate_conflict", {
