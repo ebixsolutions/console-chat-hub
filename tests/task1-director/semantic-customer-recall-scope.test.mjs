@@ -359,14 +359,20 @@ test('Task3C R2 original test533 nondeterminism 100x per historical/current sour
 `;
    text=text.replace(assertion,diagnostic+assertion);
    writeFileSync(filepath,text,'utf8');
+   // Node's parent test worker exports NODE_TEST_CONTEXT=child-v8.
+   // A nested 'node --test' inheriting it silently exits 0 with zero tests.
+   // Remove only that runner flag; never relax the original source-leak test.
+   const childEnv={...process.env,C3_KB_ADMISSION_SOURCE_REF:''};
+   delete childEnv.NODE_TEST_CONTEXT;
    const run=spawnSync(process.execPath,[
-    '--test','--test-name-pattern=Task3 topic-switch v5 Inbox suggest_reply: confident older proposal',
+    '--test','--test-reporter=tap',
+    '--test-name-pattern=Task3 topic-switch v5 Inbox suggest_reply: confident older proposal',
     'tests/c3-widget-live-auth/original-preview.test.mjs'],{
       cwd:temp,encoding:'utf8',timeout:180000,maxBuffer:32*1024*1024,
-      env:{...process.env,C3_KB_ADMISSION_SOURCE_REF:''}});
+      env:childEnv});
    if(run.error)throw run.error;
    const output=String(run.stdout??'')+'\n'+String(run.stderr??'');
-   const matches=output.split('\n').filter(line=>
+   const matches=output.split('\n').map(line=>line.trim()).filter(line=>
      /^(?:not ok|ok) \d+ - Task3 topic-switch v5 Inbox suggest_reply: confident older proposal/.test(line));
    const failures=matches.filter(line=>line.startsWith('not ok')).length;
    const paths=[...output.matchAll(/D3_R2_PATHS\|([^\n]+)/g)].flatMap(m=>{
@@ -377,6 +383,7 @@ test('Task3C R2 original test533 nondeterminism 100x per historical/current sour
       exit_code:run.status,leak_paths:[...new Set(paths)].slice(0,20),
       evidence_tier:'NONPAID_SOURCE_REPRO_NOT_HOSTED'};
    console.log('D3_R2_REPRO|'+JSON.stringify(result));
+   if(matches.length!==100)console.log('D3_R2_CHILD_TEST_DEBUG|'+JSON.stringify({label,exit_code:run.status,stdout_end:String(run.stdout??'').slice(-1200),stderr_end:String(run.stderr??'').slice(-600)}));
    assert.equal(matches.length,100,'100 original test assertions must be recorded for '+label);
    assert.equal(run.signal,null,'stress fixture timed out');
   }finally{
