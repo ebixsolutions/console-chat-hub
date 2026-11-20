@@ -1766,7 +1766,8 @@
     "tests/task1-director/fixtures/task3c-replay/industry-seeds/saas/tasks.json": "e81dcced7eb92cbf329bbd83dd0ff467fa30edc93504749111d75f690bad6bb4",
     "tests/task1-director/fixtures/task3c-replay/original-33-turns.json": "d069e7bb4e8100fe97f331e1fe56ccec3e3e09f72f24a0c605f3cca9adfd2542",
     "tests/task1-director/quantity-source-scope.test.mjs": "5e7a308cf6a573e76dbb9040bffa4efe3fcbfecb706ae39fad1e6444ee321412",
-    "tests/task1-director/semantic-customer-recall-scope.test.mjs": "6560af33fa03dc726744c742c7df9bb2c08b219437b8af6bc2b90b03ac07ae45"
+    "tests/task1-director/semantic-customer-recall-scope.test.mjs": "6560af33fa03dc726744c742c7df9bb2c08b219437b8af6bc2b90b03ac07ae45",
+    "supabase/functions/_shared/conversation-recall.integration.test.ts": "bdae208c858de35ec96eb04e2231852f58f3906aaf7c4ead18e311aeebb53161"
   },
   "authorized_task3c_t06_source_sha256": {
     "supabase/functions/_shared/llm-router.ts": "6be4633b8efc5d2c181b509c2b38c7aee3240e1c65c86e5a52995881dbc00c9f",

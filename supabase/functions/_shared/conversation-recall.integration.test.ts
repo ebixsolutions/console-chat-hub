@@ -1725,7 +1725,14 @@ Deno.test("C3 reconstructed acceptance failures use customer-owned history (non-
       source_created_at: "2026-09-16T00:00:00Z",
       next_memory_revision: 1,
     });
-    const result = prepareConversationRecall({ ...seed, memory, commerce: { ...seed.commerce!, state: commerceState } });
+    // D3: this test already has the original server-attributed Visitor setup
+    // rows. Feed those exact immutable source IDs and contents into the recall
+    // proof boundary rather than asking the resolver to trust memory alone.
+    const result = prepareConversationRecall({
+      ...seed, memory, commerce: { ...seed.commerce!, state: commerceState },
+      trusted_visitor_source_rows: setup.map((item: { id: string; content: string }) =>
+        ({ id: item.id, content: item.content })),
+    });
     assert(result.decision.handled && result.reply, `${row.id}: ${JSON.stringify(result.decision)}`);
     const normalized = result.reply.normalize("NFKC").toLowerCase();
     const contains = (value: string) => normalized.includes(value.normalize("NFKC").toLowerCase());
