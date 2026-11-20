@@ -1277,7 +1277,9 @@ export async function loadScopedRecallVisitorSources(input: {
   }
   if (ids.length > 5) return denied("over_cap");
   const needed = ids.filter(id => !recent.some(row => row.id === id));
-  if (!needed.length) return { status: ids.length ? "verified" : "missing",
+  // No candidate source ID is not a verified failed lookup: original
+  // canonical transaction states remain under their separate authority.
+  if (!needed.length) return { status: ids.length ? "verified" : "not_requested",
     rows: recent, targeted_count: 0 };
   let fetched: Awaited<ReturnType<typeof scope.fetch_missing>>;
   try {

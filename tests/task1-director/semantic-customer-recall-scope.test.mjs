@@ -261,6 +261,11 @@ test('D3 source read error is not an empty trusted-source read',async()=>{
  assert.equal(prepareConversationRecall({...input,trusted_visitor_source_rows:out.rows,trusted_visitor_source_status:out.status},'en').decision.handled,false);
  const recentFailure=await d3Read(input,async()=>{throw Error('must not run')},null);
  assert.equal(recentFailure.status,'failed');
+ const noCandidate=structuredClone(input);noCandidate.memory.current_customer_facts=[];
+ let called=false;
+ const noEvidenceId=await d3Read(noCandidate,async()=>{called=true;return {rows:[]};});
+ assert.equal(noEvidenceId.status,'not_requested');
+ assert.equal(called,false,'no candidate ID must not cause a speculative DB read');
 });
 test('D3 wrong tenant or conversation source is denied',async()=>{
  const input=fixture();
