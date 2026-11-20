@@ -2368,7 +2368,21 @@ function resolveConversationRecallLegacy(
            !e.evidence_source_message_id &&
              /^active_entities\.\d+\.current_requirements\./u.test(e.state_path) &&
              !!e.entity_id && entities.has(e.entity_id)));
-      if (!equivalent) return fail("AMBIGUOUS", `CONFLICTING_${f.toUpperCase()}`, facts);
+      if (!equivalent) {
+        // R1/D3: source-only, value-free conflict trace for actual failed
+        // candidate sets. Do not relax the ambiguity/tenant/subject guards.
+        if (f === "horsepower") console.info("[conversation-recall] c3_horsepower_candidate_conflict", {
+          selected_count:selected.length, best_count:best.length,
+          value_groups:best.map(e=>best.findIndex(x=>JSON.stringify(x.value)===JSON.stringify(e.value))),
+          paths:best.map(e=>e.state_path),
+          kinds:best.map(e=>e.source_kind),
+          entity_count:entities.size, attested_count:attested.length,
+          attested_source_count:ids.size, source_status:input.trusted_visitor_source_status,
+          source_in_verified_rows:best.map(e=>!!e.evidence_source_message_id &&
+            (input.trusted_visitor_source_rows??[]).filter(row=>row.id===e.evidence_source_message_id).length===1),
+        });
+        return fail("AMBIGUOUS", `CONFLICTING_${f.toUpperCase()}`, facts);
+      }
     }
     const fact: RecallEvidence = { ...candidates[0] };
     delete (fact as Partial<Candidate>).rank;

@@ -5333,6 +5333,22 @@ async function orchestrationGenerateReply(
       source_kinds: _c3Recall.decision.handled
         ? _c3Recall.decision.provenance.evidence.map(e=>e.source_kind) : [],
       route_accepted: _c3R1Verified,
+      proof_breakdown:_c3Recall.decision.handled?{
+        company_matches:_c3Recall.decision.provenance.company_id===_c3RecallInput.company_id,
+        conversation_matches:_c3Recall.decision.provenance.conversation_id===_c3RecallInput.conversation_id,
+        source_matches:_c3Recall.decision.provenance.source_message_id===_c3RecallInput.source_message_id,
+        memory_commerce_matches:_c3RecallInput.memory?.commerce_state_revision===_c3RecallInput.commerce?.revision,
+        evidence:_c3Recall.decision.provenance.evidence.map(e=>({
+          path:e.state_path,kind:e.source_kind,temporal:e.temporal_scope,
+          value_type:typeof e.value,
+          matched_original_rows:(e.evidence_source_message_id?
+            _c3RecallSources.rows.filter(row=>row.id===e.evidence_source_message_id).length:0),
+          literal_value_in_source:typeof e.value==="string"&&!!e.evidence_source_message_id?
+            _c3RecallSources.rows.some(row=>row.id===e.evidence_source_message_id &&
+              row.content.normalize("NFKC").replace(/\\s+/gu,"").toLowerCase()
+                .includes(String(e.value).normalize("NFKC").replace(/\\s+/gu,"").toLowerCase())):null,
+        })),
+      }:null,
     });
   }
   const _c3SourceAttestedCustomerRecall = Boolean(

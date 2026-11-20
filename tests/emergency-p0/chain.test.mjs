@@ -3334,6 +3334,8 @@ for(const row of [
   console.log('D3_R1_SOURCE_DIAGNOSTIC|'+JSON.stringify({
     case_id:row[0],route:f.commits[0].metadata.response_route,
     decisions:decisions.slice(-6).map(event=>event[1]),
+    conflict_diagnostic:f.events.filter(event=>Array.isArray(event) &&
+      event[0]==='[conversation-recall] c3_horsepower_candidate_conflict').map(event=>event[1]),
     semantic_calls:f.requests.filter(x=>x.url.endsWith(':generateContent')).length,
     kb_calls:f.requests.filter(x=>x.url.includes('/rag/context-search')).length,
   }));
