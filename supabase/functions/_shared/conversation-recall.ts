@@ -1812,71 +1812,8 @@ function hasSourceBoundCompletedRecap(input: ConversationRecallInput): boolean {
   return changed;
 }
 
-/** Semantic understanding proposes a field, not an exclusive answer route.
- * F1/S3 + F3/S4: preserve the preexisting typed resolver for unsupported
- * or compound recalls, while scope/source/merchant protections fail closed. */
-export function resolveConversationRecall(
-  input: ConversationRecallInput,
-): ConversationRecallDecision {
-  if (input.explicit_handoff) return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
-  // Historical customer speech must not fall back to an unverified stored
-  // number (the original 6 vs 3 defect). Operational current status/quantity
-  // is separately governed by canonical lifecycle and revision controls.
-  const historicalCustomerQuantity = any(input.question, OWNER) &&
-    hasField(input.question, "quantity") &&
-    /(?:剛才|刚才|頭先|头先|之前|先前|曾經|曾经|說過|说过|講過|讲过|提過|提过|previously|earlier|did (?:i|we) say|told you)/iu.test(input.question);
-  if (historicalCustomerQuantity &&
-      input.trusted_visitor_source_status !== "verified") {
-    return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");
-  }
-  const semantic = resolveSemanticCustomerRecall(input);
-  if (!semantic) {
-    const legacy = resolveConversationRecallLegacy(input);
-    // A canonical current-state recap or an already-reduced correction
-    // checkpoint is an operational state read, NOT a claim about the exact
-    // words in a historical Visitor turn. Preserve its original revision/
-    // lifecycle proof; require a verified original only for speech-owned facts.
-    const canonicalCurrentState = legacy.handled &&
-      (legacy.fact_type === "summary" ||
-        legacy.provenance.evidence.every(e =>
-          e.authority === "CANONICAL_COMMERCE_STATE" ||
-          e.source_kind === "retained_customer_correction_checkpoint"));
-    if (legacy.handled && !canonicalCurrentState &&
-        input.trusted_visitor_source_status !== "verified" &&
-        legacy.provenance.evidence.some(e => e.authority === "CURRENT_CUSTOMER_MEMORY" ||
-          e.source_kind === "customer_owned_canonical_property" ||
-          e.source_kind === "attested_customer_utterance"))
-      return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");
-    if (historicalCustomerQuantity && legacy.handled &&
-        !attestedCustomerQuantity(input)) return fail("AMBIGUOUS", "CUSTOMER_QUANTITY_NOT_ATTESTED");
-    return legacy;
-  }
-  if (semantic.handled) return semantic;
-  // A missing Visitor-source list cannot certify a supported scalar.
-  // An independently authenticated canonical field is different: allow
-  // the original resolver to verify unsupported typed fields (address,
-  // room, contact, constraints) or compound fields without extra model/KB.
-  const supportedScalar = (fact: RecallFact) =>
-    CUSTOMER_RECALL_FIELDS.some(field => field.fact === fact);
-  const parsedFields = parseQuery(input.question).facts;
-  const unsupportedTypedField = parsedFields.some(f => !supportedScalar(f)) ||
-    (input.customer_recall_proposal?.requested_facts ?? []).some(key =>
-      !CUSTOMER_RECALL_FIELDS.some(f => f.keys.some(k =>
-        keyNorm(k) === keyNorm(key))));
-  if (input.trusted_visitor_source_status !== "verified" &&
-      input.customer_recall_proposal && semantic.reason !== "CURRENT_KB_REQUIRED")
-    return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");
-  const canConsultLegacy = semantic.detail === "CUSTOMER_RECALL_FIELD_AMBIGUOUS" ||
-    (unsupportedTypedField && [
-      "CUSTOMER_SOURCE_NOT_AVAILABLE",
-      "CUSTOMER_RECALL_SOURCE_NOT_ATTESTED",
-    ].includes(semantic.detail));
-  if (semantic.reason === "AMBIGUOUS" && !canConsultLegacy) return semantic;
-  // The legacy resolver does its own intent, tenant and revision checks.
-  const previous = resolveConversationRecallLegacy(input);
-  if (!previous.handled) return semantic.reason === "CURRENT_KB_REQUIRED" ? semantic : previous;
-  const visitor = input.trusted_visitor_source_rows ?? [];
-  const originalSource = (e: RecallEvidence) => {
+function originalSourceAttests(input:ConversationRecallInput,e:RecallEvidence,unsupportedTypedField:boolean):boolean {
+  const visitor=input.trusted_visitor_source_rows??[];
     if (e.temporal_scope !== "current") return false;
     if (e.evidence_source_message_id) {
       // T68/F1 (S3): independently verify the retained field against exactly
@@ -1961,17 +1898,98 @@ export function resolveConversationRecall(
           const needle = v.trim().normalize("NFKC").toLowerCase();
           return !!needle && row.content.normalize("NFKC").toLowerCase().includes(needle);
         }));
-  };
+}
+
+/** Original Visitor evidence may validate an unlabelled read-only customer
+ * fact. This predicate is source verification, not a second classifier. */
+export function hasAttestedUnlabelledCustomerRecall(input:ConversationRecallInput,decision:ConversationRecallDecision):boolean {
+  if(input.trusted_visitor_source_status!=="verified"||!decision.handled||
+     decision.provenance.company_id!==input.company_id||
+     decision.provenance.conversation_id!==input.conversation_id||
+     decision.provenance.source_message_id!==input.source_message_id||
+     input.memory?.commerce_state_revision!==input.commerce?.revision||
+     !decision.provenance.evidence.length)return false;
+  const quoted=attestedCustomerQuantity(input);
+  return decision.provenance.evidence.every(e=>e.temporal_scope==="current"&&(
+    e.source_kind==="customer_owned_canonical_property"&&originalSourceAttests(input,e,false)||
+    e.source_kind==="attested_customer_utterance"&&e.fact_type==="quantity"&&quoted!==null&&
+       quoted.evidence_source_message_id===e.evidence_source_message_id&&quoted.value===e.value));
+}
+
+/** Semantic understanding proposes a field, not an exclusive answer route.
+ * F1/S3 + F3/S4: preserve the preexisting typed resolver for unsupported
+ * or compound recalls, while scope/source/merchant protections fail closed. */
+export function resolveConversationRecall(
+  input: ConversationRecallInput,
+): ConversationRecallDecision {
+  if (input.explicit_handoff) return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
+  // Historical customer speech must not fall back to an unverified stored
+  // number (the original 6 vs 3 defect). Operational current status/quantity
+  // is separately governed by canonical lifecycle and revision controls.
+  const historicalCustomerQuantity = any(input.question, OWNER) &&
+    hasField(input.question, "quantity") &&
+    /(?:剛才|刚才|頭先|头先|之前|先前|曾經|曾经|說過|说过|講過|讲过|提過|提过|previously|earlier|did (?:i|we) say|told you)/iu.test(input.question);
+  if (historicalCustomerQuantity &&
+      input.trusted_visitor_source_status !== "verified") {
+    return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");
+  }
+  const semantic = resolveSemanticCustomerRecall(input);
+  if (!semantic) {
+    const legacy = resolveConversationRecallLegacy(input);
+    // A canonical current-state recap or an already-reduced correction
+    // checkpoint is an operational state read, NOT a claim about the exact
+    // words in a historical Visitor turn. Preserve its original revision/
+    // lifecycle proof; require a verified original only for speech-owned facts.
+    const canonicalCurrentState = legacy.handled &&
+      (legacy.fact_type === "summary" ||
+        legacy.provenance.evidence.every(e =>
+          e.authority === "CANONICAL_COMMERCE_STATE" ||
+          e.source_kind === "retained_customer_correction_checkpoint"));
+    if (legacy.handled && !canonicalCurrentState &&
+        input.trusted_visitor_source_status !== "verified" &&
+        legacy.provenance.evidence.some(e => e.authority === "CURRENT_CUSTOMER_MEMORY" ||
+          e.source_kind === "customer_owned_canonical_property" ||
+          e.source_kind === "attested_customer_utterance"))
+      return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");
+    if (historicalCustomerQuantity && legacy.handled &&
+        !attestedCustomerQuantity(input)) return fail("AMBIGUOUS", "CUSTOMER_QUANTITY_NOT_ATTESTED");
+    return legacy;
+  }
+  if (semantic.handled) return semantic;
+  // A missing Visitor-source list cannot certify a supported scalar.
+  // An independently authenticated canonical field is different: allow
+  // the original resolver to verify unsupported typed fields (address,
+  // room, contact, constraints) or compound fields without extra model/KB.
+  const supportedScalar = (fact: RecallFact) =>
+    CUSTOMER_RECALL_FIELDS.some(field => field.fact === fact);
+  const parsedFields = parseQuery(input.question).facts;
+  const unsupportedTypedField = parsedFields.some(f => !supportedScalar(f)) ||
+    (input.customer_recall_proposal?.requested_facts ?? []).some(key =>
+      !CUSTOMER_RECALL_FIELDS.some(f => f.keys.some(k =>
+        keyNorm(k) === keyNorm(key))));
+  if (input.trusted_visitor_source_status !== "verified" &&
+      input.customer_recall_proposal && semantic.reason !== "CURRENT_KB_REQUIRED")
+    return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");
+  const canConsultLegacy = semantic.detail === "CUSTOMER_RECALL_FIELD_AMBIGUOUS" ||
+    (unsupportedTypedField && [
+      "CUSTOMER_SOURCE_NOT_AVAILABLE",
+      "CUSTOMER_RECALL_SOURCE_NOT_ATTESTED",
+    ].includes(semantic.detail));
+  if (semantic.reason === "AMBIGUOUS" && !canConsultLegacy) return semantic;
+  // The legacy resolver does its own intent, tenant and revision checks.
+  const previous = resolveConversationRecallLegacy(input);
+  if (!previous.handled) return semantic.reason === "CURRENT_KB_REQUIRED" ? semantic : previous;
+  const visitor = input.trusted_visitor_source_rows ?? [];
   // A null/empty source list never certifies a customer-owned canonical
   // attribute. Existing verified operational CANONICAL_COMMERCE_STATE
   // projections remain under the original tenant/revision/lifecycle guards.
   const canonicalProof = previous.provenance.evidence.length > 0 &&
     previous.provenance.evidence.every(e =>
       e.authority === "CANONICAL_COMMERCE_STATE" ||
-      (e.source_kind === "customer_owned_canonical_property" && originalSource(e)));
+      (e.source_kind === "customer_owned_canonical_property" && originalSourceAttests(input,e,unsupportedTypedField)));
   const legacyPersonalProof = unsupportedTypedField &&
     previous.provenance.evidence.length > 0 &&
-    previous.provenance.evidence.every(e => e.authority === "CURRENT_CUSTOMER_MEMORY" && originalSource(e));
+    previous.provenance.evidence.every(e => e.authority === "CURRENT_CUSTOMER_MEMORY" && originalSourceAttests(input,e,unsupportedTypedField));
   const readOnly = !customerRecallHasAction(input.question);
   if (semantic.reason === "CURRENT_KB_REQUIRED") {
     // Never take price, stock, merchant policy or a requested transaction
@@ -1983,7 +2001,7 @@ export function resolveConversationRecall(
     const preferenceOnly = previous.fact_type === "delivery_preference" &&
       previous.provenance.evidence.length > 0 &&
       previous.provenance.evidence.every(e => e.temporal_scope === "current" &&
-        (e.authority === "CANONICAL_COMMERCE_STATE" || originalSource(e))) &&
+        (e.authority === "CANONICAL_COMMERCE_STATE" || originalSourceAttests(input,e,unsupportedTypedField))) &&
       (canonicalProof || legacyPersonalProof);
     return readOnly && (statusOnly || preferenceOnly) ? previous : semantic;
   }
@@ -2677,6 +2695,17 @@ function renderCustomerRecap(value: unknown, language: string): string {
     return value === undefined ? [] : [prefix+(names[String(f.key)]?.[l] ?? display(String(f.key).replace(/_/g," ")))+": "+value];
   });
   const retainedText=retained.length ? ["而家記低咗","目前已记录","I have noted " ][l]+retained.join(l===2?"; ":"；")+(l===2?".":"。") : "";
+  const ownedCounts=(Array.isArray(v.customer_facts)?v.customer_facts:[])
+    .map(object).filter(f=>f?.authority==="customer"&&f.key==="quantity"&&
+      typeof f.value==="number"&&Number.isInteger(f.value));
+  const conflictingQuantity=active.length===1&&ownedCounts.length===1&&
+    customerRequestedQuantity(active[0])!==null&&active[0].quantity!==ownedCounts[0].value;
+  // Current state must not certify which of two contradictory counts was spoken.
+  const conflictNote=conflictingQuantity?[
+    "目前記錄的數量有矛盾，尚未核實，請確認最終要求。",
+    "目前记录的数量有矛盾，尚未核实，请确认最终要求。",
+    "Conflicting quantities are currently recorded; the final requirement is unverified and needs confirmation.",
+  ][l]:"";
   const first = l === 2
     ? [active.length ? `I've noted ${active.map(describe).join("; ")}.` : "",
         inactive.length ? inactive.map(describe).join("; ") + "." : "",
@@ -2686,7 +2715,8 @@ function renderCustomerRecap(value: unknown, language: string): string {
   const confirmed = Array.isArray(v.confirmed_entity_ids) ? v.confirmed_entity_ids : [];
   const global = v.selection_provenance === "global";
   const items = (global && entities.length ? ["項目：", "项目：", "Items: "][l] + first : first) +
-    (entities.length && retainedText ? (l === 2 ? " " : "") + retainedText : "");
+    (entities.length && retainedText ? (l === 2 ? " " : "") + retainedText : "") +
+    (conflictNote ? (l === 2 ? " " : "") + conflictNote : "");
   const pendingBooking = active.some(e => object(e.attributes.capabilities)?.requires_booking === true && !confirmed.includes(e.entity_id));
   const qualifications: string[] = [];
   if (pendingBooking) qualifications.push(["預約要求仍需職員確認，未成為已確認預約。", "预约要求仍需职员确认，尚未成为已确认预约。", "The booking still needs staff confirmation and is not confirmed yet."][l]);

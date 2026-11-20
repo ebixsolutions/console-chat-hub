@@ -10,6 +10,7 @@ import {
   loadScopedRecallVisitorSources,
   isCurrentEffectiveQuantityRecall,
   hasProvenCurrentRequirementsRecap,
+  hasAttestedUnlabelledCustomerRecall,
   renderCanonicalCustomerFactRecap,
   type RecallCommerceSnapshot,
   type TrustedPersistedMemoryReadback,
@@ -5227,6 +5228,27 @@ async function orchestrationGenerateReply(
     return new Response(JSON.stringify({success:false,error:"canonical_memory_commit_failed",retryable:true}),
       {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
+  // R1: reuse the original read-only resolver to detect missing original
+  // Visitor proof even when the semantic model omitted a recall label.
+  // No new model, KB, database read, lexical classifier or fact authority.
+  const _c3R1Probe = !_c3SemanticCustomerRecall&&!_c3OriginalGeneralRecallCandidate&&
+    !_mixedRequest&&!_explicitHandoffRequested&&!_currentFactualRequest?.transaction_required
+      ? prepareConversationRecall({
+        conversation_id,company_id:_criticalE2ExpectedTenantId??"",
+        source_message_id:_h1SourceMessageId,question:_h1LastMsg,
+        memory:_c3Memory,commerce:_c3CommerceSnapshot,
+        trusted_persisted_memory_readback:_c3TrustedPersistedMemoryReadback,
+        empty_state_verified:_c3EmptyStateVerified,
+        recent_questions:((_pr5HistoryRows??[]) as MemoryHistoryRow[])
+          .filter(row=>row.role==="visitor"&&row.id!==_h1SourceMessageId)
+          .slice(0,12).map(row=>String(row.content??"")),
+        trusted_visitor_source_rows:[],trusted_visitor_source_status:"not_requested",
+      },_visitorLang):null;
+  const _c3R1Unlabelled = Boolean(_c3R1Probe&&!_c3R1Probe.decision.handled&&
+    _c3R1Probe.decision.reason==="AMBIGUOUS"&&
+    _c3R1Probe.decision.detail==="CUSTOMER_SOURCE_NOT_VERIFIED");
+  const _c3R1Question=_c3R1Unlabelled?_h1LastMsg:
+    _c3SemanticCustomerRecall?_h1LastMsg:_productFactualRequest;
   // Task3C D3 (F1/F3/S3): one bounded, server-owned Visitor-source lookup
   // for BOTH semantic and canonical recall. A failed or empty DB read is never
   // silently treated as a verified empty source list.
@@ -5235,11 +5257,11 @@ async function orchestrationGenerateReply(
     company_id: _criticalE2ExpectedTenantId ?? "",
     conversation_id,
     source_message_id: _h1SourceMessageId,
-    question: _c3SemanticCustomerRecall ? _h1LastMsg : _productFactualRequest,
+    question: _c3R1Question,
     memory: _c3Memory,
     commerce: _c3CommerceSnapshot,
     requested_facts: _c3SemanticCustomerRecall?.requested_facts,
-    enabled: Boolean(_c3SemanticCustomerRecall || _c3OriginalGeneralRecallCandidate),
+    enabled: Boolean(_c3SemanticCustomerRecall || _c3OriginalGeneralRecallCandidate || _c3R1Unlabelled),
     recent_rows: _pr5HistoryReadError || !Array.isArray(_pr5HistoryRows)
       ? null : ((_pr5HistoryRows ?? []) as MemoryHistoryRow[]).map(row => ({
         id: String(row.id ?? ""),
@@ -5270,11 +5292,11 @@ async function orchestrationGenerateReply(
   });
   // C3 fact ownership routing: after E2/A3 and durable memory, before commerce
   // reply shortcuts, context clarification and current-KB/C1 resolution.
-  const _c3Recall = prepareConversationRecall({
+  const _c3RecallInput = {
     conversation_id,
     company_id: _criticalE2ExpectedTenantId ?? "",
     source_message_id: _h1SourceMessageId,
-    question: _c3SemanticCustomerRecall ? _h1LastMsg : _productFactualRequest,
+    question: _c3R1Question,
     customer_recall_proposal: _c3SemanticCustomerRecall,
     memory: _c3Memory,
     commerce: _c3CommerceSnapshot,
@@ -5287,7 +5309,11 @@ async function orchestrationGenerateReply(
       .slice(0, 12).map((row) => String(row.content ?? "")),
     trusted_visitor_source_rows: _c3RecallSources.rows,
     trusted_visitor_source_status: _c3RecallSources.status,
-  }, _visitorLang);
+  };
+  const _c3Recall = prepareConversationRecall(_c3RecallInput,_visitorLang);
+  const _c3R1Verified = Boolean(_c3R1Unlabelled&&!_mixedRequest&&!_explicitHandoffRequested&&
+    !_currentFactualRequest?.transaction_required&&
+    hasAttestedUnlabelledCustomerRecall(_c3RecallInput,_c3Recall.decision));
   const _c3SourceAttestedCustomerRecall = Boolean(
     (_c3OriginalGeneralRecallCandidate || _c3SemanticCustomerRecall) && _criticalE2ExpectedTenantId &&
     !_explicitHandoffRequested && !_mixedRequest &&
@@ -5318,7 +5344,8 @@ async function orchestrationGenerateReply(
       (e.authority === "CANONICAL_COMMERCE_STATE" && e.source_kind === "canonical_state" ||
        e.fact_type === "quantity" && e.authority === "CURRENT_CUSTOMER_MEMORY" &&
        e.source_kind === "retained_customer_correction_checkpoint")));
-  const _c3CustomerRecallRoute = _c3SourceAttestedCustomerRecall || _c3CurrentEffectiveRecall || Boolean(
+  const _c3CustomerRecallRoute = _c3SourceAttestedCustomerRecall || _c3CurrentEffectiveRecall ||
+    _c3R1Verified || Boolean(
     _c3SemanticCustomerRecall && !_mixedRequest && !_explicitHandoffRequested &&
     !_c3Recall.decision.handled && _c3Recall.decision.reason === "AMBIGUOUS" &&
     !_currentFactualRequest?.transaction_required);

@@ -1131,3 +1131,20 @@ Deno.test("Task3C D3 source-owned room value mismatch cannot reuse canonical fie
   assert(!resolveConversationRecall(i).handled,
     "typed canonical 999 sqft cannot replace the original Visitor 180 sqft");
 });
+
+Deno.test("Task3C R3 current-record recap never claims original speech",()=>{
+ const i=t06Turn2SourceConflictFixture();i.question="請總結目前已記錄的要求。";
+ const r=prepareConversationRecall(i,"zh-TW");
+ assert(r.decision.handled&&r.decision.fact_type==="summary",JSON.stringify(r.decision));
+ assert((r.reply??"").includes("而家記低咗"));
+ assert(!(r.reply??"").includes("你之前說過"));
+ assert((r.reply??"").includes("矛盾")&&(r.reply??"").includes("尚未核實"),
+   "canonical six and customer fact three must remain explicitly unresolved");
+});
+Deno.test("Task3C R3 absent historical Visitor source cannot certify stale six",()=>{
+ const i=t06Turn2SourceConflictFixture();i.trusted_visitor_source_rows=[];
+ i.trusted_visitor_source_status="not_requested";
+ const r=prepareConversationRecall(i,"zh-TW");
+ assert(!r.decision.handled&&r.decision.reason==="AMBIGUOUS",JSON.stringify(r.decision));
+ assert(!(r.reply??"").includes("6 部"));
+});

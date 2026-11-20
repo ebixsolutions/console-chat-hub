@@ -3259,14 +3259,23 @@ async function supervisorRecallFixture(row, variant='valid') {
  const entity=commerce.state.entities[0];entity.quantity=6;
  entity.provenance={source_type:'customer',source_message_id:oldSource};
  memory.memory.current_customer_facts=[{key,value,authority:'customer',source_message_id:oldSource}];
+ if(['room_size','horsepower','brand_required'].includes(key)){
+  if(key==='brand_required'){entity.constraints={...entity.constraints,brand_required:value};
+    memory.memory.active_entities[0].current_requirements.brand_required=value;}
+  else {entity.attributes={...entity.attributes,[key]:value};
+    memory.memory.active_entities[0].current_requirements[key]=value;}
+ }
  memory.memory.commerce_state_revision=commerce.revision;
  if(variant==='wrong-value')original.content=priorText.replace(String(value),'999').replace(/三/g,'九').replace('Morgan','Taylor').replace('安靜的環境','熱鬧的環境');
  if(variant==='wrong-subject')original.content=key==='quantity'?'我嘅預算係3，電腦開3個分頁。':key==='budget'?'我想要5000個樣品，預算未定。':'This is a different customer statement.';
  memory.memory_hash=hash(JSON.stringify(memory.memory));
  const f=fixture(question,{company:'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493',source:newSource,
    previous:prior,history:prior.messages,fullChain:true,originalPreview:true,captureEvidence:true,
-   semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'general',requested_facts:[]})],
-     {intent:'customer_fact_recall',requested_facts:[],language}),
+   semantic:variant==='unlabelled'
+     ? task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'general',requested_facts:[key]})],
+         {intent:'merchant_facts',requested_facts:[key],language})
+     : task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'general',requested_facts:[]})],
+         {intent:'customer_fact_recall',requested_facts:[],language}),
    answer:'UNTRUSTED_GENERATED_ANSWER_MUST_NOT_REPLACE_CUSTOMER_EVIDENCE',
  });
  return {f,value,prior:structuredClone(commerce.state),key,id};
@@ -3293,6 +3302,22 @@ for(const row of supervisorRecallCases)for(const variant of ['valid','wrong-valu
   assert.deepEqual(f.tables.conversation_commerce_state[0].state,prior,'read must not mutate historic state');
  });
 
+
+for(const row of [
+ ['T50-unlabelled','我之前提供的房間面積係180 sqft。','之前提供的房間面積是多少？','room_size','180 sqft','zh-TW'],
+ ['T68-unlabelled','我要求細房需要1.5匹冷氣。','我之前冷氣要求幾匹？','horsepower',1.5,'zh-TW'],
+ ['T69-unlabelled','冷氣品牌並非必要條件，我沒有指定品牌。','我要求的冷氣品牌是否一定要指定？','brand_required',false,'zh-TW'],
+])test('Task3C R1 full original handler unlabelled source: '+row[0],async()=>{
+ const {f,prior}=await supervisorRecallFixture(row,'unlabelled');
+ const response=await f.run();
+ assert.equal(response.status,200,JSON.stringify({body:response.body,events:f.events.slice(-7)}));
+ assert.equal(f.commits.length,1);
+ assert.equal(f.commits[0].metadata.response_route,'canonical_memory_recall',JSON.stringify(f.commits[0]));
+ assert.equal(f.requests.filter(x=>x.url.includes('/rag/context-search')).length,0);
+ assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1);
+ assert.equal(f.commits[0].metadata.b2_commit_source,'commit_ai_reply_tx');
+ assert.deepEqual(f.tables.conversation_commerce_state[0].state,prior);
+});
 function assertTask3cQuestionStillPending(f) {
  const source=f.commits[0]?.metadata?.source_message_id;
  const memory=f.tables.conversation_memory_state[0]?.memory;

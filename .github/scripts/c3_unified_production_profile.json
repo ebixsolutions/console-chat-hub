@@ -1731,11 +1731,11 @@
     "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
-    "supabase/functions/_shared/conversation-recall.ts": "4f154ca9197f0a7b075727547021a2cd25be410dfa63d99868890d98ef4fb1e2",
-    "supabase/functions/_shared/conversation-recall.test.ts": "0783767c8dcf4daa9d114055035ac39dc4ff55670c069d261401c51ff416deab",
+    "supabase/functions/_shared/conversation-recall.ts": "9485b98175c88ad184cf3b925ad8e1c92fc4b391e2ff29891203258590dfe167",
+    "supabase/functions/_shared/conversation-recall.test.ts": "748e6fd8a6ee03961ab410c85fd18bd325c011b1056397c3fed0580d0dac2646",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "9038f9546989c371986129601705e42673c29537016ce8c1212e9bb351c643c4",
-    "supabase/functions/generate-reply/index.ts": "d1b734065099dbdf68d05da79376ca9b6c61f41a714bce45dca4d0b20c4c28da",
-    "tests/emergency-p0/chain.test.mjs": "507f3e261bdce9585e9916a96ffe8609fb335130ad81b96dad794c12084e3ecb",
+    "supabase/functions/generate-reply/index.ts": "2fbebbce03cf387764c2822ffa1ad3d64eb7bae3a9288847ab69724d626a20e5",
+    "tests/emergency-p0/chain.test.mjs": "2f43f0c8c813c1ff86362d73a2937f7222e420521b9dd57f00bd2ad18a70f825",
     "supabase/functions/_shared/commerce-state-runtime-base.ts": "c1a2307d46f4881e16acffff5d684c2a7c52f1173426f7ddcb55a43164c5ddd4",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "47b2c6bcd13fbddc33c52bb4e374a13290ba75b2bd039ae9dcd919e120603e72",
     "supabase/functions/_shared/contextual-customer-update.ts": "e54def368325075a07f15320e69ae5db2c3b9137c4e1ebbfc15d7038095f6204",
