@@ -1832,7 +1832,17 @@ export function resolveConversationRecall(
   const semantic = resolveSemanticCustomerRecall(input);
   if (!semantic) {
     const legacy = resolveConversationRecallLegacy(input);
-    if (legacy.handled && input.trusted_visitor_source_status !== "verified" &&
+    // A canonical current-state recap or an already-reduced correction
+    // checkpoint is an operational state read, NOT a claim about the exact
+    // words in a historical Visitor turn. Preserve its original revision/
+    // lifecycle proof; require a verified original only for speech-owned facts.
+    const canonicalCurrentState = legacy.handled &&
+      (legacy.fact_type === "summary" ||
+        legacy.provenance.evidence.every(e =>
+          e.authority === "CANONICAL_COMMERCE_STATE" ||
+          e.source_kind === "retained_customer_correction_checkpoint"));
+    if (legacy.handled && !canonicalCurrentState &&
+        input.trusted_visitor_source_status !== "verified" &&
         legacy.provenance.evidence.some(e => e.authority === "CURRENT_CUSTOMER_MEMORY" ||
           e.source_kind === "customer_owned_canonical_property" ||
           e.source_kind === "attested_customer_utterance"))
