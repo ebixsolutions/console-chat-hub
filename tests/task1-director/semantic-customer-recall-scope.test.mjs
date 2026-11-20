@@ -19,6 +19,7 @@ function fixture({question='What budget did I mention?',key='budget',value=5000,
  memory.cancelled_or_superseded=[];
  return {...scope,question,memory,commerce:{...scope,source_message_id:'original-source',revision:2,state},
   customer_recall_proposal:{...scope,intent:'customer_fact_recall',requested_facts:emptyRequested?[]:[key],subject_refs:subjects},
+  trusted_visitor_source_status:'verified',
   trusted_visitor_source_rows:[...newer.map((content,i)=>({id:'newer-'+i,content})),{id:'original-source',content:source}]};
 }
 const entity=(name,qty,id)=>({entity_id:id,category:'generic_item',model:null,quantity:qty,status:'tentative',attributes:{product_name:name,unit:'units'},constraints:{},provenance:{source_type:'customer',source_message_id:'original-source'}});
@@ -292,4 +293,20 @@ test('D3 duplicate original message IDs and >5 targeted IDs fail closed',async()
  let dispatched=false;
  const capped=await d3Read(overflow,async()=>{dispatched=true;return {rows:[]};});
  assert.equal(capped.status,'over_cap');assert.equal(dispatched,false);
+});
+
+test('D3 missing source verification status cannot attest customer-owned scalar',()=>{
+ const input=fixture();delete input.trusted_visitor_source_status;
+ assert.equal(prepareConversationRecall(input,'en').decision.handled,false);
+});
+test('D3 six already-recent Visitor sources are not six missing DB reads',async()=>{
+ const input=fixture();const ids=Array.from({length:6},(_,i)=>'ready-'+i);
+ input.memory.current_customer_facts=ids.map((id,i)=>({
+   key:'budget',value:5000+i,authority:'customer',source_message_id:id,entity_id:null
+ }));
+ const recent=ids.map((id,i)=>d3Source('My budget is '+(5000+i)+'.',id));
+ let reads=0;
+ const out=await d3Read(input,async()=>{reads++;throw Error('no missing source');},recent);
+ assert.equal(out.status,'verified');assert.equal(out.targeted_count,0);
+ assert.equal(out.rows.length,6);assert.equal(reads,0);
 });

@@ -5,6 +5,7 @@ import { safeExecutionCode, executionFailure, type ExecutionFailure } from "../_
 import { authenticatedInboxAuthority, type InboxOperation } from "../_shared/uat-execution-contract.ts";
 import {
   prepareConversationRecall,
+  loadScopedRecallVisitorSources,
   type RecallCommerceSnapshot,
 } from "../_shared/conversation-recall.ts";
 import { isConversationCommerceState } from "../_shared/commerce-state-contract.ts";
@@ -810,6 +811,46 @@ Deno.serve(async (req) => {
               state: recallCommerce.state,
             }
             : null;
+        // The original authenticated conversation and Company scope are already
+        // checked above. Attest customer-owned recall only through that same
+        // ticket's server-read, unrecalled Visitor rows; missing/failed reads
+        // never become a synthetic "verified" result.
+        const sourceBoundary = String(recallSource.created_at ?? "");
+        const sourceBoundaryValid = Number.isFinite(Date.parse(sourceBoundary)) &&
+          /^[0-9a-f-]{36}$/i.test(String(recallSource.id ?? ""));
+        const trustedSources = await loadScopedRecallVisitorSources({
+          company_id: conv.company_id,
+          conversation_id: conversationId,
+          source_message_id: String(recallSource.id),
+          question: content,
+          memory: assistMemory,
+          commerce: recallSnapshot,
+          enabled: true,
+          recent_rows: (recallHistory ?? []).map((row: any) => ({
+            id: String(row.id ?? ""),
+            conversation_id: String(row.conversation_id ?? ""),
+            role: String(row.role ?? ""),
+            is_recalled: row.is_recalled !== false,
+            content: String(row.content ?? ""),
+            created_at: typeof row.created_at === "string" ? row.created_at : null,
+          })),
+          fetch_missing: async (ids) => {
+            if (!sourceBoundaryValid) return { rows: null, error: "source_boundary_unavailable" };
+            // Company isolation is enforced by the authenticated scoped
+            // conversation above. The messages table is bound by that ticket,
+            // not an unverified or nonexistent messages.company_id column.
+            const { data, error } = await supabaseAdmin.from("messages")
+              .select("id,conversation_id,role,content,created_at,is_recalled")
+              .eq("conversation_id", conversationId)
+              .eq("role", "visitor")
+              .eq("is_recalled", false)
+              .neq("content", "__THINKING__")
+              .or(`created_at.lt.${sourceBoundary},and(created_at.eq.${sourceBoundary},id.lt.${recallSource.id})`)
+              .in("id", [...ids])
+              .limit(5);
+            return { rows: data, error };
+          },
+        });
         const recallRoute = prepareConversationRecall({
           question: content,
           conversation_id: conversationId,
@@ -817,6 +858,8 @@ Deno.serve(async (req) => {
           source_message_id: String(recallSource.id),
           memory: assistMemory,
           commerce: recallSnapshot,
+          trusted_visitor_source_rows: trustedSources.rows,
+          trusted_visitor_source_status: trustedSources.status,
           recent_questions: (recallHistory ?? []).filter((row: any) =>
             row.role === "visitor"
           ).slice(0, 12).map((row: any) => String(row.content ?? "")),

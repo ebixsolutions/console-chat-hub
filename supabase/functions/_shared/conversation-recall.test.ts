@@ -160,6 +160,7 @@ export function recallFixture(
     question,
     memory,
     commerce: { ...scope, revision: 20, state },
+    trusted_visitor_source_status: "verified",
     trusted_visitor_source_rows: [
       { id: "ac-source", content: "I requested aircon room size 180 sqft and horsepower 1.5 hp; brand is not mandatory." },
       { id: "delivery-source", content: "My delivery address is 測試屋苑 B block 9樓; recipient 測試收件人甲 and phone 90000001." },

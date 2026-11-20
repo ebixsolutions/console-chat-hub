@@ -1730,6 +1730,7 @@ Deno.test("C3 reconstructed acceptance failures use customer-owned history (non-
     // proof boundary rather than asking the resolver to trust memory alone.
     const result = prepareConversationRecall({
       ...seed, memory, commerce: { ...seed.commerce!, state: commerceState },
+      trusted_visitor_source_status: "verified",
       trusted_visitor_source_rows: setup.map((item: { id: string; content: string }) =>
         ({ id: item.id, content: item.content })),
     });

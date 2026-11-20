@@ -503,6 +503,18 @@ for(const tool of ['knowledge_helper','suggest_reply'])for(const stale of [true,
  assert.equal(result.data.kb_request_contract.subject_source_message_id,newSource);
  assert.equal(result.data.kb_request_contract.query_sha256,await fixtureDigest(x.queries[0]));
  assert.equal(result.data.selected_document_id,'topic-new-price');
+ if(tool==='suggest_reply'&&stale&&JSON.stringify(result.data).includes(older)){
+  // Synthetic fixture only: identify the exact leaking response path, never
+  // weaken the original source-leak regression or log live customer data.
+  const leaks=[];
+  const walk=(value,path)=>{
+   if(typeof value==='string'){if(value.includes(older)||value.includes('5432'))leaks.push(path);}
+   else if(typeof value==='number'){if(value===5432)leaks.push(path);}
+   else if(value&&typeof value==='object')for(const [key,child] of Object.entries(value))walk(child,path+'.'+key);
+  };
+  walk(result.data,'data');
+  console.error('D3_SOURCE_LEAK_PATHS|'+JSON.stringify(leaks.slice(0,20)));
+ }
  assert(!JSON.stringify(result.data).includes(older)&&!JSON.stringify(result.data).includes('5432'),'older source leaked into the current assistance');
  if(tool==='suggest_reply'){
   assert.equal(result.data.draft_only,true);assert.deepEqual(result.data.result.suggestions,suggestions);

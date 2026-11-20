@@ -1275,8 +1275,10 @@ export async function loadScopedRecallVisitorSources(input: {
       "delivery_preference", "delivery_status"].includes(f))) {
     add(scope.commerce?.state.delivery.provenance?.source_message_id);
   }
-  if (ids.length > 5) return denied("over_cap");
   const needed = ids.filter(id => !recent.some(row => row.id === id));
+  // Only absent source rows cost a targeted DB read. A long canonical source
+  // lineage already present in verified recent history is not an over-cap read.
+  if (needed.length > 5) return denied("over_cap", needed.length);
   // No candidate source ID is not a verified failed lookup: original
   // canonical transaction states remain under their separate authority.
   if (!needed.length) return { status: ids.length ? "verified" : "not_requested",
@@ -1312,6 +1314,10 @@ function resolveSemanticCustomerRecall(input:ConversationRecallInput):Conversati
   // A semantic recall label cannot replace effective state with a quote.
   // The original resolver keeps canonical conflict and lifecycle checks.
   if(isCurrentEffectiveQuantityRecall(input.question))return null;
+  // A caller without a server-owned source verification result cannot
+  // establish historical customer speech, even if it supplies retained facts.
+  if (input.trusted_visitor_source_status !== "verified")
+    return fail("AMBIGUOUS","CUSTOMER_SOURCE_NOT_VERIFIED");
   const m=input.memory,c=input.commerce,rows=input.trusted_visitor_source_rows;
   if(!m||m.version!=="conversation-memory-1.0.0"||m.company_id!==input.company_id||m.conversation_id!==input.conversation_id||
      m.source_message_id!==input.source_message_id||!Number.isInteger(m.memory_revision)||m.memory_revision<1)
@@ -1819,13 +1825,18 @@ export function resolveConversationRecall(
   const historicalCustomerQuantity = any(input.question, OWNER) &&
     hasField(input.question, "quantity") &&
     /(?:剛才|刚才|頭先|头先|之前|先前|曾經|曾经|說過|说过|講過|讲过|提過|提过|previously|earlier|did (?:i|we) say|told you)/iu.test(input.question);
-  if (historicalCustomerQuantity && input.trusted_visitor_source_status &&
+  if (historicalCustomerQuantity &&
       input.trusted_visitor_source_status !== "verified") {
     return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");
   }
   const semantic = resolveSemanticCustomerRecall(input);
   if (!semantic) {
     const legacy = resolveConversationRecallLegacy(input);
+    if (legacy.handled && input.trusted_visitor_source_status !== "verified" &&
+        legacy.provenance.evidence.some(e => e.authority === "CURRENT_CUSTOMER_MEMORY" ||
+          e.source_kind === "customer_owned_canonical_property" ||
+          e.source_kind === "attested_customer_utterance"))
+      return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");
     if (historicalCustomerQuantity && legacy.handled &&
         !attestedCustomerQuantity(input)) return fail("AMBIGUOUS", "CUSTOMER_QUANTITY_NOT_ATTESTED");
     return legacy;
@@ -1842,9 +1853,9 @@ export function resolveConversationRecall(
     (input.customer_recall_proposal?.requested_facts ?? []).some(key =>
       !CUSTOMER_RECALL_FIELDS.some(f => f.keys.some(k =>
         keyNorm(k) === keyNorm(key))));
-  if (input.trusted_visitor_source_status &&
-      ["failed", "missing", "over_cap"].includes(input.trusted_visitor_source_status) &&
-      input.customer_recall_proposal) return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");
+  if (input.trusted_visitor_source_status !== "verified" &&
+      input.customer_recall_proposal && semantic.reason !== "CURRENT_KB_REQUIRED")
+    return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");
   const canConsultLegacy = semantic.detail === "CUSTOMER_RECALL_FIELD_AMBIGUOUS" ||
     (unsupportedTypedField && [
       "CUSTOMER_SOURCE_NOT_AVAILABLE",
