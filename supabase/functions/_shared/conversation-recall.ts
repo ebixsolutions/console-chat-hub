@@ -1885,7 +1885,27 @@ export function resolveConversationRecall(
           });
         });
       }
-      return hasField(row.content, e.fact_type);
+      if (!hasField(row.content, e.fact_type)) return false;
+      // D3 F1/F3 source-owned canonical typed attributes require an original
+      // Visitor VALUE match, not merely the same field label.
+      if (e.source_kind === "customer_owned_canonical_property") {
+        if (typeof e.value === "number") return numberTokens(row.content)
+          .some(token => token.value === e.value);
+        if (typeof e.value === "string") {
+          const normalize = (value: string) => value.normalize("NFKC")
+            .toLowerCase().replace(/\s+/gu, "");
+          const value = normalize(e.value);
+          return value.length > 0 && normalize(row.content).includes(value);
+        }
+        if (typeof e.value === "boolean" && e.fact_type === "brand_constraint") {
+          const mandatory = /(?:品牌.{0,8}(?:必須|必须|指定)|brand.{0,10}(?:required|mandatory))/iu;
+          const optional = /(?:品牌.{0,8}(?:不是|並非|并非|唔係|不限|無須|无需).{0,8}(?:必須|必须|指定)?|brand.{0,10}(?:not|optional|flexible))/iu;
+          return e.value ? mandatory.test(row.content) && !optional.test(row.content)
+            : optional.test(row.content);
+        }
+        return false;
+      }
+      return true;
     }
     const part = /^(customer_preferences|active_constraints|latest_corrections)\.(\d+)/u.exec(e.state_path);
     if (part) {

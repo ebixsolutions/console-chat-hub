@@ -1118,3 +1118,15 @@ Deno.test("C3 semantic fallback preserves hard scope and integrity stops",()=>{
   assert(!result.handled,what+" wrongly answered "+JSON.stringify(result));
  }
 });
+
+Deno.test("Task3C D3 source-owned room value mismatch cannot reuse canonical field", () => {
+  const i=recallFixture("之前提供的房間面積是多少？");
+  i.customer_recall_proposal={company_id:i.company_id,conversation_id:i.conversation_id,
+    source_message_id:i.source_message_id,intent:"customer_fact_recall",
+    requested_facts:["room_size"],subject_refs:[]};
+  assert(resolveConversationRecall(i).handled,"valid T50 historical read must remain available");
+  i.commerce!.state.entities[0].attributes.room_size="999 sqft";
+  i.memory!.active_entities[0].current_requirements.room_size="999 sqft";
+  assert(!resolveConversationRecall(i).handled,
+    "typed canonical 999 sqft cannot replace the original Visitor 180 sqft");
+});
