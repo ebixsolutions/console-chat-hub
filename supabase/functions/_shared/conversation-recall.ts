@@ -1843,10 +1843,21 @@ function originalSourceAttests(input:ConversationRecallInput,e:RecallEvidence,un
           });
         });
       }
-      if (!hasField(row.content, e.fact_type)) return false;
-      // D3 F1/F3 source-owned canonical typed attributes require an original
-      // Visitor VALUE match, not merely the same field label.
-      if (e.source_kind === "customer_owned_canonical_property") {
+      // A number followed by a declared horsepower unit is a customer
+      // requirement only when tied to an explicit request verb in the
+      // original Visitor utterance. "1.5匹" alone may be product specs.
+      const requestedHorsepower=e.fact_type==="horsepower" && typeof e.value==="number" &&
+        Number.isFinite(e.value) && e.value>0 && e.value<=100 &&
+        sourceClauses(row.content).some(clause=>{
+          const escaped=String(e.value).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+          return new RegExp("(?:要|需要|想要|指定|要求|預計|期望|希望|need|want|request)\\s*"+
+            escaped+"\\s*匹(?![\\d.])","iu").test(clause);
+        });
+      if (!hasField(row.content,e.fact_type) && !requestedHorsepower) return false;
+      // R1: retained customer projection and canonical typed property must
+      // BOTH match the literal Visitor VALUE, not merely the field label.
+      if (e.source_kind === "customer_owned_canonical_property" ||
+          e.source_kind === "retained_customer_fact") {
         if (typeof e.value === "number") return numberTokens(row.content)
           .some(token => token.value === e.value);
         if (typeof e.value === "string") {
@@ -1911,7 +1922,8 @@ export function hasAttestedUnlabelledCustomerRecall(input:ConversationRecallInpu
      !decision.provenance.evidence.length)return false;
   const quoted=attestedCustomerQuantity(input);
   return decision.provenance.evidence.every(e=>e.temporal_scope==="current"&&(
-    e.source_kind==="customer_owned_canonical_property"&&originalSourceAttests(input,e,false)||
+    (e.source_kind==="customer_owned_canonical_property"||
+     e.source_kind==="retained_customer_fact")&&originalSourceAttests(input,e,false)||
     e.source_kind==="attested_customer_utterance"&&e.fact_type==="quantity"&&quoted!==null&&
        quoted.evidence_source_message_id===e.evidence_source_message_id&&quoted.value===e.value));
 }
@@ -2314,7 +2326,24 @@ function resolveConversationRecallLegacy(
       best.map((x) => [`${x.entity_id ?? ""}|${JSON.stringify(x.value)}`, x]),
     );
     if (unique.size > 1) {
-      return fail("AMBIGUOUS", `CONFLICTING_${f.toUpperCase()}`, facts);
+      // A global customer-fact projection, its per-entity attribute, and
+      // Memory's source-free view can describe the SAME literal Visitor fact.
+      // Accept only when one exact independently fetched Visitor source
+      // proves every source-bearing candidate, all values are byte-equal,
+      // and at most one concrete entity is involved. Otherwise preserve
+      // the original multi-entity ambiguity and tenant/revision protections.
+      const attested=best.filter(e=>e.evidence_source_message_id &&
+        originalSourceAttests(input,e,false));
+      const ids=new Set(attested.map(e=>e.evidence_source_message_id));
+      const entities=new Set(best.map(e=>e.entity_id).filter(Boolean));
+      const equivalent= input.trusted_visitor_source_status==="verified" &&
+        attested.length>0 && ids.size===1 && entities.size<=1 &&
+        best.every(e=>JSON.stringify(e.value)===JSON.stringify(attested[0].value) &&
+          (e.evidence_source_message_id===attested[0].evidence_source_message_id ||
+           !e.evidence_source_message_id &&
+             /^active_entities\.\d+\.current_requirements\./u.test(e.state_path) &&
+             !!e.entity_id && entities.has(e.entity_id)));
+      if (!equivalent) return fail("AMBIGUOUS", `CONFLICTING_${f.toUpperCase()}`, facts);
     }
     const fact: RecallEvidence = { ...candidates[0] };
     delete (fact as Partial<Candidate>).rank;

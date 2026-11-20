@@ -2,6 +2,7 @@ import { customerDimensionPair, customerSunExposure } from "./commerce-state-aut
 import {
   type ConversationRecallInput,
   prepareConversationRecall,
+  hasAttestedUnlabelledCustomerRecall,
   recallClarification,
   renderConversationRecall,
   resolveConversationRecall,
@@ -1147,4 +1148,29 @@ Deno.test("Task3C R3 absent historical Visitor source cannot certify stale six",
  const r=prepareConversationRecall(i,"zh-TW");
  assert(!r.decision.handled&&r.decision.reason==="AMBIGUOUS",JSON.stringify(r.decision));
  assert(!(r.reply??"").includes("6 部"));
+});
+
+Deno.test("Task3C R1 unlabelled typed recall proves same original Visitor and rejects changed text",()=>{
+ for(const [question,key,value,attribute,source] of [
+   ["之前提供的房間面積是多少？","room_size","180 sqft","room_size","我之前提供的房間面積係180 sqft。"],
+   ["我之前冷氣要求幾匹？","horsepower",1.5,"horsepower","我要求細房需要1.5匹冷氣。"],
+   ["我要求的冷氣品牌是否一定要指定？","brand_required",false,"brand_required","冷氣品牌並非必要條件，我沒有指定品牌。"],
+ ] as const){
+  const x=recallFixture(question);x.customer_recall_proposal=undefined;
+  x.memory!.current_customer_facts=[{key,value,authority:"customer",source_message_id:"ac-source"}];
+  x.memory!.active_entities[0].current_requirements[attribute]=value;
+  if(attribute==="brand_required") x.commerce!.state.entities[0].constraints.brand_required=value;
+  else x.commerce!.state.entities[0].attributes[attribute]=value;
+  x.trusted_visitor_source_rows=[{id:"ac-source",content:source}];
+  x.trusted_visitor_source_status="verified";
+  const resolved=prepareConversationRecall(x,"zh-TW");
+  assert(resolved.decision.handled,JSON.stringify(resolved.decision));
+  assert(hasAttestedUnlabelledCustomerRecall(x,resolved.decision),"original Visitor provenance required");
+  const wrong={...x,trusted_visitor_source_rows:[{id:"ac-source",content:"另一位客戶的無關要求。"}]};
+  const rejected=prepareConversationRecall(wrong,"zh-TW");
+  assert(!hasAttestedUnlabelledCustomerRecall(wrong,rejected.decision),"no mismatched Visitor text");
+  const missing={...x,trusted_visitor_source_status:"failed" as const};
+  assert(!hasAttestedUnlabelledCustomerRecall(missing,prepareConversationRecall(missing).decision),
+    "missing source read status cannot grant recall");
+ }
 });
