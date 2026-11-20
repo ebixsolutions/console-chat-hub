@@ -3268,6 +3268,22 @@ async function supervisorRecallFixture(row, variant='valid') {
  memory.memory.commerce_state_revision=commerce.revision;
  if(variant==='wrong-value')original.content=priorText.replace(String(value),'999').replace(/三/g,'九').replace('Morgan','Taylor').replace('安靜的環境','熱鬧的環境');
  if(variant==='wrong-subject')original.content=key==='quantity'?'我嘅預算係3，電腦開3個分頁。':key==='budget'?'我想要5000個樣品，預算未定。':'This is a different customer statement.';
+  // Same Task3C: redacted source-shape diagnostic for the two failing full-handler fixtures.
+  if (id.startsWith('T50-') || id.startsWith('T68-')) {
+    const valueHash = value => value === undefined ? 'absent' : hash(JSON.stringify(value));
+    console.log('D3_R1_SEED_PROOF|'+JSON.stringify({
+      case_id:id,
+      original_source_count:prior.messages.filter(m=>m.id===oldSource&&m.role==='visitor').length,
+      source_is_recalled:original.is_recalled,
+      commerce_revision:commerce.revision,memory_commerce_revision:memory.memory.commerce_state_revision,
+      entity_id:entity.entity_id,entity_source_matches:entity.provenance.source_message_id===oldSource,
+      canonical:Object.entries({...entity.attributes,...entity.constraints}).filter(([k])=>/room_size|horsepower|匹|hp/iu.test(k)).map(([k,v])=>({key:k,sha256:valueHash(v)})),
+      retained:memory.memory.current_customer_facts.map(v=>({key:v.key,source_matches:v.source_message_id===oldSource,sha256:valueHash(v.value)})),
+      active_entity_id:memory.memory.active_entities[0]?.entity_id,
+      active:Object.entries(memory.memory.active_entities[0]?.current_requirements??{}).filter(([k])=>/room_size|horsepower|匹|hp/iu.test(k)).map(([k,v])=>({key:k,sha256:valueHash(v)})),
+      global:Object.entries(commerce.state.customer_constraints??{}).filter(([k])=>/room_size|horsepower|匹|hp/iu.test(k)).map(([k,v])=>({key:k,sha256:valueHash(v)})),
+    }));
+  }
  memory.memory_hash=hash(JSON.stringify(memory.memory));
  const f=fixture(question,{company:'3d6e17b5-ec79-4f75-aa7f-eaa824ff8493',source:newSource,
    previous:prior,history:prior.messages,fullChain:true,originalPreview:true,captureEvidence:true,

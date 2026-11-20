@@ -1735,7 +1735,7 @@
     "supabase/functions/_shared/conversation-recall.test.ts": "a6eca0d52000be35d36e34f6e7571f935cf261ad676aa389bcc27935a8c6fa21",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "9038f9546989c371986129601705e42673c29537016ce8c1212e9bb351c643c4",
     "supabase/functions/generate-reply/index.ts": "97b798226e82fe32bb8e5d270d2655061ed9a77188a881b51797fe5bd9e0b087",
-    "tests/emergency-p0/chain.test.mjs": "6dfe1e391a20c15574e2b1598798b6f5c1a3953900725d96b82bf83e391a2741",
+    "tests/emergency-p0/chain.test.mjs": "466dd1ffe4df2fcefb8f0807dd6718a90ec4314fdf055703427612e73f254c2f",
     "supabase/functions/_shared/commerce-state-runtime-base.ts": "c1a2307d46f4881e16acffff5d684c2a7c52f1173426f7ddcb55a43164c5ddd4",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "47b2c6bcd13fbddc33c52bb4e374a13290ba75b2bd039ae9dcd919e120603e72",
     "supabase/functions/_shared/contextual-customer-update.ts": "e54def368325075a07f15320e69ae5db2c3b9137c4e1ebbfc15d7038095f6204",
