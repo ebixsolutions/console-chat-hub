@@ -5319,6 +5319,22 @@ async function orchestrationGenerateReply(
   const _c3R1Verified = Boolean(!_mixedRequest&&!_explicitHandoffRequested&&
     !_currentFactualRequest?.transaction_required&&
     hasAttestedUnlabelledCustomerRecall(_c3RecallInput,_c3Recall.decision));
+  // R1 evidence-only trace: no raw messages, evidence values or identifiers.
+  // Distinguishes Visitor-source admission, canonical fact resolution and
+  // reply-route acceptance without exposing customer content.
+  if (!_c3SemanticCustomerRecall && !_c3OriginalGeneralRecallCandidate) {
+    console.info("[generate-reply] c3_r1_source_decision", {
+      source_status: _c3RecallSources.status,
+      targeted_count: _c3RecallSources.targeted_count,
+      handled: _c3Recall.decision.handled,
+      fact: _c3Recall.decision.handled ? _c3Recall.decision.fact_type : null,
+      reason: _c3Recall.decision.handled ? null : _c3Recall.decision.reason,
+      detail: _c3Recall.decision.handled ? null : _c3Recall.decision.detail,
+      source_kinds: _c3Recall.decision.handled
+        ? _c3Recall.decision.provenance.evidence.map(e=>e.source_kind) : [],
+      route_accepted: _c3R1Verified,
+    });
+  }
   const _c3SourceAttestedCustomerRecall = Boolean(
     (_c3OriginalGeneralRecallCandidate || _c3SemanticCustomerRecall) && _criticalE2ExpectedTenantId &&
     !_explicitHandoffRequested && !_mixedRequest &&

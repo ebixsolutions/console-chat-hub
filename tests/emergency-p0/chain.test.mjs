@@ -3312,6 +3312,16 @@ for(const row of [
  const response=await f.run();
  assert.equal(response.status,200,JSON.stringify({body:response.body,events:f.events.slice(-7)}));
  assert.equal(f.commits.length,1);
+ if(f.commits[0].metadata.response_route!=='canonical_memory_recall'){
+  const decisions=f.events.filter(event=>Array.isArray(event)&&
+    ['[generate-reply] c3_r1_source_decision','[generate-reply] c3_scoped_recall_source_read'].includes(event[0]));
+  console.log('D3_R1_SOURCE_DIAGNOSTIC|'+JSON.stringify({
+    case_id:row[0],route:f.commits[0].metadata.response_route,
+    decisions:decisions.slice(-6).map(event=>event[1]),
+    semantic_calls:f.requests.filter(x=>x.url.endsWith(':generateContent')).length,
+    kb_calls:f.requests.filter(x=>x.url.includes('/rag/context-search')).length,
+  }));
+ }
  assert.equal(f.commits[0].metadata.response_route,'canonical_memory_recall',JSON.stringify(f.commits[0]));
  assert.equal(f.requests.filter(x=>x.url.includes('/rag/context-search')).length,0);
  assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1);
