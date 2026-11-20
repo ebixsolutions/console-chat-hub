@@ -5242,8 +5242,12 @@ async function orchestrationGenerateReply(
     enabled: Boolean(_c3SemanticCustomerRecall || _c3OriginalGeneralRecallCandidate),
     recent_rows: _pr5HistoryReadError || !Array.isArray(_pr5HistoryRows)
       ? null : ((_pr5HistoryRows ?? []) as MemoryHistoryRow[]).map(row => ({
-        id: String(row.id ?? ""), conversation_id: String(row.conversation_id ?? ""),
-        role: String(row.role ?? ""), is_recalled: row.is_recalled === true,
+        id: String(row.id ?? ""),
+        // The SELECT includes these server columns; MemoryHistoryRow's narrow
+        // TS projection omits them. Missing raw fields must fail closed.
+        conversation_id: String((row as MemoryHistoryRow & { conversation_id?: unknown }).conversation_id ?? ""),
+        role: String(row.role ?? ""),
+        is_recalled: (row as MemoryHistoryRow & { is_recalled?: unknown }).is_recalled !== false,
         content: String(row.content ?? ""), created_at: row.created_at,
       })),
     fetch_missing: async (ids) => {
