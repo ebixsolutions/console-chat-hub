@@ -1174,3 +1174,25 @@ Deno.test("Task3C R1 unlabelled typed recall proves same original Visitor and re
     "missing source read status cannot grant recall");
  }
 });
+
+Deno.test("Task3C T50 grouped room areas require individually source-attested label/value pairs",()=>{
+ const x=recallFixture("兩間房的面積分別是多少？");
+ x.customer_recall_proposal=undefined;
+ x.memory!.current_customer_facts=[{
+  key:"room_size",authority:"customer",source_message_id:"ac-source",entity_id:null,
+  value:[
+    {member_id:"room:1",group:"room",label:"細房",value:"80平方呎"},
+    {member_id:"room:2",group:"room",label:"大房",value:"100平方呎"},
+  ]
+ }];
+ x.trusted_visitor_source_rows=[{id:"ac-source",content:"細房80平方呎，大房100平方呎。"}];
+ x.trusted_visitor_source_status="verified";
+ const good=prepareConversationRecall(x,"zh-TW");
+ assert(good.decision.handled && hasAttestedUnlabelledCustomerRecall(x,good.decision),
+   "each pair must derive from original Visitor line");
+ for(const bad of ["細房100平方呎，大房80平方呎。","細房80平方呎，另外的房間未說面積。"]){
+  const wrong={...x,trusted_visitor_source_rows:[{id:"ac-source",content:bad}]};
+  assert(!hasAttestedUnlabelledCustomerRecall(wrong,prepareConversationRecall(wrong,"zh-TW").decision),
+    "swapped or missing pair must not certify existing canonical values");
+ }
+});

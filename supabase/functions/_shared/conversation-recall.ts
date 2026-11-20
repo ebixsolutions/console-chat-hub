@@ -1858,6 +1858,31 @@ function originalSourceAttests(input:ConversationRecallInput,e:RecallEvidence,un
       // BOTH match the literal Visitor VALUE, not merely the field label.
       if (e.source_kind === "customer_owned_canonical_property" ||
           e.source_kind === "retained_customer_fact") {
+        // T50: room-size collection projects member_id/value; canonical
+        // Memory retains the original member label. Prove EACH label/value
+        // together in one original Visitor clause, never merely two numbers.
+        if (e.fact_type === "room_size" && Array.isArray(e.value)) {
+          if (!e.value.length || e.value.length > 8) return false;
+          const originals=(input.memory?.current_customer_facts??[])
+            .filter(f=>f.authority==="customer" && keyMatches(f.key,"room_size") &&
+              f.source_message_id===e.evidence_source_message_id)
+            .flatMap(f=>Array.isArray(f.value)?f.value:[]);
+          const normalize=(s:string)=>s.normalize("NFKC").replace(/\s+/gu,"").toLowerCase();
+          const clauses=sourceClauses(row.content).map(normalize);
+          return e.value.every(raw=>{
+            const member=object(raw);
+            if(typeof member?.member_id!=="string" ||
+               typeof member.value!=="string")return false;
+            return originals.some(raw=>{
+              const original=object(raw);
+              return original?.member_id===member.member_id &&
+                original.value===member.value &&
+                typeof original.label==="string" && original.label.length>0 &&
+                clauses.some(clause=>clause.includes(normalize(original.label)) &&
+                  clause.includes(normalize(member.value)));
+            });
+          });
+        }
         if (typeof e.value === "number") return numberTokens(row.content)
           .some(token => token.value === e.value);
         if (typeof e.value === "string") {

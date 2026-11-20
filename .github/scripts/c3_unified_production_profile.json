@@ -1731,8 +1731,8 @@
     "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
-    "supabase/functions/_shared/conversation-recall.ts": "39388f226706edff3714aa5b69436f3760f6946b48d97a34d847cc0049bccbc6",
-    "supabase/functions/_shared/conversation-recall.test.ts": "006a4df9d8ca0acfe08dd9b4c0e72c7750ca9dd0f66dcab0f143db9361fbd705",
+    "supabase/functions/_shared/conversation-recall.ts": "3b1a8ec9175b45168d8d477cd1c69d47e41d846f3a3702b757c82f3cdc3df156",
+    "supabase/functions/_shared/conversation-recall.test.ts": "a6eca0d52000be35d36e34f6e7571f935cf261ad676aa389bcc27935a8c6fa21",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "9038f9546989c371986129601705e42673c29537016ce8c1212e9bb351c643c4",
     "supabase/functions/generate-reply/index.ts": "145d3c4f90d899e668f7e95d6535f2ca3bb5b1269c247e0bd03d67a52b5f7310",
     "tests/emergency-p0/chain.test.mjs": "2f43f0c8c813c1ff86362d73a2937f7222e420521b9dd57f00bd2ad18a70f825",
