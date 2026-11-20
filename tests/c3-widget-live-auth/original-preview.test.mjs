@@ -503,7 +503,7 @@ for(const tool of ['knowledge_helper','suggest_reply'])for(const stale of [true,
  assert.equal(result.data.kb_request_contract.subject_source_message_id,newSource);
  assert.equal(result.data.kb_request_contract.query_sha256,await fixtureDigest(x.queries[0]));
  assert.equal(result.data.selected_document_id,'topic-new-price');
- if(tool==='suggest_reply'&&stale&&JSON.stringify(result.data).includes(older)){
+ if(tool==='suggest_reply'&&stale&&(JSON.stringify(result.data).includes(older)||JSON.stringify(result.data).includes('5432'))){
   // Synthetic fixture only: identify the exact leaking response path, never
   // weaken the original source-leak regression or log live customer data.
   const leaks=[];

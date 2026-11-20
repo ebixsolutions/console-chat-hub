@@ -167,6 +167,9 @@ test('Task3C N1/N3 exact 13-case clean-source differential versus deployed-v289 
    const baseInput={company_id,conversation_id,source_message_id,question:asserted[0].text,
     memory,commerce:{company_id,conversation_id,source_message_id:earlier.at(-1)?.id??source_message_id,
       revision:setup.length,state},
+    // The clean-source differential constructs original server-attributed
+    // Visitor turns; the same read result must be explicit for the D3 gate.
+    trusted_visitor_source_status:'verified',
     trusted_visitor_source_rows:earlier.slice().reverse().map(x=>({id:x.id,content:x.content}))};
    const before=old.resolveConversationRecall(baseInput);
    const keys=semanticKeys[caseId]??[];
