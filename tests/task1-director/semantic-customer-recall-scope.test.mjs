@@ -313,3 +313,75 @@ test('D3 six already-recent Visitor sources are not six missing DB reads',async(
  assert.equal(out.status,'verified');assert.equal(out.targeted_count,0);
  assert.equal(out.rows.length,6);assert.equal(reads,0);
 });
+
+/** P5 R2: sample the unchanged historical original full-handler test with
+ * both randomized source IDs and two fixed ID orders. Each worktree changes
+ * only a disposable copy of the original fixture; the assertion is verbatim.
+ * This is non-paid isolated runtime, never Hosted PASS. */
+test('Task3C R2 original test533 nondeterminism 100x per historical/current source', {timeout:240000},async()=>{
+ const {spawnSync}=await import('node:child_process');
+ const {writeFileSync}=await import('node:fs');
+ const root=fileURLToPath(new URL('../../',import.meta.url));
+ const refs=[
+  ['FIRST_OBSERVED_FAIL','fb70fd8e617b5e9f37c8ed086aca250556adcaf4'],
+  ['POST_D3_SOURCE_PASS','d4d2f3cdfcb58b26de629aef66471f82a6c45ada'],
+ ];
+ for(const [label,ref] of refs) {
+  const temp=mkdtempSync(join(tmpdir(),'c3-test533-repro-'));
+  let attached=false;
+  try{
+   execFileSync('git',['worktree','add','--detach',temp,ref],{cwd:root,timeout:30000,stdio:'pipe'});
+   attached=true;
+   if(existsSync(join(root,'node_modules')))symlinkSync(join(root,'node_modules'),join(temp,'node_modules'),'dir');
+   const filepath=join(temp,'tests/c3-widget-live-auth/original-preview.test.mjs');
+   let text=readFileSync(filepath,'utf8');
+   const loop="for(const tool of ['knowledge_helper','suggest_reply'])for(const stale of [true,false])test(";
+   assert(text.includes(loop),'original four-variant test must exist');
+   text=text.replace(loop,
+     "for(const tool of ['knowledge_helper','suggest_reply'])for(const stale of [true,false])for(const r2Iteration of Array.from({length:100},(_,i)=>i))test(");
+   const uuids=" const currentSource=crypto.randomUUID(),newSource=crypto.randomUUID(),oldSource=crypto.randomUUID();";
+   assert(text.includes(uuids),'original source ID fixture changed');
+   text=text.replace(uuids,` const currentSource=crypto.randomUUID(),
+  newSource=r2Iteration===98?'00000000-0000-4000-8000-000000000101':
+    r2Iteration===99?'00000000-0000-4000-8000-000000000099':crypto.randomUUID(),
+  oldSource=r2Iteration===98?'00000000-0000-4000-8000-000000000099':
+    r2Iteration===99?'00000000-0000-4000-8000-000000000101':crypto.randomUUID();`);
+   const assertion=" assert(!JSON.stringify(result.data).includes(older)&&!JSON.stringify(result.data).includes('5432'),'older source leaked into the current assistance');";
+   assert(text.includes(assertion),'original source-leak assertion cannot be weakened');
+   const diagnostic=` if(tool==='suggest_reply'&&stale&&(JSON.stringify(result.data).includes(older)||JSON.stringify(result.data).includes('5432'))){
+  const paths=[]; const visit=(value,path)=>{
+   if(typeof value==='string'&&(value.includes(older)||value.includes('5432')))paths.push(path);
+   else if(value&&typeof value==='object')for(const [key,child]of Object.entries(value))visit(child,path+'.'+key);
+  };
+  visit(result.data,'data');
+  console.log('D3_R2_PATHS|'+JSON.stringify(paths.slice(0,20)));
+ }
+`;
+   text=text.replace(assertion,diagnostic+assertion);
+   writeFileSync(filepath,text,'utf8');
+   const run=spawnSync(process.execPath,[
+    '--test','--test-name-pattern=Task3 topic-switch v5 Inbox suggest_reply: confident older proposal',
+    'tests/c3-widget-live-auth/original-preview.test.mjs'],{
+      cwd:temp,encoding:'utf8',timeout:180000,maxBuffer:32*1024*1024,
+      env:{...process.env,C3_KB_ADMISSION_SOURCE_REF:''}});
+   if(run.error)throw run.error;
+   const output=String(run.stdout??'')+'\n'+String(run.stderr??'');
+   const matches=output.split('\n').filter(line=>
+     /^(?:not ok|ok) \d+ - Task3 topic-switch v5 Inbox suggest_reply: confident older proposal/.test(line));
+   const failures=matches.filter(line=>line.startsWith('not ok')).length;
+   const paths=[...output.matchAll(/D3_R2_PATHS\|([^\n]+)/g)].flatMap(m=>{
+     try{return JSON.parse(m[1])}catch{return []}
+   });
+   const result={label,head:ref,attempts:matches.length,failures,
+      passes:matches.length-failures,fixed_id_order_cases:2,
+      exit_code:run.status,leak_paths:[...new Set(paths)].slice(0,20),
+      evidence_tier:'NONPAID_SOURCE_REPRO_NOT_HOSTED'};
+   console.log('D3_R2_REPRO|'+JSON.stringify(result));
+   assert.equal(matches.length,100,'100 original test assertions must be recorded for '+label);
+   assert.equal(run.signal,null,'stress fixture timed out');
+  }finally{
+   if(attached)execFileSync('git',['worktree','remove','--force',temp],{cwd:root,timeout:30000,stdio:'pipe'});
+   rmSync(temp,{recursive:true,force:true});
+  }
+ }
+});
