@@ -289,3 +289,28 @@ test('A2 source-named defer survives independent no-KB-lookup instruction',()=>{
  assert.equal(next.entities[0].provenance.source_message_id,'source-current');
  assert.deepEqual(next.quotes,state.quotes,'not looking up a price cannot mint a quote');
 });
+
+test('unresolved strong lifecycle in multiple languages blocks downstream quote, order and payment drafts',()=>{
+ const f=fixture(domains[0]);f.state.entities[0].model=null;
+ f.state.entities[0].attributes.product_name='客廳冷氣';
+ f.state.entities[0].attributes.customer_subject_aliases=['客廳冷氣'];
+ for(const text of ['取消冷氣，唔使查報價','暫緩冷氣，唔使查報價','Cancel air conditioner; do not check quotation','Defer air conditioner; no price lookup']){
+   assert.equal(resolveEntityLifecyclePlan(text,f.state).kind,'ambiguous',text);
+   const after=reduceTurn(f.state,{text,company_id:'fixture-company',
+     conversation_id:'fixture-ticket',source_message_id:'source-unknown-'+text.length,
+     language:/[\u3400-\u9fff]/u.test(text)?'zh-TW':'en'},f.hints);
+   assert.deepEqual(after,f.state,text);
+ }
+});
+test('mixed unresolved cancellation never infers an independently authorized commerce mutation',()=>{
+ const f=fixture(domains[0]);f.state.entities[0].model=null;
+ f.state.entities[0].attributes.product_name='客廳冷氣';
+ f.state.entities[0].attributes.customer_subject_aliases=['客廳冷氣'];
+ for(const text of ['取消冷氣；另外幫我報價','暫緩冷氣；另外訂購兩件商品','Cancel air conditioner; also book 2 sessions']){
+   assert.equal(resolveEntityLifecyclePlan(text,f.state).kind,'ambiguous',text);
+   const after=reduceTurn(f.state,{text,company_id:'fixture-company',
+     conversation_id:'fixture-ticket',source_message_id:'source-mixed-'+text.length,
+     language:/[\u3400-\u9fff]/u.test(text)?'zh-TW':'en'},f.hints);
+   assert.deepEqual(after,f.state,text);
+ }
+});

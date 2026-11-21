@@ -2480,21 +2480,8 @@ function reduceTurnOperations(
   // Resolve conflicting lifecycle clauses before reducing any one of them.
   if (resolveEntityLifecyclePlan(input.text, previous).kind === "ambiguous") return previous;
   const clauses = splitCustomerOperationClauses(input.text);
-  // A read-only instruction not to query external facts must never erase
-  // a separate, exact-source, uniquely bound customer lifecycle action.
-  // Do not skip an independent mutation/quantity/booking clause.
-  if(clauses.length>=2 && clauses.length<=8){
-    const directed=clauses.map(text=>({text,plan:resolveEntityLifecyclePlan(text,previous)}));
-    const actionable=directed.filter(({plan})=>plan.kind==="mutation");
-    const lookupOnly=directed.filter(({plan})=>plan.kind!=="mutation");
-    if(actionable.length===1 && lookupOnly.length===directed.length-1 &&
-       lookupOnly.every(({text,plan})=>plan.kind==="none" &&
-         /(?:唔使|不用|不需|毋須|无需|do not|don't|without)/iu.test(text) &&
-         /(?:查|check|look up|lookup|verify|search)/iu.test(text) &&
-         !/(?:加購|加购|訂購|订购|付款|支付|book|reserve|order|pay)/iu.test(text))){
-      return reduceSingleTurn(previous,{...input,text:actionable[0].text,semantic_frame:null},rawHints);
-    }
-  }
+  // The complete lifecycle plan already resolves all independent clauses.
+  // Do not isolate a clause by dropping its validated semantic frame.
   if (clauses.length === 1 && /[?？]/.test(clauses[0]) &&
     /(?:暫緩|暂缓|defer|pause|cancel|取消|唔要|不要)/i.test(clauses[0]) &&
     resolveEntityLifecyclePlan(clauses[0], previous).kind === "none") return previous;
@@ -2701,6 +2688,10 @@ function sourceBoundPartialUnitRetention(
 /** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
 export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[]): ConversationCommerceState {
   if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
+  // A missing lifecycle subject blocks all commerce-state side effects in the
+  // turn (including quote/order/payment drafts). Visitor and audit persistence
+  // remain outside this reducer.
+  if (resolveEntityLifecyclePlan(input.text,previous).kind==="ambiguous") return previous;
   const partial=sourceBoundPartialUnitRetention(previous,input);
   if(partial){
     let state=reduceCommerceState(previous,partial);
