@@ -754,7 +754,15 @@ Deno.test("C3 COMPONENT summary keeps structured evidence and renders customer l
 });
 Deno.test("C3 Cantonese and English requirement-recap paraphrases use structured recall", () => {
   for (const question of ["而家我冷氣要求係點？", "Can you recap my current air conditioner requirements?"]) {
-    const { reply } = answer(question);
+    const { reply } = answer(question,(i)=>{
+      // A bilingual identity comes from the customer's attested statement,
+      // not an industry vocabulary or a model-invented referent.
+      if(/air conditioner/i.test(question)){
+        i.commerce!.state.entities[0].attributes.customer_subject_aliases=["air conditioner"];
+        i.trusted_visitor_source_rows=(i.trusted_visitor_source_rows??[]).map(row=>
+          row.id==="ac-source" ? {...row,content:row.content+" I also call this my air conditioner."}:row);
+      }
+    });
     assert(!reply.includes("###") && !reply.includes("washer-front") && !reply.includes("entity_id"), `${question}:${reply}`);
   }
 });
@@ -911,8 +919,11 @@ for (const language of ["zh-TW", "zh-CN", "en"]) {
     const r = prepareConversationRecall(i, language);
     assert(r.decision.handled && r.reply, JSON.stringify(r));
     assert(!/aircon|washer|ac-wall|washer-front/.test(r.reply), r.reply);
-    assert(r.reply.includes(language === "en" ? "air conditioner" : language === "zh-CN" ? "空调" : "冷氣機"), r.reply);
-    assert(r.reply.includes(language === "en" ? "2 units" : "2部"), r.reply);
+    // G-only: verified customer names remain literal in any requested locale;
+    // unit is unspecified in the source and may not be invented.
+    assert(r.reply.includes("冷氣"), r.reply);
+    assert(r.reply.includes(language==="en"?"冷氣 for 2":"冷氣 2"), r.reply);
+    assert(!r.reply.includes(language==="en"?"2 units":"2部"),"unattested unit");
     assert(r.reply.includes(language === "en" ? "site checks" : language === "zh-CN" ? "现场条件" : "現場條件"), r.reply);
     assert(!internalRecap.test(r.reply) && JSON.stringify(i) === before, r.reply);
     const scoped = prepareConversationRecall({ ...i, question: "Recap washer-front." }, language);
@@ -991,10 +1002,10 @@ for (const [name,language,configure,expected] of [
   },["QP-491 subscription at 12 seats","ZX-682 add-on for 1 item is paused"]],
   ["R2 Cantonese equivalent","zh-TW",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].attributes.room_sizes={study:"137平方呎"};},["137平方呎","暫緩"]],
   ["R3 requested Booking remains unconfirmed","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0]={...i.commerce!.state.entities[0],category:"booking",quantity:5,attributes:{product_name:"BM-673 booking",unit:"sessions",requested_date:"2026-12-18",capabilities:{requires_booking:true}}};},["5 BM-673 sessions on 18 December 2026","still needs staff confirmation"]],
-  ["R4 simple one entity","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=i.commerce!.state.entities.slice(0,1);},["air conditioner for 2 units"]],
+  ["R4 simple one entity","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=i.commerce!.state.entities.slice(0,1);},["冷氣 for 2"]],
   ["R5 no active entity or business goal","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=[];i.memory!.active_entities=[];i.memory!.current_goal=null;},["No specific requirements are available yet"]],
-  ["R6 A to B to A current recap","en",(i:ConversationRecallInput)=>{i.memory!.current_topic="washer";},["air conditioner for 2 units","is paused"]],
-  ["R7 latest correction only","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].quantity=17;i.commerce!.state.latest_corrections=["2 items to 17 items"];},["air conditioner for 17 units"]],
+  ["R6 A to B to A current recap","en",(i:ConversationRecallInput)=>{i.memory!.current_topic="washer";},["冷氣 for 2","is paused"]],
+  ["R7 latest correction only","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].quantity=17;i.commerce!.state.latest_corrections=["2 items to 17 items"];},["冷氣 for 17"]],
   ["R8 cancelled item never active","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[1].status="cancelled";},["has been cancelled"]],
   ["R9 English despite Cantonese stored language","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].attributes={product_name:"KT-296 subscription",unit:"seats"};},["KT-296 subscription for 2 seats"]],
   ["R10 Cantonese despite English stored language","zh-TW",(i:ConversationRecallInput)=>{i.commerce!.state.language="en";i.commerce!.state.entities[0].attributes={product_name:"KT-296 subscription",unit:"seats"};},["而家記低咗","2席"]],
@@ -1005,8 +1016,19 @@ for (const [name,language,configure,expected] of [
   assert(r.reply && !internalRecap.test(r.reply),JSON.stringify(r));for(const value of expected)assert(r.reply.includes(value),r.reply);
   assert(JSON.stringify(i)===before,"recap mutated structured input");
   assert(r.metadata.commerce_state_revision===i.commerce!.revision && r.decision.provenance.company_id===i.company_id && r.decision.provenance.source_message_id===i.source_message_id,"scope/revision lost");
-  if(name.startsWith("R7"))assert(!r.reply.includes("air conditioner for 2 units"),r.reply);
-  if(language==="en")assert(!/[一-龿]/.test(r.reply),r.reply);
+  if(name.startsWith("R7"))assert(!r.reply.includes("冷氣 for 2"),r.reply);
+  if(language==="en"){
+    // Source literals can stay Chinese; system-provided prose must be English.
+    let systemProse=r.reply;
+    for(const e of i.commerce!.state.entities){
+      if(e.provenance.source_type!=="customer")continue;
+      for(const literal of [e.model,e.attributes.product_name,e.attributes.name]){
+        if(typeof literal==="string" && /[一-龿]/u.test(literal))
+          systemProse=systemProse.replaceAll(literal,"");
+      }
+    }
+    assert(!/[一-龿]/u.test(systemProse),systemProse);
+  }
  });
 }
 
