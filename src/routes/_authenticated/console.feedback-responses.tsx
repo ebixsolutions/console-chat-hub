@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useConsoleLang } from "@/hooks/useEffectiveRole";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
 import { LoadingState, PermissionDenied } from "@/components/console/PageStates";
@@ -13,6 +13,8 @@ export const Route = createFileRoute(
 )({
   component: FeedbackResponsesPage,
 });
+
+import { collectExportPages, downloadCsv } from "@/lib/console/csv-export";
 
 const PAGE_SIZE = 20;
 const UUID_RE =
@@ -52,8 +54,12 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
   const [conversationId, setConversationId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const readEpoch = useRef(0);
 
   const load = useCallback(async () => {
+    const epoch = ++readEpoch.current;
     if (from && to && from > to) {
       setLoading(false);
       setError("invalid_date_range");
@@ -84,6 +90,8 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
         page_size: PAGE_SIZE,
       });
 
+      if (epoch !== readEpoch.current) return;
+
       if (!res.ok) {
         setRows([]);
         setTotal(0);
@@ -94,30 +102,61 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
       setRows(res.data.rows);
       setTotal(res.data.total);
     } catch {
+      if (epoch !== readEpoch.current) return;
       setRows([]);
       setTotal(0);
       setError("feedback_response_load_failed");
     } finally {
-      setLoading(false);
+      if (epoch === readEpoch.current) setLoading(false);
     }
   }, [status, delivery, channel, rating, conversationId, from, to, page]);
 
   useEffect(() => {
     void load();
+    return () => { readEpoch.current++; };
   }, [load]);
+
+  const exportFiltered = async () => {
+    if (exporting || loading || error) return;
+    setExporting(true);
+    setExportError("");
+    // Capture this click's filter values; subsequent UI edits cannot broaden it.
+    const filters = {
+      status: status ? status as "pending" | "responded" : undefined,
+      delivery_status: delivery ? delivery as "pending" | "sent" | "delivery_failed" : undefined,
+      channel: channel ? channel as "email" | "website_widget" : undefined,
+      rating: rating === "none" ? "none" as const : rating ? Number(rating) : undefined,
+      conversation_id: conversationId || undefined,
+      from: from || undefined, to: to || undefined,
+    };
+    try {
+      const exported = await collectExportPages<FeedbackResponseRow>((page) =>
+        feedbackService.listFeedbackResponses({ ...filters, page, page_size: 50 }), 50);
+      downloadCsv("feedback-responses.csv", [
+        ["id", "conversation_id", "channel", "status", "delivery_status", "rating", "feedback", "responded_at", "created_at"],
+        ...exported.map(row => [row.id, row.conversation_id, row.channel, row.status,
+          row.delivery_status, row.rating, row.feedback_text, row.responded_at, row.created_at]),
+      ]);
+    } catch (cause) {
+      setExportError(cause instanceof Error ? cause.message : "feedback_export_failed");
+    } finally { setExporting(false); }
+  };
 
   const applyConversation = () => {
     const v = convInput.trim();
-    if (!v) {
-      setConversationId("");
-      setPage(0);
-      return;
-    }
-    if (!UUID_RE.test(v)) {
+    if (v && !UUID_RE.test(v)) {
+      // A newer invalid search supersedes any pending read of the old scope.
+      readEpoch.current++;
+      setLoading(false);
       setError("invalid_conversation_id");
       return;
     }
     setError("");
+    if (v === conversationId && page === 0) {
+      // React will not rerun the effect for unchanged filter state.
+      void load();
+      return;
+    }
     setConversationId(v);
     setPage(0);
   };
@@ -131,6 +170,11 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
   return (
     <div className="mx-auto max-w-[1120px] space-y-4">
       <div className="rounded-xl border bg-white p-4">
+        <button type="button" disabled={loading || exporting || Boolean(error)} onClick={exportFiltered}
+          className="mb-3 rounded border px-3 py-1.5 text-xs disabled:opacity-40">
+          {exporting ? (lang === "zh" ? "正在匯出…" : "Exporting…") : (lang === "zh" ? "匯出篩選結果 CSV" : "Export filtered CSV")}
+        </button>
+        {exportError && <p role="alert" className="mb-3 text-xs text-red-700">{exportError}</p>}
         <div className="mb-3 text-sm font-semibold">
           {lang === "zh" ? "客戶回饋" : "Feedback Responses"}
         </div>
@@ -230,14 +274,17 @@ function FeedbackResponsesContent({ lang }: { lang: "en" | "zh" }) {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+        <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">
           {error}
+          {error !== "invalid_conversation_id" && error !== "invalid_date_range" && <button className="ml-3 rounded-md border bg-white px-3 py-2 text-sm" type="button" disabled={loading} onClick={() => void load()}>
+            {lang === "zh" ? "重試" : "Retry"}
+          </button>}
         </div>
       )}
 
       {loading ? (
         <LoadingState />
-      ) : rows.length === 0 ? (
+      ) : error ? null : rows.length === 0 ? (
         <div className="rounded-xl border bg-white p-10 text-center text-sm text-muted-foreground">
           No feedback responses found.
         </div>

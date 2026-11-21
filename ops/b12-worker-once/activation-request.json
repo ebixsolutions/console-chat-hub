@@ -1,0 +1,71 @@
+{
+  "status": "AWAITING_EXACT_ACTIVATION_APPROVAL",
+  "branch": "B_NEW_PRODUCTION_CAPABILITY_NEEDED",
+  "owner_identity": "CONFIRMED_DIRECTOR",
+  "technical_executor": "WORK",
+  "selected_platform": "Existing Supabase nrfx project protected Edge runtime",
+  "new_objects": [
+    "Edge Function c3-b12-worker-once verify_jwt=true",
+    "private schema c3_b12_once",
+    "private table c3_b12_once.ledger; ONE permanent operation row"
+  ],
+  "objects_modified": [
+    "only newly created ops ledger: arm/send-intent/sanitized receipt/disable",
+    "only newly created Edge: deploy then tombstone; guard against intervening changes"
+  ],
+  "original_application_backend_objects_modified": [],
+  "new_secret_role_RPC_extension_workflow": false,
+  "private_read_boundary": "ONLY approved protected Edge: live singleton.worker_secret_id -> exact Vault row. No Work/CLI/browser secret retrieval. Direct UTF8SHA256 inside runtime; actual Worker uses existing verifier.",
+  "credential_values_exported": false,
+  "single_worker_attempt": "Fixed registered body; commit persistent spent BEFORE HTTP; no retry/redirect; TLS verified; 10s timeout; unknown spent; no refund",
+  "TTL": "24h unarmed; armed5min; reviewed guards within60s; permanent spent ledger retained",
+  "production_effects": [
+    "create schema/table/one ops row",
+    "deploy one NEW operations Edge only",
+    "resolve original credential internally only after fixed guards",
+    "one exact Worker POST",
+    "non-auth ops ledger writes",
+    "disable newly created row and deploy tombstone to new Edge; preserve ledger"
+  ],
+  "prohibited_effects": [
+    "original SQL/Edge/Auth/RBAC/RLS mutations",
+    "consumer retest",
+    "runtime/scheduler/queue changes",
+    "model/KB/message/fixture changes",
+    "F13/F14 cutover",
+    "secret/role/extension/RPC creation"
+  ],
+  "tools_after_approval": [
+    {
+      "tool": "supabase_apply_migration",
+      "payload": "activation-database-payload.json"
+    },
+    {
+      "tool": "supabase_deploy_edge_function",
+      "payload": "deploy-payload.json"
+    },
+    {
+      "tool": "supabase_execute_sql",
+      "payload": "snapshot.sql/arm.sql/read-ledger.sql/disable.sql"
+    }
+  ],
+  "director_minimum_operations": [
+    "Approve EXACT manifest/payload SHA256s, including new production objects and internal Vault read; no new worker allowance.",
+    "After Work deployment: same nrfx Dashboard > Edge Functions > c3-b12-worker-once > Test > POST; use built-in service_role management authorization without key reveal/copy/entry; dry-run.json > Send Request once. If unavailable, STOP; do not replace with manual key entry.",
+    "After Work fresh guards+arm, same Test caller/body execute.json > Send Request once within60s. Share only sanitized result; no duplicate sends or refund for unknown."
+  ],
+  "unverified_activation_assertions": [
+    "Platform Deno bundling/download of pinned postgres3.4.5",
+    "Injected DB URL available + normal TLS trust + existing privileged DB identity has required permissions",
+    "Dashboard supported built-in service_role management choice available with no credential exposure",
+    "Fresh exact Worker identity/config/dependency hashes, original full data baseline, no previous/unknown Worker send, sole sender",
+    "True private-auth HTTP409/realtime_claim_rejected/conversation_not_evaluable with exact job and full safe after-readback"
+  ],
+  "cleanup_and_guarded_rollback": "Disable new ledger row and replace ONLY untouched new executor with tombstone. Never delete/reset/recreate ledger; never rollback original B12 backend. If intervening changes exist, STOP mutation.",
+  "current_Worker": "NOT_RUN",
+  "B12_ACCEPTANCE": "NOT_ACCEPTED",
+  "general_claim": "OPTIONAL_PARKED",
+  "uat_start_allowed": false,
+  "final_gate_this_round": "NOT_RUN_NO_NEW_PRODUCTION_RESULT",
+  "historical_exit1": "PRESERVED"
+}

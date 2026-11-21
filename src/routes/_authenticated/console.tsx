@@ -1,8 +1,10 @@
 import { createFileRoute, Outlet, Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { LogOut } from "lucide-react";
+import { resolveAuthoritativeSupabaseBinding } from "@/integrations/supabase/runtime-authority.mjs";
 import { supabase } from "@/integrations/supabase/client";
 import { useCurrentRole } from "@/hooks/useCurrentRole";
+import { useConsoleIdentity } from "@/hooks/useConsoleIdentity";
 import { mapDemoRoleToEffective, type ConsoleOutletContext, type EffectiveRole } from "@/types/demoRole";
 import { EffectiveRoleProvider } from "@/hooks/useEffectiveRole";
 export const Route = createFileRoute("/_authenticated/console")({
@@ -32,6 +34,8 @@ const translations: Record<string, Record<string, string>> = {
     navCustomer360: "Customer 360",
     navVisitorAnalytics: "Visitor Analytics",
     navLLMRuntime: "LLM Runtime",
+    navKBBinding: "KB Tenant Binding (Dev)",
+    navEvidenceLog: "Log",
     navWidgetPreview: "Widget Preview",
     navFeedbackResponses: "Feedback Responses",
     navKbHelper: "Knowledge Helper",
@@ -51,6 +55,8 @@ const translations: Record<string, Record<string, string>> = {
     navCustomer360: "客戶全景",
     navVisitorAnalytics: "訪客分析",
     navLLMRuntime: "LLM 模型設定",
+    navKBBinding: "KB 帳戶綁定（開發）",
+    navEvidenceLog: "Log（對話證據）",
     navWidgetPreview: "Widget 預覽",
     navFeedbackResponses: "客戶回饋",
     navKbHelper: "知識庫搜尋",
@@ -107,6 +113,11 @@ const pageMeta: Record<string, { zh: string; en: string; sub?: { zh: string; en:
       zh: "AI 模型提供商設定與路由規則（僅限 Admin）",
       en: "AI model provider config & routing rules (Admin only)",
     },
+  },
+  "/console/settings/kb-binding": {
+    zh: "KB 帳戶綁定（開發）",
+    en: "KB Tenant Binding (Development)",
+    sub: { zh: "只限獲授權的 Admin、Company 及 Singapore KB Tenant", en: "Authorized Admin Company-to-KB tenant binding" },
   },
   "/console/widget-preview": {
     zh: "Widget 預覽",
@@ -170,7 +181,10 @@ const GROUPS = [
     color: "#6366f1",
     bgColor: "#ede9fe",
     adminOnly: true,
-    items: [{ path: "/console/settings/llm-runtime", icon: "🤖", navKey: "navLLMRuntime", adminOnly: true }],
+    items: [
+      { path: "/console/settings/llm-runtime", icon: "🤖", navKey: "navLLMRuntime", adminOnly: true },
+      { path: "/console/settings/kb-binding", icon: "🔐", navKey: "navKBBinding", kbDevOnly: true },
+    ],
   },
 ];
 
@@ -183,6 +197,7 @@ const GROUP_BADGE: Record<string, { label: string; bg: string; color: string }> 
   "/console/feedback-settings": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/feedback-responses": { label: "LIVE INBOX", bg: "#fee2e2", color: "#dc2626" },
   "/console/settings/llm-runtime": { label: "SETTINGS", bg: "#ede9fe", color: "#6d28d9" },
+  "/console/settings/kb-binding": { label: "DEVELOPMENT", bg: "#f1f5f9", color: "#334155" },
   "/console/widget-preview": { label: "WIDGET", bg: "#f0fdf4", color: "#16a34a" },
   "/console/conversation-evaluation": { label: "CONVERSATION EVALUATION", bg: "#ede9fe", color: "#6d28d9" },
   "/console/kb-gaps": { label: "KNOWLEDGE", bg: "#ede9fe", color: "#6d28d9" },
@@ -202,65 +217,14 @@ const ROLE_META: Record<
 
 
 
-function safeInitials(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) return "U";
-  if (!trimmed.includes(" ")) return trimmed.slice(0, 2).toUpperCase();
-  const parts = trimmed.split(/\s+/).filter(Boolean);
-  return (
-    parts
-      .slice(0, 2)
-      .map((w) => [...w][0] || "")
-      .join("")
-      .toUpperCase() || "U"
-  );
-}
-
 type HealthStatus = "checking" | "reachable" | "unavailable";
 
 function ConsoleLayout() {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { role, loading: roleLoading } = useCurrentRole();
-
-  const [userDisplayName, setUserDisplayName] = useState("System");
-  const [userInitials, setUserInitials] = useState("U");
-
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const { data: authData } = await supabase.auth.getUser();
-        const authUser = authData?.user;
-        if (cancelled || !authUser) return;
-
-        const email = authUser.email || "";
-        const { data: profile } = await supabase
-          .from("agent_profile")
-          .select("display_name")
-          .eq("user_id", authUser.id)
-          .maybeSingle();
-
-        if (cancelled) return;
-
-        if (profile?.display_name) {
-          setUserDisplayName(profile.display_name);
-          setUserInitials(safeInitials(profile.display_name));
-        } else if (email) {
-          const localPart = email.split("@")[0] || "System";
-          setUserDisplayName(localPart);
-          setUserInitials(safeInitials(localPart));
-        }
-      } catch {
-        // Auth/profile query failed — keep safe defaults.
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const evidenceLogView=useRouterState({select:s=>String((s.location.search as Record<string,unknown>)?.view??"")==="log"});
+  const { role, loading: roleLoading, error: roleError, retry: retryRole } = useCurrentRole();
+  const { name: userDisplayName, initials: userInitials } = useConsoleIdentity();
 
   const [lang, setLang] = useState<"en" | "zh">("en");
   const [collapsed, setCollapsed] = useState(false);
@@ -322,6 +286,10 @@ function ConsoleLayout() {
   const t = (key: string) => translations[lang]?.[key] ?? translations.en[key] ?? key;
   const toggleGroup = (key: string) => setCollapsedGroups((prev) => ({ ...prev, [key]: !prev[key] }));
   const showSettingsGroup = sidebarRole === "admin" || sidebarRole === "supervisor";
+  const showKbDevLink = sidebarRole === "admin" &&
+    import.meta.env.VITE_C3_KB_BINDING_DEV_ENABLED === "true" &&
+    typeof window !== "undefined" &&
+    /^(?:localhost|127\.0\.0\.1|(?:[a-z0-9-]+--)?4dbf593e-577e-4af4-a553-460441c34473\.lovableproject\.com|id-preview(?:-[a-z0-9-]+)?--4dbf593e-577e-4af4-a553-460441c34473\.lovable\.app)$/.test(window.location.hostname);
   const roleDisplayKey: string | null = sidebarRole === "agent" ? "customer_service" : sidebarRole; // one authoritative role only
   const currentRoleMeta =
     roleDisplayKey && roleDisplayKey in ROLE_META
@@ -333,7 +301,9 @@ function ConsoleLayout() {
   const noPaddingRoutes = ["/console", "/console/conversations"];
   const noPadding = noPaddingRoutes.includes(pathname) || isConvDetail;
 
-  const meta = pageMeta[pathname] || (isConvDetail ? pageMeta["/console"] : null);
+  const meta=evidenceLogView&&pathname==="/console/settings/llm-runtime"
+    ? {zh:"對話證據 Log",en:"Conversation Evidence Log",sub:{zh:"僅 Admin · 逐句 KB 與回答證據",en:"Admin only · per-turn KB and reply evidence"}}
+    : pageMeta[pathname] || (isConvDetail ? pageMeta["/console"] : null);
   const badgePath = Object.keys(GROUP_BADGE)
     .sort((a, b) => b.length - a.length)
     .find((k) => pathname === k || pathname.startsWith(k + "/"));
@@ -375,6 +345,8 @@ function ConsoleLayout() {
         color: "#1a1a1a",
       }}
     >
+      {
+        <div role="status" style={{ background: "#fef3c7", padding: "3px 12px" }}>{resolveAuthoritativeSupabaseBinding().projectId === "nrfxhqabwblzxoushgnm" ? "PRODUCTION" : "NONPRODUCTION"} · {resolveAuthoritativeSupabaseBinding().projectId} · {import.meta.env.VITE_C3_BUILD_IDENTITY}</div>}
       <div
         style={{
           height: LANGBAR_H,
@@ -553,7 +525,7 @@ function ConsoleLayout() {
                   <div style={{ fontSize: 11, color: currentRoleMeta?.color ?? "#888", fontWeight: 500 }}>
                     {roleLoading
                       ? "Loading…"
-                      : currentRoleMeta?.label ?? "No assigned role"}
+                      : roleError ? "Permissions unavailable" : currentRoleMeta?.label ?? "No assigned role"}
                   </div>
                 </div>
               </div>
@@ -595,7 +567,7 @@ function ConsoleLayout() {
                   )}
                   {!groupCollapsed &&
                     g.items
-                      .filter((item) => !(item as any).adminOnly || showSettingsGroup)
+                      .filter((item) => (!(item as any).adminOnly || showSettingsGroup) && (!(item as any).kbDevOnly || showKbDevLink))
                       .map((item) => {
                         const active = pathname === item.path || pathname.startsWith(item.path + "/");
                         return (
@@ -671,6 +643,18 @@ function ConsoleLayout() {
             </Link>
           </div>
 
+          {sidebarRole==="admin"&&(
+            <div style={{padding:collapsed?"6px 4px":"6px 10px",borderTop:"1px solid #e8e6e0"}}>
+              <Link to={"/console/settings/llm-runtime" as any} search={{view:"log"} as any}
+                title="Admin Conversation Evidence Log"
+                style={{display:"flex",alignItems:"center",gap:8,padding:"8px 9px",
+                 borderRadius:8,fontSize:12.5,textDecoration:"none",
+                 background:evidenceLogView&&pathname==="/console/settings/llm-runtime"?"#1a1a1a":"transparent",
+                 color:evidenceLogView&&pathname==="/console/settings/llm-runtime"?"#fff":"#555"}}>
+                <span aria-hidden="true">🧾</span>{!collapsed&&<span>{t("navEvidenceLog")}</span>}
+              </Link>
+            </div>
+          )}
           <div style={{ padding: "8px 10px", borderTop: "0.5px solid #e8e6e0", flexShrink: 0 }}>
             <button
               onClick={handleSignOut}
@@ -778,6 +762,8 @@ function ConsoleLayout() {
               >
                 Loading…
               </div>
+            ) : roleError ? (
+              <div role="alert"><p>{lang === "zh" ? "未能核實目前帳戶權限；這不是沒有角色的證據。" : "Current account permissions could not be verified. This is not proof of having no role."}</p><button type="button" onClick={retryRole}>{lang === "zh" ? "重試權限" : "Retry permissions"}</button></div>
             ) : effectiveRoleContext ? (
               <EffectiveRoleProvider value={effectiveRoleContext}>
                 <Outlet />

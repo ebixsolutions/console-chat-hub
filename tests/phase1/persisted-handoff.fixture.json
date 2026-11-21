@@ -1,0 +1,294 @@
+{
+  "schema_version": "c2-handoff-1.0.0",
+  "summary_markdown": "### Customer Goal\nair conditioner: quantity not yet confirmed, living room 180平方呎, large bedroom 110平方呎, small bedroom 80平方呎, afternoon sun: large bedroom, window units; refrigerator: quantity not yet confirmed, maximum width 595 mm (deferred)\n\n### Current State\n- Active: air_conditioner, quantity not yet confirmed\n- Deferred: refrigerator, quantity not yet confirmed\n- Quotation: none\n- Order: none\n- Payment: none\n- Delivery: not_confirmed\n- Installation: unknown\n\n### Latest Correction\n- 講返頭先啲冷氣,大房頭先講錯,唔係100呎,應該係110呎。\n\n### Pending\n- Product live stock quantity needs merchant confirmation\n- Product suitability and site assessment need authoritative professional confirmation\n- window_opening_check\n- 各窗口位可放機嘅闊度同高度各係幾多?\n\n### Handoff Reason\nVisitor explicitly requested human agent (R1)\n\n### Handoff Request\n我想搵真人客服跟進。\n\n### Recommended Next Action\nConfirm: window_opening_check; Product suitability and site assessment need authoritative professional confirmation",
+  "structured_package": {
+    "citations": [
+      {
+        "label": "PANASONIC CW-SUL70BA air conditioner Hong Kong",
+        "chunk_id": "d4000000-0000-4000-8000-000000001301",
+        "relevance": "high",
+        "chunk_type": "full_content",
+        "document_id": "d4000000-0000-4000-8000-000000001101",
+        "source_type": "Product",
+        "target_topics": [
+          "product_facts"
+        ],
+        "evidence_state": "current",
+        "authority_decision": "USE_CURRENT_KB",
+        "target_entity_model": [
+          "sul70ba"
+        ]
+      }
+    ],
+    "company_id": "d4000000-0000-4000-8000-000000000001",
+    "generated_at": "2026-10-04T12:03:09.650579+00:00",
+    "handoff_reason": "Visitor explicitly requested human agent (R1)",
+    "open_questions": [
+      "各窗口位可放機嘅闊度同高度各係幾多?",
+      "Product suitability and site assessment need authoritative professional confirmation",
+      "Product live stock quantity needs merchant confirmation"
+    ],
+    "schema_version": "c2-handoff-1.0.0",
+    "active_entities": [
+      {
+        "brand": null,
+        "model": null,
+        "status": "researching",
+        "category": "air_conditioner",
+        "quantity": null,
+        "entity_id": "air_conditioner:unscoped",
+        "attributes": {
+          "room_sizes": {
+            "living_room": "180平方呎",
+            "large_bedroom": "110平方呎",
+            "small_bedroom": "80平方呎"
+          },
+          "customer_goal": {
+            "missing": [
+              "sizing_decision",
+              "suitable_models"
+            ],
+            "category": "air_conditioner",
+            "collected": [
+              "space_plan",
+              "room_sizes",
+              "installation_type",
+              "sunlight"
+            ],
+            "objective": "select_product",
+            "updated_at": "2026-10-04T12:00:13.169267+00:00",
+            "journey_stage": "sizing_guidance",
+            "response_intent": "request_highest_value_missing_information",
+            "source_message_id": "d4000000-0000-4000-8000-000000000004"
+          },
+          "room_sunlight": {
+            "large_bedroom": "strong_afternoon_sun"
+          },
+          "quantity_basis": "system_default",
+          "installation_type": "window_unit"
+        },
+        "constraints": {},
+        "current_quote": null,
+        "pending_issues": [],
+        "container_quantity": 1
+      }
+    ],
+    "confirmed_facts": [],
+    "conversation_id": "d4000000-0000-4000-8000-000000000005",
+    "pending_actions": [
+      "window_opening_check",
+      "Product suitability and site assessment need authoritative professional confirmation"
+    ],
+    "deferred_entities": [
+      {
+        "status": "deferred",
+        "category": "refrigerator",
+        "quantity": null,
+        "entity_id": "refrigerator:unscoped",
+        "attributes": {
+          "customer_goal": {
+            "missing": [
+              "dimensions",
+              "capacity",
+              "suitable_models"
+            ],
+            "category": "refrigerator",
+            "collected": [],
+            "objective": "replace_existing_appliance",
+            "updated_at": "2026-10-04T11:59:48.748996+00:00",
+            "journey_stage": "requirements_discovery",
+            "response_intent": "request_highest_value_missing_information",
+            "source_message_id": "d4000000-0000-4000-8000-000000000003"
+          },
+          "quantity_basis": "system_default"
+        },
+        "provenance": {
+          "recorded_at": "2026-10-04T12:00:52.69095+00:00",
+          "source_type": "customer",
+          "source_message_id": "d4000000-0000-4000-8000-000000000005"
+        },
+        "constraints": {
+          "max_width_mm": 595
+        },
+        "container_quantity": 1
+      }
+    ],
+    "handoff_authority": "R1",
+    "transaction_state": {
+      "order": "none",
+      "payment": "none",
+      "delivery": "not_confirmed",
+      "quotation": "none",
+      "installation": "unknown"
+    },
+    "cancelled_entities": [],
+    "latest_corrections": [
+      "講返頭先啲冷氣,大房頭先講錯,唔係100呎,應該係110呎。"
+    ],
+    "question_lifecycle": [
+      {
+        "text": "各窗口位可放機嘅闊度同高度各係幾多?",
+        "status": "pending",
+        "entity_id": null,
+        "resolution": "customer information required",
+        "source_message_id": "d4000000-0000-4000-8000-000000000001",
+        "resolution_source_message_id": "ee009a61-3227-47cc-82a6-4e7a117b91c5"
+      },
+      {
+        "text": "Product suitability and site assessment need authoritative professional confirmation",
+        "status": "pending",
+        "entity_id": null,
+        "resolution": "professional/site confirmation pending",
+        "source_message_id": "d4000000-0000-4000-8000-000000000002",
+        "resolution_source_message_id": "9d79483f-6031-45df-b7e0-df908c946872"
+      },
+      {
+        "text": "高度同深度上限各係幾高/幾深?",
+        "status": "superseded",
+        "entity_id": "refrigerator:unscoped",
+        "resolution": "entity inactive",
+        "source_message_id": "d4000000-0000-4000-8000-000000000003",
+        "resolution_source_message_id": "d4000000-0000-4000-8000-000000000005"
+      },
+      {
+        "text": "我以前買冷氣每部係4000蚊,純粹按以前個價計,兩部合共幾多錢?",
+        "status": "resolved",
+        "entity_id": null,
+        "resolution": "c3_historical_conditional_calculation",
+        "source_message_id": "d4000000-0000-4000-8000-000000000006",
+        "resolution_source_message_id": "5d0b8a01-73ef-4f49-abf1-038af513a4a1"
+      },
+      {
+        "text": "Product suitability and site assessment need authoritative professional confirmation",
+        "status": "pending",
+        "entity_id": null,
+        "resolution": "professional/site confirmation pending",
+        "source_message_id": "d4000000-0000-4000-8000-000000000007",
+        "resolution_source_message_id": "01607f8d-2c5c-4e8c-a285-fbba395bf79c"
+      },
+      {
+        "text": "而家我哋傾過啲咩?幫我簡單總結。",
+        "status": "resolved",
+        "entity_id": null,
+        "resolution": "canonical_memory_recall",
+        "source_message_id": "d4000000-0000-4000-8000-000000000008",
+        "resolution_source_message_id": "9da13680-182d-496e-a0aa-1a60453c5142"
+      },
+      {
+        "text": "Product live stock quantity needs merchant confirmation",
+        "status": "pending",
+        "entity_id": null,
+        "resolution": "merchant stock confirmation pending",
+        "source_message_id": "d4000000-0000-4000-8000-000000000009",
+        "resolution_source_message_id": "a893f0c1-c8be-46e1-83e5-3f23fa42b74f"
+      }
+    ],
+    "handoff_reason_code": "explicit_customer_request",
+    "customer_constraints": {},
+    "customer_preferences": [
+      "response_language:English"
+    ],
+    "handoff_request_text": "我想搵真人客服跟進。",
+    "current_customer_goal": "air conditioner: quantity not yet confirmed, living room 180平方呎, large bedroom 110平方呎, small bedroom 80平方呎, afternoon sun: large bedroom, window units; refrigerator: quantity not yet confirmed, maximum width 595 mm (deferred)",
+    "current_customer_facts": [
+      {
+        "key": "room_size",
+        "value": [
+          {
+            "group": "room",
+            "label": "細房",
+            "value": "80平方呎",
+            "member_id": "room:1"
+          },
+          {
+            "group": "room",
+            "label": "大房",
+            "value": "110平方呎",
+            "member_id": "room:2"
+          },
+          {
+            "group": "living_room",
+            "label": "客廳",
+            "value": "180平方呎",
+            "member_id": "living_room:1"
+          }
+        ],
+        "region": null,
+        "authority": "customer",
+        "entity_id": null,
+        "source_message_id": "d4000000-0000-4000-8000-000000000004"
+      }
+    ],
+    "commerce_state_revision": 4,
+    "historical_customer_facts": [
+      {
+        "key": "money:d4000000-0000-4000-8000-000000000006:0",
+        "value": {
+          "role": "unit_price",
+          "amount": 4000,
+          "labels": [
+            "機價",
+            "机价",
+            "unit price"
+          ],
+          "source": "customer_message",
+          "category": null,
+          "currency": "HKD",
+          "authority": "customer_historical_or_hypothetical",
+          "charge_basis": "per_unit",
+          "semantic_role": "unit_price",
+          "reusable_as_current": false
+        },
+        "region": null,
+        "authority": "historical",
+        "entity_id": null,
+        "source_message_id": "d4000000-0000-4000-8000-000000000006"
+      }
+    ],
+    "conversation_memory_lineage": {
+      "version": "conversation-memory-1.0.0",
+      "memory_revision": 13,
+      "source_message_id": "d4000000-0000-4000-8000-000000000010",
+      "commerce_state_revision": 4
+    },
+    "recommended_next_human_action": "Confirm: window_opening_check; Product suitability and site assessment need authoritative professional confirmation",
+    "current_authoritative_kb_facts": [
+      {
+        "field": "features",
+        "model": "CW-SUL70BA",
+        "value": "變頻 淨冷",
+        "chunk_id": "d4000000-0000-4000-8000-000000001301",
+        "authority": "CURRENT_KB",
+        "tenant_id": "940001",
+        "document_id": "d4000000-0000-4000-8000-000000001101",
+        "source_message_id": "d4000000-0000-4000-8000-000000000009",
+        "currentness_at_answer": "current"
+      },
+      {
+        "field": "horsepower",
+        "model": "CW-SUL70BA",
+        "value": "3/4匹",
+        "chunk_id": "d4000000-0000-4000-8000-000000001301",
+        "authority": "CURRENT_KB",
+        "tenant_id": "940001",
+        "document_id": "d4000000-0000-4000-8000-000000001101",
+        "source_message_id": "d4000000-0000-4000-8000-000000000009",
+        "currentness_at_answer": "current"
+      },
+      {
+        "field": "model",
+        "model": "CW-SUL70BA",
+        "value": "CW-SUL70BA",
+        "chunk_id": "d4000000-0000-4000-8000-000000001301",
+        "authority": "CURRENT_KB",
+        "tenant_id": "940001",
+        "document_id": "d4000000-0000-4000-8000-000000001101",
+        "source_message_id": "d4000000-0000-4000-8000-000000000009",
+        "currentness_at_answer": "current"
+      }
+    ],
+    "historical_or_superseded_facts": [],
+    "generated_from_source_message_id": "d4000000-0000-4000-8000-000000000010",
+    "safety_or_professional_requirements": []
+  }
+}

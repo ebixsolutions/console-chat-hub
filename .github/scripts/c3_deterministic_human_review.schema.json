@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "c3-deterministic-full-human-review-1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "candidate", "packet_sha256", "rubric_sha256", "reviewers", "reviews"],
+  "properties": {
+    "schema_version": { "const": "c3-deterministic-full-human-review-1.0.0" },
+    "candidate": { "type": "object", "required": ["head", "tree", "run_id", "run_attempt"], "properties": { "head": { "pattern": "^[0-9a-f]{40}$" }, "tree": { "pattern": "^[0-9a-f]{40}$" }, "run_id": { "type": "string" }, "run_attempt": { "type": "integer", "minimum": 1 } } },
+    "packet_sha256": { "pattern": "^[0-9a-f]{64}$" },
+    "rubric_sha256": { "pattern": "^[0-9a-f]{64}$" },
+    "reviewers": { "type": "array", "minItems": 2, "items": { "type": "object", "required": ["reviewer_id", "human_attestation", "provenance", "role", "excluded_roles_attestation"] } },
+    "reviews": { "type": "array", "minItems": 200, "items": { "$ref": "#/$defs/review" } }
+  },
+  "$defs": {
+    "score": { "type": "number", "minimum": 0, "maximum": 10 },
+    "review": {
+      "type": "object", "additionalProperties": false,
+      "required": ["review_id", "sample_id", "reviewer_id", "case_sha256", "response_sha256", "rubric_sha256", "human_submitted", "blind_attestation", "timestamp", "reason", "scores", "p0_labels", "recommendation"],
+      "properties": {
+        "review_id": { "type": "string" }, "sample_id": { "type": "string" }, "reviewer_id": { "type": "string" },
+        "case_sha256": { "pattern": "^[0-9a-f]{64}$" }, "response_sha256": { "pattern": "^[0-9a-f]{64}$" }, "rubric_sha256": { "pattern": "^[0-9a-f]{64}$" },
+        "human_submitted": { "const": true }, "blind_attestation": { "const": true }, "timestamp": { "type": "string", "format": "date-time" }, "reason": { "type": "string", "minLength": 12 },
+        "scores": { "type": "object", "additionalProperties": false, "required": ["factual_grounding_and_commitment_truth", "resolution_and_progress", "context_correction_and_entity", "targeted_clarification_and_kb_use", "natural_language_and_concision", "handoff_next_step_and_customer_effort"], "properties": { "factual_grounding_and_commitment_truth": { "$ref": "#/$defs/score" }, "resolution_and_progress": { "$ref": "#/$defs/score" }, "context_correction_and_entity": { "$ref": "#/$defs/score" }, "targeted_clarification_and_kb_use": { "$ref": "#/$defs/score" }, "natural_language_and_concision": { "$ref": "#/$defs/score" }, "handoff_next_step_and_customer_effort": { "$ref": "#/$defs/score" } } },
+        "p0_labels": { "type": "array", "items": { "type": "string" } }, "recommendation": { "enum": ["PASS", "FAIL"] }, "adjudicator": { "type": "boolean" }
+      }
+    }
+  }
+}

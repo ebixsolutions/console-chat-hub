@@ -1,0 +1,15 @@
+{
+  "tgname": "c3_uat_training_outbox_guard",
+  "tgenabled": "O",
+  "table_name": "evaluation_training_outbox",
+  "definition": "CREATE TRIGGER c3_uat_training_outbox_guard BEFORE INSERT OR UPDATE ON public.evaluation_training_outbox FOR EACH ROW EXECUTE FUNCTION c3_uat_learning_sink_guard()",
+  "proname": "c3_uat_learning_sink_guard",
+  "function_md5": "f5ed14b94027bb555aa45c3be45d8b8b",
+  "function_definition": "CREATE OR REPLACE FUNCTION public.c3_uat_learning_sink_guard()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\nDECLARE v_conversation uuid;\nBEGIN\n IF TG_TABLE_NAME='hf3_learning_case' THEN v_conversation:=NEW.conversation_id;\n ELSE SELECT conversation_id INTO v_conversation FROM public.conversation_evaluation WHERE id=NEW.evaluation_id; END IF;\n IF public.c3_uat_learning_excluded(v_conversation) THEN RETURN NULL; END IF;\n RETURN NEW;\nEND $function$\n",
+  "owner": "postgres",
+  "acl": "{postgres=X/postgres}",
+  "security_definer": true,
+  "config": [
+    "search_path=\"\""
+  ]
+}

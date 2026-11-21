@@ -1,0 +1,10 @@
+ORIGINAL SYNTHETIC FIXTURE — Synthetic Language Grove
+Execution status: NOT_RUN. Evidence tier: SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED.
+Local profile: {"fixture_only":true,"industry":"education","company_label":"Synthetic Language Grove","company_id":"00000000-0000-4000-8000-000000004105","kb_tenant_id":"9505","languages":["zh-HK","zh-TW","en"],"claim_authority":false}
+This profile only supplies vocabulary and declared service scope. It does not establish a price, stock level, booking, entitlement, refund, SLA, or completed transaction.
+Customer recall must retain source message, same Company and Ticket, state revision, and current-versus-historical status. A profile cannot override a customer correction.
+Merchant questions require the correctly bound published KB or legitimate API. Empty or historical evidence must remain unknown; the profile is not substitute evidence.
+A missing profile keeps the generic workflow available. No industry or appliance default is injected.
+Explicit present requests for a human use the existing authorized R1 path; anger, price questions and workforce mentions alone do not trigger it.
+A quotation, preference, proposed appointment or payment discussion is not proof of a completed action.
+All writes and external model or KB calls stay isolated in local fixtures. No Production change is authorized by this seed.

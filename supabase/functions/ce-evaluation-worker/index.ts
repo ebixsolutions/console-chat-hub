@@ -1,5 +1,4 @@
 import {
-  ensureCurrentMethodology,
   processEvaluationJob,
   serviceClient,
   type AutomationJob,
@@ -28,7 +27,7 @@ Deno.serve(async (req) => {
   const realtime = body.source === "realtime" && realtimeJobId !== null;
   const workerId = `${realtime ? "realtime" : "cron"}:${crypto.randomUUID()}`;
   try {
-    const fingerprint = await ensureCurrentMethodology(admin);
+    let fingerprint: string | null = null;
     if (realtime && realtimeJobId) {
       const { data: claim, error: claimErr } = await admin.rpc("ce_claim_specific_job_v1", { p_job_id: realtimeJobId, p_worker_id: workerId });
       if (claimErr) return out(500, { error: "claim_failed" });
@@ -37,6 +36,7 @@ Deno.serve(async (req) => {
       if (claimResult !== "claimed") return out(409, { error: "realtime_claim_rejected", reason: claimResult, job_id: realtimeJobId });
       const { data: job, error: jobErr } = await admin.from("ce_evaluation_job").select("*").eq("id", realtimeJobId).single();
       if (jobErr || !job) return out(500, { error: "job_read_failed" });
+      fingerprint=String(job.evaluation_fingerprint);
       const outcome = await processEvaluationJob(admin, job as AutomationJob);
       if (!outcome.ok) return out(502, { error: "evaluation_failed", detail: outcome.code, job_id: realtimeJobId });
       return out(200, { status: "completed", evaluation_id: outcome.evaluationId, freshness: outcome.freshness, job_id: realtimeJobId, fingerprint });
@@ -51,6 +51,7 @@ Deno.serve(async (req) => {
     if (claimErr) return out(500, { error: "claim_failed" });
 
     const claimed = (jobs ?? []) as AutomationJob[];
+    fingerprint=claimed[0]?.evaluation_fingerprint??null;
     const results = await Promise.all(claimed.map((job) => processEvaluationJob(admin, job)));
     return out(200, {
       status: "ok",

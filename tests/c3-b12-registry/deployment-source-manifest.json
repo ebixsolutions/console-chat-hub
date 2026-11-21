@@ -1,0 +1,1541 @@
+[
+  {
+    "slug": "ce-evaluation-worker",
+    "version": 29,
+    "verify_jwt": false,
+    "import_map": true,
+    "entrypoint_path": "ce-evaluation-worker/index.ts",
+    "import_map_path": "deno.json",
+    "sources": [
+      {
+        "name": "_shared/authoritative-commit-readback.ts",
+        "before_or_dependency_git_blob": "c38ff8a607768b6a53cfa50f1555eccda9994c75",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "2d2c14fbab89f4caede7d8c43faed0aae3bd07064e69a948f2d9a28a6a7b62bc",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/b2-journey-progress-contract.ts",
+        "before_or_dependency_git_blob": "7548af6002ec0d9237541362c75a3b80ad71599d",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "201aef513fc85e03c0172b89163660197019e4d4c45c833c52f6071012e26c22",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/bounded-decision-context.ts",
+        "before_or_dependency_git_blob": "dc69616fc115008b5363a0eece31cc32462fc1ad",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "f93b59b56469f4a79518374f2cb3b73fab8d09028ce2b3c5c6cbb1c6c90f01f1",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/canonical-grounding.ts",
+        "before_or_dependency_git_blob": "a4ff342ac96e22b25c6bb68e161ab3178fce9f85",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "17d4d99d6b2953017fe04c5d032bf8e8ccf5b17d08406786af53b4b964cf51f7",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/canonical-json.ts",
+        "before_or_dependency_git_blob": "3853b946120b366e4a7d682b5b8728865bc822e6",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "efe44b2683ff6b90db1b9d40f438560f3011d985c1eb5a131492913acc0e4295",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/canonical-kb-direct-answer.ts",
+        "before_or_dependency_git_blob": "936ddc86938ec467e93006d8157a2898f2656235",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "c3e3b940a0e854a489709716a06609bf8e117330684cfccfc0a1890bd042b2e2",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-automation-engine.ts",
+        "before_or_dependency_git_blob": "d37602c77f9b23fa14bcb201ccfecec932f463cc",
+        "target_from_source": true,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "00882832370e770ba23bd41ac9bcb3f7b6078dc5a4f2728bb54f250a3a2a3f6a",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-contract.ts",
+        "before_or_dependency_git_blob": "5420d93ce57caaef8d7cdeffc4934d710cf80612",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "dce6cafca991315d27614580d2000cb3e18a108d0bcc91c2137b99b27fcd5210",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-conversion-reality.ts",
+        "before_or_dependency_git_blob": "02ee6d5ff63ba4517a47cdc97e346a2d86e52cad",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "200a71b68b81f1c7067fcde7cddb5b78adec447ab4cdf27c316a18944c5c488c",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-evaluation-scope.ts",
+        "before_or_dependency_git_blob": null,
+        "target_from_source": true,
+        "existing_before": false,
+        "rollback_dependency": false,
+        "sha256": "8f1ef878a90fb55eb66aa2a732035bc151e77d12a0a4deabf6c22c4f4c7cfd7e",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-grounding.ts",
+        "before_or_dependency_git_blob": "77e20943057272617f31110f259a7b9b714304b0",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "733d345e75d4e08883110be8940adf587c05aa3da13c8a5e14052288d33ef935",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-provider-response.ts",
+        "before_or_dependency_git_blob": "be67886a8e784c94d3c249b1d501707dcb05e41d",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "90e8609dd772afaf584aeb5db16c828960830562f3d09536890c903daae5e2c2",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/commerce-capability-runtime.ts",
+        "before_or_dependency_git_blob": "2b83045cf696b90b0a84d3106e1cff77bd5fcaf9",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "09a3c5917529d967d91560ead71519d987186d02c68b3638929a93a2fee83b72",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/commerce-semantic-frame.ts",
+        "before_or_dependency_git_blob": "f8ffb27285451551d6164d017413ca601f5bd708",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "fe5fbc5f0b4806001f39b7162890ad6d06e08a63ccc06406111e275675207a05",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/commerce-state-authority.ts",
+        "before_or_dependency_git_blob": "76392e65734d4c6bf49d44a979f49e06bfd387c4",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "2aee0fd61e6087bf1dc57aace20cfd8de67202cd807f8a0be8fce746a8f3fa22",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/commerce-state-contract.ts",
+        "before_or_dependency_git_blob": "29a5f6e186a250dc2b13489dac8ea04cfaea1994",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "b75848856f1854f9df5f458ba5d3e491b6693c550458f5e3178cf88874b6e3be",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/commerce-state-reducer.ts",
+        "before_or_dependency_git_blob": "f85541543098b50fe137184dec72620502f8f0a0",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "b303bcf3cb610976bf6286a6a01767a192668c1604adb0aa86832b4632d8843f",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/contextual-customer-update.ts",
+        "before_or_dependency_git_blob": "ca95350f886107bfae7d4a5437156d44394c978b",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "9b4b0d3a8deae05450d2f6a96421ad9b2e409379b2b2e32bc0ea1ee9e5333b9b",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-long-memory.ts",
+        "before_or_dependency_git_blob": "6ed30202a4795febebe2f070b531112ffe5bb78e",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "e407f0973a73d093ca515386952e3edfe2353430adb40afe4c13eb1cbbd8b594",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-recall.ts",
+        "before_or_dependency_git_blob": "9229c139cce26cf31b4b98a998e57f1a62a70ee8",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "68df8119a87454747172a40461598e9939c7950a173f23ea75dd928272f4a64d",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-runtime-state-core.ts",
+        "before_or_dependency_git_blob": "f2b2b120693b4849c6271f45989a80a262d4ac88",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "8d69978b1658c71ad0dd348f5d3f1b1dc435811d94073681e5ec28ebb7c49726",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-runtime-state.ts",
+        "before_or_dependency_git_blob": "0db016a6c312c70599d1256a57ff010bded7cf1d",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-semantic-contract.ts",
+        "before_or_dependency_git_blob": "7acc214714599e72eaedf705587ee37855f98aa1",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "e83aa29f56bb9eed32d0588143684493d8b349285a6505ebe2a736633926a8a9",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-service-planner.ts",
+        "before_or_dependency_git_blob": "6aabcf61fa7936d3ea6f1e3355e8fc132be76b4a",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "57a654e6b56b011d173ded4060ff981c4e0c7fe591945593930dec3151f18a39",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-service-runtime.ts",
+        "before_or_dependency_git_blob": "3753dd0872d4faabd90a5900cb78567d5015eeea",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "96efcf37119f9adb4dcdd6816fabbe1e6de283e3b87ded5c7b657da34ca9c974",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversational-routing.ts",
+        "before_or_dependency_git_blob": "61961f19456d327ca66e2b0ec5128ae6c66f0367",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "5108cb08d598c7ad8d2cfddbab9b2adf3bfe2333a5308e95af6fead12a2c78d6",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/current-fact-evidence.ts",
+        "before_or_dependency_git_blob": "33201e691417c61a5fa2f17428950909e82180bb",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "29bd2d56d2d82a202a9057d11e6ee085a09c1c3c9da1dee5afe717de61f2fbd9",
+        "type_only_dependency": true
+      },
+      {
+        "name": "_shared/customer-journey-orchestration.ts",
+        "before_or_dependency_git_blob": "e39a2bee2d42f078f3bfa40f8e0c34edbc2300e6",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "3978f4bd89914dcf915758f48d10a6cffd96b7c98a944e208b53c59245be2df4",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/customer-money-facts.ts",
+        "before_or_dependency_git_blob": "baef29c41ac4d9053717eb1373e6b974503e1f21",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "bad7b229031d97f0a0fcd054408b7c69bad88891bac1319dd27e1d3366d1ed19",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/deterministic-commerce-engine.ts",
+        "before_or_dependency_git_blob": "5426bd55484c245ae7afa5c157cace1c9fc88879",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "bda05ac779ec0419bf9f6c1567241accb96f1a8ad9975e76e9537cf82ba661c5",
+        "type_only_dependency": true
+      },
+      {
+        "name": "_shared/deterministic-kb-client.ts",
+        "before_or_dependency_git_blob": "885843772ae8cb9b67db3ed07cb1ab0a1ab721c0",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "ccabfc8d938a979cc9b375d3c5c84fbc24f0a6e7908ca01fd2111b9527cf9e7f",
+        "type_only_dependency": true
+      },
+      {
+        "name": "_shared/handoff-intent.ts",
+        "before_or_dependency_git_blob": "d87f23df04ddbf6a2017eafcb960b6a656930116",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "58c3f8a6c0da6967cb6bce71ea24f2955c4b8f95f383c886295ce85393b8685b",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/industry-agent-registry.ts",
+        "before_or_dependency_git_blob": "05c2c3989a013880bbbbb2e8961f226f9a33056f",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "bc4a77a489fc8a5e2e2ea8ff79f224a35497ca4320d6781568b6433e34ce2071",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/industry-profiles/home-appliance-v1.ts",
+        "before_or_dependency_git_blob": "c7b4e2bb24ea25bba20befda3206cc4f995d98b1",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "290cd0a2fc3ec235a41dcca4f9802198554c608e9bc9bd2ad84f8677fe7e20e6",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/industry-runtime-adapter.ts",
+        "before_or_dependency_git_blob": "9e9de40d3c8c2ff6548658132decfc5d1d42ffaf",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "7becbaa1540269960079c81d5cecf801583022487a436e1865f3ca5381b429f1",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/industry-schema.ts",
+        "before_or_dependency_git_blob": "936e83265421771cdb7d7442f733b2284d166ad7",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "149c208a8b898faedab61234cfc7f85e7a40d71c92996a5b61354e4cf85d35dd",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/kb-aggregation-response.ts",
+        "before_or_dependency_git_blob": "b2d1e2eac8b154b9ecfcffa044636ae4e142b35b",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "c38365d92cd0860bfba541f3cb072a01d095cb0d2c3be84162c88173ca612ba2",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/kb-auth.ts",
+        "before_or_dependency_git_blob": "1c14a5243d0ffcfccadf6c738a2b101173f08c2b",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "696473ccbae22ea1328778785659be96204328ca6be5ca35ed7e94e70483e6d7",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/kb-client.ts",
+        "before_or_dependency_git_blob": "dfce3c350cf0d49ee0b67cfea59ddd3314ca5e7f",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "c51efe438f5e3b9657f399f1800f82b9b76e07bb9f36f114a34f2179d7a920ec",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/llm-router.ts",
+        "before_or_dependency_git_blob": "28baa83606ae578e97f50427234cf7745e793eba",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "360c14644b2884aa0478ff9c4c3ad3d56024d19f0e0be82aa1bc21ecff4cc483",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/memory-reply-lifecycle-readback.ts",
+        "before_or_dependency_git_blob": "4e2184e3b6e0d010c56a78dd8cfca9fa836ccdcb",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/natural-customer-response.ts",
+        "before_or_dependency_git_blob": "d05a5b65e9a17d94ec7a8fe8e2412745b2383020",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "5f26399789280d169d29673e118ff1c637cf81202c3a68cc5489fa038363883b",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/nonproduction-secret.ts",
+        "before_or_dependency_git_blob": "af3be5e2d59efbbbd1264e15bf9c0dce29a1020e",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "9a760728a4298c09a080237a8d0c90492e7caa029fa41db9aaecc5da74daebd5",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/pre-send-conversion-supervisor.ts",
+        "before_or_dependency_git_blob": "128ac179010201a65c0efdbb7c0b404c9ed8d0f7",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "745d7aa988df3195ea9f8af75659861acdc5ea6e6d3e9dd8f387af0b2ef50f56",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/service-semantic-routing.ts",
+        "before_or_dependency_git_blob": "42ce4dc9603b941eda9cabf53b9ef2810eb35988",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "117b06bc1365e1dddbb0c80f1515b934ee45116a2826004a6e8e9f892799cc3c",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/supabase-admin-key.ts",
+        "before_or_dependency_git_blob": "b1b73b79b41f929f9b4ce4ad16c9b313e486feb7",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/vertex-generation-config.ts",
+        "before_or_dependency_git_blob": "5e7b61e517c6f1078ad325cdcec4ec21d982a746",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "e321bb5c41df644cedbfe34a8d73cdea60a0a99cb9fea1a4a39512bd8e5280c7",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/vertex-parse.ts",
+        "before_or_dependency_git_blob": "2ecfa346d14ea9b0c720c367dacf7b80f10eac5d",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "83062c4576e309ac92af3850f5f7aaf4fef2285b553a9d5a81df29451cee2a34",
+        "type_only_dependency": false
+      },
+      {
+        "name": "ce-evaluation-worker/index.ts",
+        "before_or_dependency_git_blob": "85230c4af3592f169a7684d1899175a7ea543ffc",
+        "target_from_source": true,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "4ced4c0bd7ee05e1a11b401a964226f13ca9e5f9446c4b20b06da881ec4a5f5d",
+        "type_only_dependency": false
+      },
+      {
+        "name": "deno.json",
+        "before_or_dependency_git_blob": "6055b7288147936b40556fe7241d81fba7d9260b",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b",
+        "type_only_dependency": false
+      }
+    ],
+    "before_order": [
+      "ce-evaluation-worker/index.ts",
+      "_shared/ce-automation-engine.ts",
+      "_shared/supabase-admin-key.ts",
+      "_shared/llm-router.ts",
+      "_shared/vertex-parse.ts",
+      "_shared/vertex-generation-config.ts",
+      "_shared/ce-provider-response.ts",
+      "_shared/ce-contract.ts",
+      "_shared/ce-grounding.ts",
+      "_shared/kb-client.ts",
+      "_shared/kb-auth.ts",
+      "_shared/kb-aggregation-response.ts",
+      "_shared/nonproduction-secret.ts",
+      "_shared/canonical-grounding.ts",
+      "_shared/conversation-runtime-state.ts",
+      "_shared/conversation-runtime-state-core.ts",
+      "_shared/conversation-semantic-contract.ts",
+      "_shared/natural-customer-response.ts",
+      "_shared/conversational-routing.ts",
+      "_shared/commerce-state-authority.ts",
+      "_shared/ce-conversion-reality.ts",
+      "_shared/commerce-state-contract.ts",
+      "_shared/industry-runtime-adapter.ts",
+      "_shared/industry-agent-registry.ts",
+      "_shared/industry-schema.ts",
+      "_shared/industry-profiles/home-appliance-v1.ts",
+      "_shared/customer-journey-orchestration.ts",
+      "_shared/pre-send-conversion-supervisor.ts",
+      "_shared/commerce-state-reducer.ts",
+      "_shared/conversation-service-runtime.ts",
+      "_shared/customer-money-facts.ts",
+      "_shared/canonical-kb-direct-answer.ts",
+      "_shared/b2-journey-progress-contract.ts",
+      "_shared/canonical-json.ts",
+      "_shared/conversation-long-memory.ts",
+      "_shared/conversation-recall.ts",
+      "_shared/commerce-capability-runtime.ts",
+      "_shared/handoff-intent.ts",
+      "_shared/memory-reply-lifecycle-readback.ts",
+      "_shared/authoritative-commit-readback.ts",
+      "deno.json",
+      "_shared/bounded-decision-context.ts",
+      "_shared/commerce-semantic-frame.ts",
+      "_shared/contextual-customer-update.ts",
+      "_shared/conversation-service-planner.ts",
+      "_shared/current-fact-evidence.ts",
+      "_shared/deterministic-commerce-engine.ts",
+      "_shared/deterministic-kb-client.ts",
+      "_shared/service-semantic-routing.ts"
+    ],
+    "target_payload_sha256": "61a9f0cedf548d6984360910c1aa15baeb173153dc69540c525925d4a3390dac",
+    "rollback_payload_sha256": "96f4a03e9c2c8af1c244b561cd3ca2925dd180149d8ca730c3be4813ba7b7664"
+  },
+  {
+    "slug": "ce-evaluation-control",
+    "version": 14,
+    "verify_jwt": true,
+    "import_map": true,
+    "entrypoint_path": "ce-evaluation-control/index.ts",
+    "import_map_path": "deno.json",
+    "sources": [
+      {
+        "name": "_shared/authoritative-commit-readback.ts",
+        "before_or_dependency_git_blob": "c38ff8a607768b6a53cfa50f1555eccda9994c75",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "2d2c14fbab89f4caede7d8c43faed0aae3bd07064e69a948f2d9a28a6a7b62bc",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/b2-journey-progress-contract.ts",
+        "before_or_dependency_git_blob": "7548af6002ec0d9237541362c75a3b80ad71599d",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "201aef513fc85e03c0172b89163660197019e4d4c45c833c52f6071012e26c22",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/bounded-decision-context.ts",
+        "before_or_dependency_git_blob": "dc69616fc115008b5363a0eece31cc32462fc1ad",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "f93b59b56469f4a79518374f2cb3b73fab8d09028ce2b3c5c6cbb1c6c90f01f1",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/canonical-grounding.ts",
+        "before_or_dependency_git_blob": "a4ff342ac96e22b25c6bb68e161ab3178fce9f85",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "17d4d99d6b2953017fe04c5d032bf8e8ccf5b17d08406786af53b4b964cf51f7",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/canonical-json.ts",
+        "before_or_dependency_git_blob": "3853b946120b366e4a7d682b5b8728865bc822e6",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "efe44b2683ff6b90db1b9d40f438560f3011d985c1eb5a131492913acc0e4295",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/canonical-kb-direct-answer.ts",
+        "before_or_dependency_git_blob": "936ddc86938ec467e93006d8157a2898f2656235",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "c3e3b940a0e854a489709716a06609bf8e117330684cfccfc0a1890bd042b2e2",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-automation-engine.ts",
+        "before_or_dependency_git_blob": "d37602c77f9b23fa14bcb201ccfecec932f463cc",
+        "target_from_source": true,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "00882832370e770ba23bd41ac9bcb3f7b6078dc5a4f2728bb54f250a3a2a3f6a",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-contract.ts",
+        "before_or_dependency_git_blob": "5420d93ce57caaef8d7cdeffc4934d710cf80612",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "dce6cafca991315d27614580d2000cb3e18a108d0bcc91c2137b99b27fcd5210",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-conversion-reality.ts",
+        "before_or_dependency_git_blob": "02ee6d5ff63ba4517a47cdc97e346a2d86e52cad",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "200a71b68b81f1c7067fcde7cddb5b78adec447ab4cdf27c316a18944c5c488c",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-cors.ts",
+        "before_or_dependency_git_blob": "30ef4b0f8c4ecdcf034cf34aafe5fc8632a3e3b6",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "ee60323757827310a70f1e7ab9c8ac8c8998a16f72f0b526f129008fdd85ad53",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-evaluation-scope.ts",
+        "before_or_dependency_git_blob": null,
+        "target_from_source": true,
+        "existing_before": false,
+        "rollback_dependency": false,
+        "sha256": "8f1ef878a90fb55eb66aa2a732035bc151e77d12a0a4deabf6c22c4f4c7cfd7e",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-grounding.ts",
+        "before_or_dependency_git_blob": "77e20943057272617f31110f259a7b9b714304b0",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "733d345e75d4e08883110be8940adf587c05aa3da13c8a5e14052288d33ef935",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/ce-provider-response.ts",
+        "before_or_dependency_git_blob": "be67886a8e784c94d3c249b1d501707dcb05e41d",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "90e8609dd772afaf584aeb5db16c828960830562f3d09536890c903daae5e2c2",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/commerce-capability-runtime.ts",
+        "before_or_dependency_git_blob": "2b83045cf696b90b0a84d3106e1cff77bd5fcaf9",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "09a3c5917529d967d91560ead71519d987186d02c68b3638929a93a2fee83b72",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/commerce-semantic-frame.ts",
+        "before_or_dependency_git_blob": "f8ffb27285451551d6164d017413ca601f5bd708",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "fe5fbc5f0b4806001f39b7162890ad6d06e08a63ccc06406111e275675207a05",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/commerce-state-authority.ts",
+        "before_or_dependency_git_blob": "76392e65734d4c6bf49d44a979f49e06bfd387c4",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "2aee0fd61e6087bf1dc57aace20cfd8de67202cd807f8a0be8fce746a8f3fa22",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/commerce-state-contract.ts",
+        "before_or_dependency_git_blob": "29a5f6e186a250dc2b13489dac8ea04cfaea1994",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "b75848856f1854f9df5f458ba5d3e491b6693c550458f5e3178cf88874b6e3be",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/commerce-state-reducer.ts",
+        "before_or_dependency_git_blob": "f85541543098b50fe137184dec72620502f8f0a0",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "b303bcf3cb610976bf6286a6a01767a192668c1604adb0aa86832b4632d8843f",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/contextual-customer-update.ts",
+        "before_or_dependency_git_blob": "ca95350f886107bfae7d4a5437156d44394c978b",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "9b4b0d3a8deae05450d2f6a96421ad9b2e409379b2b2e32bc0ea1ee9e5333b9b",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-long-memory.ts",
+        "before_or_dependency_git_blob": "6ed30202a4795febebe2f070b531112ffe5bb78e",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "e407f0973a73d093ca515386952e3edfe2353430adb40afe4c13eb1cbbd8b594",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-recall.ts",
+        "before_or_dependency_git_blob": "9229c139cce26cf31b4b98a998e57f1a62a70ee8",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "68df8119a87454747172a40461598e9939c7950a173f23ea75dd928272f4a64d",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-runtime-state-core.ts",
+        "before_or_dependency_git_blob": "f2b2b120693b4849c6271f45989a80a262d4ac88",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "8d69978b1658c71ad0dd348f5d3f1b1dc435811d94073681e5ec28ebb7c49726",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-runtime-state.ts",
+        "before_or_dependency_git_blob": "0db016a6c312c70599d1256a57ff010bded7cf1d",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-semantic-contract.ts",
+        "before_or_dependency_git_blob": "7acc214714599e72eaedf705587ee37855f98aa1",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "e83aa29f56bb9eed32d0588143684493d8b349285a6505ebe2a736633926a8a9",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-service-planner.ts",
+        "before_or_dependency_git_blob": "6aabcf61fa7936d3ea6f1e3355e8fc132be76b4a",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "57a654e6b56b011d173ded4060ff981c4e0c7fe591945593930dec3151f18a39",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversation-service-runtime.ts",
+        "before_or_dependency_git_blob": "3753dd0872d4faabd90a5900cb78567d5015eeea",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "96efcf37119f9adb4dcdd6816fabbe1e6de283e3b87ded5c7b657da34ca9c974",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/conversational-routing.ts",
+        "before_or_dependency_git_blob": "61961f19456d327ca66e2b0ec5128ae6c66f0367",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "5108cb08d598c7ad8d2cfddbab9b2adf3bfe2333a5308e95af6fead12a2c78d6",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/current-fact-evidence.ts",
+        "before_or_dependency_git_blob": "33201e691417c61a5fa2f17428950909e82180bb",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "29bd2d56d2d82a202a9057d11e6ee085a09c1c3c9da1dee5afe717de61f2fbd9",
+        "type_only_dependency": true
+      },
+      {
+        "name": "_shared/customer-journey-orchestration.ts",
+        "before_or_dependency_git_blob": "e39a2bee2d42f078f3bfa40f8e0c34edbc2300e6",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "3978f4bd89914dcf915758f48d10a6cffd96b7c98a944e208b53c59245be2df4",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/customer-money-facts.ts",
+        "before_or_dependency_git_blob": "baef29c41ac4d9053717eb1373e6b974503e1f21",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "bad7b229031d97f0a0fcd054408b7c69bad88891bac1319dd27e1d3366d1ed19",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/deterministic-commerce-engine.ts",
+        "before_or_dependency_git_blob": "5426bd55484c245ae7afa5c157cace1c9fc88879",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "bda05ac779ec0419bf9f6c1567241accb96f1a8ad9975e76e9537cf82ba661c5",
+        "type_only_dependency": true
+      },
+      {
+        "name": "_shared/deterministic-kb-client.ts",
+        "before_or_dependency_git_blob": "885843772ae8cb9b67db3ed07cb1ab0a1ab721c0",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "ccabfc8d938a979cc9b375d3c5c84fbc24f0a6e7908ca01fd2111b9527cf9e7f",
+        "type_only_dependency": true
+      },
+      {
+        "name": "_shared/handoff-intent.ts",
+        "before_or_dependency_git_blob": "d87f23df04ddbf6a2017eafcb960b6a656930116",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "58c3f8a6c0da6967cb6bce71ea24f2955c4b8f95f383c886295ce85393b8685b",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/industry-agent-registry.ts",
+        "before_or_dependency_git_blob": "05c2c3989a013880bbbbb2e8961f226f9a33056f",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "bc4a77a489fc8a5e2e2ea8ff79f224a35497ca4320d6781568b6433e34ce2071",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/industry-profiles/home-appliance-v1.ts",
+        "before_or_dependency_git_blob": "c7b4e2bb24ea25bba20befda3206cc4f995d98b1",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "290cd0a2fc3ec235a41dcca4f9802198554c608e9bc9bd2ad84f8677fe7e20e6",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/industry-runtime-adapter.ts",
+        "before_or_dependency_git_blob": "9e9de40d3c8c2ff6548658132decfc5d1d42ffaf",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "7becbaa1540269960079c81d5cecf801583022487a436e1865f3ca5381b429f1",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/industry-schema.ts",
+        "before_or_dependency_git_blob": "936e83265421771cdb7d7442f733b2284d166ad7",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "149c208a8b898faedab61234cfc7f85e7a40d71c92996a5b61354e4cf85d35dd",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/kb-aggregation-response.ts",
+        "before_or_dependency_git_blob": "b2d1e2eac8b154b9ecfcffa044636ae4e142b35b",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "c38365d92cd0860bfba541f3cb072a01d095cb0d2c3be84162c88173ca612ba2",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/kb-auth.ts",
+        "before_or_dependency_git_blob": "1c14a5243d0ffcfccadf6c738a2b101173f08c2b",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "696473ccbae22ea1328778785659be96204328ca6be5ca35ed7e94e70483e6d7",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/kb-client.ts",
+        "before_or_dependency_git_blob": "dfce3c350cf0d49ee0b67cfea59ddd3314ca5e7f",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "c51efe438f5e3b9657f399f1800f82b9b76e07bb9f36f114a34f2179d7a920ec",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/llm-router.ts",
+        "before_or_dependency_git_blob": "28baa83606ae578e97f50427234cf7745e793eba",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "360c14644b2884aa0478ff9c4c3ad3d56024d19f0e0be82aa1bc21ecff4cc483",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/memory-reply-lifecycle-readback.ts",
+        "before_or_dependency_git_blob": "4e2184e3b6e0d010c56a78dd8cfca9fa836ccdcb",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/natural-customer-response.ts",
+        "before_or_dependency_git_blob": "d05a5b65e9a17d94ec7a8fe8e2412745b2383020",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "5f26399789280d169d29673e118ff1c637cf81202c3a68cc5489fa038363883b",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/nonproduction-secret.ts",
+        "before_or_dependency_git_blob": "af3be5e2d59efbbbd1264e15bf9c0dce29a1020e",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "9a760728a4298c09a080237a8d0c90492e7caa029fa41db9aaecc5da74daebd5",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/pre-send-conversion-supervisor.ts",
+        "before_or_dependency_git_blob": "128ac179010201a65c0efdbb7c0b404c9ed8d0f7",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "745d7aa988df3195ea9f8af75659861acdc5ea6e6d3e9dd8f387af0b2ef50f56",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/service-semantic-routing.ts",
+        "before_or_dependency_git_blob": "42ce4dc9603b941eda9cabf53b9ef2810eb35988",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "117b06bc1365e1dddbb0c80f1515b934ee45116a2826004a6e8e9f892799cc3c",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/supabase-admin-key.ts",
+        "before_or_dependency_git_blob": "b1b73b79b41f929f9b4ce4ad16c9b313e486feb7",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/vertex-generation-config.ts",
+        "before_or_dependency_git_blob": "5e7b61e517c6f1078ad325cdcec4ec21d982a746",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "e321bb5c41df644cedbfe34a8d73cdea60a0a99cb9fea1a4a39512bd8e5280c7",
+        "type_only_dependency": false
+      },
+      {
+        "name": "_shared/vertex-parse.ts",
+        "before_or_dependency_git_blob": "2ecfa346d14ea9b0c720c367dacf7b80f10eac5d",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "83062c4576e309ac92af3850f5f7aaf4fef2285b553a9d5a81df29451cee2a34",
+        "type_only_dependency": false
+      },
+      {
+        "name": "ce-evaluation-control/index.ts",
+        "before_or_dependency_git_blob": "94b6f8bab81d2a185d2077020c5848a97df74581",
+        "target_from_source": true,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "d7e95c6594d828cf438394ba2bce199520ab775d40695e358a7ac4a0a4be01d8",
+        "type_only_dependency": false
+      },
+      {
+        "name": "deno.json",
+        "before_or_dependency_git_blob": "6055b7288147936b40556fe7241d81fba7d9260b",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b",
+        "type_only_dependency": false
+      }
+    ],
+    "before_order": [
+      "ce-evaluation-control/index.ts",
+      "_shared/ce-automation-engine.ts",
+      "_shared/supabase-admin-key.ts",
+      "_shared/llm-router.ts",
+      "_shared/vertex-parse.ts",
+      "_shared/vertex-generation-config.ts",
+      "_shared/ce-provider-response.ts",
+      "_shared/ce-contract.ts",
+      "_shared/ce-grounding.ts",
+      "_shared/kb-client.ts",
+      "_shared/kb-auth.ts",
+      "_shared/kb-aggregation-response.ts",
+      "_shared/nonproduction-secret.ts",
+      "_shared/canonical-grounding.ts",
+      "_shared/conversation-runtime-state.ts",
+      "_shared/conversation-runtime-state-core.ts",
+      "_shared/conversation-semantic-contract.ts",
+      "_shared/natural-customer-response.ts",
+      "_shared/conversational-routing.ts",
+      "_shared/commerce-state-authority.ts",
+      "_shared/ce-conversion-reality.ts",
+      "_shared/commerce-state-contract.ts",
+      "_shared/industry-runtime-adapter.ts",
+      "_shared/industry-agent-registry.ts",
+      "_shared/industry-schema.ts",
+      "_shared/industry-profiles/home-appliance-v1.ts",
+      "_shared/customer-journey-orchestration.ts",
+      "_shared/pre-send-conversion-supervisor.ts",
+      "_shared/commerce-state-reducer.ts",
+      "_shared/conversation-service-runtime.ts",
+      "_shared/customer-money-facts.ts",
+      "_shared/canonical-kb-direct-answer.ts",
+      "_shared/b2-journey-progress-contract.ts",
+      "_shared/canonical-json.ts",
+      "_shared/conversation-long-memory.ts",
+      "_shared/conversation-recall.ts",
+      "_shared/commerce-capability-runtime.ts",
+      "_shared/handoff-intent.ts",
+      "_shared/memory-reply-lifecycle-readback.ts",
+      "_shared/authoritative-commit-readback.ts",
+      "_shared/ce-cors.ts",
+      "deno.json",
+      "_shared/bounded-decision-context.ts",
+      "_shared/commerce-semantic-frame.ts",
+      "_shared/contextual-customer-update.ts",
+      "_shared/conversation-service-planner.ts",
+      "_shared/current-fact-evidence.ts",
+      "_shared/deterministic-commerce-engine.ts",
+      "_shared/deterministic-kb-client.ts",
+      "_shared/service-semantic-routing.ts"
+    ],
+    "target_payload_sha256": "9759f2a3c9a9f1dfcd87c13ab5254f7d488e76589a8a338f8097a3123784f9e0",
+    "rollback_payload_sha256": "64a8f9d4ea8016a1383537dbe667b9ee31811398a72d2c6a266753f59f6f6d90"
+  },
+  {
+    "slug": "conversation-evaluate",
+    "version": 25,
+    "verify_jwt": true,
+    "import_map": true,
+    "entrypoint_path": "functions/conversation-evaluate/index.ts",
+    "import_map_path": "functions/conversation-evaluate/deno.json",
+    "sources": [
+      {
+        "name": "functions/_shared/authoritative-commit-readback.ts",
+        "before_or_dependency_git_blob": "c38ff8a607768b6a53cfa50f1555eccda9994c75",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "2d2c14fbab89f4caede7d8c43faed0aae3bd07064e69a948f2d9a28a6a7b62bc",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/b2-journey-progress-contract.ts",
+        "before_or_dependency_git_blob": "7548af6002ec0d9237541362c75a3b80ad71599d",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "201aef513fc85e03c0172b89163660197019e4d4c45c833c52f6071012e26c22",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/bounded-decision-context.ts",
+        "before_or_dependency_git_blob": "dc69616fc115008b5363a0eece31cc32462fc1ad",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "f93b59b56469f4a79518374f2cb3b73fab8d09028ce2b3c5c6cbb1c6c90f01f1",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/canonical-grounding.ts",
+        "before_or_dependency_git_blob": "a4ff342ac96e22b25c6bb68e161ab3178fce9f85",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "17d4d99d6b2953017fe04c5d032bf8e8ccf5b17d08406786af53b4b964cf51f7",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/canonical-json.ts",
+        "before_or_dependency_git_blob": "3853b946120b366e4a7d682b5b8728865bc822e6",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "efe44b2683ff6b90db1b9d40f438560f3011d985c1eb5a131492913acc0e4295",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/canonical-kb-direct-answer.ts",
+        "before_or_dependency_git_blob": "936ddc86938ec467e93006d8157a2898f2656235",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "c3e3b940a0e854a489709716a06609bf8e117330684cfccfc0a1890bd042b2e2",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/ce-contract.ts",
+        "before_or_dependency_git_blob": "5420d93ce57caaef8d7cdeffc4934d710cf80612",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "dce6cafca991315d27614580d2000cb3e18a108d0bcc91c2137b99b27fcd5210",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/ce-conversion-reality.ts",
+        "before_or_dependency_git_blob": "02ee6d5ff63ba4517a47cdc97e346a2d86e52cad",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "200a71b68b81f1c7067fcde7cddb5b78adec447ab4cdf27c316a18944c5c488c",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/ce-evaluation-scope.ts",
+        "before_or_dependency_git_blob": null,
+        "target_from_source": true,
+        "existing_before": false,
+        "rollback_dependency": false,
+        "sha256": "8f1ef878a90fb55eb66aa2a732035bc151e77d12a0a4deabf6c22c4f4c7cfd7e",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/ce-grounding.ts",
+        "before_or_dependency_git_blob": "77e20943057272617f31110f259a7b9b714304b0",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "733d345e75d4e08883110be8940adf587c05aa3da13c8a5e14052288d33ef935",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/ce-provider-response.ts",
+        "before_or_dependency_git_blob": "be67886a8e784c94d3c249b1d501707dcb05e41d",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "90e8609dd772afaf584aeb5db16c828960830562f3d09536890c903daae5e2c2",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/commerce-capability-runtime.ts",
+        "before_or_dependency_git_blob": "2b83045cf696b90b0a84d3106e1cff77bd5fcaf9",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "09a3c5917529d967d91560ead71519d987186d02c68b3638929a93a2fee83b72",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/commerce-semantic-frame.ts",
+        "before_or_dependency_git_blob": "f8ffb27285451551d6164d017413ca601f5bd708",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "fe5fbc5f0b4806001f39b7162890ad6d06e08a63ccc06406111e275675207a05",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/commerce-state-authority.ts",
+        "before_or_dependency_git_blob": "76392e65734d4c6bf49d44a979f49e06bfd387c4",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "2aee0fd61e6087bf1dc57aace20cfd8de67202cd807f8a0be8fce746a8f3fa22",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/commerce-state-contract.ts",
+        "before_or_dependency_git_blob": "29a5f6e186a250dc2b13489dac8ea04cfaea1994",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "b75848856f1854f9df5f458ba5d3e491b6693c550458f5e3178cf88874b6e3be",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/commerce-state-reducer.ts",
+        "before_or_dependency_git_blob": "f85541543098b50fe137184dec72620502f8f0a0",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "b303bcf3cb610976bf6286a6a01767a192668c1604adb0aa86832b4632d8843f",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/contextual-customer-update.ts",
+        "before_or_dependency_git_blob": "ca95350f886107bfae7d4a5437156d44394c978b",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "9b4b0d3a8deae05450d2f6a96421ad9b2e409379b2b2e32bc0ea1ee9e5333b9b",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/conversation-long-memory.ts",
+        "before_or_dependency_git_blob": "6ed30202a4795febebe2f070b531112ffe5bb78e",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "e407f0973a73d093ca515386952e3edfe2353430adb40afe4c13eb1cbbd8b594",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/conversation-recall.ts",
+        "before_or_dependency_git_blob": "9229c139cce26cf31b4b98a998e57f1a62a70ee8",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "68df8119a87454747172a40461598e9939c7950a173f23ea75dd928272f4a64d",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/conversation-runtime-state-core.ts",
+        "before_or_dependency_git_blob": "f2b2b120693b4849c6271f45989a80a262d4ac88",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "8d69978b1658c71ad0dd348f5d3f1b1dc435811d94073681e5ec28ebb7c49726",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/conversation-runtime-state.ts",
+        "before_or_dependency_git_blob": "0db016a6c312c70599d1256a57ff010bded7cf1d",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/conversation-semantic-contract.ts",
+        "before_or_dependency_git_blob": "7acc214714599e72eaedf705587ee37855f98aa1",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "e83aa29f56bb9eed32d0588143684493d8b349285a6505ebe2a736633926a8a9",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/conversation-service-planner.ts",
+        "before_or_dependency_git_blob": "6aabcf61fa7936d3ea6f1e3355e8fc132be76b4a",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "57a654e6b56b011d173ded4060ff981c4e0c7fe591945593930dec3151f18a39",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/conversation-service-runtime.ts",
+        "before_or_dependency_git_blob": "3753dd0872d4faabd90a5900cb78567d5015eeea",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "96efcf37119f9adb4dcdd6816fabbe1e6de283e3b87ded5c7b657da34ca9c974",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/conversational-routing.ts",
+        "before_or_dependency_git_blob": "61961f19456d327ca66e2b0ec5128ae6c66f0367",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "5108cb08d598c7ad8d2cfddbab9b2adf3bfe2333a5308e95af6fead12a2c78d6",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/current-fact-evidence.ts",
+        "before_or_dependency_git_blob": "33201e691417c61a5fa2f17428950909e82180bb",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "29bd2d56d2d82a202a9057d11e6ee085a09c1c3c9da1dee5afe717de61f2fbd9",
+        "type_only_dependency": true
+      },
+      {
+        "name": "functions/_shared/customer-journey-orchestration.ts",
+        "before_or_dependency_git_blob": "e39a2bee2d42f078f3bfa40f8e0c34edbc2300e6",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "3978f4bd89914dcf915758f48d10a6cffd96b7c98a944e208b53c59245be2df4",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/customer-money-facts.ts",
+        "before_or_dependency_git_blob": "baef29c41ac4d9053717eb1373e6b974503e1f21",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "bad7b229031d97f0a0fcd054408b7c69bad88891bac1319dd27e1d3366d1ed19",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/deterministic-commerce-engine.ts",
+        "before_or_dependency_git_blob": "5426bd55484c245ae7afa5c157cace1c9fc88879",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "bda05ac779ec0419bf9f6c1567241accb96f1a8ad9975e76e9537cf82ba661c5",
+        "type_only_dependency": true
+      },
+      {
+        "name": "functions/_shared/deterministic-kb-client.ts",
+        "before_or_dependency_git_blob": "885843772ae8cb9b67db3ed07cb1ab0a1ab721c0",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "ccabfc8d938a979cc9b375d3c5c84fbc24f0a6e7908ca01fd2111b9527cf9e7f",
+        "type_only_dependency": true
+      },
+      {
+        "name": "functions/_shared/handoff-intent.ts",
+        "before_or_dependency_git_blob": "d87f23df04ddbf6a2017eafcb960b6a656930116",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "58c3f8a6c0da6967cb6bce71ea24f2955c4b8f95f383c886295ce85393b8685b",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/industry-agent-registry.ts",
+        "before_or_dependency_git_blob": "05c2c3989a013880bbbbb2e8961f226f9a33056f",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "bc4a77a489fc8a5e2e2ea8ff79f224a35497ca4320d6781568b6433e34ce2071",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/industry-profiles/home-appliance-v1.ts",
+        "before_or_dependency_git_blob": "c7b4e2bb24ea25bba20befda3206cc4f995d98b1",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "290cd0a2fc3ec235a41dcca4f9802198554c608e9bc9bd2ad84f8677fe7e20e6",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/industry-runtime-adapter.ts",
+        "before_or_dependency_git_blob": "9e9de40d3c8c2ff6548658132decfc5d1d42ffaf",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "7becbaa1540269960079c81d5cecf801583022487a436e1865f3ca5381b429f1",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/industry-schema.ts",
+        "before_or_dependency_git_blob": "936e83265421771cdb7d7442f733b2284d166ad7",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "149c208a8b898faedab61234cfc7f85e7a40d71c92996a5b61354e4cf85d35dd",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/kb-aggregation-response.ts",
+        "before_or_dependency_git_blob": "b2d1e2eac8b154b9ecfcffa044636ae4e142b35b",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "c38365d92cd0860bfba541f3cb072a01d095cb0d2c3be84162c88173ca612ba2",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/kb-auth.ts",
+        "before_or_dependency_git_blob": "1c14a5243d0ffcfccadf6c738a2b101173f08c2b",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "696473ccbae22ea1328778785659be96204328ca6be5ca35ed7e94e70483e6d7",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/kb-client.ts",
+        "before_or_dependency_git_blob": "dfce3c350cf0d49ee0b67cfea59ddd3314ca5e7f",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "c51efe438f5e3b9657f399f1800f82b9b76e07bb9f36f114a34f2179d7a920ec",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/llm-router.ts",
+        "before_or_dependency_git_blob": "28baa83606ae578e97f50427234cf7745e793eba",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "360c14644b2884aa0478ff9c4c3ad3d56024d19f0e0be82aa1bc21ecff4cc483",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/memory-reply-lifecycle-readback.ts",
+        "before_or_dependency_git_blob": "4e2184e3b6e0d010c56a78dd8cfca9fa836ccdcb",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/natural-customer-response.ts",
+        "before_or_dependency_git_blob": "d05a5b65e9a17d94ec7a8fe8e2412745b2383020",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "5f26399789280d169d29673e118ff1c637cf81202c3a68cc5489fa038363883b",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/nonproduction-secret.ts",
+        "before_or_dependency_git_blob": "af3be5e2d59efbbbd1264e15bf9c0dce29a1020e",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "9a760728a4298c09a080237a8d0c90492e7caa029fa41db9aaecc5da74daebd5",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/pre-send-conversion-supervisor.ts",
+        "before_or_dependency_git_blob": "128ac179010201a65c0efdbb7c0b404c9ed8d0f7",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "745d7aa988df3195ea9f8af75659861acdc5ea6e6d3e9dd8f387af0b2ef50f56",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/service-semantic-routing.ts",
+        "before_or_dependency_git_blob": "42ce4dc9603b941eda9cabf53b9ef2810eb35988",
+        "target_from_source": false,
+        "existing_before": false,
+        "rollback_dependency": true,
+        "sha256": "117b06bc1365e1dddbb0c80f1515b934ee45116a2826004a6e8e9f892799cc3c",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/supabase-admin-key.ts",
+        "before_or_dependency_git_blob": "b1b73b79b41f929f9b4ce4ad16c9b313e486feb7",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/vertex-generation-config.ts",
+        "before_or_dependency_git_blob": "5e7b61e517c6f1078ad325cdcec4ec21d982a746",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "e321bb5c41df644cedbfe34a8d73cdea60a0a99cb9fea1a4a39512bd8e5280c7",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/_shared/vertex-parse.ts",
+        "before_or_dependency_git_blob": "2ecfa346d14ea9b0c720c367dacf7b80f10eac5d",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "83062c4576e309ac92af3850f5f7aaf4fef2285b553a9d5a81df29451cee2a34",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/conversation-evaluate/deno.json",
+        "before_or_dependency_git_blob": "6055b7288147936b40556fe7241d81fba7d9260b",
+        "target_from_source": false,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b",
+        "type_only_dependency": false
+      },
+      {
+        "name": "functions/conversation-evaluate/index.ts",
+        "before_or_dependency_git_blob": "2cd0d1775ca2b25ad55cf6318429497b587fc325",
+        "target_from_source": true,
+        "existing_before": true,
+        "rollback_dependency": false,
+        "sha256": "123d8fde288929e3a2d05606dca28ffa719219d5f57444b33867ce2e432e3203",
+        "type_only_dependency": false
+      }
+    ],
+    "before_order": [
+      "functions/conversation-evaluate/index.ts",
+      "functions/_shared/supabase-admin-key.ts",
+      "functions/_shared/llm-router.ts",
+      "functions/_shared/vertex-parse.ts",
+      "functions/_shared/vertex-generation-config.ts",
+      "functions/_shared/ce-provider-response.ts",
+      "functions/_shared/ce-contract.ts",
+      "functions/_shared/ce-grounding.ts",
+      "functions/_shared/kb-client.ts",
+      "functions/_shared/kb-auth.ts",
+      "functions/_shared/kb-aggregation-response.ts",
+      "functions/_shared/nonproduction-secret.ts",
+      "functions/_shared/canonical-grounding.ts",
+      "functions/_shared/conversation-runtime-state.ts",
+      "functions/_shared/conversation-runtime-state-core.ts",
+      "functions/_shared/conversation-semantic-contract.ts",
+      "functions/_shared/natural-customer-response.ts",
+      "functions/_shared/conversational-routing.ts",
+      "functions/_shared/commerce-state-authority.ts",
+      "functions/_shared/ce-conversion-reality.ts",
+      "functions/_shared/commerce-state-contract.ts",
+      "functions/_shared/industry-runtime-adapter.ts",
+      "functions/_shared/industry-agent-registry.ts",
+      "functions/_shared/industry-schema.ts",
+      "functions/_shared/industry-profiles/home-appliance-v1.ts",
+      "functions/_shared/customer-journey-orchestration.ts",
+      "functions/_shared/pre-send-conversion-supervisor.ts",
+      "functions/_shared/commerce-state-reducer.ts",
+      "functions/_shared/conversation-service-runtime.ts",
+      "functions/_shared/customer-money-facts.ts",
+      "functions/_shared/canonical-kb-direct-answer.ts",
+      "functions/_shared/b2-journey-progress-contract.ts",
+      "functions/_shared/canonical-json.ts",
+      "functions/_shared/conversation-long-memory.ts",
+      "functions/_shared/conversation-recall.ts",
+      "functions/_shared/commerce-capability-runtime.ts",
+      "functions/_shared/handoff-intent.ts",
+      "functions/_shared/memory-reply-lifecycle-readback.ts",
+      "functions/_shared/authoritative-commit-readback.ts",
+      "functions/conversation-evaluate/deno.json",
+      "functions/_shared/bounded-decision-context.ts",
+      "functions/_shared/commerce-semantic-frame.ts",
+      "functions/_shared/contextual-customer-update.ts",
+      "functions/_shared/conversation-service-planner.ts",
+      "functions/_shared/current-fact-evidence.ts",
+      "functions/_shared/deterministic-commerce-engine.ts",
+      "functions/_shared/deterministic-kb-client.ts",
+      "functions/_shared/service-semantic-routing.ts"
+    ],
+    "target_payload_sha256": "7316c7e35b076079e705c0222f534b6d66ed1bc5a5869505c71b1a45b8e9220d",
+    "rollback_payload_sha256": "97f071617053dd04a8fd5b85b0fa9f9fe5e47f58b71afb245e41fa4f12fdd20d"
+  }
+]

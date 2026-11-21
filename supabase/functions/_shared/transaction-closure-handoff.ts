@@ -1,4 +1,4 @@
-import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import type { CommerceEntity, ConversationCommerceState } from "./commerce-state-contract.ts";
 
 export const C2_HANDOFF_SCHEMA_VERSION = "c2-handoff-1.0.0" as const;
 
@@ -29,6 +29,8 @@ export type C2HandoffEntity = {
   model: string | null;
   quantity: number;
   status: string;
+  attributes?: Record<string, unknown>;
+  constraints?: Record<string, unknown>;
   current_quote: { amount: number; currency: string; status: string } | null;
   pending_issues: string[];
 };
@@ -42,6 +44,11 @@ export type C2HandoffPackage = {
   handoff_authority: string;
   current_customer_goal: string;
   active_entities: C2HandoffEntity[];
+  deferred_entities?: CommerceEntity[];
+  cancelled_entities?: CommerceEntity[];
+  current_customer_facts?: Array<{ authority: "CUSTOMER_FACT"; entity_id: string; key: string; value: unknown; source: "canonical_commerce_state" }>;
+  customer_constraints?: Record<string, unknown>;
+  handoff_request_text?: string;
   latest_corrections: string[];
   confirmed_facts: Array<{ key: string; value: string; source: "canonical_commerce_state" }>;
   historical_or_superseded_facts: Array<{ key: string; value: string; state: string }>;
@@ -231,6 +238,8 @@ export function buildC2HandoffPackage(input: PackageInput): C2HandoffPackage {
       model: clean(entity.model, 120) || null,
       quantity: Number.isFinite(entity.quantity) ? entity.quantity : 0,
       status: entity.status,
+      attributes: entity.attributes,
+      constraints: entity.constraints,
       current_quote: quote
         ? { amount: quote.amount, currency: clean(quote.currency, 20), status: quote.validity_status }
         : null,
@@ -266,6 +275,16 @@ export function buildC2HandoffPackage(input: PackageInput): C2HandoffPackage {
     handoff_authority: clean(input.handoff_authority, 100),
     current_customer_goal: clean(input.current_customer_goal, 1000) || "unknown",
     active_entities: entities,
+    deferred_entities: (state?.entities ?? []).filter((entity) => entity.status === "deferred"),
+    cancelled_entities: (state?.entities ?? []).filter((entity) => entity.status === "cancelled"),
+    current_customer_facts: (state?.entities ?? [])
+      .filter((entity) => entity.status !== "cancelled")
+      .flatMap((entity) => Object.entries(entity.attributes)
+        .filter(([key]) => !["customer_goal", "capabilities", "semantic_attributes", "semantic_frame_version", "semantic_operation", "semantic_confidence", "semantic_transaction_state", "semantic_payment_state", "semantic_booking_state", "semantic_fulfillment_state"].includes(key))
+        .map(([key, value]) => ({ authority: "CUSTOMER_FACT" as const,
+          entity_id: entity.entity_id, key, value,
+          source: "canonical_commerce_state" as const }))),
+    customer_constraints: state?.customer_constraints ?? {},
     latest_corrections: unique(state?.latest_corrections ?? []),
     confirmed_facts: confirmed,
     historical_or_superseded_facts: historicalQuotes.map((quote) => ({

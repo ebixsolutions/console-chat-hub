@@ -1,0 +1,76 @@
+version: "3.9"
+
+# 一鍵重現：docker compose up  → API on :8000
+# 一鍵驗證：docker compose --profile test run --rm tests
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16          # 內建 pgvector 擴充
+    environment:
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus
+      POSTGRES_DB: nexus_kb
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexus -d nexus_kb"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    environment: &appenv
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379/0
+      ENV: production
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production-32bytes-minimum}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-nexus-kb}
+      JWT_ISSUER: ${JWT_ISSUER:-nexus-platform}
+      SERVICE_ROLE_SECRET: ${SERVICE_ROLE_SECRET:-}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://nexus-kb-core.base44.app}
+      REQUIRE_PRODUCTION_EMBEDDING: ${REQUIRE_PRODUCTION_EMBEDDING:-true}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+    ports: ["8000:8000"]
+
+  worker:
+    build: .
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    environment: *appenv
+    command: bash docker/worker.sh
+
+  # 一鍵驗證容器（PostgreSQL+pgvector+Redis+tests）
+  tests:
+    build: .
+    profiles: ["test"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    environment:
+      <<: *appenv
+      ENV: test
+      REQUIRE_PRODUCTION_EMBEDDING: "false"
+      OPENAI_BASE_URL: http://localhost:8899
+      DEEPSEEK_BASE_URL: http://localhost:8899
+      VERTEX_BASE_URL: http://localhost:8899
+      FIRECRAWL_BASE_URL: http://localhost:8899
+    command: bash docker/run_tests.sh
+
+volumes:
+  pgdata:

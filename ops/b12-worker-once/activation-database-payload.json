@@ -1,0 +1,5 @@
+{
+  "project_id": "nrfxhqabwblzxoushgnm",
+  "name": "c3_b12_worker_once_activation",
+  "query": "-- PROPOSED ONLY. Needs exact activation approval. Never rerun after a spent row.\nbegin;\ncreate schema c3_b12_once;\nrevoke all on schema c3_b12_once from public, anon, authenticated, service_role;\ncreate table c3_b12_once.ledger (\n  operation text primary key check(operation='C3-B12-WORKER-ONCE-20261009-42eee3e7'),\n  armed boolean not null default false,\n  created_at timestamptz not null default now(),\n  expires_at timestamptz not null default now()+interval '24 hours',\n  guards_reviewed_at timestamptz,\n  spent_at timestamptz,\n  receipt jsonb\n);\nalter table c3_b12_once.ledger enable row level security;\nrevoke all on c3_b12_once.ledger from public, anon, authenticated, service_role;\ninsert into c3_b12_once.ledger(operation) values ('C3-B12-WORKER-ONCE-20261009-42eee3e7');\ncommit;\n"
+}

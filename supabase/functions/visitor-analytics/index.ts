@@ -1,3 +1,5 @@
+import { getSupabaseAdminKey } from "../_shared/supabase-admin-key.ts";
+import { readComplete, readByIds, countByIds } from "../_shared/complete-scoped-read.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import {
   applyCompanyScope,
@@ -90,7 +92,7 @@ Deno.serve(async (req) => {
 
     const admin = createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      getSupabaseAdminKey(),
     );
 
     const scopeResult = await resolveCallerScope(admin, {
@@ -153,14 +155,14 @@ Deno.serve(async (req) => {
       // Tenant boundary is conversations.company_id in canonical mode, and
       // company_id IS NULL in pre-activation mode. Every downstream metric is
       // derived exclusively from this scoped conversation set.
-      const { data: conversations, error: conversationError } = await applyCompanyScope(
+      const { data: conversations, error: conversationError } = await readComplete(() => applyCompanyScope(
         admin
           .from("conversations")
           .select(
-            "id, visitor_session_id, status, created_at, updated_at, resolved_at",
+            "id, visitor_session_id, status, created_at, updated_at, resolved_at", { count: "exact" },
           ),
         scope,
-      );
+      ));
 
       if (conversationError) {
         console.error(
@@ -193,22 +195,22 @@ Deno.serve(async (req) => {
         [];
 
       if (conversationIds.length > 0) {
-        const { count, error } = await admin
+        const { count, error } = await countByIds(conversationIds, batch => admin
           .from("messages")
           .select("id", { count: "exact", head: true })
-          .in("conversation_id", conversationIds)
+          .in("conversation_id", batch)
           .neq("content", "__THINKING__")
-          .eq("is_recalled", false);
+          .eq("is_recalled", false));
         if (error) {
           return jsonResponse({ error: "analytics_query_failed" }, 500, req);
         }
         totalMessages = count ?? 0;
 
-        const { data, error: feedbackError } = await admin
+        const { data, error: feedbackError } = await readByIds(conversationIds, "conversation_id", batch => admin
           .from("feedback_request")
-          .select("conversation_id, rating")
-          .in("conversation_id", conversationIds)
-          .not("rating", "is", null);
+          .select("id, conversation_id, rating", { count: "exact" })
+          .in("conversation_id", batch)
+          .not("rating", "is", null), true);
         if (feedbackError) {
           return jsonResponse({ error: "analytics_query_failed" }, 500, req);
         }
@@ -290,10 +292,10 @@ Deno.serve(async (req) => {
         { created_at: string | null; last_seen_at: string | null }
       >();
       if (sessionIds.length > 0) {
-        const { data, error } = await admin
+        const { data, error } = await readByIds(sessionIds, "id", batch => admin
           .from("visitor_session")
-          .select("id, created_at, last_seen_at")
-          .in("id", sessionIds);
+          .select("id, created_at, last_seen_at", { count: "exact" })
+          .in("id", batch));
         if (error) {
           return jsonResponse({ error: "analytics_query_failed" }, 500, req);
         }
@@ -355,14 +357,14 @@ Deno.serve(async (req) => {
 
     // Cross-tenant protection: a visitor session is visible only if it has at
     // least one conversation inside the resolved scope.
-    const { data: scopedConversations, error: scopedError } = await applyCompanyScope(
+    const { data: scopedConversations, error: scopedError } = await readComplete(() => applyCompanyScope(
       admin
         .from("conversations")
-        .select("id, status, created_at, resolved_at, updated_at"),
+        .select("id, status, created_at, resolved_at, updated_at", { count: "exact" }),
       scope,
     )
       .eq("visitor_session_id", visitorSessionId)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false }));
 
     if (scopedError) {
       return jsonResponse({ error: "analytics_query_failed" }, 500, req);
@@ -378,27 +380,28 @@ Deno.serve(async (req) => {
       .eq("id", visitorSessionId)
       .maybeSingle();
 
-    if (visitorError || !visitor) {
+    if (visitorError) return jsonResponse({ error: "analytics_query_failed" }, 500, req);
+    if (!visitor) {
       return jsonResponse({ error: "not_found" }, 404, req);
     }
 
     const conversationIds = scopedConversations.map((row) => String(row.id));
-    const { data: messages, error: messageError } = await admin
+    const { data: messages, error: messageError } = await readByIds(conversationIds, "conversation_id", batch => admin
       .from("messages")
-      .select("conversation_id, id, content, is_recalled")
-      .in("conversation_id", conversationIds)
+      .select("conversation_id, id, content, is_recalled", { count: "exact" })
+      .in("conversation_id", batch)
       .neq("content", "__THINKING__")
-      .eq("is_recalled", false);
+      .eq("is_recalled", false));
 
     if (messageError) {
       return jsonResponse({ error: "analytics_query_failed" }, 500, req);
     }
 
-    const { data: feedback, error: feedbackError } = await admin
+    const { data: feedback, error: feedbackError } = await readByIds(conversationIds, "conversation_id", batch => admin
       .from("feedback_request")
-      .select("conversation_id, rating")
-      .in("conversation_id", conversationIds)
-      .not("rating", "is", null);
+      .select("id, conversation_id, rating", { count: "exact" })
+      .in("conversation_id", batch)
+      .not("rating", "is", null), true);
 
     if (feedbackError) {
       return jsonResponse({ error: "analytics_query_failed" }, 500, req);

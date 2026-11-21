@@ -1,0 +1,8 @@
+[
+  {
+    "table_name": "conversation_assignment",
+    "tgname": "enforce_assignment_invariant_a",
+    "definition": "CREATE CONSTRAINT TRIGGER enforce_assignment_invariant_a AFTER INSERT OR DELETE OR UPDATE ON public.conversation_assignment DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION trg_check_assignment_side()",
+    "function_definition": "CREATE OR REPLACE FUNCTION public.trg_check_assignment_side()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO ''\nAS $function$ BEGIN IF TG_OP='DELETE' THEN PERFORM public.check_conv_assignment_invariant(OLD.conversation_id);RETURN NULL;END IF;IF TG_OP='INSERT' THEN PERFORM public.check_conv_assignment_invariant(NEW.conversation_id);RETURN NULL;END IF;PERFORM public.check_conv_assignment_invariant(NEW.conversation_id);IF OLD.conversation_id IS DISTINCT FROM NEW.conversation_id THEN PERFORM public.check_conv_assignment_invariant(OLD.conversation_id);END IF;RETURN NULL;END;$function$\n"
+  }
+]
