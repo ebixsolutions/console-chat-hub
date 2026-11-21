@@ -94,13 +94,10 @@ export function resolveIndustryRuntime(input: {
   industry_identifier?: string | null;
 }): IndustryRuntimeResolution {
   const explicit = INDUSTRY_AGENT_REGISTRY.resolve(input.industry_identifier);
-  const detected = input.texts.some((text) =>
-    HOME_APPLIANCE_CATEGORIES.some((category) => matches(text, category.aliases)),
-  )
-    ? HOME_APPLIANCE_PROFILE_V1
-    : null;
+  // D4-3: a product word is not a server-authorized industry/profile choice.
+  // Optional vocabulary activates only with an explicit trusted identifier.
   const hasExplicitIdentifier = Boolean(clean(input.industry_identifier));
-  const profile = hasExplicitIdentifier ? explicit : detected;
+  const profile = hasExplicitIdentifier ? explicit : null;
   if (!profile) return { industry_id: null, profile: null, hints: [] };
 
   const hints = new Map<string, CommerceTurnEntityHint>();

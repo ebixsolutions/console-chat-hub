@@ -1743,7 +1743,7 @@
     "supabase/functions/_shared/conversation-long-memory.ts": "63847708909f163b368fa606567d03dc56085044ffc0c383b5c9d662be0edf05",
     "supabase/functions/_shared/generation-terminal-guard.ts": "f2c5d97f4174f35d6d09c046b88c7fc5a3eabb9451667fd5e62e274ae08d07ac",
     "supabase/functions/_shared/handoff-intent.ts": "d85ea12bc9407736d7266bc3c4befae49c0b47cd16a2738ef657d04f45a96db7",
-    "supabase/functions/_shared/industry-runtime-adapter.ts": "030fab57d8c03f3e07f6865f60949781b7ca73421c72111b250f3bd712e7c829",
+    "supabase/functions/_shared/industry-runtime-adapter.ts": "0ef4eaa8fc692dedd1261e6c6f62cf81d7f86338ad919cbaaf9b024b726342ec",
     "supabase/functions/_shared/llm-router-grounding.test.ts": "59cc38f33e998355ea7e2123011a8d3c1878e5184c53ee6690a3cd21be373f4e",
     "supabase/functions/_shared/llm-router.ts": "98fd65bc5d3fef3596326d37ec21c5b7db073c7c8d4aef3be764231cb8cfe7e9",
     "supabase/functions/_shared/natural-customer-response.ts": "a34bcc7924b5238f512bdb16cbfc0711f11bdae4d68382a808e4f15f0a5c64da",
