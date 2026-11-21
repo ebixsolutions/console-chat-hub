@@ -1731,7 +1731,7 @@
     "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
-    "supabase/functions/_shared/conversation-recall.ts": "0b53bdcc6cbbb6c378b4ed505caba2a8a9e7f72dceba7a4061106b77cd30619b",
+    "supabase/functions/_shared/conversation-recall.ts": "31fb9f0359c50cd6a79a5a8e2f6131c5afcb56e2a0177054e398f3c52322decb",
     "supabase/functions/_shared/conversation-recall.test.ts": "a6eca0d52000be35d36e34f6e7571f935cf261ad676aa389bcc27935a8c6fa21",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "9038f9546989c371986129601705e42673c29537016ce8c1212e9bb351c643c4",
     "supabase/functions/generate-reply/index.ts": "ff34713a5004dd57cc6f3df62e280f730d62706759f7c95a93be9b6aaa1ceb45",

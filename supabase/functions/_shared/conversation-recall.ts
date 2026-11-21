@@ -1479,6 +1479,55 @@ function attestedCustomerQuantity(
   }
   // Multiple valid, distinct customer totals need a newer entity/source
   // disambiguation; a broad history search must never silently pick one.
+  // D4-3: current canonical quantity can be attested by its ORIGINAL
+  // same-tenant Visitor row when Memory has no duplicate quantity fact.
+  // A provider-proposed amount or current merchant KB must never suffice.
+  const commerce=input.commerce;
+  if(!candidates.length&&commerce&&input.memory&&
+    input.trusted_visitor_source_status==="verified"&&
+    input.memory.commerce_state_revision===commerce.revision&&
+    commerce.company_id===input.company_id&&commerce.conversation_id===input.conversation_id&&
+    !input.memory.current_customer_facts.some(f=>f.authority==="customer"&&keyNorm(f.key)==="quantity")){
+    const active=commerce.state.entities.filter(isCurrentEntity);
+    const named=active.filter(e=>[e.model,e.attributes.product_name].some(v=>
+      typeof v==="string"&&v.length>1&&phrase(input.question,v)));
+    const selected=named.length===1?named:active.length===1?active:[];
+    if(selected.length===1){
+      const e=selected[0],id=e.provenance.source_message_id;
+      const original=rows.filter(row=>row.id===id);
+      const labels=[e.model,e.attributes.product_name].filter(
+        (v):v is string=>typeof v==="string"&&v.length>1);
+      if(e.provenance.source_type==="customer"&&id&&id!==input.source_message_id&&
+        original.length===1&&labels.some(n=>phrase(original[0].content,n))&&
+        labels.some(n=>phrase(input.question,n))&&Number.isInteger(e.quantity)&&
+        e.quantity>=0&&e.quantity<=1000){
+        const unit=typeof e.attributes.unit==="string"?e.attributes.unit.trim():"";
+        const source=original[0].content.normalize("NFKC");
+        const words:Record<string,number>={one:1,two:2,three:3,four:4,five:5,
+          six:6,seven:7,eight:8,nine:9,ten:10};
+        const number="([0-9]{1,4}|[零〇一二兩两三四五六七八九十]|one|two|three|four|five|six|seven|eight|nine|ten)";
+        const validUnit=unit.length>0&&unit.length<=32&&/^[\p{L}\p{N}]+$/u.test(unit);
+        const found=validUnit?[...source.matchAll(new RegExp(number+"\\s*"+
+          unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function canonicalCandidates("),"giu"))]
+          .map(m=>readNumber(m[1])??words[m[1].toLowerCase()]??null)
+          .filter((n):n is number=>n!==null):[];
+        const sourceIndex=rows.findIndex(row=>row.id===id);
+        const superseded=sourceIndex<0||rows.slice(0,sourceIndex).some(row=>
+          labels.some(n=>phrase(row.content,n))&&
+          /更正|改為|改为|取消|暫緩|暂缓|change|correct|cancel|defer/iu.test(row.content));
+        if(found.length===1&&found[0]===e.quantity&&!superseded){
+          candidates.push({fact_type:"quantity",value:e.quantity,
+            state_path:"entities."+commerce.state.entities.indexOf(e)+".quantity",
+            authority:"CURRENT_CUSTOMER_MEMORY",entity_id:e.entity_id,region:null,
+            evidence_source_message_id:id,temporal_scope:"current",
+            source_kind:"attested_customer_utterance",rank:-2});
+        }
+      }
+    }
+  }
   return candidates.length === 1 ? candidates[0] : null;
 }
 
