@@ -124,6 +124,34 @@ test('new generic request after unrelated browser counts is source-bound without
   }
  }
 });
+
+test('T06 original no-semantic-frame four-turn source survives browser corrections',()=>{
+ const turns=[
+  '早晨，我間書房大約95呎，想揀部窗口冷氣。見到樂聲 CW-SUL70BA，呢款係幾多匹，同埋有咩主要功能？',
+  '更正，實際只係8個分頁，預算想慳啲。請比較 RAM、CPU、SSD 升級優先次序，邊啲可以暫緩？暫時唔使查店舖售價或庫存。',
+  '再更正，依家只會開6個分頁，其他文書、視像會議同慳錢要求不變。',
+  '我要為兩間睡房同一個客廳選購冷氣，即合共三部；這是測試資料。'
+ ];
+ let state=createEmptyConversationCommerceState();
+ for(let index=0;index<turns.length;index++){
+  state=reduceTurn(state,{text:turns[index],company_id:'fixture-company',conversation_id:'fixture-ticket',
+   source_message_id:'noframe-'+index,language:'zh-TW',
+   history:turns.slice(0,index).map(content=>({role:'visitor',content}))},
+   buildCommerceEntityHints(turns.slice(0,index+1).reverse()));
+  const original=state.entities.find(e=>e.model==='CW-SUL70BA');
+  assert(original,'customer source-owned first model persists without a semantic frame, turn '+index);
+  assert.equal(original.provenance.source_message_id,'noframe-0');
+  assert.equal(original.quantity,0,'8/6 browser tabs must not become merchandise quantity');
+  assert.equal(original.attributes.quantity_basis,'system_default');
+  assert.equal(state.current_industry,null,'legacy profile cannot reactivate');
+  if(index===3){
+    const fresh=state.entities.filter(e=>e.entity_id!==original.entity_id&&e.provenance.source_message_id==='noframe-3');
+    assert(fresh.length>0,'fresh three unit goal must be recorded');
+    assert(fresh.some(e=>e.quantity===3),'explicit original customer total three, never six browser tabs');
+    assert(fresh.every(e=>e.model!=='CW-SUL70BA'),'fresh subject cannot borrow historical SKU');
+  }
+ }
+});
 test('no selected profile returns only neutral scope clarification',()=>{
  const state=createEmptyConversationCommerceState();
  const candidate=resolveIndustryContextualCandidate({text:'房各一部',history:[],state,language:'zh-TW'});

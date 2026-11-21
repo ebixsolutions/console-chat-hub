@@ -814,7 +814,8 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
   const active = state?.entities.filter(e => !["deferred", "cancelled"].includes(e.status)) ?? [];
   const goal = state ? activeCustomerGoal(state) : null;
   const categoryKey = (value: string | null | undefined) => clean(value);
-  const category = categoryKey(goal?.goal.category ?? state?.current_topic);
+  const onlyActive=active.length===1?active[0]:null;
+  const category = categoryKey(goal?.goal.category ?? onlyActive?.category ?? state?.current_topic);
   const labels: Record<string, [string, string, string]> = {
     current_topic: ["查詢項目", "查询项目", "Item"],
     delivery_address: ["送貨地址", "送货地址", "Delivery address"],
@@ -832,8 +833,8 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
   };
   const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
   const selected = active.find(e => e.entity_id === goal?.entity_id) ??
-    (active.filter(e => categoryKey(e.category) === category).length === 1 ? active.find(e => categoryKey(e.category) === category) : undefined);
-  const topicName = clean(selected?.attributes.product_name) || clean(selected?.model) || clean(selected?.attributes.sku);
+    (active.filter(e => categoryKey(e.category) === category).length === 1 ? active.find(e => categoryKey(e.category) === category) : undefined) ?? onlyActive ?? undefined;
+  const topicName = clean(selected?.model) || clean(selected?.attributes.product_name) || clean(selected?.attributes.sku);
   const seen = new Set<string>();
   return plan.known_facts.flatMap(fact => {
     if (["current_intent", "customer_goal", "quotation_status", "order_status"].includes(fact.name)) return [];

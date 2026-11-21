@@ -2693,6 +2693,22 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
     return state;
   }
   let state = reduceTurnOperations(previous,input,hints);
+  // Persist the customer-authored exact model as an unknown-quantity subject.
+  // A no-frame product inquiry is not evidence for count=1 or any industry.
+  if (!input.semantic_frame && state.entities.length===0 &&
+      /(?:想揀|想选|想買|想买|我想要|我要買|我要买|想選購|想选购|want to buy|want to choose)/iu.test(input.text) &&
+      !/(?:如果|假如|假設|假设|what if|hypothetically)/iu.test(input.text)){
+    const models=exactProductIdentifiers(input.text);
+    if(models.length===1){
+      const model=models[0],source={source_type:"customer" as const,source_message_id:input.source_message_id,recorded_at:input.occurred_at??null};
+      state=reduceCommerceState(state,[{type:"ENSURE_ENTITY",entity:{
+        entity_id:"generic:"+model.toLowerCase(),category:"generic_product",
+        brand:null,model,quantity:0,status:"tentative",
+        attributes:{product_name:model,customer_subject_aliases:[model],unit:null,quantity_basis:"system_default"},
+        constraints:{},provenance:source,
+      }}]);
+    }
+  }
   // An explicit customer-owned declaration can accompany ASK_FACT/general
   // guidance. Commit only literal-source-backed changed leaves via the original
   // deterministic reducer and source-message CAS, never a merchant claim or

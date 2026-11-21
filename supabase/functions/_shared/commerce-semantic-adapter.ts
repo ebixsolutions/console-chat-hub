@@ -28,9 +28,7 @@ function slugify(raw: string): string {
 }
 
 function categoryFor(entity: CommerceSemanticEntity): string {
-  if (entity.category_hint) {
-    return clean(entity.category_hint, 80) || "generic_product";
-  }
+  // Untrusted model category hints never enable Phase1 industry behaviour.
   switch (entity.kind) {
     case "digital_good":
       return "digital_good";

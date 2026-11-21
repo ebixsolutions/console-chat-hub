@@ -1,4 +1,5 @@
 import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
+import { resolveSourceOwnedSubject,sourceOwnedSubjectLabels } from "./commerce-subject-resolution.ts";
 /** C3: deterministic, read-only fact ownership routing. No KB, model or state writes. */
 import type {
   CommerceEntity,
@@ -760,6 +761,7 @@ function entityAliases(e: CommerceEntity): string[] {
     // Explicit entity names come from source-bound canonical fields.
     e.brand,
     e.model,
+    ...sourceOwnedSubjectLabels(e),
     ...["name", "product_name", "display_name", "original_name", "sku"].map(
       (k) => e.attributes?.[k],
     ),
@@ -825,7 +827,10 @@ function summarySelection(input: ConversationRecallInput, entities: CommerceEnti
   // This is identifier syntax, independent of category, tenant and fixture values.
   const identifiers = input.question.match(/\b(?=[a-z0-9-]*[a-z])(?=[a-z0-9-]*\d)[a-z][a-z0-9]*(?:-[a-z0-9]+)+\b/gi) ?? [];
   if (identifiers.length) return { provenance: "explicit_identity", entities: [] };
-  const explicit = entities.filter(e => any(input.question, entityAliases(e)));
+  const resolved=input.commerce ? resolveSourceOwnedSubject(input.commerce.state,input.question,{include_inactive:true}) : {kind:"none"} as const;
+  const explicit=resolved.kind==="one" ? entities.filter(e=>e.entity_id===resolved.entity.entity_id)
+    : resolved.kind==="ambiguous" ? entities.filter(e=>resolved.entity_ids.includes(e.entity_id))
+    : entities.filter(e=>any(input.question,entityAliases(e)));
   if (explicit.length) {
     // A canonical aggregate owns its category; subordinate room projections are not competing purchase goals.
     const categories = new Set(explicit.filter(e => e.entity_id.endsWith(":unscoped")).map(e => e.category));
@@ -2935,7 +2940,7 @@ function renderCustomerRecap(value: unknown, language: string): string {
   const pendingBooking = active.some(e => object(e.attributes.capabilities)?.requires_booking === true && !confirmed.includes(e.entity_id));
   const qualifications: string[] = [];
   if (pendingBooking) qualifications.push(["預約要求仍需職員確認，未成為已確認預約。", "预约要求仍需职员确认，尚未成为已确认预约。", "The booking still needs staff confirmation and is not confirmed yet."][l]);
-  if (active.some(e => e.category === "air_conditioner" || object(e.attributes.capabilities)?.requires_site_check === true) ||
+  if (active.some(e => object(e.attributes.capabilities)?.requires_site_check === true) ||
     global && Array.isArray(v.operational_pending_checks) && v.operational_pending_checks.length > 0) qualifications.push(["適用性仍要按現行資料及現場條件核對。", "适用性仍需按现行资料及现场条件核对。", "Suitability still needs current evidence and the relevant site checks."][l]);
   // Only the global projection owns portfolio transaction status. Operational
   // qualifications never suppress it, and scoped projections never inherit it.
