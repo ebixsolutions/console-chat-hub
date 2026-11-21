@@ -2569,6 +2569,28 @@ function reduceTurnOperations(
   if (clauses.length === 1 && /[?？]/.test(clauses[0]) &&
     /(?:暫緩|暂缓|defer|pause|cancel|取消|唔要|不要)/i.test(clauses[0]) &&
     resolveEntityLifecyclePlan(clauses[0], previous).kind === "none") return previous;
+  // Preserve one independently sourced, model-interpreted new item with a
+  // literal dimension assignment. Splitting by punctuation before reading its
+  // semantic frame loses the source subject and makes the constraint orphaned.
+  // All numeric values, unit and dimension must independently match Visitor text.
+  const proposed=input.semantic_frame;
+  if(proposed?.operation==="ADD_ITEM" && proposed.confidence>=0.90 &&
+     !proposed.ambiguity.is_ambiguous && !proposed.additive &&
+     !proposed.customer_correction && proposed.entities.length===1 &&
+     !looksInterrogative(input.text) && !isBareCommerceSubjectMention(input.text,proposed) &&
+     !isHistoricalOrConditionalCustomerCalculationRequest(input.text)){
+    const item=proposed.entities[0],proof=parseCommerceDimensionMeasurement(input.text);
+    const entries=Object.entries(item.constraints);
+    const axis=inferCommerceDimensionAttribute(input.text,proposed);
+    if(item.confidence>=0.90 && typeof item.name==="string" &&
+       matchesReferenceLabel(input.text,item.name) &&
+       proof && proof.value_mm>0 && axis &&
+       entries.length===1 && entries[0][0]===`max_${axis}_mm` &&
+       typeof entries[0][1]==="number" && entries[0][1]===proof.value_mm &&
+       !previous.entities.some(e=>e.entity_id===item.entity_ref &&
+         ["cancelled","deferred","superseded"].includes(e.status)))
+      return reduceSingleTurn(previous,input,rawHints);
+  }
   const semanticCustomerConditions = Boolean(input.semantic_frame?.entities.some((entity) =>
     Object.keys(entity.constraints).length > 0
   ));
