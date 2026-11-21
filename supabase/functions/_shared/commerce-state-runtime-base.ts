@@ -2547,7 +2547,10 @@ function sourceBoundPartialUnitRetention(
     !frame.customer_correction||!["SET_QUANTITY","UPDATE_ITEM"].includes(frame.operation)||
     frame.entities.length!==1)return null;
   const active=previous.entities.filter(e=>!["cancelled","deferred","superseded"].includes(e.status));
-  if(active.length!==1||previous.current_topic!==active[0].category)return null;
+  // A generic customer correction can have a null current_topic. Identity
+  // is established by the one active entity, its canonical subject and unit,
+  // the original utterance, and a high-confidence correction frame.
+  if(active.length!==1)return null;
   const entity=active[0],proposed=frame.entities[0];
   if(proposed.confidence<0.72||proposed.quantity===null||!Number.isInteger(proposed.quantity)||
     proposed.quantity<0||proposed.quantity>=entity.quantity)return null;
@@ -2567,8 +2570,13 @@ function sourceBoundPartialUnitRetention(
   if(!inactive.test(text))return null;
   const names=[entity.model,entity.attributes.product_name].filter(
     (v):v is string=>typeof v==="string"&&v.length>1);
-  if(!names.some(n=>matchesReferenceLabel(text,n))&&
-     !(proposed.entity_ref===entity.entity_id&&(!proposed.category_hint||proposed.category_hint===entity.category)))return null;
+  const namedByCustomer=names.some(name=>matchesReferenceLabel(text,name));
+  const namedByCanonicalFrame=names.some(name=>
+    clean(proposed.name).toLowerCase()===clean(name).toLowerCase());
+  const identityMatches=proposed.entity_ref===entity.entity_id ||
+    namedByCanonicalFrame;
+  if(proposed.category_hint && proposed.category_hint!==entity.category)return null;
+  if(!namedByCustomer&&!identityMatches)return null;
   if(typeof proposed.unit==="string"&&proposed.unit&&
      proposed.unit.toLowerCase()!==unit.toLowerCase())return null;
   const found=[...text.matchAll(new RegExp(number+"\\s*"+escaped,"giu"))]
@@ -2578,11 +2586,24 @@ function sourceBoundPartialUnitRetention(
   if(found.length!==1||found[0]!==quantity)return null;
   const provenance={source_type:"customer" as const,source_message_id:input.source_message_id,
     recorded_at:input.occurred_at??null};
+  const inactiveStatus=/取消|cancel/iu.test(text)?"cancelled":"deferred";
+  // The third of the originally three units is a *customer-described split
+  // member* of the same item, never a new SKU, merchant offer or order.
+  // It has a deterministic source-bound ID, is inactive, and cannot be
+  // counted as an active line; repeated message delivery remains idempotent.
+  const inactiveUnitId=entity.entity_id+":unit-status:"+input.source_message_id;
+  const inactive={...entity,entity_id:inactiveUnitId,quantity:1,
+    status:inactiveStatus,
+    attributes:{...entity.attributes,quantity_basis:"customer_explicit",
+      customer_part_of_entity_id:entity.entity_id,
+      customer_unit_partition:"third_unit_inactive"},
+    constraints:{...entity.constraints,source_bound_partial_unit:true},
+    provenance};
   return [
     {type:"SET_ENTITY_QUANTITY",entity_id:entity.entity_id,quantity,provenance},
+    {type:"ENSURE_ENTITY",entity:inactive},
     {type:"SET_ENTITY_CONSTRAINT",entity_id:entity.entity_id,key:"customer_inactive_unit_count",value:1,provenance},
-    {type:"SET_ENTITY_CONSTRAINT",entity_id:entity.entity_id,key:"customer_inactive_unit_status",
-      value:/取消|cancel/iu.test(text)?"cancelled":"deferred",provenance},
+    {type:"SET_ENTITY_CONSTRAINT",entity_id:entity.entity_id,key:"customer_inactive_unit_status",value:inactiveStatus,provenance},
   ];
 }
 
