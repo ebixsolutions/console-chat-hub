@@ -76,8 +76,41 @@ export function resolveIndustryCustomerJourney(input: {
     selected.length === 1 && selected[0].provenance.source_type === "customer" &&
     HOME_APPLIANCE_CATEGORIES.some(category => category.key === "air_conditioner" &&
       category.aliases.some(alias => matchesReferenceLabel(input.text, alias)));
-  if ((!profile || profile.id !== HOME_APPLIANCE_PROFILE_V1.id) && !returning) return null;
-  return homeApplianceCustomerJourneySignal(input);
+  // An explicit customer-authored purchase/selection GOAL may initialize a
+  // prospective research entity without selecting an optional industry profile.
+  // A bare product mention, factual question or inferred model output cannot.
+  const semanticAdmitted = Boolean(current && current.confidence >= 0.72 &&
+    current.ambiguity.is_ambiguous === false &&
+    (current.operation === "ADD_ITEM" ||
+      current.operation === "ASK_FACT" && current.intent === "customer_guidance"));
+  const sourceGoal = /(?:我要.{0,32}(?:選購|选购|購買|购买|買|买|挑選|挑选)|我想.{0,32}(?:換|换|買|买|選購|选购|揀|选)|想.{0,32}(?:換|换|買|买|選購|选购|揀|选)|(?:i\s+(?:want|need|plan)\s+to\s+)?(?:buy|replace|shop\s+for)\b)/iu.test(input.text);
+  const explicitCategories = HOME_APPLIANCE_CATEGORIES.filter(category =>
+    category.aliases.some(alias => matchesReferenceLabel(input.text,alias)));
+  const newCustomerGoal = !clean(input.state.current_industry) &&
+    !input.state.entities.some(entity => entity.status !== "cancelled" &&
+      entity.status !== "deferred") &&
+    semanticAdmitted && sourceGoal && explicitCategories.length === 1 &&
+    !/(?:有冇貨|有没有货|幾錢|几钱|現價|现价|庫存|库存|in\s+stock|price\b|cost\b|how\s+much|取消|cancel|defer)/iu.test(input.text);
+  if ((!profile || profile.id !== HOME_APPLIANCE_PROFILE_V1.id) &&
+      !returning && !newCustomerGoal) return null;
+  const originalJourney = homeApplianceCustomerJourneySignal(input);
+  if (originalJourney || !newCustomerGoal) return originalJourney;
+  // A named first goal without room measurements must still remain
+  // prospective; never make a suitability, order, booking or payment claim.
+  return {
+    category: explicitCategories[0].key,
+    objective: "select_product",
+    journey_stage: "discovery",
+    collected: [],
+    missing: ["usage_and_space"],
+    response_intent: "request_highest_value_missing_information",
+    reply: input.language === "en"
+      ? "I can help compare options. What is the intended use and space or other key requirements? Suitability still needs current verified information."
+      : input.language === "zh-CN"
+      ? "可以先按用途和实际空间比较。请提供各处的面积或关键要求，具体适用性仍需核实。"
+      : "可以先按用途同實際空間比較。請提供各處面積或關鍵要求，具體適用性仍要核實。",
+    category_source: "explicit",
+  };
 }
 
 export interface IndustryRuntimeResolution {
