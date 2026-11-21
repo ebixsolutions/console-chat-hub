@@ -39,20 +39,7 @@ assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_ta
 // not a permissive alternative error from a different guard.
 assert.throws(()=>verifyProductionSource({root,profile:{...profile,task1_cross_topic_deployment_authorized:true},sourceOnly:true}),/task1_cross_topic_deployment_not_authorized/);
 assert.throws(()=>verifyProductionSource({root,profile:{...profile,authorized_task1_cross_topic_sha256:{}},sourceOnly:true}),/task1_cross_topic_scope_drift/);
-function reject(name,fn,re){
-  // A new signed D4 source overlay rejects a mutation in the same exact file
-  // before older frozen hash checks. Accept only that exact mutated path, never
-  // a different file, and preserve the pre-existing negative error contracts.
-  const target=Object.keys(profile.authorized_task3c_d4_no_industry_sha256??{}).find(file=>name.endsWith(file));
-  let error=null;
-  try{fn();}catch(caught){error=caught;}
-  assert(error,name+": forbidden mutation unexpectedly succeeded");
-  const message=String(error?.message??error);
-  const legacy=new RegExp(re.source+"|task3c_reason_log_source_drift:|task3c_1139_grounding_recovery_source_drift:|task2_evidence_source_hash_drift:|task1c_source_hash_drift:|task1_current_quote_hash_drift:|task1_cross_topic_hash_drift:|task1_director_hash_drift:|live_execution_source_drift:|uat_source_drift:|uat_compatibility_source_drift:|director_functional_source_drift:");
-  const exactD4=target&&message==="task3c_d4_no_industry_source_drift:"+target;
-  assert(legacy.test(message)||exactD4,name+": wrong fail-closed source / target: "+message);
-  tests.push({name,result:"PASS",rejected:true});
-}
+function reject(name,fn,re){assert.throws(fn,new RegExp(re.source+"|task3c_reason_log_source_drift:|task3c_1139_grounding_recovery_source_drift:|task2_evidence_source_hash_drift:|task1c_source_hash_drift:|task1_current_quote_hash_drift:|task1_cross_topic_hash_drift:|task1_director_hash_drift:|live_execution_source_drift:|uat_source_drift:|uat_compatibility_source_drift:|director_functional_source_drift:"));tests.push({name,result:'PASS',rejected:true});}
 reject('Task 1 source repair cannot authorize production deployment',()=>verifyProductionSource({root,profile:{...profile,task1_director_repair_deployment_authorized:true},sourceOnly:true}),/task1_deployment_not_authorized/);
 reject('Task 1 exact source bytes cannot be widened',()=>verifyProductionSource({root,profile:{...profile,authorized_task1_director_repair_sha256:{}},sourceOnly:true}),/task1_director_scope_drift/);
 reject('live execution source repair cannot authorize deployment',()=>verifyProductionSource({root,profile:{...profile,live_execution_deployment_authorized:true},sourceOnly:true}),/live_execution_deployment_not_authorized/);

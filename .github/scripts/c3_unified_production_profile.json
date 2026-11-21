@@ -1738,8 +1738,7 @@
   "supabase/functions/_shared/conversation-recall.ts": "d42db1534081d7aa54ba127e60b3679cf93b7dbc9cc2686f621474c20440fe33",
   "supabase/functions/_shared/conversation-service-planner.ts": "6764253062e6954b36e789b58badf48ce45e288abb8fcb7a515d03d4f5fc2298",
   "tests/task1-director/quantity-source-scope.test.mjs": "46a7bacc67bb4c914cc75cb286c6151bbafaa44eb5b970259fa29bbdd42451dc",
-  "supabase/functions/_shared/conversation-recall.test.ts": "d5150c45b09f51b47bb2eb527711c8d223db6e1cddff5e97fbcc6c752bf498bc",
-  ".github/scripts/c3_unified_production_source_gate.test.mjs": "8532c0c32508b39aea59b15d2b8817dfd6291e3e8964752deb482a3200b92e5d"
+  "supabase/functions/_shared/conversation-recall.test.ts": "d5150c45b09f51b47bb2eb527711c8d223db6e1cddff5e97fbcc6c752bf498bc"
 },
   "authorized_task3c_t06_turn2_source_sha256": {
   "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",
