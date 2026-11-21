@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import {prepareConversationRecall} from '../../supabase/functions/_shared/conversation-recall.ts';
 import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
 import {buildCanonicalConversationMemory} from '../../supabase/functions/_shared/conversation-long-memory.ts';
+import {resolveIndustryRuntime as d4ResolveIndustryRuntime} from '../../supabase/functions/_shared/industry-runtime-adapter.ts';
 const scope={company_id:'tenant-a',conversation_id:'ticket-a',source_message_id:'current-turn'};
 function fixture({question='What budget did I mention?',key='budget',value=5000,source='My budget is 5000.',entity_id=null,subjects=[],entities=[],newer=[],emptyRequested=false}={}) {
  const state=createEmptyConversationCommerceState();state.entities=entities;
@@ -391,4 +392,111 @@ test('Task3C R2 original test533 nondeterminism 100x per historical/current sour
    rmSync(temp,{recursive:true,force:true});
   }
  }
+});
+
+
+/** D4-2 PRE-FIX observational baseline, not D4 acceptance.
+ * Original Task3C, 6 industries x 4 question classes. Scripted semantic
+ * frames only; 0 real AI, 0 KB, 0 Hosted, 0 production changes.
+ * Keep failures in the denominator and preserve original assertions. */
+test('D4-2 six-industry twenty-four-cell baseline before generic repair',()=>{
+ const domains=[
+  ['appliance','air_conditioner','CW-SUL70BA air conditioner','Living room air conditioner','部','units',
+    '我要三部冷氣。','我之前提過要幾多部冷氣？','更正，只保留兩部冷氣，第三部暫緩。'],
+  ['beauty','beauty_service','Glow facial package','Calm facial package','堂','sessions',
+    '我想要三堂美容療程。','我之前提過要幾多堂美容療程？','更正，只保留兩堂療程，第三堂暫緩。'],
+  ['education','education_service','English course','Math course','課','lessons',
+    '我想報三課英語課。','我之前提過要幾多課英語課？','更正，只保留兩課，第三課延後再談。'],
+  ['restaurant','restaurant_service','Dinner set','Lunch set','份','sets',
+    '我想要三份套餐。','我之前提過要幾多份套餐？','更正，只保留兩份套餐，第三份取消。'],
+  ['retail','retail_item','Office desk','Meeting desk','張','items',
+    '我要三張書枱。','我之前提過要幾多張書枱？','更正，只保留兩張書枱，第三張暫時取消。'],
+  ['saas','subscription','Team license','Staff license','licenses','licenses',
+    'We need three licenses for this team.','How many licenses did I mention earlier?',
+    'Correction: keep two licenses; postpone the third.']
+ ];
+ const classes=['C1_RECALL','C2_CORRECT_CANCEL','C3_QUANTITY_WRITE','C4_MULTI_SUBJECT'];
+ const rows=[];
+ function applyScripted(name,category,unit,count,text) {
+  const state=createEmptyConversationCommerceState();state.current_topic=category;
+  const e={...entity(name,3,'d4-a'),model:name,category,
+    attributes:{product_name:name,unit},
+    provenance:{source_type:'customer',source_message_id:'d4-original'}};
+  state.entities=[e];
+  const frame={version:'commerce-semantic-1.0.0',language:'en',operation:'SET_QUANTITY',
+   intent:'other',topic:category,confidence:.98,
+   ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+   entities:[{entity_ref:'d4-a',name,kind:'service',category_hint:category,
+    sku:null,model:name,quantity:count,unit,attributes:{},constraints:{},
+    capabilities:{},confidence:.96}],
+   referents:[],customer_facts:[],requested_facts:[],customer_correction:true,
+   additive:false,explicit_negations:[],transaction_state:'none',payment_state:'none',
+   booking_state:'none',fulfillment_state:'none'};
+  const next=reduceTurn(state,{text,semantic_frame:frame,source_message_id:'d4-new',
+   company_id:'d4-synthetic-company',conversation_id:'d4-synthetic-ticket',language:'en'},
+   [{entity_id:'d4-a',category,model:name,aliases:[name],
+     attributes:{product_name:name,unit}}]);
+  return {qty:next.entities.find(v=>v.entity_id==='d4-a')?.quantity??null,
+   source_id:next.entities[0]?.provenance?.source_message_id??null,
+   deferred:next.entities.filter(v=>v.status==='cancelled'||v.status==='deferred').length};
+ }
+ for(const [industry,category,name,other,sourceUnit,englishUnit,original,question,correction] of domains){
+  for(const kind of classes){
+   const write='Change '+name+' to 3 '+englishUnit+'.';
+   const dual='I requested 3 '+englishUnit+' for '+name+' and 5 '+englishUnit+' for '+other+'.';
+   const ask='Remind me of the quantity I requested for '+name+'.';
+   const text=kind===classes[0]?question:kind===classes[1]?correction:
+     kind===classes[2]?write:ask;
+   const source=kind===classes[3]?dual:original;
+   const profile=d4ResolveIndustryRuntime({texts:[text,source],industry_identifier:null});
+   let status='FAIL',reason='UNTESTED',observed={};
+   try{
+    if(kind===classes[0]){
+     const r=prepareConversationRecall(fixture({source,question:text,key:'quantity',value:3,
+       emptyRequested:true}),industry==='saas'?'en':'zh-TW').decision;
+     const attested=!!r.provenance?.evidence?.find(e=>e.evidence_source_message_id==='original-source');
+     status=r.handled&&r.value===3&&attested?'PASS':'FAIL';
+     reason=status==='PASS'?'SOURCE_PROVEN':String(r.reason??'VALUE_OR_SOURCE_UNVERIFIED');
+     observed={handled:r.handled,fact:r.fact_type??null,attested};
+    }else if(kind===classes[1]){
+     const a=applyScripted(name,category,englishUnit,2,text);
+     status=a.qty===2?(a.deferred>=1?'PASS':'CLARIFY'):'FAIL';
+     reason=a.qty!==2?'CORRECTION_NOT_APPLIED':a.deferred<1?
+       'DEFERRED_MEMBER_NOT_TRACKED':'CORRECTION_AND_DEFERRED_PROVEN';
+     observed={retained_count:a.qty,deferred_member_count:a.deferred};
+    }else if(kind===classes[2]){
+     const a=applyScripted(name,category,englishUnit,3,text);
+     status=a.qty===3&&a.source_id==='d4-new'?'PASS':'FAIL';
+     reason=status==='PASS'?'SOURCE_BOUND_WRITE':'WRITE_OR_PROVENANCE_UNVERIFIED';
+     observed={quantity:a.qty,source_attested:a.source_id==='d4-new'};
+    }else{
+     const entities=[{...entity(name,3,'d4-a'),model:name,
+      attributes:{product_name:name,unit:englishUnit}},
+      {...entity(other,5,'d4-b'),model:other,
+      attributes:{product_name:other,unit:englishUnit}}];
+     const r=prepareConversationRecall(fixture({source,question:text,key:'quantity',
+      value:'3 '+englishUnit,entity_id:'d4-a',entities,subjects:['d4-a']}),'en').decision;
+     const attested=!!r.provenance?.evidence?.find(e=>e.evidence_source_message_id==='original-source');
+     status=r.handled&&String(r.value).includes('3')&&!String(r.value).includes('5')&&attested?'PASS':'FAIL';
+     reason=status==='PASS'?'SUBJECT_TYPED_UNIT_PROVEN':
+       String(r.reason??'TYPED_UNIT_OR_SUBJECT_UNVERIFIED');
+     observed={handled:r.handled,attested,value_type:typeof r.value,other_quantity:5};
+    }
+   }catch(e){status='FAIL';reason='BASELINE_RUNTIME_EXCEPTION';observed={error:String(e).slice(0,130)};}
+   const row={case_id:'D4-'+industry+'-'+kind,industry,question_class:kind,
+    explicit_profile:null,effective_profile:profile.industry_id??null,
+    status,reason_code:reason,observed,
+    evidence_tier:'SOURCE_ISOLATED_SCRIPTED_NOT_REAL_MODEL_NOT_HOSTED'};
+   rows.push(row);console.log('D4_BASELINE|'+JSON.stringify(row));
+  }
+ }
+ assert.equal(rows.length,24,'D4-2 must have 24 observed cases');
+ assert.equal(new Set(rows.map(v=>v.case_id)).size,24,'D4-2 duplicate ids');
+ assert.equal(rows.filter(v=>!['PASS','FAIL','CLARIFY'].includes(v.status)).length,0,'D4 status missing');
+ console.log('D4_BASELINE_SUMMARY|'+JSON.stringify({
+  source_logic:'08863aa54be5d6880790e1a9f66f4d5423c5bc00',
+  cases:24,pass:rows.filter(v=>v.status==='PASS').length,
+  fail:rows.filter(v=>v.status==='FAIL').length,
+  clarify:rows.filter(v=>v.status==='CLARIFY').length,
+  scripted:true,real_model_calls:0,real_kb_calls:0,hosted:'NOT_RUN',acceptance:'NOT_CLAIMED'}));
 });
