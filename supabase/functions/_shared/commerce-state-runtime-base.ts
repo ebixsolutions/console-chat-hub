@@ -1181,7 +1181,7 @@ function detectsBrandRequirementRecall(text: string): boolean {
 
 function buildEntityPortfolioAnswer(state: ConversationCommerceState, language: CommerceLanguage, quoteReadyOnly: boolean): string {
   const entities = state.entities.filter((entity) => entity.status !== "cancelled" && (!quoteReadyOnly || entity.status !== "deferred"));
-  const labels = entities.map((entity) => `${entityLabel(entity.entity_id, language)} x${entity.quantity}`);
+  const labels = entities.map((entity) => `${entityLabel(entity.entity_id, language)} ${customerRequestedQuantity(entity) === null ? (language === "en" ? "quantity not confirmed" : "數量待確認") : "x" + entity.quantity}`);
   if (language === "en") return labels.length ? `${quoteReadyOnly ? "The currently active items are" : "You are currently considering"}: ${labels.join(", ")}.` : `There are currently no ${quoteReadyOnly ? "active items" : "items under consideration"}.`;
   if (language === "zh-CN") return labels.length ? `${quoteReadyOnly ? "目前有效项目是" : "你目前正在考虑的是"}：${labels.join("、")}。` : `目前没有${quoteReadyOnly ? "有效" : "正在考虑"}的产品。`;
   return labels.length ? `${quoteReadyOnly ? "而家有效嘅項目係" : "你而家睇緊嘅係"}：${labels.join("、")}。` : `而家未有${quoteReadyOnly ? "有效" : "考慮中"}嘅產品。`;
@@ -1321,10 +1321,13 @@ export function extractCommerceCalculationTerms(
   const activeEntities = state.entities.filter(
     (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
   );
-  const stateMultiplier = activeEntities.length === 1
-    ? Math.max(1, activeEntities[0].quantity)
-    : activeEntities.reduce((sum, entity) => sum + Math.max(0, entity.quantity), 0) || 1;
+  const sourcedCounts=activeEntities.map(customerRequestedQuantity);
+  // Unknown customer quantities never become an implicit purchase multiplier.
+  const stateMultiplier=sourcedCounts.length > 0 &&
+      sourcedCounts.every(value => value !== null && value > 0)
+    ? sourcedCounts.reduce((sum,value) => sum + (value ?? 0),0) : null;
   const multiplier = currentTurnMultiplier ?? stateMultiplier;
+  if(multiplier===null)return {terms:[],currency:null};
 
   const currency = state.quotes.find((q) => q.currency)?.currency ?? "HKD";
   return {
@@ -3109,7 +3112,7 @@ export function buildTransactionSummary(
     });
     const horsepower = clean(entity.attributes.horsepower, 80);
     const details = [horsepower, ...constraints].filter(Boolean);
-    return `${entityLabel(entity.entity_id, language)} ${customerRequestedQuantity(entity) === null ? (language === "en" ? "quantity not yet confirmed" : language === "zh-CN" ? "数量待确认" : "機數待確認") : `x${entity.quantity}`} (${statusLabel(entity.status, language)}${details.length ? `；${details.join("、")}` : ""})`;
+    return `${entityLabel(entity.entity_id, language)} ${customerRequestedQuantity(entity) === null ? (language === "en" ? "quantity not yet confirmed" : language === "zh-CN" ? "数量待确认" : "數量待確認") : `x${entity.quantity}`} (${statusLabel(entity.status, language)}${details.length ? `；${details.join("、")}` : ""})`;
   };
   lines.push(`${t.items[language]}: ${active.length ? active.map(renderEntity).join("、") : t.none[language]}`);
   if (inactive.length) lines.push(`${t.removed[language]}: ${inactive.map((e) => `${entityLabel(e.entity_id, language)} (${statusLabel(e.status, language)})`).join("、")}`);
@@ -3138,7 +3141,7 @@ export function buildTransactionSummary(
 function buildQuantityAnswer(state: ConversationCommerceState, language: CommerceLanguage): string | null {
   const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
   if (!active.length) return null;
-  if (active.some(e=>customerRequestedQuantity(e) === null)) return language === "en" ? "The requested quantity is not yet confirmed." : language === "zh-CN" ? "所需数量尚未确认。" : "所需機數仲未確認。";
+  if (active.some(e=>customerRequestedQuantity(e) === null)) return language === "en" ? "The requested quantity is not yet confirmed." : language === "zh-CN" ? "所需数量尚未确认。" : "所需數量尚未確認。";
   const total = active.reduce((sum, e) => sum + e.quantity, 0);
   const breakdown = active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、");
   if (language === "en") return `You currently have ${total} unit(s) in total: ${breakdown}.`;
@@ -3151,12 +3154,13 @@ function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, va
     const index = Number(statePath.split(".")[1]);
     const entity = Number.isInteger(index) ? state.entities[index] : null;
     if (entity && entity.status !== "cancelled" && entity.status !== "deferred") {
-      if (customerRequestedQuantity(entity) === null) return language === "en" ? "The requested quantity is not yet confirmed." : language === "zh-CN" ? "所需数量尚未确认。" : "所需機數仲未確認。";
+      if (customerRequestedQuantity(entity) === null) return language === "en" ? "The requested quantity is not yet confirmed." : language === "zh-CN" ? "所需数量尚未确认。" : "所需數量尚未確認。";
       const quantity = typeof value === "number" ? value : entity.quantity;
       const label = entityLabel(entity.entity_id, language);
       if (language === "en") return `Your current ${label} quantity is ${quantity}.`;
-      if (language === "zh-CN") return `你目前的${label}数量是 ${quantity} 部。`;
-      return `你而家嘅${label}數量係 ${quantity} 部。`;
+      const unit=typeof entity.attributes.unit==="string" ? " "+entity.attributes.unit : "";
+      if (language === "zh-CN") return `你目前的${label}数量是 ${quantity}${unit}。`;
+      return `你而家嘅${label}數量係 ${quantity}${unit}。`;
     }
     const answer = buildQuantityAnswer(state, language);
     if (answer) return answer;
@@ -3181,15 +3185,13 @@ function buildResolvedEntityStatusChangeAnswer(input: CommerceRuntimeInput, stat
   // Only this turn's uniquely resolved entity may bypass clarification.
   if (changed.length !== 1) return null;
   const entity = changed[0];
-  const activeQuantity = state.entities.filter((candidate) =>
-    candidate.category === entity.category &&
-    !["cancelled", "deferred"].includes(candidate.status)
-  ).reduce((total, candidate) => total + candidate.quantity, 0);
+  // Generic products share a schema category, never a quantity aggregate.
+  // The lifecycle event verifies this specific entity, not unrelated items.
   const label = entityLabel(entity.entity_id, input.language);
   const status = statusLabel(entity.status, input.language);
-  if (input.language === "en") return `${label} is ${status}. The current active quantity is ${activeQuantity}.`;
-  if (input.language === "zh-CN") return `${label}${status}；目前有效数量为 ${activeQuantity} 部。`;
-  return `${label}${status}；而家有效數量係 ${activeQuantity} 部。`;
+  if (input.language === "en") return `${label} is ${status}. Other recorded items remain unchanged.`;
+  if (input.language === "zh-CN") return `${label}${status}；其他已记录项目保持不变。`;
+  return `${label}${status}；其他已記錄項目保持不變。`;
 }
 
 export function buildResolvedAddressCorrectionAnswer(
@@ -3335,7 +3337,7 @@ function buildCalculationAnswer(language: CommerceLanguage, calculation: { expre
 
 function buildProfessionalConfirmationAnswer(language: CommerceLanguage, state: ConversationCommerceState): string {
   const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
-  const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、") : "";
+  const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} ${customerRequestedQuantity(e)===null ? (language==="en"?"quantity unconfirmed":"數量待確認") : "x"+e.quantity}`).join("、") : "";
   if (language === "en") return `${known ? `I still have your details on record: ${known}. ` : ""}For safety and accuracy, our technician needs to inspect the site in person before we can confirm whether the installation is suitable.`;
   if (language === "zh-CN") return `${known ? `我们已保留您之前提供的资料：${known}。` : ""}为确保安全和准确，需要师傅上门检查窗口尺寸、承托及安装环境后再确认是否适合安装。`;
   return `${known ? `我哋已保留您之前提供嘅資料：${known}。` : ""}為確保安全同準確，需要師傅上門檢查窗口尺寸、承托同安裝環境後先可以確認是否適合安裝。`;
@@ -3349,7 +3351,7 @@ export function buildCurrentPriceValidityAnswer(language: CommerceLanguage): str
 
 export function buildPreorderUnpaidAnswer(language: CommerceLanguage, state: ConversationCommerceState): string {
   const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
-  const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、") : "";
+  const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} ${customerRequestedQuantity(e)===null ? (language==="en"?"quantity unconfirmed":"數量待確認") : "x"+e.quantity}`).join("、") : "";
   const nextStep = buildCapabilityAwarePreorderNextStep(state, language);
   if (language === "en") return `${known ? `Got it — you want to reserve ${known}. ` : "Got it — you want to proceed. "}Since payment has not been made yet, this is not a completed or confirmed order. ${nextStep}`;
   if (language === "zh-CN") return `${known ? `好的，我知道你想预订${known}。` : "好的，我知道你想继续预订。"}由于目前还未付款，所以现在还不算已完成或已确认订单。${nextStep}`;
