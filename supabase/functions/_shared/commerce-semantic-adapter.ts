@@ -355,6 +355,11 @@ export function semanticFrameToStateEvents(
             status: "tentative",
             attributes: {
               ...(hint?.attributes ?? {}),
+              // The accepted frame preserves the visitor's literal subject
+              // even before a product-specific hint or profile exists.
+              product_name: clean(entity.name,160),
+              unit: entity.unit,
+              commerce_kind: entity.kind,
               quantity_basis: entity.quantity === null ? "system_default" : "customer_explicit",
               semantic_attributes: entity.attributes,
               capabilities: entity.capabilities,

@@ -1899,6 +1899,18 @@ function hasSourceBoundQuantityMutation(
   const active = previous.entities.filter(entity =>
     !["cancelled", "deferred", "superseded"].includes(entity.status));
   const target = active.find(entity => entity.entity_id === event.entity_id);
+  // A shared category word is not a unique referent when several current
+  // items of that category exist. Require one source-named distinct identity.
+  const sameCategory=target ? active.filter(entity=>entity.category===target.category) : [];
+  if(target && sameCategory.length>1) {
+    const unique=[target.model,target.attributes.sku,target.attributes.product_name]
+      .filter((v):v is string=>typeof v==="string"&&v.trim().length>=2)
+      .filter(label=>matchesReferenceLabel(input.text,label) &&
+        sameCategory.every(other=>other.entity_id===target.entity_id ||
+          ![other.model,other.attributes.sku,other.attributes.product_name]
+            .some(v=>typeof v==="string" && v.toLowerCase()===label.toLowerCase())));
+    if(unique.length===0)return false;
+  }
   const identities = new Map<string, string[]>();
   for (const hint of hints) identities.set(hint.entity_id,
     [hint.model, hint.category, hint.attributes?.sku, hint.attributes?.product_name,
@@ -1912,7 +1924,8 @@ function hasSourceBoundQuantityMutation(
         typeof value === "string" && value.length >= 2));
   const namedTargets = (clause: string): string[] => {
     const categories = new Set(detectCategories(clause).map(category => category.key));
-    const rooms = detectReferencedRooms(clause);
+    // A place mentioned in a purchase goal is contextual information, not
+    // authority to redirect its item quantity to a separate room entity.
     const specific = [...identities.keys()].filter(id => {
       const stored = previous.entities.find(entity => entity.entity_id === id);
       const hint = hints.find(candidate => candidate.entity_id === id);
@@ -1922,10 +1935,8 @@ function hasSourceBoundQuantityMutation(
     });
     return [...identities].filter(([id, labels]) => {
       if (specific.length && !specific.includes(id)) return false;
-      // A room explicitly names its own scope; an inactive room must not be
-      // redirected to the remaining active aggregate of the same category.
-      if (!id.startsWith("generic:") && rooms.length &&
-        !rooms.some(room => id.endsWith(":" + room.key))) return false;
+      // Scoped identities are selected only through source-backed names,
+      // never from an industry room taxonomy.
       const stored = previous.entities.find(entity => entity.entity_id === id);
       // Historical inactive hints cannot make a generic category correction
       // ambiguous, or act as authority to revive the cancelled item.
@@ -2232,6 +2243,13 @@ function reduceSingleTurn(
     return scopedProductReferences.has(id) || Boolean(entity && explicitProductCategories.has(entity.category));
   };
   const quantityEvents = [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents].filter(event => {
+    if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
+      const named=typeof event.entity.attributes.product_name==="string"
+        ? event.entity.attributes.product_name : "";
+      // A semantic proposal is not a customer-owned item unless its name
+      // occurs in the current Visitor utterance. No profile backfills it.
+      if(!named || !matchesReferenceLabel(input.text,named))return false;
+    }
     if (event.type === "SET_ENTITY_STATUS" && !["cancelled", "deferred", "superseded"].includes(event.status)) {
       const stored = previous.entities.find(entity => entity.entity_id === event.entity_id);
       // Changing an active quantity must not revive an unrelated cancelled
