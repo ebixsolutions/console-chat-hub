@@ -1508,10 +1508,7 @@ function attestedCustomerQuantity(
         const number="([0-9]{1,4}|[零〇一二兩两三四五六七八九十]|one|two|three|four|five|six|seven|eight|nine|ten)";
         const validUnit=unit.length>0&&unit.length<=32&&/^[\p{L}\p{N}]+$/u.test(unit);
         const found=validUnit?[...source.matchAll(new RegExp(number+"\\s*"+
-          unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\  return candidates.length === 1 ? candidates[0] : null;
-}
-
-function canonicalCandidates("),"giu"))]
+          unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\$&"),"giu"))]
           .map(m=>readNumber(m[1])??words[m[1].toLowerCase()]??null)
           .filter((n):n is number=>n!==null):[];
         const sourceIndex=rows.findIndex(row=>row.id===id);
@@ -2049,10 +2046,7 @@ function sourceAttestedTypedCustomerAttribute(
     (v):v is string=>typeof v==="string"&&v.length>1&&phrase(source,v));
   if(!labels.length)return null;
   const valuePattern=new RegExp(declaration[1].replace(".","\\.")+"\\s*"+
-    unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\/** Semantic understanding proposes a field, not an exclusive answer route.
- * F1/S3 + F3/S4: preserve the preexisting typed resolver for unsupported
- * or compound recalls, while scope/source/merchant protections fail closed. */
-export function resolveConversationRecall("),"iu");
+    unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\$&"),"iu");
   const sourceProves=labels.some(label=>{
     const at=source.toLowerCase().indexOf(label.toLowerCase());
     if(at<0)return false;

@@ -2554,10 +2554,7 @@ function sourceBoundPartialUnitRetention(
   const unit=typeof entity.attributes.unit==="string"?entity.attributes.unit.trim():"";
   if(!unit||unit.length>32||!/^[\p{L}\p{N}]+$/u.test(unit))return null;
   const text=clean(input.text).normalize("NFKC");
-  const escaped=unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\/** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
-export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[]): ConversationCommerceState {
-  if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
-  let state = reduceTurnOperations(previous,input,hints);");
+  const escaped=unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\$&");
   const number="([0-9]{1,4}|[一二兩两三四五六七八九十]|one|two|three|four|five|six|seven|eight|nine|ten)";
   const retain=text.match(new RegExp("(?:只(?:保留|留低|留返)|keep)\\s*"+number+"\\s*"+escaped,"iu"));
   if(!retain)return null;
