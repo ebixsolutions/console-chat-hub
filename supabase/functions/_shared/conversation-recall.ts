@@ -1873,13 +1873,15 @@ function originalSourceAttests(input:ConversationRecallInput,e:RecallEvidence,un
             const member=object(raw);
             if(typeof member?.member_id!=="string" ||
                typeof member.value!=="string")return false;
+            const memberId=member.member_id, memberValue=member.value;
             return originals.some(raw=>{
               const original=object(raw);
-              return original?.member_id===member.member_id &&
-                original.value===member.value &&
-                typeof original.label==="string" && original.label.length>0 &&
-                clauses.some(clause=>clause.includes(normalize(original.label)) &&
-                  clause.includes(normalize(member.value)));
+              if(!original || original.member_id!==memberId ||
+                 original.value!==memberValue ||
+                 typeof original.label!=="string" || original.label.length===0)return false;
+              const originalLabel=original.label;
+              return clauses.some(clause=>clause.includes(normalize(originalLabel)) &&
+                clause.includes(normalize(memberValue)));
             });
           });
         }
@@ -2798,8 +2800,9 @@ function renderCustomerRecap(value: unknown, language: string): string {
   const ownedCounts=(Array.isArray(v.customer_facts)?v.customer_facts:[])
     .map(object).filter(f=>f?.authority==="customer"&&f.key==="quantity"&&
       typeof f.value==="number"&&Number.isInteger(f.value));
-  const conflictingQuantity=active.length===1&&ownedCounts.length===1&&
-    customerRequestedQuantity(active[0])!==null&&active[0].quantity!==ownedCounts[0].value;
+  const ownedCount=ownedCounts.length===1?ownedCounts[0]?.value:null;
+  const conflictingQuantity=active.length===1&&typeof ownedCount==="number"&&
+    customerRequestedQuantity(active[0])!==null&&active[0].quantity!==ownedCount;
   // Current state must not certify which of two contradictory counts was spoken.
   const conflictNote=conflictingQuantity?[
     "目前記錄的數量有矛盾，尚未核實，請確認最終要求。",
