@@ -1741,7 +1741,8 @@
   "supabase/functions/_shared/conversation-recall.test.ts": "d2e44b3b7e90d3f8de8d2eaeb6a4bd8f271f44a7b22d1c2481c45bf4839a2010",
   "supabase/functions/_shared/protected-pipeline-evidence.ts": "ae7fb88b45e5d62acd1bb0491e6d0fd5debfa81bd582b451d30c6b66e29ecfb1",
   "tests/emergency-p0/protected-evidence.test.ts": "ede44d12f42355dd116f7cc5046715f340b46d464ee4bde37e1b984ae441d708",
-  "tests/c3-widget-live-auth/original-preview.test.mjs": "e18ba07d51bcd9cee578573e8342ea4c640fd81d6c69191fdb6d9c1121a03aab"
+  "tests/c3-widget-live-auth/original-preview.test.mjs": "e18ba07d51bcd9cee578573e8342ea4c640fd81d6c69191fdb6d9c1121a03aab",
+  "supabase/functions/_shared/conversation-service-planner.test.ts": "2cb675ff27a5ea993bea80a527a6e836706a8d99d07f281b00201be56f9f4702"
 },
   "authorized_task3c_t06_turn2_source_sha256": {
   "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",
