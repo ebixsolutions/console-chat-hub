@@ -2718,6 +2718,19 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
       state, input.text, input.source_message_id, input.occurred_at ?? null);
     if (customerEvents.length) state = reduceCommerceState(state, customerEvents);
   }
+  // Generic current customer fact with exact Visitor provenance; never
+  // propagate the old air-conditioning sunlight/room_sunlight schema.
+  const observation=customerSunExposure(input.text);
+  if(observation){
+    const all=state.customer_constraints.customer_reported_facts;
+    const original=all && typeof all==="object" && !Array.isArray(all) ? all as Record<string,unknown> : {};
+    const scope=/(?:全屋|整間屋|所有房間|the whole house|all rooms|entire premises)/iu.test(input.text)
+      ? "whole_premises" : "unscoped";
+    const value={value:observation,scope,source_text:input.text,
+      provenance:{source_type:"customer" as const,source_message_id:input.source_message_id,recorded_at:input.occurred_at??null}};
+    state=reduceCommerceState(state,[{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",
+      value:{...original,site_observation:value}}]);
+  }
   if (detectQuantityCorrectionSignal(input.text)) {
     for (const entity of state.entities.filter(e=>e.entity_id.startsWith("generic:"))) {
       const old=previous.entities.find(e=>e.entity_id===entity.entity_id);

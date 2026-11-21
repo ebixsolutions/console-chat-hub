@@ -2380,7 +2380,16 @@ function resolveConversationRecallLegacy(
           preferences: scope.provenance === "global" ? m.customer_preferences : [],
           constraints: scope.provenance === "global" ? m.active_constraints : [],
           regions: scope.provenance === "global" ? m.current_regions : [],
-          customer_facts: scope.provenance === "global" ? m.current_customer_facts : [],
+          customer_facts: scope.provenance === "global" ? [
+            ...m.current_customer_facts.filter(f=>f.key!=="site_observation"),
+            ...Object.entries(c?.state.customer_constraints.customer_reported_facts ?? {}).flatMap(([key,value])=>{
+              if(key!=="site_observation" || !value || typeof value!=="object" || Array.isArray(value))return [];
+              const record=value as Record<string,unknown>;
+              const provenance=record.provenance as Record<string,unknown>|undefined;
+              return provenance?.source_type==="customer" && typeof provenance.source_message_id==="string" && typeof record.source_text==="string"
+                ? [{key,value:record.source_text,authority:"customer",source_message_id:provenance.source_message_id}] : [];
+            }),
+          ] : [],
         },
         authority: c ? "CANONICAL_COMMERCE_STATE" : "CURRENT_CUSTOMER_MEMORY",
         entity_id: null,
@@ -2848,12 +2857,7 @@ function renderCustomerRecap(value: unknown, language: string): string {
     }
     if (typeof e.constraints.max_width_mm === "number") facts.push(l === 2 ? `maximum width ${e.constraints.max_width_mm} mm` : `最闊${e.constraints.max_width_mm} mm`);
     if (e.model && !label(e).includes(e.model)) facts.push(display(e.model));
-    for (const [room, sun] of Object.entries(object(e.attributes.room_sunlight) ?? {})) {
-      if (sun === "strong_afternoon_sun") facts.push(`${rooms[room]?.[l] ?? room.replace(/_/g," ")} ${["下午日照強", "下午日晒较强", "has strong afternoon sun"][l]}`);
-    }
-    if (e.attributes.sunlight === "strong_afternoon_sun") facts.push(["下午日照強", "下午日晒较强", "strong afternoon sun"][l]);
-    if (e.attributes.sunlight === "none") facts.push(["客戶表示冇西斜", "客户表示没有西晒", "customer reports no afternoon sun"][l]);
-    for(const [room,sun] of Object.entries(object(e.attributes.room_sunlight)??{}))if(sun==="none")facts.push(`${rooms[room]?.[l]??room.replace(/_/g," ")} ${["冇西斜","没有西晒","has no afternoon sun"][l]}`);
+    // Phase1 legacy site-specific attributes are inert. Use customer facts only.
     const opening=object(e.attributes.window_opening_observation);
     if(opening&&typeof opening.width_mm==="number"&&typeof opening.height_mm==="number")facts.push(`${opening.width_mm} mm × ${opening.height_mm} mm${opening.scope?` (${rooms[String(opening.scope)]?.[l]??String(opening.scope)})`:["（所屬窗口未確認）","（所属窗口未确认）"," (opening scope not confirmed)"][l]}`);
     if (e.attributes.installation_type === "window_unit") facts.push(["窗口機", "窗口机", "window unit"][l]);
@@ -2882,7 +2886,7 @@ function renderCustomerRecap(value: unknown, language: string): string {
     if(f.key==="horsepower" && Array.isArray(f.value) && f.value.every(x=>typeof x==="string"))return [prefix+f.value.map(x=>l===2?String(x).replace(/匹/g," hp"):String(x)).join(l===2?", ":"、")];
     if(f.key==="room_size" && Array.isArray(f.value))return f.value.flatMap(x=>{const row=object(x);return row && typeof row.label==="string" && typeof row.value==="string" ? [prefix+display(row.label)+" "+display(row.value)] : [];});
     if(f.key==="brand_required" && typeof f.value==="boolean")return [prefix+(f.value?["你要求指定品牌","你要求指定品牌","you require a specific brand"]:["你冇限定品牌","你没有限定品牌","you do not require a specific brand"])[l]];
-    const names: Record<string, [string,string,string]> = {team_size:["團隊人數","团队人数","team size"],monthly_budget:["每月預算","每月预算","monthly budget"],automatic_renewal:["自動續訂","自动续订","automatic renewal"],preferred_interface_language:["介面語言","界面语言","interface language"],business_type:["業務類型","业务类型","business type"],priority:["優先需求","优先需求","priority"],budget:["預算","预算","budget"],room_area:["面積","面积","room area"],product_count:["商品數量","商品数量","product count"],staff_count:["人手","人手","staff count"],app_interest:["App 需要","App 需要","app needed"],preferred_interface:["使用介面","使用界面","preferred interface"],current_market:["目前市場","目前市场","current market"],desired_features:["需要功能","需要功能","required features"],future_markets:["未來市場","未来市场","future markets"]};
+    const names: Record<string, [string,string,string]> = {site_observation:["客人提供的現場資料","客户提供的现场资料","Customer-provided observation"],team_size:["團隊人數","团队人数","team size"],monthly_budget:["每月預算","每月预算","monthly budget"],automatic_renewal:["自動續訂","自动续订","automatic renewal"],preferred_interface_language:["介面語言","界面语言","interface language"],business_type:["業務類型","业务类型","business type"],priority:["優先需求","优先需求","priority"],budget:["預算","预算","budget"],room_area:["面積","面积","room area"],product_count:["商品數量","商品数量","product count"],staff_count:["人手","人手","staff count"],app_interest:["App 需要","App 需要","app needed"],preferred_interface:["使用介面","使用界面","preferred interface"],current_market:["目前市場","目前市场","current market"],desired_features:["需要功能","需要功能","required features"],future_markets:["未來市場","未来市场","future markets"]};
     const renderValue = (raw:unknown):string|undefined => {
       if(raw===null)return ["未確認","未确认","unknown"][l];
       if(typeof raw==="boolean")return (raw?["需要","需要","yes"]:["不需要","不需要","no"])[l];

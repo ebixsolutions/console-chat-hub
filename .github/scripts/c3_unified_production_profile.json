@@ -1731,13 +1731,14 @@
     "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
   },
   "authorized_task3c_d4_no_industry_sha256": {
-  "supabase/functions/_shared/commerce-state-runtime-base.ts": "930a03fca5ce9420854e1567bb72b035f9e22cbed2b29f5081e04f30c11be1c6",
+  "supabase/functions/_shared/commerce-state-runtime-base.ts": "3abaa12b4229ba7d14f0d127680b097f52820fdafa62599941e069fc18ffb89b",
   "supabase/functions/_shared/b2-journey-progress-contract.ts": "5325344e1627cfb63b459ff5a99ea9da73c202a7bab971f63426d12ff16146fa",
   "supabase/functions/_shared/commerce-semantic-adapter.ts": "5b8ad3f90ffbcc89f6dd8d44ed5322b256df9e8475e5c3dc1bccc05745dda9d4",
   "supabase/functions/_shared/commerce-subject-resolution.ts": "72752c02f4d1c136862dbb24db55d67b91da5a2540c9277bf9f238f27e95be0d",
-  "supabase/functions/_shared/conversation-recall.ts": "adc2ef831bbda6f77b5cdd5d76289aa27a50c53a70de83b11d7f8763ff4437d0",
+  "supabase/functions/_shared/conversation-recall.ts": "d42db1534081d7aa54ba127e60b3679cf93b7dbc9cc2686f621474c20440fe33",
   "supabase/functions/_shared/conversation-service-planner.ts": "6764253062e6954b36e789b58badf48ce45e288abb8fcb7a515d03d4f5fc2298",
-  "tests/task1-director/quantity-source-scope.test.mjs": "46a7bacc67bb4c914cc75cb286c6151bbafaa44eb5b970259fa29bbdd42451dc"
+  "tests/task1-director/quantity-source-scope.test.mjs": "46a7bacc67bb4c914cc75cb286c6151bbafaa44eb5b970259fa29bbdd42451dc",
+  "supabase/functions/_shared/conversation-recall.test.ts": "d5150c45b09f51b47bb2eb527711c8d223db6e1cddff5e97fbcc6c752bf498bc"
 },
   "authorized_task3c_t06_turn2_source_sha256": {
   "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",
