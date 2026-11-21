@@ -32,7 +32,7 @@ export function resolveSourceOwnedSubject(
   // an independently server-accepted exact entity ID. Chinese two-char overlap
   // remains read-only discovery and NEVER grants cancellation or quantity edit.
   const wholeMutationLabel=q.replace(
-    /(?:暫時|暂时|先|請|请|麻煩|麻烦|取消|暫緩|暂缓|唔要|不要|改做|改為|改为|改|更正|延期|延後|延后)/gu,""
+    /(?:暫時唔買住|暫時不買|暂时不买|暫時|暂时|先|請|请|麻煩|麻烦|取消|暫緩|暂缓|唔要|不要|改做|改為|改为|改|更正|延期|延後|延后|那部|呢部|那個|那个)/gu,""
   ).replace(/\b(?:please|cancel|defer|pause|postpone|remove|change|update|the|item|for|now)\b/giu,"")
    .replace(/[\s，,。.!！?？;；:：]+/gu,"").trim();
   const candidates=state.entities.filter(e=>options.include_inactive || !["cancelled","deferred","superseded"].includes(e.status));

@@ -263,7 +263,8 @@ Deno.test("Task3C original Ticket source sequence stops six-browser-tabs from be
     "再更正，依家只會開6個分頁，其他文書、視像會議同慳錢要求不變。",
     "我要為兩間睡房同一個客廳選購冷氣，即合共三部；這是測試資料。",
   ];
-  const expected=[1,1,1,3];
+  // Phase1 NO INDUSTRY: unknown original count stays unknown (zero marker)
+  // until the independent source-authored three-unit goal is actually stated.
   let state=createEmptyConversationCommerceState();
   for(let index=0;index<turns.length;index++){
     const source_message_id="70000000-0000-4000-8000-"+String(index+1).padStart(12,"0");
@@ -271,17 +272,19 @@ Deno.test("Task3C original Ticket source sequence stops six-browser-tabs from be
       conversation_id,company_id,source_message_id,text:turns[index],
       language:"zh-TW",history:turns.slice(0,index).map(content=>({role:"visitor",content})),
     },buildCommerceEntityHints(turns.slice(0,index+1).reverse()));
-    const active=state.entities.filter(e=>e.category==="air_conditioner"&&
-      !["deferred","cancelled","superseded"].includes(e.status));
-    assert(active.length===1 && active[0].quantity===expected[index],
-      JSON.stringify({index,expected:expected[index],actual:active.map(e=>({quantity:e.quantity,model:e.model}))}));
-    if(index===2)assert(active[0].model==="CW-SUL70BA","tabs must not replace the earlier SKU");
+    const old=state.entities.find(e=>e.model==="CW-SUL70BA");
+    assert(old && old.quantity===0 && old.attributes.quantity_basis==="system_default",
+      "unknown original item and explicit SKU must survive without assumed appliance quantity");
+    assert(old.provenance.source_message_id==="70000000-0000-4000-8000-000000000001",
+      "browser 8/6 cannot replace the original Visitor source");
+    assert(state.current_industry===null,"no industry flow can activate");
     if(index===3){
-      assert(active[0].model===null,"new general goal cannot inherit old study SKU");
-      assert(Object.keys((active[0].attributes.room_sizes ?? {}) as Record<string,unknown>).length===0,
-        "new multiple-room goal cannot inherit unrelated old room size");
-      assert(active[0].provenance.source_message_id===source_message_id,
-        "new customer-owned goal must retain actual source");
+      const fresh=state.entities.filter(e=>e.entity_id!==old.entity_id &&
+        e.provenance.source_message_id===source_message_id);
+      assert(fresh.length===1 && fresh[0].quantity===3,"new source-owned goal needs exactly three");
+      assert(fresh[0].model===null,"new goal must not inherit historical model");
+      assert(Object.keys((fresh[0].attributes.room_sizes??{}) as Record<string,unknown>).length===0,
+        "new goal must not inherit prior room sizes");
     }
   }
 });

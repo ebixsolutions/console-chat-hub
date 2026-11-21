@@ -34,7 +34,7 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
           matchesReferenceLabel(part,value)) || identifiers(part).some(id=>identityValues(entity).some(value=>identifiers(value).includes(id)))
     ).map((entity) => entity.category),
   ])];
-  const lifecycle = /暫時唔|暫時不|暂时不|暫緩|暂缓|先擺低|先放低|稍後先|稍后再|hold off|defer|pause|取消|唔要|不要|cancel\b/i;
+  const lifecycle = /暫時唔買住|暫時不買|暂时不买|暫時唔|暫時不|暂时不|暫緩|暂缓|先擺低|先放低|稍後先|稍后再|hold off|defer|pause|取消|唔要|不要|cancel\b/i;
   if (!lifecycle.test(normalized)) return { kind: "none" };
   if (/^(?:你仲記唔記得|係咪|有冇|是否|is |was |did )/i.test(normalized)) return { kind: "none" };
   const named = aliases(normalized);

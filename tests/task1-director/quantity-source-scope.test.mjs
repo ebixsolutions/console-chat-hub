@@ -275,3 +275,17 @@ test('B2 both uses two distinct source-owned generic entity IDs, not category co
  if(result.kind==='mutation')assert.deepEqual(result.plans.map(x=>x.target_entity_id).sort(),
   state.entities.map(e=>e.entity_id).sort());
 });
+
+test('A2 source-named defer survives independent no-KB-lookup instruction',()=>{
+ const state=createEmptyConversationCommerceState();
+ state.entities=[{entity_id:'generic:living',category:'generic_product',brand:null,model:null,
+  quantity:1,status:'tentative',attributes:{product_name:'客廳冷氣',customer_subject_aliases:['客廳冷氣'],
+  unit:'部'},constraints:{},provenance:{source_type:'customer',source_message_id:'original'}}];
+ const turn='唔使查報價；客廳冷氣暫時唔買住。';
+ const next=reduceTurn(state,{text:turn,company_id:'fixture-company',conversation_id:'fixture-ticket',
+  source_message_id:'source-current',language:'zh-TW'},
+  buildCommerceEntityHints([turn]));
+ assert.equal(next.entities[0].status,'deferred');
+ assert.equal(next.entities[0].provenance.source_message_id,'source-current');
+ assert.deepEqual(next.quotes,state.quotes,'not looking up a price cannot mint a quote');
+});
