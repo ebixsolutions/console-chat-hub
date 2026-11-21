@@ -436,9 +436,27 @@ function trustedResearchFocusEvents(input: CommerceRuntimeInput, state: Conversa
       provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } }];
 }
 
-function resolveAttributeQueryCategory(input: CommerceRuntimeInput): {
+/** Server-snapshot, original customer-owned exact referent. No industry alias
+ * or singleton category grants an attribute scope. */
+function trustedAttributeReferent(input:CommerceRuntimeInput,state:ConversationCommerceState):
+ ConversationCommerceState["entities"][number]|null {
+ const frame=input.semantic_frame;
+ if(!frame||frame.confidence<0.90||frame.ambiguity.is_ambiguous||
+    !input.company_id||!input.conversation_id||!input.source_message_id)return null;
+ const refs=frame.referents.filter(r=>r.confidence>=0.90&&
+    ["persistent_state","prior_turn"].includes(r.source));
+ if(refs.length!==1)return null;
+ const e=state.entities.find(e=>e.entity_id===refs[0].ref&&
+    e.provenance.source_type==="customer"&&!!e.provenance.source_message_id&&
+    !["cancelled","deferred","superseded"].includes(e.status));
+ return e&&sourceOwnedSubjectLabels(e).some(label=>
+    matchesReferenceLabel(input.text,label))?e:null;
+}
+function resolveAttributeQueryCategory(input: CommerceRuntimeInput,
+  state?:ConversationCommerceState): {
   category: string | null;
   ambiguous: boolean;
+  entity_id?: string;
 } {
   // Current-turn semantics outrank stale topic inheritance.  A unique explicit
   // category in the utterance is the strongest binding, followed by the
@@ -446,7 +464,8 @@ function resolveAttributeQueryCategory(input: CommerceRuntimeInput): {
   const current = explicitCategoryKeys(input.text);
   if (current.length > 1) return { category: null, ambiguous: true };
   if (current.length === 1) return { category: current[0], ambiguous: false };
-
+  const bound=state?trustedAttributeReferent(input,state):null;
+  if(bound)return {category:bound.category,entity_id:bound.entity_id,ambiguous:false};
   const semantic = semanticCategoryKeys(input.semantic_frame);
   if (semantic.length > 1) return { category: null, ambiguous: true };
   if (semantic.length === 1) return { category: semantic[0], ambiguous: false };
@@ -477,11 +496,11 @@ function stateDimensionConstraint(
   state: ConversationCommerceState,
   category: string,
   attribute: CommerceDimensionAttribute,
+  entityId:string|null=null,
 ): { value_mm: number; path: string } | null {
-  const active = state.entities.filter(
-    (entity) =>
-      entity.category === category && entity.status !== "cancelled" && entity.status !== "deferred",
-  );
+  const active=state.entities.filter(entity=>
+    entity.category===category && (!entityId||entity.entity_id===entityId) &&
+    entity.status!=="cancelled"&&entity.status!=="deferred");
   if (active.length === 1) {
     const entityIndex = state.entities.indexOf(active[0]);
     for (const key of dimensionConstraintKey(attribute)) {
@@ -492,6 +511,7 @@ function stateDimensionConstraint(
     }
   }
 
+  if(entityId)return null; // A specific item cannot inherit another's limit.
   const categoryConstraints = state.customer_constraints[category];
   if (isRecord(categoryConstraints)) {
     for (const key of dimensionConstraintKey(attribute)) {
@@ -600,7 +620,7 @@ function resolveReadOnlyAttributeConstraintQuery(
   const measurement = parseCommerceDimensionMeasurement(input.text);
   if (!measurement) return null;
 
-  const categoryResolution = resolveAttributeQueryCategory(input);
+  const categoryResolution = resolveAttributeQueryCategory(input,state);
   const attribute =
     inferCommerceDimensionAttribute(input.text, input.semantic_frame) ??
     (() => {
@@ -652,8 +672,8 @@ function resolveReadOnlyAttributeConstraintQuery(
   }
 
   const constraint =
-    stateDimensionConstraint(state, category, attribute) ??
-    historyDimensionConstraint(input, category, attribute);
+    stateDimensionConstraint(state, category, attribute, categoryResolution.entity_id??null) ??
+    (categoryResolution.entity_id?null:historyDimensionConstraint(input, category, attribute));
   if (!constraint) {
     const product = categoryLabel(category, input.language);
     const dimension = dimensionLabel(attribute, input.language);
@@ -1189,12 +1209,14 @@ function buildEntityPortfolioAnswer(state: ConversationCommerceState, language: 
 }
 
 function buildScopedConstraintAnswer(input: CommerceRuntimeInput, state: ConversationCommerceState): { reply: string; path: string } | null {
-  const categoryResolution = resolveAttributeQueryCategory(input);
+  const categoryResolution = resolveAttributeQueryCategory(input,state);
   if (categoryResolution.ambiguous || !categoryResolution.category) return null;
   const category = categoryResolution.category;
-  const active = state.entities.filter((entity) => entity.category === category && entity.status !== "cancelled" && entity.status !== "deferred");
-  if (active.length !== 1) return null;
-  const entity = active[0];
+  const active=state.entities.filter(e=>e.category===category&&
+    (!categoryResolution.entity_id||e.entity_id===categoryResolution.entity_id)&&
+    e.status!=="cancelled"&&e.status!=="deferred");
+  if(active.length!==1)return null;
+  const entity=active[0];
   const labels: string[] = [];
   for (const [key, raw] of Object.entries(entity.constraints)) {
     const value = numericConstraint(raw);
@@ -1206,7 +1228,8 @@ function buildScopedConstraintAnswer(input: CommerceRuntimeInput, state: Convers
     else labels.push(key.startsWith("excluded_") ? `${dimension}唔接受 ${formatMillimetres(value)}mm` : `${dimension}上限 ${formatMillimetres(value)}mm`);
   }
   if (!labels.length) return null;
-  const product = categoryLabel(category, input.language);
+  const product=clean(entity.attributes.product_name ?? entity.model ??
+    categoryLabel(category,input.language),120);
   const reply = input.language === "en" ? `The current ${product} constraint is: ${labels.join(", ")}.` : input.language === "zh-CN" ? `目前${product}的限制是：${labels.join("、")}。` : `而家${product}嘅限制係：${labels.join("、")}。`;
   return { reply, path: `entities.${state.entities.indexOf(entity)}.constraints` };
 }
@@ -1435,12 +1458,15 @@ function deriveA3RuntimeEvents(
 
   // Persist dimension constraints against the same uniquely scoped product
   // used by the reader, preventing cross-entity carryover.
-  const dimensionCategory = resolveAttributeQueryCategory(input);
-  if (!dimensionCategory.ambiguous && dimensionCategory.category && !looksInterrogative(text)) {
-    const category = dimensionCategory.category;
-    const target = previous.entities.find((entity) =>
-      entity.category === category && entity.status !== "cancelled" && entity.status !== "deferred"
-    ) ?? mentioned.find((hint) => hint.category === category);
+  const dimensionCategory=resolveAttributeQueryCategory(input,previous);
+  if(!dimensionCategory.ambiguous&&dimensionCategory.category&&!looksInterrogative(text)){
+    const category=dimensionCategory.category;
+    const candidates=previous.entities.filter(e=>e.category===category&&
+      !["cancelled","deferred","superseded"].includes(e.status));
+    const target=dimensionCategory.entity_id
+      ? candidates.find(e=>e.entity_id===dimensionCategory.entity_id)
+      : candidates.length===1?candidates[0]
+      : !candidates.length?mentioned.find(h=>h.category===category):null;
     if (target) {
       if (constraintCancellation) {
         const attribute = inferCommerceDimensionAttribute(text) ?? "width";

@@ -377,79 +377,78 @@ Deno.test("C3 production-parity semantic ASK_FACT still persists and scopes prod
       industry_identifier: "home_appliance",
     });
 
-  const initial = await run(
-    21,
-    "順便問埋雪櫃，想要三門，600mm樓下闊。",
-    semantic("refrigerator", ["width"]),
-    [],
-  );
-  const fridge = state.entities.find((entity) =>
-    entity.category === "refrigerator"
-  );
-  assert(
-    fridge?.constraints.max_width_mm === 600,
-    `${JSON.stringify(initial)}:${JSON.stringify(state.entities)}`,
-  );
+  const initialText="順便問埋雪櫃，想要三門，600mm樓下闊。";
+  // The original source is unchanged. An ASK_FACT topic without an accepted
+  // entity must not resurrect home_appliance or invent a durable item.
+  const unframed=await run(20,initialText,semantic("refrigerator",["width"]),[]);
+  assert(unframed?.reason==="read_only_attribute_constraint_query_unresolved" &&
+    state.entities.length===0,"unbound topic cannot create a merchant/item state");
 
-  const constraint = await run(
-    56,
-    "雪櫃限制呢？",
-    semantic("refrigerator", ["constraints"]),
-    [
-      { role: "visitor", content: "順便問埋雪櫃，想要三門，600mm樓下闊。" },
-    ],
-  );
-  assert(constraint?.reply?.includes("600"), JSON.stringify(constraint));
-  assert(
-    !/冷氣|air_conditioner/i.test(constraint?.reply ?? ""),
-    constraint?.reply ?? "",
-  );
+  const acceptedItem=(name:string,id:string,width:number|null):CommerceSemanticFrame=>({
+    ...semantic("generic_product",["width"]),operation:"ADD_ITEM",
+    topic:"generic_product",entities:[{entity_ref:id,name,kind:"physical_product",
+      category_hint:"generic_product",sku:null,model:null,quantity:null,unit:null,
+      attributes:{},constraints:width===null?{}:{max_width_mm:width},
+      capabilities:{requires_delivery:false,supports_pickup:false,requires_installation:false,
+        requires_booking:false,requires_quote:false,requires_site_check:false,
+        digital_fulfilment:false,recurring_billing:false,rental_return:false,
+        customization:false},confidence:.99}],
+  });
+  const scoped=(id:string,operation:CommerceSemanticFrame["operation"]="ASK_FACT"):
+    CommerceSemanticFrame=>({...semantic("generic_product",["constraints"]),
+      operation,referents:[{ref:id,source:"persistent_state",confidence:.99}]});
 
-  await run(
-    61,
-    "再問埋洗衣機，我位得600闊。",
-    semantic("washing_machine", ["width"]),
-    [
-      { role: "visitor", content: "雪櫃限制呢？" },
-    ],
-  );
-  const washer = state.entities.find((entity) =>
-    entity.category === "washing_machine"
-  );
-  assert(
-    washer?.constraints.max_width_mm === 600,
-    JSON.stringify(state.entities),
-  );
+  const initial=await run(21,initialText,acceptedItem("雪櫃","generic:source-fridge",600),[]);
+  const fridge=state.entities.find(e=>e.attributes.product_name==="雪櫃");
+  assert(initial?.persist_result==="success" &&
+    fridge?.category==="generic_product"&&fridge.quantity===0 &&
+    fridge.constraints.max_width_mm===600 &&
+    fridge.provenance.source_message_id==="21000000-0000-4000-8000-000000000021" &&
+    state.current_industry===null,
+    "accepted customer item and literal width must persist without industry defaults");
 
-  const correction = await run(63, "之前雪櫃嗰個闊度限制取消啦。", null, [
-    { role: "visitor", content: "前置式，8kg左右。" },
-    { role: "visitor", content: "再問埋洗衣機，我位得600闊。" },
-  ]);
-  const correctedFridge = state.entities.find((entity) =>
-    entity.category === "refrigerator"
-  );
-  const unchangedWasher = state.entities.find((entity) =>
-    entity.category === "washing_machine"
-  );
-  assert(
-    correctedFridge?.status !== "cancelled",
-    JSON.stringify(correctedFridge),
-  );
-  assert(
-    correctedFridge?.constraints.max_width_mm === undefined,
-    `${JSON.stringify(correction)}:${JSON.stringify(correctedFridge)}`,
-  );
-  assert(
-    unchangedWasher?.constraints.max_width_mm === 600,
-    JSON.stringify(unchangedWasher),
-  );
+  const constraint=await run(56,"雪櫃限制呢？",scoped(fridge.entity_id),
+    [{role:"visitor",content:initialText}]);
+  assert(constraint?.reply?.includes("600") &&
+    !/冷氣|air_conditioner/i.test(constraint?.reply??""),
+    "read one customer's exact current item, not another item or merchant evidence");
 
-  await run(66, "洗衣機未決定買住。", null, []);
-  assert(
-    state.entities.find((entity) => entity.category === "washing_machine")
-      ?.status === "deferred",
-    JSON.stringify(state.entities),
-  );
+  const washerText="再問埋洗衣機，我位得600闊。";
+  await run(61,washerText,acceptedItem("洗衣機","generic:source-washer",null),
+    [{role:"visitor",content:"雪櫃限制呢？"}]);
+  const washer=state.entities.find(e=>e.attributes.product_name==="洗衣機");
+  assert(washer?.entity_id!==fridge.entity_id &&
+    washer?.category==="generic_product" &&
+    washer.constraints.max_width_mm===undefined,
+    "600 without a unit cannot borrow 600mm from the other item");
+
+  // Only an independent literal 600mm source with the accepted Washer ID
+  // can commit its own width. No model or category supplies the missing unit.
+  const washerProof=await run(62,"洗衣機闊度上限600mm。",
+    scoped(washer.entity_id,"UPDATE_ITEM"),[]);
+  assert(washerProof?.persist_result==="success" &&
+    state.entities.find(e=>e.entity_id===washer.entity_id)?.constraints.max_width_mm===600,
+    "second item's own sourced unit must be saved under its own entity");
+
+  const correction=await run(63,"之前雪櫃嗰個闊度限制取消啦。",
+    scoped(fridge.entity_id,"UPDATE_ITEM"),[
+      {role:"visitor",content:"前置式，8kg左右。"},
+      {role:"visitor",content:washerText},
+    ]);
+  const nowFridge=state.entities.find(e=>e.entity_id===fridge.entity_id);
+  const nowWasher=state.entities.find(e=>e.entity_id===washer.entity_id);
+  assert(correction?.persist_result==="success" &&
+    nowFridge?.status!=="cancelled" &&
+    nowFridge?.constraints.max_width_mm===undefined &&
+    nowWasher?.constraints.max_width_mm===600,
+    "item-scoped dimension correction cannot cancel a product or change another item");
+
+  const deferral=await run(66,"洗衣機未決定買住。",
+    scoped(washer.entity_id,"DEFER"),[]);
+  assert(deferral?.reason==="unmatched_semantic_lifecycle_requires_confirmation" &&
+    deferral.reply?.includes("洗衣機") &&
+    state.entities.find(e=>e.entity_id===washer.entity_id)?.status!=="deferred",
+    "new wording needs named clarification without silent state mutation");
 });
 
 Deno.test("S5 a minimal model clarification answer preserves the pending KB question", () => {
