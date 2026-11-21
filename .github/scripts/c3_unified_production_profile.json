@@ -1730,7 +1730,7 @@
     "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
   },
   "authorized_task3c_d4_no_industry_sha256": {
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "c411d1eedc20b850c5a63e18bfb254b5df2f0e7a1cdb511a34a2ad6df8e58e8c"
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "3daa031e25bda2bf8ad63d492706cba339e3915458266c8c517c0810bbd92880"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
     "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",

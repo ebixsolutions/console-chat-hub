@@ -169,7 +169,7 @@ const TASK3C_KB_BINDING_SOURCE=Object.freeze({"supabase/migrations/2026111103000
 
 // Same Task3C D4 NO INDUSTRY repair: exact current Source hash only. Historical
 // frozen hash maps and the original Closure Contract remain immutable.
-const TASK3C_D4_NO_INDUSTRY_SOURCE=Object.freeze({"supabase/functions/_shared/commerce-state-runtime-base.ts":"c411d1eedc20b850c5a63e18bfb254b5df2f0e7a1cdb511a34a2ad6df8e58e8c"});
+const TASK3C_D4_NO_INDUSTRY_SOURCE=Object.freeze({"supabase/functions/_shared/commerce-state-runtime-base.ts":"3daa031e25bda2bf8ad63d492706cba339e3915458266c8c517c0810bbd92880"});
 
 export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs.readFileSync(path.join(root,PROFILE_PATH))),expectedIdentity,sourceOnly=false}={}){
  must(JSON.stringify(profile.authorized_task3c_d4_no_industry_sha256)===JSON.stringify(TASK3C_D4_NO_INDUSTRY_SOURCE),'task3c_d4_no_industry_signed_scope_drift');

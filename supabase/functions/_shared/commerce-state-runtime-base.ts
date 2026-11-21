@@ -2366,7 +2366,18 @@ function reduceSingleTurn(
   const sourceGoalCategories = detectCategories(input.text);
   const goalTargets = sourceGoalCategories.length === 1
     ? previous.entities.filter(entity => entity.category === sourceGoalCategories[0].key &&
-      !["deferred", "cancelled", "superseded"].includes(entity.status)) : [];
+      !["deferred", "cancelled", "superseded"].includes(entity.status))
+    : affirmativeAggregateGoal !== null
+    ? previous.entities.filter(entity => {
+      if (entity.entity_id !== input.semantic_frame?.entities[0]?.entity_ref ||
+          ["deferred","cancelled","superseded"].includes(entity.status)) return false;
+      const compatible=previous.entities.filter(e => e.category === entity.category &&
+        !["deferred","cancelled","superseded"].includes(e.status));
+      return compatible.length === 1 &&
+        [entity.attributes.name,entity.attributes.product_name,entity.model]
+          .some(name => typeof name === "string" && name.length > 1 &&
+            matchesReferenceLabel(input.text,name));
+    }) : [];
   const isFreshGoal = Boolean(explicitGoalNumber !== null &&
     /(?:選購|选购|購入|購買|购买|想買|想买|要買|要买|want to buy|need to purchase|shopping for)/iu.test(input.text) &&
     !looksInterrogative(input.text) && goalTargets.length === 1 &&
@@ -2587,7 +2598,9 @@ function sourceBoundPartialUnitRetention(
   if(!frame || frame.confidence<0.72 || frame.ambiguity.is_ambiguous ||
     !frame.customer_correction ||
     !["SET_QUANTITY","UPDATE_ITEM"].includes(frame.operation) ||
-    frame.entities.length!==1 || isReadOnlyCommerceQuestion(input.text,frame)) return null;
+    frame.entities.length!==1 || frame.additive ||
+    detectAdditiveEntityCreationSignal(input.text) ||
+    isReadOnlyCommerceQuestion(input.text,frame)) return null;
   const active=previous.entities.filter(e=>!["cancelled","deferred","superseded"].includes(e.status));
   if(active.length!==1) return null;
   const entity=active[0], proposed=frame.entities[0];
@@ -2600,6 +2613,14 @@ function sourceBoundPartialUnitRetention(
   if(typeof proposed.unit==="string" && proposed.unit &&
       proposed.unit.toLowerCase()!==unit.toLowerCase())return null;
   const text=clean(input.text).normalize("NFKC");
+  // An inactive named scope cannot retarget the single active aggregate.
+  if (previous.entities.some(candidate =>
+    ["cancelled","deferred","superseded"].includes(candidate.status) &&
+    [candidate.attributes.name,
+      ...(Array.isArray(candidate.attributes.customer_subject_aliases)
+        ? candidate.attributes.customer_subject_aliases : [])]
+      .some(alias => typeof alias === "string" && alias.length > 1 &&
+        matchesReferenceLabel(text,alias)) && !detectEntityReactivation(text))) return null;
   const names=[entity.model,entity.attributes.product_name].filter(
     (v):v is string=>typeof v==="string" && v.length>1);
   const sourceSubject=names.some(name=>matchesReferenceLabel(text,name));
@@ -2621,10 +2642,19 @@ function sourceBoundPartialUnitRetention(
   const cancelled=/(?:取消|唔要|不要|cancel\b|remove\b)/iu.test(text) &&
     !/(?:唔係|不是|並非|并非)\s*(?:要)?取消/iu.test(text);
   const deferred=/(?:暫緩|暂缓|延期|延後|延后|postpone\b|defer\b|hold\s+off)/iu.test(text);
+  // The customer's final unit is source-scoped by a quantity and an ordinal
+  // status instruction, never by an unrelated browser-tab or capacity count.
+  const ordinals=["first","second","third","fourth","fifth","sixth","seventh","eighth","ninth","tenth"];
+  const lastOrdinal=entity.quantity>=1 && entity.quantity<=ordinals.length
+    ? ordinals[entity.quantity-1] : null;
+  const explicitInactiveOrdinal=delta===1 && explicitTotal && lastOrdinal!==null &&
+    new RegExp("\\b(?:postpone|defer|cancel|hold\\s+off)\\s+(?:the\\s+)?"+
+      lastOrdinal+"\\b","iu").test(text);
   // A numbered member or stated portion links the status to this quantity.
   const scopedInactive=delta>0 && (cancelled||deferred) &&
     (new RegExp("第\\s*"+number+"\\s*"+escaped,"iu").test(text) ||
-      /(?:其(?:中|餘|余)|剩低|剩下|另外|other|remaining)/iu.test(text)) &&
+      /(?:其(?:中|餘|余)|剩低|剩下|另外|other|remaining)/iu.test(text) ||
+      explicitInactiveOrdinal) &&
     (counted.includes(delta) || explicitTotal || delta===1);
   const decrementOne=delta===1 && !explicitTotal && cancelled &&
     /(?:其中|其餘|其余|one\s+of|one\s+less)/iu.test(text) &&
