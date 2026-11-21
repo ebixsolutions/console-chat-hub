@@ -1731,16 +1731,17 @@
     "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
   },
   "authorized_task3c_d4_no_industry_sha256": {
-  "supabase/functions/_shared/commerce-state-runtime-base.ts": "84607306dccd96810206d094c10f027721766ca730003cdb6ab2d065579a1d82",
-  "supabase/functions/_shared/b2-journey-progress-contract.ts": "5325344e1627cfb63b459ff5a99ea9da73c202a7bab971f63426d12ff16146fa",
+  "supabase/functions/_shared/commerce-state-runtime-base.ts": "5944bae45d3cc77120b2d42e72e0c171fb2e4feb5edb23f7f9156f66c02bcffb",
+  "supabase/functions/_shared/b2-journey-progress-contract.ts": "4194083eb23e5d3542b59df6aa353651f1ba5c4ae9fd36148c720742512488b3",
   "supabase/functions/_shared/commerce-semantic-adapter.ts": "5b8ad3f90ffbcc89f6dd8d44ed5322b256df9e8475e5c3dc1bccc05745dda9d4",
-  "supabase/functions/_shared/commerce-subject-resolution.ts": "72752c02f4d1c136862dbb24db55d67b91da5a2540c9277bf9f238f27e95be0d",
+  "supabase/functions/_shared/commerce-subject-resolution.ts": "afc672aef8885b32c10d919b913e859f5a0a54d6d811971d690d26d13566b9fb",
   "supabase/functions/_shared/conversation-recall.ts": "d42db1534081d7aa54ba127e60b3679cf93b7dbc9cc2686f621474c20440fe33",
   "supabase/functions/_shared/conversation-service-planner.ts": "6764253062e6954b36e789b58badf48ce45e288abb8fcb7a515d03d4f5fc2298",
-  "tests/task1-director/quantity-source-scope.test.mjs": "46a7bacc67bb4c914cc75cb286c6151bbafaa44eb5b970259fa29bbdd42451dc",
+  "tests/task1-director/quantity-source-scope.test.mjs": "5198532360d160c0a52793f55265610d80591741cec7fc2210737936b0bc5e9a",
   "supabase/functions/_shared/conversation-recall.test.ts": "d5150c45b09f51b47bb2eb527711c8d223db6e1cddff5e97fbcc6c752bf498bc",
   "supabase/functions/_shared/protected-pipeline-evidence.ts": "ae7fb88b45e5d62acd1bb0491e6d0fd5debfa81bd582b451d30c6b66e29ecfb1",
-  "tests/emergency-p0/protected-evidence.test.ts": "ede44d12f42355dd116f7cc5046715f340b46d464ee4bde37e1b984ae441d708"
+  "tests/emergency-p0/protected-evidence.test.ts": "ede44d12f42355dd116f7cc5046715f340b46d464ee4bde37e1b984ae441d708",
+  "tests/c3-widget-live-auth/original-preview.test.mjs": "e18ba07d51bcd9cee578573e8342ea4c640fd81d6c69191fdb6d9c1121a03aab"
 },
   "authorized_task3c_t06_turn2_source_sha256": {
   "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",

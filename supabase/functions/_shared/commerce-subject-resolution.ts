@@ -25,13 +25,23 @@ function score(q: string,label:string):number {
 }
 export function resolveSourceOwnedSubject(
   state:ConversationCommerceState,question:string,
-  options:{include_inactive?:boolean;accepted_entity_ref?:string|null}={}
+  options:{include_inactive?:boolean;accepted_entity_ref?:string|null;mode?:"read"|"mutation"}={}
 ):{kind:"one";entity:CommerceEntity}|{kind:"ambiguous";entity_ids:string[]}|{kind:"none"} {
   const q=clean(question);if(!q)return{kind:"none"};
+  // State mutation requires the entire customer-recorded name/short alias or
+  // an independently server-accepted exact entity ID. Chinese two-char overlap
+  // remains read-only discovery and NEVER grants cancellation or quantity edit.
+  const wholeMutationLabel=q.replace(
+    /(?:暫時|暂时|先|請|请|麻煩|麻烦|取消|暫緩|暂缓|唔要|不要|改做|改為|改为|改|更正|延期|延後|延后)/gu,""
+  ).replace(/\b(?:please|cancel|defer|pause|postpone|remove|change|update|the|item|for|now)\b/giu,"")
+   .replace(/[\s，,。.!！?？;；:：]+/gu,"").trim();
   const candidates=state.entities.filter(e=>options.include_inactive || !["cancelled","deferred","superseded"].includes(e.status));
   const accepted=clean(options.accepted_entity_ref);
   const matched=candidates.map(entity=>({entity,score:accepted&&entity.entity_id.toLowerCase()===accepted
-    ? 2000 : Math.max(0,...sourceOwnedSubjectLabels(entity).map(name=>score(q,name)))})).filter(o=>o.score>=2);
+    ? 2000 : options.mode==="mutation"
+      ? (sourceOwnedSubjectLabels(entity).some(name=>name.replace(/[\s，,。.!！?？;；:：]+/gu,"")===wholeMutationLabel)
+        ? 1000+wholeMutationLabel.length:0)
+      : Math.max(0,...sourceOwnedSubjectLabels(entity).map(name=>score(q,name)))})).filter(o=>o.score>=2);
   if(!matched.length)return{kind:"none"};
   const max=Math.max(...matched.map(m=>m.score));
   const top=matched.filter(m=>m.score===max);

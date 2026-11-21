@@ -2712,6 +2712,31 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
       }}]);
     }
   }
+  // Recover a fresh explicitly counted goal WITHOUT a semantic frame.
+  // Only a current customer purchase sentence with an independently written
+  // total and noun qualifies; unrelated browser tabs, historical models,
+  // guesses, merchant facts and transaction state never supply that quantity.
+  if(!input.semantic_frame && !/[?？]/u.test(input.text) &&
+     !/(?:如果|假如|假設|假设|what if|hypothetically)/iu.test(input.text)){
+    const stated=clean(input.text);
+    const goal=stated.match(/(?:選購|选购|購買|购买|purchase|buy|order)\s*([^，,。；;！？!?]{2,60})\s*[,，；;]\s*(?:即|所以|即係|即是)?\s*(?:合共|總共|总共|一共|共計|共计|in total|total of)\s*(?:要|需|有|為|为|是|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(部|台|件|個|个|套|份|盒|箱|包|堂|課|课|units?|pieces?|items?|sets?|boxes?|packs?|lessons?|sessions?|seats?|nights?)/iu);
+    if(goal && /(?:我要|我想|我哋|我们|需要|\b(?:i|we)\s+(?:want|need)\b)/iu.test(stated.slice(0,goal.index))){
+      const noun=clean(goal[1],80),count=countTokenValue(goal[2]),unit=goal[3];
+      const slug=noun.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"-").replace(/^-+|-+$/gu,"").slice(0,64);
+      const id="generic:customer-goal:"+slug;
+      if(noun.length>=2&&slug&&count!==null&&count>0&&count<=1000&&
+        state.entities.every(e=>e.entity_id!==id&&e.provenance.source_message_id!==input.source_message_id)){
+        state=reduceCommerceState(state,[{type:"ENSURE_ENTITY",entity:{
+          entity_id:id,category:"generic_product",brand:null,model:null,
+          quantity:count,status:"tentative",
+          attributes:{product_name:noun,customer_subject_aliases:[noun],
+            quantity_basis:"customer_explicit",unit},
+          constraints:{},provenance:{source_type:"customer",
+            source_message_id:input.source_message_id,recorded_at:input.occurred_at??null}
+        }}]);
+      }
+    }
+  }
   // An explicit customer-owned declaration can accompany ASK_FACT/general
   // guidance. Commit only literal-source-backed changed leaves via the original
   // deterministic reducer and source-message CAS, never a merchant claim or

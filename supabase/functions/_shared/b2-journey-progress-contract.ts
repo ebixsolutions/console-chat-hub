@@ -26,7 +26,7 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
   const identifiers = (part: string): string[] => part.match(/\b(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9]+(?:[-_][a-z0-9]+)*\b/gi) ?? [];
 
   const aliases = (part: string) => [...new Set([
-    ...(() => { const match = resolveSourceOwnedSubject(state, part, { include_inactive: true }); return match.kind === "one" ? [match.entity.category] : []; })(),
+    ...(() => { const match = resolveSourceOwnedSubject(state, part, { include_inactive: true, mode:"mutation" }); return match.kind === "one" ? [match.entity.category] : []; })(),
     // Historical industry taxonomy never supplies implicit lifecycle aliases.
     ...state.entities.filter((entity) =>
       [entity.category, entity.model, entity.attributes.product_name]
@@ -57,14 +57,27 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
       plans[0].action = "cancelled";
       continue;
     }
-    const sourceMatch = resolveSourceOwnedSubject(state,part,{include_inactive:true});
+    const sourceMatch = resolveSourceOwnedSubject(state,part,{include_inactive:true,mode:"mutation"});
     if(sourceMatch.kind==="ambiguous")return ambiguous();
+    // Fuzzy overlap may locate a noun for a read-only answer but must never
+    // mutate a whole aggregate merely because it contains a named part.
+    const loose=resolveSourceOwnedSubject(state,part,{include_inactive:true});
+    if(sourceMatch.kind==="none" && loose.kind!=="none" && !identifiers(part).length)
+      return ambiguous();
     let keys = aliases(part);
     if (/兩樣都|两样都|both\b/i.test(part)) {
-      keys = [...new Set(state.entities.filter((entity) =>
-        entity.status !== "deferred" && entity.status !== "cancelled"
-      ).map((entity) => entity.category))];
-      if (keys.length !== 2) return ambiguous();
+      // Exactly two verified customer-owned active entities, even if their
+      // generic category is identical; no category-wide mutation authority.
+      const active=state.entities.filter(entity=>entity.status!=="deferred"&&
+        entity.status!=="cancelled"&&entity.status!=="superseded");
+      if(active.length!==2 || active.some(entity=>entity.provenance.source_type!=="customer"))
+        return ambiguous();
+      for(const entity of active){
+        if(plans.some(p=>p.target_entity_id===entity.entity_id))return ambiguous();
+        plans.push({target_category:entity.category,target_entity_id:entity.entity_id,
+          action:operation(part),focus_category:null});
+      }
+      continue;
     }
     if (keys.length !== 1 && !/兩樣都|两样都|both\b/i.test(part)) return ambiguous();
     for (const key of keys) {

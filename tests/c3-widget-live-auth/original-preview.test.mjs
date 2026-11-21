@@ -1677,11 +1677,14 @@ for(const mode of ['legacy','scoped','body-false','legacy-verdict','schema-parti
  if(mode==='schema-partial'){verifier.resolution='partial';verifier.demand_resolutions[0].status='partial';}
  const x=await setupInbox('none',{documents:docs},semantic,{scopeAnswer:mode!=='legacy',suggestions:[{content:mode==='legacy'?'Create the channel and setup is complete.':'The verified initial steps are to open LINE Developers, create a Provider and a LINE Login channel. Remaining settings are not verified.',tone_label:'Informative'}],verifier});
  f.rows.rag_trace=[];
- f.rows.messages=[{id:crypto.randomUUID(),conversation_id:x.c.id,role:'visitor',content:question,created_at:'2026-11-14T00:00:00Z',metadata:{},is_recalled:false}];
+ f.rows.messages=[{id:'10000000-0000-4000-8000-000000000001',conversation_id:x.c.id,role:'visitor',content:question,created_at:'2026-11-14T00:00:00Z',metadata:{},is_recalled:false}];
  try{const before=JSON.stringify(f.rows.messages),r=await x.send('suggest_reply',question,'conversation');
  if(['scoped','schema-partial'].includes(mode)){assert.equal(r.status,200,JSON.stringify(r));assert.equal(r.data.grounding_verification.question_resolution,'partial');assert.equal(r.data.grounding_verification.coverage_scope.cap_reason,mode==='scoped'?'status_capped_by_server':null);assert(!r.data.result.suggestions[0].content.includes('setup or activation'));const schema=x.modelRequests.find(r=>r.generationConfig?.responseSchema?.properties?.grounded).generationConfig.responseSchema;assert.deepEqual(schema.properties.resolution.enum,['partial','unsupported']);assert.match(r.data.result.suggestions[0].content,/This covers only/);}
  else assert(r.status>=400,JSON.stringify(r));
- if(mode==='body-false'){const trace=f.rows.rag_trace??[];assert(trace.some(row=>row.retrieved_chunks?.stage==='assist_grounding_reviewer_specifics'&&row.retrieved_chunks.payload.body?.includes('answer_body_scope_unverified')));assert(trace.some(row=>row.retrieved_chunks?.stage==='assist_grounding_verdict'&&row.retrieved_chunks.payload.body?.includes('grounding_rejection')));}
+ if(mode==='body-false'){const trace=f.rows.rag_trace??[];assert(trace.some(row=>row.retrieved_chunks?.stage==='assist_grounding_reviewer_specifics'&&row.retrieved_chunks.payload.body?.includes('answer_body_scope_unverified')));assert(trace.some(row=>row.retrieved_chunks?.stage==='assist_grounding_verdict'&&row.retrieved_chunks.payload.body?.includes('grounding_rejection')),
+ JSON.stringify(trace.map(row=>({stage:row.retrieved_chunks?.stage,
+  capture_state:row.retrieved_chunks?.payload?.capture_state,
+  fired_condition:row.retrieved_chunks?.decision_receipt?.fired_condition}))));}
 
  assert.equal(JSON.stringify(f.rows.messages),before);assert.equal(x.posts(),1);assert(x.model()<=3);
  }finally{globalThis.fetch=realFetch;}

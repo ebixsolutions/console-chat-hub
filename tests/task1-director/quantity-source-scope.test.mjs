@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
 import {reduceTurn,buildCommerceEntityHints} from '../../supabase/functions/_shared/commerce-state-runtime-base.ts';
 import {resolveIndustryContextualCandidate,resolveIndustryCustomerJourney} from '../../supabase/functions/_shared/industry-runtime-adapter.ts';
+import {resolveSourceOwnedSubject} from '../../supabase/functions/_shared/commerce-subject-resolution.ts';
+import {resolveEntityLifecyclePlan} from '../../supabase/functions/_shared/b2-journey-progress-contract.ts';
 
 const domains=[
  ['air_conditioner','CW-SUL70BA','部'],
@@ -247,4 +249,29 @@ test('same-target specification allocation uses the source count sum and never t
  }
  const foreign=fixture(domains[1]);foreign.state.entities[0].quantity=4;
  assert.equal(apply(foreign,'改做一部1匹，一部1.5匹。',frame(foreign,{operation:'SET_QUANTITY',quantity:2,topic:'air_conditioner',facts:[]})).entities[0].quantity,4);
+});
+
+test('A2 partial Han overlap is read-only and cannot change an aggregate',()=>{
+ const state=createEmptyConversationCommerceState();
+ state.entities=[{entity_id:'generic:whole',category:'generic_product',brand:null,
+  model:null,quantity:3,status:'tentative',attributes:{
+  product_name:'細房、大房、客廳冷氣',customer_subject_aliases:['細房、大房、客廳冷氣']},
+  constraints:{},provenance:{source_type:'customer',source_message_id:'source-original'}}];
+ assert.equal(resolveSourceOwnedSubject(state,'客廳冷氣',{mode:'read'}).kind,'one');
+ assert.equal(resolveSourceOwnedSubject(state,'取消客廳冷氣',{mode:'mutation'}).kind,'none');
+ assert.notEqual(resolveEntityLifecyclePlan('取消客廳冷氣',state).kind,'mutation');
+ assert.equal(resolveSourceOwnedSubject(state,'取消細房、大房、客廳冷氣',{mode:'mutation'}).kind,'one');
+ assert.equal(resolveSourceOwnedSubject(state,'unrelated words',{mode:'mutation',
+  accepted_entity_ref:'generic:whole'}).kind,'one');
+});
+test('B2 both uses two distinct source-owned generic entity IDs, not category count',()=>{
+ const state=createEmptyConversationCommerceState();
+ state.entities=['Blue jacket','Red jacket'].map((name,i)=>({
+  entity_id:'generic:item-'+i,category:'generic_product',brand:null,model:null,
+  quantity:1,status:'tentative',attributes:{product_name:name,customer_subject_aliases:[name]},
+  constraints:{},provenance:{source_type:'customer',source_message_id:'source-'+i}}));
+ const result=resolveEntityLifecyclePlan('both cancel',state);
+ assert.equal(result.kind,'mutation');
+ if(result.kind==='mutation')assert.deepEqual(result.plans.map(x=>x.target_entity_id).sort(),
+  state.entities.map(e=>e.entity_id).sort());
 });
