@@ -500,3 +500,89 @@ test('D4-2 six-industry twenty-four-cell baseline before generic repair',()=>{
   clarify:rows.filter(v=>v.status==='CLARIFY').length,
   scripted:true,real_model_calls:0,real_kb_calls:0,hosted:'NOT_RUN',acceptance:'NOT_CLAIMED'}));
 });
+
+
+/** D4-2 TIER1 (local half of the 24-cell strengthened baseline).
+ * The complete-handler C1/C3 half is in the existing emergency-p0 suite.
+ * Synthetic semantic frames are explicitly NOT real-model or Hosted evidence. */
+test('D4-2 tier1 six-industry corrected/cancelled and typed subject-value matrix',()=>{
+ const d=[
+  ['appliance','air_conditioner','冷氣','部','匹','細房冷氣','大房冷氣',1.5,2,'更正，只保留兩部冷氣，第三部暫緩。'],
+  ['beauty','beauty_service','美容療程','堂','分鐘','護膚療程A','護膚療程B',60,90,'更正，只保留兩堂療程，第三堂暫緩。'],
+  ['education','education_service','英語課','課','分鐘','英語課A','英語課B',45,90,'更正，只保留兩課，第三課延後再談。'],
+  ['restaurant','restaurant_service','套餐','份','位','A號餐枱','B號餐枱',4,6,'更正，只保留兩份套餐，第三份取消。'],
+  ['retail','retail_item','書枱','張','位','書枱A','書枱B',4,6,'更正，只保留兩張書枱，第三張取消。'],
+  ['saas','subscription','Team licenses','licenses','seats','Starter plan','Pro plan',4,6,'Correction: keep two licenses; postpone the third.']
+ ];
+ const rows=[],instrument=[];
+ for(const [industry,category,name,unit,propertyUnit,firstName,otherName,firstValue,otherValue,correction] of d){
+  const base=createEmptyConversationCommerceState();base.current_topic=category;
+  base.entities=[{...entity(name,3,'d4-t1-primary'),category,model:name,status:'tentative',
+   attributes:{product_name:name,unit},provenance:{source_type:'customer',source_message_id:'d4-original'}}];
+  try{
+   const first=base.entities[0];
+   const frame={version:'commerce-semantic-1.0.0',language:industry==='saas'?'en':'zh-TW',
+    operation:'SET_QUANTITY',intent:'other',topic:category,confidence:.98,
+    ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+    entities:[{entity_ref:first.entity_id,name,kind:industry==='appliance'||industry==='retail'?'physical_product':'service',
+      category_hint:category,sku:null,model:name,quantity:2,unit,attributes:{},constraints:{},capabilities:{},confidence:.96}],
+    referents:[],customer_facts:[{key:'browser_tabs',value:6}],requested_facts:[],
+    customer_correction:true,additive:false,explicit_negations:[],
+    transaction_state:'none',payment_state:'none',booking_state:'none',fulfillment_state:'none'};
+   const after=reduceTurn(base,{text:correction+(industry==='saas'?' I also have six browser tabs now.':' 另外現在只開6個瀏覽器分頁。'),
+      semantic_frame:frame,source_message_id:'d4-t1-correction',
+      company_id:'d4-t1-company',conversation_id:'d4-t1-ticket',
+      language:industry==='saas'?'en':'zh-TW'},[{entity_id:first.entity_id,
+      category,model:name,aliases:[name],attributes:{unit}}]);
+   const active=after.entities.filter(v=>v.status!=='cancelled'&&v.status!=='deferred');
+   const retained=active.find(v=>v.entity_id===first.entity_id);
+   const deferred=after.entities.filter(v=>v.status==='cancelled'||v.status==='deferred').length;
+   const count=retained?.quantity??null;
+   const status=count===2&&count!==6?(deferred>=1?'PASS':'CLARIFY'):'FAIL';
+   const row={case_id:'D4-T1-'+industry+'-C2_CORRECT_CANCEL',industry,question_class:'C2_CORRECT_CANCEL',
+    explicit_profile:null,effective_profile:after.current_industry??null,
+    status,reason_code:count!==2?'TARGET_NOT_UPDATED':deferred===0?'DEFERRED_MEMBER_NOT_TRACKED':'SOURCED_CORRECTION',
+    observations:{initial_count:3,target_count:2,decoy_count:6,actual_count:count,
+      deferred_count:deferred,provenance_source_matches:retained?.provenance?.source_message_id==='d4-t1-correction'},
+    profile_observed_from:'REDUCER_STATE',evidence_tier:'SCRIPTED_REDUCER_NOT_FULL_HANDLER'};
+   rows.push(row);console.log('D4_TIER1|'+JSON.stringify(row));
+  }catch(e){instrument.push({case_id:'D4-T1-'+industry+'-C2',error:String(e).slice(0,250)});}
+  try{
+   const key=industry==='appliance'?'horsepower':industry==='beauty'?'duration_minutes':
+     industry==='education'?'lesson_minutes':industry==='restaurant'?'seats_per_table':
+     industry==='retail'?'seat_capacity':'subscription_seats';
+   const original=industry==='saas'
+    ? 'I requested '+firstValue+' '+propertyUnit+' for '+firstName+
+      ' and '+otherValue+' '+propertyUnit+' for '+otherName+'.'
+    : '我之前要求'+firstName+firstValue+propertyUnit+'，'+otherName+otherValue+propertyUnit+'。';
+   const e1={...entity(firstName,1,'d4-t1-first'),category,model:firstName,
+     attributes:{product_name:firstName,[key]:firstValue,unit:propertyUnit}};
+   const e2={...entity(otherName,1,'d4-t1-other'),category,model:otherName,
+     attributes:{product_name:otherName,[key]:otherValue,unit:propertyUnit}};
+   const expected=String(firstValue)+' '+propertyUnit;
+   const input=fixture({source:original,question:industry==='saas'?'What '+key+' did I request for '+firstName+'?':'我之前要求'+firstName+'係幾多'+propertyUnit+'？',
+    key,value:expected,entity_id:'d4-t1-first',entities:[e1,e2],subjects:['d4-t1-first']});
+   const result=prepareConversationRecall(input,industry==='saas'?'en':'zh-TW').decision;
+   const attested=!!result.provenance?.evidence?.some(x=>x.evidence_source_message_id==='original-source');
+   const correct=result.handled&&attested&&String(result.value).includes(String(firstValue))&&
+    !String(result.value).includes(String(otherValue));
+   const status=correct?'PASS':result.handled?'FAIL':'CLARIFY';
+   const row={case_id:'D4-T1-'+industry+'-C4_MULTI_SUBJECT',industry,question_class:'C4_MULTI_SUBJECT',
+    explicit_profile:null,effective_profile:input.commerce?.state?.current_industry??null,
+    status,reason_code:correct?'ONE_SUBJECT_NUMERIC_TEXT_UNIT_ATTESTED':
+      result.handled?'WRONG_VALUE_OR_SUBJECT':String(result.reason??'SOURCE_OR_DIMENSION_UNVERIFIED'),
+    observations:{source_attribute_type:'number',source_memory_type:'text_with_unit',
+      source_number:firstValue,decoy_subject_number:otherValue,unit:propertyUnit,
+      handled:result.handled,source_attested:attested,answer_value_type:typeof result.value},
+    profile_observed_from:'CANONICAL_INPUT_STATE',
+    evidence_tier:'SOURCE_ISOLATED_NOT_FULL_HANDLER_NOT_REAL_MODEL'};
+   rows.push(row);console.log('D4_TIER1|'+JSON.stringify(row));
+  }catch(e){instrument.push({case_id:'D4-T1-'+industry+'-C4',error:String(e).slice(0,250)});}
+ }
+ console.log('D4_TIER1_LOCAL_SUMMARY|'+JSON.stringify({cells:rows.length,
+  pass:rows.filter(x=>x.status==='PASS').length,fail:rows.filter(x=>x.status==='FAIL').length,
+  clarify:rows.filter(x=>x.status==='CLARIFY').length,instrument_errors:instrument,
+  real_model_calls:0,real_kb_calls:0,hosted:'NOT_RUN'}));
+ assert.deepEqual(instrument,[],'instrument defects cannot be misclassified as product FAIL');
+ assert.equal(rows.length,12,'C2/C4 must produce all twelve source observations');
+});

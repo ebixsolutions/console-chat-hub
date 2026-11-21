@@ -3476,3 +3476,102 @@ for(const kind of ['retained-checkpoint','canonical-active','current-conflict'])
    assert.equal(f.tables.conversation_memory_state[0].memory.question_lifecycle.find(item=>item.source_message_id===reply.metadata.source_message_id)?.status,'resolved');
   }
  });
+
+
+/** D4-2 TIER1 full original generate-reply handler baseline (C1 and C3 per
+ * industry). Original synthetic seeds supply visitor wording. Transport uses
+ * only isolated SDK/LLM/KB fixtures: no real paid model, KB, or Hosted.
+ * D4-3 must not begin until these 12 + local C2/C4 12 are captured. */
+const d4Tier1Industries=[
+ ['appliance','冷氣','air_conditioner','部','zh-TW',
+   ['我要三部冷氣。','我之前提過要幾部冷氣？'],
+   ['我要三部冷氣。','更正，只保留兩部冷氣，第三部暫緩。']],
+ ...['beauty','education','restaurant','retail','saas'].map((name,index)=>{
+  const seeds=JSON.parse(fs.readFileSync(path.join(root,
+   'tests/task1-director/fixtures/task3c-replay/industry-seeds',name,'tasks.json'),'utf8'));
+  const recall=seeds.tasks.find(row=>row.seed_task_id==='SYNTHETIC-'+name+'-recall');
+  const correction=seeds.tasks.find(row=>row.seed_task_id==='SYNTHETIC-'+name+'-correction');
+  assert(recall?.turns?.length===2&&correction?.turns?.length>=2,'original seed missing '+name);
+  const details=[
+   ['美容療程','beauty_service','堂','zh-TW'],
+   ['英語課','education_service','課','zh-TW'],
+   ['套餐','restaurant_service','份','zh-TW'],
+   ['書枱','retail_item','張','zh-TW'],
+   ['licenses','subscription','licenses','en']][index];
+  return [name,...details,recall.turns,correction.turns.slice(0,2)];
+ })
+];
+for(const [index,d] of d4Tier1Industries.entries())for(const kind of ['C1_RECALL','C3_QUANTITY_WRITE'])
+ test('Task3C D4-2 TIER1 real Handler '+d[0]+' '+kind,async()=>{
+  const [industry,name,category,unit,language,recallTurns,correctionTurns]=d;
+  const row={case_id:'D4-T1-'+industry+'-'+kind,industry,question_class:kind,
+   explicit_profile:null,effective_profile:null,status:'FAIL',reason_code:'NOT_RUN',
+   observations:{},profile_observed_from:'ACTUAL_HANDLER_PERSISTED_COMMERCE_STATE',
+   evidence_tier:'FULL_HANDLER_ISOLATED_SCRIPTED_SEMANTIC_NOT_REAL_MODEL_NOT_HOSTED'};
+  let instrumentError=null;
+  try{
+   const oldSource=uuid(9500+index*3+(kind==='C1_RECALL'?0:1));
+   const newSource=uuid(9700+index*3+(kind==='C1_RECALL'?0:1));
+   const oldText=kind==='C1_RECALL'?recallTurns[0]:correctionTurns[0];
+   const question=kind==='C1_RECALL'?recallTurns[1]:
+     correctionTurns[1]+(language==='en'?' I also have six browser tabs now.':
+       ' 另外現在只開6個瀏覽器分頁。');
+   const initial=fixture(oldText,{source:oldSource,originalPreview:true,fullChain:true,
+    semantic:providerWire({language,intent:'customer_context_update',requested_facts:[],
+     entities:[{name,kind:category==='air_conditioner'||category==='retail_item'?'physical_product':'service',
+      quantity:3,unit,confidence:.98}]},'ADD_ITEM')});
+   const first=await initial.run();
+   const seeded=initial.tables.conversation_commerce_state[0]?.state;
+   row.observations.seed_status=first.status;
+   row.observations.seed_quantity=seeded?.entities?.find(x=>x.status!=='cancelled')?.quantity??null;
+   if(first.status!==200||!seeded?.entities?.length) {
+    row.reason_code='INITIAL_CUSTOMER_STATE_NOT_PERSISTED';
+   }else{
+    const semantic=kind==='C1_RECALL'
+     ? providerWire({language,intent:'merchant_facts',requested_facts:['quantity']},'ASK_FACT')
+     : providerWire({language,intent:'customer_context_update',customer_correction:true,
+       requested_facts:[],customer_facts:[{key:'browser_tabs',value:6}],
+       entities:[{name,kind:category==='air_conditioner'||category==='retail_item'?'physical_product':'service',
+        quantity:2,unit,confidence:.98}]},'SET_QUANTITY');
+    const actual=fixture(question,{source:newSource,originalPreview:true,fullChain:true,
+     previous:initial.tables,history:initial.tables.messages.slice().reverse(),
+     semantic,answer:'UNTRUSTED_MODEL_DRAFT_IS_NOT_CUSTOMER_SOURCE'});
+    const response=await actual.run();
+    const commerce=actual.tables.conversation_commerce_state[0]?.state;
+    const reply=actual.commits[0];
+    const profile=commerce?.current_industry??null;
+    const active=commerce?.entities?.filter(x=>x.status!=='cancelled'&&x.status!=='deferred')??[];
+    const quantities=active.map(x=>x.quantity);
+    const primary=active.find(x=>x.model===name||x.attributes?.product_name===name)??active[0];
+    const model=actual.requests.filter(x=>x.url.endsWith(':generateContent')).length;
+    const kb=actual.requests.filter(x=>x.url.includes('/rag/context-search')).length;
+    row.effective_profile=profile;
+    row.observations={...row.observations,http_status:response.status,
+     route:reply?.metadata?.response_route??null,reply_commits:actual.commits.length,
+     b2_commit_source:reply?.metadata?.b2_commit_source??null,semantic_fixture_calls:model,
+     kb_fixture_calls:kb,active_quantities:quantities,target_quantity:primary?.quantity??null,
+     decoy_quantity:6,source_matches:primary?.provenance?.source_message_id===newSource,
+     recall_attested:!!reply?.metadata?.recall_provenance?.some(e=>e.source_kind==='attested_customer_utterance'),
+     current_industry_readback:profile,original_seed_fixture:true};
+    const validDelivery=response.status===200&&actual.commits.length===1&&
+     reply?.metadata?.b2_commit_source==='commit_ai_reply_tx';
+    if(kind==='C1_RECALL'){
+     const hasThree=typeof reply?.content==='string'&&/(?:3|三|three)/i.test(reply.content);
+     const exact=validDelivery&&reply.metadata.response_route==='canonical_memory_recall'&&
+       row.observations.recall_attested&&hasThree&&kb===0;
+     row.status=exact?'PASS':reply?.metadata?.response_route==='canonical_memory_clarification'&&validDelivery?'CLARIFY':'FAIL';
+     row.reason_code=exact?'ORIGINAL_VISITOR_QUANTITY_RECALLED':
+       'HANDLER_RECALL_OR_REPLY_NOT_SOURCE_ATTESTED';
+    }else{
+     const exact=validDelivery&&row.observations.seed_quantity===3&&
+       primary?.quantity===2&&primary?.quantity!==6&&
+       row.observations.source_matches&&kb===0;
+     row.status=exact?'PASS':'FAIL';row.reason_code=exact?'REAL_HANDLER_SOURCE_BOUND_CORRECTION_NO_DECOY':
+       'CORRECTION_OR_DECOY_CONTAMINATED_PRODUCT';
+    }
+   }
+  }catch(e){instrumentError=String(e).slice(0,260);row.status='INSTRUMENT_ERROR';
+    row.reason_code='FIXTURE_THREW_NOT_PRODUCT_FAIL';row.observations.error=instrumentError;}
+  console.log('D4_TIER1|'+JSON.stringify(row));
+  assert.equal(instrumentError,null,'D4 fixture instrument error must be fixed, not filed as a product defect');
+ });
