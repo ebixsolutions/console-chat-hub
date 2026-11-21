@@ -2536,9 +2536,71 @@ function reduceTurnOperations(
   return focus ? state : restoreExplicitReturnTopic(state, input.text);
 }
 
+/** A unit-level partial hold is not cancellation/deferral of an entire item.
+ * The customer may retain two of three while postponing the third; preserve
+ * the customer-owned unit allocation without fabricating a third SKU/order. */
+function sourceBoundPartialUnitRetention(
+  previous:ConversationCommerceState,input:CommerceRuntimeInput,
+):CommerceStateEvent[] | null {
+  const frame=input.semantic_frame;
+  if(!frame||frame.confidence<0.72||frame.ambiguity.is_ambiguous||
+    !frame.customer_correction||!["SET_QUANTITY","UPDATE_ITEM"].includes(frame.operation)||
+    frame.entities.length!==1)return null;
+  const active=previous.entities.filter(e=>!["cancelled","deferred","superseded"].includes(e.status));
+  if(active.length!==1||previous.current_topic!==active[0].category)return null;
+  const entity=active[0],proposed=frame.entities[0];
+  if(proposed.confidence<0.72||proposed.quantity===null||!Number.isInteger(proposed.quantity)||
+    proposed.quantity<0||proposed.quantity>=entity.quantity)return null;
+  const unit=typeof entity.attributes.unit==="string"?entity.attributes.unit.trim():"";
+  if(!unit||unit.length>32||!/^[\p{L}\p{N}]+$/u.test(unit))return null;
+  const text=clean(input.text).normalize("NFKC");
+  const escaped=unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\/** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
+export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[]): ConversationCommerceState {
+  if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
+  let state = reduceTurnOperations(previous,input,hints);");
+  const number="([0-9]{1,4}|[一二兩两三四五六七八九十]|one|two|three|four|five|six|seven|eight|nine|ten)";
+  const retain=text.match(new RegExp("(?:只(?:保留|留低|留返)|keep)\\s*"+number+"\\s*"+escaped,"iu"));
+  if(!retain)return null;
+  const words:Record<string,number>={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
+  const quantity=countTokenValue(retain[1])??words[retain[1].toLowerCase()]??null;
+  if(quantity===null||quantity!==proposed.quantity||entity.quantity!==quantity+1)return null;
+  const inactive=new RegExp("(?:第(?:三|3)\\s*"+escaped+
+    "\\s*(?:暫緩|暂缓|取消|延後|延后|稍後|稍后)|(?:postpone|defer|cancel)\\s+(?:the\\s+)?(?:third|3rd|3)(?:\\s+"+
+    escaped+")?\\b)","iu");
+  if(!inactive.test(text))return null;
+  const names=[entity.model,entity.attributes.product_name].filter(
+    (v):v is string=>typeof v==="string"&&v.length>1);
+  if(!names.some(n=>matchesReferenceLabel(text,n))&&
+     !(proposed.entity_ref===entity.entity_id&&(!proposed.category_hint||proposed.category_hint===entity.category)))return null;
+  if(typeof proposed.unit==="string"&&proposed.unit&&
+     proposed.unit.toLowerCase()!==unit.toLowerCase())return null;
+  const found=[...text.matchAll(new RegExp(number+"\\s*"+escaped,"giu"))]
+    .filter(m=>text.slice(Math.max(0,(m.index??0)-1),m.index)!=="第")
+    .map(m=>countTokenValue(m[1])??words[m[1].toLowerCase()]??null)
+    .filter((n):n is number=>n!==null);
+  if(found.length!==1||found[0]!==quantity)return null;
+  const provenance={source_type:"customer" as const,source_message_id:input.source_message_id,
+    recorded_at:input.occurred_at??null};
+  return [
+    {type:"SET_ENTITY_QUANTITY",entity_id:entity.entity_id,quantity,provenance},
+    {type:"SET_ENTITY_CONSTRAINT",entity_id:entity.entity_id,key:"customer_inactive_unit_count",value:1,provenance},
+    {type:"SET_ENTITY_CONSTRAINT",entity_id:entity.entity_id,key:"customer_inactive_unit_status",
+      value:/取消|cancel/iu.test(text)?"cancelled":"deferred",provenance},
+  ];
+}
+
 /** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
 export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[]): ConversationCommerceState {
   if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
+  const partial=sourceBoundPartialUnitRetention(previous,input);
+  if(partial){
+    let state=reduceCommerceState(previous,partial);
+    // Extra browser-tab/background facts are not the entity's quantity.
+    const owned=sourceBoundMixedCustomerFactEvents(input.semantic_frame,state,input.text,
+      input.source_message_id,input.occurred_at??null);
+    if(owned.length)state=reduceCommerceState(state,owned);
+    return state;
+  }
   let state = reduceTurnOperations(previous,input,hints);
   // An explicit customer-owned declaration can accompany ASK_FACT/general
   // guidance. Commit only literal-source-backed changed leaves via the original
