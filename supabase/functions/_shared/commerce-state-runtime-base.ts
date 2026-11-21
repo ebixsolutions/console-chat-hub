@@ -2148,8 +2148,8 @@ function acceptedLifecycleEntityRef(
       !input.conversation_id || !input.company_id || !input.source_message_id ||
       isReadOnlyCommerceQuestion(input.text,frame))return null;
   const normalized=requirementMutationText(input.text);
-  const cancel=/(?:取消|\\bcancel\\b)/iu.test(normalized);
-  const defer=/(?:暫緩|暂缓|暫時唔買住|暫時不買|暂时不买|\\b(?:defer|pause)\\b)/iu.test(normalized);
+  const cancel=/(?:取消|\bcancel\b)/iu.test(normalized);
+  const defer=/(?:暫緩|暂缓|暫時唔買住|暫時不買|暂时不买|\b(?:defer|pause)\b)/iu.test(normalized);
   if(cancel===defer || (cancel && !["CANCEL_ITEM","REMOVE_ITEM"].includes(frame.operation)) ||
       (defer && frame.operation!=="DEFER"))return null;
   const refs=[...new Set(frame.referents.filter(ref=>
