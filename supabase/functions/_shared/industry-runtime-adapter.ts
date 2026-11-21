@@ -61,7 +61,22 @@ export function resolveIndustryCustomerJourney(input: {
     texts: [input.text],
     industry_identifier: input.state.current_industry,
   }).profile;
-  if (!profile || profile.id !== HOME_APPLIANCE_PROFILE_V1.id) return null;
+  // An established single customer-owned AC referent may be explicitly revisited.
+  // This is retained-state compatibility, NOT word-based profile inference.
+  const selected = input.state.entities.filter(entity =>
+    entity.category === "air_conditioner" &&
+    entity.status !== "cancelled" && entity.status !== "deferred");
+  const topic = clean(input.semantic_frame?.topic).toLowerCase();
+  const returning = !clean(input.state.current_industry) &&
+    topic === "air_conditioner" &&
+    clean(input.state.current_topic).toLowerCase() === "air_conditioner" &&
+    input.semantic_frame !== null && input.semantic_frame !== undefined &&
+    input.semantic_frame.confidence >= 0.72 &&
+    input.semantic_frame.ambiguity.is_ambiguous === false &&
+    selected.length === 1 && selected[0].provenance.source_type === "customer" &&
+    HOME_APPLIANCE_CATEGORIES.some(category => category.key === "air_conditioner" &&
+      category.aliases.some(alias => matchesReferenceLabel(input.text, alias)));
+  if ((!profile || profile.id !== HOME_APPLIANCE_PROFILE_V1.id) && !returning) return null;
   return homeApplianceCustomerJourneySignal(input);
 }
 

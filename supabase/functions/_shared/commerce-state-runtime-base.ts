@@ -2562,7 +2562,7 @@ function sourceBoundPartialUnitRetention(
   const quantity=countTokenValue(retain[1])??words[retain[1].toLowerCase()]??null;
   if(quantity===null||quantity!==proposed.quantity||entity.quantity!==quantity+1)return null;
   const inactive=new RegExp("(?:第(?:三|3)\\s*"+escaped+
-    "\\s*(?:暫緩|暂缓|取消|延後|延后|稍後|稍后)|(?:postpone|defer|cancel)\\s+(?:the\\s+)?(?:third|3rd|3)(?:\\s+"+
+    "\\s*(?:(?:暫時|暂时)\\s*)?(?:暫緩|暂缓|取消|延後|延后|稍後|稍后)|(?:postpone|defer|cancel)\\s+(?:the\\s+)?(?:third|3rd|3)(?:\\s+"+
     escaped+")?\\b)","iu");
   if(!inactive.test(text))return null;
   const names=[entity.model,entity.attributes.product_name].filter(
