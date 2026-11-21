@@ -117,3 +117,37 @@ Deno.test("Task3C reviewer email, phone and credential withhold the entire prote
   assert(!("decision_receipt" in row)&&!JSON.stringify(row).includes(secret));
  }
 });
+
+Deno.test("Task3C server UUID-like phone masks only inspected identity fields",async()=>{
+ const server={...scope,source_message_id:"23456789-abcd-4abc-8abc-abcdefabcdef"};
+ const evidence={source_message_id:server.source_message_id,request:{source_message_id:server.source_message_id},
+  verdict:{ok:false,grounding_rejection:{stage:"semantic_claims",reason:"answer_body_scope_unverified"}}};
+ const raw=JSON.stringify(evidence);
+ const plain=await captureProtectedDiagnosticText(raw,"SERVER_PIPELINE_SNAPSHOT");
+ const bound=await captureProtectedDiagnosticText(raw,"SERVER_PIPELINE_SNAPSHOT",server);
+ assert(plain.capture_state==="WITHHELD_SENSITIVE"&&plain.body===null);
+ assert(bound.capture_state==="CAPTURED"&&bound.body===raw);
+ assert(plain.sha256===bound.sha256&&plain.bytes===bound.bytes);
+ const user=await captureProtectedDiagnosticText(JSON.stringify({...evidence,
+  customer_text:"Customer typed 23456789-abcd-4abc-8abc-abcdefabcdef"}),"SERVER_PIPELINE_SNAPSHOT",server);
+ assert(user.capture_state==="WITHHELD_SENSITIVE"&&user.body===null);
+});
+Deno.test("Task3C Assist negative verdict preserves closed reason even with sensitive raw",async()=>{
+ const db=database();
+ const evidence={verdict:{ok:false,grounding_rejection:{stage:"semantic_claims",
+  reason:"answer_body_scope_unverified",demand_resolutions:[]}},user_text:"+852 6123 4567"};
+ assert(await writeProtectedPipelineEvidence(db,scope,"assist_grounding_verdict",evidence));
+ const row=db.writes[0].retrieved_chunks;
+ assert(row.payload.capture_state==="WITHHELD_SENSITIVE"&&row.payload.body===null);
+ assert(row.decision_receipt.outcome==="rejected"&&
+  row.decision_receipt.fired_condition==="answer_body_scope_unverified"&&
+  row.decision_receipt.fault_class==="content");
+});
+Deno.test("Task3C conflicting dual rejection writer schemas never select a reason",async()=>{
+ const db=database();
+ assert(await writeProtectedPipelineEvidence(db,scope,"assist_grounding_verdict",
+  {verdict:{ok:false,rejection:{stage:"semantic_claims",reason:"unsupported_semantic_claim"},
+   grounding_rejection:{stage:"semantic_claims",reason:"answer_body_scope_unverified"}}}));
+ const receipt=db.writes[0].retrieved_chunks.decision_receipt;
+ assert(receipt.outcome==="rejected"&&receipt.fired_condition==="NOT_CAPTURED");
+});

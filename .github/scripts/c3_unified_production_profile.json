@@ -1738,7 +1738,9 @@
   "supabase/functions/_shared/conversation-recall.ts": "d42db1534081d7aa54ba127e60b3679cf93b7dbc9cc2686f621474c20440fe33",
   "supabase/functions/_shared/conversation-service-planner.ts": "6764253062e6954b36e789b58badf48ce45e288abb8fcb7a515d03d4f5fc2298",
   "tests/task1-director/quantity-source-scope.test.mjs": "46a7bacc67bb4c914cc75cb286c6151bbafaa44eb5b970259fa29bbdd42451dc",
-  "supabase/functions/_shared/conversation-recall.test.ts": "d5150c45b09f51b47bb2eb527711c8d223db6e1cddff5e97fbcc6c752bf498bc"
+  "supabase/functions/_shared/conversation-recall.test.ts": "d5150c45b09f51b47bb2eb527711c8d223db6e1cddff5e97fbcc6c752bf498bc",
+  "supabase/functions/_shared/protected-pipeline-evidence.ts": "ae7fb88b45e5d62acd1bb0491e6d0fd5debfa81bd582b451d30c6b66e29ecfb1",
+  "tests/emergency-p0/protected-evidence.test.ts": "ede44d12f42355dd116f7cc5046715f340b46d464ee4bde37e1b984ae441d708"
 },
   "authorized_task3c_t06_turn2_source_sha256": {
   "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",

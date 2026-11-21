@@ -7,17 +7,34 @@ export interface ProtectedDiagnosticText {
 async function sha256(value: string): Promise<string> {
   return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value))),b=>b.toString(16).padStart(2,"0")).join("");
 }
+/** Mask only DB-verified server ID FIELDS on a temporary inspection copy.
+ * Raw data, SHA256, size, and customer/model text are never modified. */
+type VerifiedPipelineIds={company_id:string;conversation_id:string;source_message_id:string};
+function maskVerifiedIdentityFields(value:unknown,verified:VerifiedPipelineIds):unknown{
+ if(Array.isArray(value))return value.map(item=>maskVerifiedIdentityFields(item,verified));
+ if(value===null||typeof value!=="object")return value;
+ return Object.fromEntries(Object.entries(value as Record<string,unknown>).map(([key,part])=>{
+  const known=key==="company_id"?verified.company_id:key==="conversation_id"?verified.conversation_id:key==="source_message_id"?verified.source_message_id:null;
+  return [key,known!==null&&typeof part==="string"&&part===known?"[SERVER_VERIFIED_ID]":maskVerifiedIdentityFields(part,verified)];
+ }));
+}
+
 export async function captureProtectedDiagnosticText(
   value: string,
   origin: ProtectedDiagnosticText["capture_origin"],
+  verifiedIds?: VerifiedPipelineIds,
 ): Promise<ProtectedDiagnosticText> {
   const bytes = new TextEncoder().encode(value).byteLength;
   const hash = await sha256(value);
   // Whole-body withholding avoids retaining a partially scrubbed credential or
   // reporting truncated data as the actual complete model response.
   let inspected = value;
-  // Inspect escaped JSON strings too, without changing the captured bytes.
-  try { inspected += "\n" + JSON.stringify(JSON.parse(value)); } catch { /* Preserve malformed model text as received. */ }
+  // Unescape JSON; scan all customer text, but mask exact server-scope ID fields.
+  try {
+    const parsed=JSON.parse(value);
+    inspected=verifiedIds?JSON.stringify(maskVerifiedIdentityFields(parsed,verifiedIds)):
+      value+"\n"+JSON.stringify(parsed);
+  }catch{/* Scan malformed model text unchanged. */}
   const sensitive = /\bBearer\s+\S+|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|-----BEGIN [^-]*(?:PRIVATE KEY|CERTIFICATE)-----|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b|(?<![A-Za-z0-9])(?:\+?852[- .]?)?[23569]\d{3}[- .]?\d{4}(?![A-Za-z0-9])|(?<![A-Za-z0-9])\+\d{1,3}(?:[ .()-]?\d){7,14}(?![A-Za-z0-9])|\b(?:sk-[A-Za-z0-9_-]{12,}|AIza[A-Za-z0-9_-]{20,})|\b(?:password|authorization|x-api-key|api[_ -]?key|access[_ -]?token|refresh[_ -]?token|private[_ -]?key|client[_ -]?secret|service[_ -]?role[_ -]?key)\b/i.test(inspected.normalize("NFKC"));
   const state = bytes > 65_536 ? "WITHHELD_OVERSIZED" : sensitive ? "WITHHELD_SENSITIVE" : "CAPTURED";
   return {capture_origin: origin, capture_state: state, sha256: hash, bytes,
@@ -85,17 +102,22 @@ export async function safeGateReasonReceipt(scope:{
  const gates:Record<string,string>={grounding_verdict:"grounding_verifier",assist_grounding_verdict:"grounding_verifier",b2_verdict:"b2",semantic_validation:"semantic_validation",recovery_decision:"recovery"};
  const gate=gates[stage];if(!gate)return null;
  const obj=(v:unknown):Record<string,unknown>=>v&&typeof v==="object"&&!Array.isArray(v)?v as Record<string,unknown>:{};
- const x=obj(evidence),verdict=obj(x.verdict),rejection=obj(verdict.rejection),decision=obj(x.decision);
+ const x=obj(evidence),verdict=obj(x.verdict);
+ const ordinary=obj(verdict.rejection),assist=obj(verdict.grounding_rejection);
+ const both=Object.keys(ordinary).length>0&&Object.keys(assist).length>0;
+ const conflict=both&&(ordinary.reason!==assist.reason||ordinary.stage!==assist.stage);
+ const rejection=conflict?{}:Object.keys(ordinary).length?ordinary:assist;
+ const decision=obj(x.decision);
  const allow=new Set(["raw_not_array","demand_count_mismatch","invalid_grounding_evidence","invalid_item",
  "unexpected_key","unknown_or_duplicate_demand","invalid_status","invalid_evidence_ids",
  "evidence_id_not_used_or_bound","blocked_demand_must_be_unavailable","kb_resolution_requires_evidence",
  "unavailable_cannot_cite_evidence","supported_with_missing_reasons","used_evidence_unattributed",
  "question_resolution_missing","question_resolution_unsupported","question_resolution_demand_inconsistent",
  "unsupported_semantic_claim","verifier_invalid_output","verifier_demand_resolution_invalid",
- "question_not_resolved_by_applicable_evidence"]);
+ "question_not_resolved_by_applicable_evidence","answer_body_scope_unverified"]);
  const reason=(v:unknown)=>typeof v==="string"&&allow.has(v)?v:null;
  const code=(v:unknown)=>typeof v==="string"&&/^[A-Z0-9_]{3,80}$/u.test(v)?v:null;
- const fired=gate==="grounding_verifier"?reason(rejection.reason)??reason(verdict.reason):
+ const fired=gate==="grounding_verifier"?(conflict?null:reason(rejection.reason)??reason(verdict.reason)):
    gate==="b2"?code(decision.code):gate==="recovery"?code(x.fallback_condition):code(x.failure_code);
  const outcome=gate==="grounding_verifier"?verdict.ok===true?"accepted":verdict.ok===false?"rejected":"NOT_CAPTURED":
    gate==="b2"?decision.decision==="allow"?"accepted":decision.decision==="block"?"rejected":"NOT_CAPTURED":
@@ -138,7 +160,7 @@ export async function writeProtectedPipelineEvidence(db: any, scope: {
       .eq("id",scope.source_message_id).eq("conversation_id",scope.conversation_id).maybeSingle();
     if (se || source?.id!==scope.source_message_id || source.conversation_id!==scope.conversation_id ||
       source.role!=="visitor" || source.is_recalled!==false) return false;
-    const payload=await captureProtectedDiagnosticText(JSON.stringify(evidence),"SERVER_PIPELINE_SNAPSHOT");
+    const payload=await captureProtectedDiagnosticText(JSON.stringify(evidence),"SERVER_PIPELINE_SNAPSHOT",scope);
     const decision_receipt=await safeGateReasonReceipt(scope,stage,evidence,payload);
     const {error}=await db.from("rag_trace").insert({id:crypto.randomUUID(),
       conversation_id:scope.conversation_id,message_id:scope.source_message_id,
