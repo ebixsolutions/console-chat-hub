@@ -194,6 +194,12 @@ test('explicit restoration of the one named room retains its lawful existing pat
 test('a fresh multi-room purchase goal updates its aggregate without reviving the cancelled scope',()=>{
  const f=cancelledRoomFixture(),s=frame(f,{operation:'ADD_ITEM',quantity:3,topic:'air_conditioner',facts:[]});s.customer_correction=false;
  const after=apply(f,'我要為兩間睡房同一個客廳選購冷氣，即合共三部；這是測試資料。',s);
+ if(after.entities[0].quantity!==3)console.log('D4_GENERIC_GOAL_DIAG|'+JSON.stringify({
+   case_id:'fresh-multi-subject-goal',entities:after.entities.map(e=>({
+    id:e.entity_id,qty:e.quantity,status:e.status,category:e.category,
+    source:e.provenance?.source_message_id,display:e.attributes.product_name,name:e.attributes.name})),
+   current_topic:after.current_topic,current_intent:after.current_intent,
+   expected:3,source_attested:false}));
  assert.equal(after.entities[0].quantity,3);assert.equal(after.entities[1].status,'cancelled');
 });
 test('multiple active quantities are not made unambiguous by a generic category name',()=>{

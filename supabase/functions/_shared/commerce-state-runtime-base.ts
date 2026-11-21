@@ -979,6 +979,18 @@ export function isReadOnlyCurrentStateQuery(
   text: string,
   semanticFrame?: CommerceSemanticFrame | null,
 ): boolean {
+  // A genuine customer-owned first selection goal remains a state-bearing
+  // statement even when the same message also asks a product question. A
+  // model-only ADD_ITEM proposal never suffices without its literal subject
+  // and an actual customer action in this very source turn.
+  const explicitGenericGoal=semanticFrame?.operation==="ADD_ITEM" &&
+    semanticFrame.confidence>=0.72 && !semanticFrame.ambiguity.is_ambiguous &&
+    semanticFrame.entities.length>0 &&
+    /(?:想揀|想選|想选|想買|想买|選購|选购|購買|购买|want to (?:choose|select|buy)|i (?:want|need) to (?:choose|buy))/iu.test(text) &&
+    !/(?:以前|之前|上次|曾經|曾经|historically|last time)/iu.test(text) &&
+    semanticFrame.entities.some(entity=>entity.confidence>=0.72 &&
+      typeof entity.name==="string" && matchesReferenceLabel(text,entity.name));
+  if(explicitGenericGoal)return false;
   if (isCurrentRequirementsRecap(text)) return true;
   if (isReadOnlyCurrentStateAggregateQuery(text, semanticFrame)) return true;
   if (isReadOnlyMemoryOrCurrentStateRecall(text, semanticFrame)) return true;
