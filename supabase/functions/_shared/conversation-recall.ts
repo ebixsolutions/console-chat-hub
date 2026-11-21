@@ -1997,11 +1997,90 @@ export function hasAttestedUnlabelledCustomerRecall(input:ConversationRecallInpu
      input.memory?.commerce_state_revision!==input.commerce?.revision||
      !decision.provenance.evidence.length)return false;
   const quoted=attestedCustomerQuantity(input);
+  const typed=sourceAttestedTypedCustomerAttribute(input);
   return decision.provenance.evidence.every(e=>e.temporal_scope==="current"&&(
     (e.source_kind==="customer_owned_canonical_property"||
      e.source_kind==="retained_customer_fact")&&originalSourceAttests(input,e,false)||
     e.source_kind==="attested_customer_utterance"&&e.fact_type==="quantity"&&quoted!==null&&
-       quoted.evidence_source_message_id===e.evidence_source_message_id&&quoted.value===e.value));
+       quoted.evidence_source_message_id===e.evidence_source_message_id&&quoted.value===e.value||
+    e.source_kind==="attested_customer_utterance"&&e.fact_type==="customer_fact"&&
+       typed!==null&&typed.handled&&typed.provenance.evidence.some(t=>
+         t.evidence_source_message_id===e.evidence_source_message_id&&t.state_path===e.state_path&&t.value===e.value)));
+}
+
+/** D4-3: source-bound customer-owned numeric attribute recall.
+ * Selection is allowed by an existing model proposal, but the fact must
+ * agree between current Memory, canonical Commerce and one original Visitor
+ * clause for exactly one named subject; merchant/transaction data is excluded. */
+function sourceAttestedTypedCustomerAttribute(
+  input:ConversationRecallInput,
+):ConversationRecallDecision | null {
+  const p=input.customer_recall_proposal,m=input.memory,c=input.commerce;
+  if(!p||!m||!c||input.trusted_visitor_source_status!=="verified"||
+    p.intent!=="customer_fact_recall"||p.requested_facts.length!==1||
+    p.company_id!==input.company_id||p.conversation_id!==input.conversation_id||
+    p.source_message_id!==input.source_message_id||
+    c.company_id!==input.company_id||c.conversation_id!==input.conversation_id||
+    m.commerce_state_revision!==c.revision||
+    !/(?:之前|頭先|头先|剛才|刚才|曾經|曾经|要求|提過|提过|did\s+i|i\s+(?:request|ask|mention)|earlier|previously)/iu.test(input.question))return null;
+  const key=p.requested_facts[0];
+  if(!/^[a-z][a-z0-9_]{1,60}$/iu.test(key)||
+    /(?:price|stock|availability|order|payment|refund|policy|tier|entitlement|warranty|delivery|booking|identity|email|phone)/iu.test(key))return null;
+  const named=c.state.entities.filter(isCurrentEntity).filter(e=>
+    [e.model,e.attributes.product_name].some(v=>typeof v==="string"&&v.length>1&&
+      phrase(input.question,v)));
+  if(named.length!==1)return null;
+  const e=named[0];
+  const facts=m.current_customer_facts.filter(f=>f.authority==="customer"&&
+    keyNorm(f.key)===keyNorm(key)&&f.entity_id===e.entity_id&&
+    typeof f.value==="string"&&!!f.source_message_id&&f.source_message_id!==input.source_message_id);
+  if(facts.length!==1)return null;
+  const fact=facts[0];
+  const declaration=String(fact.value).trim().match(/^([0-9]+(?:\.[0-9]+)?)\s*([\p{L}][\p{L}\p{N}-]{0,31})$/u);
+  if(!declaration)return null;
+  const number=Number(declaration[1]),unit=declaration[2];
+  if(!Number.isFinite(number)||number<0||number>1000000||
+    typeof e.attributes[key]!=="number"||e.attributes[key]!==number)return null;
+  const rows=input.trusted_visitor_source_rows??[];
+  const originals=rows.filter(row=>row.id===fact.source_message_id&&row.content.length<=2400);
+  if(originals.length!==1)return null;
+  const source=originals[0].content.normalize("NFKC");
+  const labels=[e.model,e.attributes.product_name].filter(
+    (v):v is string=>typeof v==="string"&&v.length>1&&phrase(source,v));
+  if(!labels.length)return null;
+  const valuePattern=new RegExp(declaration[1].replace(".","\\.")+"\\s*"+
+    unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\/** Semantic understanding proposes a field, not an exclusive answer route.
+ * F1/S3 + F3/S4: preserve the preexisting typed resolver for unsupported
+ * or compound recalls, while scope/source/merchant protections fail closed. */
+export function resolveConversationRecall("),"iu");
+  const sourceProves=labels.some(label=>{
+    const at=source.toLowerCase().indexOf(label.toLowerCase());
+    if(at<0)return false;
+    const after=source.slice(at+label.length).split(/[，,。;；]/u)[0].slice(0,24);
+    const before=source.slice(Math.max(0,at-40),at).split(/[，,。;；]/u).at(-1)??"";
+    const forward=after.match(valuePattern),backward=before.match(valuePattern);
+    return Boolean(forward&&forward.index!==undefined&&forward.index<=8||
+      backward&&backward.index!==undefined&&
+        /(?:for|of)\s*$/iu.test(before.slice(backward.index+backward[0].length)));
+  });
+  const sourceIndex=rows.findIndex(row=>row.id===fact.source_message_id);
+  const superseded=sourceIndex<0||rows.slice(0,sourceIndex).some(row=>
+    labels.some(label=>phrase(row.content,label))&&
+    /更正|改為|改为|取消|暫緩|暂缓|change|correct|cancel|defer/iu.test(row.content));
+  if(!sourceProves||superseded)return null;
+  const index=m.current_customer_facts.indexOf(fact);
+  const evidence:RecallEvidence={fact_type:"customer_fact",
+    state_path:"current_customer_facts."+index+".value",value:fact.value,
+    authority:"CURRENT_CUSTOMER_MEMORY",entity_id:e.entity_id,
+    entity_label:labels[0],region:fact.region??null,
+    evidence_source_message_id:fact.source_message_id,temporal_scope:"current",
+    source_kind:"attested_customer_utterance",attribute_key:key};
+  return {handled:true,authority:"CURRENT_CUSTOMER_MEMORY",
+    fact_type:"customer_fact",state_path:evidence.state_path,value:fact.value,
+    provenance:{conversation_id:input.conversation_id,company_id:input.company_id,
+      source_message_id:input.source_message_id,memory_revision:m.memory_revision,
+      commerce_state_revision:c.revision,commerce_source_message_id:c.source_message_id,
+      evidence:[evidence]}};
 }
 
 /** Semantic understanding proposes a field, not an exclusive answer route.
@@ -2011,6 +2090,8 @@ export function resolveConversationRecall(
   input: ConversationRecallInput,
 ): ConversationRecallDecision {
   if (input.explicit_handoff) return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
+  const typedCustomer=sourceAttestedTypedCustomerAttribute(input);
+  if(typedCustomer) return typedCustomer;
   // Historical customer speech must not fall back to an unverified stored
   // number (the original 6 vs 3 defect). Operational current status/quantity
   // is separately governed by canonical lifecycle and revision controls.
@@ -2649,6 +2730,12 @@ export function renderConversationRecall(
       v = e.value
         ? ["已確認", "已确认", "confirmed"][l]
         : ["尚未確認", "尚未确认", "not confirmed"][l];
+    }
+    if (e.fact_type === "customer_fact" && e.source_kind === "attested_customer_utterance" && e.entity_label) {
+      lines.push(l===2 ? "You previously stated "+e.entity_label+": "+String(e.value)+"."
+        : l===1 ? "你之前提供的"+e.entity_label+"是："+String(e.value)+"。"
+        : "你之前提過"+e.entity_label+"係："+String(e.value)+"。");
+      continue;
     }
     if (e.fact_type === "delivery_preference") {
       lines.push([
