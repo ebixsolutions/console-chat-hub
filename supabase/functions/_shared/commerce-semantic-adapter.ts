@@ -92,6 +92,7 @@ export function semanticFrameToEntityHints(
         semantic_frame_version: frame.version,
         semantic_operation: frame.operation,
         product_name: entity.name,
+        customer_subject_aliases: [entity.name,entity.model,entity.sku].filter((label):label is string=>typeof label==="string"&&label.trim().length>=2),
         commerce_kind: entity.kind,
         unit: entity.unit,
         sku: entity.sku,
@@ -358,6 +359,7 @@ export function semanticFrameToStateEvents(
               // The accepted frame preserves the visitor's literal subject
               // even before a product-specific hint or profile exists.
               product_name: clean(entity.name,160),
+              customer_subject_aliases: [entity.name,entity.model,entity.sku].filter((label):label is string=>typeof label==="string"&&label.trim().length>=2),
               unit: entity.unit,
               commerce_kind: entity.kind,
               quantity_basis: entity.quantity === null ? "system_default" : "customer_explicit",

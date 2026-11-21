@@ -1,4 +1,5 @@
 import { matchesReferenceLabel } from "./industry-agent-registry.ts";
+import { resolveSourceOwnedSubject } from "./commerce-subject-resolution.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { ScopedCustomerValue } from "./contextual-customer-update.ts";
 import { sameCanonicalJson } from "./canonical-json.ts";
@@ -25,6 +26,7 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
   const identifiers = (part: string): string[] => part.match(/\b(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9]+(?:[-_][a-z0-9]+)*\b/gi) ?? [];
 
   const aliases = (part: string) => [...new Set([
+    ...(() => { const match = resolveSourceOwnedSubject(state, part, { include_inactive: true }); return match.kind === "one" ? [match.entity.category] : []; })(),
     // Historical industry taxonomy never supplies implicit lifecycle aliases.
     ...state.entities.filter((entity) =>
       [entity.category, entity.model, entity.attributes.product_name]
@@ -55,6 +57,8 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
       plans[0].action = "cancelled";
       continue;
     }
+    const sourceMatch = resolveSourceOwnedSubject(state,part,{include_inactive:true});
+    if(sourceMatch.kind==="ambiguous")return ambiguous();
     let keys = aliases(part);
     if (/兩樣都|两样都|both\b/i.test(part)) {
       keys = [...new Set(state.entities.filter((entity) =>
@@ -65,13 +69,13 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
     if (keys.length !== 1 && !/兩樣都|两样都|both\b/i.test(part)) return ambiguous();
     for (const key of keys) {
       const action=operation(part), explicitIds=identifiers(part);
-      const namedEntities=state.entities.filter(entity=>identityValues(entity).some(value=>matchesReferenceLabel(part,value)) || explicitIds.some(id=>identityValues(entity).some(value=>identifiers(value).includes(id))));
+      const namedEntities=sourceMatch.kind==="one"?[sourceMatch.entity]:state.entities.filter(entity=>identityValues(entity).some(value=>matchesReferenceLabel(part,value)) || explicitIds.some(id=>identityValues(entity).some(value=>identifiers(value).includes(id))));
       if(explicitIds.length && explicitIds.some(id=>!namedEntities.some(entity=>identityValues(entity).some(value=>identifiers(value).includes(id)))))return ambiguous();
       const candidates=(namedEntities.length?namedEntities:state.entities.filter(entity=>entity.category===key)).filter(entity=>entity.category===key && (action==="cancelled" || entity.status!=="cancelled"));
       if(candidates.length!==1)return ambiguous();
       const target=candidates[0];
       if(plans.some(plan=>plan.target_entity_id ? plan.target_entity_id===target.entity_id : plan.target_category===target.category))return ambiguous();
-      plans.push({target_category:key,action,focus_category:focusKeys[0]??null,...(state.entities.filter(entity=>entity.category===key).length>1?{target_entity_id:target.entity_id}:{})});
+      plans.push({target_category:key,action,focus_category:focusKeys[0]??null,...(state.entities.filter(entity=>entity.category===key).length>1 || key.startsWith("generic") ? {target_entity_id:target.entity_id} : {})});
     }
   }
   if (!plans.length || plans.some((plan) =>
@@ -119,7 +123,7 @@ export function verifyEntityLifecycleTransition(
     if (!targetIds.includes(entity.entity_id)) continue;
     const changed = after.entities[index];
     if (changed?.entity_id !== entity.entity_id || changed.status !==
-      resolved.plans.find((plan) => plan.target_category === entity.category)?.action ||
+      resolved.plans.find((plan) => plan.target_entity_id ? plan.target_entity_id === entity.entity_id : plan.target_category === entity.category)?.action ||
       changed.provenance.source_type !== "customer" ||
       changed.provenance.source_message_id !== sourceMessageId) return { valid: false };
     expected.entities[index] = structuredClone(changed);
@@ -135,7 +139,7 @@ export function verifyEntityLifecycleTransition(
   expected.conversion.cancelled_entity_ids = [...new Set([
     ...before.conversion.cancelled_entity_ids,
     ...resolved.plans.filter((plan) => plan.action === "cancelled").flatMap((plan) =>
-      targetIds.filter((id) => before.entities.find((entity) => entity.entity_id === id)?.category === plan.target_category)),
+      targetIds.filter((id) => plan.target_entity_id ? id === plan.target_entity_id : before.entities.find((entity) => entity.entity_id === id)?.category === plan.target_category)),
   ])];
   if (!sameCanonicalJson(expected, after)) return { valid: false };
   for (const [index, entity] of before.entities.entries()) {

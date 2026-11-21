@@ -169,7 +169,7 @@ const TASK3C_KB_BINDING_SOURCE=Object.freeze({"supabase/migrations/2026111103000
 
 // Same Task3C D4 NO INDUSTRY repair: exact current Source hash only. Historical
 // frozen hash maps and the original Closure Contract remain immutable.
-const TASK3C_D4_NO_INDUSTRY_SOURCE=Object.freeze({"supabase/functions/_shared/commerce-state-runtime-base.ts":"3daa031e25bda2bf8ad63d492706cba339e3915458266c8c517c0810bbd92880"});
+const TASK3C_D4_NO_INDUSTRY_SOURCE=Object.freeze({"supabase/functions/_shared/commerce-state-runtime-base.ts":"3daa031e25bda2bf8ad63d492706cba339e3915458266c8c517c0810bbd92880","supabase/functions/_shared/b2-journey-progress-contract.ts":"5325344e1627cfb63b459ff5a99ea9da73c202a7bab971f63426d12ff16146fa","supabase/functions/_shared/commerce-semantic-adapter.ts":"89d3322e98ca114c9d01ec02eb2b634fadaaf5e34cd0455ce5d514d7d8d3d3b2","supabase/functions/_shared/commerce-subject-resolution.ts":"72752c02f4d1c136862dbb24db55d67b91da5a2540c9277bf9f238f27e95be0d"});
 
 export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs.readFileSync(path.join(root,PROFILE_PATH))),expectedIdentity,sourceOnly=false}={}){
  must(JSON.stringify(profile.authorized_task3c_d4_no_industry_sha256)===JSON.stringify(TASK3C_D4_NO_INDUSTRY_SOURCE),'task3c_d4_no_industry_signed_scope_drift');
