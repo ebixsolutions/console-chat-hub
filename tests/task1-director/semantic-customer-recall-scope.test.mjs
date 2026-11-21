@@ -200,6 +200,23 @@ test('Task3C N1/N3 exact 13-case clean-source differential versus deployed-v289 
    }
    const equal=before.handled===after.handled &&
       (!before.handled||JSON.stringify(before.value)===JSON.stringify(after.value));
+   // Baseline v289 gave a known wrong answer to original T17.
+   // Recognize only a source-verified corrected two and a not-yet-executed
+   // cancellation request, never any arbitrary divergence from that baseline.
+   const correctedT17=caseId==='T17'&&after.handled&&
+     after.fact_type==='quantity+entity_status'&&
+     after.provenance.company_id===company_id&&
+     after.provenance.conversation_id===conversation_id&&
+     after.provenance.evidence.some(e=>e.fact_type==='quantity'&&e.value===2&&
+       !!e.evidence_source_message_id&&
+       earlier.some(row=>row.id===e.evidence_source_message_id&&
+         row.content.includes('只保留兩間房的兩部')))&&
+     after.provenance.evidence.some(e=>e.fact_type==='entity_status'&&
+       e.source_kind==='attested_customer_utterance'&&
+       !!e.evidence_source_message_id&&
+       earlier.some(row=>row.id===e.evidence_source_message_id&&row.content.includes('客廳')));
+   if(caseId==='T17')assert(correctedT17,
+     'source-proven T17 must retain two without inventing a completed cancellation');
    // Source route decisions only: report concise path/why without disclosing
    // preserved fixture addresses, recipient names or contact numbers.
    const status={
@@ -216,10 +233,11 @@ test('Task3C N1/N3 exact 13-case clean-source differential versus deployed-v289 
     })):null,
     value_equal:before.handled&&after.handled?equal:null,
     independent_setup_turns:setup.length,
-    result:before.handled&&!equal?'REGRESSION':after.handled?'SOURCE_ANSWER':'SOURCE_UNRESOLVED'
+    result:correctedT17&&!equal?'SOURCE_CORRECTION_VERIFIED':
+      before.handled&&!equal?'REGRESSION':after.handled?'SOURCE_ANSWER':'SOURCE_UNRESOLVED'
    };
    console.log('C3_N1_N3_DIFFERENTIAL|'+JSON.stringify(status));
-   if(before.handled&&!equal)regressions++;
+   if(before.handled&&!equal&&!correctedT17)regressions++;
   }
   assert.equal(compared,13);
   assert.equal(regressions,0,'new semantic route may not be worse than the baseline on a canonical source-proven case');
