@@ -6,7 +6,7 @@ import type {
 } from "./commerce-state-contract.ts";
 import { splitCustomerOperationClauses, hasRequirementsRecapCue, isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall, withoutExcludedLookups } from "./commerce-state-authority.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
-import { industryEntityLabel, industryEntityQuantityUnit } from "./industry-runtime-adapter.ts";
+// Phase 1 recap never imports an industry-specific display vocabulary.
 import { renderEnglishRequirement } from "./commerce-capability-runtime.ts";
 import { classifyCanonicalConversationTurn } from "./conversation-semantic-contract.ts";
 
@@ -751,26 +751,13 @@ function fieldValue(field: RecallFact, key: string, value: unknown): unknown {
     ? !value
     : value;
 }
-const TYPE_ALIASES: string[][] = [
-  [
-    "aircon",
-    "air conditioner",
-    "air conditioning",
-    "ac",
-    "冷氣",
-    "冷氣機",
-    "冷气",
-    "空調",
-    "空调",
-  ],
-  ["washer", "washing machine", "洗衣機", "洗衣机"],
-];
+const TYPE_ALIASES: string[][] = []; // No appliance/category alias table in Phase 1.
 function entityAliases(e: CommerceEntity): string[] {
   const values = [
     e.entity_id,
     e.category,
     e.category.replace(/_/g, " "),
-    ...(["en", "zh-TW", "zh-CN"] as const).map(language => industryEntityLabel(e.entity_id, language)),
+    // Explicit entity names come from source-bound canonical fields.
     e.brand,
     e.model,
     ...["name", "product_name", "display_name", "original_name", "sku"].map(
@@ -2836,23 +2823,18 @@ function renderCustomerRecap(value: unknown, language: string): string {
   const active = entities.filter(e => !["deferred", "cancelled"].includes(e.status));
   const label = (e: CommerceEntity) => typeof e.attributes.product_name === "string"
     ? display(e.attributes.product_name)
-    : industryEntityLabel(e.entity_id, l === 2 ? "en" : l === 1 ? "zh-CN" : "zh-TW")
-      ?? industryEntityLabel(e.category, l === 2 ? "en" : l === 1 ? "zh-CN" : "zh-TW")
-      ?? (typeof e.attributes.name === "string" ? display(e.attributes.name) : null)
+    : (typeof e.attributes.name === "string" ? display(e.attributes.name) : null)
       ?? (e.model ? display(e.model) : display(e.category.replace(/_/g, " ")));
   const unitLabels: Record<string, [string, string]> = {
     seat: ["席", "席"], seats: ["席", "席"], session: ["節", "节"], sessions: ["節", "节"],
     item: ["個", "个"], items: ["個", "个"], unit: ["個", "个"], units: ["個", "个"],
   };
-  const rooms: Record<string, [string, string, string]> = {
-    study: ["書房", "书房", "study"], small_bedroom: ["細房", "小卧室", "small bedroom"],
-    large_bedroom: ["大房", "大卧室", "large bedroom"], living_room: ["客廳", "客厅", "living room"],
-  };
+  const rooms: Record<string, [string, string, string]> = {}; // No implicit room labels.
   const describe = (e: CommerceEntity): string => {
     const unit = typeof e.attributes.unit === "string" ? e.attributes.unit
-      : industryEntityQuantityUnit(e.category, l === 2 ? "en" : l === 1 ? "zh-CN" : "zh-TW", e.quantity) ?? "items";
-    const count = customerRequestedQuantity(e) === null ? ["機數待確認", "数量待确认", "quantity not yet confirmed"][l] : l === 2 ? `${e.quantity} ${e.quantity === 1 ? unit.replace(/s$/, "") : unit}`
-      : `${e.quantity}${unitLabels[unit]?.[l] ?? display(unit)}`;
+      : "";
+    const count = customerRequestedQuantity(e) === null ? ["機數待確認", "数量待确认", "quantity not yet confirmed"][l] : l === 2 ? `${e.quantity}${unit ? " " + (e.quantity === 1 ? unit.replace(/s$/, "") : unit) : ""}`
+      : `${e.quantity}${unit ? (unitLabels[unit]?.[l] ?? display(unit)) : ""}`;
     const facts: string[] = [];
     const sizes = object(e.attributes.room_sizes);
     for (const [room, size] of Object.entries(sizes ?? {})) {

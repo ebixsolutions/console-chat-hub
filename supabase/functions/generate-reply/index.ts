@@ -3,7 +3,6 @@ import { resolveCatalogueVariantFollowup } from "../_shared/kb-product-record.ts
 import { resolveFactualFollowup, buildFactualFollowupPrompt, factualSubject, literalFactualSubject } from "../_shared/conversation-semantic-contract.ts";
 import { originalPreviewEnabled } from "../_shared/original-widget-preview.ts";
 import { executionFailure, failureFromError, safeB2FailureCode, type ExecutionFailure } from "../_shared/execution-failure.ts";
-import { resolveIndustryProfile } from "../_shared/industry-runtime-adapter.ts";
 import { phase1CoachAllowed } from "../_shared/remote-model-accounting.ts";
 import {
   prepareConversationRecall,
@@ -5161,8 +5160,7 @@ async function orchestrationGenerateReply(
         conversation_id, company_id: _criticalE2ExpectedTenantId!,
       })), { conversation_id, company_id: _criticalE2ExpectedTenantId },
       _c3CommerceSnapshot,
-      resolveIndustryProfile(_c3CommerceSnapshot.state.current_industry)?.category_bindings
-        ? [...resolveIndustryProfile(_c3CommerceSnapshot.state.current_industry)!.category_bindings!] : undefined,
+      undefined, // No industry bindings for any Phase 1 conversation.
       _a3SemanticFrame,
     );
     _effectiveNaturalCustomerIntent = _productFollowUpArbitration.kind === "not_applicable"

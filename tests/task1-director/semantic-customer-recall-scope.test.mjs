@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import {prepareConversationRecall} from '../../supabase/functions/_shared/conversation-recall.ts';
 import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
 import {buildCanonicalConversationMemory} from '../../supabase/functions/_shared/conversation-long-memory.ts';
-import {resolveIndustryRuntime as d4ResolveIndustryRuntime} from '../../supabase/functions/_shared/industry-runtime-adapter.ts';
+import {resolveIndustryRuntime as d4ResolveIndustryRuntime,resolveIndustryCustomerJourney,resolveIndustryProfile,industryEntityLabel,industryEntityQuantityUnit} from '../../supabase/functions/_shared/industry-runtime-adapter.ts';
 const scope={company_id:'tenant-a',conversation_id:'ticket-a',source_message_id:'current-turn'};
 function fixture({question='What budget did I mention?',key='budget',value=5000,source='My budget is 5000.',entity_id=null,subjects=[],entities=[],newer=[],emptyRequested=false}={}) {
  const state=createEmptyConversationCommerceState();state.entities=entities;
@@ -536,14 +536,20 @@ test('D4-2 tier1 six-industry corrected/cancelled and typed subject-value matrix
       category,model:name,aliases:[name],attributes:{unit}}]);
    const active=after.entities.filter(v=>v.status!=='cancelled'&&v.status!=='deferred');
    const retained=active.find(v=>v.entity_id===first.entity_id);
-   const deferred=after.entities.filter(v=>v.status==='cancelled'||v.status==='deferred').length;
-   const count=retained?.quantity??null;
-   const status=count===2&&count!==6?(deferred>=1?'PASS':'CLARIFY'):'FAIL';
+   const inactive=after.entities.filter(v=>v.status==='cancelled'||v.status==='deferred');
+   const inactiveQuantity=inactive.reduce((sum,v)=>sum+v.quantity,0);
+   const inactiveSource=inactive.every(v=>v.provenance?.source_message_id==='d4-t1-correction'&&
+      v.attributes?.customer_part_of_entity_id===first.entity_id);
+   const deferred=inactive.length;
+   const count=retained?.quantity??null,hasSource=retained?.provenance?.source_message_id==='d4-t1-correction';
+   const status=count===2&&count!==6&&hasSource
+     ? (inactiveQuantity===1&&inactiveSource?'PASS':'CLARIFY'):'FAIL';
    const row={case_id:'D4-T1-'+industry+'-C2_CORRECT_CANCEL',industry,question_class:'C2_CORRECT_CANCEL',
     explicit_profile:null,effective_profile:after.current_industry??null,
-    status,reason_code:count!==2?'TARGET_NOT_UPDATED':deferred===0?'DEFERRED_MEMBER_NOT_TRACKED':'SOURCED_CORRECTION',
+    status,reason_code:count!==2?'TARGET_NOT_UPDATED':inactiveQuantity!==1||!inactiveSource?'INACTIVE_STATUS_OR_SOURCE_UNVERIFIED':'SOURCED_CORRECTION',
     observations:{initial_count:3,target_count:2,decoy_count:6,actual_count:count,
-      deferred_count:deferred,provenance_source_matches:retained?.provenance?.source_message_id==='d4-t1-correction'},
+      inactive_record_count:deferred,inactive_quantity:inactiveQuantity,inactive_source_bound:inactiveSource,
+      provenance_source_matches:hasSource},
     profile_observed_from:'REDUCER_STATE',evidence_tier:'SCRIPTED_REDUCER_NOT_FULL_HANDLER'};
    rows.push(row);console.log('D4_TIER1|'+JSON.stringify(row));
   }catch(e){instrument.push({case_id:'D4-T1-'+industry+'-C2',error:String(e).slice(0,250)});}
@@ -585,4 +591,55 @@ test('D4-2 tier1 six-industry corrected/cancelled and typed subject-value matrix
   real_model_calls:0,real_kb_calls:0,hosted:'NOT_RUN'}));
  assert.deepEqual(instrument,[],'instrument defects cannot be misclassified as product FAIL');
  assert.equal(rows.length,12,'C2/C4 must produce all twelve source observations');
+});
+
+test('Task3C D4 K2: old industry metadata and caller identifiers cannot enable a profile',()=>{
+ const state=createEmptyConversationCommerceState();
+ for(const industry of [null,'home_appliance','beauty','old_identifier']){
+  state.current_industry=industry;
+  for(const text of ['我要三部冷氣','我要三堂課','I need three licenses']){
+   const r=d4ResolveIndustryRuntime({texts:[text],industry_identifier:industry});
+   assert.equal(r.industry_id,null);assert.equal(r.profile,null);assert.deepEqual(r.hints,[]);
+   assert.equal(resolveIndustryProfile(industry),null);
+   assert.equal(resolveIndustryCustomerJourney({text,state,language:'zh-TW',semantic_frame:null}),null);
+  }
+ }
+ assert.equal(industryEntityLabel('air_conditioner:unscoped','zh-TW'),null);
+ assert.equal(industryEntityQuantityUnit('air_conditioner','zh-TW',3),null);
+});
+test('Task3C D4 K3: no home profile import through any previous direct importer',()=>{
+ const root=fileURLToPath(new URL('../../',import.meta.url));
+ for(const name of ['industry-runtime-adapter','commerce-state-runtime-base',
+                    'conversation-service-planner','b2-journey-progress-contract']){
+  const source=readFileSync(join(root,'supabase/functions/_shared',name+'.ts'),'utf8');
+  assert(!/from\\s*['"][^'"]*industry-profiles\\/home-appliance-v1(?:\\.ts)?['"]/u.test(source),
+    'Phase 1 runtime imports a dormant industry taxonomy: '+name);
+ }
+});
+test('Task3C D4 K1: all six customer-written unit counts use identical generic policy',()=>{
+ const cases=[
+  ['冷氣','部','我要三部冷氣。'],['美容療程','堂','我想要三堂美容療程。'],
+  ['英語課','課','我想報三課英語課。'],['套餐','份','我想要三份套餐。'],
+  ['書枱','張','我要三張書枱。'],['subscription','licenses','I need 3 licenses for subscription.']
+ ];
+ const decisions=[];
+ for(const [name,unit,text] of cases){
+  const frame={version:'commerce-semantic-1.0.0',language:'zh-TW',operation:'ADD_ITEM',
+   intent:'other',topic:'generic_item',confidence:.99,ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+   entities:[{entity_ref:'generic:'+name,name,kind:'service',category_hint:'generic_item',
+     sku:null,model:null,quantity:3,unit,attributes:{},constraints:{},capabilities:{},confidence:.99}],
+   referents:[],customer_facts:[],requested_facts:[],customer_correction:false,additive:false,
+   explicit_negations:[],transaction_state:'none',payment_state:'none',booking_state:'none',fulfillment_state:'none'};
+  const state=reduceTurn(createEmptyConversationCommerceState(),{
+   text,semantic_frame:frame,source_message_id:'d4-k1-source',
+   company_id:'d4-k1-tenant',conversation_id:'d4-k1-ticket',language:'zh-TW'},[]);
+  const list=state.entities.filter(e=>e.attributes.product_name===name);
+  assert.equal(state.current_industry,null,'K1 forbidden industry state');
+  assert.equal(list.length,1,'K1 initial known subject must persist: '+name);
+  assert.equal(list[0].quantity,3);
+  assert.equal(list[0].attributes.unit,unit,'K1 customer unit preserved, not guessed: '+name);
+  assert.equal(list[0].provenance.source_message_id,'d4-k1-source');
+  decisions.push({subject:true,count:3,attested:true});
+ }
+ assert(decisions.every(d=>JSON.stringify(d)===JSON.stringify(decisions[0])),'K1 unequal generic decisions');
 });

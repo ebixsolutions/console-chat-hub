@@ -21,7 +21,7 @@ import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state.ts";
 import { DecisionContextLimitError } from "./bounded-decision-context.ts";
 import { classifyHandoffIntent, classifyHumanServiceDiscussion, type HandoffIntentCategory } from "./handoff-intent.ts";
 
-import { HOME_APPLIANCE_CATEGORIES, HOME_APPLIANCE_ROOMS } from "./industry-profiles/home-appliance-v1.ts";
+// Phase 1: use customer-provided subject and unit, not industry tables.
 
 export type ServiceLanguage = "zh-TW" | "zh-CN" | "en";
 export type ServiceKnowledgeState =
@@ -172,13 +172,8 @@ const has = (text: string, values: string[]) =>
     text.toLocaleLowerCase().includes(value.toLocaleLowerCase())
   );
 
-// Locale names for the existing canonical room-size keys used below.
-const SERVICE_ROOM_LABELS: Record<string, [string, string, string]> = {
-  small_bedroom: ["細房", "小卧室", "small bedroom"],
-  large_bedroom: ["大房", "大卧室", "large bedroom"],
-  living_room: ["客廳", "客厅", "living room"],
-  study: ["書房", "书房", "study"],
-};
+// No predefined room labels in Phase 1; present customer-provided labels only.
+const SERVICE_ROOM_LABELS: Record<string, [string, string, string]> = {};
 
 function knownFacts(input: ServicePlanInput) {
   const facts: ServiceDialoguePlan["known_facts"] = [];
@@ -253,7 +248,7 @@ function knownFacts(input: ServicePlanInput) {
       const l = input.language === "en" ? 2 : input.language === "zh-CN" ? 1 : 0;
       if (entity.attributes.room_sizes && typeof entity.attributes.room_sizes === "object") {
         for (const [room, size] of Object.entries(entity.attributes.room_sizes))
-          add(`entity:${entity.entity_id}:room_size:${room}`, `${SERVICE_ROOM_LABELS[room]?.[l] ?? HOME_APPLIANCE_ROOMS.find(r => r.key === room)?.label[input.language] ?? ["空間", "空间", "Space"][l]}${["面積", "面积", " area"][l]}`, size, "CUSTOMER_PROVIDED");
+          add(`entity:${entity.entity_id}:room_size:${room}`, `${SERVICE_ROOM_LABELS[room]?.[l] ?? ["空間", "空间", "Space"][l]}${["面積", "面积", " area"][l]}`, size, "CUSTOMER_PROVIDED");
       }
       add(`entity:${entity.entity_id}:requested_date`, "Requested date", entity.attributes.requested_date,"CUSTOMER_PROVIDED");
       add(`entity:${entity.entity_id}:product_name`, "Item", entity.attributes.product_name, "CUSTOMER_PROVIDED");
@@ -818,8 +813,7 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
   const state = plan.committed_commerce;
   const active = state?.entities.filter(e => !["deferred", "cancelled"].includes(e.status)) ?? [];
   const goal = state ? activeCustomerGoal(state) : null;
-  const categoryKey = (value: string | null | undefined) => HOME_APPLIANCE_CATEGORIES.find(c =>
-    c.key === value || c.aliases.some(alias => alias.toLowerCase() === value?.toLowerCase()))?.key ?? clean(value);
+  const categoryKey = (value: string | null | undefined) => clean(value);
   const category = categoryKey(goal?.goal.category ?? state?.current_topic);
   const labels: Record<string, [string, string, string]> = {
     current_topic: ["查詢項目", "查询项目", "Item"],
@@ -839,8 +833,7 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
   const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
   const selected = active.find(e => e.entity_id === goal?.entity_id) ??
     (active.filter(e => categoryKey(e.category) === category).length === 1 ? active.find(e => categoryKey(e.category) === category) : undefined);
-  const topicName = HOME_APPLIANCE_CATEGORIES.find(c => c.key === category)?.label[language] ??
-    (clean(selected?.attributes.product_name) || clean(selected?.model) || clean(selected?.attributes.sku));
+  const topicName = clean(selected?.attributes.product_name) || clean(selected?.model) || clean(selected?.attributes.sku);
   const seen = new Set<string>();
   return plan.known_facts.flatMap(fact => {
     if (["current_intent", "customer_goal", "quotation_status", "order_status"].includes(fact.name)) return [];
@@ -860,7 +853,7 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
       const field = fact.name.slice(`entity:${entity.entity_id}:`.length);
       if (field.startsWith("room_size:")) {
         const roomKey = field.slice("room_size:".length);
-        const roomName = SERVICE_ROOM_LABELS[roomKey]?.[l] ?? HOME_APPLIANCE_ROOMS.find(r => r.key === roomKey)?.label[language];
+        const roomName = SERVICE_ROOM_LABELS[roomKey]?.[l];
         label = roomName ? roomName + ["面積", "面积", " area"][l] : ["空間面積", "空间面积", "Space area"][l];
       } else label = labels[field]?.[l];
     }
@@ -957,21 +950,7 @@ function contextualContinuation(plan: ServiceDialoguePlan, l: number, recent: Ar
     (objective && !/^[a-z]+(?:_[a-z]+)*$/.test(objective) ? objective : "");
   const prefix = goalText ? goalText + (l === 2 ? ". " : "。") : "";
   // A persisted pending check is not a completed check or a new discovery goal.
-  const category = goal?.goal.category ?? state?.current_topic;
-  const selectingAC = HOME_APPLIANCE_CATEGORIES.find(c => c.key === "air_conditioner")?.aliases
-    .some(alias => alias.toLowerCase() === category?.toLowerCase()) || category === "air_conditioner";
-  if (selectingAC && objective && ["select_product", "replace_existing_appliance", "compare_products"].includes(objective) && state?.installation.pending_checks.includes("window_opening_check")) {
-    const alreadyAsked = plan.clarification_previously_asked || recent.some(m => m.role === "assistant" && /(?:窗口|window)/i.test(m.content) && /(?:闊|宽|高度|width|height)/i.test(m.content));
-    return prefix + (alreadyAsked ? [
-      "窗口位闊度同高度仍未有資料；有尺寸後先可以核對放機限制，型號適用性仍要產品資料及專業確認。",
-      "窗口位置的宽度和高度仍未提供；有尺寸后才能核对放置限制，型号适用性仍需产品资料及专业确认。",
-      "The window-opening width and height are still missing. Those measurements are needed to check fit; product evidence and professional confirmation are still needed for suitability.",
-    ][l] : [
-      "要核對窗口位可唔可以放得落，仲欠各位置可用嘅闊度同高度。你有呢啲尺寸嗎？型號適用性仍要產品資料及專業確認。",
-      "要核对放置限制，还缺各位置可用的宽度和高度。你有这些尺寸吗？型号适用性仍需产品资料及专业确认。",
-      "To check whether a unit will fit, I still need the usable width and height of each opening. Do you have those measurements? Suitability still needs product evidence and professional confirmation.",
-    ][l]);
-  }
+  // An old installation flag cannot force industry-specific follow-up.
   const missing = contextualMissingContinuation(plan, l, recent);
   if (missing) return prefix + missing;
   if (goalText) return prefix + [

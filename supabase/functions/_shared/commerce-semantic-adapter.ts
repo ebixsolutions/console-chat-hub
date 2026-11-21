@@ -343,6 +343,7 @@ export function semanticFrameToStateEvents(
           provenance: p,
         });
       } else if (!existing) {
+        // No default quantity=1 without a customer-attested source value.
         events.push({
           type: "ENSURE_ENTITY",
           entity: {
@@ -350,10 +351,11 @@ export function semanticFrameToStateEvents(
             category: hint?.category ?? categoryFor(entity),
             brand: null,
             model: entity.model,
-            quantity: entity.quantity ?? 1,
+            quantity: entity.quantity ?? 0,
             status: "tentative",
             attributes: {
               ...(hint?.attributes ?? {}),
+              quantity_basis: entity.quantity === null ? "system_default" : "customer_explicit",
               semantic_attributes: entity.attributes,
               capabilities: entity.capabilities,
             },

@@ -83,10 +83,11 @@ import {
   resolveEntityLifecyclePlan,
   verifyEntityLifecycleTransition,
 } from "./b2-journey-progress-contract.ts";
-import {
-  HOME_APPLIANCE_CATEGORIES as CATEGORY_SPECS,
-  HOME_APPLIANCE_ROOMS as ROOM_SPECS,
-} from "./industry-profiles/home-appliance-v1.ts";
+// Phase 1: no implicit industry or room vocabulary. Historic fields are
+// retained for data compatibility, not for category detection or routing.
+type InertVocabularyEntry = { key: string; aliases: readonly string[]; label: Record<CommerceLanguage, string> };
+const CATEGORY_SPECS: readonly InertVocabularyEntry[] = [];
+const ROOM_SPECS: readonly InertVocabularyEntry[] = [];
 
 export type CommerceLanguage = "zh-TW" | "zh-CN" | "en";
 
@@ -1393,6 +1394,14 @@ function deriveA3RuntimeEvents(
   if (currentCategories.length === 1 && establishesDurableProductResearch(text)) {
     events.push({ type: "SET_CONTEXT", topic: currentCategories[0] });
   }
+  // A generic initial advice intent is a durable customer-conversation state
+  // even without a known product quantity. Never invent an entity or unit.
+  const frame = input.semantic_frame;
+  if (previous.entities.length === 0 && frame && frame.confidence >= 0.72 &&
+      !frame.ambiguity.is_ambiguous && frame.operation === "ASK_FACT" &&
+      ["customer_guidance","ask_for_advice"].includes(frame.intent)) {
+    events.push({type:"SET_CONTEXT",intent:"customer_guidance"});
+  }
 
   // Persist dimension constraints against the same uniquely scoped product
   // used by the reader, preventing cross-entity carryover.
@@ -1857,81 +1866,8 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
   if (categories.length === 1 && named.length === 1 && new Set(modelHints.map((hint) => hint.model)).size === 1 && !named[0].model) {
     reduced = reduceCommerceState(reduced, [{ type: "UPDATE_ENTITY", entity_id: named[0].entity_id, patch: { model: modelHints[0].model }, provenance }]);
   }
-  const ac = active.filter((entity) => entity.category === "air_conditioner");
-  const frameTopic = typeof input.semantic_frame?.topic === "string"
-    ? input.semantic_frame.topic.normalize("NFKC").trim().toLowerCase() : "";
-  const unrelatedCurrentSemanticTopic = Boolean(frameTopic &&
-    input.semantic_frame && input.semantic_frame.confidence >= 0.72 &&
-    !input.semantic_frame.ambiguity.is_ambiguous &&
-    frameTopic !== "air_conditioner" && frameTopic !== "air conditioner" &&
-    frameTopic !== "ac" && !categories.some(category => category.key === "air_conditioner"));
-  if (ac.length === 1 && !unrelatedCurrentSemanticTopic &&
-      (categories.length === 1 && categories[0].key === "air_conditioner" ||
-       !categories.length && reduced.current_topic === "air_conditioner")) {
-    const facts: CommerceStateEvent[] = [];
-    if (/窗口(?:冷氣|機|机)|window\s+(?:unit|air)/iu.test(input.text)) facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"installation_type",value:"window_unit",provenance});
-    const sunlight = { ...(ac[0].attributes.room_sunlight as Record<string, string> ?? {}) };
-    for (const clause of input.text.split(/[，,。;；]/u)) {
-      if(/以前|之前|曾經|曾经|previously|historically/iu.test(clause))continue;
-      const exposure=customerSunExposure(clause);if(exposure===null)continue;
-      const scope=roomScope(clause),all=/全屋|全間|全间|全部|所有|all\s+(?:rooms|spaces)|whole\s+(?:home|house)/iu.test(clause);
-      if(scope&&!all)sunlight[scope]=exposure;
-      else {
-        facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"sunlight",value:exposure,provenance});
-        if(all)for(const room of new Set([...Object.keys(ac[0].attributes.room_sizes as object ?? {}),...Object.keys(sunlight)]))sunlight[room]=exposure;
-        const semantic=ac[0].attributes.semantic_attributes;
-        if(semantic && typeof semantic==="object" && !Array.isArray(semantic))facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"semantic_attributes",value:{...semantic,...("sun_exposure" in semantic?{sun_exposure:exposure}:{}),...("sunlight" in semantic?{sunlight:exposure}:{})},provenance});
-      }
-    }
-    if(Object.keys(sunlight).length)facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"room_sunlight",value:sunlight,provenance});
-    const pair=customerDimensionPair(input.text);
-    const pending=ac[0].attributes.window_opening_observation as Record<string,unknown>|undefined;
-    const windowContext=ac[0].attributes.installation_type==="window_unit" || reduced.installation.pending_checks.includes("window_opening_check");
-    if(windowContext && (pair || pending && pending.scope===null && roomScope(input.text))) {
-      const scope=roomScope(input.text);
-      const observation=pair?{...pair,unit:"mm",source_message_id:input.source_message_id,recorded_at:input.occurred_at??null,scope}: {...pending,scope,scope_source_message_id:input.source_message_id};
-      facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"window_opening_observation",value:observation,provenance});
-      if(scope)facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"room_window_openings",value:{...(ac[0].attributes.room_window_openings as object??{}),[scope]:observation},provenance});
-    }
-    const eachSpace = /(?:各|每).{0,8}(?:一|1)\s*(?:部|台)/iu.test(input.text);
-    const roomAllocation = eachSpace && Object.keys(ac[0].attributes.room_sizes as object ?? {}).length > 0
-      ? Object.fromEntries(Object.keys(ac[0].attributes.room_sizes as object).map(room=>[room,1])) : null;
-    const requestedQuantity = roomAllocation ? Object.keys(roomAllocation).length : parseSpaceScopedCommerceQuantity(input.text) ?? parseCount(input.text);
-    if (roomAllocation && !looksInterrogative(input.text)) facts.push(
-      {type:"SET_ENTITY_QUANTITY",entity_id:ac[0].entity_id,quantity:Object.keys(roomAllocation).length,provenance},
-      {type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"room_allocation",value:roomAllocation,provenance});
-    // "8 個分頁", "4 位同事" and similar counted customer facts are
-    // not quantities of the previously discussed appliance. Never promote
-    // an old system-default quantity to customer_explicit without a number
-    // bound to a machine/product unit in this very customer statement.
-    const machineCountLiteral = /(?:\d{1,4}|[一二兩两三四五六七八九十])\s*(?:部|台|units?|machines?)/iu.test(input.text);
-    // An unqualified "2 units" can refer to the old appliance only if the
-    // authoritative semantic frame has not resolved a different new topic.
-    // An explicit AC mention is still enough regardless of topic-history.
-    const semanticOtherTopic = Boolean(input.semantic_frame &&
-      input.semantic_frame.confidence >= 0.72 &&
-      !input.semantic_frame.ambiguity.is_ambiguous &&
-      typeof input.semantic_frame.topic === "string" &&
-      input.semantic_frame.topic.trim().length > 1 &&
-      !["air_conditioner", "air conditioner", "ac"].includes(input.semantic_frame.topic.trim().toLowerCase()));
-    const boundedApplianceQuantity = Boolean(roomAllocation) ||
-      (machineCountLiteral && categories.length <= 1 &&
-        (categories.length === 1 && categories[0].key === "air_conditioner" ||
-          categories.length === 0 && !semanticOtherTopic));
-    if (boundedApplianceQuantity && requestedQuantity !== null &&
-        ac[0].attributes.quantity_basis === "system_default" &&
-        !looksInterrogative(input.text) &&
-        !/純粹|以前|歷史|historical|previous|唔好.{0,30}講/iu.test(input.text)) {
-      facts.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:ac[0].entity_id,key:"quantity_basis",value:"customer_explicit",provenance});
-    }
-    if (facts.length) reduced = reduceCommerceState(reduced,facts);
-  }
-  const fridge = active.filter((entity) => entity.category === "refrigerator");
-  if (fridge.length === 1 && categories.length === 1 && categories[0].key === "refrigerator") {
-    const doors = input.text.match(/(單|单|雙|双|三|四|[1-4])門|([1-4])[- ]?doors?/iu);
-    const count = doors ? ({單:1,单:1,雙:2,双:2,三:3,四:4} as Record<string,number>)[doors[1]] ?? Number(doors[1] ?? doors[2]) : null;
-    if (count) reduced = reduceCommerceState(reduced,[{type:"SET_ENTITY_ATTRIBUTE",entity_id:fridge[0].entity_id,key:"door_count",value:count,provenance}]);
-  }
+  // No category-specific installation, room, horsepower, sunlight or
+  // quantity guesses. Use only source-bound semantic/canonical customer facts.
   return reduced;
 }
 
@@ -2241,9 +2177,7 @@ function reduceSingleTurn(
     derived = derived.filter(compatible);
     runtimeEvents = runtimeEvents.filter(compatible);
   }
-  const industryEvent: CommerceStateEvent[] = input.industry_identifier
-    ? [{ type: "SET_CONTEXT", language: input.language, industry: input.industry_identifier }]
-    : [];
+  const industryEvent: CommerceStateEvent[] = []; // A legacy caller cannot select an industry.
   const machineQuantity = parseSpaceScopedCommerceQuantity(input.text) ?? parseCount(input.text);
   // A customer count belongs to the source's subject, not automatically to a
   // previously active product. An UPDATE_ITEM can carry typed customer facts
@@ -2298,8 +2232,7 @@ function reduceSingleTurn(
     // A room count describes spatial scope, never machine count. The frozen
     // generic reducer still supports room-based products in their own domain.
     if (event.type !== "SET_ENTITY_QUANTITY" || machineQuantity !== null) return true;
-    const target = previous.entities.find(e=>e.entity_id === event.entity_id);
-    return !(target?.category === "air_conditioner" || journey.goal?.category === "air_conditioner");
+    return false; // No literal count: model cannot change a quantity in any category.
   }).map(event => {
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
       const entityId = event.entity.entity_id;
@@ -2313,8 +2246,7 @@ function reduceSingleTurn(
           constraints: {...scoped[0].constraints, ...event.entity.constraints}}};
       }
     }
-    if (event.type !== "ENSURE_ENTITY" || event.entity.category !== "air_conditioner" || machineQuantity !== null) return event;
-    return {...event, entity: {...event.entity, attributes: {...event.entity.attributes, quantity_basis: "system_default"}}};
+    return event;
   });
   // An authorized materialization must precede field updates. Unknown targets
   // still throw; no proposed mutation is silently dropped or guessed.
@@ -2536,75 +2468,77 @@ function reduceTurnOperations(
   return focus ? state : restoreExplicitReturnTopic(state, input.text);
 }
 
-/** A unit-level partial hold is not cancellation/deferral of an entire item.
- * The customer may retain two of three while postponing the third; preserve
- * the customer-owned unit allocation without fabricating a third SKU/order. */
+/** Generic, source-bound unit correction. A difference in counts is NOT by
+ * itself evidence of cancellation; status requires its own customer operation.
+ * No number or unit may be borrowed from an unrelated background fact. */
 function sourceBoundPartialUnitRetention(
   previous:ConversationCommerceState,input:CommerceRuntimeInput,
 ):CommerceStateEvent[] | null {
   const frame=input.semantic_frame;
-  if(!frame||frame.confidence<0.72||frame.ambiguity.is_ambiguous||
-    !frame.customer_correction||!["SET_QUANTITY","UPDATE_ITEM"].includes(frame.operation)||
-    frame.entities.length!==1)return null;
+  if(!frame || frame.confidence<0.72 || frame.ambiguity.is_ambiguous ||
+    !frame.customer_correction ||
+    !["SET_QUANTITY","UPDATE_ITEM"].includes(frame.operation) ||
+    frame.entities.length!==1 || isReadOnlyCommerceQuestion(input.text,frame)) return null;
   const active=previous.entities.filter(e=>!["cancelled","deferred","superseded"].includes(e.status));
-  // A generic customer correction can have a null current_topic. Identity
-  // is established by the one active entity, its canonical subject and unit,
-  // the original utterance, and a high-confidence correction frame.
-  if(active.length!==1)return null;
-  const entity=active[0],proposed=frame.entities[0];
-  if(proposed.confidence<0.72||proposed.quantity===null||!Number.isInteger(proposed.quantity)||
-    proposed.quantity<0||proposed.quantity>=entity.quantity)return null;
-  const unit=typeof entity.attributes.unit==="string"?entity.attributes.unit.trim():"";
-  if(!unit||unit.length>32||!/^[\p{L}\p{N}]+$/u.test(unit))return null;
-  const text=clean(input.text).normalize("NFKC");
-  const escaped=unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\$&");
-  const number="([0-9]{1,4}|[一二兩两三四五六七八九十]|one|two|three|four|five|six|seven|eight|nine|ten)";
-  const retain=text.match(new RegExp("(?:只(?:保留|留低|留返)|keep)\\s*"+number+"\\s*"+escaped,"iu"));
-  if(!retain)return null;
-  const words:Record<string,number>={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
-  const quantity=countTokenValue(retain[1])??words[retain[1].toLowerCase()]??null;
-  if(quantity===null||quantity!==proposed.quantity||entity.quantity!==quantity+1)return null;
-  const inactive=new RegExp("(?:第(?:三|3)\\s*"+escaped+
-    "\\s*(?:(?:暫時|暂时)\\s*)?(?:暫緩|暂缓|取消|延後|延后|稍後|稍后)|(?:postpone|defer|cancel)\\s+(?:the\\s+)?(?:third|3rd|3)(?:\\s+"+
-    escaped+")?\\b)","iu");
-  if(!inactive.test(text))return null;
-  const names=[entity.model,entity.attributes.product_name].filter(
-    (v):v is string=>typeof v==="string"&&v.length>1);
-  const namedByCustomer=names.some(name=>matchesReferenceLabel(text,name));
-  const namedByCanonicalFrame=names.some(name=>
-    clean(proposed.name).toLowerCase()===clean(name).toLowerCase());
-  const identityMatches=proposed.entity_ref===entity.entity_id ||
-    namedByCanonicalFrame;
+  if(active.length!==1) return null;
+  const entity=active[0], proposed=frame.entities[0];
+  if(proposed.confidence<0.72 || proposed.quantity===null ||
+    !Number.isInteger(proposed.quantity) || proposed.quantity<0 ||
+    proposed.quantity===entity.quantity) return null;
+  const unit=typeof entity.attributes.unit==="string" ? entity.attributes.unit.trim():"";
+  if(!unit || unit.length>32 || !/^[\\p{L}\\p{N}]+$/u.test(unit))return null;
   if(proposed.category_hint && proposed.category_hint!==entity.category)return null;
-  if(!namedByCustomer&&!identityMatches)return null;
-  if(typeof proposed.unit==="string"&&proposed.unit&&
-     proposed.unit.toLowerCase()!==unit.toLowerCase())return null;
-  const found=[...text.matchAll(new RegExp(number+"\\s*"+escaped,"giu"))]
+  if(typeof proposed.unit==="string" && proposed.unit &&
+      proposed.unit.toLowerCase()!==unit.toLowerCase())return null;
+  const text=clean(input.text).normalize("NFKC");
+  const names=[entity.model,entity.attributes.product_name].filter(
+    (v):v is string=>typeof v==="string" && v.length>1);
+  const sourceSubject=names.some(name=>matchesReferenceLabel(text,name));
+  const frameSubject=proposed.entity_ref===entity.entity_id ||
+    names.some(name=>clean(proposed.name).toLowerCase()===clean(name).toLowerCase());
+  if(!sourceSubject && !frameSubject &&
+    !(active.length===1 && text.includes(unit) &&
+      /(?:更正|改|只(?:保留|留低|留返)|取消|暫緩|暂缓|keep|change|correct)/iu.test(text) &&
+      !/(?:分頁|分页|browser\s+tabs?|web\s+pages?)/iu.test(text))) return null;
+  const number="([0-9]{1,4}|[一二兩两三四五六七八九十]|one|two|three|four|five|six|seven|eight|nine|ten)";
+  const escaped=unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\$&");
+  const words:Record<string,number>={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
+  const counted=[...text.matchAll(new RegExp(number+"\\s*"+escaped,"giu"))]
     .filter(m=>text.slice(Math.max(0,(m.index??0)-1),m.index)!=="第")
     .map(m=>countTokenValue(m[1])??words[m[1].toLowerCase()]??null)
     .filter((n):n is number=>n!==null);
-  if(found.length!==1||found[0]!==quantity)return null;
+  const explicitTotal=counted.includes(proposed.quantity);
+  const delta=entity.quantity-proposed.quantity;
+  const cancelled=/(?:取消|唔要|不要|cancel\b|remove\b)/iu.test(text) &&
+    !/(?:唔係|不是|並非|并非)\s*(?:要)?取消/iu.test(text);
+  const deferred=/(?:暫緩|暂缓|延期|延後|延后|postpone\b|defer\b|hold\s+off)/iu.test(text);
+  // A numbered member or stated portion links the status to this quantity.
+  const scopedInactive=delta>0 && (cancelled||deferred) &&
+    (new RegExp("第\\s*"+number+"\\s*"+escaped,"iu").test(text) ||
+      /(?:其(?:中|餘|余)|剩低|剩下|另外|other|remaining)/iu.test(text)) &&
+    (counted.includes(delta) || explicitTotal || delta===1);
+  const decrementOne=delta===1 && !explicitTotal && cancelled &&
+    /(?:其中|其餘|其余|one\s+of|one\s+less)/iu.test(text) &&
+    (counted.includes(1) || /一\s*/u.test(text));
+  if(!explicitTotal && !decrementOne)return null;
   const provenance={source_type:"customer" as const,source_message_id:input.source_message_id,
     recorded_at:input.occurred_at??null};
-  const inactiveStatus=/取消|cancel/iu.test(text)?"cancelled":"deferred";
-  // The third of the originally three units is a *customer-described split
-  // member* of the same item, never a new SKU, merchant offer or order.
-  // It has a deterministic source-bound ID, is inactive, and cannot be
-  // counted as an active line; repeated message delivery remains idempotent.
-  const inactiveUnitId=entity.entity_id+":unit-status:"+input.source_message_id;
-  const inactive={...entity,entity_id:inactiveUnitId,quantity:1,
-    status:inactiveStatus,
-    attributes:{...entity.attributes,quantity_basis:"customer_explicit",
-      customer_part_of_entity_id:entity.entity_id,
-      customer_unit_partition:"third_unit_inactive"},
-    constraints:{...entity.constraints,source_bound_partial_unit:true},
-    provenance};
-  return [
-    {type:"SET_ENTITY_QUANTITY",entity_id:entity.entity_id,quantity,provenance},
-    {type:"ENSURE_ENTITY",entity:inactive},
-    {type:"SET_ENTITY_CONSTRAINT",entity_id:entity.entity_id,key:"customer_inactive_unit_count",value:1,provenance},
-    {type:"SET_ENTITY_CONSTRAINT",entity_id:entity.entity_id,key:"customer_inactive_unit_status",value:inactiveStatus,provenance},
+  const events:CommerceStateEvent[]=[
+    {type:"SET_ENTITY_QUANTITY",entity_id:entity.entity_id,quantity:proposed.quantity,provenance}
   ];
+  if(scopedInactive){
+    const inactiveStatus=deferred?"deferred":"cancelled";
+    const id=entity.entity_id+":unit-status:"+input.source_message_id;
+    events.push({type:"ENSURE_ENTITY",entity:{...entity,entity_id:id,quantity:delta,status:inactiveStatus,
+      attributes:{...entity.attributes,quantity_basis:"customer_explicit",
+        customer_part_of_entity_id:entity.entity_id,customer_unit_partition:"source_bound_status"},
+      constraints:{...entity.constraints,source_bound_partial_unit:true},provenance}});
+    events.push({type:"SET_ENTITY_CONSTRAINT",entity_id:entity.entity_id,
+      key:"customer_inactive_unit_count",value:delta,provenance});
+    events.push({type:"SET_ENTITY_CONSTRAINT",entity_id:entity.entity_id,
+      key:"customer_inactive_unit_status",value:inactiveStatus,provenance});
+  }
+  return events;
 }
 
 /** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
@@ -3479,11 +3413,7 @@ export async function runCommerceStateRuntime(
   const conversationTexts = [text, ...historyTexts];
   const deterministicHints = buildCommerceEntityHints(conversationTexts);
   const semanticHints = semanticFrameToEntityHints(input.semantic_frame);
-  const industry = resolveIndustryRuntime({
-    texts: conversationTexts,
-    semantic_frame: input.semantic_frame,
-    industry_identifier: input.industry_identifier,
-  });
+  const industry = resolveIndustryRuntime({texts:conversationTexts, semantic_frame:input.semantic_frame});
   const proposedHints = mergeCommerceEntityHints(
     semanticHints,
     mergeCommerceEntityHints(industry.hints, deterministicHints),
@@ -3503,9 +3433,7 @@ export async function runCommerceStateRuntime(
     return targets.length===1 && detectQuantityCorrectionSignal(text)
       ? {...hint,entity_id:targets[0].entity_id} : hint;
   }),canonicalHints);
-  const runtimeInput = industry.industry_id && !input.industry_identifier
-    ? { ...input, industry_identifier: industry.industry_id }
-    : input;
+  const runtimeInput = { ...input, industry_identifier: null };
 
   const persisted = await persistCommerceTurn(db, runtimeInput, hints);
   if (!["success", "no_semantic_change", "source_message_already_applied"].includes(persisted.result)) {
@@ -3523,7 +3451,8 @@ export async function runCommerceStateRuntime(
     const target = lifecycleVerified.targetIds.map(id => {
       const entity = state.entities.find(e => e.entity_id === id)!;
       if (typeof entity.attributes.product_name === "string") return entity.attributes.product_name;
-      return entity.category === "refrigerator" ? "雪櫃" : entity.category === "air_conditioner" ? "冷氣" : industryEntityLabel(id, language) ?? entity.model ?? "產品";
+      return (typeof entity.attributes.name === "string" ? entity.attributes.name : null) ??
+         entity.model ?? entity.category.replace(/_/g, " ");
     }).join("同");
     const genericEnglish = language === "en" && lifecycleVerified.targetIds.every(id=>state.entities.find(e=>e.entity_id===id)?.entity_id.startsWith("generic:"));
     const reply = genericEnglish ? lifecycleVerified.targetIds.map(id=>renderCanonicalRequirement(state.entities.find(e=>e.entity_id===id)!,language)).join("; ")+"." : lifecycleVerified.plans[0].action === "cancelled"

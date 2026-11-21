@@ -478,7 +478,6 @@ export function collectKnownCommerceFacts(state: ConversationCommerceState): Kno
   const facts: KnownFact[] = [];
   addFact(facts, "current_intent", state.current_intent);
   addFact(facts, "current_topic", state.current_topic);
-  addFact(facts, "current_industry", state.current_industry);
   state.unresolved_items.forEach((item, index) =>
     addFact(facts, `unresolved_items.${index}`, item),
   );

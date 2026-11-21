@@ -3,7 +3,7 @@ import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { ScopedCustomerValue } from "./contextual-customer-update.ts";
 import { sameCanonicalJson } from "./canonical-json.ts";
 import type { CustomerJourneyResponseIntent } from "./customer-journey-orchestration.ts";
-import { HOME_APPLIANCE_CATEGORIES } from "./industry-profiles/home-appliance-v1.ts";
+// Only source-backed canonical entities may supply lifecycle targets.
 import { requirementMutationText, splitCustomerOperationClauses } from "./commerce-state-authority.ts";
 
 export interface B2LifecyclePlan {
@@ -25,10 +25,7 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
   const identifiers = (part: string): string[] => part.match(/\b(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9]+(?:[-_][a-z0-9]+)*\b/gi) ?? [];
 
   const aliases = (part: string) => [...new Set([
-    ...HOME_APPLIANCE_CATEGORIES.filter((spec) =>
-      state.entities.some(entity=>entity.category===spec.key) &&
-      spec.aliases.some((alias) => matchesReferenceLabel(part,alias))
-    ).map((spec) => spec.key),
+    // Historical industry taxonomy never supplies implicit lifecycle aliases.
     ...state.entities.filter((entity) =>
       [entity.category, entity.model, entity.attributes.product_name]
         .some((value) => typeof value === "string" && value.trim().length >= 2 &&

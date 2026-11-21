@@ -1,7 +1,7 @@
 import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import type { CommerceEntity, ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CommerceTurnEntityHint } from "./commerce-state-reducer.ts";
-import { industryEntityQuantityUnit } from "./industry-runtime-adapter.ts";
+// No implicit quantity unit or professional-site-check by product category.
 
 export type CommerceKind = "physical_product" | "digital_good" | "service" | "b2b_product" | "unknown";
 
@@ -278,7 +278,7 @@ export function buildCapabilityAwarePreorderNextStep(
 export function renderEnglishRequirement(entity: CommerceEntity, displayName?: string): string {
   const name = displayName ?? (typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.model ?? entity.category.replace(/_/g, " "));
   const storedUnit = typeof entity.attributes.unit === "string" ? entity.attributes.unit.trim()
-    : industryEntityQuantityUnit(entity.category, "en", entity.quantity) ?? "";
+    : "";
   const singulars: Record<string,string> = {seats:"seat",sessions:"session",units:"unit",items:"item",boxes:"box",pieces:"piece",bottles:"bottle",packs:"pack",bags:"bag",pairs:"pair",sets:"set",nights:"night",lessons:"lesson"};
   const singular = singulars[storedUnit] ?? storedUnit;
   const unit = entity.quantity === 1 ? singular : Object.values(singulars).includes(singular) ? Object.entries(singulars).find(([,v])=>v===singular)![0] : storedUnit;
@@ -303,9 +303,13 @@ export function renderCanonicalRequirement(entity: CommerceEntity, language: str
   const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
   const name = typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.model ?? entity.category.replace(/_/g, " ");
   const unit = typeof entity.attributes.unit === "string" ? entity.attributes.unit
-    : industryEntityQuantityUnit(entity.category, language === "zh-CN" ? "zh-CN" : "zh-TW", entity.quantity) ?? "items";
+    : "";
   const translated: Record<string, [string,string]> = {seats:["席","席"],seat:["席","席"],sessions:["節","节"],session:["節","节"],units:["個","个"],unit:["個","个"],items:["個","个"]};
-  const count = l === 2 ? `${entity.quantity} ${entity.quantity===1?unit.replace(/s$/, ""):unit}` : `${entity.quantity}${translated[unit]?.[l] ?? unit}`;
+  const count = customerRequestedQuantity(entity) === null
+    ? ["數量待確認","数量待确认","quantity not yet confirmed"][l]
+    : l === 2
+    ? `${entity.quantity}${unit ? " " + (entity.quantity===1?unit.replace(/s$/, ""):unit) : ""}`
+    : `${entity.quantity}${unit ? (translated[unit]?.[l] ?? unit) : ""}`;
   const date = typeof entity.attributes.requested_date === "string" ? entity.attributes.requested_date : null;
   const dateText = date ? [ `，要求日期 ${date}`, `，要求日期 ${date}`, ` on ${date}` ][l] : "";
   const inactive = entity.status === "deferred" ? ["，已暫緩","，已暂缓"," (deferred)"][l] : entity.status === "cancelled" ? ["，已取消","，已取消"," (cancelled)"][l] : "";
@@ -318,7 +322,7 @@ export function renderRequirementQualification(state: ConversationCommerceState,
   const booking = active.some(e=>e.attributes.capabilities && typeof e.attributes.capabilities === "object" &&
     (e.attributes.capabilities as Record<string,unknown>).requires_booking === true && !state.conversion.confirmed_entity_ids.includes(e.entity_id));
   if (booking) return ["預約要求仍需職員確認，未成為已確認預約。","预约要求仍需职员确认，尚未成为已确认预约。","The booking still needs staff confirmation and is not confirmed yet."][l];
-  const site = active.some(e=>e.category === "air_conditioner" || e.attributes.capabilities && typeof e.attributes.capabilities === "object" &&
+  const site = active.some(e=>e.attributes.capabilities && typeof e.attributes.capabilities === "object" &&
     (e.attributes.capabilities as Record<string,unknown>).requires_site_check === true);
   if (site) return ["適用性仍要按現行資料及現場條件核對。","适用性仍需按现行资料及现场条件核对。","Suitability still needs current evidence and the relevant site checks."][l];
   if (state.conversion.order_status === "none" && state.conversion.payment_status === "none")
