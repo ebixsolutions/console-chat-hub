@@ -753,17 +753,28 @@ Deno.test("C3 COMPONENT summary keeps structured evidence and renders customer l
   );
 });
 Deno.test("C3 Cantonese and English requirement-recap paraphrases use structured recall", () => {
+  // Original customer source remains Chinese; never add a fabricated English
+  // alias or alter the trusted historical Visitor utterance to fit an oracle.
   for (const question of ["而家我冷氣要求係點？", "Can you recap my current air conditioner requirements?"]) {
-    const { reply } = answer(question,(i)=>{
-      // A bilingual identity comes from the customer's attested statement,
-      // not an industry vocabulary or a model-invented referent.
-      if(/air conditioner/i.test(question)){
-        i.commerce!.state.entities[0].attributes.customer_subject_aliases=["air conditioner"];
-        i.trusted_visitor_source_rows=(i.trusted_visitor_source_rows??[]).map(row=>
-          row.id==="ac-source" ? {...row,content:row.content+" I also call this my air conditioner."}:row);
-      }
-    });
-    assert(!reply.includes("###") && !reply.includes("washer-front") && !reply.includes("entity_id"), `${question}:${reply}`);
+    const input=recallFixture(question),before=JSON.stringify(input);
+    const plain=prepareConversationRecall(input,question.includes("air conditioner")?"en":"zh-TW");
+    if(question.includes("air conditioner")){
+      assert(!plain.decision.handled,"foreign noun without model reading must not select");
+      const framed=prepareConversationRecall({...input,referents:[{
+        ref:input.commerce!.state.entities[0].entity_id,confidence:0.99,source:"persistent_state",
+      }]},"en");
+      assert(framed.decision.handled && framed.reply?.includes("冷氣") &&
+        !framed.reply.includes("washer-front"),JSON.stringify(framed));
+      assert(framed.decision.handled &&
+        framed.decision.provenance.company_id===input.company_id &&
+        framed.decision.provenance.commerce_state_revision===input.commerce?.revision);
+      const wrongCompany=prepareConversationRecall({...input,company_id:"another-company",
+        referents:[{ref:input.commerce!.state.entities[0].entity_id,confidence:0.99,source:"persistent_state"}]},"en");
+      assert(!wrongCompany.decision.handled,"a semantic ref cannot cross tenant");
+    } else {
+      assert(plain.decision.handled && plain.reply?.includes("冷氣"),JSON.stringify(plain));
+    }
+    assert(JSON.stringify(input)===before,"original Chinese source was changed");
   }
 });
 Deno.test("C3 two-sentence Cantonese recap presents known corrected and deferred state", () => {

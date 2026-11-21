@@ -2137,41 +2137,53 @@ function hasSourceBoundQuantityMutation(
   return allocated === event.quantity && fullTargets.length === 1 && fullTargets[0] === event.entity_id;
 }
 
-/** A semantic referent is an untrusted candidate until the server binds
- * it to a unique customer-owned entity in this ticket/company state. This
- * never infers an industry, translates a name, or accepts a category target. */
-function acceptedLifecycleEntityRef(
-  input: CommerceRuntimeInput, state: ConversationCommerceState,
-): string | null {
+/** A model-suggested action/subject becomes a candidate only after source-owned
+ * unique identity and original company/ticket snapshot verification. It grants
+ * no mutation permission: the existing B2 plan still verifies its action. */
+function verifiedLifecycleProposal(input:CommerceRuntimeInput,state:ConversationCommerceState):
+  {entity:ConversationCommerceState["entities"][number];action:"cancelled"|"deferred"}|null {
   const frame=input.semantic_frame;
-  if(!frame || frame.confidence<0.90 || frame.ambiguity.is_ambiguous ||
-      !input.conversation_id || !input.company_id || !input.source_message_id ||
-      isReadOnlyCommerceQuestion(input.text,frame))return null;
-  const normalized=requirementMutationText(input.text);
-  const cancel=/(?:取消|\bcancel\b)/iu.test(normalized);
-  const defer=/(?:暫緩|暂缓|暫時唔買住|暫時不買|暂时不买|\b(?:defer|pause)\b)/iu.test(normalized);
-  if(cancel===defer || (cancel && !["CANCEL_ITEM","REMOVE_ITEM"].includes(frame.operation)) ||
-      (defer && frame.operation!=="DEFER"))return null;
+  if(!frame||frame.confidence<0.90||frame.ambiguity.is_ambiguous||
+    !input.conversation_id||!input.company_id||!input.source_message_id||
+    isReadOnlyCommerceQuestion(input.text,frame))return null;
+  const action=["CANCEL_ITEM","REMOVE_ITEM"].includes(frame.operation)?"cancelled":
+    frame.operation==="DEFER"?"deferred":null;
+  if(!action)return null;
   const refs=[...new Set(frame.referents.filter(ref=>
-    ref.confidence>=0.9 && ["persistent_state","prior_turn"].includes(ref.source)
+    ref.confidence>=0.90&&["persistent_state","prior_turn"].includes(ref.source)
   ).map(ref=>ref.ref))];
   if(refs.length!==1)return null;
-  const e=state.entities.find(entity=>entity.entity_id===refs[0] &&
-    entity.provenance.source_type==="customer" && Boolean(entity.provenance.source_message_id) &&
-    !["cancelled","deferred","superseded"].includes(entity.status));
-  if(!e || frame.entities.some(entity=>entity.confidence>=0.72 &&
-       entity.entity_ref && entity.entity_ref!==e.entity_id))return null;
-  const sameCategory=state.entities.filter(entity=>entity.category===e.category &&
-    !["cancelled","deferred","superseded"].includes(entity.status));
+  const entity=state.entities.find(e=>e.entity_id===refs[0]&&
+    e.provenance.source_type==="customer"&&Boolean(e.provenance.source_message_id)&&
+    !["cancelled","deferred","superseded"].includes(e.status));
+  if(!entity||frame.entities.some(e=>e.confidence>=0.72&&e.entity_ref&&
+    e.entity_ref!==entity.entity_id))return null;
+  const sameCategory=state.entities.filter(e=>e.category===entity.category&&
+    !["cancelled","deferred","superseded"].includes(e.status));
   if(sameCategory.length!==1){
     const named=resolveSourceOwnedSubject(state,input.text,
       {include_inactive:false,mode:"mutation"});
-    if(named.kind!=="one" || named.entity.entity_id!==e.entity_id)return null;
+    if(named.kind!=="one"||named.entity.entity_id!==entity.entity_id)return null;
   }
-  if(state.entities.some(entity=>entity.entity_id!==e.entity_id &&
-    sourceOwnedSubjectLabels(entity).some(label=>matchesReferenceLabel(input.text,label))))
-    return null;
-  return e.entity_id;
+  if(state.entities.some(e=>e.entity_id!==entity.entity_id&&
+    sourceOwnedSubjectLabels(e).some(label=>matchesReferenceLabel(input.text,label))))return null;
+  return {entity,action};
+}
+function acceptedLifecycleEntityRef(input:CommerceRuntimeInput,state:ConversationCommerceState):string|null {
+  const proposal=verifiedLifecycleProposal(input,state);
+  if(!proposal)return null;
+  // Single source of lifecycle interpretation guard: no independent second
+  // verb list. This parser is only a fail-closed gate, not authority.
+  const parsed=resolveEntityLifecyclePlan(input.text,state,
+    {accepted_entity_ref:proposal.entity.entity_id});
+  if(parsed.kind!=="mutation"||parsed.plans.length!==1||
+    parsed.plans[0].action!==proposal.action)return null;
+  const plan=parsed.plans[0];
+  const targets=state.entities.filter(e=>(plan.target_entity_id
+    ?e.entity_id===plan.target_entity_id:e.category===plan.target_category) &&
+    (plan.action==="cancelled"||e.status!=="cancelled"));
+  if(targets.length!==1||targets[0].entity_id!==proposal.entity.entity_id)return null;
+  return proposal.entity.entity_id;
 }
 function resolveBoundLifecyclePlan(input:CommerceRuntimeInput,state:ConversationCommerceState){
   return resolveEntityLifecyclePlan(input.text,state,
@@ -2572,9 +2584,10 @@ function reduceTurnOperations(
       history: index > 0
         ? [{ role: "visitor", content: clauses.slice(0, index).join("。") }, ...(input.history ?? [])]
         : input.history,
-      // A frame describing the whole turn cannot authorize a different
-      // clause's state mutation. Each clause uses the deterministic reducer.
-      semantic_frame: null,
+      // Only this independently verified clause may inherit its original
+      // semantic action; every other clause stays isolated and read-only.
+      semantic_frame: acceptedLifecycleEntityRef({...input,text:clause},state)
+        ? input.semantic_frame : null,
     }, hints);
   }
   // A multi-clause customer correction retains one server-validated semantic
@@ -2734,6 +2747,11 @@ function sourceBoundPartialUnitRetention(
 /** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
 export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[]): ConversationCommerceState {
   if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
+  // A high-confidence lifecycle proposal without an accepted B2 target/action
+  // is never permission to mutate a different item or transaction state.
+  if(input.semantic_frame && input.semantic_frame.confidence>=0.72 &&
+    ["DEFER","CANCEL_ITEM","REMOVE_ITEM"].includes(input.semantic_frame.operation) &&
+    !acceptedLifecycleEntityRef(input,previous))return previous;
   // A missing lifecycle subject blocks all commerce-state side effects in the
   // turn (including quote/order/payment drafts). Visitor and audit persistence
   // remain outside this reducer.
@@ -3496,6 +3514,24 @@ export async function runCommerceStateRuntime(
 
 
   const lifecycleIntent = resolveBoundLifecyclePlan(input, contextualBefore.state);
+  const proposedLifecycle=verifiedLifecycleProposal(input,contextualBefore.state);
+  if(proposedLifecycle && !acceptedLifecycleEntityRef(input,contextualBefore.state)){
+    // A confident model interpretation outside the existing lexical safety
+    // gate must not silently disappear, nor may it become a mutation.
+    const item=clean(String(proposedLifecycle.entity.attributes.product_name ??
+      proposedLifecycle.entity.model ?? proposedLifecycle.entity.attributes.name ?? ""),120);
+    if(item){
+      const cancel=proposedLifecycle.action==="cancelled";
+      return {authority:"CONVERSATION_STATE",reply:language==="en"
+        ? `Do you want to ${cancel?"cancel":"pause"} ${item}? Please confirm.`
+        : language==="zh-CN"
+        ? `请确认：你是想${cancel?"取消":"暂缓"}「${item}」吗？`
+        : `請確認：你係想${cancel?"取消":"暫緩"}「${item}」嗎？`,
+        revision:contextualBefore.revision,persist_result:"read_only",
+        reason:"unmatched_semantic_lifecycle_requires_confirmation",
+        route:"commerce_state_answer"};
+    }
+  }
   if (lifecycleIntent.kind === "ambiguous") {
     const cancel=lifecycleIntent.action === "cancelled";
     return { authority: "CONVERSATION_STATE", reply: language === "en"

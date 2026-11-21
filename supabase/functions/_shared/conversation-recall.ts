@@ -814,11 +814,50 @@ function selectEntities(
   return active.length === 1 ? active : [];
 }
 
+/** A cross-language subject may be selected by one semantic referent,
+ * never by a hard-coded product synonym. Verify current server-owned
+ * Company/Ticket/revision and the original source row for this exact entity.
+ * The ephemeral question phrase is NOT written as a customer alias. */
+function verifiedSemanticRecapTarget(input:ConversationRecallInput):CommerceEntity|null {
+  const c=input.commerce,m=input.memory;
+  if(!c||!m||input.explicit_handoff||
+    input.trusted_visitor_source_status!=="verified"||
+    !input.company_id||!input.conversation_id||!input.source_message_id||
+    c.company_id!==input.company_id||c.conversation_id!==input.conversation_id||
+    m.company_id!==input.company_id||m.conversation_id!==input.conversation_id||
+    m.commerce_state_revision!==c.revision||
+    !hasRequirementsRecapCue(input.question))return null;
+  const allowed=(input.referents??[]).filter(r=>r.confidence>=0.9&&
+    ["persistent_state","prior_turn","canonical_commerce"].includes(r.source??""));
+  if(allowed.length!==1)return null;
+  const entity=c.state.entities.find(e=>e.entity_id===allowed[0].ref&&
+    e.provenance.source_type==="customer" &&
+    !["cancelled","deferred","superseded"].includes(e.status) &&
+    typeof e.provenance.source_message_id==="string"&&
+    e.provenance.source_message_id.length>0);
+  if(!entity)return null;
+  const sources=(input.trusted_visitor_source_rows??[]).filter(row=>
+    row.id===entity.provenance.source_message_id);
+  if(sources.length!==1||!entityAliases(entity).some(name=>
+    phrase(sources[0].content,name)))return null;
+  return entity;
+}
+function semanticRecapQuestionSubject(question:string):string|null {
+  // A grammar slot for a recap target, not a domain/translation word list.
+  const normalized=question.normalize("NFKC").trim();
+  const matched=normalized.match(/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:recap|summari[sz]e)\s+(?:my|our)(?:\s+current)?\s+(.{2,90}?)\s+requirements[?.!]?$/iu);
+  return matched?.[1]?.trim()??null;
+}
+
 /** Current-turn scope is authoritative; fallback focus never turns a global recap into a scoped one. */
 function summarySelection(input: ConversationRecallInput, entities: CommerceEntity[]): {
   provenance: "explicit_identity" | "explicit_category" | "trusted_referent" | "global";
   entities: CommerceEntity[];
 } {
+  const semanticTarget=verifiedSemanticRecapTarget(input);
+  if(semanticTarget && semanticRecapQuestionSubject(input.question))
+    return {provenance:"trusted_referent",entities:entities.filter(e=>
+      e.entity_id===semanticTarget.entity_id)};
   const identity = entities.filter(e => any(input.question, [e.entity_id, e.model,
     ...["product_name", "display_name", "original_name", "sku"].map(k => e.attributes[k])]
     .filter((v): v is string => typeof v === "string" && v.length > 0)));
@@ -2173,6 +2212,9 @@ function resolveConversationRecallLegacy(
     return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
   }
   const retainedTargets = input.commerce ? retainedRecapTargets(input.commerce.state) : [];
+  const semanticRecapTarget=verifiedSemanticRecapTarget(input);
+  const semanticQuestionSubject=semanticRecapTarget ? semanticRecapQuestionSubject(input.question) : null;
+  if(semanticQuestionSubject) retainedTargets.push(semanticQuestionSubject);
   const resolved = summarySelection(input, input.commerce?.state.entities ?? []);
   if (resolved.provenance === "trusted_referent" && resolved.entities.length === 1) retainedTargets.push("it", "that", "this");
   const recap = isCurrentRequirementsRecap(input.question, retainedTargets);
