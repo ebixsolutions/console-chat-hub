@@ -174,7 +174,7 @@ const TASK3C_D4_NO_INDUSTRY_SOURCE=Object.freeze({"supabase/functions/_shared/co
 export function verifyProductionSource({root=process.cwd(),profile=JSON.parse(fs.readFileSync(path.join(root,PROFILE_PATH))),expectedIdentity,sourceOnly=false}={}){
  must(JSON.stringify(profile.authorized_task3c_d4_no_industry_sha256)===JSON.stringify(TASK3C_D4_NO_INDUSTRY_SOURCE),'task3c_d4_no_industry_signed_scope_drift');
  for(const [f,h] of Object.entries(TASK3C_D4_NO_INDUSTRY_SOURCE))
-  must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task3c_d4_no_industry_source_hash_drift:'+f);
+  must(fs.existsSync(path.join(root,f))&&sha(fs.readFileSync(path.join(root,f)))===h,'task3c_d4_no_industry_source_drift:'+f);
  must(profile.task3c_kb_binding_production_authorized===false,'task3c_kb_binding_deploy_not_authorized');
  must(profile.task3c_kb_binding_publish_authorized===false,'task3c_kb_binding_publish_not_authorized');
  must(profile.task3c_kb_binding_schema_authorized===false,'task3c_kb_binding_schema_not_authorized');
