@@ -2142,7 +2142,10 @@ function reduceSingleTurn(
   rawHints: CommerceTurnEntityHint[],
 ): ConversationCommerceState {
   const lifecycle = resolveEntityLifecyclePlan(input.text, previous);
-  if (lifecycle.kind === "ambiguous") return previous;
+  // A customer asks which option might be deferred; that is advice, not a
+  // lifecycle command. Retain independently sourced customer facts in ASK_FACT.
+  if (lifecycle.kind === "ambiguous" &&
+      !isReadOnlyCommerceQuestion(input.text,input.semantic_frame)) return previous;
   if (lifecycle.kind === "mutation") {
     const events: CommerceStateEvent[] = lifecycle.plans.map((plan) => ({
       type: "SET_ENTITY_STATUS",
@@ -2478,7 +2481,8 @@ function reduceTurnOperations(
   rawHints: CommerceTurnEntityHint[],
 ): ConversationCommerceState {
   // Resolve conflicting lifecycle clauses before reducing any one of them.
-  if (resolveEntityLifecyclePlan(input.text, previous).kind === "ambiguous") return previous;
+  if (!isReadOnlyCommerceQuestion(input.text,input.semantic_frame) &&
+      resolveEntityLifecyclePlan(input.text, previous).kind === "ambiguous") return previous;
   const clauses = splitCustomerOperationClauses(input.text);
   // The complete lifecycle plan already resolves all independent clauses.
   // Do not isolate a clause by dropping its validated semantic frame.
@@ -2691,7 +2695,8 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
   // A missing lifecycle subject blocks all commerce-state side effects in the
   // turn (including quote/order/payment drafts). Visitor and audit persistence
   // remain outside this reducer.
-  if (resolveEntityLifecyclePlan(input.text,previous).kind==="ambiguous") return previous;
+  if (!isReadOnlyCommerceQuestion(input.text,input.semantic_frame) &&
+      resolveEntityLifecyclePlan(input.text,previous).kind==="ambiguous") return previous;
   const partial=sourceBoundPartialUnitRetention(previous,input);
   if(partial){
     let state=reduceCommerceState(previous,partial);
@@ -2747,7 +2752,8 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
   // guidance. Commit only literal-source-backed changed leaves via the original
   // deterministic reducer and source-message CAS, never a merchant claim or
   // the model's proposed transaction/booking/payment state.
-  if (resolveEntityLifecyclePlan(input.text, previous).kind !== "ambiguous") {
+  if (isReadOnlyCommerceQuestion(input.text,input.semantic_frame) ||
+      resolveEntityLifecyclePlan(input.text, previous).kind !== "ambiguous") {
     const customerEvents = sourceBoundMixedCustomerFactEvents(input.semantic_frame,
       state, input.text, input.source_message_id, input.occurred_at ?? null);
     if (customerEvents.length) state = reduceCommerceState(state, customerEvents);
