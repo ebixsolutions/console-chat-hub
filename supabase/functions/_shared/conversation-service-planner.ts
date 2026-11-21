@@ -855,13 +855,22 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
       if (field.startsWith("room_size:")) {
         const roomKey = field.slice("room_size:".length);
         const roomName = SERVICE_ROOM_LABELS[roomKey]?.[l];
-        label = roomName ? roomName + ["面積", "面积", " area"][l] : ["空間面積", "空间面积", "Space area"][l];
+        const sourceSlots=plan.known_facts.filter(row=>
+          row.name.startsWith(`entity:${entity.entity_id}:room_size:`));
+        // Preserve distinct recorded values; an internal schema key does not
+        // prove the customer named that room. Use a stable neutral slot number.
+        const neutralIndex=sourceSlots.findIndex(row=>row.name===fact.name)+1;
+        label=roomName ? roomName+["面積","面积"," area"][l]
+          : ["空間面積","空间面积","Space area"][l]+" "+neutralIndex;
       } else label = labels[field]?.[l];
     }
     // Unknown schema fields receive a neutral label, never a raw internal key.
     label ??= ["你提供的資料", "你提供的资料", "Provided detail"][l];
-    if (entity && ["product_name", "model", "sku"].includes(fact.name.slice(`entity:${entity.entity_id}:`.length)) && seen.has(value)) return [];
-    seen.add(value);
+    const sameItemLabel=entity && ["product_name","model","sku"].includes(
+      fact.name.slice(`entity:${entity.entity_id}:`.length));
+    // Distinct customer areas can legitimately have equal measured values.
+    if(sameItemLabel && seen.has(value))return [];
+    if(sameItemLabel)seen.add(value);
     return [`${label}${l === 2 ? ": " : "："}${value}`];
   }).slice(0, 6);
 }

@@ -935,7 +935,9 @@ for (const language of ["zh-TW", "zh-CN", "en"]) {
     assert(r.reply.includes("冷氣"), r.reply);
     assert(r.reply.includes(language==="en"?"冷氣 for 2":"冷氣 2"), r.reply);
     assert(!r.reply.includes(language==="en"?"2 units":"2部"),"unattested unit");
-    assert(r.reply.includes(language === "en" ? "site checks" : language === "zh-CN" ? "现场条件" : "現場條件"), r.reply);
+    assert(r.reply.includes(language==="en"?"recorded checks":language==="zh-CN"?"待核对事项":"待核對事項"),r.reply);
+    assert(!r.reply.includes(language==="en"?"site checks":language==="zh-CN"?"现场条件":"現場條件"),
+      "generic pending checks must not become an on-site requirement");
     assert(!internalRecap.test(r.reply) && JSON.stringify(i) === before, r.reply);
     const scoped = prepareConversationRecall({ ...i, question: "Recap washer-front." }, language);
     assert(scoped.decision.handled && scoped.reply && !/site checks|现场条件|現場條件/.test(scoped.reply), JSON.stringify(scoped));

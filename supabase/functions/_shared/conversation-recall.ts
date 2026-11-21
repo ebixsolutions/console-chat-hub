@@ -2986,8 +2986,16 @@ function renderCustomerRecap(value: unknown, language: string): string {
   const pendingBooking = active.some(e => object(e.attributes.capabilities)?.requires_booking === true && !confirmed.includes(e.entity_id));
   const qualifications: string[] = [];
   if (pendingBooking) qualifications.push(["預約要求仍需職員確認，未成為已確認預約。", "预约要求仍需职员确认，尚未成为已确认预约。", "The booking still needs staff confirmation and is not confirmed yet."][l]);
-  if (active.some(e => object(e.attributes.capabilities)?.requires_site_check === true) ||
-    global && Array.isArray(v.operational_pending_checks) && v.operational_pending_checks.length > 0) qualifications.push(["適用性仍要按現行資料及現場條件核對。", "适用性仍需按现行资料及现场条件核对。", "Suitability still needs current evidence and the relevant site checks."][l]);
+  const siteRequired=active.some(e=>
+    object(e.attributes.capabilities)?.requires_site_check===true);
+  const pending=global && Array.isArray(v.operational_pending_checks) &&
+    v.operational_pending_checks.length>0;
+  if(siteRequired)qualifications.push(["適用性仍要按現行資料及現場條件核對。",
+    "适用性仍需按现行资料及现场条件核对。",
+    "Suitability still needs current evidence and the relevant site checks."][l]);
+  else if(pending)qualifications.push(["仍有記錄中的待核對事項，尚未完成確認。",
+    "仍有记录中的待核对事项，尚未完成确认。",
+    "Some recorded checks still need verification."][l]);
   // Only the global projection owns portfolio transaction status. Operational
   // qualifications never suppress it, and scoped projections never inherit it.
   let transactionText = "";
