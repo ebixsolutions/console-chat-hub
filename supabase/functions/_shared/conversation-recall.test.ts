@@ -218,10 +218,9 @@ export function t17ProductionFailureFixture(
     source_message_id,
     commerce_state_revision: 3,
     commerce_state: state,
-    newest_first: turns.slice().reverse().map((content, index) => ({
-      id: `17000000-0000-4000-8000-00000000020${index}`,
-      role: "visitor",
-      content,
+    newest_first: turns.slice().reverse().map((content,index)=>({
+      id:`17000000-0000-4000-8000-00000000010${2-index}`,
+      role:"visitor",content,
     })),
     visitor_turn_count: 3,
     source_created_at: "2026-09-17T00:00:00Z",
@@ -240,6 +239,10 @@ export function t17ProductionFailureFixture(
       revision: 3,
       state,
     },
+    trusted_visitor_source_status:"verified",
+    trusted_visitor_source_rows:turns.slice().reverse().map((content,index)=>({
+      id:`17000000-0000-4000-8000-00000000010${2-index}`,content,
+    })),
   };
 }
 
@@ -376,11 +379,9 @@ Deno.test("C3 semantic T17 corrected active quantity excludes deferred item", ()
 });
 Deno.test("C3 T17 exact production reproduction retains two and excludes living room", () => {
   const input = t17ProductionFailureFixture();
-  assert(
-    input.commerce?.state.entities.length === 1 &&
-      input.commerce.state.entities[0].status === "cancelled",
-    "fixture must reproduce the collapsed inactive canonical entity",
-  );
+  assert(input.commerce?.state.entities.every(e=>
+    !(e.status==="cancelled"&&e.quantity===3)),
+    "an unbound named-part cancellation must not cancel the whole aggregate");
   const decision = resolveConversationRecall(input);
   assert(decision.handled, JSON.stringify(decision));
   const reply = renderConversationRecall(decision, "zh-TW") ?? "";
@@ -425,8 +426,9 @@ Deno.test("C3 T17 canonical active correction outranks stale inactive quantity",
   );
   assert(
     quantity?.value === 2 &&
-      quantity.entity_id === "air_conditioner:unscoped" &&
-      cancelledStatus?.entity_id === "air_conditioner:living_room",
+      quantity.evidence_source_message_id === "17000000-0000-4000-8000-000000000101" &&
+      cancelledStatus?.source_kind === "attested_customer_utterance" &&
+      String(cancelledStatus.value).includes("客廳"),
     JSON.stringify(decision),
   );
 });
@@ -449,7 +451,7 @@ Deno.test("C3 T17 direct inactive quantity remains genuinely ambiguous", () => {
   const decision = resolveConversationRecall(input);
   assert(
     !decision.handled && decision.reason === "AMBIGUOUS" &&
-      decision.detail === "INACTIVE_ENTITY_NOT_CURRENT_QUANTITY",
+      decision.detail === "UNBOUND_NAMED_PART",
     JSON.stringify(decision),
   );
 });

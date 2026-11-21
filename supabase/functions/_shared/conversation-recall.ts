@@ -777,6 +777,29 @@ function entityAliases(e: CommerceEntity): string[] {
 export function retainedRecapTargets(state: ConversationCommerceState): string[] {
   return state.entities.flatMap(entityAliases);
 }
+/** The customer's latest retained quantity is an answerable *request*
+ * only when one original, same-ticket Visitor row attests it. It cannot
+ * certify a completed business cancellation or overwrite state. */
+function verifiedRetainedCustomerCorrection(input:ConversationRecallInput):
+  {value:number;text:string;source_id:string}|null {
+  const m=input.memory,c=input.commerce,rows=input.trusted_visitor_source_rows;
+  if(!m||!c||input.trusted_visitor_source_status!=="verified"||!rows?.length||
+    m.company_id!==input.company_id||m.conversation_id!==input.conversation_id||
+    c.company_id!==input.company_id||c.conversation_id!==input.conversation_id||
+    m.commerce_state_revision!==c.revision)return null;
+  const latest=latestRetainedQuantity(m);
+  if(!latest)return null;
+  const text=m.latest_corrections[latest.index];
+  const norm=(s:string)=>s.normalize("NFKC").replace(/\s+/gu," ").trim();
+  const source=rows.filter(r=>r.id!==input.source_message_id &&
+    typeof r.content==="string"&&norm(r.content)===norm(text));
+  if(source.length!==1)return null;
+  const at=rows.findIndex(r=>r.id===source[0].id);
+  if(at<0||rows.slice(0,at).some(r=>r.id!==input.source_message_id &&
+    retainedQuantity(r.content)!==null && retainedQuantity(r.content)!==latest.value))return null;
+  return {value:latest.value,text,source_id:source[0].id};
+}
+
 function selectEntities(
   input: ConversationRecallInput,
   entities: CommerceEntity[],
@@ -2305,6 +2328,34 @@ function resolveConversationRecallLegacy(
       { ...input, question: slot.question },
       c?.state.entities ?? [],
     );
+    const sourceCorrection=(
+      f==="quantity"&&asksRetainedQuantity(slot.question) ||
+      f==="entity_status"&&asksInactiveEntityStatus(slot.question))
+      ?verifiedRetainedCustomerCorrection(input):null;
+    if(sourceCorrection){
+      if(f==="quantity"){
+        evidence.push({fact_type:"quantity",value:sourceCorrection.value,
+          state_path:"latest_corrections.source_verified_quantity",
+          authority:"CURRENT_CUSTOMER_MEMORY",entity_id:null,region:null,
+          evidence_source_message_id:sourceCorrection.source_id,
+          temporal_scope:"current",source_kind:"retained_customer_correction_checkpoint"});
+      }else{
+        evidence.push({fact_type:"entity_status",value:sourceCorrection.text,
+          state_path:"latest_corrections.source_verified_customer_request",
+          authority:"CURRENT_CUSTOMER_MEMORY",entity_id:null,region:null,
+          evidence_source_message_id:sourceCorrection.source_id,
+          temporal_scope:"current",source_kind:"attested_customer_utterance"});
+      }
+      continue;
+    }
+    if(f==="quantity"&&!asksRetainedQuantity(slot.question)&&
+      selected.length===1&&selected[0].provenance.source_type==="customer"&&
+      typeof selected[0].attributes.product_name==="string"&&
+      /[：:].+[,，、]/u.test(selected[0].attributes.product_name)&&
+      !phrase(slot.question,selected[0].attributes.product_name)){
+      // A named part cannot inherit a legacy collapsed multi-part total.
+      return fail("AMBIGUOUS","UNBOUND_NAMED_PART",facts);
+    }
     const selectedOnlyInactive = selected.length > 0 && selected.every(
       (entity) => !isCurrentEntity(entity),
     );
@@ -2747,7 +2798,11 @@ export function renderConversationRecall(
       ? retainedNumberWords[e.value][l]
       : display(e.value);
     if (e.source_kind === "attested_customer_utterance") {
-      lines.push(`${LABELS[e.fact_type]?.[l] ?? e.attribute_key ?? "Customer information"}: ${v}`);
+      if(e.fact_type==="entity_status"){
+        lines.push(l===2?`You said: ${v} (not proof of completed cancellation).`
+          :l===1?`你表示：${v}（不代表取消手续已完成）。`
+          :`你表示：${v}（不代表取消手續已完成）。`);
+      }else lines.push(`${LABELS[e.fact_type]?.[l] ?? e.attribute_key ?? "Customer information"}: ${v}`);
       continue;
     }
     if (e.temporal_scope === "historical") v = ["歷史記錄：", "历史记录：", "Historical record: "][l] + v;
