@@ -1051,7 +1051,29 @@ for (const [text,expected] of [
 ] as const)Deno.test('lookup instruction and genuine lifecycle remain independent: '+text,()=>{
  const setup='我要一部客廳冷氣。';const scope={conversation_id:'17000000-0000-4000-8000-000000000001',company_id:'17000000-0000-4000-8000-000000000002',language:'zh-TW' as const,history:[]};
  const previous=reduceTurn(createEmptyConversationCommerceState(),{...scope,source_message_id:'17000000-0000-4000-8000-000000000102',text:setup},buildCommerceEntityHints([setup]));
- const state=reduceTurn(previous,{...scope,source_message_id:'17000000-0000-4000-8000-000000000103',text},buildCommerceEntityHints([text,setup]));
+ const shortReference=/^(?:我要冷氣|I want an air conditioner)/u.test(text);
+ // The original setup has no customer-authored short alias. No-frame fuzzy
+ // cancellation must fail closed rather than mutate via a substring.
+ if(shortReference){
+   const unbound=reduceTurn(previous,{...scope,
+     source_message_id:'17000000-0000-4000-8000-000000000103',text},
+     buildCommerceEntityHints([text,setup]));
+   assert(JSON.stringify(unbound)===JSON.stringify(previous),"unbound lifecycle changed state");
+ }
+ const acceptedFrame=shortReference ? ({
+   version:"commerce-semantic-1.0.0" as const,language:"zh-TW",
+   operation:expected==="deferred"?"DEFER" as const:"CANCEL_ITEM" as const,
+   intent:"customer_preference",topic:null,entities:[],customer_facts:[],
+   requested_facts:[],confidence:.99,customer_correction:false,additive:false,
+   referents:[{ref:previous.entities[0].entity_id,source:"persistent_state" as const,confidence:.99}],
+   ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+   explicit_negations:[],transaction_state:"none" as const,payment_state:"none" as const,
+   booking_state:"none" as const,fulfillment_state:"none" as const,
+ }) : null;
+ const state=reduceTurn(previous,{...scope,
+   source_message_id:'17000000-0000-4000-8000-000000000103',text,
+   ...(acceptedFrame ? {semantic_frame:acceptedFrame}:{}),
+ },buildCommerceEntityHints([text,setup]));
  assert(state.entities.length>0,JSON.stringify(state));
  assert(state.entities.every(e=>expected==='active'?!['deferred','cancelled'].includes(e.status):e.status===expected),JSON.stringify(state));
 });

@@ -18,6 +18,7 @@ import { retainedRecapTargets } from "./conversation-recall.ts";
  */
 
 import { matchesReferenceLabel } from "./industry-agent-registry.ts";
+import { resolveSourceOwnedSubject,sourceOwnedSubjectLabels } from "./commerce-subject-resolution.ts";
 import {
   type ConversationCommerceState,
   createEmptyConversationCommerceState,
@@ -2136,12 +2137,53 @@ function hasSourceBoundQuantityMutation(
   return allocated === event.quantity && fullTargets.length === 1 && fullTargets[0] === event.entity_id;
 }
 
+/** A semantic referent is an untrusted candidate until the server binds
+ * it to a unique customer-owned entity in this ticket/company state. This
+ * never infers an industry, translates a name, or accepts a category target. */
+function acceptedLifecycleEntityRef(
+  input: CommerceRuntimeInput, state: ConversationCommerceState,
+): string | null {
+  const frame=input.semantic_frame;
+  if(!frame || frame.confidence<0.90 || frame.ambiguity.is_ambiguous ||
+      !input.conversation_id || !input.company_id || !input.source_message_id ||
+      isReadOnlyCommerceQuestion(input.text,frame))return null;
+  const normalized=requirementMutationText(input.text);
+  const cancel=/(?:取消|\\bcancel\\b)/iu.test(normalized);
+  const defer=/(?:暫緩|暂缓|暫時唔買住|暫時不買|暂时不买|\\b(?:defer|pause)\\b)/iu.test(normalized);
+  if(cancel===defer || (cancel && !["CANCEL_ITEM","REMOVE_ITEM"].includes(frame.operation)) ||
+      (defer && frame.operation!=="DEFER"))return null;
+  const refs=[...new Set(frame.referents.filter(ref=>
+    ref.confidence>=0.9 && ["persistent_state","prior_turn"].includes(ref.source)
+  ).map(ref=>ref.ref))];
+  if(refs.length!==1)return null;
+  const e=state.entities.find(entity=>entity.entity_id===refs[0] &&
+    entity.provenance.source_type==="customer" && Boolean(entity.provenance.source_message_id) &&
+    !["cancelled","deferred","superseded"].includes(entity.status));
+  if(!e || frame.entities.some(entity=>entity.confidence>=0.72 &&
+       entity.entity_ref && entity.entity_ref!==e.entity_id))return null;
+  const sameCategory=state.entities.filter(entity=>entity.category===e.category &&
+    !["cancelled","deferred","superseded"].includes(entity.status));
+  if(sameCategory.length!==1){
+    const named=resolveSourceOwnedSubject(state,input.text,
+      {include_inactive:false,mode:"mutation"});
+    if(named.kind!=="one" || named.entity.entity_id!==e.entity_id)return null;
+  }
+  if(state.entities.some(entity=>entity.entity_id!==e.entity_id &&
+    sourceOwnedSubjectLabels(entity).some(label=>matchesReferenceLabel(input.text,label))))
+    return null;
+  return e.entity_id;
+}
+function resolveBoundLifecyclePlan(input:CommerceRuntimeInput,state:ConversationCommerceState){
+  return resolveEntityLifecyclePlan(input.text,state,
+    {accepted_entity_ref:acceptedLifecycleEntityRef(input,state)});
+}
+
 function reduceSingleTurn(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
 ): ConversationCommerceState {
-  const lifecycle = resolveEntityLifecyclePlan(input.text, previous);
+  const lifecycle = resolveBoundLifecyclePlan(input, previous);
   // A customer asks which option might be deferred; that is advice, not a
   // lifecycle command. Retain independently sourced customer facts in ASK_FACT.
   if (lifecycle.kind === "ambiguous" &&
@@ -2482,7 +2524,7 @@ function reduceTurnOperations(
 ): ConversationCommerceState {
   // Resolve conflicting lifecycle clauses before reducing any one of them.
   if (!isReadOnlyCommerceQuestion(input.text,input.semantic_frame) &&
-      resolveEntityLifecyclePlan(input.text, previous).kind === "ambiguous") return previous;
+      resolveBoundLifecyclePlan(input, previous).kind === "ambiguous") return previous;
   const clauses = splitCustomerOperationClauses(input.text);
   // The complete lifecycle plan already resolves all independent clauses.
   // Do not isolate a clause by dropping its validated semantic frame.
@@ -2514,7 +2556,7 @@ function reduceTurnOperations(
   }
   let state = previous;
   for (const [index, clause] of clauses.entries()) {
-    if (resolveEntityLifecyclePlan(clause, state).kind === "ambiguous") return previous;
+    if (resolveBoundLifecyclePlan({...input,text:clause}, state).kind === "ambiguous") return previous;
     const hints = rawHints.filter((hint) => {
       if (state.entities.some((entity) => entity.entity_id === hint.entity_id)) return true;
       // A location or customer condition about an existing aggregate is not
@@ -2696,7 +2738,7 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
   // turn (including quote/order/payment drafts). Visitor and audit persistence
   // remain outside this reducer.
   if (!isReadOnlyCommerceQuestion(input.text,input.semantic_frame) &&
-      resolveEntityLifecyclePlan(input.text,previous).kind==="ambiguous") return previous;
+      resolveBoundLifecyclePlan(input,previous).kind==="ambiguous") return previous;
   const partial=sourceBoundPartialUnitRetention(previous,input);
   if(partial){
     let state=reduceCommerceState(previous,partial);
@@ -2753,7 +2795,7 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
   // deterministic reducer and source-message CAS, never a merchant claim or
   // the model's proposed transaction/booking/payment state.
   if (isReadOnlyCommerceQuestion(input.text,input.semantic_frame) ||
-      resolveEntityLifecyclePlan(input.text, previous).kind !== "ambiguous") {
+      resolveBoundLifecyclePlan(input, previous).kind !== "ambiguous") {
     const customerEvents = sourceBoundMixedCustomerFactEvents(input.semantic_frame,
       state, input.text, input.source_message_id, input.occurred_at ?? null);
     if (customerEvents.length) state = reduceCommerceState(state, customerEvents);
@@ -3453,7 +3495,7 @@ export async function runCommerceStateRuntime(
   }
 
 
-  const lifecycleIntent = resolveEntityLifecyclePlan(text, contextualBefore.state);
+  const lifecycleIntent = resolveBoundLifecyclePlan(input, contextualBefore.state);
   if (lifecycleIntent.kind === "ambiguous") {
     const cancel=lifecycleIntent.action === "cancelled";
     return { authority: "CONVERSATION_STATE", reply: language === "en"
@@ -3651,7 +3693,8 @@ export async function runCommerceStateRuntime(
   }
   const state = persisted.state;
   const lifecycleVerified = persisted.result === "success"
-    ? verifyEntityLifecycleTransition(text, persisted.previous_state, state, input.source_message_id)
+    ? verifyEntityLifecycleTransition(text, persisted.previous_state, state, input.source_message_id,
+        acceptedLifecycleEntityRef(input,persisted.previous_state))
     : { valid: false } as const;
   if (lifecycleVerified.valid) {
     const focus = lifecycleVerified.plans[0].focus_category;
@@ -3681,7 +3724,7 @@ export async function runCommerceStateRuntime(
       },
     };
   }
-  if (resolveEntityLifecyclePlan(text, persisted.previous_state).kind === "mutation") {
+  if (resolveBoundLifecyclePlan(input, persisted.previous_state).kind === "mutation") {
     return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
       persist_result: persisted.result, reason: "unverified_lifecycle_commit", route: "commerce_state_answer" };
   }

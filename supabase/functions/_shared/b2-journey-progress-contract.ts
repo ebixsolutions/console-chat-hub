@@ -16,8 +16,10 @@ export interface B2LifecyclePlan {
 }
 
 /** Lifecycle and focus are separate clauses. An unbound lifecycle verb is never inferred from history. */
-export function resolveEntityLifecyclePlan(text: string, state: ConversationCommerceState):
-  { kind: "mutation"; plans: B2LifecyclePlan[] } | { kind: "ambiguous"; action: "deferred" | "cancelled" } | { kind: "none" } {
+export function resolveEntityLifecyclePlan(
+  text: string, state: ConversationCommerceState,
+  options: { accepted_entity_ref?: string | null } = {},
+): { kind: "mutation"; plans: B2LifecyclePlan[] } | { kind: "ambiguous"; action: "deferred" | "cancelled" } | { kind: "none" } {
   const normalized = requirementMutationText(text).trim().toLowerCase();
   const operation = (part: string): "deferred" | "cancelled" => /取消|唔要|不要|cancel\b/i.test(part) && !/暫時唔|暫時不|暂时不/i.test(part) ? "cancelled" : "deferred";
   const ambiguous = () => ({kind:"ambiguous" as const,action:operation(normalized)});
@@ -26,7 +28,8 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
   const identifiers = (part: string): string[] => part.match(/\b(?=[a-z0-9_-]*[a-z])(?=[a-z0-9_-]*\d)[a-z0-9]+(?:[-_][a-z0-9]+)*\b/gi) ?? [];
 
   const aliases = (part: string) => [...new Set([
-    ...(() => { const match = resolveSourceOwnedSubject(state, part, { include_inactive: true, mode:"mutation" }); return match.kind === "one" ? [match.entity.category] : []; })(),
+    ...(() => { const match = resolveSourceOwnedSubject(state, part, { include_inactive: true, mode:"mutation",
+      accepted_entity_ref:options.accepted_entity_ref }); return match.kind === "one" ? [match.entity.category] : []; })(),
     // Historical industry taxonomy never supplies implicit lifecycle aliases.
     ...state.entities.filter((entity) =>
       [entity.category, entity.model, entity.attributes.product_name]
@@ -62,7 +65,8 @@ export function resolveEntityLifecyclePlan(text: string, state: ConversationComm
       plans[0].action = "cancelled";
       continue;
     }
-    const sourceMatch = resolveSourceOwnedSubject(state,part,{include_inactive:true,mode:"mutation"});
+    const sourceMatch = resolveSourceOwnedSubject(state,part,{include_inactive:true,mode:"mutation",
+      accepted_entity_ref:options.accepted_entity_ref});
     if(sourceMatch.kind==="ambiguous")return ambiguous();
     // Fuzzy overlap may locate a noun for a read-only answer but must never
     // mutate a whole aggregate merely because it contains a named part.
@@ -124,9 +128,9 @@ export interface B2TrustedLifecycleCommit {
 
 export function verifyEntityLifecycleTransition(
   text: string, before: ConversationCommerceState, after: ConversationCommerceState,
-  sourceMessageId: string,
+  sourceMessageId: string, acceptedEntityRef: string | null = null,
 ): { valid: true; plans: B2LifecyclePlan[]; targetIds: string[] } | { valid: false } {
-  const resolved = resolveEntityLifecyclePlan(text, before);
+  const resolved = resolveEntityLifecyclePlan(text, before, {accepted_entity_ref:acceptedEntityRef});
   if (resolved.kind !== "mutation" || before.entities.length !== after.entities.length ||
     JSON.stringify(b2JourneyTransactionBoundary(before)) !== JSON.stringify(b2JourneyTransactionBoundary(after))) return { valid: false };
   const targetIds: string[] = [];
