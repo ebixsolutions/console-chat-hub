@@ -1902,6 +1902,47 @@ function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: Convers
  * Bind the count to one customer-authored clause and the actual target. The
  * anonymous form is limited to a pure, unambiguous contextual count update;
  * a provider's repeated old entity is never sufficient by itself. */
+/** A customer-authored purchase goal with a literal aggregate quantity is
+ * state, not a request to calculate a total. Both the Visitor text and one
+ * unambiguous semantic proposal must agree; industry/profile defaults never
+ * supply the subject, count, unit or authority. */
+function sourceBoundAffirmativeAggregateGoal(
+  input: CommerceRuntimeInput,
+  previous: ConversationCommerceState,
+): number | null {
+  const frame = input.semantic_frame;
+  if (!frame || frame.confidence < 0.72 || frame.ambiguity.is_ambiguous ||
+      frame.operation !== "ADD_ITEM" || frame.additive || frame.customer_correction ||
+      frame.entities.length !== 1) return null;
+  const text = clean(input.text);
+  if (looksInterrogative(text) || isHistoricalOrConditionalCustomerCalculationRequest(text) ||
+      /(?:唔|不|無需|无需|不要|唔好|別|别).{0,12}(?:選購|选购|購買|购买|買|买|訂購|订购)|\b(?:do not|don't|never|not)\s+(?:want|need|buy|purchase)\b/iu.test(text)) return null;
+  if (!/(?:我要|我想|我哋|我们|需要|想|\b(?:i|we)\s+(?:want|need)\b).{0,90}?(?:選購|选购|購買|购买|買|买|訂購|订购|purchase|buy|order)/iu.test(text)) return null;
+  const total = text.match(
+    /(?:合共|總共|总共|一共|總數|总数|共計|共计|in\s+total|total(?:\s+of)?)\s*(?:要|需|有|為|为|是|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(部|台|件|個|个|套|份|盒|箱|包|堂|課|课|units?|pieces?|items?|sets?|boxes?|packs?|lessons?|sessions?|seats?|nights?)/iu,
+  );
+  const quantity = total ? countTokenValue(total[1]) : null;
+  const proposed = frame.entities[0];
+  if (quantity === null || quantity <= 0 || proposed.quantity !== quantity ||
+      proposed.confidence < 0.72) return null;
+  // The unit must be literally sourced, not invented from a previous product
+  // or a provider echo. Unknown-unit proposals may use the explicit source.
+  const sourceUnit = total![2].toLowerCase();
+  if (proposed.unit && clean(proposed.unit).toLowerCase() !== sourceUnit) return null;
+  const bound = previous.entities.find(entity =>
+    entity.entity_id === proposed.entity_ref &&
+    entity.provenance.source_type === "customer" &&
+    !["cancelled", "deferred", "superseded"].includes(entity.status));
+  if (bound && proposed.category_hint && proposed.category_hint !== bound.category) return null;
+  const literalNames: unknown[] = [
+    proposed.name,
+    ...(bound ? [bound.attributes.name, bound.attributes.product_name, bound.model] : []),
+  ];
+  return literalNames.some(name => typeof name === "string" &&
+    name.length > 1 && matchesReferenceLabel(text, name))
+    ? quantity : null;
+}
+
 function hasSourceBoundQuantityMutation(
   event: Extract<CommerceStateEvent, { type: "SET_ENTITY_QUANTITY" }>,
   input: CommerceRuntimeInput,
@@ -1914,6 +1955,17 @@ function hasSourceBoundQuantityMutation(
   // A shared category word is not a unique referent when several current
   // items of that category exist. Require one source-named distinct identity.
   const sameCategory=target ? active.filter(entity=>entity.category===target.category) : [];
+  // An explicit fresh aggregate selection can update only the one active,
+  // customer-owned referent selected by a semantic entity ID and the Visitor's
+  // own subject label. A cancelled room or another active item cannot inherit
+  // the quantity, and a question or background numeric fact never qualifies.
+  const aggregateGoal = sourceBoundAffirmativeAggregateGoal(input, previous);
+  if (target && aggregateGoal !== null && event.quantity === aggregateGoal &&
+      input.semantic_frame?.entities[0]?.entity_ref === target.entity_id &&
+      sameCategory.length === 1 &&
+      [target.attributes.name, target.attributes.product_name, target.model]
+        .some(label => typeof label === "string" && label.length > 1 &&
+          matchesReferenceLabel(input.text, label))) return true;
   if(target && sameCategory.length>1) {
     const unique=[target.model,target.attributes.sku,target.attributes.product_name]
       .filter((v):v is string=>typeof v==="string"&&v.trim().length>=2)
@@ -2112,7 +2164,8 @@ function reduceSingleTurn(
   // state events. Persistence may still record this source-message revision,
   // but its canonical state payload remains byte-for-byte unchanged.
   const durableResearchTurn = establishesDurableProductResearch(input.text);
-  if (isReadOnlyCurrentStateQuery(input.text, input.semantic_frame) && !durableResearchTurn && !input.trusted_product_topic_focus) {
+  const affirmativeAggregateGoal = sourceBoundAffirmativeAggregateGoal(input, previous);
+  if (isReadOnlyCurrentStateQuery(input.text, input.semantic_frame) && !durableResearchTurn && affirmativeAggregateGoal === null && !input.trusted_product_topic_focus) {
     return previous;
   }
   // Bare product/service names are references; do not commit an LLM's inferred
@@ -2126,7 +2179,7 @@ function reduceSingleTurn(
     ));
   }
   const journey = resolveCustomerJourneyTurn(input, previous);
-  const calculationTurn = !input.trusted_product_topic_focus && detectExplicitCalculationRequest(input.text);
+  const calculationTurn = !input.trusted_product_topic_focus && affirmativeAggregateGoal === null && detectExplicitCalculationRequest(input.text);
   const proposedHints = calculationTurn
     ? []
     : materializeRoomOnlyReferenceHints(input.text, previous, rawHints, input.history ?? []);
@@ -2542,7 +2595,7 @@ function sourceBoundPartialUnitRetention(
     !Number.isInteger(proposed.quantity) || proposed.quantity<0 ||
     proposed.quantity===entity.quantity) return null;
   const unit=typeof entity.attributes.unit==="string" ? entity.attributes.unit.trim():"";
-  if(!unit || unit.length>32 || !/^[\\p{L}\\p{N}]+$/u.test(unit))return null;
+  if(!unit || unit.length>32 || !/^[\p{L}\p{N}]+$/u.test(unit))return null;
   if(proposed.category_hint && proposed.category_hint!==entity.category)return null;
   if(typeof proposed.unit==="string" && proposed.unit &&
       proposed.unit.toLowerCase()!==unit.toLowerCase())return null;
