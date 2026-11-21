@@ -14,7 +14,7 @@ const domains=[
 function fixture([category,name,unit]) {
  const state=createEmptyConversationCommerceState();state.current_topic=category;
  const id=category==='air_conditioner'?'air_conditioner:unscoped':'generic:'+category;
- state.entities=[{entity_id:id,category,model:name,quantity:1,status:'tentative',attributes:{product_name:name,unit,quantity_basis:'customer_explicit'},constraints:{},provenance:{source_type:'customer',source_message_id:'original-requirement'}}];
+ state.entities=[{entity_id:id,category,model:name,quantity:1,status:'tentative',attributes:{product_name:name,name:category==='air_conditioner'?'冷氣':name,unit,quantity_basis:'customer_explicit'},constraints:{},provenance:{source_type:'customer',source_message_id:'original-requirement'}}];
  return {state,hints:[{entity_id:id,category,model:name,aliases:[name],attributes:{product_name:name,unit}}]};
 }
 function frame(f,{operation='UPDATE_ITEM',facts=[],quantity=6,topic='computer',additive=false}={}) {
@@ -86,14 +86,43 @@ test('generic units use the known target dimension for unnamed corrections',()=>
   assert.deepEqual(apply(f,`now only 6 ${unit}`,bad).entities,f.state.entities);
  }
 });
-test('original stale AC then two browser corrections then new three room goal stays sourced',()=>{
- const turns=['早晨，我間書房大約95呎，想揀部窗口冷氣。見到樂聲 CW-SUL70BA，呢款係幾多匹，同埋有咩主要功能？','更正，實際只係8個分頁，預算想慳啲。請比較 RAM、CPU、SSD 升級優先次序，邊啲可以暫緩？暫時唔使查店舖售價或庫存。','再更正，依家只會開6個分頁，其他文書、視像會議同慳錢要求不變。','我要為兩間睡房同一個客廳選購冷氣，即合共三部；這是測試資料。'];
+test('new generic request after unrelated browser counts is source-bound without an appliance profile',()=>{
+ const turns=[
+ '早晨，我間書房大約95呎，想揀部窗口冷氣。見到樂聲 CW-SUL70BA，呢款係幾多匹，同埋有咩主要功能？',
+ '更正，實際只係8個分頁，預算想慳啲。請比較 RAM、CPU、SSD 升級優先次序，邊啲可以暫緩？暫時唔使查店舖售價或庫存。',
+ '再更正，依家只會開6個分頁，其他文書、視像會議同慳錢要求不變。',
+ '我要為兩間睡房同一個客廳選購冷氣，即合共三部；這是測試資料。'
+ ];
+ const semantic=(i)=>({version:'commerce-semantic-1.0.0',language:'zh-TW',
+  operation:i===0||i===3?'ADD_ITEM':'ASK_FACT',intent:i===1||i===2?'customer_guidance':'other',
+  topic:i===1||i===2?'computer':'generic_item',confidence:.98,
+  ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+  entities:i===0||i===3?[{entity_ref:i===0?'generic:original-spec':'generic:fresh-need',
+   name:'冷氣',kind:'physical_product',category_hint:'generic_item',sku:null,
+   model:i===0?'CW-SUL70BA':null,quantity:i===0?null:3,unit:'部',attributes:{},constraints:{},capabilities:{},confidence:.96}]:[],
+  referents:[],customer_facts:i===1?[{key:'browser_tabs',value:8}]:i===2?[{key:'browser_tabs',value:6}]:[],
+  requested_facts:[],customer_correction:false,additive:false,explicit_negations:[],
+  transaction_state:'none',payment_state:'none',booking_state:'none',fulfillment_state:'none'});
  let state=createEmptyConversationCommerceState();
- for(let i=0;i<turns.length;i++) {
-  state=reduceTurn(state,{text:turns[i],company_id:'fixture-company',conversation_id:'fixture-ticket',source_message_id:'source-'+i,language:'zh-TW',history:turns.slice(0,i).map(content=>({role:'visitor',content}))},buildCommerceEntityHints(turns.slice(0,i+1).reverse()));
-  assert.equal(state.entities.length,1);assert.equal(state.entities[0].quantity,[1,1,1,3][i]);
+ for(let i=0;i<turns.length;i++){
+  state=reduceTurn(state,{text:turns[i],company_id:'fixture-company',conversation_id:'fixture-ticket',
+   source_message_id:'source-'+i,language:'zh-TW',
+   semantic_frame:semantic(i),
+   history:turns.slice(0,i).map(content=>({role:'visitor',content}))},
+   buildCommerceEntityHints(turns.slice(0,i+1).reverse()));
+  assert.equal(state.current_industry,null,'no industry can be activated');
+  const old=state.entities.find(e=>e.entity_id==='generic:original-spec');
+  assert(old,'original product reference remains historical context');
+  assert.equal(old.quantity,0,'unknown original number must not be invented as one');
+  assert.equal(old.provenance.source_message_id,'source-0','browser counts cannot change original source');
+  if(i===3){
+   const fresh=state.entities.find(e=>e.entity_id==='generic:fresh-need');
+   assert(fresh,'new request is distinct from old product specification');
+   assert.equal(fresh.quantity,3,'new customer quantity is three, not six tabs');
+   assert.equal(fresh.provenance.source_message_id,'source-3');
+   assert.equal(fresh.model,null,'old model cannot be copied into a new need');
+  }
  }
- assert.equal(state.entities[0].model,null);assert.equal(state.entities[0].provenance.source_message_id,'source-3');
 });
 test('no selected profile returns only neutral scope clarification',()=>{
  const state=createEmptyConversationCommerceState();
@@ -111,17 +140,20 @@ test('neutral clarification cannot intercept a named service or its distribution
   assert.equal(resolveIndustryContextualCandidate({text,history:[],state:f.state,language:'zh-TW'}),null,text);
  }
 });
-test('selected appliance profile preserves legitimate implicit room followup',()=>{
+test('legacy industry state cannot trigger an implicit room followup in Phase 1',()=>{
  const f=fixture(domains[0]);f.state.current_industry='home_appliance';
  const result=resolveIndustryCustomerJourney({text:'書房大約80平方呎',state:f.state,language:'zh-TW'});
- assert.equal(result.category,'air_conditioner');assert(result.collected.includes('room_sizes'));
+ assert.equal(result,null,'Phase 1 has no appliance or other industry journey');
+ assert.equal(f.state.entities[0].attributes.name,'冷氣','customer-owned name still persists');
 });
 
 // Same Task3C isolated source regressions. All semantic proposals are scripted;
 // no model, KB, transaction or Hosted acceptance is inferred from these tests.
 function cancelledRoomFixture() {
  const f=fixture(domains[0]);f.state.entities[0].quantity=2;f.state.current_industry='home_appliance';f.state.language='en';
- f.state.entities.push({...structuredClone(f.state.entities[0]),entity_id:'air_conditioner:living_room',quantity:1,status:'cancelled',attributes:{unit:'部'},provenance:{source_type:'customer',source_message_id:'cancelled-room-source'}});
+ f.state.entities.push({...structuredClone(f.state.entities[0]),entity_id:'air_conditioner:living_room',quantity:1,status:'cancelled',
+  attributes:{unit:'部',name:'客廳那部',customer_subject_aliases:['客廳'],quantity_basis:'customer_explicit'},
+  provenance:{source_type:'customer',source_message_id:'cancelled-room-source'}});
  f.hints.push({entity_id:'air_conditioner:living_room',category:'air_conditioner',model:null,aliases:['air_conditioner']});
  f.state.conversion.tentative_entity_ids=['air_conditioner:unscoped'];f.state.conversion.cancelled_entity_ids=['air_conditioner:living_room'];
  return f;

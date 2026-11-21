@@ -826,13 +826,27 @@ export function buildCommerceEntityHints(texts: string[]): CommerceTurnEntityHin
   return [...hints.values()];
 }
 
-function hintsMentionedInTurn(text: string, hints: CommerceTurnEntityHint[]): CommerceTurnEntityHint[] {
+function hintsMentionedInTurn(text: string, hints: CommerceTurnEntityHint[], state?: ConversationCommerceState): CommerceTurnEntityHint[] {
   const lower = clean(text).toLowerCase();
   const categories = detectCategories(text).map((x) => x.key);
   const rooms = categories.length > 0
     ? detectRooms(text)
     : detectReferencedRooms(text);
   return hints.filter((hint) => {
+    const entity=state?.entities.find(e=>e.entity_id===hint.entity_id);
+    // Only names recorded in a customer-owned canonical entity, never a
+    // category/profile alias, can select a historic non-generic subject.
+    const storedLabels=entity?.provenance.source_type==="customer" ? [
+      entity.model, entity.attributes.product_name, entity.attributes.name,
+      ...(Array.isArray(entity.attributes.customer_subject_aliases)
+        ? entity.attributes.customer_subject_aliases : []),
+    ].filter((v):v is string=>typeof v==="string"&&v.trim().length>=2):[];
+    const explicitName=storedLabels.some(label=>matchesReferenceLabel(lower,label));
+    if(explicitName) {
+      if(entity && ["cancelled","deferred","superseded"].includes(entity.status) &&
+          !detectEntityReactivation(text)) return false;
+      return true;
+    }
     if (hint.entity_id.startsWith("generic:")) {
       return (hint.aliases ?? []).some((alias) => {
         const normalized = clean(alias, 80).toLowerCase();
@@ -1348,7 +1362,7 @@ function deriveA3RuntimeEvents(
     source_message_id: input.source_message_id,
     recorded_at: input.occurred_at ?? null,
   };
-  const mentioned = hintsMentionedInTurn(text, hints);
+  const mentioned = hintsMentionedInTurn(text, hints, previous);
   const quantity = parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
   const constraintCancellation = dimensionConstraintCancellation(text);
   const cancelled = detectCancellation(text) && !constraintCancellation;
@@ -1892,7 +1906,9 @@ function hasSourceBoundQuantityMutation(
         typeof value === "string" && value.length >= 2));
   for (const entity of active) identities.set(entity.entity_id,
     [...(identities.get(entity.entity_id) ?? []), entity.model, entity.category,
-      entity.attributes.sku, entity.attributes.product_name].filter((value): value is string =>
+      entity.attributes.sku, entity.attributes.product_name,entity.attributes.name,
+      ...(Array.isArray(entity.attributes.customer_subject_aliases)
+        ? entity.attributes.customer_subject_aliases : [])].filter((value): value is string =>
         typeof value === "string" && value.length >= 2));
   const namedTargets = (clause: string): string[] => {
     const categories = new Set(detectCategories(clause).map(category => category.key));
@@ -1924,6 +1940,16 @@ function hasSourceBoundQuantityMutation(
     /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/giu,
     word => String(["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].indexOf(word.toLowerCase())),
   );
+  // Explicit correction of a named cancelled subject cannot silently edit
+  // another active subject. A fresh unqualified goal is not a correction.
+  if(detectQuantityCorrectionSignal(input.text) && !detectEntityReactivation(input.text) &&
+      previous.entities.some(entity=>
+        ["cancelled","deferred","superseded"].includes(entity.status) &&
+        entity.provenance.source_type==="customer" &&
+        [entity.attributes.name,
+         ...(Array.isArray(entity.attributes.customer_subject_aliases)
+          ? entity.attributes.customer_subject_aliases : [])]
+          .some(label=>typeof label==="string"&&matchesReferenceLabel(input.text,label)))) return false;
   const frame = input.semantic_frame;
   const acceptedFrame = Boolean(frame && frame.confidence >= 0.72 && !frame.ambiguity.is_ambiguous);
   const semanticTargets = acceptedFrame ? (frame?.entities ?? []).filter(entity =>
@@ -2102,7 +2128,7 @@ function reduceSingleTurn(
   const hints = calculationTurn
     ? []
     : filterGhostUnscopedHints(input.text, previous, resolvedHints);
-  const mentioned = calculationTurn ? [] : hintsMentionedInTurn(input.text, hints);
+  const mentioned = calculationTurn ? [] : hintsMentionedInTurn(input.text, hints, previous);
   const bookingWithoutDelivery = mentioned.some(hintRequiresBookingWithoutDelivery);
   const semanticProposed = !calculationTurn && Boolean(input.semantic_frame && input.semantic_frame.confidence >= 0.72);
   const semanticEventsRaw = semanticProposed
@@ -2184,7 +2210,7 @@ function reduceSingleTurn(
   // ("six tabs", "three people", "four bookings") while the provider also
   // echoes a stale entity. Reject that unrelated entity mutation unless this
   // very turn identifies the same commerce entity. Keep typed customer facts.
-  const scopedProductReferences = new Set(hintsMentionedInTurn(input.text, hints).map(h => h.entity_id));
+  const scopedProductReferences = new Set(hintsMentionedInTurn(input.text, hints, previous).map(h => h.entity_id));
   const explicitProductCategories = new Set(detectCategories(input.text).map(category => category.key));
   const sourceNumbers = new Set<number>();
   const collectSourceNumbers = (value: unknown, depth = 0): void => {

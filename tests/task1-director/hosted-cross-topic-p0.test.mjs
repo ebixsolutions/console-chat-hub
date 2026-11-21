@@ -54,7 +54,8 @@ test('legitimate explicit return to AC remains permitted without duplicating ent
  const next=reduce(text,'air_conditioner');
  assert.equal(next.entities.length,1);
  assert.equal(next.entities[0].category,'air_conditioner');
- assert.equal(resolveIndustryCustomerJourney({text,state:state(),language:'zh-TW',semantic_frame:frame('air_conditioner')})?.category,'air_conditioner');
+ assert.equal(resolveIndustryCustomerJourney({text,state:state(),language:'zh-TW',semantic_frame:frame('air_conditioner')}),null,
+  'explicitly mentioning a product must not restart an industry workflow');
 });
 
 test('latest cross-topic guidance overrides stale AC goal in Memory and handoff projection',()=>{

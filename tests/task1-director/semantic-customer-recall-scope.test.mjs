@@ -612,7 +612,7 @@ test('Task3C D4 K3: no home profile import through any previous direct importer'
  for(const name of ['industry-runtime-adapter','commerce-state-runtime-base',
                     'conversation-service-planner','b2-journey-progress-contract']){
   const source=readFileSync(join(root,'supabase/functions/_shared',name+'.ts'),'utf8');
-  assert(!/from\\s*['"][^'"]*industry-profiles\\/home-appliance-v1(?:\\.ts)?['"]/u.test(source),
+  assert(!/from\s*['"][^'"]*industry-profiles\/home-appliance-v1(?:\.ts)?['"]/u.test(source),
     'Phase 1 runtime imports a dormant industry taxonomy: '+name);
  }
 });
