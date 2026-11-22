@@ -1375,7 +1375,8 @@ function unresolvedCorrectionCarriesConcreteResolution(text: string): boolean {
   return /(?:\d|[一二兩两三四五六七八九十])\s*(?:部|台|件|個|个|套|匹)|(?:取消|唔要|不要|唔裝|不裝|不装|暫緩|暂缓|defer|cancel|remove)|(?:quotation|報價|报价).{0,12}(?:咋|啫|而已|only)|(?:地址|address).{0,40}(?:座|樓|楼|室|街|道|路|號|号)|(?:電話|电话|phone|contact).{0,40}\d{4}/i.test(text);
 }
 
-function evaluateCorrections(text: string, state: ConversationCommerceState): B2Decision | null {
+function evaluateCorrections(text: string, snapshot: B2CanonicalSnapshot): B2Decision | null {
+  const state = snapshot.state;
   if (state.latest_corrections.length === 0) return null;
   const latest = state.latest_corrections.at(-1) ?? "";
   const parsed = parseCorrection(latest);
@@ -1395,13 +1396,31 @@ function evaluateCorrections(text: string, state: ConversationCommerceState): B2
       const owners = state.entities.filter(e => e.category === "air_conditioner" &&
         e.status !== "cancelled" && e.status !== "deferred" &&
         isRecord(e.attributes.room_sizes) && scope && e.attributes.room_sizes[scope] === replacement.value);
+      // Generic corrections require a fresh, source-backed canonical fact.
+      // A model assertion, prior turn or arbitrary room label is never proof.
+      const reported = isRecord(state.customer_constraints.customer_reported_facts)
+        ? state.customer_constraints.customer_reported_facts : {};
+      const sourceBoundGenericArea = snapshot.commerce_state_source_message_id === snapshot.source_message_id &&
+        Object.entries(reported).filter(([key, candidate]) => {
+          if (!scope || !(
+            key === `${scope}_area` ||
+            scope === "living_room" && key === "room_area"
+          ) || !isRecord(candidate) || !isRecord(candidate.value) ||
+              !isRecord(candidate.provenance)) return false;
+          const value = candidate.value, provenance = candidate.provenance;
+          return provenance.source_type === "customer" &&
+            provenance.source_message_id === snapshot.source_message_id &&
+            typeof value.amount === "number" && Number.isFinite(value.amount) &&
+            typeof value.unit === "string" &&
+            `${value.amount}${value.unit}` === replacement.value;
+        }).length === 1;
       const draftSizes = retainedRoomSizes(text);
       const draftAreaValues = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(?:平方呎|平方尺|sq\s*ft|sqft|呎|尺)/gi)]
         .map(match => `${match[1]}平方呎`);
       // Ordinary advice need not repeat the corrected area. A fresh exact
       // canonical match resolves the correction; any proposed area claim must
       // still repeat that scoped value, including otherwise unlabelled numbers.
-      if (scope && owners.length === 1 && draftAreaValues.every(value => value === replacement.value) &&
+      if (scope && (owners.length === 1 || sourceBoundGenericArea) && draftAreaValues.every(value => value === replacement.value) &&
         (draftAreaValues.length === 0 || draftSizes.some(size => scopeOf(size.label) === scope && size.value === replacement.value)) &&
         draftSizes.every(size => scopeOf(size.label) === scope && size.value === replacement.value)) return null;
       return { decision: "indeterminate", code: "LATEST_CORRECTION_UNRESOLVED" };
@@ -1535,7 +1554,7 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     ? evaluateCurrentKbSellingPrice(input, draft)
     : null;
   if (kbPriceDecision?.decision === "block") return kbPriceDecision;
-  const correctionDecision = evaluateCorrections(draft, state);
+  const correctionDecision = evaluateCorrections(draft, input.snapshot);
   const trustedReadOnlyRecap = isTrustedReadOnlyRecap(input, draft);
   const trustedCustomerCalculation = isTrustedCustomerCalculation(input, draft);
   if ((input.trusted_customer_calculation || input.metadata?.calculation_type === "historical_or_conditional") &&
