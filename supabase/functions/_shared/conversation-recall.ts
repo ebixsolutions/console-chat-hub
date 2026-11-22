@@ -2917,13 +2917,28 @@ export function prepareConversationRecall(
  * It renders current values and lifecycle, never an internal Markdown/JSON
  * projection, historical corrections, or the wording that requested recall.
  */
-export function renderCanonicalCustomerFactRecap(state:ConversationCommerceState,language:string):string|null {
+export function renderCanonicalCustomerFactRecap(
+  state:ConversationCommerceState, language:string, verifiedMemory?:CanonicalConversationMemory|null,
+):string|null {
   const values=object(state.customer_constraints.customer_reported_facts);
   const facts=Object.entries(values??{}).flatMap(([key,value])=>{
     const row=object(value),p=object(row?.provenance);
     return row && Object.prototype.hasOwnProperty.call(row,"value") && p?.source_type==="customer" && typeof p.source_message_id==="string"
       ? [{key,value:row.value,authority:"customer",source_message_id:p.source_message_id}] : [];
   });
+  // A NO_STATE_CHANGE customer statement can still be preserved as current
+  // customer-owned Memory without mutating Commerce. On a proven same-ticket
+  // read-only recap, render those retained facts, never superseded history,
+  // merchant claims, model-only data, or a synthetic product entity.
+  const seen=new Set(facts.map(f=>f.key));
+  for(const fact of verifiedMemory?.current_customer_facts??[]) {
+    if(fact.authority!=="customer" || !fact.source_message_id ||
+      !/^[a-z][a-z0-9_]{0,79}$/i.test(fact.key) ||
+      ["__proto__","prototype","constructor"].includes(fact.key) ||
+      seen.has(fact.key)) continue;
+    facts.push({key:fact.key,value:fact.value,authority:"customer",source_message_id:fact.source_message_id});
+    seen.add(fact.key);
+  }
   return facts.length ? renderCustomerRecap({customer_facts:facts},language) : null;
 }
 
