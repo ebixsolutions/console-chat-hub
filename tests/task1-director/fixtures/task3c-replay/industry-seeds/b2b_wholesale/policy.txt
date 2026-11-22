@@ -1,8 +1,0 @@
-ORIGINAL SYNTHETIC FIXTURE — Synthetic Wholesale Harbor
-Execution status: NOT_RUN. Evidence tier: SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED.
-Local profile: {"fixture_only":true,"industry":"b2b_wholesale","company_label":"Synthetic Wholesale Harbor","company_id":"00000000-0000-4000-8000-000000004106","kb_tenant_id":"9506","languages":["zh-HK","zh-TW","en"],"claim_authority":false}
-This profile is fixture vocabulary only. It cannot establish a merchant's MOQ, current stock, lead time, unit price, entitlement, paid order or confirmed delivery.
-Customer-owned requested quantities, corrections and partial deferrals require original source-message, company, ticket, revision and exact entity proof. An inferred order is forbidden.
-The synthetic KB stub says only that a wholesale quotation requires a product specification, requested quantity and delivery region; it does not state any MOQ, price, reserved inventory, booking or promised lead time.
-Unverified historical prices and speculative availability must not become current quotes or stock guarantees. A real commercial answer requires authorised published current KB / legal backend evidence.
-Explicit human requests preserve original R1. No industry branch, alias table, privileged access, Production mutation, paid provider dispatch or extra gate is authorised by this fixture.
