@@ -1402,19 +1402,7 @@ function deriveA3RuntimeEvents(
     recorded_at: input.occurred_at ?? null,
   };
   const mentioned = hintsMentionedInTurn(text, hints, previous);
-  // An ASK_FACT guidance frame that proposes no item quantity cannot receive
-  // a different noun's number from the lexical count scanner. This leaves
-  // already source-bound purchases/additions and corrections unchanged.
-  const guidanceNoItemQuantity=Boolean(input.semantic_frame &&
-    input.semantic_frame.confidence>=0.72 &&
-    !input.semantic_frame.ambiguity.is_ambiguous &&
-    input.semantic_frame.operation==="ASK_FACT" &&
-    (input.semantic_frame.intent==="customer_guidance" ||
-     input.semantic_frame.intent==="ask_for_advice") &&
-    input.semantic_frame.entities.length>0 &&
-    input.semantic_frame.entities.every(entity=>entity.quantity===null));
-  const quantity=guidanceNoItemQuantity ? null
-    : parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
+  const quantity = parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
   const constraintCancellation = dimensionConstraintCancellation(text);
   const cancelled = detectCancellation(text) && !constraintCancellation;
   const deferred = detectDeferral(text);
@@ -1689,7 +1677,6 @@ function deriveA3RuntimeEvents(
 export function enforceQuotationNotOrderEvents(
   text: string,
   state: ConversationCommerceState,
-  frame?: CommerceSemanticFrame | null,
 ): CommerceStateEvent[] {
   const scan = scanNegatedTransaction(text);
   const positiveOrder = explicitOrderConfirmation(scan.positive);
@@ -1706,12 +1693,6 @@ export function enforceQuotationNotOrderEvents(
   const paidDrift = !positivePayment && scan.negated_payment && (state.conversion.payment_status === "paid" || state.conversion.payment_status === "pending_payment");
 
   if (!promoted && !paidDrift) {
-    // Source-owned budget and a denied quote lookup are not merchant quote
-    // authority when a confident semantic frame asks for guidance instead.
-    if (frame && frame.confidence>=0.72 && !frame.ambiguity.is_ambiguous &&
-        frame.operation==="ASK_FACT" &&
-        (frame.intent==="customer_guidance" || frame.intent==="ask_for_advice"))
-      return events;
     if (quotationOnlySignal(text) && state.conversion.quotation_status === "none") {
       events.push({ type: "SET_CONVERSION", patch: { funnel_stage: "quotation", quotation_status: "draft" } });
     }
@@ -2416,17 +2397,7 @@ function reduceSingleTurn(
     const entity = previous.entities.find(e => e.entity_id === id);
     return scopedProductReferences.has(id) || Boolean(entity && explicitProductCategories.has(entity.category));
   };
-  const guidanceUncounted=Boolean(input.semantic_frame &&
-    input.semantic_frame.confidence>=0.72 &&
-    !input.semantic_frame.ambiguity.is_ambiguous &&
-    input.semantic_frame.operation==="ASK_FACT" &&
-    (input.semantic_frame.intent==="customer_guidance" ||
-     input.semantic_frame.intent==="ask_for_advice") &&
-    input.semantic_frame.entities.length>0 &&
-    input.semantic_frame.entities.every(entity=>entity.quantity===null));
   const quantityEvents = [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents].filter(event => {
-    if(guidanceUncounted && event.type==="SET_CONVERSION")return false;
-    if(guidanceUncounted && event.type==="SET_ENTITY_QUANTITY")return false;
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
       const named=typeof event.entity.attributes.product_name==="string"
         ? event.entity.attributes.product_name : "";
@@ -2463,8 +2434,6 @@ function reduceSingleTurn(
     return false; // No literal count: model cannot change a quantity in any category.
   }).map(event => {
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
-      if(guidanceUncounted)event={...event,entity:{...event.entity,
-        quantity:0,attributes:{...event.entity.attributes,quantity_basis:"system_default"}}};
       const entityId = event.entity.entity_id;
       const scoped = boundHints.filter(hint => hint.entity_id === entityId);
       if (scoped.length === 1) {
@@ -2528,7 +2497,7 @@ function reduceSingleTurn(
   let reduced = JSON.stringify(candidate)===JSON.stringify(previous)
     ? candidate : reduceCommerceState(previous,orderedEvents);
   reduced = enrichExplicitCustomerFacts(input,reduced,hints);
-  const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced, input.semantic_frame);
+  const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
 }
 
