@@ -2796,6 +2796,71 @@ function sourceBoundPartialUnitRetention(
   return events;
 }
 
+
+/** NO_STATE_CHANGE is not an entity/transaction mutation. A typed customer
+ * measurement may nevertheless become a Commerce customer fact when EACH
+ * subject, numeric value and unit is independently visible in the original
+ * Visitor sentence. Unproved/model-only facts remain in bounded Memory only;
+ * they cannot obtain the Commerce/B2 readback proof. */
+function sourceAttestedNoStateAreaFacts(
+  previous: ConversationCommerceState,
+  input: CommerceRuntimeInput,
+): CommerceStateEvent[] {
+  const frame=input.semantic_frame;
+  if(!frame || frame.operation!=="NO_STATE_CHANGE" || frame.confidence<0.90 ||
+     frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+     frame.entities.length>0 || !frame.customer_facts?.length ||
+     frame.customer_facts.length>8 ||
+     /[?？]|\b(?:if|what if|suppose|hypothetical|might)\b|(?:如果|假設|假设|假如|大概係咪|是否|有冇|幾多|几多)/iu.test(input.text))return [];
+  const clauses=input.text.normalize("NFKC").split(/[，,。；;\n]+/u)
+    .map(part=>part.trim()).filter(Boolean);
+  const labels:Record<string,RegExp>={
+    small_room:/(?:細房|细房|小房|small\s+(?:bed)?room)/iu,
+    large_room:/(?:大房|large\s+(?:bed)?room)/iu,
+    living_room:/(?:客廳|客厅|living\s+room)/iu,
+    meeting_room:/(?:會議室|会议室|meeting\s+room)/iu,
+    training_room:/(?:培訓室|培训室|training\s+room)/iu,
+    lobby:/(?:大堂|接待處|接待处|\blobby\b)/iu,
+  };
+  const existing=previous.customer_constraints.customer_reported_facts;
+  const prior=existing && typeof existing==="object" && !Array.isArray(existing)
+    ? existing as Record<string,unknown> : {};
+  const incoming:Record<string,unknown>={...prior};
+  const claimed=new Set<number>();
+  let changed=false;
+  for(const fact of frame.customer_facts){
+    if(!/^[a-z][a-z0-9_]{0,79}$/i.test(fact.key) ||
+       ["__proto__","prototype","constructor"].includes(fact.key))return [];
+    const match=fact.key.match(/^([a-z][a-z0-9_]*)_area$/);
+    const value=fact.value;
+    if(!match || !value || typeof value!=="object" || Array.isArray(value) ||
+       !("amount" in value) || !("unit" in value) ||
+       typeof value.amount!=="number" || !Number.isFinite(value.amount) ||
+       value.amount<=0 || value.amount>100000 || value.unit!=="sq_ft" ||
+       Object.keys(value).some(k=>k!=="amount"&&k!=="unit"))return [];
+    const scope=labels[match[1]] ??
+      new RegExp(String.raw`\b`+match[1].replace(/_/g,String.raw`\s+`)+String.raw`\b`,"iu");
+    const matching=clauses.flatMap((clause,i)=>{
+      if(!scope.test(clause) || !/(?:平方[呎尺]|[0-9]\s*[呎尺]|sq\.?\s*ft|square\s*feet)/iu.test(clause))return [];
+      const values=[...clause.matchAll(/(?<!\d)\d+(?:\.\d+)?(?!\d)/gu)].map(m=>Number(m[0]));
+      return values.length===1 && values[0]===value.amount ? [i] : [];
+    });
+    if(matching.length!==1 || claimed.has(matching[0]))return [];
+    claimed.add(matching[0]);
+    // NO_STATE_CHANGE cannot silently overwrite an existing customer fact;
+    // explicit updates remain the original revision-bound UPDATE_ITEM path.
+    if(Object.prototype.hasOwnProperty.call(prior,fact.key))continue;
+    incoming[fact.key]={
+      value:fact.value,
+      provenance:{source_type:"customer",source_message_id:input.source_message_id,
+        recorded_at:input.occurred_at??null},
+    };
+    changed=true;
+  }
+  if(!changed || claimed.size!==clauses.length)return [];
+  return [{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:incoming}];
+}
+
 /** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
 export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[]): ConversationCommerceState {
   if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
@@ -2869,6 +2934,10 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
     const customerEvents = sourceBoundMixedCustomerFactEvents(input.semantic_frame,
       state, input.text, input.source_message_id, input.occurred_at ?? null);
     if (customerEvents.length) state = reduceCommerceState(state, customerEvents);
+    // Only attested per-clause dimensions can advance customer facts on a
+    // typed NO_STATE_CHANGE turn; never let it mutate an entity or transaction.
+    const attested=sourceAttestedNoStateAreaFacts(state,input);
+    if(attested.length)state=reduceCommerceState(state,attested);
   }
   // Generic current customer fact with exact Visitor provenance; never
   // propagate the old air-conditioning sunlight/room_sunlight schema.
