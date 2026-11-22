@@ -1389,6 +1389,32 @@ export async function loadCommerceState(
   };
 }
 
+
+/** A proposed item quantity requires an independently matched numeral right
+ * beside that item's customer-written name. Unrelated people, budgets and
+ * dimensions cannot provide quantity evidence; there is no industry lexicon. */
+function attestedCurrentItemQuantity(
+ input: CommerceRuntimeInput, name: string, proposed: number | null,
+): number | null {
+ if (proposed===null || !Number.isInteger(proposed) || proposed<0 ||
+     proposed>100000 || !name.trim()) return null;
+ const label=name.normalize("NFKC").trim().toLowerCase();
+ let valid=0;
+ for (const clause of input.text.normalize("NFKC").toLowerCase()
+     .split(/[，,。；;\n]+/u).map(part=>part.trim()).filter(Boolean)) {
+   const at=clause.indexOf(label);
+   if (at<0 || clause.indexOf(label,at+1)>=0)continue;
+   for (const hit of clause.matchAll(/\d{1,5}|[一二兩两三四五六七八九十]/gu)) {
+     if(countTokenValue(hit[0])!==proposed)continue;
+     const start=hit.index??-1,end=start+hit[0].length;
+     const between=end<=at ? clause.slice(end,at)
+       : start>=at+label.length ? clause.slice(at+label.length,start) : null;
+     if(between!==null && [...between.trim()].length<=2)valid++;
+   }
+ }
+ return valid===1 ? proposed : null;
+}
+
 function deriveA3RuntimeEvents(
   input: CommerceRuntimeInput,
   hints: CommerceTurnEntityHint[],
@@ -1402,7 +1428,16 @@ function deriveA3RuntimeEvents(
     recorded_at: input.occurred_at ?? null,
   };
   const mentioned = hintsMentionedInTurn(text, hints, previous);
-  const quantity = parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
+  // The reading proposes an item quantity; lexical numbers only validate it.
+  const proposals=input.semantic_frame?.confidence!==undefined &&
+    input.semantic_frame.confidence>=0.72 &&
+    !input.semantic_frame.ambiguity.is_ambiguous &&
+    input.semantic_frame.entities.length===1 ? input.semantic_frame.entities : [];
+  const quantity=input.semantic_frame
+    ? proposals.length===1
+      ? attestedCurrentItemQuantity(input,proposals[0].name,proposals[0].quantity)
+      : null
+    : parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
   const constraintCancellation = dimensionConstraintCancellation(text);
   const cancelled = detectCancellation(text) && !constraintCancellation;
   const deferred = detectDeferral(text);
@@ -1677,6 +1712,7 @@ function deriveA3RuntimeEvents(
 export function enforceQuotationNotOrderEvents(
   text: string,
   state: ConversationCommerceState,
+  frame?: CommerceSemanticFrame | null,
 ): CommerceStateEvent[] {
   const scan = scanNegatedTransaction(text);
   const positiveOrder = explicitOrderConfirmation(scan.positive);
@@ -1693,6 +1729,11 @@ export function enforceQuotationNotOrderEvents(
   const paidDrift = !positivePayment && scan.negated_payment && (state.conversion.payment_status === "paid" || state.conversion.payment_status === "pending_payment");
 
   if (!promoted && !paidDrift) {
+    // A request for general advice does not create a quotation merely
+    // because the customer's text contains a budget or excluded lookup.
+    if (frame && frame.confidence>=0.72 && !frame.ambiguity.is_ambiguous &&
+        (frame.intent==="customer_guidance" || frame.intent==="ask_for_advice"))
+      return events;
     if (quotationOnlySignal(text) && state.conversion.quotation_status === "none") {
       events.push({ type: "SET_CONVERSION", patch: { funnel_stage: "quotation", quotation_status: "draft" } });
     }
@@ -2397,7 +2438,13 @@ function reduceSingleTurn(
     const entity = previous.entities.find(e => e.entity_id === id);
     return scopedProductReferences.has(id) || Boolean(entity && explicitProductCategories.has(entity.category));
   };
+  const guidanceOnly=Boolean(input.semantic_frame &&
+    input.semantic_frame.confidence>=0.72 &&
+    !input.semantic_frame.ambiguity.is_ambiguous &&
+    (input.semantic_frame.intent==="customer_guidance" ||
+     input.semantic_frame.intent==="ask_for_advice"));
   const quantityEvents = [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents].filter(event => {
+    if(guidanceOnly && event.type==="SET_CONVERSION")return false;
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
       const named=typeof event.entity.attributes.product_name==="string"
         ? event.entity.attributes.product_name : "";
@@ -2434,6 +2481,20 @@ function reduceSingleTurn(
     return false; // No literal count: model cannot change a quantity in any category.
   }).map(event => {
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
+      // No initial quantity without this semantic item's own source span.
+      if(input.semantic_frame && input.semantic_frame.confidence>=0.72 &&
+          !input.semantic_frame.ambiguity.is_ambiguous){
+        const matches=input.semantic_frame.entities.filter(proposal=>
+          proposal.confidence>=0.72 &&
+          typeof event.entity.attributes.product_name==="string" &&
+          proposal.name===event.entity.attributes.product_name);
+        const proven=matches.length===1
+          ? attestedCurrentItemQuantity(input,matches[0].name,matches[0].quantity)
+          : null;
+        event={...event,entity:{...event.entity,quantity:proven??0,
+          attributes:{...event.entity.attributes,
+            quantity_basis:proven===null?"system_default":"customer_explicit"}}};
+      }
       const entityId = event.entity.entity_id;
       const scoped = boundHints.filter(hint => hint.entity_id === entityId);
       if (scoped.length === 1) {
@@ -2497,7 +2558,7 @@ function reduceSingleTurn(
   let reduced = JSON.stringify(candidate)===JSON.stringify(previous)
     ? candidate : reduceCommerceState(previous,orderedEvents);
   reduced = enrichExplicitCustomerFacts(input,reduced,hints);
-  const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
+  const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced, input.semantic_frame);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
 }
 
