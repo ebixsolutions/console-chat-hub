@@ -1772,7 +1772,32 @@ function deriveA3RuntimeEvents(
   return events;
 }
 
-export function enforceQuotationNotOrderEvents(
+export function customerHistoricalQuoteProof(
+  input:CommerceRuntimeInput,
+  quote:Extract<CommerceStateEvent,{type:"ADD_QUOTE"}>["quote"],
+):boolean {
+  const frame=input.semantic_frame;
+  if(!frame || frame.confidence<0.72 || frame.ambiguity.is_ambiguous ||
+     quote.quote_type!=="customer_reported_historical" ||
+     quote.provenance.source_type!=="customer" ||
+     quote.provenance.source_message_id!==input.source_message_id)return false;
+  const sourceNumbers=[...input.text.matchAll(/(?<![\d.])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\d.])/gu)]
+    .filter(match=>Number(match[0].replace(/,/g,""))===quote.amount);
+  if(sourceNumbers.length!==1)return false;
+  const historicalFacts=(frame.customer_facts??[]).filter(fact=>
+    /^(?:(?:customer_)?historical|previous|prior|customer_reported)_(?:price|quote|quotation|quoted_price)(?:_amount)?$/i.test(fact.key));
+  return historicalFacts.some(fact=>{
+    const value=fact.value;
+    const amount=typeof value==="number"?value:
+      (value && typeof value==="object" && !Array.isArray(value) && "amount" in value &&
+       typeof value.amount==="number"?value.amount:null);
+    const currency=value && typeof value==="object" && !Array.isArray(value) &&
+      "unit" in value && typeof value.unit==="string"?value.unit.toUpperCase():null;
+    return amount===quote.amount && (!currency || currency===quote.currency.toUpperCase());
+  });
+}
+
+function enforceQuotationNotOrderEvents(
   text: string,
   state: ConversationCommerceState,
   frame?: CommerceSemanticFrame | null,
@@ -2441,6 +2466,10 @@ function reduceSingleTurn(
     entity_hints: hints,
     current_language: input.language,
   }).filter(event => {
+    // The customer budget is a typed fact, NOT a quotation record.
+    // Only a sourced and typed historical customer price can be emitted.
+    if(event.type==="ADD_QUOTE")
+      return customerHistoricalQuoteProof(input,event.quote);
     // Source words can corroborate, never override the semantic operation.
     if (event.type !== "SET_ENTITY_STATUS") return true;
     if (semanticRejectsLifecycle &&
@@ -2552,6 +2581,8 @@ function reduceSingleTurn(
   ).map(event=>(event.type==="ENSURE_ENTITY"||event.type==="ADD_ENTITY")
     ? event.entity.entity_id:""));
   const quantityEvents = eventCandidates.filter(event => {
+    if(event.type==="ADD_QUOTE" && !customerHistoricalQuoteProof(input,event.quote))
+      return false;
     if((event.type==="ENSURE_ENTITY"||event.type==="ADD_ENTITY") &&
        refusedNewIds.has(event.entity.entity_id))return false;
     if("entity_id" in event && typeof event.entity_id==="string" &&
