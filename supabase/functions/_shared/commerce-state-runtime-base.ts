@@ -2187,9 +2187,13 @@ function verifiedLifecycleProposal(input:CommerceRuntimeInput,state:Conversation
   const sameCategory=state.entities.filter(e=>e.category===entity.category&&
     !["cancelled","deferred","superseded"].includes(e.status));
   if(sameCategory.length!==1){
-    const named=resolveSourceOwnedSubject(state,input.text,
-      {include_inactive:false,mode:"mutation"});
-    if(named.kind!=="one"||named.entity.entity_id!==entity.entity_id)return null;
+    // For an unrecognised *action wording*, this check identifies one
+    // customer-authored noun only. It does NOT grant a mutation. The single
+    // B2 lifecycle parser must still verify the operation before a write.
+    const named=sameCategory.filter(candidate=>
+      sourceOwnedSubjectLabels(candidate).some(label=>
+        matchesReferenceLabel(input.text,label)));
+    if(named.length!==1||named[0].entity_id!==entity.entity_id)return null;
   }
   if(state.entities.some(e=>e.entity_id!==entity.entity_id&&
     sourceOwnedSubjectLabels(e).some(label=>matchesReferenceLabel(input.text,label))))return null;
