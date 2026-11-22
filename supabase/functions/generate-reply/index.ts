@@ -5630,23 +5630,8 @@ Latest applicable corrections replace old values; an answered clarification is n
     _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     _c3Recall.decision.handled && _c3Recall.decision.fact_type === "summary" &&
     Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
-  // A customer-only recap may supplement the canonical Commerce projection
-  // with persisted CURRENT Memory only after the original tenant, ticket,
-  // source, revision and readback identity agree. No portfolio proof exemption
-  // or synthetic item is created; B2 still controls the response commit.
-  const _c3CustomerOnlyMemory = _c3TrustedPersistedMemoryReadback && _c3Memory &&
-    _c3CommerceSnapshot && isCanonicalConversationMemory(_c3Memory) &&
-    _c3Memory.company_id === _criticalE2ExpectedTenantId &&
-    _c3Memory.conversation_id === conversation_id &&
-    _c3Memory.commerce_state_revision === _c3CommerceSnapshot.revision &&
-    _c3TrustedPersistedMemoryReadback.company_id === _criticalE2ExpectedTenantId &&
-    _c3TrustedPersistedMemoryReadback.conversation_id === conversation_id &&
-    _c3TrustedPersistedMemoryReadback.source_message_id === _c3Memory.source_message_id &&
-    _c3TrustedPersistedMemoryReadback.memory_revision === _c3Memory.memory_revision &&
-    _c3TrustedPersistedMemoryReadback.commerce_state_revision === _c3CommerceSnapshot.revision
-      ? _c3Memory : null;
   const _c3CustomerOnlyReply = _c3IsGroundedReadOnlyRecap && _c3CommerceSnapshot?.state.entities.length === 0
-    ? renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang,_c3CustomerOnlyMemory) : null;
+    ? renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang) : null;
   // An unproved customer quotation must not be embellished with the very
   // canonical value whose source is in conflict. Keep the attested reply or
   // its single neutral clarification; original B2 still governs persistence.
