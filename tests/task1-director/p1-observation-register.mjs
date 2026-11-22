@@ -63,7 +63,7 @@ export function registerP1ObservationCases({test,assert,fixture,uuid,fs,root}) {
   }
   return details;
  };
- for(const [index,row] of [...all,...spec.probes].entries())
+ for(const [index,row] of [...all,...spec.probes.map(probe=>({...probe,kind:'probe'}))].entries())
   test('P1-OBS '+row.id,async()=>{
    const modes=row.kind==='probe'?['scripted']:['no_reading','scripted'];
    const record={id:row.id,category:row.kind??'probe',
