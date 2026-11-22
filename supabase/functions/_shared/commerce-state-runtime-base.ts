@@ -1409,6 +1409,70 @@ function sourceHasUniqueEnglishInflection(text:string,label:string):boolean {
     matchesReferenceLabel(text,prefix+form)).length===1;
 }
 
+
+/** New item quantities must have one customer-authored numeral bound to the
+ * corresponding named item. No industry, noun, verb or unit allowlist. */
+function attestedItemQuantity(text:string,name:string,proposed:number|null,unit?:string|null):number|null {
+ if(proposed===null || !Number.isInteger(proposed) || proposed<0 || proposed>100000 ||
+    typeof name!=="string" || !name.trim())return null;
+ const key=name.normalize("NFKC").trim().toLowerCase();
+ const forms=[key];
+ if(/^[a-z]{2,}(?:[ -][a-z]{2,})*$/u.test(key)){
+  const at=key.lastIndexOf(" ")+1,pre=key.slice(0,at),end=key.slice(at);
+  if(/[^aeiou]y$/u.test(end))forms.push(pre+end.slice(0,-1)+"ies");
+  else if(/(?:s|x|z|ch|sh)$/u.test(end))forms.push(pre+end+"es");
+  else forms.push(pre+end+"s");
+  if(/[^aeiou]ies$/u.test(end))forms.push(pre+end.slice(0,-3)+"y");
+  else if(/(?:ches|shes|xes|zes|sses)$/u.test(end))forms.push(pre+end.slice(0,-2));
+  else if(end.endsWith("s") && !end.endsWith("ss"))forms.push(pre+end.slice(0,-1));
+ }
+ const words:Record<string,number>={zero:0,one:1,two:2,three:3,four:4,five:5,
+   six:6,seven:7,eight:8,nine:9,ten:10};
+ const spans=new Map<string,number>();
+ for(const [i,clause] of text.normalize("NFKC").toLowerCase()
+   .split(/[，,。；;!?！？\n]+/u).map(s=>s.trim()).filter(Boolean).entries()){
+  for(const form of [...new Set(forms)]){
+   if(!matchesReferenceLabel(clause,form))continue;
+   const at=clause.indexOf(form),tail=at+form.length;
+   if(at<0)continue;
+   for(const m of clause.matchAll(/\d{1,5}|[一二兩两三四五六七八九十]|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/giu)){
+    const start=m.index??-1,end=start+m[0].length;
+    const n=countTokenValue(m[0])??words[m[0].toLowerCase()]??null;
+    if(n===null)continue;
+    const before=end<=at?clause.slice(end,at):null;
+    const sourceUnit=typeof unit==="string"?unit.normalize("NFKC").trim().toLowerCase():"";
+    // English "3 licenses for subscription" binds a semantic unit and one
+    // current item. There is no built-in domain vocabulary or unit word list.
+    const unitForItem=Boolean(sourceUnit && sourceUnit.length<=36 &&
+      before!==null &&
+      [" "+sourceUnit+" for "," "+sourceUnit+" of "," "+sourceUnit+" to "].includes(before.toLowerCase()));
+    const prefix=before!==null && (/^\s*$/u.test(before) ||
+      (/^\s*[\p{Script=Han}]{1,2}\s*$/u.test(before) &&
+      (!unit || before.trim()===unit)) || unitForItem);
+    const after=start>=tail?clause.slice(tail,start):null;
+    const suffix=after!==null && /^\s*(?:[:：×x]\s*)?$/u.test(after) &&
+      (clause.slice(end).trim()==="" || (unit && clause.slice(end).trim()===unit));
+    if(prefix||suffix)spans.set(i+":"+start+":"+at,n);
+   }
+  }
+ }
+ if(spans.size===1)return [...spans.values()][0]===proposed?proposed:null;
+ // A fresh explicitly totaled goal can put its total in a separate clause.
+ // Require the same written item name in the turn and the same *semantic
+ // customer unit* immediately following exactly one total. A count of people
+ // cannot satisfy a different item's written unit.
+ const requestedUnit=typeof unit==="string"?unit.normalize("NFKC").trim().toLowerCase():"";
+ if(!spans.size && requestedUnit && requestedUnit.length<=36 &&
+    matchesReferenceLabel(text,name)){
+   const total=[...text.normalize("NFKC").toLowerCase().matchAll(
+     /(?:合共|總共|总共|總數|总数|共計|共计|\bin\s+total\b|\btotal(?:\s+of)?\b)\s*([一二兩两三四五六七八九十]|\d{1,4})\s*([\p{L}\p{N}]{1,36})/giu,
+   )].filter(match=>countTokenValue(match[1])===proposed &&
+     match[2]===requestedUnit);
+   if(total.length===1)return proposed;
+ }
+ return null;
+}
+
 function deriveA3RuntimeEvents(
   input: CommerceRuntimeInput,
   hints: CommerceTurnEntityHint[],
@@ -1422,18 +1486,15 @@ function deriveA3RuntimeEvents(
     recorded_at: input.occurred_at ?? null,
   };
   const mentioned = hintsMentionedInTurn(text, hints, previous);
-  // An ASK_FACT guidance frame that proposes no item quantity cannot receive
-  // a different noun's number from the lexical count scanner. This leaves
-  // already source-bound purchases/additions and corrections unchanged.
-  const guidanceNoItemQuantity=Boolean(input.semantic_frame &&
-    input.semantic_frame.confidence>=0.72 &&
-    !input.semantic_frame.ambiguity.is_ambiguous &&
-    input.semantic_frame.operation==="ASK_FACT" &&
-    (input.semantic_frame.intent==="customer_guidance" ||
-     input.semantic_frame.intent==="ask_for_advice") &&
-    input.semantic_frame.entities.length>0 &&
-    input.semantic_frame.entities.every(entity=>entity.quantity===null));
-  const quantity=guidanceNoItemQuantity ? null
+  // A confident reading proposes; source-bound subject and numeral verify.
+  // ADD_ITEM cannot borrow counts describing people or a customer's budget.
+  const reading=input.semantic_frame;
+  const quantity=reading
+    ? reading.confidence>=0.72 && !reading.ambiguity.is_ambiguous &&
+       reading.entities.length===1
+        ? attestedItemQuantity(text,reading.entities[0].name,
+            reading.entities[0].quantity,reading.entities[0].unit)
+        : null
     : parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
   const constraintCancellation = dimensionConstraintCancellation(text);
   const semanticRejectsLifecycle=Boolean(input.semantic_frame &&
@@ -2461,14 +2522,13 @@ function reduceSingleTurn(
     const entity = previous.entities.find(e => e.entity_id === id);
     return scopedProductReferences.has(id) || Boolean(entity && explicitProductCategories.has(entity.category));
   };
-  const guidanceUncounted=Boolean(input.semantic_frame &&
-    input.semantic_frame.confidence>=0.72 &&
-    !input.semantic_frame.ambiguity.is_ambiguous &&
-    input.semantic_frame.operation==="ASK_FACT" &&
-    (input.semantic_frame.intent==="customer_guidance" ||
-     input.semantic_frame.intent==="ask_for_advice") &&
-    input.semantic_frame.entities.length>0 &&
-    input.semantic_frame.entities.every(entity=>entity.quantity===null));
+  const sourcedEntities=input.semantic_frame && input.semantic_frame.confidence>=0.72 &&
+    !input.semantic_frame.ambiguity.is_ambiguous ? input.semantic_frame.entities : [];
+  const itemCountUnknown=sourcedEntities.length>0 &&
+    sourcedEntities.every(entity=>entity.quantity===null);
+  const guidanceUncounted=itemCountUnknown &&
+    input.semantic_frame?.operation==="ASK_FACT" &&
+    ["customer_guidance","ask_for_advice"].includes(input.semantic_frame.intent);
   const eventCandidates=[...industryEvent,...journey.events,...semanticEvents,...derived,...runtimeEvents];
   const sourceNames=(name:string):boolean=>{
     if(matchesReferenceLabel(input.text,name))return true;
@@ -2478,7 +2538,9 @@ function reduceSingleTurn(
     const proposals=input.semantic_frame?.entities.filter(entity=>
       entity.confidence>=0.72 && entity.name.toLowerCase()===name.toLowerCase())??[];
     return proposals.length===1 &&
-      (proposals[0].quantity===null || parseCount(input.text)===proposals[0].quantity);
+      (proposals[0].quantity===null ||
+       attestedItemQuantity(input.text,proposals[0].name,proposals[0].quantity,
+         proposals[0].unit)===proposals[0].quantity);
   };
   // If a new entity is not source-attested, drop that creation together with
   // every dependent event; never execute an update against a missing entity.
@@ -2497,7 +2559,7 @@ function reduceSingleTurn(
     if(semanticRejectsLifecycle && event.type==="SET_ENTITY_STATUS" &&
       (event.status==="cancelled" || event.status==="deferred"))return false;
     if(guidanceUncounted && event.type==="SET_CONVERSION")return false;
-    if(guidanceUncounted && event.type==="SET_ENTITY_QUANTITY")return false;
+    if(itemCountUnknown && event.type==="SET_ENTITY_QUANTITY")return false;
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
       const named=typeof event.entity.attributes.product_name==="string"
         ? event.entity.attributes.product_name : "";
@@ -2534,8 +2596,18 @@ function reduceSingleTurn(
     return false; // No literal count: model cannot change a quantity in any category.
   }).map(event => {
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
-      if(guidanceUncounted)event={...event,entity:{...event.entity,
-        quantity:0,attributes:{...event.entity.attributes,quantity_basis:"system_default"}}};
+      if(sourcedEntities.length>0 && !previous.entities.some(e=>e.entity_id===event.entity.entity_id)){
+        const candidates=sourcedEntities.filter(entity=>entity.confidence>=0.72 &&
+          (entity.entity_ref===event.entity.entity_id ||
+           entity.name===event.entity.attributes.product_name ||
+           (sourcedEntities.length===1 && entity.category_hint===event.entity.category)));
+        const attested=candidates.length===1
+          ?attestedItemQuantity(input.text,candidates[0].name,
+             candidates[0].quantity,candidates[0].unit):null;
+        event={...event,entity:{...event.entity,quantity:attested??0,
+          attributes:{...event.entity.attributes,
+            quantity_basis:attested===null?"system_default":"customer_explicit"}}};
+      }
       const entityId = event.entity.entity_id;
       const scoped = boundHints.filter(hint => hint.entity_id === entityId);
       if (scoped.length === 1) {
