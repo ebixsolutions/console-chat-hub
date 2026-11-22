@@ -1,0 +1,30 @@
+{
+  "scope": "Task3C P1 existing Task observation only; not a new gate",
+  "fixture_type": "ORIGINAL_AUTHORED_SYNTHETIC",
+  "is_real_case": false,
+  "original_authored": true,
+  "executed": false,
+  "execution_status": "NOT_RUN",
+  "real_model_calls": 0,
+  "real_kb_calls": 0,
+  "hosted": "NOT_RUN",
+  "quality95": "NOT_MEASURED",
+  "industry": "b2b_wholesale",
+  "observation_tasks": 5,
+  "original_25_inventory": "FROZEN_UNCHANGED",
+  "files": [
+    {
+      "path": "policy.txt",
+      "sha256": "b30aa05aa640795fa1eaa98b74128d3b09b44629c0833a2b96d8fba8da7d7e96"
+    },
+    {
+      "path": "knowledge.txt",
+      "sha256": "80ee16b9e31c21d79c2bb480579f4bd67f017fde5e826debe43da28335e3ecd2"
+    },
+    {
+      "path": "tasks.json",
+      "sha256": "bb70721d39b32332514861af2030befc29bf5df7e2bc923d782c1d504dbabc78"
+    }
+  ],
+  "release_conditions": "Use as scripted observations only; P1 original exit criteria unchanged; no current price/stock/order authority"
+}

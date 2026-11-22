@@ -8,7 +8,7 @@ This directory preserves original contract inputs and original synthetic industr
 
 ## Original synthetic industry seeds
 
-`industry-seeds/inventory.json` indexes retail, SaaS, beauty, restaurant, education and B2B wholesale. Each domain has `policy.txt`, `knowledge.txt` and `tasks.json`: 18 content files, 30 supplemental tasks. All are marked NOT_RUN. Company UUIDs and KB tenant values are synthetic fixture identifiers. No company profile is installed into runtime, and no model-improvement claim is made. Profiles provide vocabulary only; they are not merchant fact, permission, current price or transaction authority.
+`industry-seeds/inventory.json` indexes retail, SaaS, beauty, restaurant and education. Each domain has `policy.txt`, `knowledge.txt` and `tasks.json`: 15 content files, 25 supplemental tasks. All are marked NOT_RUN. Company UUIDs and KB tenant values are synthetic fixture identifiers. No company profile is installed into runtime, and no model-improvement claim is made. Profiles provide vocabulary only; they are not merchant fact, permission, current price or transaction authority.
 
 Task mappings link to original cases and existing tests; they do not replace or shrink them. A future local replay may use hand-authored semantic frames only when explicitly marked SCRIPTED_NOT_REAL_MODEL. A generated fixture answer must never establish real-model or Hosted acceptance.
 
@@ -19,5 +19,3 @@ There is deliberately no copied live-snapshot replay harness in this directory. 
 ## CI integration
 
 The quantity test is included in the existing Task1-director Node test commands in the original C3 workflow. llm-router-grounding.test.ts is included in the existing Deno grounding command in c3-preproduction. Do not create a new job, workflow, approval or gate. No paid model or KB dispatch is required by these isolated tests.
-
-B2B wholesale rows are original synthetic observations only: no real customer case, genuine Singapore KB, real semantic model, Hosted dispatch or acceptance is implied. The 30 seeds are optional P1 observation material and do not change P1's original mandatory case denominator; P3 remains separately required.
