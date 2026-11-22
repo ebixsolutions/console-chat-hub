@@ -1746,7 +1746,11 @@
     "tests/task1-director/semantic-customer-recall-scope.test.mjs": "4d5b6a36d1cff71b3f7b0963a5cbcb03933d6eb84f4cfb698fb3c53812928929",
     "supabase/functions/_shared/natural-customer-response.test.ts": "5b045b686ddf41ca99df5b276d96237d6a9d6b94e9d2c9680d014ab482a6ffcc",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "6d3b7daa6ab49d5425dcbd0c531457511ac797719b2048a98b70b5b9b8ec9a65",
-    "tests/emergency-p0/chain.test.mjs": "c42daefb2cd92259f6fb79b2895eed5cc812b4e25c87b7ab0aca5ec98c2c4160"
+    "tests/emergency-p0/chain.test.mjs": "c42daefb2cd92259f6fb79b2895eed5cc812b4e25c87b7ab0aca5ec98c2c4160",
+    "tests/task1-director/p1-observation-runner.mjs": "0bcc53dff0f4c026b28c1b7b3c7855166b1f53b81f9db621c9c727a5198ee0dc",
+    "tests/task1-director/p1-observation-register.mjs": "b5adde09e61b9f90a8541ecd60b5604e7d52e84ac66fc264abf613e59947d719",
+    "tests/task1-director/fixtures/task3c-replay/observations-60-plus-7.json": "b1b820e5bc8fcda0365d5738d4b973c1193c3c49953c70de93daf24ca158e3ba",
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "2e214ef1e0d21b7fa4029bf188392caed4474c0762c5faa28e9ce3eaa78aa739"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
     "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",

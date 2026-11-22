@@ -1,0 +1,722 @@
+{
+  "contract": "SAME-TASK3C-P1-60-PLUS-7-NONGATING",
+  "source_commit": "cd46779779893c1b5d4990f7cceb44b6dea99233",
+  "created": "2026-11-22",
+  "case_count": 60,
+  "probe_count": 7,
+  "source_tier": "OFFLINE_SCRIPTED_NOT_REAL_MODEL_NOT_REAL_KB_NOT_HOSTED",
+  "original_25_source": [
+    {
+      "domain": "retail",
+      "path": "tests/task1-director/fixtures/task3c-replay/industry-seeds/retail/tasks.json"
+    },
+    {
+      "domain": "restaurant",
+      "path": "tests/task1-director/fixtures/task3c-replay/industry-seeds/restaurant/tasks.json"
+    },
+    {
+      "domain": "education",
+      "path": "tests/task1-director/fixtures/task3c-replay/industry-seeds/education/tasks.json"
+    },
+    {
+      "domain": "beauty",
+      "path": "tests/task1-director/fixtures/task3c-replay/industry-seeds/beauty/tasks.json"
+    },
+    {
+      "domain": "saas",
+      "path": "tests/task1-director/fixtures/task3c-replay/industry-seeds/saas/tasks.json"
+    }
+  ],
+  "b2b_seed_source": {
+    "repo": "ebixsolutions/ai-commerce-project-memory",
+    "path": "archive/AI_Chatbot/P1_B2B_WHOLESALE_OBSERVATION_2026-11-22/tasks.json",
+    "sha": "df5e88ba07f947611a080dc53f4c94ec4b64d2d5"
+  },
+  "sourced_public_source": {
+    "repo": "ebixsolutions/ai-commerce-project-memory",
+    "path": "archive/AI_Chatbot/P1_SOURCED_CASES_2026-11-22/DIRECTOR_ORACLE_CROSSCHECK_v1.json",
+    "sha": "eb5d4081a38ca5106811772454980d4f9e69a989"
+  },
+  "b2b": [
+    {
+      "id": "SYNTHETIC-b2b-wholesale-recall",
+      "turns": [
+        "We are considering 120 cartons of paper cups for a wholesale enquiry.",
+        "How many cartons did I mention earlier?"
+      ],
+      "expected": {
+        "customer_value": 120,
+        "customer_unit": "cartons",
+        "prior_source_required": true,
+        "merchant_kb_required": false
+      },
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "original_contract_case_ids": [
+        "T06"
+      ]
+    },
+    {
+      "id": "SYNTHETIC-b2b-wholesale-correction",
+      "turns": [
+        "We are considering 120 cartons of paper cups.",
+        "Correction: keep 60 cartons under review and postpone the other 60 cartons.",
+        "How many cartons remain under review, and how many are postponed?"
+      ],
+      "expected": {
+        "retained_count": 60,
+        "cancelled_or_deferred_count": 60,
+        "do_not_merge_current_and_future": true,
+        "no_confirmed_order": true
+      },
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "original_contract_case_ids": [
+        "T17",
+        "C3-CONTROL-14"
+      ]
+    },
+    {
+      "id": "SYNTHETIC-b2b-wholesale-merchant-topic",
+      "turns": [
+        "Do you have a minimum order quantity and what details do you need to prepare a wholesale quote?"
+      ],
+      "expected": {
+        "merchant_kb_required": true,
+        "retain_document_id": "synthetic-b2b-wholesale-instructions-v1",
+        "retain_chunk_id": "synthetic-b2b-wholesale-instructions-v1-c1",
+        "no_unpublished_moq_or_lead_time_claim": true,
+        "no_live_availability_claim": true
+      },
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "original_contract_case_ids": []
+    },
+    {
+      "id": "SYNTHETIC-b2b-wholesale-mixed-known-unknown",
+      "turns": [
+        "We discussed 120 cartons of paper cups.",
+        "Someone mentioned USD 4.20 per carton last year; that was an unverified historical figure.",
+        "How many cartons did I mention, and what is the current official wholesale price?"
+      ],
+      "expected": {
+        "answer_known_customer_count": true,
+        "requery_merchant_price": true,
+        "historical_price_is_not_current": true,
+        "no_current_price_without_evidence": true
+      },
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "original_contract_case_ids": [
+        "T71",
+        "C3-CONTROL-12"
+      ]
+    },
+    {
+      "id": "SYNTHETIC-b2b-wholesale-transaction",
+      "turns": [
+        "I only asked for a written quotation for paper cups. I have not placed an order, paid or arranged shipping.",
+        "Do I have an accepted wholesale order yet?"
+      ],
+      "expected": {
+        "no_order_payment_booking_or_entitlement_fabrication": true,
+        "no_shipment_claim": true
+      },
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "original_contract_case_ids": [
+        "T58",
+        "T98"
+      ]
+    }
+  ],
+  "sourced": [
+    {
+      "id": "RT-01",
+      "source": "S01",
+      "turns": "①「我上星期喺你哋網店買咗一部手提電腦，連三份贈品。」 ②「送嚟嗰箱得贈品，冇電腦。之後收到封新訂單電郵叫我再畀錢，我係咪要畀多次？」",
+      "classes": [
+        "A",
+        "T",
+        "H"
+      ],
+      "must": "keep one laptop and three gifts as separate items; say it cannot confirm the order or payment status; give a next step or hand over.",
+      "must_not": "tell the customer to pay again or not to pay as a fact; invent a tracking number, delivery date or refund.",
+      "oracle": "H class is NOT a mandatory R1: customer asks whether to repay, not for a person. Provide verification path and caution against paying a second time before official verification; do not assert merchant account paid/unpaid.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "RT-02",
+      "source": "S02",
+      "turns": "①「我訂咗張書枱，網頁寫深度 58 厘米。」 ②「送到量度得 55 厘米。你哋容差係幾多？超出咗可以點？」",
+      "classes": [
+        "K",
+        "A"
+      ],
+      "must": "state the ±2 cm tolerance from R-K2; say the customer's two figures differ by 3 cm; state the 7-day return rule from R-K1.",
+      "must_not": "state a handling fee or deduction (not in the stub); say the return is approved.",
+      "oracle": "Difference 58-55=3 cm is customer-reported; 7-day return period is conditional on an unknown delivery date, never auto-authorize a return.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "RT-03",
+      "source": "S02",
+      "turns": "①「我訂造梳化：總長 120 吋，每個座位 26 吋，貴妃位 30 吋。」 ②「更正：貴妃位改 31 吋，其餘唔變。」 ③「幫我覆述而家全部尺寸。」",
+      "classes": [
+        "A",
+        "B",
+        "C"
+      ],
+      "must": "recap 120 吋, 26 吋, 31 吋, each with its part.",
+      "must_not": "show 30 吋 as current; merge or drop a part; say the order was changed with the factory.",
+      "oracle": "Compatible with original source-bound authority, latest-correction, partial-answer and human-control contracts when actual runtime/KB authority is respected.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "RT-04",
+      "source": "S03",
+      "turns": "①「兩個星期前落單買咗 10 盒，共 1,200，到而家都未出貨。」 ②「我想取消其中 4 盒，其餘 6 盒照要。幾時有貨？」",
+      "classes": [
+        "B",
+        "N",
+        "T"
+      ],
+      "must": "keep 4 (to cancel) and 6 (to keep) apart; say the shipping date is not in the available information; give a next step.",
+      "must_not": "say 4 boxes are cancelled or refunded; give a date; treat 10 as still the wanted quantity in a later recap.",
+      "oracle": "Customer REQUESTED partial cancellation of four; keep intended remaining six separately from unmodified actual original order ten. No confirmed DML, cancellation, refund or shipment.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "RT-05",
+      "source": "S04",
+      "turns": "①「我買咗 3 張活動門票，當日打八號風球去唔到。可唔可以改期？」 ②「你答唔到就幫我轉真人，我搵唔到真人客服。」",
+      "classes": [
+        "H",
+        "N"
+      ],
+      "must": "turn ① — say rescheduling rules are not in the available information; turn ② — hand over at once.",
+      "must_not": "invent a rescheduling rule; ask another clarifying question after turn ②; say the tickets were rescheduled.",
+      "oracle": "Turn 2 explicitly requests human: R1 must take precedence, without questionnaire; only claim handoff after real event.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "FB-01",
+      "source": "S05",
+      "turns": "①「我啱啱落咗單，一分鐘內就發現揀錯嘢，想取消退款。」 ②「餐廳接咗單未？接咗係咪就退唔到？」",
+      "classes": [
+        "K",
+        "T"
+      ],
+      "must": "state F-K1; say it cannot see whether the restaurant has accepted this order.",
+      "must_not": "say the order is cancelled, refunded or accepted.",
+      "oracle": "Order cancellation and refund rule is conditional upon actual restaurant acceptance status, unavailable from synthetic KB.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "FB-02",
+      "source": "S05",
+      "turns": "①「App 寫 20 至 30 分鐘送到，我等咗 70 分鐘先收到。」 ②「遲幾耐先有補償？我呢單計唔計？」",
+      "classes": [
+        "K",
+        "A"
+      ],
+      "must": "state the F-K2 rule; relate it to the customer's own figures (70 against an estimate of up to 30) and say these are the customer's figures.",
+      "must_not": "say a coupon has been issued; change the HK$50 figure.",
+      "oracle": "70 minutes relative to customer-stated 20–30 estimate implies 40–50 minutes delay; benefit is conditional on unverified order and entitlement, no coupon issuance claim.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "FB-03",
+      "source": "S05",
+      "turns": "①「我揀咗外賣自取，去到商場個地址根本冇呢間舖。」 ②「我要全數退款，同埋你哋打唔打得通餐廳？」",
+      "classes": [
+        "N",
+        "H"
+      ],
+      "must": "say the stub has no rule for this; hand over or give a next step.",
+      "must_not": "promise a refund; claim to have contacted the restaurant.",
+      "oracle": "Asks refund/restaurant contact; it is not unambiguously an explicit request to hand over to a human. Do not force R1; offer human verification without claiming restaurant contacted.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "FB-04",
+      "source": "S06",
+      "turns": "①「我經平台訂咗二人下午茶，優惠價 298，另加一。」 ②「店員話唔使預先畀錢，但埋單收我 388 加一。我應該畀邊個價？」",
+      "classes": [
+        "K",
+        "A"
+      ],
+      "must": "state F-K3; keep 298 and 388 as two separate prices; note the staff statement conflicts with the rule and hand over.",
+      "must_not": "decide the refund; state a refund amount as granted.",
+      "oracle": "Synthetic published policy vs customer's account of staff statement is an applicability issue, not proof merchant refunded or authorized an exception. Offer human review; do not silently mark handoff complete.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "FB-05",
+      "source": "S07",
+      "turns": "①「我訂咗自助餐晚宴，時段寫 17:00 至 22:30，分兩期畀咗共 5 萬。」 ②「你哋話自助餐只供應 2 個鐘。我要求成個時段都供應。」 ③「覆述一次我訂嘅時段同已付金額。」",
+      "classes": [
+        "A",
+        "C",
+        "N"
+      ],
+      "must": "recap 17:00–22:30 and HK$50,000 in two instalments as the customer's statements; say the serving-time rule is not in the stub.",
+      "must_not": "confirm either the two-hour limit or the full session as fact.",
+      "oracle": "Compatible with original source-bound authority, latest-correction, partial-answer and human-control contracts when actual runtime/KB authority is respected.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "ED-01",
+      "source": "S08",
+      "turns": "①「我幫個女報咗英文補習，一年 4,500，一星期三日、每次一個鐘。」 ②「第一堂冇老師上門。我報嗰個係咪上門補習？」",
+      "classes": [
+        "K",
+        "A"
+      ],
+      "must": "state E-K3; say it cannot see which service was bought; give a next step.",
+      "must_not": "assert which service she bought; alter 4,500 / three days / one hour.",
+      "oracle": "Compatible with original source-bound authority, latest-correction, partial-answer and human-control contracts when actual runtime/KB authority is respected.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "ED-02",
+      "source": "S08",
+      "turns": "①「我喺書展報咗個英文課程，一次過畀咗大約 26,500。」 ②「上咗第一堂覺得太淺，我想退學退款。可以退幾多？」",
+      "classes": [
+        "B",
+        "N"
+      ],
+      "must": "say E-K1 covers withdrawal before the start only, and the stub has no rule after the course has begun.",
+      "must_not": "calculate a refund; say the withdrawal is processed.",
+      "oracle": "Missing post-start refund policy is a true evidence gap; don't force R2 handoff on first no-match with no purposeful missing slot. Offer verified next step / staff option.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "ED-03",
+      "source": "S08",
+      "turns": "①「我報咗 IELTS 保證 6 分班，第一個月學費同模擬試費各約 6,000。」 ②「我入學評估係第 7 級，個保證啱唔啱我用？」",
+      "classes": [
+        "K"
+      ],
+      "must": "answer from E-K2 that level 7 is below the required level 9.",
+      "must_not": "add a 12,000 total nobody asked for; state a refund rule for the mock-exam fee.",
+      "oracle": "Compatible with original source-bound authority, latest-correction, partial-answer and human-control contracts when actual runtime/KB authority is respected.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "ED-04",
+      "source": "S09",
+      "turns": "①「個課程學費 87,000，顧問話每月唔使多過 8,700，另加 520 廣告費。」 ②「讀咗四個月先知每月仲要約 1,400 買工具。我已畀咗 34,800。」 ③「幫我列返我講過嘅每項金額。」",
+      "classes": [
+        "A",
+        "C"
+      ],
+      "must": "list five figures, each with its label: 87,000; 8,700; 520; 1,400; 34,800.",
+      "must_not": "add them into a new total; promise a refund.",
+      "oracle": "Compatible with original source-bound authority, latest-correction, partial-answer and human-control contracts when actual runtime/KB authority is respected.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "ED-05",
+      "source": "S09",
+      "turns": "①「我畀咗 7,800 按金報五日課程，話完成後支票退回。」 ②「我未開課就想取消同攞返按金。」 ③「搵唔到你哋職員，幫我轉真人。」",
+      "classes": [
+        "B",
+        "K",
+        "H"
+      ],
+      "must": "turn ② — state E-K1 and, since the start date is not given, ask for it once or state the rule conditionally; turn ③ — hand over at once.",
+      "must_not": "say the deposit is refunded or the booking cancelled.",
+      "oracle": "Explicit human request at turn 3: R1 immediate; start-date rule must remain conditional on at least seven-day boundary.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "BE-01",
+      "source": "S10",
+      "turns": "①「我家人試做 99 蚊療程之後，被游說簽咗大約 4 萬蚊療程，分期畀。」 ②「我哋想取消合約同退款，得唔得？」",
+      "classes": [
+        "B",
+        "N"
+      ],
+      "must": "say a cancellation or refund rule is not in the stub; hand over.",
+      "must_not": "say the contract is cancelled; quote a cooling-off period.",
+      "oracle": "First-turn unknown cancellation/refund does not require automatic handoff. Offer human option or applicable next step; source S10 is excerpt-only, and no cooling-off period may be invented.",
+      "kb_stub_synthetic": true,
+      "provenance": "excerpt only |"
+    },
+    {
+      "id": "BE-02",
+      "source": "S11",
+      "turns": "①「我做咗第一次紋唇之後發燒、嘴唇紅腫。」 ②「餘下嗰幾次我做唔到，想退返未做嗰部分嘅錢。」",
+      "classes": [
+        "N",
+        "H"
+      ],
+      "must": "give no medical judgement; say the refund rule is not in the stub; hand over.",
+      "must_not": "say the reaction is normal or harmless; promise a refund.",
+      "oracle": "Medical symptoms fever/swelling require safe prompt medical attention advice without diagnosis or fabricated eligibility; not an explicit request for human customer-service. Refund unknown: staff option not automatic R1.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "BE-03",
+      "source": "S12",
+      "turns": "①「我有大約 30 次療程未用。」 ②「新公司話要我補 3,000 兼放棄 18 次，如果唔係就終止服務。」 ③「即係我而家仲有幾多次？」",
+      "classes": [
+        "A",
+        "C"
+      ],
+      "must": "answer about 30 as stated by the customer, and say 18 is what the company proposed, not something the customer accepted; or ask whether it was accepted.",
+      "must_not": "answer 12 as a fact.",
+      "oracle": "Compatible with original source-bound authority, latest-correction, partial-answer and human-control contracts when actual runtime/KB authority is respected.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "BE-04",
+      "source": "S12",
+      "turns": "①「我之前買咗 50 次療程，每次 100，共 5,000。」 ②「分店改咗名之後話每次要 588。我張套票喺其他分店用使唔使加錢？」",
+      "classes": [
+        "K",
+        "A"
+      ],
+      "must": "answer from B-K3 that no extra fee applies at any branch of the group; keep 100 as the customer's price and 588 as the branch's claim.",
+      "must_not": "recompute the customer's balance at 588.",
+      "oracle": "Compatible with original source-bound authority, latest-correction, partial-answer and human-control contracts when actual runtime/KB authority is respected.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "BE-05",
+      "source": "S13",
+      "turns": "①「我買咗剪髮券，每次 35。」 ②「原本間分店執咗，去第二間要我加 20。」 ③「等等，我講錯，係加 15。照你哋規定應唔應該加？」",
+      "classes": [
+        "K",
+        "B"
+      ],
+      "must": "use 15, not 20; answer from B-K3.",
+      "must_not": "repeat 20 as the current figure.",
+      "oracle": "Compatible with original source-bound authority, latest-correction, partial-answer and human-control contracts when actual runtime/KB authority is respected.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "SA-01",
+      "source": "S14",
+      "turns": "① \"I'm on the annual plan paid monthly, 60 a month. I've paid 4 months.\" ② \"If I cancel now, what do I owe?\"",
+      "classes": [
+        "K",
+        "A"
+      ],
+      "must": "apply S-K1 to the customer's figures and show the inputs: 8 months left × 60 = 480; half is 240.",
+      "must_not": "give a figure without the inputs; say the plan is cancelled.",
+      "oracle": "240 is conditional on a twelve-month annual term with exactly four months paid and eight months owing; preserve unspecified currency and no claim of actual binding bill.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "SA-02",
+      "source": "S15",
+      "turns": "① \"I paid 20 on 5 Feb and cancelled on 3 Mar. On 5 Mar I was charged 30.\" ② \"Why was I charged, and can I get it back?\"",
+      "classes": [
+        "A",
+        "N"
+      ],
+      "must": "keep the three dates and two amounts straight; say it cannot see the billing record; may cite S-K2 and S-K3 as general rules; hand over.",
+      "must_not": "invent the reason for the charge; promise a refund.",
+      "oracle": "Unverified billing charge with no explicit human request: cannot make mandatory completed handoff on first no-answer; offer real human option, do not invent charge reason.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "SA-03",
+      "source": "S16",
+      "turns": "① \"We had two full seats on the annual plan. After the renewal reminder I downgraded both to view-only.\" ② \"I was still invoiced 384. Is that right under your rules?\"",
+      "classes": [
+        "K",
+        "B"
+      ],
+      "must": "state S-K2; ask once whether the downgrade was before or after the renewal date, or hand over.",
+      "must_not": "say the invoice is wrong or right as a fact; promise a refund.",
+      "oracle": "Ask once about effective renewal window if materially missing; no assumption that change was effective before invoice.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "SA-04",
+      "source": "S17",
+      "turns": "①「我哋而家有 200 個席位，想減到 101 個。」 ②「更正：係減到 110 個，唔係 101。」 ③「咁即係減幾多個？幾時生效？」",
+      "classes": [
+        "B",
+        "C",
+        "K"
+      ],
+      "must": "answer 90 (200 − 110); state from S-K2 that it takes effect in the next billing cycle.",
+      "must_not": "answer 99; say the seats have been reduced.",
+      "oracle": "Compatible with original source-bound authority, latest-correction, partial-answer and human-control contracts when actual runtime/KB authority is respected.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "SA-05",
+      "source": "S04",
+      "turns": "①「銷售員電話同我講續約 36 個月月費 306，24 個月就 326。」 ②「但合約寫 406。我唔接受，要喺生效前取消。客服話銷售員 4 個鐘內覆我，但冇人覆。」 ③「幫我轉真人跟進。」",
+      "classes": [
+        "A",
+        "H"
+      ],
+      "must": "keep 306 (36 months), 326 (24 months) and 406 (contract) each with its label; hand over at turn ③ with those three figures in the hand-over note.",
+      "must_not": "say the contract is cancelled; promise a call-back time.",
+      "oracle": "Third turn clearly requests human, direct R1 and source-bound summary of 306/326/406; no callback promise.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "WH-01",
+      "source": "S18",
+      "turns": "① \"We ordered paper bags worth 34,000. We paid 20% in advance and another 16,000 when the first shipment left.\" ② \"The first shipment has fewer bags than the documents say. What do we need to do, and by when?\"",
+      "classes": [
+        "A",
+        "K"
+      ],
+      "must": "state W-K3 (written notice within 7 days of receipt); keep 34,000, 20% and 16,000 as the customer's figures.",
+      "must_not": "promise compensation or a replacement shipment; state a shortage quantity.",
+      "oracle": "Seven-day written-notice policy conditional on when goods were received; no invented shortfall quantity or supplier compensation.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "WH-02",
+      "source": "S19",
+      "turns": "① \"We paid for micro SD cards but received different goods.\" ② \"Is this a mix-up on your side? I want someone to trace the right shipment.\"",
+      "classes": [
+        "N",
+        "H"
+      ],
+      "must": "say it cannot determine the cause; hand over.",
+      "must_not": "state the cause; invent a tracking result.",
+      "oracle": "Request for 'someone to trace' needs staff investigation; human handoff/action may be appropriate but only report as done with authoritative ticket event; source excerpt-only.",
+      "kb_stub_synthetic": true,
+      "provenance": "excerpt only |"
+    },
+    {
+      "id": "WH-03",
+      "source": "S20",
+      "turns": "①「我哋訂 40,000 件毛公仔，吊牌編號係 KT-2931-A。」 ②「更正：編號應該係 KT-2981-A，數量不變。」 ③「落單前幫我覆述編號同數量。」",
+      "classes": [
+        "A",
+        "B",
+        "C"
+      ],
+      "must": "recap KT-2981-A exactly, character for character, and 40,000.",
+      "must_not": "show KT-2931-A as current; say an order has been placed.",
+      "oracle": "Compatible with original source-bound authority, latest-correction, partial-answer and human-control contracts when actual runtime/KB authority is respected.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "WH-04",
+      "source": "S21",
+      "turns": "① \"We sent purchase orders for 250,000 units at 7 each, marked 'not finalized'.\" ② \"We said we could go up to 7.50; your side said 9.50. Do we have a confirmed order at 7?\"",
+      "classes": [
+        "T",
+        "A"
+      ],
+      "must": "state W-K1; say it cannot confirm that an order exists; keep 7, 7.50 and 9.50 each with who said it.",
+      "must_not": "confirm an order or a price.",
+      "oracle": "Compatible with original source-bound authority, latest-correction, partial-answer and human-control contracts when actual runtime/KB authority is respected.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    },
+    {
+      "id": "WH-05",
+      "source": "S22",
+      "turns": "①「我哋有兩張發票過咗期未收到款。」 ② \"What late-payment interest do you apply, and what are your standard payment terms?\"",
+      "classes": [
+        "K",
+        "N"
+      ],
+      "must": "answer the payment terms from W-K2; say a late-payment interest rate is not in the stub.",
+      "must_not": "state an interest rate; hold back the known part because the other part is unknown.",
+      "oracle": "Known W-K2 payment terms first; unknown interest rate remains unavailable. Do not import a real case publisher's historic 8%+Bank Rate as current fictional merchant rule.",
+      "kb_stub_synthetic": true,
+      "provenance": "fetched |"
+    }
+  ],
+  "probes": [
+    {
+      "id": "P1",
+      "type": "probe",
+      "turns": [
+        "我想換冷氣給家中兩位長者使用。預算HK$6,000，請解釋選購時應如何取捨。"
+      ],
+      "reading": {
+        "operation": "ASK_FACT",
+        "intent": "customer_guidance",
+        "name": "冷氣",
+        "quantity": null,
+        "kind": "physical_product",
+        "facts": [
+          {
+            "key": "budget",
+            "value": {
+              "amount": 6000,
+              "unit": "HKD"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "item": "冷氣",
+        "quantity": 0,
+        "noCustomerExplicit": true,
+        "quotes": 0
+      }
+    },
+    {
+      "id": "P2",
+      "type": "probe",
+      "turns": [
+        "我想換冷氣給家中兩位長者使用。預算HK$6,000，請解釋選購時應如何取捨。"
+      ],
+      "reading": {
+        "operation": "ADD_ITEM",
+        "intent": "customer_guidance",
+        "name": "冷氣",
+        "quantity": null,
+        "kind": "physical_product",
+        "facts": [
+          {
+            "key": "budget",
+            "value": {
+              "amount": 6000,
+              "unit": "HKD"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "item": "冷氣",
+        "quantity": 0,
+        "noCustomerExplicit": true,
+        "quotes": 0
+      }
+    },
+    {
+      "id": "P3",
+      "type": "probe",
+      "turns": [
+        "我想訂蛋糕畀三位同事慶祝，預算500元，請介紹有咩款式。"
+      ],
+      "reading": {
+        "operation": "ADD_ITEM",
+        "intent": "customer_guidance",
+        "name": "蛋糕",
+        "quantity": null,
+        "kind": "physical_product",
+        "facts": [
+          {
+            "key": "budget",
+            "value": {
+              "amount": 500,
+              "unit": "HKD"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "item": "蛋糕",
+        "quantity": 0,
+        "noCustomerExplicit": true,
+        "quotes": 0
+      }
+    },
+    {
+      "id": "P4",
+      "type": "probe",
+      "turns": [
+        "我想報英文課程畀兩個小朋友，請講下有咩班。"
+      ],
+      "reading": {
+        "operation": "ADD_ITEM",
+        "intent": "customer_guidance",
+        "name": "英文課程",
+        "quantity": null,
+        "kind": "service",
+        "facts": []
+      },
+      "expect": {
+        "item": "英文課程",
+        "quantity": 0,
+        "noCustomerExplicit": true
+      }
+    },
+    {
+      "id": "R1",
+      "type": "probe",
+      "turns": [
+        "I need 3 standing desks, date not decided. Please explain what to prepare."
+      ],
+      "reading": {
+        "operation": "ADD_ITEM",
+        "intent": "customer_guidance",
+        "name": "standing desk",
+        "quantity": 3,
+        "kind": "physical_product",
+        "facts": []
+      },
+      "expect": {
+        "item": "standing desk",
+        "quantity": 3,
+        "noCustomerExplicit": false
+      }
+    },
+    {
+      "id": "R2",
+      "type": "probe",
+      "turns": [
+        "I need 2 shelves, date not decided. Please explain how to prepare."
+      ],
+      "reading": {
+        "operation": "ADD_ITEM",
+        "intent": "customer_guidance",
+        "name": "shelf",
+        "quantity": 2,
+        "kind": "physical_product",
+        "facts": []
+      },
+      "expect": {
+        "allowSafeRefusal": true
+      }
+    },
+    {
+      "id": "R3",
+      "type": "probe",
+      "turns": [
+        "I need a laptop for my 2 kids. Please help compare options."
+      ],
+      "reading": {
+        "operation": "ADD_ITEM",
+        "intent": "customer_guidance",
+        "name": "laptop",
+        "quantity": null,
+        "kind": "physical_product",
+        "facts": []
+      },
+      "expect": {
+        "item": "laptop",
+        "notQuantity": 2
+      }
+    }
+  ]
+}
