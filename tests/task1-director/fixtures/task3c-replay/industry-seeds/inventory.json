@@ -104,6 +104,26 @@
           "sha256": "5b32a6281de94d3a7da15502a66a8171ac87da844b750ba88183b06c86b037e7"
         }
       ]
+    },
+    {
+      "industry": "b2b_wholesale",
+      "original_authored": true,
+      "task_count": 5,
+      "execution_status": "NOT_RUN",
+      "files": [
+        {
+          "path": "b2b_wholesale/policy.txt",
+          "sha256": "b30aa05aa640795fa1eaa98b74128d3b09b44629c0833a2b96d8fba8da7d7e96"
+        },
+        {
+          "path": "b2b_wholesale/knowledge.txt",
+          "sha256": "80ee16b9e31c21d79c2bb480579f4bd67f017fde5e826debe43da28335e3ecd2"
+        },
+        {
+          "path": "b2b_wholesale/tasks.json",
+          "sha256": "bb70721d39b32332514861af2030befc29bf5df7e2bc923d782c1d504dbabc78"
+        }
+      ]
     }
   ]
 }
