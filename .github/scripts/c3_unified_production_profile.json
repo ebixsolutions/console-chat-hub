@@ -1744,8 +1744,7 @@
   "tests/c3-widget-live-auth/original-preview.test.mjs": "e18ba07d51bcd9cee578573e8342ea4c640fd81d6c69191fdb6d9c1121a03aab",
   "supabase/functions/_shared/conversation-service-planner.test.ts": "2cb675ff27a5ea993bea80a527a6e836706a8d99d07f281b00201be56f9f4702",
   "tests/task1-director/semantic-customer-recall-scope.test.mjs": "4d5b6a36d1cff71b3f7b0963a5cbcb03933d6eb84f4cfb698fb3c53812928929",
-  "supabase/functions/_shared/natural-customer-response.test.ts": "5b045b686ddf41ca99df5b276d96237d6a9d6b94e9d2c9680d014ab482a6ffcc",
-  "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "9cebc649fe534ca419722d1d83aa0ce5a421939de52eafe0d68f8558302782e2"
+  "supabase/functions/_shared/natural-customer-response.test.ts": "5b045b686ddf41ca99df5b276d96237d6a9d6b94e9d2c9680d014ab482a6ffcc"
 },
   "authorized_task3c_t06_turn2_source_sha256": {
   "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",
