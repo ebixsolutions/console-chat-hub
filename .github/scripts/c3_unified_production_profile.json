@@ -1731,7 +1731,7 @@
     "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
   },
   "authorized_task3c_d4_no_industry_sha256": {
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "c3d654ed9eb4fcbfd71c378829b18c32f2ddd16cbcbf5d2b24d2591a80e55e3c",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "0188a7b1e86923ed65ff72a3b409217ec0ed31c602cf6ab3ab8c098236cf74c1",
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "9042a66f250d727b57a19dd0adef4481dcb33e0425aad0fcd622596bab93124c",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "5b8ad3f90ffbcc89f6dd8d44ed5322b256df9e8475e5c3dc1bccc05745dda9d4",
     "supabase/functions/_shared/commerce-subject-resolution.ts": "5526b3992852c492d01943601d5a683a25a1d6da69140cb5715b07fd61503372",
