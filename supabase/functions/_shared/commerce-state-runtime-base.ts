@@ -1389,6 +1389,26 @@ export async function loadCommerceState(
   };
 }
 
+
+/** Accept only a unique regular English inflection of a source-owned name.
+ * No industry/noun list or loose string similarity supplies entity authority. */
+function sourceHasUniqueEnglishInflection(text:string,label:string):boolean {
+  const key=label.normalize("NFKC").trim().toLowerCase();
+  if(!/^[a-z]{2,}(?:[ -][a-z]{2,})*$/u.test(key) ||
+     matchesReferenceLabel(text,key))return false;
+  const lastIndex=Math.max(key.lastIndexOf(" "),key.lastIndexOf("-"))+1;
+  const prefix=key.slice(0,lastIndex),last=key.slice(lastIndex);
+  const endings=new Set<string>();
+  if(/[^aeiou]y$/u.test(last))endings.add(last.slice(0,-1)+"ies");
+  else if(/(?:s|x|z|ch|sh)$/u.test(last))endings.add(last+"es");
+  else endings.add(last+"s");
+  if(/[^aeiou]ies$/u.test(last))endings.add(last.slice(0,-3)+"y");
+  else if(/(?:ches|shes|xes|zes|sses)$/u.test(last))endings.add(last.slice(0,-2));
+  else if(/s$/u.test(last)&&!/ss$/u.test(last))endings.add(last.slice(0,-1));
+  return [...endings].filter(form=>form!==last &&
+    matchesReferenceLabel(text,prefix+form)).length===1;
+}
+
 function deriveA3RuntimeEvents(
   input: CommerceRuntimeInput,
   hints: CommerceTurnEntityHint[],
@@ -2449,7 +2469,31 @@ function reduceSingleTurn(
      input.semantic_frame.intent==="ask_for_advice") &&
     input.semantic_frame.entities.length>0 &&
     input.semantic_frame.entities.every(entity=>entity.quantity===null));
-  const quantityEvents = [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents].filter(event => {
+  const eventCandidates=[...industryEvent,...journey.events,...semanticEvents,...derived,...runtimeEvents];
+  const sourceNames=(name:string):boolean=>{
+    if(matchesReferenceLabel(input.text,name))return true;
+    if(!sourceHasUniqueEnglishInflection(input.text,name))return false;
+    // An inflected name belongs to exactly one confident semantic entity,
+    // and any item quantity must also be independently visible in Visitor text.
+    const proposals=input.semantic_frame?.entities.filter(entity=>
+      entity.confidence>=0.72 && entity.name.toLowerCase()===name.toLowerCase())??[];
+    return proposals.length===1 &&
+      (proposals[0].quantity===null || parseCount(input.text)===proposals[0].quantity);
+  };
+  // If a new entity is not source-attested, drop that creation together with
+  // every dependent event; never execute an update against a missing entity.
+  const refusedNewIds=new Set(eventCandidates.filter(event=>
+    (event.type==="ENSURE_ENTITY"||event.type==="ADD_ENTITY") &&
+    !previous.entities.some(entity=>entity.entity_id===event.entity.entity_id) &&
+    !(typeof event.entity.attributes.product_name==="string" &&
+      sourceNames(event.entity.attributes.product_name))
+  ).map(event=>(event.type==="ENSURE_ENTITY"||event.type==="ADD_ENTITY")
+    ? event.entity.entity_id:""));
+  const quantityEvents = eventCandidates.filter(event => {
+    if((event.type==="ENSURE_ENTITY"||event.type==="ADD_ENTITY") &&
+       refusedNewIds.has(event.entity.entity_id))return false;
+    if("entity_id" in event && typeof event.entity_id==="string" &&
+       refusedNewIds.has(event.entity_id))return false;
     if(semanticRejectsLifecycle && event.type==="SET_ENTITY_STATUS" &&
       (event.status==="cancelled" || event.status==="deferred"))return false;
     if(guidanceUncounted && event.type==="SET_CONVERSION")return false;
@@ -2457,9 +2501,9 @@ function reduceSingleTurn(
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
       const named=typeof event.entity.attributes.product_name==="string"
         ? event.entity.attributes.product_name : "";
-      // A semantic proposal is not a customer-owned item unless its name
-      // occurs in the current Visitor utterance. No profile backfills it.
-      if(!named || !matchesReferenceLabel(input.text,named))return false;
+      // The source must contain this name exactly or in one uniquely
+      // attested regular inflection; model-only or fuzzy names are rejected.
+      if(!named || !sourceNames(named))return false;
     }
     if (event.type === "SET_ENTITY_STATUS" && !["cancelled", "deferred", "superseded"].includes(event.status)) {
       const stored = previous.entities.find(entity => entity.entity_id === event.entity_id);
