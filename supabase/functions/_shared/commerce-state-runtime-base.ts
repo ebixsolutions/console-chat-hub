@@ -1416,8 +1416,13 @@ function deriveA3RuntimeEvents(
   const quantity=guidanceNoItemQuantity ? null
     : parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
   const constraintCancellation = dimensionConstraintCancellation(text);
-  const cancelled = detectCancellation(text) && !constraintCancellation;
-  const deferred = detectDeferral(text);
+  const semanticRejectsLifecycle=Boolean(input.semantic_frame &&
+    input.semantic_frame.confidence>=0.72 &&
+    !input.semantic_frame.ambiguity.is_ambiguous &&
+    !["DEFER","CANCEL_ITEM","REMOVE_ITEM"].includes(input.semantic_frame.operation));
+  const cancelled = !semanticRejectsLifecycle &&
+    detectCancellation(text) && !constraintCancellation;
+  const deferred = !semanticRejectsLifecycle && detectDeferral(text);
   const reactivated = detectEntityReactivation(text);
   const semanticAuthoritative = Boolean(
     input.semantic_frame && input.semantic_frame.confidence >= 0.72,
@@ -2234,9 +2239,26 @@ function acceptedLifecycleEntityRef(input:CommerceRuntimeInput,state:Conversatio
   if(targets.length!==1||targets[0].entity_id!==proposal.entity.entity_id)return null;
   return proposal.entity.entity_id;
 }
-function resolveBoundLifecyclePlan(input:CommerceRuntimeInput,state:ConversationCommerceState){
-  return resolveEntityLifecyclePlan(input.text,state,
+function resolveBoundLifecyclePlan(
+  input:CommerceRuntimeInput,state:ConversationCommerceState,
+): ReturnType<typeof resolveEntityLifecyclePlan> {
+  // A lexical defer/cancel cue can only corroborate a semantic lifecycle
+  // proposal. It cannot start lifecycle handling against a confident,
+  // non-lifecycle customer request such as "do not check models yet".
+  const frame=input.semantic_frame;
+  if(frame && frame.confidence>=0.72 && !frame.ambiguity.is_ambiguous &&
+     !["DEFER","CANCEL_ITEM","REMOVE_ITEM"].includes(frame.operation))
+    return {kind:"none"};
+  const parsed=resolveEntityLifecyclePlan(input.text,state,
     {accepted_entity_ref:acceptedLifecycleEntityRef(input,state)});
+  // An existing no-frame strictly source-named lifecycle instruction is a
+  // frozen deterministic positive contract. Preserve it. A present but
+  // low-confidence/ambiguous interpretation cannot independently authorize
+  // a mutation and requires clarification instead.
+  if(frame && (frame.confidence<0.72 || frame.ambiguity.is_ambiguous) &&
+     parsed.kind==="mutation")
+    return {kind:"ambiguous",action:parsed.plans[0]?.action??"deferred"};
+  return parsed;
 }
 
 function reduceSingleTurn(
@@ -2327,6 +2349,10 @@ function reduceSingleTurn(
   let semanticEvents = bookingWithoutDelivery
     ? semanticEventsRaw.filter((event) => event.type !== "SET_DELIVERY")
     : semanticEventsRaw;
+  const semanticRejectsLifecycle=Boolean(input.semantic_frame &&
+    input.semantic_frame.confidence>=0.72 &&
+    !input.semantic_frame.ambiguity.is_ambiguous &&
+    !["DEFER","CANCEL_ITEM","REMOVE_ITEM"].includes(input.semantic_frame.operation));
   const deterministicEvents = calculationTurn ? [] : deriveCommerceEventsFromCustomerTurn({
     text: input.text,
     source_message_id: input.source_message_id,
@@ -2334,11 +2360,10 @@ function reduceSingleTurn(
     entity_hints: hints,
     current_language: input.language,
   }).filter(event => {
-    // Frozen lexical extraction sees the complete utterance. Lookup deferral is
-    // an instruction about evidence retrieval, not a product lifecycle event.
-    // Keep all factual extraction; validate only these proposed status changes
-    // against the same scoped language used by the runtime lifecycle adapter.
+    // Source words can corroborate, never override the semantic operation.
     if (event.type !== "SET_ENTITY_STATUS") return true;
+    if (semanticRejectsLifecycle &&
+        (event.status==="cancelled" || event.status==="deferred"))return false;
     if (event.status === "deferred") return detectDeferral(input.text);
     if (event.status === "cancelled") return detectCancellation(input.text);
     return true;
@@ -2425,6 +2450,8 @@ function reduceSingleTurn(
     input.semantic_frame.entities.length>0 &&
     input.semantic_frame.entities.every(entity=>entity.quantity===null));
   const quantityEvents = [...industryEvent, ...journey.events, ...semanticEvents, ...derived, ...runtimeEvents].filter(event => {
+    if(semanticRejectsLifecycle && event.type==="SET_ENTITY_STATUS" &&
+      (event.status==="cancelled" || event.status==="deferred"))return false;
     if(guidanceUncounted && event.type==="SET_CONVERSION")return false;
     if(guidanceUncounted && event.type==="SET_ENTITY_QUANTITY")return false;
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
