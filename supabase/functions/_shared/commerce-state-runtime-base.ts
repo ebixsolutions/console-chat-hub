@@ -3089,6 +3089,22 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
     return state;
   }
   let state = reduceTurnOperations(previous,input,hints);
+  // A genuine, source-visible advice question is a durable conversational goal
+  // even when the interpretation has no sale item, product category or count.
+  // Record only intent: never materialize an industry, entity, price or quote.
+  const guidanceFrame=input.semantic_frame;
+  if (previous.entities.length===0 && guidanceFrame &&
+      guidanceFrame.operation==="ASK_FACT" && guidanceFrame.confidence>=0.90 &&
+      !guidanceFrame.ambiguity.is_ambiguous && !guidanceFrame.customer_correction &&
+      !guidanceFrame.additive && guidanceFrame.entities.length===0 &&
+      !guidanceFrame.customer_facts?.length &&
+      ["customer_guidance","ask_for_advice"].includes(guidanceFrame.intent) &&
+      looksInterrogative(input.text) &&
+      !isReadOnlyCurrentStateQuery(input.text,guidanceFrame) &&
+      !isHistoricalOrConditionalCustomerCalculationRequest(input.text) &&
+      state.entities.length===0 && state.current_intent!=="customer_guidance") {
+    state=reduceCommerceState(state,[{type:"SET_CONTEXT",intent:"customer_guidance"}]);
+  }
   // Persist the customer-authored exact model as an unknown-quantity subject.
   // A no-frame product inquiry is not evidence for count=1 or any industry.
   if (!input.semantic_frame && state.entities.length===0 &&
