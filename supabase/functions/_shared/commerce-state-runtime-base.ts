@@ -402,6 +402,22 @@ function explicitCategoryKeys(text: string): string[] {
   return [...new Set(detectCategories(text).map((category) => category.key))];
 }
 
+/** An initialism is evidence only when it expands to the already stored,
+ * uniquely active canonical topic AND the customer's original same-product
+ * message contains those exact topic words. No trade-name translation table,
+ * history-derived quantity, or new alias is created. */
+function sourceAttestedTopicInitialism(
+  customerSource: string, sourceSubject: string, canonicalTopic: string,
+): boolean {
+  const words = canonicalTopic.replace(/[_-]+/gu, " ").split(/\\s+/u).filter(Boolean);
+  if (words.length < 2 || words.length > 5 ||
+      !words.every(word => /^[a-z]{2,32}$/iu.test(word)) ||
+      !/^[a-z]{2,5}$/iu.test(sourceSubject)) return false;
+  const initials = words.map(word => word[0].toUpperCase()).join("");
+  return sourceSubject.toUpperCase() === initials &&
+    matchesReferenceLabel(customerSource, words.join(" "));
+}
+
 export function validateTrustedProductTopicFocus(
   input: CommerceRuntimeInput,
   state: ConversationCommerceState,
@@ -427,7 +443,8 @@ export function validateTrustedProductTopicFocus(
   if (returnSubject && !(input.history ?? []).some((turn) =>
     ["visitor", "user", "customer"].includes(turn.role) &&
     clean(turn.content).toUpperCase().includes(clean(focus.product).toUpperCase()) &&
-    matchesReferenceLabel(turn.content, returnSubject)
+    (matchesReferenceLabel(turn.content, returnSubject) ||
+      sourceAttestedTopicInitialism(turn.content, returnSubject, focus.topic))
   )) return { valid: false, reason: "RETURN_SUBJECT_SOURCE_MISMATCH" };
   if (!(explicitTopics.length === 1 && explicitTopics[0] === focus.topic) &&
     !(returning && (returnTopics.length === 0 ||
