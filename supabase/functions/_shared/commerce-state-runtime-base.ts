@@ -4219,9 +4219,7 @@ export async function runCommerceStateRuntime(
     !isReadOnlyCommerceQuestion(text,input.semantic_frame) &&
     !detectQuantityCorrectionSignal(text) &&
     !detectAdditiveEntityCreationSignal(text) &&
-    // A parser-only generic hint never proves the customer meant the
-    // existing item. Without a verified current-turn subject, "one each"
-    // must not overwrite or create Commerce entities.
+    buildGenericCommerceEntityHints([text]).length===0 &&
     !contextualBefore.state.entities.some(entity=>
       entity.provenance.source_type==="customer" &&
       sourceOwnedSubjectLabels(entity).some(label=>matchesReferenceLabel(text,label)));
