@@ -1755,7 +1755,7 @@
     "tests/task1-director/fixtures/task3c-replay/observations-60-plus-7.json": "b1b820e5bc8fcda0365d5738d4b973c1193c3c49953c70de93daf24ca158e3ba",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "2e214ef1e0d21b7fa4029bf188392caed4474c0762c5faa28e9ce3eaa78aa739",
     "supabase/functions/_shared/contextual-customer-update.ts": "b9db8a2353a577733e9bd16156850a0ba0ce4598478eebd00fd332ae96ceda97",
-    "supabase/functions/_shared/contextual-customer-update.test.ts": "e1a0cb48b4f7c3d2f11352c723093b0ea136f610447dca56888645c21b9f0b57"
+    "supabase/functions/_shared/contextual-customer-update.test.ts": "824c405e8633a533af35e8491543fa1fd242389983e18d2d54d4b88ba27453a7"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
     "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",

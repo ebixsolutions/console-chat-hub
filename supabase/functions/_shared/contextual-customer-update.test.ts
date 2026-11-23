@@ -1620,7 +1620,7 @@ Deno.test("Task3C G1 first enquiry uses current source quote without KB or order
     company_id:"company",conversation_id:"conv",source_message_id:"first-source",
     text,language:"zh-TW",history:[],semantic_frame:frame,
   });
-  assert(actual.route==="product_guidance" &&
+  assert(actual !== null && actual.route==="product_guidance" &&
     actual.reply?.includes(text) && actual.reply?.includes("面積") &&
     latest.conversion.order_status==="none" &&
     latest.conversion.payment_status==="none",
