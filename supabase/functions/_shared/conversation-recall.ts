@@ -773,9 +773,30 @@ function entityAliases(e: CommerceEntity): string[] {
   }
   return [...new Set(values)];
 }
-/** Existing entity/referent vocabulary, shared by recap consumers. */
+/** A customer-owned canonical category can corroborate a *read-only* initialism,
+ * never create or mutate a subject. No industry synonyms or taxonomy aliases. */
+function persistedCategoryInitialism(e: CommerceEntity): string | null {
+  if (e.provenance.source_type !== "customer" ||
+    typeof e.provenance.source_message_id !== "string" ||
+    !e.provenance.source_message_id ||
+    ["cancelled", "deferred", "superseded"].includes(e.status)) return null;
+  const parts = e.category.normalize("NFKC").split(/[_-]+/u).filter(Boolean);
+  if (parts.length < 2 || parts.length > 5 ||
+    !parts.every(part => /^[a-z]{2,32}$/iu.test(part))) return null;
+  return parts.map(part => part[0].toUpperCase()).join("");
+}
+/** Existing entity/referent vocabulary, shared by recap consumers. A derived
+ * acronym is exposed only if it uniquely selects one persisted customer item. */
 export function retainedRecapTargets(state: ConversationCommerceState): string[] {
-  return state.entities.flatMap(entityAliases);
+  const active = state.entities.filter(e =>
+    !["cancelled", "deferred", "superseded"].includes(e.status));
+  const abbreviations = active.flatMap(entity => {
+    const initials = persistedCategoryInitialism(entity);
+    return initials && active.filter(other =>
+      persistedCategoryInitialism(other) === initials).length === 1
+      ? [initials] : [];
+  });
+  return [...new Set([...state.entities.flatMap(entityAliases), ...abbreviations])];
 }
 /** The customer's latest retained quantity is an answerable *request*
  * only when one original, same-ticket Visitor row attests it. It cannot
@@ -975,6 +996,27 @@ function summarySelection(input: ConversationRecallInput, entities: CommerceEnti
   if(semanticTarget && semanticRecapQuestionSubject(input.question))
     return {provenance:"trusted_referent",entities:entities.filter(e=>
       e.entity_id===semanticTarget.entity_id)};
+  // Resolve "my AC requirements" only from the one same-ticket, persisted,
+  // customer-owned category whose recorded *words* yield these initials.
+  // An acronym is not a mutable product synonym, or permission to summarize
+  // another company, stale memory revision, or a competing same-initial item.
+  const acronym = input.question.normalize("NFKC").trim().match(
+    /^(?:what are|can you recap) (?:my|our)(?: current)? ([a-z]{2,5}) requirements[?!.]?$/iu,
+  )?.[1]?.toUpperCase();
+  if (acronym && input.commerce && input.memory &&
+    !input.explicit_handoff &&
+    input.commerce.company_id === input.company_id &&
+    input.commerce.conversation_id === input.conversation_id &&
+    input.memory.company_id === input.company_id &&
+    input.memory.conversation_id === input.conversation_id &&
+    input.memory.commerce_state_revision === input.commerce.revision) {
+    const matches = entities.filter(e =>
+      persistedCategoryInitialism(e) === acronym);
+    if (matches.length) return {
+      provenance: "explicit_category",
+      entities: matches.length === 1 ? matches : [],
+    };
+  }
   const identity = entities.filter(e => any(input.question, [e.entity_id, e.model,
     ...["product_name", "display_name", "original_name", "sku"].map(k => e.attributes[k])]
     .filter((v): v is string => typeof v === "string" && v.length > 0)));
