@@ -43,16 +43,6 @@ export function registerP1ObservationCases({test,assert,fixture,uuid,fs,root}) {
    const result=await f.run();
    assert.equal(result.status,200,'observed_handler_http_failure');
    assert.equal(f.commits.length,1,'observed_handler_commit_not_exactly_once');
-   if(row.id==='P3' && mode==='scripted'){
-    // P3 is an original failing observation; leave its assertion intact.
-    // Record only safe route/stage codes to identify the shared runtime defect.
-    const md=f.commits[0].metadata??{}, failure=md.execution_failure??{};
-    console.log('P1_P3_TRACE '+JSON.stringify({route:md.response_route??null,
-     error_code:md.source_error_code??null,
-     failure_stage:failure.stage??null,
-     failure_code:failure.code??null,
-     commerce_result:md.commerce_state_persist_result??null}));
-   }
    assert.notEqual(f.commits[0].metadata.generation_success,false,'observed_handler_terminal_failure');
    const state=f.tables.conversation_commerce_state[0]?.state;
    if(state){
