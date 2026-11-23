@@ -585,30 +585,6 @@ function contextualConstraintAttribute(
   return null;
 }
 
-function historyDimensionConstraint(
-  input: CommerceRuntimeInput,
-  category: string,
-  attribute: CommerceDimensionAttribute,
-): { value_mm: number; path: string } | null {
-  const history = (input.history ?? [])
-    .filter((turn) => ["visitor", "user", "customer"].includes(turn.role))
-    .slice(0, MAX_HISTORY_TURNS);
-  for (let index = 0; index < history.length; index += 1) {
-    const turn = history[index];
-    const categories = explicitCategoryKeys(turn.content);
-    if (categories.length && !categories.includes(category)) continue;
-    const measurement = parseCommerceDimensionMeasurement(turn.content);
-    if (!measurement || !maximumConstraintLanguage(turn.content)) continue;
-    const candidateAttribute =
-      measurement.attribute ?? contextualConstraintAttribute(history, index, category);
-    if (candidateAttribute !== attribute) continue;
-    return {
-      value_mm: measurement.value_mm,
-      path: `customer_constraints.${category}.${attribute}`,
-    };
-  }
-  return null;
-}
 
 function categoryLabel(category: string, language: CommerceLanguage): string {
   const spec = CATEGORY_SPECS.find((candidate) => candidate.key === category);
@@ -687,9 +663,14 @@ function resolveReadOnlyAttributeConstraintQuery(
     };
   }
 
-  const constraint =
-    stateDimensionConstraint(state, category, attribute, categoryResolution.entity_id??null) ??
-    (categoryResolution.entity_id?null:historyDimensionConstraint(input, category, attribute));
+  // Raw conversation history is context for interpretation, never evidence
+  // that a customer constraint was committed. A comparison requires the
+  // canonical, scoped Commerce state (or a persisted customer constraint).
+  // A missing/ambiguous persisted limit must ask for the limit, not turn
+  // an earlier uncommitted utterance into current customer authority.
+  const constraint = stateDimensionConstraint(
+    state, category, attribute, categoryResolution.entity_id ?? null,
+  );
   if (!constraint) {
     const product = categoryLabel(category, input.language);
     const dimension = dimensionLabel(attribute, input.language);
