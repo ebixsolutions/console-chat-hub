@@ -5071,7 +5071,9 @@ async function orchestrationGenerateReply(
       // one active + one cancelled canonical record and read-only semantics.
       // Never derive this proof from the model, a widget or a transcript.
       const readOnlyEffectiveRetention = Boolean(
-        _c3SemanticCustomerRecall && isCurrentEffectiveQuantityRecall(_h1LastMsg) &&
+        // Current state is proved by persisted Memory/Commerce and original Visitor
+        // sources, not by an optional provider-proposed customer-recall label.
+        isCurrentEffectiveQuantityRecall(_h1LastMsg) &&
         !_mixedRequest && !_explicitHandoffRequested && !_customerOwnedDelta &&
         !(_a3SemanticFrame?.customer_facts?.length) &&
         !_currentFactualRequest?.transaction_required);
@@ -5104,7 +5106,9 @@ async function orchestrationGenerateReply(
           _c3Memory, memoryHistory,
         ).block;
       }
-      const memoryOutcome = !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
+      const memoryOutcome = readOnlyEffectiveRetention && _c3TrustedPersistedMemoryReadback
+        ? null // verified current-state read: do not replace historical correction source
+        : !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
         ? null
         : await refreshConversationLongMemory(
           supabaseAdmin as unknown as Parameters<
@@ -5372,8 +5376,17 @@ async function orchestrationGenerateReply(
   // A source-attested customer quote is not a merchant price/policy/stock fact.
   // Preserve the KB demand for every other case, including ambiguous, mixed,
   // inferred, unbound and transaction requests.
+  const _c3SourceVerifiedEffectiveRetention = Boolean(
+    _c3TrustedPersistedMemoryReadback && _c3RecallSources.status === "verified" &&
+    _c3Recall.decision.handled &&
+    _c3Recall.decision.fact_type === "quantity+entity_status" &&
+    _c3Recall.decision.provenance.evidence.length === 2 &&
+    _c3Recall.decision.provenance.evidence.every(e =>
+      e.authority === "CANONICAL_COMMERCE_STATE" &&
+      e.source_kind === "canonical_state" && e.temporal_scope === "current"));
   const _c3CurrentEffectiveRecall = Boolean(
-    _c3SemanticCustomerRecall && isCurrentEffectiveQuantityRecall(_h1LastMsg) &&
+    (_c3SemanticCustomerRecall || _c3SourceVerifiedEffectiveRetention) &&
+    isCurrentEffectiveQuantityRecall(_h1LastMsg) &&
     !_mixedRequest && !_explicitHandoffRequested && !_currentFactualRequest?.transaction_required &&
     _c3CommerceSnapshot && _c3Memory && _c3Recall.decision.handled &&
     _c3Recall.decision.provenance.company_id === _criticalE2ExpectedTenantId &&
@@ -5389,6 +5402,27 @@ async function orchestrationGenerateReply(
       (e.authority === "CANONICAL_COMMERCE_STATE" && e.source_kind === "canonical_state" ||
        e.fact_type === "quantity" && e.authority === "CURRENT_CUSTOMER_MEMORY" &&
        e.source_kind === "retained_customer_correction_checkpoint")));
+  // Source and revision attestation, not semantic classification, authorize the
+  // exact current quantity + cancelled-status read-only route. B2 still applies.
+  if (isCurrentEffectiveQuantityRecall(_h1LastMsg) && !_c3CurrentEffectiveRecall) {
+    console.info("[generate-reply] c3_r1_source_decision", {
+      canonical_current_reject:true,
+      semantic_candidate:Boolean(_c3SemanticCustomerRecall),
+      persisted_readback:Boolean(_c3TrustedPersistedMemoryReadback),
+      source_status:_c3RecallSources.status,
+      handled:_c3Recall.decision.handled,
+      fact:_c3Recall.decision.handled ? _c3Recall.decision.fact_type : null,
+      reason:_c3Recall.decision.handled ? null : _c3Recall.decision.reason,
+      detail:_c3Recall.decision.handled ? null : _c3Recall.decision.detail,
+      source_verified_effective_retention:_c3SourceVerifiedEffectiveRetention,
+      mixed_request:Boolean(_mixedRequest),
+      customer_owned_delta:Boolean(_customerOwnedDelta),
+      transaction_required:Boolean(_currentFactualRequest?.transaction_required),
+      memory_commerce_scope:_c3Memory?.commerce_state_revision === _c3CommerceSnapshot?.revision,
+      memory_source_scope:_c3Memory?.source_message_id === _c3CommerceSnapshot?.source_message_id,
+      a3_reason:_a3Commerce?.reason ?? null,
+    });
+  }
   const _c3CustomerRecallRoute = _c3SourceAttestedCustomerRecall || _c3CurrentEffectiveRecall ||
     _c3R1Verified || Boolean(
     _c3SemanticCustomerRecall && !_mixedRequest && !_explicitHandoffRequested &&
