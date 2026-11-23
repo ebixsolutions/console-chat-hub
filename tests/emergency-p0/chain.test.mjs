@@ -3462,49 +3462,9 @@ for(const kind of ['retained-checkpoint','canonical-active','current-conflict'])
    mr.revision=2;mr.source_message_id=history[1].id;mr.commerce_state_revision=2;mr.memory_hash=hash(JSON.stringify(mr.memory));
    f.tables.messages.splice(0,f.tables.messages.length,current,...history.slice().reverse());
   }
-  // Single-turn, redacted #567 diagnosis; does not alter any Frozen assertion.
-  const _d567=kind==='canonical-active'?(()=>{
-   try{
-    const c=f.tables.conversation_commerce_state[0],m=f.tables.conversation_memory_state[0];
-    const d=f.load(path.join(root,'supabase/functions/_shared/conversation-recall.ts'))
-      .resolveConversationRecall({
-       company_id:c.company_id,conversation_id:ticket,
-       source_message_id:f.tables.messages[0].id,question,
-       memory:m.memory,commerce:{company_id:c.company_id,conversation_id:ticket,
-        source_message_id:c.source_message_id,revision:c.revision,state:c.state},
-       trusted_persisted_memory_readback:{contract:'persisted-memory-readback-v1',
-        company_id:c.company_id,conversation_id:ticket,
-        source_message_id:m.source_message_id,memory_revision:m.revision,
-        commerce_state_revision:c.revision,memory_hash:m.memory_hash},
-       trusted_visitor_source_status:'verified',
-       trusted_visitor_source_rows:f.tables.messages.slice(1)
-        .filter(r=>r.role==='visitor'&&r.is_recalled===false)
-        .map(r=>({id:r.id,content:r.content})),
-       explicit_handoff:false,recent_questions:[],referents:[],
-      });
-    return {memory_source_scope:m.memory.source_message_id===m.source_message_id,
-     memory_revision_scope:m.revision===m.memory.memory_revision,
-     memory_commerce_revision:m.memory.commerce_state_revision===c.revision,
-     commerce_source_scope:m.source_message_id===c.source_message_id,
-     entities:c.state.entities.map(e=>({status:e.status,quantity:e.quantity,
-      source_matches:e.provenance.source_message_id===c.source_message_id,
-      name_same:c.state.entities.every(other=>other.attributes.product_name===e.attributes.product_name)})),
-     direct:d.handled?{handled:true,fact:d.fact_type,
-      evidence:d.provenance.evidence.map(e=>({fact:e.fact_type,kind:e.source_kind,authority:e.authority}))}
-      : {handled:false,reason:d.reason,detail:d.detail}};
-   }catch(e){return {diagnostic_error:e instanceof Error?e.message:String(e)}}
-  })():null;
   const prior=structuredClone(f.tables.conversation_commerce_state[0].state);
   const result=await f.run();assert.equal(result.status,200,JSON.stringify({result,events:f.events.slice(-8)}));
   assert.equal(f.commits.length,1);const reply=f.commits[0];
-  if(kind==='canonical-active'&&reply.metadata.response_route!=='canonical_memory_recall')
-   console.log('TASK3C_567_DIAGNOSTIC|'+JSON.stringify({
-    direct:_d567,route:reply.metadata.response_route,
-    recall_reason:reply.metadata.recall_reason,recall_fact_type:reply.metadata.recall_fact_type,
-    source_events:f.events.filter(e=>Array.isArray(e)&&
-      ['[generate-reply] c3_scoped_recall_source_read','[generate-reply] c3_r1_source_decision'].includes(e[0]))
-       .slice(-6).map(e=>({event:e[0],data:e[1]})),
-   }));
   assert.equal(reply.metadata.b2_commit_source,'commit_ai_reply_tx');
   assert.deepEqual(f.tables.conversation_commerce_state[0].state,prior,'current read must not mutate canonical state');
   assert.equal(f.requests.filter(r=>r.url.includes('/rag/context-search')).length,0);

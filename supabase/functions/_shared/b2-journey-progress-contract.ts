@@ -78,7 +78,7 @@ export function resolveEntityLifecyclePlan(
       // Exactly two verified customer-owned active entities, even if their
       // generic category is identical; no category-wide mutation authority.
       const active=state.entities.filter(entity=>entity.status!=="deferred"&&
-        entity.status!=="cancelled"&&entity.status!=="superseded");
+        !["cancelled","superseded"].includes(entity.status));
       if(active.length!==2 || active.some(entity=>entity.provenance.source_type!=="customer"))
         return ambiguous();
       for(const entity of active){

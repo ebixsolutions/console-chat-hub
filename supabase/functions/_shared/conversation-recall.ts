@@ -2229,7 +2229,7 @@ function sourceAttestedTypedCustomerAttribute(
     state_path:"current_customer_facts."+index+".value",value:fact.value,
     authority:"CURRENT_CUSTOMER_MEMORY",entity_id:e.entity_id,
     entity_label:labels[0],region:fact.region??null,
-    evidence_source_message_id:fact.source_message_id,temporal_scope:"current",
+    evidence_source_message_id:fact.source_message_id??null,temporal_scope:"current",
     source_kind:"attested_customer_utterance",attribute_key:key};
   return {handled:true,authority:"CURRENT_CUSTOMER_MEMORY",
     fact_type:"customer_fact",state_path:evidence.state_path,value:fact.value,
