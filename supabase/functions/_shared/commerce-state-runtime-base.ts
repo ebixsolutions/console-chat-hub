@@ -3852,8 +3852,14 @@ function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, va
       if (customerRequestedQuantity(entity) === null) return language === "en" ? "The requested quantity is not yet confirmed." : language === "zh-CN" ? "所需数量尚未确认。" : "所需數量尚未確認。";
       const quantity = typeof value === "number" ? value : entity.quantity;
       const label = entityLabel(entity.entity_id, language);
-      if (language === "en") return `Your current ${label} quantity is ${quantity}.`;
-      const unit=typeof entity.attributes.unit==="string" ? " "+entity.attributes.unit : "";
+      // A canonical quantity has a known count but may have no customer-
+      // supplied measurement unit. Express the unit as unrecorded rather
+      // than guessing one from the product category. Keep the numeric count
+      // independently parseable by the original B2 read-only proof gate.
+      const storedUnit = typeof entity.attributes.unit === "string" &&
+        entity.attributes.unit.trim() ? entity.attributes.unit.trim() : null;
+      if (language === "en") return `Your current ${label} quantity is ${quantity} ${storedUnit ?? "items (measurement unit not recorded)"}.`;
+      const unit = storedUnit ? " " + storedUnit : " 個項目（實際計量單位未記錄）";
       if (language === "zh-CN") return `你目前的${label}数量是 ${quantity}${unit}。`;
       return `你而家嘅${label}數量係 ${quantity}${unit}。`;
     }
