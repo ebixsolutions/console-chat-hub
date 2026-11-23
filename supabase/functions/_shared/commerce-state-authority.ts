@@ -307,7 +307,8 @@ export function isSourceOwnedActiveAdviceGoal(text:string):boolean {
  const t=clean(text);
  if(!t || t.length>2400 ||
    /(?:以前|之前|上次|曾經|曾经|previously|last time|used to|remember|記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|唔想|不想|不要|唔要|不需要|不打算|don't|do not)/iu.test(t))return false;
- return /(?:我|我哋|我們|我们).{0,8}(?:想|要|需要|打算).{0,8}(?:揀|選|选|買|买|換|换|租|訂|订|比較|对比|了解)/iu.test(t) ||
+ return /^(?:想|打算|需要)\s*(?:揀|選|选|買|买|換|换|租|訂|订|比較|对比|了解)/iu.test(t) ||
+   /(?:我|我哋|我們|我们).{0,8}(?:想|要|需要|打算).{0,8}(?:揀|選|选|買|买|換|换|租|訂|订|比較|对比|了解)/iu.test(t) ||
    /\b(?:i|we)\s+(?:(?:really|currently|now)\s+)?(?:want|need|plan)\s+to\s+(?:choose|buy|select|replace|rent|compare|research)\b/iu.test(t) ||
    /\b(?:i'm|i am|we're|we are)\s+looking\s+to\s+(?:choose|buy|select|replace|rent|compare|research)\b/iu.test(t);
 }
