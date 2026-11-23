@@ -139,6 +139,9 @@ export function resolveSemanticContextualCandidate(input: {
   const scopes = new Set<string>();
   const spans: Array<{ start: number; end: number }> = [];
   const values: ScopedCustomerValue[] = [];
+  // Evidence counts follow distinct Visitor quantity phrases, not the
+  // derived number of anonymous members in an explicitly counted group.
+  let quotedQuantityPhrases = 0;
   let unit: string | null = null;
   for (const raw of proposed) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return invalid();
@@ -151,10 +154,18 @@ export function resolveSemanticContextualCandidate(input: {
     const scope = row.scope.normalize("NFKC").replace(/\s+/gu, " ").trim();
     const quote = row.source_text.normalize("NFKC").replace(/\s+/gu, " ").trim();
     const sourceUnit = row.unit.normalize("NFKC").trim();
-    if (scope.length < 2 || scope.length > 80 || quote.length < 3 ||
-      quote.length > 200 || !/^[\p{L}\p{N}]{1,20}$/u.test(sourceUnit) ||
-      !matchesReferenceLabel(quote, scope) || scopes.has(scope.toLowerCase()))
-      return invalid();
+    // An anonymous group may have a one-character CJK name (e.g. 隊).
+    // Require that exact source character inside one unique current-turn
+    // quoted allocation; it never maps to a product/category synonym.
+    const grouped = typeof row.scope_count === "number" ||
+      typeof row.per_scope_quantity === "number";
+    const literalScope = matchesReferenceLabel(quote, scope) ||
+      (grouped && /^[\p{Script=Han}]$/u.test(scope) &&
+        quote.indexOf(scope) >= 0 && quote.indexOf(scope) === quote.lastIndexOf(scope));
+    if (scope.length < (grouped ? 1 : 2) || scope.length > 80 ||
+      quote.length < 3 || quote.length > 200 ||
+      !/^[\p{L}\p{N}]{1,20}$/u.test(sourceUnit) ||
+      !literalScope || scopes.has(scope.toLowerCase())) return invalid();
     if ((unit !== null && unit.toLowerCase() !== sourceUnit.toLowerCase()) ||
       (item.unit && item.unit.normalize("NFKC").toLowerCase() !== sourceUnit.toLowerCase()) ||
       (typeof target.attributes.unit === "string" && target.attributes.unit &&
@@ -163,6 +174,47 @@ export function resolveSemanticContextualCandidate(input: {
     const at = folded.indexOf(quote.toLowerCase());
     if (at < 0 || folded.indexOf(quote.toLowerCase(), at + 1) >= 0 ||
       spans.some(s => at < s.end && s.start < at + quote.length)) return invalid();
+    if (grouped) {
+      // Grammar is language-level "N scopes, M each", not a room/industry
+      // dictionary. Both numerical tokens, the literal scope label, the
+      // distributive marker and the item unit must be visible in this one
+      // Visitor quote. No previous unverified history or model-only count.
+      const quantities = [...quote.matchAll(new RegExp(
+        "([0-9]{1,4}|[零〇一二兩两三四五六七八九十]|\\\\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\\\\b)",
+        "giu",
+      ))];
+      if (quantities.length !== 2 || quantities.some(m => m.index === undefined))
+        return invalid();
+      const first = quantities[0], second = quantities[1];
+      const number = (s: string): number =>
+        Object.prototype.hasOwnProperty.call(words, s.toLowerCase())
+          ? words[s.toLowerCase()] : Number(s);
+      const n = number(first[0]), each = number(second[0]);
+      if (!Number.isInteger(n) || !Number.isInteger(each) ||
+        n < 1 || n > 12 || each < 1 || each > 100 ||
+        n * each > 1000 || row.scope_count !== n ||
+        row.per_scope_quantity !== each || row.value !== each)
+        return invalid();
+      const middle = quote.slice(first.index! + first[0].length, second.index!);
+      const after = quote.slice(second.index! + second[0].length).trim();
+      const sourceName = middle.indexOf(scope);
+      if (sourceName < 0 || middle.indexOf(scope, sourceName + 1) >= 0 ||
+        !/(?:各|每|\\\\beach\\\\b|\\\\bper\\\\b)/iu.test(middle) ||
+        !after.startsWith(sourceUnit)) return invalid();
+      // Reject extra written per-unit quantities inside the same phrase.
+      if ([...quote.matchAll(new RegExp(quantityPattern + "\\\\s*" + sourceUnit, "giu"))].length !== 1)
+        return invalid();
+      for (let index = 1; index <= n; index++) {
+        const distinct = scope + "#" + index;
+        if (scopes.has(distinct.toLowerCase())) return invalid();
+        values.push({scope: distinct, attribute: "quantity", action: "set", value: each});
+      }
+      unit = sourceUnit;
+      scopes.add(scope.toLowerCase());
+      spans.push({start: at, end: at + quote.length});
+      quotedQuantityPhrases++;
+      continue;
+    }
     const counts = [...quote.matchAll(new RegExp(quantityPattern + "\\s*" + sourceUnit, "giu"))];
     if (counts.length !== 1) return invalid();
     const word = counts[0][1].toLowerCase();
@@ -173,12 +225,13 @@ export function resolveSemanticContextualCandidate(input: {
     scopes.add(scope.toLowerCase());
     spans.push({ start: at, end: at + quote.length });
     values.push({ scope, attribute: "quantity", action: "set", value: count });
+    quotedQuantityPhrases++;
   }
-  if (unit === null) return invalid();
-  // Each counted item in the current Visitor turn must be included in one
-  // non-overlapping quoted scope; a model cannot silently omit other counts.
+  if (unit === null || values.length > 24) return invalid();
+  // Expanded members preserve the exact N×M customer count, while requiring
+  // every written per-item quantity phrase to be accounted for once.
   const all = [...text.matchAll(new RegExp(quantityPattern + "\\s*" + unit, "giu"))];
-  if (all.length !== values.length || all.some(m => !spans.some(s =>
+  if (all.length !== quotedQuantityPhrases || all.some(m => !spans.some(s =>
     (m.index ?? -1) >= s.start && (m.index ?? -1) + m[0].length <= s.end)))
     return invalid();
   const total = values.reduce((sum, v) => sum + Number(v.value), 0);

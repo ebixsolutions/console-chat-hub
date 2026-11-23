@@ -1485,3 +1485,67 @@ Deno.test("Task3C English generic scoped reading is source-backed and refuses du
   assert(resolveSemanticContextualCandidate({ text, state, language: "en", semantic_frame: duplicate })?.context_sufficient === false,
     "duplicate scope accepted");
 });
+
+
+/** Independent G2 regression, not a change to the original A/B/C/2a inputs. */
+Deno.test("Task3C G2 source-quoted distributive groups expand without trade vocab", () => {
+  const state = createEmptyConversationCommerceState();
+  state.entities = [{
+    entity_id:"training:cohorts",category:"service",quantity:2,status:"researching",
+    model:null,attributes:{product_name:"Training slots",unit:"席"},constraints:{},
+    provenance:{source_type:"customer",source_message_id:"visitor-prior"},
+  }];
+  const make = (): CommerceSemanticFrame => ({
+    version:"commerce-semantic-1.0.0",language:"zh-TW",
+    operation:"UPDATE_ITEM",intent:"scoped allocation",topic:"service",
+    entities:[{
+      entity_ref:"training:cohorts",name:"Training slots",kind:"service",
+      category_hint:"service",sku:null,model:null,quantity:3,unit:"席",
+      attributes:{scoped_customer_updates:[
+        {scope:"主隊",source_text:"主隊1席",unit:"席",value:1,attribute:"quantity",action:"set"},
+        {scope:"支隊",source_text:"兩個支隊各1席",unit:"席",value:1,scope_count:2,per_scope_quantity:1,attribute:"quantity",action:"set"},
+      ]},constraints:{},capabilities:{
+        requires_delivery:false,supports_pickup:false,requires_installation:false,
+        requires_booking:false,requires_quote:false,requires_site_check:false,
+        digital_fulfilment:false,recurring_billing:false,
+        rental_return:false,customization:false,
+      },confidence:0.99,
+    }],
+    referents:[{ref:"training:cohorts",source:"persistent_state",confidence:0.99}],
+    customer_correction:false,additive:false,explicit_negations:[],requested_facts:[],
+    transaction_state:"none",payment_state:"none",booking_state:"none",
+    fulfillment_state:"none",
+    ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+    confidence:0.99,
+  });
+  const text="主隊1席，兩個支隊各1席";
+  const proposed=resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:make()});
+  assert(proposed?.values.length===3&&proposed.aggregate_quantity===3 &&
+    proposed.values.every(v=>v.value===1) &&
+    proposed.values.some(v=>v.scope==="支隊#1") &&
+    proposed.values.some(v=>v.scope==="支隊#2"),JSON.stringify(proposed));
+  const decision=resolveContextualCustomerUpdate({candidate:proposed,state});
+  assert(decision.route==="contextual_scoped_update",JSON.stringify(decision));
+  const next=reduceCommerceState(state,contextualUpdateEvents(decision,state,"visitor-latest"));
+  assert(next.entities[0].quantity===3 &&
+    (next.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[]).length===3 &&
+    next.conversion.order_status==="none" && next.conversion.payment_status==="none",
+    JSON.stringify(next));
+  const badCount=make();
+  (badCount.entities[0].attributes.scoped_customer_updates as unknown as Record<string,unknown>[])[1].scope_count=3;
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:badCount})?.context_sufficient===false,
+    "invented group count");
+  const badEach=make();
+  (badEach.entities[0].attributes.scoped_customer_updates as unknown as Record<string,unknown>[])[1].per_scope_quantity=2;
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:badEach})?.context_sufficient===false,
+    "invented per-scope quantity");
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:null})===null,
+    "no-reading group must not mutate");
+  const missingGroup="主隊1席，支隊各1席";
+  assert(resolveSemanticContextualCandidate({text:missingGroup,language:"zh-TW",state,semantic_frame:make()})?.context_sufficient===false,
+    "missing source scope count must not inherit model count");
+  const duplicate=make();
+  (duplicate.entities[0].attributes.scoped_customer_updates as unknown as Record<string,unknown>[])[1].scope="主隊";
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:duplicate})?.context_sufficient===false,
+    "ambiguous overlapping group");
+});
