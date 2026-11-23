@@ -1329,6 +1329,20 @@ export async function loadScopedRecallVisitorSources(input: {
       "delivery_preference", "delivery_status"].includes(f))) {
     add(scope.commerce?.state.delivery.provenance?.source_message_id);
   }
+  // The effective retained count is a source-owned correction, even when the
+  // prior multi-part goal was represented as one cancelled legacy entity.
+  // Admit its exact Visitor source to the existing bounded scoped lookup,
+  // not an unverified number or an inactive entity as a current quantity.
+  const retainedSource=scope.memory?.source_message_id;
+  if (originalFacts.includes("quantity") && asksRetainedQuantity(scope.question) &&
+      scope.memory && scope.commerce &&
+      scope.memory.commerce_state_revision===scope.commerce.revision &&
+      retainedSource && retainedSource===scope.commerce.source_message_id &&
+      scope.memory.latest_corrections.some(row=>retainedQuantity(row)!==null) &&
+      scope.commerce.state.entities.some(e=>e.status==="cancelled" &&
+        e.provenance.source_type==="customer" &&
+        e.provenance.source_message_id===retainedSource))
+    add(retainedSource);
   const needed = ids.filter(id => !recent.some(row => row.id === id));
   // Only absent source rows cost a targeted DB read. A long canonical source
   // lineage already present in verified recent history is not an over-cap read.
@@ -2243,6 +2257,18 @@ function resolveConversationRecallLegacy(
   const recap = isCurrentRequirementsRecap(input.question, retainedTargets);
   const parsed = parseQuery(input.question, input.recent_questions, retainedTargets, hasSourceBoundCompletedRecap(input));
   const m = input.memory, c = input.commerce;
+  // A current effective quantity read may legitimately target a previous
+  // committed correction. Its memory source is not this question's source.
+  // Do not relax the original source guard for historical speech or any
+  // read lacking exact persisted CAS lineage and original Visitor proof.
+  const verifiedCorrection = isCurrentEffectiveQuantityRecall(input.question)
+    ? verifiedRetainedCustomerCorrection(input) : null;
+  const persistedEffectiveRead = Boolean(verifiedCorrection && m && c &&
+    hasTrustedPersistedMemoryReadback(input) &&
+    m.source_message_id===c.source_message_id &&
+    c.state.entities.some(e=>e.status==="cancelled" &&
+      e.provenance.source_type==="customer" &&
+      e.provenance.source_message_id===verifiedCorrection.source_id));
   const requestedAmounts = (input.question.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((v) => Number(v.replace(/,/g, "")));
   const retainedHistoricalAmount = (m?.historical_facts ?? []).some((fact) => {
     const value = object(fact.value);
@@ -2263,7 +2289,7 @@ function resolveConversationRecallLegacy(
       m.company_id !== input.company_id ||
       m.conversation_id !== input.conversation_id ||
       (m.source_message_id !== input.source_message_id &&
-        !(recap && c &&
+        !((recap || persistedEffectiveRead) && c &&
           (m.source_message_id === c.source_message_id || (m.question_lifecycle ?? []).some(q =>
             q.source_message_id === m.source_message_id && q.status === "resolved" &&
             Boolean(q.resolution_source_message_id)) || hasTrustedPersistedMemoryReadback(input)) &&
@@ -2333,7 +2359,28 @@ function resolveConversationRecallLegacy(
       f==="entity_status"&&asksInactiveEntityStatus(slot.question))
       ?verifiedRetainedCustomerCorrection(input):null;
     if(sourceCorrection){
+      // Prefer one exact-source, current canonical projection when present:
+      // the retained active item quantity and the cancelled item's lifecycle
+      // are distinct facts. Never reuse an inactive aggregate as current qty.
+      const canonical=canonicalCandidates(input,f,selected.filter(e=>
+        f==="quantity"?isCurrentEntity(e):["cancelled","deferred"].includes(e.status)
+      )).filter(row=>row.source_kind==="canonical_state" &&
+        row.authority==="CANONICAL_COMMERCE_STATE" &&
+        row.evidence_source_message_id===sourceCorrection.source_id &&
+        (f==="quantity"?row.value===sourceCorrection.value:row.value==="cancelled"));
+      if(canonical.length===1){
+        const {rank:unusedRank,...attested}=canonical[0];
+        evidence.push(attested);
+        continue;
+      }
       if(f==="quantity"){
+        // A contradictory active canonical quantity from this very correction
+        // must be clarified; the older checkpoint must not mask the conflict.
+        if(selected.some(e=>isCurrentEntity(e) &&
+          customerRequestedQuantity(e)!==null &&
+          e.provenance.source_message_id===sourceCorrection.source_id &&
+          e.quantity!==sourceCorrection.value))
+          return fail("AMBIGUOUS","CONFLICTING_CURRENT_QUANTITY",facts);
         evidence.push({fact_type:"quantity",value:sourceCorrection.value,
           state_path:"latest_corrections.source_verified_quantity",
           authority:"CURRENT_CUSTOMER_MEMORY",entity_id:null,region:null,
