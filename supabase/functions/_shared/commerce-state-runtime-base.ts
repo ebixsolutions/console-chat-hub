@@ -45,6 +45,7 @@ import {
   customerDimensionPair,
   withoutExcludedLookups,
   customerBusinessText,
+  isSourceOwnedActiveAdviceGoal,
   requirementMutationText,
   splitCustomerOperationClauses,
   isReadOnlyCurrentStateAggregateQuery,
@@ -3157,6 +3158,20 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
     return state;
   }
   let state = reduceTurnOperations(previous,input,hints);
+  // A counted room/person in a first service-advice question is not a
+  // customer assertion of an additional product or unit. Persist intent only
+  // through the existing source/revision-bound Commerce RPC.
+  const advisoryFrame=input.semantic_frame;
+  if(advisoryFrame?.operation==="ASK_FACT" && advisoryFrame.confidence>=0.90 &&
+     !advisoryFrame.ambiguity.is_ambiguous && !advisoryFrame.customer_correction &&
+     !advisoryFrame.additive && advisoryFrame.entities.length===0 &&
+     !advisoryFrame.customer_facts?.length &&
+     ["customer_guidance","ask_for_advice"].includes(advisoryFrame.intent) &&
+     isSourceOwnedActiveAdviceGoal(input.text) &&
+     previous.entities.length===0 && state.entities.length===0 &&
+     state.current_intent!=="customer_guidance") {
+    state=reduceCommerceState(state,[{type:"SET_CONTEXT",intent:"customer_guidance"}]);
+  }
   // Persist the customer-authored exact model as an unknown-quantity subject.
   // A no-frame product inquiry is not evidence for count=1 or any industry.
   if (!input.semantic_frame && state.entities.length===0 &&

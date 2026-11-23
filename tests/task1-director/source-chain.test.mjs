@@ -2,7 +2,7 @@ import test from 'node:test';
 import {transformSync as task1Transpile, buildSync as task3cBuildCanonical} from 'esbuild';
 import {readFileSync as task1SourceRead} from 'node:fs';
 import assert from 'node:assert/strict';
-import {resolveCustomerRequestDecision,isBareCommerceSubjectMention} from '../../supabase/functions/_shared/commerce-state-authority.ts';
+import {resolveCustomerRequestDecision,isBareCommerceSubjectMention,isSourceOwnedActiveAdviceGoal,isReadOnlyMemoryOrCurrentStateRecall} from '../../supabase/functions/_shared/commerce-state-authority.ts';
 import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
 import {reduceTurn, isReadOnlyCommerceQuestion} from '../../supabase/functions/_shared/commerce-state-runtime-base.ts';
 import {sourceBoundMixedCustomerFactEvents, semanticFrameToStateEvents} from '../../supabase/functions/_shared/commerce-semantic-adapter.ts';
@@ -546,4 +546,32 @@ test("Task3C #178 generic unit mismatch is rejected",()=>{
  },[]);
  assert.equal(state.customer_constraints.customer_reported_facts?.course_duration,undefined);
  assert.equal(state.quotes.length,0);
+});
+
+for(const [name,text] of [
+ ["HK room-count initial shopping research","想換冷氣，兩間睡房加個客廳，應該點揀好？"],
+ ["English multi-department rental","We want to choose a rental for 2 departments; which option?"],
+ ["Taiwan subscription shopping","我們想選購 3 個訂閱席位，應該比較哪些？"]
+]) test("Task3C P1 source-attested first advisory intent, no industry default: "+name,()=>{
+ const f=semantic({operation:"ASK_FACT",intent:"customer_guidance",requested_facts:[],entities:[],customer_facts:[]});
+ assert.equal(isSourceOwnedActiveAdviceGoal(text),true);
+ assert.equal(isReadOnlyMemoryOrCurrentStateRecall(text,f),false);
+ const s=reduceTurn(createEmptyConversationCommerceState(),{text,semantic_frame:f,source_message_id:SRC,conversation_id:CID,company_id:TID,language:"zh-TW"},[]);
+ assert.equal(s.current_intent,"customer_guidance");
+ assert.equal(s.entities.length,0);
+ assert.equal(s.quotes.length,0);
+ assert.equal(s.conversion.order_status,"none");
+});
+for(const text of [
+ "Do you remember we wanted to buy 2 chairs?",
+ "以前我想選三個方案，現在還是三個嗎？",
+ "We do not want to buy 3 seats.",
+ "How many units did we select earlier?"
+]) test("Task3C P1 historical or negated sources cannot create new intent: "+text,()=>{
+ const f=semantic({operation:"ASK_FACT",intent:"customer_guidance",requested_facts:[],entities:[],customer_facts:[]});
+ assert.equal(isSourceOwnedActiveAdviceGoal(text),false);
+ const s=reduceTurn(createEmptyConversationCommerceState(),{text,semantic_frame:f,source_message_id:SRC,conversation_id:CID,company_id:TID,language:"en"},[]);
+ assert.notEqual(s.current_intent,"customer_guidance");
+ assert.equal(s.entities.length,0);
+ assert.equal(s.quotes.length,0);
 });

@@ -301,6 +301,17 @@ export function isDeliveryScheduleCurrentFactQuery(question: string): boolean {
   return interrogative && deliveryAndSchedule;
 }
 
+/** A present visitor-authored selection goal is not historical quantity
+ * recall. This classifies a speech act, never an item, industry or order. */
+export function isSourceOwnedActiveAdviceGoal(text:string):boolean {
+ const t=clean(text);
+ if(!t || t.length>2400 ||
+   /(?:以前|之前|上次|曾經|曾经|previously|last time|used to|remember|記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|唔想|不想|不要|唔要|不需要|不打算|don't|do not)/iu.test(t))return false;
+ return /(?:我|我哋|我們|我们).{0,8}(?:想|要|需要|打算).{0,8}(?:揀|選|选|買|买|換|换|租|訂|订|比較|对比|了解)/iu.test(t) ||
+   /\b(?:i|we)\s+(?:(?:really|currently|now)\s+)?(?:want|need|plan)\s+to\s+(?:choose|buy|select|replace|rent|compare|research)\b/iu.test(t) ||
+   /\b(?:i'm|i am|we're|we are)\s+looking\s+to\s+(?:choose|buy|select|replace|rent|compare|research)\b/iu.test(t);
+}
+
 /**
  * Shared READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL contract. A counted noun in
  * an interrogative/recall utterance is a fact target, never mutation authority.
@@ -312,6 +323,7 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
 ): boolean {
   const text = clean(question);
   if (!text || explicitCustomerMutation(text)) return false;
+  if(semantic?.operation==="ASK_FACT" && isSourceOwnedActiveAdviceGoal(text))return false;
   const requested = (semantic?.requested_facts ?? []).join(" ");
   const semanticRead = ["ASK_FACT", "NO_STATE_CHANGE"].includes(String(semantic?.operation ?? ""));
   const recallLanguage = /(?:記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|還記得|頭先|头先|之前最後|之前最后|最後話|最后说|提我|提醒我|do you remember|remind me|settled on|have now)/i.test(text);
