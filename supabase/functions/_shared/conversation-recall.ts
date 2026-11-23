@@ -800,6 +800,76 @@ function verifiedRetainedCustomerCorrection(input:ConversationRecallInput):
   return {value:latest.value,text,source_id:source[0].id};
 }
 
+/** A canonical active portion and the cancelled legacy aggregate can
+ * coexist after one source-proven partial cancellation. A current count is
+ * attested by the same original correction; it is not the old aggregate. */
+function resolveSourceVerifiedCanonicalActiveRetention(
+  input:ConversationRecallInput,
+):ConversationRecallDecision|null {
+  if(input.explicit_handoff||!isCurrentEffectiveQuantityRecall(input.question)||
+    customerRecallHasAction(input.question)||
+    input.trusted_visitor_source_status!=="verified"||
+    !hasTrustedPersistedMemoryReadback(input))return null;
+  const parsed=parseQuery(input.question);
+  if(parsed.stop||parsed.facts.length!==2||
+    !parsed.facts.includes("quantity")||
+    !parsed.facts.includes("entity_status")||
+    !asksRetainedQuantity(input.question)||
+    !asksInactiveEntityStatus(input.question)||
+    any(withoutExcludedLookups(input.question),EXTERNAL))return null;
+  const m=input.memory,c=input.commerce;
+  if(!m||!c||m.company_id!==input.company_id||c.company_id!==input.company_id||
+    m.conversation_id!==input.conversation_id||c.conversation_id!==input.conversation_id||
+    m.commerce_state_revision!==c.revision||
+    m.source_message_id!==c.source_message_id)return null;
+  const corrected=verifiedRetainedCustomerCorrection(input);
+  if(!corrected||corrected.source_id!==m.source_message_id||
+    !/(?:取消|cancel)/iu.test(corrected.text))return null;
+  const active=c.state.entities.filter(isCurrentEntity);
+  const cancelled=c.state.entities.filter(e=>e.status==="cancelled");
+  if(c.state.entities.length!==2||active.length!==1||cancelled.length!==1||
+    (active[0].status!=="tentative"&&active[0].status!=="researching"))return null;
+  const current=active[0],historical=cancelled[0];
+  if(current.entity_id===historical.entity_id||
+    current.category!==historical.category||
+    current.provenance.source_type!=="customer"||
+    historical.provenance.source_type!=="customer"||
+    current.provenance.source_message_id!==corrected.source_id||
+    historical.provenance.source_message_id!==corrected.source_id||
+    !Number.isInteger(current.quantity)||current.quantity!==corrected.value||
+    !entityAliases(current).some(label=>phrase(input.question,label))||
+    !entityAliases(historical).some(label=>phrase(input.question,label)))return null;
+  const cancelledLabel=correctedInactiveEntityLabel(input,historical);
+  if(!cancelledLabel||!phrase(corrected.text,cancelledLabel))return null;
+  // Both records are customer-owned. The active number is independently
+  // attested by the original correction, even if the cancelled aggregate
+  // retained historical quantity_basis bookkeeping. No state is written.
+  const facts:RecallEvidence[]=[
+    {fact_type:"quantity",state_path:"entities."+c.state.entities.indexOf(current)+".quantity",
+      value:current.quantity,authority:"CANONICAL_COMMERCE_STATE",
+      entity_id:current.entity_id,
+      entity_label:typeof current.attributes.product_name==="string"
+        ? current.attributes.product_name:current.category,
+      region:typeof current.attributes.region==="string"?current.attributes.region:null,
+      evidence_source_message_id:corrected.source_id,
+      temporal_scope:"current",source_kind:"canonical_state"},
+    {fact_type:"entity_status",state_path:"entities."+c.state.entities.indexOf(historical)+".status",
+      value:"cancelled",authority:"CANONICAL_COMMERCE_STATE",
+      entity_id:historical.entity_id,entity_label:cancelledLabel,
+      region:typeof historical.attributes.region==="string"?historical.attributes.region:null,
+      evidence_source_message_id:corrected.source_id,
+      temporal_scope:"current",source_kind:"canonical_state"},
+  ];
+  return {handled:true,authority:"CANONICAL_COMMERCE_STATE",
+    fact_type:"quantity+entity_status",
+    state_path:facts.map(e=>e.state_path).join("|"),
+    value:facts.map(e=>({fact_type:e.fact_type,entity_id:e.entity_id,value:e.value})),
+    provenance:{conversation_id:input.conversation_id,company_id:input.company_id,
+      source_message_id:input.source_message_id,memory_revision:m.memory_revision,
+      commerce_state_revision:c.revision,commerce_source_message_id:c.source_message_id,
+      evidence:facts}};
+}
+
 function selectEntities(
   input: ConversationRecallInput,
   entities: CommerceEntity[],
@@ -2152,6 +2222,8 @@ export function resolveConversationRecall(
   input: ConversationRecallInput,
 ): ConversationRecallDecision {
   if (input.explicit_handoff) return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
+  const canonicalActiveRetention=resolveSourceVerifiedCanonicalActiveRetention(input);
+  if(canonicalActiveRetention)return canonicalActiveRetention;
   const typedCustomer=sourceAttestedTypedCustomerAttribute(input);
   if(typedCustomer) return typedCustomer;
   // Historical customer speech must not fall back to an unverified stored
