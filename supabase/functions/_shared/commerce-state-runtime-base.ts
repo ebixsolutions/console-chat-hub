@@ -4291,7 +4291,7 @@ export async function runCommerceStateRuntime(
     aliases:[entity.category,entity.model,entity.attributes.sku,entity.attributes.product_name]
       .filter((v):v is string=>typeof v==="string"&&v.length>=2),
   }));
-  const hints = mergeCommerceEntityHints(proposedHints.map(hint=>{
+  const mergedHints = mergeCommerceEntityHints(proposedHints.map(hint=>{
     const identities=[hint.model,hint.attributes?.sku,hint.attributes?.product_name]
       .filter((v):v is string=>typeof v==="string"&&v.length>=2);
     // An unknown explicit identity cannot fall back to its category alias.
@@ -4301,6 +4301,42 @@ export async function runCommerceStateRuntime(
     return targets.length===1 && detectQuantityCorrectionSignal(text)
       ? {...hint,entity_id:targets[0].entity_id} : hint;
   }),canonicalHints);
+  // Never materialize the same customer-authored item a second time simply
+  // because a generic fallback parser included a trailing question/purpose
+  // clause in its proposed name. A single interpreted item must independently
+  // match the Visitor's *current* name, exact count and written unit. If it
+  // refers to prior state, only the existing customer-source entity_id is
+  // eligible. This filter can REMOVE a duplicate hint; it grants no mutation,
+  // quantity, transaction, or B2 authority and never scans old raw history.
+  const singleSubject = (() => {
+    const frame=input.semantic_frame;
+    if(!frame || frame.operation!=="ADD_ITEM" || frame.ambiguity.is_ambiguous ||
+       frame.entities.length!==1)return null;
+    const entity=frame.entities[0];
+    if(entity.confidence<0.90 || typeof entity.name!=="string" ||
+       entity.name.trim().length<2 || entity.quantity===null ||
+       !matchesReferenceLabel(text,entity.name) ||
+       attestedItemQuantity(text,entity.name,entity.quantity,entity.unit)!==entity.quantity)return null;
+    const existing=contextualBefore.state.entities.find(candidate=>
+      candidate.entity_id===entity.entity_ref && candidate.provenance.source_type==="customer" &&
+      !!candidate.provenance.source_message_id &&
+      !["cancelled","deferred","superseded"].includes(candidate.status));
+    if(!existing && frame.confidence<0.90)return null;
+    return { name:clean(entity.name,160).toLowerCase(), quantity:entity.quantity,
+      retainedId:existing?.entity_id??null,
+      interpretedId:existing?null:semanticHints.find(hint=>
+        clean(hint.attributes?.product_name,160).toLowerCase()===clean(entity.name,160).toLowerCase())?.entity_id??null };
+  })();
+  const hints = singleSubject ? mergedHints.filter(hint=>{
+    if(contextualBefore.state.entities.some(entity=>entity.entity_id===hint.entity_id) ||
+       hint.entity_id===singleSubject.retainedId ||
+       hint.entity_id===singleSubject.interpretedId ||
+       !hint.entity_id.startsWith("generic:"))return true;
+    const candidate=clean(hint.attributes?.product_name,160).toLowerCase();
+    const normalized=candidate.replace(/[嗎吗呢咩]+$/u,"");
+    const sameCount=hint.quantity===undefined || hint.quantity===singleSubject.quantity;
+    return !(sameCount && normalized.startsWith(singleSubject.name));
+  }) : mergedHints;
   const runtimeInput = { ...input, industry_identifier: null };
 
   const persisted = await persistCommerceTurn(db, runtimeInput, hints);
