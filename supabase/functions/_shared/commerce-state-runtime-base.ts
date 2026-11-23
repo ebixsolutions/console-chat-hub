@@ -262,14 +262,29 @@ function resolvePendingCheckAggregateScope(
       lower.includes(normalized);
   }) ?? [];
   const explicitDeictic = /(?:呢|這|这|嗰|那)(?:一|兩|两|二|\d+)?(?:部|件|個|个|樣|样|位)|\bthis\s+(?:one|item|unit|product|installation|refrigerator|fridge|air\s*conditioner)\b|\bfor\s+(?:this|the)\b/i.test(text);
-  const explicitScope = categories.length > 0 || rooms.length > 0 ||
-    semanticRefs.length > 0 || explicitDeictic;
-  if (!explicitScope) return { mode: "global" };
-
   const active = state.entities.filter((entity) =>
     entity.status !== "cancelled" && entity.status !== "deferred"
   );
+  // A customer-named, already persisted product/service is a scoped read,
+  // even when this industry has no registered vocabulary and the semantic
+  // frame omits an entity. Never turn that question into a global aggregate.
+  // Full recorded labels only: no partial category guess, raw-history
+  // promotion, model-only name, new entity, or state mutation.
+  const sourceNamed = active.filter((entity) =>
+    entity.provenance.source_type === "customer" &&
+    Boolean(entity.provenance.source_message_id) &&
+    sourceOwnedSubjectLabels(entity).some((label) =>
+      matchesReferenceLabel(text, label))
+  );
+  const explicitScope = categories.length > 0 || rooms.length > 0 ||
+    semanticRefs.length > 0 || explicitDeictic || sourceNamed.length > 0;
+  if (!explicitScope) return { mode: "global" };
+
   let candidates = active.filter((entity) => {
+    // A duplicate customer label is ambiguous; competing canonical entities
+    // must never be picked by array order or the previous topic.
+    if (sourceNamed.length && !sourceNamed.some((named) =>
+      named.entity_id === entity.entity_id)) return false;
     if (categories.length && !categories.includes(entity.category)) return false;
     if (rooms.length) {
       const room = entity.entity_id.split(":")[1] ?? "";
