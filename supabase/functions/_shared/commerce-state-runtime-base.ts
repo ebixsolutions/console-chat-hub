@@ -1551,7 +1551,8 @@ function deriveA3RuntimeEvents(
   const frame = input.semantic_frame;
   if (previous.entities.length === 0 && frame && frame.confidence >= 0.72 &&
       !frame.ambiguity.is_ambiguous && frame.operation === "ASK_FACT" &&
-      ["customer_guidance","ask_for_advice"].includes(frame.intent)) {
+      ["customer_guidance","ask_for_advice"].includes(frame.intent) &&
+      isSourceOwnedActiveAdviceGoal(input.text)) {
     events.push({type:"SET_CONTEXT",intent:"customer_guidance"});
   }
 
