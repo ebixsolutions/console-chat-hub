@@ -830,15 +830,29 @@ function resolveSourceVerifiedCanonicalActiveRetention(
   if(c.state.entities.length!==2||active.length!==1||cancelled.length!==1||
     (active[0].status!=="tentative"&&active[0].status!=="researching"))return null;
   const current=active[0],historical=cancelled[0];
+  // A formerly collapsed customer goal may have generic_product category
+  // while its exactly matching customer-owned retained entity has a specific
+  // category. Only byte-identical persisted customer product names allow
+  // this cross-schema representation, never an inferred industry default.
+  const sameSourceOwnedProduct=current.category===historical.category ||
+    (historical.category==="generic_product" &&
+      historical.entity_id.startsWith("generic:") &&
+      typeof historical.attributes.product_name==="string" &&
+      historical.attributes.product_name.length>=2 &&
+      historical.attributes.product_name===current.attributes.product_name);
   if(current.entity_id===historical.entity_id||
-    current.category!==historical.category||
+    !sameSourceOwnedProduct||
     current.provenance.source_type!=="customer"||
     historical.provenance.source_type!=="customer"||
     current.provenance.source_message_id!==corrected.source_id||
     historical.provenance.source_message_id!==corrected.source_id||
     !Number.isInteger(current.quantity)||current.quantity!==corrected.value||
     !entityAliases(current).some(label=>phrase(input.question,label))||
-    !entityAliases(historical).some(label=>phrase(input.question,label)))return null;
+    !(entityAliases(historical).some(label=>phrase(input.question,label)) ||
+      (historical.category==="generic_product" &&
+        historical.entity_id.startsWith("generic:") &&
+        typeof historical.attributes.product_name==="string" &&
+        historical.attributes.product_name===current.attributes.product_name)))return null;
   const cancelledLabel=correctedInactiveEntityLabel(input,historical);
   if(!cancelledLabel||!phrase(corrected.text,cancelledLabel))return null;
   // Both records are customer-owned. The active number is independently
