@@ -409,7 +409,7 @@ function explicitCategoryKeys(text: string): string[] {
 function sourceAttestedTopicInitialism(
   customerSource: string, sourceSubject: string, canonicalTopic: string,
 ): boolean {
-  const words = canonicalTopic.replace(/[_-]+/gu, " ").split(/\\s+/u).filter(Boolean);
+  const words = canonicalTopic.replace(/[_-]+/gu, " ").split(/\s+/u).filter(Boolean);
   if (words.length < 2 || words.length > 5 ||
       !words.every(word => /^[a-z]{2,32}$/iu.test(word)) ||
       !/^[a-z]{2,5}$/iu.test(sourceSubject)) return false;
