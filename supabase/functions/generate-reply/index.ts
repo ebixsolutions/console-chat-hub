@@ -4915,6 +4915,9 @@ async function orchestrationGenerateReply(
   let _c3ReadOnlyMemoryHash: string | null = null;
   let _c3ReadOnlyMemorySource: string | null = null;
   let _c3TrustedPersistedMemoryReadback: TrustedPersistedMemoryReadback | null = null;
+  // Prior persisted source for source-proven two-entity current retention only.
+  // Refresh still writes this turn's pending question for exactly-once resolution.
+  let _c3SourceRetainedMemoryForRecall: CanonicalConversationMemory | null = null;
   let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
   let _currentFactualRequest: CurrentFactualRequest | undefined;
   let _factualContextLimit = false;
@@ -5102,13 +5105,19 @@ async function orchestrationGenerateReply(
           commerce_state_revision: Number(commerceRow.revision),
           memory_hash: persistedMemory.memory_hash,
         };
+        // Preserve the attested pre-refresh correction lineage only when the
+        // canonical source presents exactly one live and one cancelled record.
+        // Actual original Visitor proof and equality are checked in the resolver.
+        if (readOnlyEffectiveRetention && commerceState?.entities.length === 2 &&
+            commerceState.entities.filter(e => e.status === "cancelled").length === 1 &&
+            commerceState.entities.filter(e => e.status === "tentative" || e.status === "researching").length === 1) {
+          _c3SourceRetainedMemoryForRecall = persistedMemory.memory;
+        }
         _c3MemoryContext = buildBoundedConversationContext(
           _c3Memory, memoryHistory,
         ).block;
       }
-      const memoryOutcome = readOnlyEffectiveRetention && _c3TrustedPersistedMemoryReadback
-        ? null // verified current-state read: do not replace historical correction source
-        : !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
+      const memoryOutcome = !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
         ? null
         : await refreshConversationLongMemory(
           supabaseAdmin as unknown as Parameters<
@@ -5272,7 +5281,7 @@ async function orchestrationGenerateReply(
     conversation_id,
     source_message_id: _h1SourceMessageId,
     question: _c3R1Question,
-    memory: _c3Memory,
+    memory: _c3SourceRetainedMemoryForRecall ?? _c3Memory,
     commerce: _c3CommerceSnapshot,
     requested_facts: _c3SemanticCustomerRecall?.requested_facts,
     // Source admission is independent of an external model's intent label.
@@ -5315,7 +5324,7 @@ async function orchestrationGenerateReply(
     source_message_id: _h1SourceMessageId,
     question: _c3R1Question,
     customer_recall_proposal: _c3SemanticCustomerRecall,
-    memory: _c3Memory,
+    memory: _c3SourceRetainedMemoryForRecall ?? _c3Memory,
     commerce: _c3CommerceSnapshot,
     trusted_persisted_memory_readback: _c3TrustedPersistedMemoryReadback,
     empty_state_verified: _c3EmptyStateVerified,
@@ -5392,7 +5401,7 @@ async function orchestrationGenerateReply(
     _c3Recall.decision.provenance.company_id === _criticalE2ExpectedTenantId &&
     _c3Recall.decision.provenance.conversation_id === conversation_id &&
     _c3Recall.decision.provenance.source_message_id === _h1SourceMessageId &&
-    _c3Recall.decision.provenance.memory_revision === _c3Memory.memory_revision &&
+    _c3Recall.decision.provenance.memory_revision === (_c3SourceRetainedMemoryForRecall ?? _c3Memory).memory_revision &&
     _c3Recall.decision.provenance.commerce_state_revision === _c3CommerceSnapshot.revision &&
     _c3Memory.commerce_state_revision === _c3CommerceSnapshot.revision &&
     _c3Recall.decision.provenance.commerce_source_message_id === _c3CommerceSnapshot.source_message_id &&
