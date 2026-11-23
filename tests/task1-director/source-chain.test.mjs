@@ -491,3 +491,54 @@ for(const [text,fact] of [
  assert.notEqual(next.intent,'customer_guidance');
  assert.deepEqual(frame,before,'decision application must not mutate the provider frame');
 });
+
+// Task3C #178 generic source/subject/value/unit regression. Existing handler
+// 580 and Frozen assertions remain unchanged; all inputs are native offline.
+for (const scenario of [
+  {name:"wholesale carton quantity",text:"Our wholesale enquiry needs 120 cartons.",facts:[{key:"wholesale_cartons",value:{amount:120,unit:"cartons"}}],expected:["wholesale_cartons",120,"cartons"]},
+  {name:"service training duration",text:"The course lasts 3 hours.",facts:[{key:"course_duration",value:{amount:3,unit:"hours"}}],expected:["course_duration",3,"hours"]},
+  {name:"rental contract period",text:"The rental period is 24 months.",facts:[{key:"rental_period",value:{amount:24,unit:"months"}}],expected:["rental_period",24,"months"]},
+  {name:"two separately sourced customer facts",text:"Our team has 8 staff; training takes 2 hours.",facts:[{key:"team_size",value:{amount:8,unit:"staff"}},{key:"training_duration",value:{amount:2,unit:"hours"}}],expected:["team_size",8,"staff"],other:["training_duration",2,"hours"]},
+  {name:"source unit retained without industry mapping",text:"細房約80呎，大房100呎，客廳就180呎。",facts:[{key:"small_room_area",value:{amount:80,unit:"sq_ft"}},{key:"large_room_area",value:{amount:100,unit:"sq_ft"}},{key:"living_room_area",value:{amount:180,unit:"sq_ft"}}],expected:["small_room_area",80,"呎"],other:["living_room_area",180,"呎"]},
+]) test("Task3C P1 #178 source-bound generic observation: "+scenario.name,()=>{
+  const next=reduceTurn(createEmptyConversationCommerceState(),{
+    text:scenario.text,semantic_frame:semantic({operation:"NO_STATE_CHANGE",intent:"customer_context_update",requested_facts:[],customer_facts:scenario.facts}),
+    source_message_id:SRC,conversation_id:CID,company_id:TID,language:"zh-TW"
+  },[]);
+  const facts=next.customer_constraints.customer_reported_facts;
+  for(const expected of [scenario.expected,...(scenario.other?[scenario.other]:[])]){
+    const [key,amount,unit]=expected,record=facts[key];
+    assert(record,JSON.stringify({scenario,record,facts}));
+    assert.equal(record.value.amount,amount);
+    assert.equal(record.source_unit_text,unit);
+    assert.equal(record.provenance.source_message_id,SRC);
+    assert.equal(record.provenance.source_type,"customer");
+  }
+  assert.equal(next.entities.length,0,"a customer observation must not create a sale item");
+  assert.equal(next.quotes.length,0,"a customer observation is not a quote");
+  assert.equal(next.conversion.order_status,"none");
+});
+for (const scenario of [
+  {name:"question cannot become current",text:"Could the course be 3 hours?",facts:[{key:"course_duration",value:{amount:3,unit:"hours"}}]},
+  {name:"unmatched quantity",text:"Our order needs 4 cartons.",facts:[{key:"wholesale_cartons",value:{amount:8,unit:"cartons"}}]},
+  {name:"ambiguity two numerals one clause",text:"We have 2 staff and 5 seats.",facts:[{key:"seats",value:{amount:5,unit:"seats"}}]},
+  {name:"merchant price authority forbidden",text:"Our budget is 800 HKD.",facts:[{key:"current_price",value:{amount:800,unit:"HKD"}}]},
+]) test("Task3C P1 #178 rejects unproved customer fact: "+scenario.name,()=>{
+  const next=reduceTurn(createEmptyConversationCommerceState(),{
+    text:scenario.text,semantic_frame:semantic({operation:"NO_STATE_CHANGE",intent:"customer_context_update",requested_facts:[],customer_facts:scenario.facts}),
+    source_message_id:SRC,conversation_id:CID,company_id:TID,language:"en"
+  },[]);
+  const record=next.customer_constraints.customer_reported_facts?.[scenario.facts[0].key];
+  assert.equal(record?.source_unit_text,undefined,"no source-verified Commerce proof");
+  assert.equal(next.quotes.length,0,"never write quotation from observation");
+});
+
+test("Task3C #178 generic unit mismatch is rejected",()=>{
+ const text="The course lasts 3 hours.";
+ const state=reduceTurn(createEmptyConversationCommerceState(),{
+  text,semantic_frame:semantic({operation:"NO_STATE_CHANGE",intent:"customer_context_update",requested_facts:[],customer_facts:[{key:"course_duration",value:{amount:3,unit:"USD"}}]}),
+  source_message_id:SRC,conversation_id:CID,company_id:TID,language:"en"
+ },[]);
+ assert.equal(state.customer_constraints.customer_reported_facts?.course_duration,undefined);
+ assert.equal(state.quotes.length,0);
+});

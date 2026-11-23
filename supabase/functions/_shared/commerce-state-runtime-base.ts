@@ -3066,6 +3066,74 @@ function sourceAttestedNoStateAreaFacts(
   return [{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:incoming}];
 }
 
+/** A NO_STATE_CHANGE customer fact remains a customer observation only.
+ * A semantic reading proposes its key/value, but a single original Visitor
+ * clause must independently contain its number, subject and written unit.
+ * This is not an entity, merchant price, stock, quote or order authority.
+ * There are no industry, room, product or canonical-unit vocabulary tables. */
+function sourceAttestedGenericNoStateFacts(
+  previous:ConversationCommerceState,input:CommerceRuntimeInput,
+):CommerceStateEvent[]{
+  const frame=input.semantic_frame;
+  if(!frame || frame.operation!=="NO_STATE_CHANGE" || frame.confidence<0.90 ||
+     frame.intent!=="customer_context_update" ||
+     frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+     frame.entities.length>0 || !frame.customer_facts?.length ||
+     frame.customer_facts.length>8 || (frame.explicit_negations?.length??0)>0 ||
+     !input.company_id || !input.conversation_id || !input.source_message_id ||
+     looksInterrogative(input.text) ||
+     /\b(?:could|would|should|might|maybe|perhaps|suppose|hypothetical|whether|if)\b|(?:可能|假設|假设|假如|如果|會否|会否)/iu.test(input.text) ||
+     isHistoricalOrConditionalCustomerCalculationRequest(input.text))return [];
+  const clauses=input.text.normalize("NFKC").split(/[，。；;\n]+|,(?=\s)/u)
+    .map(part=>part.trim()).filter(Boolean);
+  if(!clauses.length || clauses.length>8)return [];
+  const existing=previous.customer_constraints.customer_reported_facts;
+  const prior=existing && typeof existing==="object" && !Array.isArray(existing)
+    ? existing as Record<string,unknown> : {};
+  const incoming:Record<string,unknown>={...prior};
+  const used=new Set<number>();
+  let changed=false;
+  for(const fact of frame.customer_facts){
+    if(!/^[a-z][a-z0-9_]{0,79}$/i.test(fact.key) ||
+       ["__proto__","prototype","constructor"].includes(fact.key) ||
+       /(?:^|_)(?:price|stock|inventory|verified|quote|order|payment|paid|refund|entitlement|warranty|policy|sla)(?:_|$)/i.test(fact.key))return [];
+    const val=fact.value;
+    const obj=val && typeof val==="object" && !Array.isArray(val)?val:null;
+    const amount=obj && "amount" in obj && typeof obj.amount==="number"
+      ?obj.amount:null;
+    if(!obj || amount===null || !Number.isFinite(amount) || amount<0 || amount>1000000000 ||
+       (obj && (Object.keys(obj).some(key=>key!=="amount"&&key!=="unit") ||
+         !("unit" in obj) || typeof obj.unit!=="string" ||
+         !obj.unit.trim() || obj.unit.length>40)))return [];
+    const matches=clauses.flatMap((clause,idx)=>{
+      if(used.has(idx))return [];
+      const numbers=[...clause.matchAll(/(?<!\d)\d+(?:\.\d+)?(?!\d)/gu)];
+      if(numbers.length!==1 || Number(numbers[0][0])!==amount)return [];
+      const hit=numbers[0],at=hit.index??0;
+      const rawSubject=clause.slice(0,at).trim();
+      const after=clause.slice(at+hit[0].length).trim();
+      const writtenUnit=after.match(/^([\p{L}\p{N}%°²]{1,36})/u)?.[1]??null;
+      if(rawSubject.length<2 || !/[\p{L}]/u.test(rawSubject) || !writtenUnit ||
+       writtenUnit.toLowerCase()!==obj.unit.trim().toLowerCase())return [];
+      return [{idx,clause,rawSubject,writtenUnit}];
+    });
+    // Equal numeric values in multiple clauses are NOT proof of which
+    // arbitrary customer field owns either amount. Fail closed.
+    if(matches.length!==1)return [];
+    const m=matches[0];used.add(m.idx);
+    // Existing effective facts must only change through the original
+    // correction + source/revision/CAS contract, never NO_STATE_CHANGE.
+    if(Object.prototype.hasOwnProperty.call(prior,fact.key))continue;
+    incoming[fact.key]={value:val,source_text:m.clause,
+      source_subject_text:m.rawSubject,source_unit_text:m.writtenUnit,
+      provenance:{source_type:"customer",source_message_id:input.source_message_id,
+        recorded_at:input.occurred_at??null}};
+    changed=true;
+  }
+  if(!changed || used.size!==clauses.length)return [];
+  return [{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:incoming}];
+}
+
 /** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
 export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[]): ConversationCommerceState {
   if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
@@ -3089,22 +3157,6 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
     return state;
   }
   let state = reduceTurnOperations(previous,input,hints);
-  // A genuine, source-visible advice question is a durable conversational goal
-  // even when the interpretation has no sale item, product category or count.
-  // Record only intent: never materialize an industry, entity, price or quote.
-  const guidanceFrame=input.semantic_frame;
-  if (previous.entities.length===0 && guidanceFrame &&
-      guidanceFrame.operation==="ASK_FACT" && guidanceFrame.confidence>=0.90 &&
-      !guidanceFrame.ambiguity.is_ambiguous && !guidanceFrame.customer_correction &&
-      !guidanceFrame.additive && guidanceFrame.entities.length===0 &&
-      !guidanceFrame.customer_facts?.length &&
-      ["customer_guidance","ask_for_advice"].includes(guidanceFrame.intent) &&
-      looksInterrogative(input.text) &&
-      !isReadOnlyCurrentStateQuery(input.text,guidanceFrame) &&
-      !isHistoricalOrConditionalCustomerCalculationRequest(input.text) &&
-      state.entities.length===0 && state.current_intent!=="customer_guidance") {
-    state=reduceCommerceState(state,[{type:"SET_CONTEXT",intent:"customer_guidance"}]);
-  }
   // Persist the customer-authored exact model as an unknown-quantity subject.
   // A no-frame product inquiry is not evidence for count=1 or any industry.
   if (!input.semantic_frame && state.entities.length===0 &&
@@ -3157,7 +3209,8 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
     if (customerEvents.length) state = reduceCommerceState(state, customerEvents);
     // Only attested per-clause dimensions can advance customer facts on a
     // typed NO_STATE_CHANGE turn; never let it mutate an entity or transaction.
-    const attested=sourceAttestedNoStateAreaFacts(state,input);
+    const area=sourceAttestedNoStateAreaFacts(state,input);
+    const attested=area.length ? area : sourceAttestedGenericNoStateFacts(state,input);
     if(attested.length)state=reduceCommerceState(state,attested);
   }
   // Generic current customer fact with exact Visitor provenance; never
