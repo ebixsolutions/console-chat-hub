@@ -4140,6 +4140,38 @@ export async function runCommerceStateRuntime(
     const cancelled=lifecycleIntent.plans.every(plan=>plan.action==="cancelled");
     return {authority:"CONVERSATION_STATE",reply:language==="en"?names.join("; ")+(cancelled?" has already been cancelled.":" remains paused."):names.join("、")+(cancelled?"已取消。":"仍然暫緩。"),revision:contextualBefore.revision,persist_result:"read_only",reason:"read_only_lifecycle_already_applied",route:"commerce_state_answer"};
   }
+  // A multi-scope allocation with no interpreted entity and no current
+  // source-attested subject cannot borrow a different product from old raw
+  // history. The original generic count parser only detects the structure;
+  // exact entities come from committed, customer-owned canonical state.
+  // Preserve an explicitly named new item, corrections, read-only questions
+  // and valid additive instructions on their existing guarded paths.
+  const unboundAllocation = !input.semantic_frame &&
+    contextualBefore.state.entities.some(entity=>
+      !["cancelled","deferred","superseded"].includes(entity.status)) &&
+    isAllocationBreakdown(text) &&
+    !isReadOnlyCommerceQuestion(text,input.semantic_frame) &&
+    !detectQuantityCorrectionSignal(text) &&
+    !detectAdditiveEntityCreationSignal(text) &&
+    buildGenericCommerceEntityHints([text]).length===0 &&
+    !contextualBefore.state.entities.some(entity=>
+      entity.provenance.source_type==="customer" &&
+      sourceOwnedSubjectLabels(entity).some(label=>matchesReferenceLabel(text,label)));
+  if(unboundAllocation){
+    const reply=language==="en"
+      ? "Which recorded product or service do these quantities refer to? Please name the item before I update its allocation."
+      : language==="zh-CN"
+      ? "这些数量是指哪件已记录的产品或哪项服务？请先确认项目，我才会更新分配。"
+      : "呢啲數量係指邊件已記錄嘅產品或邊項服務？請先確認項目，我先會更新分配。";
+    const contextual_decision:ContextualDecision={
+      route:"targeted_clarification",reason:"SOURCE_ENTITY_UNBOUND",
+      reply,updates:[],
+    };
+    return {authority:"CONVERSATION_STATE",reply,
+      revision:contextualBefore.revision,persist_result:"read_only",
+      reason:"contextual_targeted_clarification",
+      route:"commerce_state_answer",contextual_decision};
+  }
   const contextualDecision = resolveContextualTurn(input, contextualBefore.state);
   const customerJourney = resolveCustomerJourneyTurn(input, contextualBefore.state);
   if (contextualDecision.route === "targeted_clarification") {
