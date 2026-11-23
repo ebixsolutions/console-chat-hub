@@ -5065,7 +5065,17 @@ async function orchestrationGenerateReply(
       }
       const readOnlyRecap = _a3Commerce?.reason ===
         "read_only_current_requirements_recap";
-      if (readOnlyRecap && persistedMemory && commerceRow &&
+      // A bounded present-state quantity/status read needs the same *persisted*
+      // Memory/Commerce identity proof as a recap. The downstream resolver
+      // still requires source-attested correction, exact tenant/revisions,
+      // one active + one cancelled canonical record and read-only semantics.
+      // Never derive this proof from the model, a widget or a transcript.
+      const readOnlyEffectiveRetention = Boolean(
+        _c3SemanticCustomerRecall && isCurrentEffectiveQuantityRecall(_h1LastMsg) &&
+        !_mixedRequest && !_explicitHandoffRequested && !_customerOwnedDelta &&
+        !(_a3SemanticFrame?.customer_facts?.length) &&
+        !_currentFactualRequest?.transaction_required);
+      if ((readOnlyRecap || readOnlyEffectiveRetention) && persistedMemory && commerceRow &&
         isCanonicalConversationMemory(persistedMemory.memory) &&
         persistedMemory.conversation_id === conversation_id &&
         persistedMemory.company_id === _criticalE2ExpectedTenantId &&
