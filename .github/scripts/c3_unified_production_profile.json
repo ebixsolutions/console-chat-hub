@@ -1732,7 +1732,7 @@
   },
   "authorized_task3c_d4_no_industry_sha256": {
     "supabase/functions/_shared/commerce-state-authority.ts": "3652783f165df0fbb1037e1d786194fce92708e3c8a90c860298cef5f71c4b19",
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "b202d52e000e7fd134386ce803b51c56de72f7f735f2bd67e869ef529dbe09b9",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "becb5f10980673e4dd9afb2313eeef21f949fdb1e4af965a3ea446fc04cad3de",
     "tests/task1-director/source-chain.test.mjs": "e834f1d984834366c76480411bebfb6ca8da2b4200bcb303a422a0b3a8b9ffa4",
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "91849565e41da98dc2fdcc170a3bcf4cae4b6a6b3171ded735349474c02056f0",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "5b8ad3f90ffbcc89f6dd8d44ed5322b256df9e8475e5c3dc1bccc05745dda9d4",

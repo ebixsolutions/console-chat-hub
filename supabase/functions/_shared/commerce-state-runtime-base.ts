@@ -3297,6 +3297,11 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
   // not inferred from a product, room, unit or industry word list.
   if (isReadOnlyCurrentStateQuery(input.text,input.semantic_frame) &&
       !input.trusted_product_topic_focus &&
+      // A mixed factual question can carry verified customer-owned updates
+      // (e.g. correcting 20 browser tabs to 8). Let the original source-bound
+      // customer-fact reducer validate and persist those fields; still forbid
+      // creating a product/quantity/transaction from the question itself.
+      !input.semantic_frame?.customer_facts?.length &&
       (!input.semantic_frame || ["ASK_FACT","ASK_CALCULATION","NO_STATE_CHANGE"]
         .includes(input.semantic_frame.operation))) return previous;
   if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
