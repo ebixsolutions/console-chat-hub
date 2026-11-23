@@ -3295,15 +3295,17 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
   // compatibility hint must never turn a read-only question into a purchase.
   // A source-verified mutation is classified by the existing shared guard,
   // not inferred from a product, room, unit or industry word list.
-  if (isReadOnlyCurrentStateQuery(input.text,input.semantic_frame) &&
+  // Only a supplied, non-mutating semantic reading can enable this extra
+  // read-only guard. In a no-frame turn the existing source-attested research
+  // and quantity checks remain authoritative (including an explicit first
+  // model with unknown quantity), not an inferred shopping transaction.
+  if (input.semantic_frame &&
+      ["ASK_FACT","ASK_CALCULATION","NO_STATE_CHANGE"].includes(input.semantic_frame.operation) &&
+      isReadOnlyCurrentStateQuery(input.text,input.semantic_frame) &&
       !input.trusted_product_topic_focus &&
-      // A mixed factual question can carry verified customer-owned updates
-      // (e.g. correcting 20 browser tabs to 8). Let the original source-bound
-      // customer-fact reducer validate and persist those fields; still forbid
-      // creating a product/quantity/transaction from the question itself.
-      !input.semantic_frame?.customer_facts?.length &&
-      (!input.semantic_frame || ["ASK_FACT","ASK_CALCULATION","NO_STATE_CHANGE"]
-        .includes(input.semantic_frame.operation))) return previous;
+      // Mixed question + customer-owned correction must retain its factual
+      // part after exact sentence/source validation; no invented entity.
+      !input.semantic_frame.customer_facts?.length) return previous;
   if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
   const oldCollapsed=sourceBoundLegacyCollapsedCancellation(previous,input);
   if(oldCollapsed)return reduceCommerceState(previous,oldCollapsed);
