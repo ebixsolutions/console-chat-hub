@@ -1350,7 +1350,7 @@ export function extractCommerceCalculationTerms(
   // Unknown customer quantities never become an implicit purchase multiplier.
   const stateMultiplier=sourcedCounts.length > 0 &&
       sourcedCounts.every(value => value !== null && value > 0)
-    ? sourcedCounts.reduce((sum,value) => sum + (value ?? 0),0) : null;
+    ? sourcedCounts.reduce<number>((sum,value) => sum + (value ?? 0),0) : null;
   const multiplier = currentTurnMultiplier ?? stateMultiplier;
   if(multiplier===null)return {terms:[],currency:null};
 
@@ -2629,11 +2629,14 @@ function reduceSingleTurn(
     return false; // No literal count: model cannot change a quantity in any category.
   }).map(event => {
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
-      if(sourcedEntities.length>0 && !previous.entities.some(e=>e.entity_id===event.entity.entity_id)){
+      const proposedEntity=event.entity;
+      // Capture the discriminated event's entity before nested callbacks:
+      // event itself is later replaced with a source-attested copy.
+      if(sourcedEntities.length>0 && !previous.entities.some(e=>e.entity_id===proposedEntity.entity_id)){
         const candidates=sourcedEntities.filter(entity=>entity.confidence>=0.72 &&
-          (entity.entity_ref===event.entity.entity_id ||
-           entity.name===event.entity.attributes.product_name ||
-           (sourcedEntities.length===1 && entity.category_hint===event.entity.category)));
+          (entity.entity_ref===proposedEntity.entity_id ||
+           entity.name===proposedEntity.attributes.product_name ||
+           (sourcedEntities.length===1 && entity.category_hint===proposedEntity.category)));
         const attested=candidates.length===1
           ?attestedItemQuantity(input.text,candidates[0].name,
              candidates[0].quantity,candidates[0].unit):null;
@@ -3103,10 +3106,11 @@ function sourceAttestedGenericNoStateFacts(
     const obj=val && typeof val==="object" && !Array.isArray(val)?val:null;
     const amount=obj && "amount" in obj && typeof obj.amount==="number"
       ?obj.amount:null;
+    const customerUnit=obj && "unit" in obj && typeof obj.unit==="string"
+      ?obj.unit.trim():null;
     if(!obj || amount===null || !Number.isFinite(amount) || amount<0 || amount>1000000000 ||
-       (obj && (Object.keys(obj).some(key=>key!=="amount"&&key!=="unit") ||
-         !("unit" in obj) || typeof obj.unit!=="string" ||
-         !obj.unit.trim() || obj.unit.length>40)))return [];
+       Object.keys(obj).some(key=>key!=="amount"&&key!=="unit") ||
+       !customerUnit || customerUnit.length>40)return [];
     const matches=clauses.flatMap((clause,idx)=>{
       if(used.has(idx))return [];
       const numbers=[...clause.matchAll(/(?<!\d)\d+(?:\.\d+)?(?!\d)/gu)];
@@ -3116,7 +3120,7 @@ function sourceAttestedGenericNoStateFacts(
       const after=clause.slice(at+hit[0].length).trim();
       const writtenUnit=after.match(/^([\p{L}\p{N}%°²]{1,36})/u)?.[1]??null;
       if(rawSubject.length<2 || !/[\p{L}]/u.test(rawSubject) || !writtenUnit ||
-       writtenUnit.toLowerCase()!==obj.unit.trim().toLowerCase())return [];
+       writtenUnit.toLowerCase()!==customerUnit.toLowerCase())return [];
       return [{idx,clause,rawSubject,writtenUnit}];
     });
     // Equal numeric values in multiple clauses are NOT proof of which
