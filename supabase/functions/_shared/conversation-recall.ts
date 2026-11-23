@@ -1003,19 +1003,23 @@ function summarySelection(input: ConversationRecallInput, entities: CommerceEnti
   const acronym = input.question.normalize("NFKC").trim().match(
     /^(?:what are|can you recap) (?:my|our)(?: current)? ([a-z]{2,5}) requirements[?!.]?$/iu,
   )?.[1]?.toUpperCase();
-  if (acronym && input.commerce && input.memory &&
-    !input.explicit_handoff &&
-    input.commerce.company_id === input.company_id &&
-    input.commerce.conversation_id === input.conversation_id &&
-    input.memory.company_id === input.company_id &&
-    input.memory.conversation_id === input.conversation_id &&
-    input.memory.commerce_state_revision === input.commerce.revision) {
+  if (acronym) {
     const matches = entities.filter(e =>
       persistedCategoryInitialism(e) === acronym);
-    if (matches.length) return {
-      provenance: "explicit_category",
-      entities: matches.length === 1 ? matches : [],
-    };
+    if (matches.length) {
+      const snapshotMatches = Boolean(input.commerce && input.memory &&
+        !input.explicit_handoff &&
+        input.commerce.company_id === input.company_id &&
+        input.commerce.conversation_id === input.conversation_id &&
+        input.memory.company_id === input.company_id &&
+        input.memory.conversation_id === input.conversation_id &&
+        input.memory.commerce_state_revision === input.commerce.revision);
+      // Never fall back to a global portfolio recap after an explicitly
+      // scoped acronym when the trusted identity, revision or uniqueness
+      // check fails. The original summary resolver will clarify.
+      return { provenance: "explicit_category",
+        entities: snapshotMatches && matches.length === 1 ? matches : [] };
+    }
   }
   const identity = entities.filter(e => any(input.question, [e.entity_id, e.model,
     ...["product_name", "display_name", "original_name", "sku"].map(k => e.attributes[k])]
