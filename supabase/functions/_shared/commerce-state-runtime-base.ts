@@ -410,10 +410,25 @@ export function validateTrustedProductTopicFocus(
   if (!focus) return { valid: false, reason: "FOCUS_MISSING" };
   if (focus.resolution_strategy !== "PER_TOPIC_REFERENT_HISTORY") return { valid: false, reason: "UNTRUSTED_RESOLUTION_STRATEGY" };
   const explicitTopics = explicitCategoryKeys(input.text);
-  const returning = input.text.split(/[，；;。!?！？]/).find((part) =>
-    /(?:講返|说回|講回|返去|回到|back to|return to)/i.test(part)
+  const returning = input.text.split(/[，,；;。!?！？]/).find((part) =>
+    /(?:講返|说回|講回|返去|回到|back\s+to|return\s+to)/i.test(part)
   );
   const returnTopics = returning ? explicitCategoryKeys(returning) : [];
+  // After Phase 1 removed industry vocabulary, an empty returnTopics list
+  // cannot prove that "back to <other item>" refers to the trusted focus.
+  // A new explicit return subject must occur in customer-authored history
+  // together with the exact focus product. Deictic-only returns can still
+  // use the separately validated unique active focus. No industry noun list.
+  const returnSubject = returning
+    ? returning.replace(/^.*?(?:講返|说回|講回|返去|回到|back\s+to|return\s+to)\s*/iu, "")
+      .replace(/^(?:(?:頭先|头先|之前|先前|剛才|刚才|嗰|呢|那|這|这|個|个|一|兩|两|件|部|台|隻|只|張|张|款|種|种)\s*|(?:the|my|our|that|this|previous|earlier|same|one|it)\b\s*)+/iu, "")
+      .trim()
+    : "";
+  if (returnSubject && !(input.history ?? []).some((turn) =>
+    ["visitor", "user", "customer"].includes(turn.role) &&
+    clean(turn.content).toUpperCase().includes(clean(focus.product).toUpperCase()) &&
+    matchesReferenceLabel(turn.content, returnSubject)
+  )) return { valid: false, reason: "RETURN_SUBJECT_SOURCE_MISMATCH" };
   if (!(explicitTopics.length === 1 && explicitTopics[0] === focus.topic) &&
     !(returning && (returnTopics.length === 0 ||
       (returnTopics.length === 1 && returnTopics[0] === focus.topic)))) {
