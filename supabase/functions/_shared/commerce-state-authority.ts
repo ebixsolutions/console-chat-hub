@@ -305,12 +305,17 @@ export function isDeliveryScheduleCurrentFactQuery(question: string): boolean {
  * recall. This classifies a speech act, never an item, industry or order. */
 export function isSourceOwnedActiveAdviceGoal(text:string):boolean {
  const t=clean(text);
+ // This classifies the customer's own *current* planning speech act only.
+ // It never chooses a product/industry, item count, price or merchant fact:
+ // those must be sourced separately through the canonical semantic + CAS/B2 path.
  if(!t || t.length>2400 ||
    /(?:以前|之前|上次|曾經|曾经|previously|last time|used to|remember|記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|唔想|不想|不要|唔要|不需要|不打算|don't|do not)/iu.test(t))return false;
- return /^(?:想|打算|需要)\s*(?:揀|選|选|買|买|換|换|租|訂|订|比較|对比|了解)/iu.test(t) ||
-   /(?:我|我哋|我們|我们).{0,8}(?:想|要|需要|打算).{0,8}(?:揀|選|选|買|买|換|换|租|訂|订|比較|对比|了解)/iu.test(t) ||
-   /\b(?:i|we)\s+(?:(?:really|currently|now)\s+)?(?:want|need|plan)\s+to\s+(?:choose|buy|select|replace|rent|compare|research)\b/iu.test(t) ||
-   /\b(?:i'm|i am|we're|we are)\s+looking\s+to\s+(?:choose|buy|select|replace|rent|compare|research)\b/iu.test(t);
+ // First-person present goal grammar, with no category, industry noun or
+ // purchase/booking verb inventory. Neither a count nor a named item is inferred.
+ return /^(?:(?:我|我哋|我們|我们)\s*)?(?:想|打算|需要)\S/iu.test(t) ||
+   /(?:我|我哋|我們|我们).{0,8}(?:想|要|需要|打算)\S/iu.test(t) ||
+   /\b(?:i|we)\s+(?:(?:really|currently|now)\s+)?(?:want|need|plan)\s+to\b/iu.test(t) ||
+   /\b(?:i'm|i am|we're|we are)\s+looking\s+to\b/iu.test(t);
 }
 
 /**
