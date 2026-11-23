@@ -1553,6 +1553,7 @@ Deno.test("Task3C G2 source-quoted distributive groups expand without trade voca
 
 Deno.test("Task3C G1 first enquiry uses current source quote without KB or order claims", async () => {
   const text="想問 Training sessions 給三個小組怎樣安排，先提供指引。";
+  const normalizedText=text.normalize("NFKC").replace(/\s+/gu," ").trim();
   const frame: CommerceSemanticFrame = {
     version:"commerce-semantic-1.0.0",language:"zh-TW",
     operation:"ASK_FACT",intent:"customer_guidance",topic:"training",
@@ -1583,7 +1584,7 @@ Deno.test("Task3C G1 first enquiry uses current source quote without KB or order
   const state=createEmptyConversationCommerceState();
   const candidate=resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:frame});
   assert(candidate?.action==="enquiry" && candidate.context_sufficient &&
-    candidate.reply.includes(text) && candidate.reply.includes("面積") &&
+    candidate.reply.includes(normalizedText) && candidate.reply.includes("面積") &&
     !/已確認訂單|已收款|庫存足夠|現價/.test(candidate.reply),
     JSON.stringify(candidate));
   const decision=resolveContextualCustomerUpdate({candidate,state});
@@ -1621,7 +1622,7 @@ Deno.test("Task3C G1 first enquiry uses current source quote without KB or order
     text,language:"zh-TW",history:[],semantic_frame:frame,
   });
   assert(actual !== null && actual.route==="product_guidance" &&
-    actual.reply?.includes(text) && actual.reply?.includes("面積") &&
+    actual.reply?.includes(normalizedText) && actual.reply?.includes("面積") &&
     latest.conversion.order_status==="none" &&
     latest.conversion.payment_status==="none",
     JSON.stringify({actual,writes}));
