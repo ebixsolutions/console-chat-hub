@@ -1656,11 +1656,11 @@ function deriveA3RuntimeEvents(
         (!["cancelled", "deferred"].includes(entity.status) || reactivated)
       )
       : null;
-    const target = scopedTarget ?? (scopedMentionIds.length === 0
-      ? active.length === 1
-        ? active[0]
-        : active.find((entity) => entity.category === "air_conditioner" && entity.entity_id.endsWith(":unscoped"))
-      : null);
+    // A multi-entity state cannot silently apply an attribute to an
+    // appliance-specific fallback. Resolve a written scoped referent, or
+    // require exactly one active candidate; otherwise keep state unchanged.
+    const target = scopedTarget ??
+      (scopedMentionIds.length === 0 && active.length === 1 ? active[0] : null);
     if (target) events.push({ type: "SET_ENTITY_ATTRIBUTE", entity_id: target.entity_id, key: "horsepower", value: [...new Set(horsepower)].join("、"), provenance });
   }
 
@@ -3211,7 +3211,14 @@ function sourceBoundLegacyCollapsedCancellation(
   const countMatch=text.match(new RegExp("(?:只保留|僅保留|仅保留|keep only|retain only)[^，,。;；]{0,60}?"+number+"\\s*"+unit,"iu"));
   const retained=countMatch?countTokenValue(countMatch[1]):null;
   if(retained===null||retained<1||entity.quantity-retained!==1)return null;
-  const scope=text.match(/(?:更正|correction|correct)\s*[:：]\s*([^，,。;；:：]{1,32}?)\s*(?:那|嗰|這|这|呢)?\s*(?:部|台|件|個|个|張|张|套|份)\s*(?:暫時|暂时)?\s*(?:取消|cancel)/iu);
+  // Require the unit already recorded for this customer-owned entity.
+  // A fixed item-classifier list can cancel a different item by mistake.
+  const scope=text.match(new RegExp(
+    String.raw`(?:更正|correction|correct)\s*[:：]\s*([^，,。;；:：]{1,32}?)\s*(?:那|嗰|這|这|呢)?\s*` +
+      unit +
+    String.raw`\s*(?:暫時|暂时)?\s*(?:取消|cancel)`,
+    "iu",
+  ));
   const cancelled=scope?.[1]?.trim()??"";
   if(cancelled.length<2||!original.includes(cancelled))return null;
   const provenance={source_type:"customer" as const,source_message_id:input.source_message_id,
