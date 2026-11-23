@@ -840,6 +840,21 @@ function resolveSourceVerifiedCanonicalActiveRetention(
       typeof historical.attributes.product_name==="string" &&
       historical.attributes.product_name.length>=2 &&
       historical.attributes.product_name===current.attributes.product_name);
+  // Match the user's short subject against the *stored customer source* using
+  // the existing read-only resolver. A legacy collapsed name such as a named
+  // set of items is not expected to be repeated verbatim in a quantity query.
+  // The only acceptable ambiguity is precisely these two same-source records.
+  const readSubject=resolveSourceOwnedSubject(c.state,input.question,
+    {include_inactive:true,mode:"read"});
+  const exactNamedPair=entityAliases(current).some(label=>
+    phrase(input.question,label)) &&
+    entityAliases(historical).some(label=>phrase(input.question,label));
+  const legacySourcedPair=historical.category==="generic_product" &&
+    sameSourceOwnedProduct && readSubject.kind==="ambiguous" &&
+    readSubject.entity_ids.length===2 &&
+    readSubject.entity_ids.includes(current.entity_id) &&
+    readSubject.entity_ids.includes(historical.entity_id);
+  const sourceBoundPairQuestionMatch=exactNamedPair||legacySourcedPair;
   if(current.entity_id===historical.entity_id||
     !sameSourceOwnedProduct||
     current.provenance.source_type!=="customer"||
@@ -847,12 +862,7 @@ function resolveSourceVerifiedCanonicalActiveRetention(
     current.provenance.source_message_id!==corrected.source_id||
     historical.provenance.source_message_id!==corrected.source_id||
     !Number.isInteger(current.quantity)||current.quantity!==corrected.value||
-    !entityAliases(current).some(label=>phrase(input.question,label))||
-    !(entityAliases(historical).some(label=>phrase(input.question,label)) ||
-      (historical.category==="generic_product" &&
-        historical.entity_id.startsWith("generic:") &&
-        typeof historical.attributes.product_name==="string" &&
-        historical.attributes.product_name===current.attributes.product_name)))return null;
+    !sourceBoundPairQuestionMatch)return null;
   const cancelledLabel=correctedInactiveEntityLabel(input,historical);
   if(!cancelledLabel||!phrase(corrected.text,cancelledLabel))return null;
   // Both records are customer-owned. The active number is independently
