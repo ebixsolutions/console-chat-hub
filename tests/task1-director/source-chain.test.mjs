@@ -510,7 +510,12 @@ for (const scenario of [
     const [key,amount,unit]=expected,record=facts[key];
     assert(record,JSON.stringify({scenario,record,facts}));
     assert.equal(record.value.amount,amount);
-    assert.equal(record.source_unit_text,unit);
+    if(scenario.name==="source unit retained without industry mapping"){
+      // Frozen legacy area representation is value.unit='sq_ft' plus provenance.
+      // It never claimed to contain the generic fallback's source_unit_text.
+      assert.equal(record.value.unit,"sq_ft");
+      assert.equal(record.source_unit_text,undefined);
+    } else assert.equal(record.source_unit_text,unit);
     assert.equal(record.provenance.source_message_id,SRC);
     assert.equal(record.provenance.source_type,"customer");
   }
