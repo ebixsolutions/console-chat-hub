@@ -43,7 +43,17 @@ export function registerP1ObservationCases({test,assert,fixture,uuid,fs,root}) {
    const result=await f.run();
    assert.equal(result.status,200,'observed_handler_http_failure');
    assert.equal(f.commits.length,1,'observed_handler_commit_not_exactly_once');
-   assert.notEqual(f.commits[0].metadata.generation_success,false,'observed_handler_terminal_failure');
+   const meta=f.commits[0].metadata??{};
+   // Preserve the original fail verdict and case denominator; expose only
+   // sanitized stage and reason codes, never customer text or private keys.
+   const failure=meta.execution_failure??{};
+   assert.notEqual(meta.generation_success,false,'observed_handler_terminal_failure|'+JSON.stringify({
+    route:meta.response_route??null,
+    source_code:meta.source_error_code??null,
+    failure_code:failure.code??null,
+    failure_stage:failure.stage??null,
+    persist_result:meta.commerce_state_persist_result??null,
+   }));
    const state=f.tables.conversation_commerce_state[0]?.state;
    if(state){
     assert.notEqual(state.conversion.order_status,'confirmed','handler fabricated a confirmed order');
