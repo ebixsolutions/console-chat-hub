@@ -3,6 +3,9 @@
  * The core knows entities, scopes and event authority, never industry vocabulary.
  */
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
+import { matchesReferenceLabel } from "./industry-agent-registry.ts";
+import { sourceOwnedSubjectLabels } from "./commerce-subject-resolution.ts";
 import type { CommerceStateEvent } from "./commerce-state-reducer.ts";
 
 export interface ScopedCustomerValue {
@@ -14,7 +17,8 @@ export interface ScopedCustomerValue {
 
 export interface ContextualCandidate {
   topic: string;
-  topic_source: "explicit" | "profile";
+  topic_source: "explicit" | "profile" | "semantic";
+  entity_id?: string;
   action: "enquiry" | "scoped_update";
   values: ScopedCustomerValue[];
   /** Explicit aggregate from the adapter; partial scoped changes must not invent it. */
@@ -54,6 +58,155 @@ export function unresolvedScopedQuantityCandidate(input: {
     context_sufficient:false,reply:"",clarification};
 }
 
+/** The Semantic Frame is a proposal, never authority for an item or a count.
+ * Only source-quoted values belonging to one active persisted customer entity
+ * can become scoped updates; this works without industry or room dictionaries.
+ */
+export function resolveSemanticContextualCandidate(input: {
+  text: string; language: "zh-TW" | "zh-CN" | "en";
+  state: ConversationCommerceState; semantic_frame?: CommerceSemanticFrame | null;
+}): ContextualCandidate | null {
+  const f = input.semantic_frame;
+  if (!f) return null;
+  const text = input.text.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  const question = input.language === "en"
+    ? "Which saved item and exact quantity for each named scope should I update?"
+    : input.language === "zh-CN"
+      ? "请确认要更新哪件已记录项目，以及每个范围的具体数量。"
+      : "請確認要更新邊項已記錄要求，同埋每個範圍嘅實際數量。";
+  const invalid = (): ContextualCandidate => ({
+    topic: "", topic_source: "semantic", action: "scoped_update",
+    values: [], context_sufficient: false, reply: "", clarification: question,
+  });
+  const item = f.entities.length === 1 ? f.entities[0] : null;
+  const proposed = item?.attributes["scoped_customer_updates"];
+  if (!Array.isArray(proposed)) {
+    // Never take precedence over a published-KB, policy, price, inventory or
+    // transaction demand. General, fact-free advice can only ask one useful
+    // follow-up about a literal current-turn subject.
+    if (f.operation !== "ASK_FACT" || f.confidence < 0.9 ||
+      f.ambiguity.is_ambiguous || f.customer_correction || f.additive ||
+      f.explicit_negations.length !== 0 || f.entities.length !== 1 ||
+      !item || item.confidence < 0.9 || item.quantity !== null ||
+      !["customer_guidance", "ask_for_advice"].includes(f.intent) ||
+      f.requested_facts.length > 0 || (f.demands ?? []).length > 0 ||
+      !item.name || !matchesReferenceLabel(text, item.name)) return null;
+    const name = item.name.normalize("NFKC").trim().slice(0, 100);
+    const reply = input.language === "en"
+      ? "For " + name + ", what is the main intended use or constraint? This is guidance, not an order."
+      : input.language === "zh-CN"
+        ? "关于「" + name + "」，最需要考虑的用途或限制是什么？现在只是选购讨论，未下单。"
+        : "關於「" + name + "」，你最想優先考慮嘅用途或限制係乜？而家只係選購討論，未落單。";
+    return { topic: name, topic_source: "semantic", action: "enquiry",
+      values: [], context_sufficient: true, reply, clarification: question };
+  }
+  if (!item || f.confidence < 0.9 || item.confidence < 0.9 ||
+    f.ambiguity.is_ambiguous || f.customer_correction || f.additive ||
+    f.explicit_negations.length > 0 ||
+    !["UPDATE_ITEM", "SET_QUANTITY"].includes(f.operation) ||
+    (f.demands ?? []).length > 0 || proposed.length < 1 ||
+    proposed.length > 8 || !text) return invalid();
+
+  const active = input.state.entities.filter(e =>
+    e.provenance.source_type === "customer" &&
+    Boolean(e.provenance.source_message_id) &&
+    !["cancelled", "deferred", "superseded"].includes(e.status));
+  const named = active.filter(e => sourceOwnedSubjectLabels(e).some(label =>
+    matchesReferenceLabel(text, label)));
+  const referenced = active.filter(e => item.entity_ref === e.entity_id &&
+    f.referents.some(r => r.ref === e.entity_id &&
+      r.source === "persistent_state" && r.confidence >= 0.9));
+  // A model-supplied ID cannot select one of multiple active entities unless
+  // the Visitor independently names that existing item in the latest turn.
+  const matches = active.length === 1
+    ? active.filter(e => named.includes(e) || referenced.includes(e))
+    : active.filter(e => named.includes(e) &&
+      (item.entity_ref === e.entity_id || referenced.includes(e)));
+  if (matches.length !== 1) return invalid();
+  const target = matches[0];
+  if (item.category_hint && item.category_hint !== target.category)
+    return invalid();
+
+  const words: Record<string, number> = {
+    "零": 0, "〇": 0, "一": 1, "二": 2, "兩": 2, "两": 2,
+    "三": 3, "四": 4, "五": 5, "六": 6, "七": 7,
+    "八": 8, "九": 9, "十": 10, one: 1, two: 2, three: 3,
+    four: 4, five: 5, six: 6, seven: 7, eight: 8,
+    nine: 9, ten: 10,
+  };
+  const quantityPattern = "([0-9]{1,4}|[零〇一二兩两三四五六七八九十]|one|two|three|four|five|six|seven|eight|nine|ten)";
+  const folded = text.toLowerCase();
+  const scopes = new Set<string>();
+  const spans: Array<{ start: number; end: number }> = [];
+  const values: ScopedCustomerValue[] = [];
+  let unit: string | null = null;
+  for (const raw of proposed) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return invalid();
+    const row = raw as Record<string, unknown>;
+    if (row.action !== "set" || row.attribute !== "quantity" ||
+      typeof row.scope !== "string" || typeof row.source_text !== "string" ||
+      typeof row.unit !== "string" || typeof row.value !== "number" ||
+      !Number.isInteger(row.value) || row.value < 1 || row.value > 1000)
+      return invalid();
+    const scope = row.scope.normalize("NFKC").replace(/\s+/gu, " ").trim();
+    const quote = row.source_text.normalize("NFKC").replace(/\s+/gu, " ").trim();
+    const sourceUnit = row.unit.normalize("NFKC").trim();
+    if (scope.length < 2 || scope.length > 80 || quote.length < 3 ||
+      quote.length > 200 || !/^[\p{L}\p{N}]{1,20}$/u.test(sourceUnit) ||
+      !matchesReferenceLabel(quote, scope) || scopes.has(scope.toLowerCase()))
+      return invalid();
+    if ((unit !== null && unit.toLowerCase() !== sourceUnit.toLowerCase()) ||
+      (item.unit && item.unit.normalize("NFKC").toLowerCase() !== sourceUnit.toLowerCase()) ||
+      (typeof target.attributes.unit === "string" && target.attributes.unit &&
+        target.attributes.unit.normalize("NFKC").toLowerCase() !== sourceUnit.toLowerCase()))
+      return invalid();
+    const at = folded.indexOf(quote.toLowerCase());
+    if (at < 0 || folded.indexOf(quote.toLowerCase(), at + 1) >= 0 ||
+      spans.some(s => at < s.end && s.start < at + quote.length)) return invalid();
+    const counts = [...quote.matchAll(new RegExp(quantityPattern + "\\s*" + sourceUnit, "giu"))];
+    if (counts.length !== 1) return invalid();
+    const word = counts[0][1].toLowerCase();
+    const count = Object.prototype.hasOwnProperty.call(words, word)
+      ? words[word] : Number(word);
+    if (count !== row.value) return invalid();
+    unit = sourceUnit;
+    scopes.add(scope.toLowerCase());
+    spans.push({ start: at, end: at + quote.length });
+    values.push({ scope, attribute: "quantity", action: "set", value: count });
+  }
+  if (unit === null) return invalid();
+  // Each counted item in the current Visitor turn must be included in one
+  // non-overlapping quoted scope; a model cannot silently omit other counts.
+  const all = [...text.matchAll(new RegExp(quantityPattern + "\\s*" + unit, "giu"))];
+  if (all.length !== values.length || all.some(m => !spans.some(s =>
+    (m.index ?? -1) >= s.start && (m.index ?? -1) + m[0].length <= s.end)))
+    return invalid();
+  const total = values.reduce((sum, v) => sum + Number(v.value), 0);
+  if (total < 1 || total > 1000 ||
+    (item.quantity !== null && item.quantity !== total)) return invalid();
+  const previousScopes = Array.isArray(target.attributes.scoped_customer_updates) &&
+    target.attributes.scoped_customer_updates.length > 0;
+  const name = typeof target.attributes.product_name === "string" &&
+    target.attributes.product_name.trim()
+    ? target.attributes.product_name : target.model ?? target.category;
+  const entries = values.map(v => v.scope + " " + v.value + unit);
+  const reply = input.language === "en"
+    ? "Noted for " + name + ": " + entries.join(", ") +
+      (previousScopes ? ". Existing other scopes remain." : ". Total " + total + " " + unit + ".") +
+      " This is not a confirmed order."
+    : input.language === "zh-CN"
+      ? "已记录「" + name + "」的分配：" + entries.join("、") +
+        (previousScopes ? "；其他已记录范围保留。" : "；合共 " + total + unit + "。") + "尚未下单。"
+      : "已記低「" + name + "」嘅分配：" + entries.join("、") +
+        (previousScopes ? "；其餘已記錄範圍保留。" : "；合共 " + total + unit + "。") + "未落單。";
+  return {
+    topic: target.category, topic_source: "semantic", entity_id: target.entity_id,
+    action: "scoped_update", values,
+    aggregate_quantity: previousScopes ? undefined : total,
+    context_sufficient: true, reply, clarification: question,
+  };
+}
+
 export type ContextualDecision =
   | { route: "none"; reason: string; updates: [] }
   | { route: "targeted_clarification"; reason: string; reply: string; updates: [] }
@@ -85,9 +238,10 @@ export function resolveContextualCustomerUpdate(input: {
   const active = input.state.entities.filter((entity) =>
     entity.status !== "cancelled" && entity.status !== "deferred"
   );
-  const compatible = active.filter((entity) => entity.category === candidate.topic);
+  const compatible = active.filter((entity) => entity.category === candidate.topic &&
+    (!candidate.entity_id || candidate.entity_id === entity.entity_id));
   // An implicit subject must never silently jump across another active domain.
-  const ambiguous = candidate.topic_source !== "explicit" && active.some((entity) =>
+  const ambiguous = candidate.topic_source === "profile" && active.some((entity) =>
     entity.category !== candidate.topic
   );
   if (!candidate.context_sufficient || ambiguous || compatible.length !== 1) {

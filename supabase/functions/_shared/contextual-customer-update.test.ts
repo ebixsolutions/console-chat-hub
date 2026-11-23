@@ -1,8 +1,10 @@
 import { resolveIndustryProfile } from "./industry-runtime-adapter.ts";
+import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import {
   type ContextualCandidate,
   contextualUpdateEvents,
   resolveContextualCustomerUpdate,
+  resolveSemanticContextualCandidate,
   type ScopedCustomerValue,
 } from "./contextual-customer-update.ts";
 import {
@@ -1366,4 +1368,120 @@ Deno.test("hosted Cantonese historical calculation never rebinds canonical Comme
   const result = await f.ask("我以前買冷氣每部係5680蚊，純粹按以前個價計，兩部合共幾多錢？");
   assert(result.reason === "read_only_customer_calculation" && result.persist_result === "read_only", JSON.stringify(result));
   assert(JSON.stringify(f.snapshot()) === before, "historical arithmetic mutated Commerce");
+});
+
+
+Deno.test("Task3C source-attested generic contextual Reading: positive, missing and invalid negatives", async () => {
+  const state = createEmptyConversationCommerceState();
+  state.entities = [{
+    entity_id: "subscription:membership", category: "subscription", model: null,
+    quantity: 2, status: "researching",
+    attributes: { product_name: "會員方案", unit: "席" }, constraints: {},
+    provenance: { source_type: "customer", source_message_id: "original-visitor" },
+  }];
+  const frame: CommerceSemanticFrame = {
+    version: "commerce-semantic-1.0.0", language: "zh-TW",
+    operation: "UPDATE_ITEM", intent: "scoped allocation", topic: "subscription",
+    entities: [{
+      entity_ref: "subscription:membership", name: "會員方案",
+      kind: "subscription", category_hint: "subscription", sku: null, model: null,
+      quantity: 3, unit: "席",
+      attributes: { scoped_customer_updates: [
+        { scope: "甲組", source_text: "甲組2席", unit: "席", value: 2, attribute: "quantity", action: "set" },
+        { scope: "乙組", source_text: "乙組1席", unit: "席", value: 1, attribute: "quantity", action: "set" },
+      ] }, constraints: {},
+      capabilities: { requires_delivery: false, supports_pickup: false,
+        requires_installation: false, requires_booking: false,
+        requires_quote: false, requires_site_check: false,
+        digital_fulfilment: false, recurring_billing: true,
+        rental_return: false, customization: false }, confidence: 0.99,
+    }],
+    referents: [{ ref: "subscription:membership", source: "persistent_state", confidence: 0.99 }],
+    customer_correction: false, additive: false, explicit_negations: [],
+    requested_facts: [], transaction_state: "none", payment_state: "none",
+    booking_state: "none", fulfillment_state: "none",
+    ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
+    confidence: 0.99,
+  };
+  const text = "甲組2席，乙組1席";
+  const candidate = resolveSemanticContextualCandidate({ text, language: "zh-TW", state, semantic_frame: frame });
+  assert(candidate?.entity_id === "subscription:membership" &&
+    candidate.values.length === 2 && candidate.aggregate_quantity === 3, JSON.stringify(candidate));
+  const decision = resolveContextualCustomerUpdate({ state, candidate });
+  assert(decision.route === "contextual_scoped_update", JSON.stringify(decision));
+  const reduced = reduceCommerceState(state, contextualUpdateEvents(decision, state, "new-customer-source"));
+  assert(reduced.entities.length === 1 && reduced.entities[0].quantity === 3 &&
+    reduced.conversion.order_status === "none" && reduced.conversion.payment_status === "none", JSON.stringify(reduced));
+  assert(resolveSemanticContextualCandidate({ text, language: "zh-TW", state, semantic_frame: null }) === null,
+    "missing Reading created authority");
+  const wrong = structuredClone(frame);
+  (wrong.entities[0].attributes.scoped_customer_updates as unknown as Array<Record<string, unknown>>)[0].value = 4;
+  const refused = resolveSemanticContextualCandidate({ text, language: "zh-TW", state, semantic_frame: wrong });
+  assert(refused?.context_sufficient === false &&
+    resolveContextualCustomerUpdate({ state, candidate: refused }).route === "targeted_clarification",
+    "unsupported count accepted");
+  const competing = structuredClone(state);
+  competing.entities.push({ ...structuredClone(state.entities[0]), entity_id: "subscription:other",
+    attributes: { product_name: "其他計劃", unit: "席" } });
+  assert(resolveSemanticContextualCandidate({ text, language: "zh-TW", state: competing, semantic_frame: frame })?.context_sufficient === false,
+    "model-only referent crossed active entities");
+
+  let persisted = structuredClone(state);
+  let writes = 0;
+  const db: CommerceStateDbClient = {
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({
+      data: { revision: 1, state: persisted }, error: null,
+    }) }) }) }),
+    rpc: async (_fn, args) => {
+      writes++;
+      persisted = args.p_state as ConversationCommerceState;
+      return { data: { result: "success", applied_revision: 2 }, error: null };
+    },
+  };
+  const outcome = await runCommerceStateRuntime(db, {
+    company_id: "company", conversation_id: "conversation",
+    source_message_id: "new-customer-source", text, language: "zh-TW",
+    semantic_frame: frame, history: [],
+  });
+  assert(outcome?.route === "contextual_scoped_update" && writes === 1 &&
+    persisted.entities[0].quantity === 3, JSON.stringify({outcome,writes}));
+});
+
+Deno.test("Task3C English generic scoped reading is source-backed and refuses duplicates", () => {
+  const state = createEmptyConversationCommerceState();
+  state.entities = [{
+    entity_id: "service:training", category: "service", model: null,
+    quantity: 2, status: "researching",
+    attributes: { product_name: "Training programme", unit: "slots" }, constraints: {},
+    provenance: { source_type: "customer", source_message_id: "original-visitor" },
+  }];
+  const frame: CommerceSemanticFrame = {
+    version: "commerce-semantic-1.0.0", language: "en",
+    operation: "SET_QUANTITY", intent: "scoped service allocation", topic: "service",
+    entities: [{
+      entity_ref: "service:training", name: "Training programme", kind: "service",
+      category_hint: "service", sku: null, model: null, quantity: 3, unit: "slots",
+      attributes: { scoped_customer_updates: [
+        { scope: "Team Cedar", source_text: "Team Cedar 2 slots", unit: "slots", value: 2, attribute: "quantity", action: "set" },
+        { scope: "Team Birch", source_text: "Team Birch 1 slots", unit: "slots", value: 1, attribute: "quantity", action: "set" },
+      ] }, constraints: {},
+      capabilities: { requires_delivery: false, supports_pickup: false,
+        requires_installation: false, requires_booking: false, requires_quote: false,
+        requires_site_check: false, digital_fulfilment: false, recurring_billing: false,
+        rental_return: false, customization: false }, confidence: 0.99,
+    }],
+    referents: [{ ref: "service:training", source: "persistent_state", confidence: 0.99 }],
+    customer_correction: false, additive: false, explicit_negations: [],
+    requested_facts: [], transaction_state: "none", payment_state: "none",
+    booking_state: "none", fulfillment_state: "none",
+    ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
+    confidence: 0.99,
+  };
+  const text = "Team Cedar 2 slots; Team Birch 1 slots";
+  const accepted = resolveSemanticContextualCandidate({ text, state, language: "en", semantic_frame: frame });
+  assert(accepted?.aggregate_quantity === 3 && accepted.values.length === 2, JSON.stringify(accepted));
+  const duplicate = structuredClone(frame);
+  (duplicate.entities[0].attributes.scoped_customer_updates as unknown as Array<Record<string, unknown>>)[1].scope = "Team Cedar";
+  assert(resolveSemanticContextualCandidate({ text, state, language: "en", semantic_frame: duplicate })?.context_sufficient === false,
+    "duplicate scope accepted");
 });

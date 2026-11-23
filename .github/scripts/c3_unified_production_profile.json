@@ -1732,7 +1732,7 @@
   },
   "authorized_task3c_d4_no_industry_sha256": {
     "supabase/functions/_shared/commerce-state-authority.ts": "dcd6bb558a7f08d605b0919112d6a3fb17633cbf45c53b452af35a0cda0f21d7",
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "0911f4b706bca8c19f0f91262e69bd3b607ee4297cd704da749674802d8d2a4f",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "a9a93ad30e80e2d578e654fc3ac66ad34f5d030bad62186dbcde09b9598efee9",
     "tests/task1-director/source-chain.test.mjs": "e834f1d984834366c76480411bebfb6ca8da2b4200bcb303a422a0b3a8b9ffa4",
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "91849565e41da98dc2fdcc170a3bcf4cae4b6a6b3171ded735349474c02056f0",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "5b8ad3f90ffbcc89f6dd8d44ed5322b256df9e8475e5c3dc1bccc05745dda9d4",
@@ -1753,7 +1753,9 @@
     "tests/task1-director/p1-observation-runner.mjs": "0bcc53dff0f4c026b28c1b7b3c7855166b1f53b81f9db621c9c727a5198ee0dc",
     "tests/task1-director/p1-observation-register.mjs": "b39fa3b2cdb7aebde931dc75077d08226cc38a64fbf35a1230400beb12e8bd2b",
     "tests/task1-director/fixtures/task3c-replay/observations-60-plus-7.json": "b1b820e5bc8fcda0365d5738d4b973c1193c3c49953c70de93daf24ca158e3ba",
-    ".github/workflows/task-ai-abc-c3-final-gate.yml": "2e214ef1e0d21b7fa4029bf188392caed4474c0762c5faa28e9ce3eaa78aa739"
+    ".github/workflows/task-ai-abc-c3-final-gate.yml": "2e214ef1e0d21b7fa4029bf188392caed4474c0762c5faa28e9ce3eaa78aa739",
+    "supabase/functions/_shared/contextual-customer-update.ts": "5d03b714472c667eedda5cd8bd926978086b09667389d20f593b2c13a1f3b905",
+    "supabase/functions/_shared/contextual-customer-update.test.ts": "c5a8b06333eb4eefed04ac4fca43a4879ca101b1b188f0a12291ff781156f8ec"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
     "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",

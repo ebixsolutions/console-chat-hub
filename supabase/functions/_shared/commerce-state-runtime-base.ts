@@ -68,7 +68,7 @@ import {
   sourceBoundMixedCustomerFactEvents,
 } from "./commerce-semantic-adapter.ts";
 import { industryEntityLabel, industryEntityQuantityUnit, resolveIndustryContextualCandidate, resolveIndustryCustomerJourney, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
-import { contextualUpdateEvents, resolveContextualCustomerUpdate } from "./contextual-customer-update.ts";
+import { contextualUpdateEvents, resolveContextualCustomerUpdate, resolveSemanticContextualCandidate } from "./contextual-customer-update.ts";
 import { deriveTypedCustomerCalculation, isHistoricalOrConditionalCustomerCalculationRequest } from "./conversation-service-runtime.ts";
 import type { ContextualDecision } from "./contextual-customer-update.ts";
 import {
@@ -3522,7 +3522,10 @@ function resolveContextualTurn(
   const history = (input.history ?? [])
     .filter((turn) => ["visitor", "user", "customer"].includes(turn.role))
     .slice(0, MAX_HISTORY_TURNS).map((turn) => clean(turn.content));
-  const candidate = resolveIndustryContextualCandidate({
+  const candidate = resolveSemanticContextualCandidate({
+    text: input.text, language: input.language, state,
+    semantic_frame: input.semantic_frame,
+  }) ?? resolveIndustryContextualCandidate({
     text: input.text, history, state, language: input.language,
   });
   return resolveContextualCustomerUpdate({
