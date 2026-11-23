@@ -1505,12 +1505,35 @@ function deriveA3RuntimeEvents(
   // A confident reading proposes; source-bound subject and numeral verify.
   // ADD_ITEM cannot borrow counts describing people or a customer's budget.
   const reading=input.semantic_frame;
+  // A weak *overall* reading is not quantity authority. However an explicit
+  // same-turn additive request can corroborate one separately confident item
+  // referent against an existing, uniquely active customer-owned entity ID.
+  // The literal name, count and unit must bind in the Visitor's source; a
+  // model echo, person count, other topic or unknown target cannot qualify.
+  const corroboratedWeakAdditive=(()=>{
+    if(!reading || reading.confidence>=0.72 ||
+       reading.ambiguity.is_ambiguous || reading.operation!=="ADD_ITEM" ||
+       !reading.additive || reading.customer_correction ||
+       reading.entities.length!==1 ||
+       !detectAdditiveEntityCreationSignal(text) ||
+       isReadOnlyCommerceQuestion(text,reading))return null;
+    const item=reading.entities[0];
+    const active=previous.entities.filter(entity=>
+      !["cancelled","deferred","superseded"].includes(entity.status));
+    if(active.length!==1 || item.confidence<0.90 ||
+       item.entity_ref!==active[0].entity_id ||
+       (item.category_hint && item.category_hint!==active[0].category) ||
+       active[0].provenance.source_type!=="customer" ||
+       !active[0].provenance.source_message_id ||
+       !matchesReferenceLabel(text,item.name))return null;
+    return attestedItemQuantity(text,item.name,item.quantity,item.unit);
+  })();
   const quantity=reading
     ? reading.confidence>=0.72 && !reading.ambiguity.is_ambiguous &&
        reading.entities.length===1
         ? attestedItemQuantity(text,reading.entities[0].name,
             reading.entities[0].quantity,reading.entities[0].unit)
-        : null
+        : corroboratedWeakAdditive
     : parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
   const constraintCancellation = dimensionConstraintCancellation(text);
   const semanticRejectsLifecycle=Boolean(input.semantic_frame &&
