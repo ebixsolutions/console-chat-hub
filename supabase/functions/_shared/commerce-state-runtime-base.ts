@@ -3289,6 +3289,16 @@ function sourceBoundWindowOpeningReply(
 
 /** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
 export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[]): ConversationCommerceState {
+  // A question that only reads canonical customer/Commerce facts must not
+  // create an item, change an entity, or rewrite a transaction. Enforce this
+  // at the reducer entry as well as in each response/recall branch: a stray
+  // compatibility hint must never turn a read-only question into a purchase.
+  // A source-verified mutation is classified by the existing shared guard,
+  // not inferred from a product, room, unit or industry word list.
+  if (isReadOnlyCurrentStateQuery(input.text,input.semantic_frame) &&
+      !input.trusted_product_topic_focus &&
+      (!input.semantic_frame || ["ASK_FACT","ASK_CALCULATION","NO_STATE_CHANGE"]
+        .includes(input.semantic_frame.operation))) return previous;
   if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
   const oldCollapsed=sourceBoundLegacyCollapsedCancellation(previous,input);
   if(oldCollapsed)return reduceCommerceState(previous,oldCollapsed);
