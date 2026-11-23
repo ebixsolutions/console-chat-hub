@@ -89,14 +89,36 @@ export function resolveSemanticContextualCandidate(input: {
       f.explicit_negations.length !== 0 || f.entities.length !== 1 ||
       !item || item.confidence < 0.9 || item.quantity !== null ||
       !["customer_guidance", "ask_for_advice"].includes(f.intent) ||
-      f.requested_facts.length > 0 || (f.demands ?? []).length > 0 ||
       !item.name || !matchesReferenceLabel(text, item.name)) return null;
+    // The existing fact-free advisory remains unchanged. A first-turn enquiry
+    // with a verified source-quoted, unresolved product/general demand can
+    // receive a known-first clarification without claiming merchant specs.
+    const existingAdvisory = f.requested_facts.length === 0 &&
+      (f.demands ?? []).length === 0;
+    const requests = f.demands ?? [];
+    const allDemandsSourced = requests.length <= 1 && requests.every(d => {
+      const quote = d.source_quote.normalize("NFKC").replace(/\s+/gu, " ").trim();
+      return quote.length >= 4 && text.includes(quote) &&
+        !d.ambiguity.is_ambiguous && !d.customer_correction &&
+        d.explicit_negations.length === 0 &&
+        (d.source_type === "product" || d.source_type === "general");
+    });
+    const firstTurnGuidance = input.state.entities.length === 0 &&
+      text.length >= 4 && text.length <= 240 && !item.model && !item.sku &&
+      allDemandsSourced && f.requested_facts.length <= 8;
+    if (!existingAdvisory && !firstTurnGuidance) return null;
     const name = item.name.normalize("NFKC").trim().slice(0, 100);
-    const reply = input.language === "en"
-      ? "For " + name + ", what is the main intended use or constraint? This is guidance, not an order."
-      : input.language === "zh-CN"
-        ? "关于「" + name + "」，最需要考虑的用途或限制是什么？现在只是选购讨论，未下单。"
-        : "關於「" + name + "」，你最想優先考慮嘅用途或限制係乜？而家只係選購討論，未落單。";
+    const reply = firstTurnGuidance && !existingAdvisory
+      ? input.language === "en"
+        ? "You asked: '" + text + "'. I can start from your stated conditions. To give reliable guidance, please share the relevant area, size or limits for each scope. I cannot verify a specification or an order yet."
+        : input.language === "zh-CN"
+          ? "你问的是「" + text + "」。我可以先按你说过的要求整理；要提供可靠建议，请补充各个范围的面积、尺寸或其他限制。目前不能确认具体规格，也不是已下单。"
+          : "你問緊「" + text + "」。我可以先按你講過嘅要求整理；要提供可靠指引，請補充各個範圍嘅面積、尺寸或其他限制。而家未能核實具體規格，亦唔代表已落單。"
+      : input.language === "en"
+        ? "For " + name + ", what is the main intended use or constraint? This is guidance, not an order."
+        : input.language === "zh-CN"
+          ? "关于「" + name + "」，最需要考虑的用途或限制是什么？现在只是选购讨论，未下单。"
+          : "關於「" + name + "」，你最想優先考慮嘅用途或限制係乜？而家只係選購討論，未落單。";
     return { topic: name, topic_source: "semantic", action: "enquiry",
       values: [], context_sufficient: true, reply, clarification: question };
   }

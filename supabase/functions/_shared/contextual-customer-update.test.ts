@@ -1549,3 +1549,80 @@ Deno.test("Task3C G2 source-quoted distributive groups expand without trade voca
   assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:duplicate})?.context_sufficient===false,
     "ambiguous overlapping group");
 });
+
+
+Deno.test("Task3C G1 first enquiry uses current source quote without KB or order claims", async () => {
+  const text="想問 Training sessions 給三個小組怎樣安排，先提供指引。";
+  const frame: CommerceSemanticFrame = {
+    version:"commerce-semantic-1.0.0",language:"zh-TW",
+    operation:"ASK_FACT",intent:"customer_guidance",topic:"training",
+    entities:[{
+      entity_ref:"",name:"Training sessions",kind:"service",
+      category_hint:null,sku:null,model:null,quantity:null,unit:null,
+      attributes:{},constraints:{},capabilities:{
+        requires_delivery:false,supports_pickup:false,requires_installation:false,
+        requires_booking:false,requires_quote:false,requires_site_check:false,
+        digital_fulfilment:false,recurring_billing:false,
+        rental_return:false,customization:false,
+      },confidence:0.99,
+    }],
+    referents:[],
+    demands:[{
+      question:text,source_quote:text,subject_refs:["Training sessions"],
+      source_type:"general",requested_facts:["selection advice"],constraints:{},
+      customer_correction:false,explicit_negations:[],
+      ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+    }],
+    customer_correction:false,additive:false,explicit_negations:[],
+    requested_facts:["selection advice"],
+    transaction_state:"none",payment_state:"none",booking_state:"none",
+    fulfillment_state:"none",
+    ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+    confidence:0.99,
+  };
+  const state=createEmptyConversationCommerceState();
+  const candidate=resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:frame});
+  assert(candidate?.action==="enquiry" && candidate.context_sufficient &&
+    candidate.reply.includes(text) && candidate.reply.includes("面積") &&
+    !/已確認訂單|已收款|庫存足夠|現價/.test(candidate.reply),
+    JSON.stringify(candidate));
+  const decision=resolveContextualCustomerUpdate({candidate,state});
+  assert(decision.route==="product_guidance",JSON.stringify(decision));
+  const invented=structuredClone(frame);
+  invented.demands![0].source_quote="I want a discount that was never requested";
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:invented})===null,
+    "invented quote accepted");
+  const transaction=structuredClone(frame);
+  transaction.demands![0].source_type="transaction";
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:transaction})===null,
+    "transaction disguised as guidance");
+  const model=structuredClone(frame);
+  model.entities[0].model="TRAINING-M100";
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:model})===null,
+    "model-specific source bypassed merchant evidence");
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:null})===null,
+    "no Reading must not invent guidance");
+  const prior=structuredClone(state);
+  prior.entities=[{entity_id:"prior",category:"service",quantity:1,status:"researching",
+    attributes:{product_name:"Other sessions"},constraints:{},
+    provenance:{source_type:"customer",source_message_id:"prior-visitor"}}];
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state:prior,semantic_frame:frame})===null,
+    "factual follow-up incorrectly bypassed previous state");
+  let writes=0,latest=state;
+  const db: CommerceStateDbClient = {
+    from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:null,error:null})})})}),
+    rpc:async(_f,args)=>{
+      writes++;latest=args.p_state as ConversationCommerceState;
+      return {data:{result:"success",applied_revision:1},error:null};
+    },
+  };
+  const actual=await runCommerceStateRuntime(db,{
+    company_id:"company",conversation_id:"conv",source_message_id:"first-source",
+    text,language:"zh-TW",history:[],semantic_frame:frame,
+  });
+  assert(actual.route==="product_guidance" &&
+    actual.reply?.includes(text) && actual.reply?.includes("面積") &&
+    latest.conversion.order_status==="none" &&
+    latest.conversion.payment_status==="none",
+    JSON.stringify({actual,writes}));
+});
