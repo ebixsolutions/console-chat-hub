@@ -180,7 +180,7 @@ export function resolveSemanticContextualCandidate(input: {
       // distributive marker and the item unit must be visible in this one
       // Visitor quote. No previous unverified history or model-only count.
       const quantities = [...quote.matchAll(new RegExp(
-        "([0-9]{1,4}|[零〇一二兩两三四五六七八九十]|\\\\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\\\\b)",
+        "([0-9]{1,4}|[零〇一二兩两三四五六七八九十]|\\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\\b)",
         "giu",
       ))];
       if (quantities.length !== 2 || quantities.some(m => m.index === undefined))
@@ -199,10 +199,10 @@ export function resolveSemanticContextualCandidate(input: {
       const after = quote.slice(second.index! + second[0].length).trim();
       const sourceName = middle.indexOf(scope);
       if (sourceName < 0 || middle.indexOf(scope, sourceName + 1) >= 0 ||
-        !/(?:各|每|\\\\beach\\\\b|\\\\bper\\\\b)/iu.test(middle) ||
+        !/(?:各|每|\beach\b|\bper\b)/iu.test(middle) ||
         !after.startsWith(sourceUnit)) return invalid();
       // Reject extra written per-unit quantities inside the same phrase.
-      if ([...quote.matchAll(new RegExp(quantityPattern + "\\\\s*" + sourceUnit, "giu"))].length !== 1)
+      if ([...quote.matchAll(new RegExp(quantityPattern + "\\s*" + sourceUnit, "giu"))].length !== 1)
         return invalid();
       for (let index = 1; index <= n; index++) {
         const distinct = scope + "#" + index;
