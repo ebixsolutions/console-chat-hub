@@ -276,11 +276,13 @@ function resolvePendingCheckAggregateScope(
       if (!rooms.includes(room)) return false;
     }
     if (semanticRefs.length) {
-      const values = [entity.entity_id, entity.category].map((value) => clean(value, 160).toLowerCase());
-      if (!semanticRefs.some((ref) => {
-        const normalized = ref.toLowerCase();
-        return values.some((value) => value === normalized || value.includes(normalized) || normalized.includes(value));
-      }) && !categories.length && !rooms.length) return false;
+      // A scoped operational read may select a customer's already persisted
+      // product/service name or model. Never use a partial substring or a
+      // semantic echo as proof of an unrelated canonical entity.
+      const sourceLabels = [entity.entity_id, entity.category,
+        ...sourceOwnedSubjectLabels(entity)].map((value) => clean(value, 160).toLowerCase());
+      if (!semanticRefs.some((ref) =>
+        sourceLabels.includes(clean(ref, 160).toLowerCase()))) return false;
     }
     return true;
   });
