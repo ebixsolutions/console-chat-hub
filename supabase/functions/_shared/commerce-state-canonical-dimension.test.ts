@@ -29,7 +29,8 @@ function snapshot(category: string): ConversationCommerceState {
 }
 
 async function read(state: ConversationCommerceState, semantic: CommerceSemanticFrame | null,
-  text = "Would one 598mm item fit?", revision = 12) {
+  text = "Would one 598mm item fit?", revision = 12,
+  language?: CommerceSemanticFrame["language"]) {
   const before = JSON.stringify(state);
   let writes = 0;
   const db: CommerceStateDbClient = {
@@ -40,7 +41,8 @@ async function read(state: ConversationCommerceState, semantic: CommerceSemantic
   };
   const outcome = await runCommerceStateRuntime(db, {
     company_id: "company-a", conversation_id: "ticket-a", source_message_id: "current-customer-source",
-    text, language: /[\p{Script=Han}]/u.test(text) ? "zh-TW" : "en", semantic_frame: semantic,
+    text, language: language === "zh-CN" ? "zh-CN" :
+      /[\p{Script=Han}]/u.test(text) ? "zh-TW" : "en", semantic_frame: semantic,
     history: [{ role: "visitor", content: "Previously I mentioned 1800mm height and 650mm depth." }],
   });
   assert(writes === 0, "Read-only canonical comparison called the writer");
@@ -113,6 +115,7 @@ Deno.test("Task3C canonical dimension lookup refuses an independently named comp
 
 Deno.test("Task3C dimension lookup asks only for the missing limit on its verified canonical subject", async () => {
   const state = snapshot("packing-case");
+  state.entities[0].attributes.product_name = "packing-case";
   const reading = frame("packing-case");
   reading.requested_facts = ["height"];
   const result = await read(state, reading, "Would a height of 1820mm fit?");
@@ -199,5 +202,30 @@ Deno.test("Task3C dimension lookup requires a valid committed revision on every 
       literal ? "Would Packing crate width 598mm fit?" : "Would one 598mm item fit?", revision);
     assert(result?.reason !== "read_only_attribute_constraint_query_resolved" && !result?.state_path,
       JSON.stringify({ literal, revision, result }));
+  }
+});
+
+
+Deno.test("Task3C dimension clarification renders verified labels or neutral wording, never category IDs", async () => {
+  const cases = [
+    { language: "en", text: "Would a height of 1820mm fit?", neutral: "this item", label: "Packing crate", dimension: "height" },
+    { language: "zh-TW", text: "高度1820mm得唔得？", neutral: "呢件產品", label: "活動展架", dimension: "高度" },
+    { language: "zh-CN", text: "高度1820mm可以吗？", neutral: "这件产品", label: "活动展架", dimension: "高度" },
+  ] as const;
+  for (const c of cases) {
+    for (const label of [c.label, undefined, "contextual-item:source-1"]) {
+      const state = snapshot("internal_dimension_category");
+      if (label !== undefined) state.entities[0].attributes.product_name = label;
+      const reading = frame("internal_dimension_category");
+      reading.language = c.language;
+      reading.requested_facts = ["height"];
+      const outcome = await read(state, reading, c.text, 12, c.language);
+      assert(outcome?.reason === "read_only_attribute_constraint_query_unresolved" &&
+        !outcome.state_path && outcome.persist_result === "read_only", JSON.stringify(outcome));
+      assert(outcome.reply?.includes(label === c.label ? c.label : c.neutral) &&
+        outcome.reply.includes(c.dimension) && outcome.reply.includes("1820") &&
+        !/internal_dimension_category|contextual-item:source-1|1800|595/.test(outcome.reply),
+        JSON.stringify(outcome));
+    }
   }
 });

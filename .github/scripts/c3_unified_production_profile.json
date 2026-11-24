@@ -1733,7 +1733,7 @@
   },
   "authorized_task3c_d4_no_industry_sha256": {
     "supabase/functions/_shared/commerce-state-authority.ts": "2c8fbfc069a1c2f553ae422825ce8649a199b3deb72db4d3d10c1c36ac44397b",
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "f759fdfad4c8d65da791f018f168c0701edb95ad0655f00921f02acf839c448f",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "b7cbf1422eb2c4c9dabe6f3f45c81cce038eac6f39bad008955150e0558cd1df",
     "tests/task1-director/source-chain.test.mjs": "d381f63f9d90c44ed3c284f0d2eab439de1b907c2e36918040a25dcc7c3255ca",
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "91849565e41da98dc2fdcc170a3bcf4cae4b6a6b3171ded735349474c02056f0",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "5b8ad3f90ffbcc89f6dd8d44ed5322b256df9e8475e5c3dc1bccc05745dda9d4",
@@ -1757,7 +1757,7 @@
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "2e214ef1e0d21b7fa4029bf188392caed4474c0762c5faa28e9ce3eaa78aa739",
     "supabase/functions/_shared/contextual-customer-update.ts": "cc2900dc228aca7735844afb9a6da4cf4fdef2e8cd895e8bf3acdc75a0626778",
     "supabase/functions/_shared/contextual-customer-update.test.ts": "562443c8cf7346816667ebc50f285065436e8af36293a9c5e28c3b0d7cc75f03",
-    "supabase/functions/_shared/commerce-state-canonical-dimension.test.ts": "b72a0a5e3e97fdb981c1a670f72a72febaeb585f5578044bcd272b42e680426e",
+    "supabase/functions/_shared/commerce-state-canonical-dimension.test.ts": "0841b7fead5502e087b33671de3c07434b03bc736c13b4905b38ab065ad344ce",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "aba4a6165851d0590e154b56a83dda1275f01b004c3e9feedcc5889e91fa8e08",
     "supabase/functions/_shared/commerce-state-contextual-scope-runtime.test.ts": "1150eab4bbcaf7e9c7c492a32c108a780574878f916438e67d247abb60b75829",
     "tests/task1-director/contextual-guidance-register.mjs": "9ff7a611d9e535e5ea3e663f1682e02c7a1daf681aed056e2f7fd550e3e8016e",

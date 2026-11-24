@@ -780,9 +780,16 @@ function contextualConstraintAttribute(
 }
 
 
-function categoryLabel(category: string, language: CommerceLanguage): string {
-  const spec = CATEGORY_SPECS.find((candidate) => candidate.key === category);
-  return spec?.label[language] ?? category;
+// Presentation only. A resolver category is not a customer-facing name.
+// Use a verified active canonical subject's stored customer label, otherwise
+// ask about the item in the customer's language without inventing a name.
+function dimensionSubjectLabel(state: ConversationCommerceState, entityId: string | undefined,
+  language: CommerceLanguage): string {
+  const entity = entityId ? state.entities.find(candidate =>
+    candidate.entity_id === entityId &&
+    !["cancelled", "deferred", "superseded"].includes(candidate.status)) : undefined;
+  return (entity ? customerOwnedDisplayLabel(entity) : null) ??
+    (language === "en" ? "this item" : language === "zh-CN" ? "这件产品" : "呢件產品");
 }
 
 function dimensionLabel(attribute: CommerceDimensionAttribute, language: CommerceLanguage): string {
@@ -847,10 +854,10 @@ function resolveReadOnlyAttributeConstraintQuery(
 
   const category = categoryResolution.category;
   if (!attribute) {
-    const product = categoryLabel(category, input.language);
+    const product = dimensionSubjectLabel(state, categoryResolution.entity_id, input.language);
     const reply =
       input.language === "en"
-        ? `For the ${product}, does ${measurement.value}${measurement.unit} refer to its width, height or depth?`
+        ? `For ${product}, does ${measurement.value}${measurement.unit} refer to its width, height or depth?`
         : input.language === "zh-CN"
           ? `你说的${product} ${measurement.value}${measurement.unit} 是指宽度、高度还是深度？`
           : `你講嘅${product} ${measurement.value}${measurement.unit} 係指闊度、高度定深度？`;
@@ -871,14 +878,14 @@ function resolveReadOnlyAttributeConstraintQuery(
     state, category, attribute, categoryResolution.entity_id ?? null,
   );
   if (!constraint) {
-    const product = categoryLabel(category, input.language);
+    const product = dimensionSubjectLabel(state, categoryResolution.entity_id, input.language);
     const dimension = dimensionLabel(attribute, input.language);
     const reply =
       input.language === "en"
-        ? `What is your current ${product} ${dimension} limit? I cannot safely compare ${measurement.value}${measurement.unit} with another product's state.`
+        ? `What is the current ${dimension} limit for ${product}? I cannot safely compare ${measurement.value}${measurement.unit} with another product's state.`
         : input.language === "zh-CN"
-          ? `你目前的${product}${dimension}上限是多少？我不能用其他产品的状态来判断 ${measurement.value}${measurement.unit}。`
-          : `你目前嘅${product}${dimension}上限係幾多？我唔可以用其他產品嘅狀態去判斷 ${measurement.value}${measurement.unit}。`;
+          ? `${product}目前的${dimension}上限是多少？我不能用其他产品的状态来判断 ${measurement.value}${measurement.unit}。`
+          : `${product}目前嘅${dimension}上限係幾多？我唔可以用其他產品嘅狀態去判斷 ${measurement.value}${measurement.unit}。`;
     return {
       authority: "INSUFFICIENT_INFORMATION",
       reason: "read_only_attribute_constraint_query_unresolved",
