@@ -1752,7 +1752,7 @@
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "bda50bc9ba23fa974785743ee3ccc2780217f08574c3c26f32b58aac66621bec",
     "tests/emergency-p0/chain.test.mjs": "c42daefb2cd92259f6fb79b2895eed5cc812b4e25c87b7ab0aca5ec98c2c4160",
     "tests/task1-director/p1-observation-runner.mjs": "0bcc53dff0f4c026b28c1b7b3c7855166b1f53b81f9db621c9c727a5198ee0dc",
-    "tests/task1-director/p1-observation-register.mjs": "b39fa3b2cdb7aebde931dc75077d08226cc38a64fbf35a1230400beb12e8bd2b",
+    "tests/task1-director/p1-observation-register.mjs": "01e6a5a3d2afdabf62fe547527959f3fe6fb42ee0a264102325c0b5525c8fa1e",
     "tests/task1-director/fixtures/task3c-replay/observations-60-plus-7.json": "b1b820e5bc8fcda0365d5738d4b973c1193c3c49953c70de93daf24ca158e3ba",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "2e214ef1e0d21b7fa4029bf188392caed4474c0762c5faa28e9ce3eaa78aa739",
     "supabase/functions/_shared/contextual-customer-update.ts": "89b57a93523e0a98c09571580accd3b4636fde7d00328cb19b26839a7ed32bfc",
@@ -1773,7 +1773,9 @@
     "supabase/functions/_shared/pre-send-field-scope.test.ts": "71ed8c9de8545f88deb78b4feb2ca581718ee58a9f948166c15835eee126cbf1",
     "supabase/functions/_shared/commerce-state-canonical-quantity.test.ts": "c89cfb2891b8ad33ea54587269379c839da2127e0b64ac4001dce0dd24a18a5b",
     "supabase/functions/_shared/commerce-state-canonical-fractional.test.ts": "0107de5bd87cb8c52c374f9d2a1b1368083f778f890429e7c05aa528011a8373",
-    "supabase/functions/_shared/commerce-state-scoped-pending.test.ts": "fe10f16a7b4e50d79d8c3a5176bce4398aa44a44b9eb2e71b1e2f57e43c4789a"
+    "supabase/functions/_shared/commerce-state-scoped-pending.test.ts": "fe10f16a7b4e50d79d8c3a5176bce4398aa44a44b9eb2e71b1e2f57e43c4789a",
+    "tests/task1-director/p1-observation-fixtures.mjs": "2cd55df982facd0937d54b3ffaddb67644c9940a7053ffd708a301ecc91862ad",
+    "tests/task1-director/p1-observation-diagnostics.mjs": "1ee24224999186bea67554722a621b1fd9224ca3a264a3a95ddf092af4399b29"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
     "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",
