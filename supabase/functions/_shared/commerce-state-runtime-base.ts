@@ -228,7 +228,7 @@ type PendingCheckAggregateResolution = {
 };
 
 type PendingCheckAggregateScope =
-  | { mode: "global" }
+  | { mode: "global"; source_conflict?: true }
   | { mode: "entity"; entity_id: string | null };
 
 function pendingCheckLabel(check: string, language: CommerceLanguage): string {
@@ -278,30 +278,39 @@ function resolvePendingCheckAggregateScope(
     sourceOwnedSubjectLabels(entity).some((label) =>
       matchesReferenceLabel(text, label))
   );
-  const explicitScope = categories.length > 0 || rooms.length > 0 ||
+  const sourceScope = categories.length > 0 || rooms.length > 0 ||
     semanticRefs.length > 0 || explicitDeictic || sourceNamed.length > 0;
-  if (!explicitScope) return { mode: "global" };
-
-  // An incidental model reference cannot narrow a global question above.
-  // Only a source-scoped read can consume one exact persisted identity.
   const frame = input.semantic_frame;
-  // Literal customer names do not erase a supplied conflicting operation.
-  // Apply these exclusions before choosing either literal or semantic targets.
-  if (frame && (!["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) ||
-    frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
-    frame.explicit_negations.length || frame.customer_facts?.length))
+  const suppliedDemands = frame?.demands ?? [];
+  // A demanded subject is not the same as an incidental model referent.
+  // It must never disappear merely because no known customer alias matched.
+  const demandedScope = suppliedDemands.some(demand => demand.subject_refs.length > 0);
+  const explicitScope = sourceScope || demandedScope;
+  const invalidOperation = Boolean(frame && (!["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) ||
+    frame.customer_correction || frame.additive || frame.explicit_negations.length ||
+    frame.customer_facts?.length));
+  const invalidDemand = suppliedDemands.some(demand =>
+    demand.customer_correction || demand.explicit_negations.length ||
+    !clean(demand.source_quote,2400) || !text.includes(clean(demand.source_quote,2400)));
+  if (!explicitScope) {
+    // No demanded item needs resolving for an already admitted global,
+    // committed-state aggregate. Incidental entity ambiguity/confidence does
+    // not invalidate it; genuine domain/source/operation conflicts still do.
+    // This path only selects a read scope, never a writer or a new fact.
+    if (invalidOperation || invalidDemand || hasPendingCheckDomainAmbiguity(input))
+      return { mode: "global", source_conflict: true };
+    return { mode: "global" };
+  }
+  // A model-demanded scope without original-text corroboration cannot be
+  // converted into either global or specific-item authority.
+  if (invalidOperation || invalidDemand || (demandedScope && !sourceScope) ||
+    frame?.ambiguity.is_ambiguous || suppliedDemands.some(demand => demand.ambiguity.is_ambiguous))
     return { mode: "entity", entity_id: null };
+  // Confidence controls positive scoped selection, not validation of supplied evidence.
   const qualified = frame && ["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) &&
     frame.confidence >= 0.9 && !frame.ambiguity.is_ambiguous && !frame.customer_correction &&
     !frame.additive && !frame.customer_facts?.length && input.company_id &&
     input.conversation_id && input.source_message_id;
-  // Confidence controls positive selection, not whether contradictory
-  // supplied evidence can be discarded before a literal-name fallback.
-  const suppliedDemands = frame?.demands ?? [];
-  if ((qualified && frame.explicit_negations.length) || suppliedDemands.some(demand =>
-    demand.customer_correction || demand.ambiguity.is_ambiguous || demand.explicit_negations.length ||
-    !clean(demand.source_quote,2400) || !text.includes(clean(demand.source_quote,2400))))
-    return { mode: "entity", entity_id: null };
   const references = qualified ? frame.referents.filter(reference =>
     reference.source === "persistent_state" && reference.confidence >= 0.9) : [];
   const referenceIds = [...new Set(references.map(reference => reference.ref))];
@@ -362,12 +371,14 @@ function resolvePendingCheckAggregateScope(
 }
 
 function hasPendingCheckDomainAmbiguity(input: CommerceRuntimeInput): boolean {
-  if (input.semantic_frame?.ambiguity.is_ambiguous !== true) return false;
-  return input.semantic_frame.ambiguity.reasons.some((reason) =>
-    /(?:incompatible|different|multiple)\s+(?:meaning|interpretation|domain)|(?:師傅|师傅|technician|professional).*(?:意思|含義|含义|meaning|ambiguous)/i.test(
-      clean(reason, 240),
-    )
-  );
+  const frame = input.semantic_frame;
+  const ambiguities = [frame?.ambiguity, ...(frame?.demands ?? []).map(demand => demand.ambiguity)];
+  return ambiguities.some(ambiguity => ambiguity?.is_ambiguous === true &&
+    ambiguity.reasons.some((reason) =>
+      /(?:incompatible|different|multiple)\s+(?:meaning|interpretation|domain)|(?:師傅|师傅|technician|professional).*(?:意思|含義|含义|meaning|ambiguous)/i.test(
+        clean(reason, 240),
+      )
+    ));
 }
 
 function pendingCheckUnknownReply(
@@ -394,6 +405,14 @@ function resolvePendingCheckAggregateQuery(
     !/(?:有咩|有什么|what).{0,18}(?:仲未|還沒|还没|未|not yet|outstanding|pending).{0,12}(?:confirm|確認|确认)|(?:仲未|還沒|还没|not yet).{0,12}(?:confirm|確認|确认).{0,12}(?:有咩|有什么|what)/i.test(input.text)
   ) return null;
   const scope = resolvePendingCheckAggregateScope(input, state, revision);
+  if (scope.mode === "global" && scope.source_conflict) {
+    const reply = input.language === "en"
+      ? "I couldn't verify the current pending-check request. Please confirm what you want me to check."
+      : input.language === "zh-CN"
+        ? "暂时无法核实这次待确认事项查询。请确认你想查看哪些事项。"
+        : "暫時未能核實今次待確認事項查詢。請確認你想查看邊啲事項。";
+    return { authority: "INSUFFICIENT_INFORMATION", reason: "read_only_current_state_aggregate_query_unresolved", reply, state_path: null };
+  }
   if (
     !Number.isSafeInteger(revision) || revision < 1 ||
     (scope.mode === "global" && hasPendingCheckDomainAmbiguity(input)) ||

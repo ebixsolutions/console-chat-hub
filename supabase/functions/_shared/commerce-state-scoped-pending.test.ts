@@ -195,3 +195,74 @@ Deno.test("Task3C literal and deictic pending reads require an active customer-o
     }
   }
 });
+
+
+// Agreed T48 successor: distinguish incidental referent ambiguity from
+// material scope/domain/source/operation conflict. Original callbacks unchanged.
+Deno.test("Task3C global pending aggregate ignores incidental entity ambiguity but not contradictory Reading", async () => {
+  const text = "How many checks are still pending?";
+  for (const kind of ["valid", "incidental-frame", "incidental-demand", "wrong-operation",
+    "correction", "additive", "frame-negation", "fabricated-quote", "empty-quote",
+    "demand-correction", "demand-negation", "frame-domain", "demand-domain"] as const) {
+    const frame = reading();
+    frame.demands = [{ question: text, source_quote: text, subject_refs: [],
+      source_type: "general", requested_facts: ["pending_checks"], constraints: {},
+      customer_correction: false, explicit_negations: [],
+      ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null } }];
+    if (kind === "incidental-frame" || kind === "incidental-demand") {
+      const ambiguity = { is_ambiguous: true, reasons: ["several equipment referents"],
+        clarification_question: "Which item?" };
+      frame.confidence = 0.55;
+      if (kind === "incidental-frame") frame.ambiguity = ambiguity;
+      else frame.demands[0].ambiguity = ambiguity;
+    }
+    if (kind === "wrong-operation") frame.operation = "REMOVE_ITEM";
+    if (kind === "correction") frame.customer_correction = true;
+    if (kind === "additive") frame.additive = true;
+    if (kind === "frame-negation") frame.explicit_negations = ["pending checks"];
+    if (kind === "fabricated-quote") frame.demands[0].source_quote = "Unrelated model-only text.";
+    if (kind === "empty-quote") frame.demands[0].source_quote = "";
+    if (kind === "demand-correction") frame.demands[0].customer_correction = true;
+    if (kind === "demand-negation") frame.demands[0].explicit_negations = ["pending checks"];
+    if (kind === "frame-domain" || kind === "demand-domain") {
+      const ambiguity = { is_ambiguous: true, reasons: ["multiple interpretations"],
+        clarification_question: "Which meaning?" };
+      if (kind === "frame-domain") frame.ambiguity = ambiguity;
+      else frame.demands[0].ambiguity = ambiguity;
+    }
+    const positive = ["valid", "incidental-frame", "incidental-demand"].includes(kind);
+    if (!positive) frame.confidence = 0.8;
+    const result = await read(state(), frame, text);
+    if (positive) {
+      assert(result?.authority === "CONVERSATION_STATE" &&
+        result.state_path === "installation.pending_checks" &&
+        result.reply?.includes("3") && !/[?？]/u.test(result.reply), kind + ": " + JSON.stringify(result));
+    } else {
+      assert(result?.reason === "read_only_current_state_aggregate_query_unresolved" &&
+        result.authority === "INSUFFICIENT_INFORMATION" && !result.state_path &&
+        !/training-a|display-b|currently 3/.test(result.reply ?? ""), kind + ": " + JSON.stringify(result));
+    }
+  }
+});
+
+Deno.test("Task3C pending aggregate must clarify a demanded subject that cannot bind current state", async () => {
+  for (const kind of ["unknown-literal", "unquoted-canonical", "ambiguous-named"] as const) {
+    const s = state(), frame = reading();
+    const text = kind === "unknown-literal" ? "How many portable gantry checks are still pending?" :
+      kind === "ambiguous-named" ? "How many Training kit checks are still pending?" :
+      "How many checks are still pending?";
+    frame.demands = [{ question: text, source_quote: text,
+      subject_refs: [kind === "unknown-literal" ? "portable gantry" : "training-a"],
+      source_type: "general", requested_facts: ["pending_checks"], constraints: {},
+      customer_correction: false, explicit_negations: [],
+      ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null } }];
+    if (kind === "ambiguous-named") {
+      frame.ambiguity = { is_ambiguous: true, reasons: ["several equipment referents"],
+        clarification_question: "Which item?" };
+    }
+    const result = await read(s, frame, text);
+    assert(result?.authority === "INSUFFICIENT_INFORMATION" &&
+      result.reason === "read_only_current_state_aggregate_query_unresolved" && !result.state_path,
+      kind + ": " + JSON.stringify(result));
+  }
+});

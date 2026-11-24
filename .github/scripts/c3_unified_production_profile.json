@@ -1733,7 +1733,7 @@
   },
   "authorized_task3c_d4_no_industry_sha256": {
     "supabase/functions/_shared/commerce-state-authority.ts": "2c8fbfc069a1c2f553ae422825ce8649a199b3deb72db4d3d10c1c36ac44397b",
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "b7cbf1422eb2c4c9dabe6f3f45c81cce038eac6f39bad008955150e0558cd1df",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "c845f4fe1ee57e251c88bdae2ec003dd50ef38a5609033b5f96a49bf7e10aff3",
     "tests/task1-director/source-chain.test.mjs": "d381f63f9d90c44ed3c284f0d2eab439de1b907c2e36918040a25dcc7c3255ca",
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "91849565e41da98dc2fdcc170a3bcf4cae4b6a6b3171ded735349474c02056f0",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "5b8ad3f90ffbcc89f6dd8d44ed5322b256df9e8475e5c3dc1bccc05745dda9d4",
@@ -1772,7 +1772,7 @@
     "supabase/functions/_shared/pre-send-field-scope.test.ts": "71ed8c9de8545f88deb78b4feb2ca581718ee58a9f948166c15835eee126cbf1",
     "supabase/functions/_shared/commerce-state-canonical-quantity.test.ts": "c89cfb2891b8ad33ea54587269379c839da2127e0b64ac4001dce0dd24a18a5b",
     "supabase/functions/_shared/commerce-state-canonical-fractional.test.ts": "0107de5bd87cb8c52c374f9d2a1b1368083f778f890429e7c05aa528011a8373",
-    "supabase/functions/_shared/commerce-state-scoped-pending.test.ts": "24e2ebf7afecaf1552f7318abf4d52d9af610294a67d68d36d2e5cf803b834f9",
+    "supabase/functions/_shared/commerce-state-scoped-pending.test.ts": "f14aea577355a9d1b077ef68c88da503240211c0d3a4e43f18e2a5c737b87792",
     "tests/task1-director/p1-observation-fixtures.mjs": "2cd55df982facd0937d54b3ffaddb67644c9940a7053ffd708a301ecc91862ad",
     "tests/task1-director/p1-observation-diagnostics.mjs": "a17165528329363b091d911e41078834df7c04fbf03c8d9106f69c0ffa4d9c31",
     "supabase/functions/_shared/contextual-prior-scope-display.test.ts": "75d9577dc7f99d596bb99999122d700841ec22d10e602da06c50c5f584069778",
