@@ -2983,3 +2983,46 @@ Deno.test("P0-1 pre-Semantic recap requires scoped successful current readback",
   const absent={from:()=>{const q={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:null,error:null})};return q;}};
   assert(await hasProvenCurrentRequirementsRecap(absent,input),"verified empty recap");
 });
+
+
+// Separate compatibility case for legacy committed state with no stored unit.
+// The approved original T25 setup/assertions above remain byte-identical.
+Deno.test("Task3C legacy T25 unitless canonical quantity stays read-only without inventing a unit", async () => {
+  const previous = turn55CommerceState();
+  const question = "頭先冷氣嗰兩部你仲記唔記得？";
+  assert(previous.entities.every(entity => !Object.hasOwn(entity.attributes, "unit")),
+    "Legacy fixture unexpectedly has a stored unit");
+  const before = JSON.stringify(previous);
+  const result = await executeTurn25Fixture(question, turn25SemanticFrame(), previous);
+  assert(result.outcome?.authority === "CONVERSATION_STATE" &&
+    result.outcome.route === "commerce_state_answer" &&
+    result.outcome.reason === "read_only_memory_or_current_state_recall_resolved" &&
+    result.outcome.persist_result === "read_only" && result.outcome.revision === 24,
+    JSON.stringify(result.outcome));
+  assert(result.rpcCalls === 0 && JSON.stringify(result.persisted) === before,
+    "Unitless recall changed canonical state");
+  const recall = prepareConversationRecall({
+    conversation_id: "fbfc51ee-32a0-41dc-9ff5-451c5a8bf4e9",
+    company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    source_message_id: result.source, question, memory: null,
+    commerce: {
+      conversation_id: "fbfc51ee-32a0-41dc-9ff5-451c5a8bf4e9",
+      company_id: "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+      source_message_id: "55a00000-0000-4000-8000-000000000016",
+      revision: 24, state: previous,
+    },
+  }, "zh-TW");
+  assert(recall.decision.handled && recall.decision.value === 2,
+    JSON.stringify(recall.decision));
+  assert(recall.metadata.response_route === "canonical_memory_recall" &&
+    /^數量[:：]\s*2\s*$/u.test(recall.reply?.trim() ?? ""),
+    JSON.stringify(recall));
+  assert(recall.decision.provenance.evidence.some(e => e.fact_type === "quantity" &&
+    e.value === 2 && e.evidence_source_message_id === previous.entities[0].provenance.source_message_id),
+    JSON.stringify(recall.decision));
+  assert(recall.decision.provenance.evidence.every(e => !e.quantity_unit &&
+    !e.quantity_unit_source_kind && !e.quantity_unit_source_message_id),
+    "An unverified question unit was promoted to recall evidence");
+  assert(JSON.stringify(previous) === before && JSON.stringify(result.persisted) === before,
+    "Unitless display changed state or provenance");
+});

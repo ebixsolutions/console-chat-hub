@@ -1785,7 +1785,7 @@
     "tests/task1-director/p1-observation-business-assertions.test.mjs": "d2c165dca9c7b3dc89ef343321d75cb4ebfc873ea159238db01e8623a435dd84",
     "supabase/functions/_shared/commerce-recall-question-scope.test.ts": "f7c0f45920a44530f78f90d8a9ea59f4acde297309c37fe401d3865b9d321117",
     "supabase/functions/_shared/lifecycle-focus-display.test.ts": "61c0fd24bfe0281c4daad626d15f8f6d677555b4d47e1c7d5a8b3b22fb6e43de",
-    "supabase/functions/_shared/conversation-recall.integration.test.ts": "aca4aa712f9a9944957a388eb34fe71ad046626f7025676b15fa034a7b0ed2a3"
+    "supabase/functions/_shared/conversation-recall.integration.test.ts": "996bb87a71acd77ee5d568fa17643e4de7ab20fa4d9c47299305930e8e5a7750"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
     "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",
