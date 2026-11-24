@@ -2427,9 +2427,12 @@ function hasSourceBoundQuantityMutation(
   const proposedUnit = input.semantic_frame?.entities.find(entity => entity.entity_ref === event.entity_id ||
     target && sourceOwnedSubjectLabels(target).includes(entity.name.normalize("NFKC").trim().toLowerCase()));
   // A changed unit is part of the quantity value. Refuse the whole proposed
-  // change when the current source does not attest that new dimension.
+  // named change when the current source does not attest that new dimension.
+  // An unnamed counter remains subject to the existing unique-target/topic
+  // and unit compatibility guards below; it gains no unit-write authority.
   if (target && proposedUnit && typeof proposedUnit.unit === "string" &&
       typeof target.attributes.unit === "string" && target.attributes.unit.trim().length > 0 &&
+      sourceOwnedSubjectLabels(target).some(label => matchesReferenceLabel(input.text, label)) &&
       proposedUnit.unit !== target.attributes.unit &&
       proposedUnit.quantity === event.quantity &&
       input.semantic_frame && ["SET_QUANTITY", "UPDATE_ITEM"].includes(input.semantic_frame.operation)) return false;
