@@ -502,6 +502,47 @@ function trustedAttributeReferent(input:CommerceRuntimeInput,state:ConversationC
  return e&&sourceOwnedSubjectLabels(e).some(label=>
     matchesReferenceLabel(input.text,label))?e:null;
 }
+
+/** A read-only semantic topic may select an exact stored category when that
+ * category has one customer-owned subject and the requested measurement is
+ * already canonical. The model supplies no value and grants no writer action.
+ * This also supports older canonical records that have no display-name alias;
+ * no industry dictionary or raw-history constraint is restored. */
+function canonicalDimensionReferent(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+): { entity: ConversationCommerceState["entities"][number] | null; ambiguous: boolean } {
+  const frame = input.semantic_frame;
+  if (!frame || frame.operation !== "ASK_FACT" || frame.confidence < 0.9 ||
+    frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+    frame.explicit_negations.length || !input.company_id || !input.conversation_id ||
+    !input.source_message_id || !isReadOnlyCommerceQuestion(input.text, frame))
+    return { entity: null, ambiguous: false };
+  const topic = clean(frame.topic, 160);
+  const attribute = inferCommerceDimensionAttribute(input.text, frame);
+  if (!topic || !attribute || !parseCommerceDimensionMeasurement(input.text))
+    return { entity: null, ambiguous: false };
+  const active = state.entities.filter(entity =>
+    entity.provenance.source_type === "customer" && Boolean(entity.provenance.source_message_id) &&
+    !["cancelled", "deferred", "superseded"].includes(entity.status));
+  const candidates = active.filter(entity => entity.category === topic);
+  if (candidates.length !== 1) return { entity: null, ambiguous: candidates.length > 1 };
+  const entity = candidates[0];
+  const named = active.filter(candidate => sourceOwnedSubjectLabels(candidate).some(label =>
+    matchesReferenceLabel(input.text, label)));
+  const conflictingReference = frame.referents.some(reference =>
+    reference.source === "persistent_state" && reference.confidence >= 0.9 &&
+    reference.ref !== entity.entity_id);
+  const conflictingEntity = frame.entities.some(candidate =>
+    candidate.confidence >= 0.9 && ((candidate.category_hint && candidate.category_hint !== topic) ||
+      (active.some(stored => stored.entity_id === candidate.entity_ref) &&
+        candidate.entity_ref !== entity.entity_id)));
+  if (named.some(candidate => candidate.entity_id !== entity.entity_id) ||
+    conflictingReference || conflictingEntity ||
+    !stateDimensionConstraint(state, topic, attribute, entity.entity_id))
+    return { entity: null, ambiguous: false };
+  return { entity, ambiguous: false };
+}
 function resolveAttributeQueryCategory(input: CommerceRuntimeInput,
   state?:ConversationCommerceState): {
   category: string | null;
@@ -516,6 +557,10 @@ function resolveAttributeQueryCategory(input: CommerceRuntimeInput,
   if (current.length === 1) return { category: current[0], ambiguous: false };
   const bound=state?trustedAttributeReferent(input,state):null;
   if(bound)return {category:bound.category,entity_id:bound.entity_id,ambiguous:false};
+  const canonical = state ? canonicalDimensionReferent(input, state) : null;
+  if (canonical?.ambiguous) return { category: null, ambiguous: true };
+  if (canonical?.entity) return { category: canonical.entity.category,
+    entity_id: canonical.entity.entity_id, ambiguous: false };
   const semantic = semanticCategoryKeys(input.semantic_frame);
   if (semantic.length > 1) return { category: null, ambiguous: true };
   if (semantic.length === 1) return { category: semantic[0], ambiguous: false };

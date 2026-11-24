@@ -1732,7 +1732,7 @@
   },
   "authorized_task3c_d4_no_industry_sha256": {
     "supabase/functions/_shared/commerce-state-authority.ts": "dcd6bb558a7f08d605b0919112d6a3fb17633cbf45c53b452af35a0cda0f21d7",
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "48355cff13b373e6169ac6899ff3a72049b5b68a3506906def3bc5b2363bdfb5",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "e74b7cb8438df801c8de9684f52e435ef92a924a8e214b8adb35d7d367db7983",
     "tests/task1-director/source-chain.test.mjs": "e834f1d984834366c76480411bebfb6ca8da2b4200bcb303a422a0b3a8b9ffa4",
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "91849565e41da98dc2fdcc170a3bcf4cae4b6a6b3171ded735349474c02056f0",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "5b8ad3f90ffbcc89f6dd8d44ed5322b256df9e8475e5c3dc1bccc05745dda9d4",
@@ -1755,7 +1755,8 @@
     "tests/task1-director/fixtures/task3c-replay/observations-60-plus-7.json": "b1b820e5bc8fcda0365d5738d4b973c1193c3c49953c70de93daf24ca158e3ba",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "2e214ef1e0d21b7fa4029bf188392caed4474c0762c5faa28e9ce3eaa78aa739",
     "supabase/functions/_shared/contextual-customer-update.ts": "40233ef1a6d4943e29319d12d251c59c1d8745df7b251f1eef3a7fef6d0053cc",
-    "supabase/functions/_shared/contextual-customer-update.test.ts": "854983bbb3ed0211cea92736367a3a1d07be4ca4b08a11e8a46f131dfd81a7ff"
+    "supabase/functions/_shared/contextual-customer-update.test.ts": "8f233deee249521d3c9b842344e3e661404e42a79641759443f06af9feb5fec2",
+    "supabase/functions/_shared/commerce-state-canonical-dimension.test.ts": "daf3bbad92dda7f92cb5a7817091b60f3ffebff24a524d5f2c6f0308fdeef624"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
     "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",

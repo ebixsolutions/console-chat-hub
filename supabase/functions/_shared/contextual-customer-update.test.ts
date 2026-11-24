@@ -1732,3 +1732,6 @@ Deno.test("Task3C scoped confirmation preserves customer phrases and individual 
   assert(latest.entities[0].quantity===8 && latestRows.find(r=>r.scope==="門")?.source_message_id==="correction-source" &&
     latestRows.filter(r=>r.scope.startsWith("支隊#")).every(r=>r.source_message_id==="allocation-source"),"old scopes were reattributed or partial aggregate overwritten");
 });
+
+// Independent canonical-dimension regressions; original cases above are unchanged.
+import "./commerce-state-canonical-dimension.test.ts";
