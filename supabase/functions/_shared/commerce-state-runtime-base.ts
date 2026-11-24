@@ -247,6 +247,7 @@ function pendingCheckLabel(check: string, language: CommerceLanguage): string {
 function resolvePendingCheckAggregateScope(
   input: CommerceRuntimeInput,
   state: ConversationCommerceState,
+  revision: number,
 ): PendingCheckAggregateScope {
   const text = clean(input.text);
   const lower = text.toLowerCase();
@@ -281,7 +282,30 @@ function resolvePendingCheckAggregateScope(
     semanticRefs.length > 0 || explicitDeictic || sourceNamed.length > 0;
   if (!explicitScope) return { mode: "global" };
 
+  // An incidental model reference cannot narrow a global question above.
+  // Only a source-scoped read can consume one exact persisted identity.
+  const frame = input.semantic_frame;
+  const qualified = frame && ["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) &&
+    frame.confidence >= 0.9 && !frame.ambiguity.is_ambiguous && !frame.customer_correction &&
+    !frame.additive && !frame.customer_facts?.length && input.company_id &&
+    input.conversation_id && input.source_message_id;
+  const suppliedDemands = qualified ? frame.demands ?? [] : [];
+  if ((qualified && frame.explicit_negations.length) || suppliedDemands.some(demand =>
+    demand.customer_correction || demand.ambiguity.is_ambiguous || demand.explicit_negations.length ||
+    !clean(demand.source_quote,2400) || !text.includes(clean(demand.source_quote,2400))))
+    return { mode: "entity", entity_id: null };
+  const references = qualified ? frame.referents.filter(reference =>
+    reference.source === "persistent_state" && reference.confidence >= 0.9) : [];
+  const referenceIds = [...new Set(references.map(reference => reference.ref))];
+  const selected = referenceIds.length === 1 ? active.filter(entity => entity.entity_id === referenceIds[0] &&
+    entity.provenance.source_type === "customer" && Boolean(entity.provenance.source_message_id) &&
+    ["researching", "tentative", "confirmed"].includes(entity.status)) : [];
+  // This bound applies to the new selector, not the existing no-reading path.
+  if (referenceIds.length && (!Number.isSafeInteger(revision) || revision < 1 || selected.length !== 1))
+    return { mode: "entity", entity_id: null };
+
   let candidates = active.filter((entity) => {
+    if (selected.length && selected[0].entity_id !== entity.entity_id) return false;
     // A duplicate customer label is ambiguous; competing canonical entities
     // must never be picked by array order or the previous topic.
     if (sourceNamed.length && !sourceNamed.some((named) =>
@@ -302,10 +326,24 @@ function resolvePendingCheckAggregateScope(
     }
     return true;
   });
-  if (!categories.length && !rooms.length && !semanticRefs.length && explicitDeictic) {
+  if (!categories.length && !rooms.length && !semanticRefs.length && !sourceNamed.length &&
+    !selected.length && explicitDeictic) {
     candidates = active;
   }
-  return { mode: "entity", entity_id: candidates.length === 1 ? candidates[0].entity_id : null };
+  const target = candidates.length === 1 ? candidates[0] : null;
+  if (!target) return { mode: "entity", entity_id: null };
+  // Validate only supplied demand facts. Empty/absent demand lists add no gate.
+  const owned = state.entities.filter(entity => entity.provenance.source_type === "customer" &&
+    Boolean(entity.provenance.source_message_id));
+  for (const demand of suppliedDemands) for (const ref of demand.subject_refs) {
+    const subject = clean(ref,160), quote = clean(demand.source_quote,2400);
+    if (!subject) return { mode: "entity", entity_id: null };
+    const named = owned.filter(entity => [entity.entity_id,entity.category,...sourceOwnedSubjectLabels(entity)]
+      .some(label => clean(label,160).toLowerCase() === subject.toLowerCase()));
+    if ((named.length && (named.length !== 1 || named[0].entity_id !== target.entity_id)) ||
+      (!named.length && !matchesReferenceLabel(quote,subject))) return { mode: "entity", entity_id: null };
+  }
+  return { mode: "entity", entity_id: target.entity_id };
 }
 
 function hasPendingCheckDomainAmbiguity(input: CommerceRuntimeInput): boolean {
@@ -340,7 +378,7 @@ function resolvePendingCheckAggregateQuery(
     !isReadOnlyCurrentStateAggregateQuery(input.text, input.semantic_frame) &&
     !/(?:有咩|有什么|what).{0,18}(?:仲未|還沒|还没|未|not yet|outstanding|pending).{0,12}(?:confirm|確認|确认)|(?:仲未|還沒|还没|not yet).{0,12}(?:confirm|確認|确认).{0,12}(?:有咩|有什么|what)/i.test(input.text)
   ) return null;
-  const scope = resolvePendingCheckAggregateScope(input, state);
+  const scope = resolvePendingCheckAggregateScope(input, state, revision);
   if (
     revision === 0 ||
     (scope.mode === "global" && hasPendingCheckDomainAmbiguity(input)) ||
