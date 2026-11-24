@@ -6,7 +6,13 @@ import {
   resolveContextualCustomerUpdate,
   resolveSemanticContextualCandidate,
   type ScopedCustomerValue,
+  type ContextualSourceContext,
+  type SourceBoundContextualGoal,
+  type SourceBoundScopeFact,
+  readSourceBoundContextualGoal,
+  verifiedCurrentScopeFacts,
 } from "./contextual-customer-update.ts";
+import type { DecisionValue } from "./bounded-decision-context.ts";
 import {
   type ConversationCommerceState,
   createEmptyConversationCommerceState,
@@ -1647,8 +1653,6 @@ Deno.test("Task3C G1 first enquiry uses current source quote without KB or order
     JSON.stringify({actual,writes}));
 });
 
-import type { DecisionValue } from "./bounded-decision-context.ts";
-
 /** Independent generic verifier controls; original A/B/C/2a inputs stay intact. */
 function genericAllocationInput(text: string, rows: Record<string, DecisionValue>[], unit: string, language: "zh-TW" | "zh-CN" | "en" = "zh-TW") {
   const state = createEmptyConversationCommerceState();
@@ -1733,5 +1737,241 @@ Deno.test("Task3C scoped confirmation preserves customer phrases and individual 
     latestRows.filter(r=>r.scope.startsWith("支隊#")).every(r=>r.source_message_id==="allocation-source"),"old scopes were reattributed or partial aggregate overwritten");
 });
 
-// Independent canonical-dimension regressions; original cases above are unchanged.
+function genericScopeFactInput() {
+  const text="Training sessions for 2 teams and 1 lobby. Please offer general planning advice.";
+  const state=createEmptyConversationCommerceState();
+  const frame=genericAllocationInput(text,[],"slots","en").semantic_frame;
+  frame.operation="UPDATE_ITEM";frame.intent="customer_guidance";frame.topic="Training sessions";
+  frame.entities=[];frame.referents=[];
+  frame.customer_facts=[{key:"contextual_scope_counts",value:[
+    {scope:"teams",count:2,source_text:"2 teams",subject_label:"Training sessions"},
+    {scope:"lobby",count:1,source_text:"1 lobby",subject_label:"Training sessions"},
+  ]}];
+  frame.demands=[{question:text,source_quote:text,subject_refs:["Training sessions"],
+    source_type:"general",requested_facts:[],constraints:{},customer_correction:false,
+    explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}];
+  const context:ContextualSourceContext={company_id:"company",conversation_id:"conversation",
+    source_message_id:"source-t1",state_revision:0};
+  return {text,state,semantic_frame:frame,context,language:"en" as const};
+}
+
+function committedGenericScopeState() {
+  const input=genericScopeFactInput(), verified=verifiedCurrentScopeFacts(input);
+  assert(verified,"source fixture must verify independently");
+  // Unit-level snapshot: runtime tests exercise the actual CAS and readback.
+  const state=createEmptyConversationCommerceState();
+  state.current_topic=verified.goal.subject_label;
+  state.customer_constraints.contextual_goal={...verified.goal,recorded_revision:1};
+  state.customer_constraints.contextual_scope_facts=verified.facts.map(fact=>({...fact,recorded_revision:1}));
+  return {state,goal:state.customer_constraints.contextual_goal as SourceBoundContextualGoal};
+}
+
+function genericInheritedAllocationInput() {
+  const {state,goal}=committedGenericScopeState();
+  const input=genericAllocationInput("lobby 1 slots, teams 2 slots each",[
+    {scope:"lobby",source_text:"lobby 1 slots",unit:"slots",value:1,attribute:"quantity",action:"set"},
+    {scope:"teams",source_text:"teams 2 slots each",unit:"slots",value:2,scope_count:null,per_scope_quantity:2,attribute:"quantity",action:"set"},
+  ],"slots","en");
+  input.state=state;
+  input.semantic_frame.entities[0].name=goal.subject_label;
+  input.semantic_frame.entities[0].entity_ref=goal.goal_id;
+  input.semantic_frame.topic=goal.subject_label;
+  input.semantic_frame.referents=[{ref:goal.goal_id,source:"persistent_state",confidence:0.99}];
+  return {...input,context:{company_id:"company",conversation_id:"conversation",
+    source_message_id:"source-t2",state_revision:1} as ContextualSourceContext};
+}
+
+Deno.test("Task3C scope-count producer facts retain only literal customer context and no product quantity", () => {
+  const input=genericScopeFactInput();
+  const decoded=normalizeCommerceSemanticFrame(input.semantic_frame);
+  assert(decoded,"typed customer-fact producer rejected valid payload");
+  const verified=verifiedCurrentScopeFacts({...input,semantic_frame:decoded});
+  assert(verified && verified.goal.subject_label==="Training sessions" &&
+    verified.facts.length===2 && verified.facts[0].count===2 &&
+    verified.facts.every(fact=>fact.source_message_id==="source-t1" && fact.recorded_revision===0),
+    JSON.stringify(verified));
+  const guidance=resolveSemanticContextualCandidate({...input,semantic_frame:decoded});
+  assert(guidance?.requires_generated_guidance && guidance.action==="enquiry" &&
+    !guidance.new_entity && guidance.aggregate_quantity===undefined && input.state.entities.length===0,
+    "scope count manufactured an item or item quantity");
+  const chinese=genericScopeFactInput();
+  chinese.text="Training sessions，兩間房，先講一般安排原則。";
+  chinese.semantic_frame.demands![0].source_quote=chinese.text;
+  chinese.semantic_frame.customer_facts![0].value=[{scope:"房",count:2,source_text:"兩間房",subject_label:"Training sessions"}];
+  assert(verifiedCurrentScopeFacts(chinese)?.facts[0].scope==="房","literal one-character scope count was lost");
+  const bads:Array<ReturnType<typeof genericScopeFactInput>>=[];
+  const invented=genericScopeFactInput();
+  (invented.semantic_frame.customer_facts![0].value as Record<string,DecisionValue>[])[0].count=3;bads.push(invented);
+  const rewritten=genericScopeFactInput();
+  (rewritten.semantic_frame.customer_facts![0].value as Record<string,DecisionValue>[])[0].source_text="two teams";bads.push(rewritten);
+  const transaction=genericScopeFactInput();transaction.semantic_frame.demands![0].source_type="transaction";bads.push(transaction);
+  const merchant=genericScopeFactInput();merchant.semantic_frame.demands![0].requested_facts=["price"];bads.push(merchant);
+  const duplicate=genericScopeFactInput();
+  (duplicate.semantic_frame.customer_facts![0].value as DecisionValue[]).push(
+    structuredClone((duplicate.semantic_frame.customer_facts![0].value as DecisionValue[])[0]));bads.push(duplicate);
+  const injected=genericScopeFactInput();
+  (injected.semantic_frame.customer_facts![0].value as Record<string,DecisionValue>[])[0].recorded_revision=55;bads.push(injected);
+  const wrongSubject=genericScopeFactInput();
+  (wrongSubject.semantic_frame.customer_facts![0].value as Record<string,DecisionValue>[])[0].subject_label="Other product";bads.push(wrongSubject);
+  const outsideDemand=genericScopeFactInput();
+  outsideDemand.semantic_frame.demands![0].source_quote="Training sessions for 2 teams";bads.push(outsideDemand);
+  assert(bads.every(bad=>verifiedCurrentScopeFacts(bad)===null),"unverified customer scope fact admitted");
+  assert(verifiedCurrentScopeFacts({...input,semantic_frame:null})===null &&
+    verifiedCurrentScopeFacts({...input,context:undefined})===null,"missing Reading/server binding admitted");
+});
+
+Deno.test("Task3C cross-turn scope counts require committed tenant ticket goal and revision evidence", () => {
+  const input=genericInheritedAllocationInput();
+  const candidate=resolveSemanticContextualCandidate(input);
+  assert(candidate?.context_sufficient && candidate.aggregate_quantity===5 &&
+    candidate.new_entity?.category==="Training sessions" && candidate.new_entity.quantity===5 &&
+    candidate.values.filter(value=>value.scope.startsWith("teams#")).every(value=>
+      value.scope_count_source?.source_message_id==="source-t1" && value.scope_count_source.source_revision===1),
+    JSON.stringify(candidate));
+  assert(candidate.reply.includes("teams 2 slots each") && !candidate.reply.includes("teams#"),candidate.reply);
+  const decision=resolveContextualCustomerUpdate({state:input.state,candidate});
+  const events=contextualUpdateEvents(decision,input.state,"source-t2",null,2);
+  const next=reduceCommerceState(input.state,events);
+  assert(next.entities.length===1 && next.entities[0].quantity===5 && next.entities[0].status==="researching" &&
+    next.entities[0].attributes.subject_source_message_id==="source-t1" &&
+    next.entities[0].provenance.source_message_id==="source-t2" &&
+    next.conversion.order_status==="none" && next.conversion.payment_status==="none",JSON.stringify(next));
+  const saved=next.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+  assert(saved.every(value=>value.source_message_id==="source-t2" && value.source_revision===2),JSON.stringify(saved));
+  const repeated=reduceCommerceState(next,contextualUpdateEvents(decision,next,"source-t2",null,3));
+  assert(JSON.stringify(repeated)===JSON.stringify(next),"replay changed row source revision");
+  const replayCandidate=resolveSemanticContextualCandidate({...input,state:next,context:{...input.context,state_revision:2}});
+  assert(replayCandidate?.context_sufficient && !replayCandidate.new_entity,"same-source goal referent could not replay");
+  const unrelatedSource=resolveSemanticContextualCandidate({...input,state:next,
+    context:{...input.context,source_message_id:"source-t3",state_revision:2}});
+  assert(unrelatedSource?.context_sufficient===false,"goal referent granted authority on a different source");
+  const cases:Array<ReturnType<typeof genericInheritedAllocationInput>>=[];
+  for(const key of ["company_id","conversation_id"] as const){const bad=genericInheritedAllocationInput();bad.context[key]="wrong";cases.push(bad);}
+  const stale=genericInheritedAllocationInput();stale.context.state_revision=0;cases.push(stale);
+  const future=genericInheritedAllocationInput();
+  (future.state.customer_constraints.contextual_scope_facts as SourceBoundScopeFact[])[0].recorded_revision=5;cases.push(future);
+  const oldTopic=genericInheritedAllocationInput();oldTopic.state.current_topic="Other topic";cases.push(oldTopic);
+  const missingFact=genericInheritedAllocationInput();missingFact.state.customer_constraints.contextual_scope_facts=[];cases.push(missingFact);
+  const modelCount=genericInheritedAllocationInput();
+  (modelCount.semantic_frame.entities[0].attributes.scoped_customer_updates as Record<string,DecisionValue>[])[1].scope_count=2;cases.push(modelCount);
+  for(const status of ["cancelled","deferred","superseded"] as const){
+    const bad=genericInheritedAllocationInput();(bad.state.customer_constraints.contextual_goal as SourceBoundContextualGoal).status=status;cases.push(bad);
+  }
+  const forgedQuote=genericInheritedAllocationInput();
+  (forgedQuote.state.customer_constraints.contextual_scope_facts as SourceBoundScopeFact[])[0].source_text="3 teams";cases.push(forgedQuote);
+  const rewrittenQuote=genericInheritedAllocationInput();
+  (rewrittenQuote.state.customer_constraints.contextual_scope_facts as SourceBoundScopeFact[])[0].source_text="two teams";cases.push(rewrittenQuote);
+  const rewrittenSource=genericInheritedAllocationInput();
+  const changedFact=(rewrittenSource.state.customer_constraints.contextual_scope_facts as SourceBoundScopeFact[])[0];
+  changedFact.source_text="two teams";
+  changedFact.source_message_text=changedFact.source_message_text.replace("2 teams","two teams");cases.push(rewrittenSource);
+  const priorRevision=genericInheritedAllocationInput();priorRevision.context.state_revision=2;
+  (priorRevision.state.customer_constraints.contextual_goal as SourceBoundContextualGoal).recorded_revision=2;cases.push(priorRevision);
+  const changedGoalId=genericInheritedAllocationInput();
+  (changedGoalId.state.customer_constraints.contextual_goal as SourceBoundContextualGoal).goal_id="contextual-goal:invented";cases.push(changedGoalId);
+  const wrongGoal=genericInheritedAllocationInput();
+  (wrongGoal.state.customer_constraints.contextual_scope_facts as SourceBoundScopeFact[])[0].goal_id="contextual-goal:elsewhere";cases.push(wrongGoal);
+  const wrongRef=genericInheritedAllocationInput();wrongRef.semantic_frame.entities[0].entity_ref="unrelated";cases.push(wrongRef);
+  for(const bad of cases){
+    const result=resolveSemanticContextualCandidate(bad);
+    assert(result===null || !result.context_sufficient,JSON.stringify({bad,result}));
+  }
+  assert(resolveSemanticContextualCandidate({...input,context:undefined})?.context_sufficient===false,
+    "unbound canonical state used a prior count");
+});
+
+Deno.test("Task3C changed scope facts require an explicit correction and keep item quantities separate", () => {
+  const {state,goal}=committedGenericScopeState();
+  const input=genericScopeFactInput();input.state=state;
+  input.context.source_message_id="source-correction";input.context.state_revision=1;
+  input.text="Training sessions for 3 teams. Please update my planning context.";
+  input.semantic_frame.demands![0].source_quote=input.text;
+  input.semantic_frame.customer_facts![0].value=[
+    {scope:"teams",count:3,source_text:"3 teams",subject_label:"Training sessions"},
+  ];
+  assert(verifiedCurrentScopeFacts(input)===null,"scope count silently overwritten");
+  input.semantic_frame.customer_correction=true;
+  const verified=verifiedCurrentScopeFacts(input);
+  assert(verified?.goal.goal_id===goal.goal_id && verified.facts.length===1 && verified.facts[0].count===3 &&
+    verified.facts[0].source_message_id==="source-correction" && state.entities.length===0,
+    JSON.stringify(verified));
+  assert(readSourceBoundContextualGoal(state,input.context)?.goal_id===goal.goal_id,"current receipt was not readable");
+  const wrong=structuredClone(state);
+  (wrong.customer_constraints.contextual_goal as SourceBoundContextualGoal).subject_label="Invented subject";
+  assert(readSourceBoundContextualGoal(wrong,input.context)===null,"model-only goal subject accepted");
+});
+
+Deno.test("Task3C scope numeral multipliers cannot be read as grammatical classifiers", () => {
+  for(const operator of ["百","佰","千","仟","萬","万","億","亿","兆","拾","廿","卅","卌"]){
+    const facts=genericScopeFactInput();
+    const quote="兩"+operator+"房";
+    facts.text="Training sessions，"+quote+"，先談一般安排。";
+    facts.semantic_frame.demands![0].source_quote=facts.text;
+    facts.semantic_frame.customer_facts![0].value=[{scope:"房",count:2,source_text:quote,subject_label:"Training sessions"}];
+    assert(verifiedCurrentScopeFacts(facts)===null,"numeral multiplier stored as count=2: "+operator);
+    const allocation=genericAllocationInput(quote+"各一台",[
+      {scope:"房",source_text:quote+"各一台",unit:"台",value:1,
+        scope_count:2,per_scope_quantity:1,attribute:"quantity",action:"set"},
+    ],"台");
+    assert(resolveSemanticContextualCandidate(allocation)?.context_sufficient===false,
+      "numeral multiplier allocated as 2 items: "+operator);
+  }
+});
+
+Deno.test("Task3C whole-group correction retires only superseded members and preserves replay provenance", () => {
+  for(const count of [1,3]){
+    const initial=genericInheritedAllocationInput();
+    const initialCandidate=resolveSemanticContextualCandidate(initial);
+    const initialDecision=resolveContextualCustomerUpdate({state:initial.state,candidate:initialCandidate});
+    const before=reduceCommerceState(initial.state,contextualUpdateEvents(initialDecision,initial.state,"source-t2",null,2));
+    const facts=before.customer_constraints.contextual_scope_facts as SourceBoundScopeFact[];
+    facts[0]={...facts[0],count,source_text:count+" teams",
+      source_message_text:"Training sessions for "+count+" teams. Please correct the scope count.",
+      source_message_id:"source-count-correction",recorded_revision:3};
+    const input={...initial,state:before,semantic_frame:structuredClone(initial.semantic_frame),
+      context:{...initial.context,source_message_id:"source-reallocation",state_revision:3}};
+    input.semantic_frame.entities[0].entity_ref=before.entities[0].entity_id;
+    input.semantic_frame.referents=[{ref:before.entities[0].entity_id,source:"persistent_state",confidence:0.99}];
+    const candidate=resolveSemanticContextualCandidate(input);
+    assert(candidate?.aggregate_quantity===1+count*2 && candidate.values.length===1+count,JSON.stringify(candidate));
+    const decision=resolveContextualCustomerUpdate({state:before,candidate});
+    const next=reduceCommerceState(before,contextualUpdateEvents(decision,before,"source-reallocation",null,4));
+    const rows=next.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+    assert(next.entities[0].quantity===1+count*2 && rows.filter(row=>row.group_scope==="teams").length===count &&
+      rows.filter(row=>row.group_scope==="teams").every(row=>row.group_goal_id==="contextual-goal:source-t1" &&
+        row.scope_count_source?.source_message_id==="source-count-correction"),JSON.stringify(next));
+    const replayCandidate=resolveSemanticContextualCandidate({...input,state:next,context:{...input.context,state_revision:4}});
+    const repeated=reduceCommerceState(next,contextualUpdateEvents(resolveContextualCustomerUpdate({state:next,candidate:replayCandidate}),
+      next,"source-reallocation",null,5));
+    assert(JSON.stringify(repeated)===JSON.stringify(next),"whole-group replay changed provenance or member order");
+    const partial={...input,text:"teams 2 slots each",semantic_frame:structuredClone(input.semantic_frame)};
+    partial.semantic_frame.entities[0].attributes.scoped_customer_updates=[
+      {scope:"teams",source_text:partial.text,unit:"slots",value:2,scope_count:null,per_scope_quantity:2,attribute:"quantity",action:"set"},
+    ];
+    const partialCandidate=resolveSemanticContextualCandidate(partial);
+    assert(partialCandidate?.context_sufficient && partialCandidate.aggregate_quantity===undefined &&
+      partialCandidate.reply.includes("total has not been reconfirmed"),JSON.stringify(partialCandidate));
+    const partialState=reduceCommerceState(before,contextualUpdateEvents(resolveContextualCustomerUpdate({state:before,candidate:partialCandidate}),
+      before,"source-partial",null,4));
+    const partialRows=partialState.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+    assert(partialState.entities[0].quantity===5 && partialRows.filter(row=>row.group_scope==="teams").length===count &&
+      partialRows.find(row=>row.scope==="lobby")?.source_message_id==="source-t2",
+      "partial group overwrote unrelated scope or invented a new total");
+    const newGroup={...input,text:"2 offices with 1 slots each",semantic_frame:structuredClone(input.semantic_frame)};
+    newGroup.semantic_frame.entities[0].attributes.scoped_customer_updates=[
+      {scope:"offices",source_text:newGroup.text,unit:"slots",value:1,scope_count:2,per_scope_quantity:1,attribute:"quantity",action:"set"},
+    ];
+    const addition=resolveSemanticContextualCandidate(newGroup);
+    assert(addition?.context_sufficient && addition.aggregate_quantity===undefined,"one new scope replaced the aggregate");
+    const added=reduceCommerceState(before,contextualUpdateEvents(resolveContextualCustomerUpdate({state:before,candidate:addition}),before,"source-extra",null,4));
+    const addedRows=added.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+    assert(added.entities[0].quantity===5 && addedRows.filter(row=>row.group_scope!=="offices").every(row=>row.source_message_id==="source-t2"),
+      "new group overwrote existing scope provenance");
+  }
+});
+
+
 import "./commerce-state-canonical-dimension.test.ts";
+
+import "./commerce-state-contextual-scope-runtime.test.ts";
+import "./contextual-semantic-reference.test.ts";

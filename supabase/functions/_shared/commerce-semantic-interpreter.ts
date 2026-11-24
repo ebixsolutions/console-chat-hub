@@ -5,6 +5,7 @@ import { sha256 } from "./model-attempt-accounting.ts";
 import { getSupabaseAdminKey } from "./supabase-admin-key.ts";
 import { requirementMutationText } from "./commerce-state-authority.ts";
 import { sourceOwnedOptionWording } from "./current-factual-request.ts";
+import { projectContextualSemanticReferences } from "./contextual-semantic-reference.ts";
 import {
   COMMERCE_SEMANTIC_FRAME_VERSION,
   COMMERCE_SEMANTIC_SYSTEM_PROMPT,
@@ -220,6 +221,8 @@ export function buildPersistentCommerceStateSummary(
                 quantity: entity.quantity,
                 attributes: entity.attributes,
                 constraints: entity.constraints,
+                ...(isRecord(entity.attributes) && typeof entity.attributes.contextual_goal_id === "string"
+                  ? {provenance:entity.provenance} : {}),
               }
               : entity
           )
@@ -465,7 +468,9 @@ export async function interpretCommerceSemantics(
   const persistentStateSummary = await loadPersistentCommerceStateSummary(
     input,
   );
-  const projection = buildUser(input,persistentStateSummary);
+  const references = await projectContextualSemanticReferences({summary:persistentStateSummary,
+    company_id:input.company_id,conversation_id:input.conversation_id,source_message_id:input.source_message_id});
+  const projection = buildUser(input,references.summary);
   if (projection === null) return {frame:null,source:"none",failure_code:"SEMANTIC_INPUT_LIMIT",failure_stage:"input_context"};
   const {user,recentIds,recoveredIds} = projection;
   const [userSha,systemSha] = await Promise.all([sha256(user),sha256(COMMERCE_SEMANTIC_SYSTEM_PROMPT)]);
@@ -562,9 +567,20 @@ export async function interpretCommerceSemantics(
     contractRejection ??= reason;
     contractDiagnostic ??= diagnostic;
   };
-  const frame = normalizeCommerceSemanticFrame(
+  let frame = normalizeCommerceSemanticFrame(
     decodeCommerceSemanticWire(parsed, rejected), rejected,
   );
+  if (frame) {
+    const restored = references.restore(frame);
+    if (!restored) return {
+      input_receipt,frame:null,source:"none",failure_code:"LLM_INVALID_OUTPUT",
+      failure_stage:"semantic_reference_binding",failure_evidence:await captureFailure(),
+      failure:executionFailure("LLM_INVALID_OUTPUT",{stage:"canonical_validation",
+        request_id:result.request_id,source_message_id:input.source_message_id}),
+      request_id:result.request_id,
+    };
+    frame = restored;
+  }
   if (!frame) {
     // A malformed optional entity must not suppress a complete independent
     // merchant-fact question. Only the exact full current customer quote and

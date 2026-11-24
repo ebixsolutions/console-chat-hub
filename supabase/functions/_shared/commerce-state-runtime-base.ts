@@ -68,9 +68,9 @@ import {
   sourceBoundMixedCustomerFactEvents,
 } from "./commerce-semantic-adapter.ts";
 import { industryEntityLabel, industryEntityQuantityUnit, resolveIndustryContextualCandidate, resolveIndustryCustomerJourney, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
-import { contextualUpdateEvents, resolveContextualCustomerUpdate, resolveSemanticContextualCandidate } from "./contextual-customer-update.ts";
+import { contextualUpdateEvents, readSourceBoundContextualGoal, resolveContextualCustomerUpdate, resolveSemanticContextualCandidate, verifiedCurrentScopeFacts } from "./contextual-customer-update.ts";
 import { deriveTypedCustomerCalculation, isHistoricalOrConditionalCustomerCalculationRequest } from "./conversation-service-runtime.ts";
-import type { ContextualDecision } from "./contextual-customer-update.ts";
+import type { ContextualDecision, ContextualSourceContext, SourceBoundContextualGoal, SourceBoundScopeFact } from "./contextual-customer-update.ts";
 import {
   activeCustomerGoal,
   planCustomerJourney,
@@ -1450,12 +1450,20 @@ interface LoadedCommerceState {
 export async function loadCommerceState(
   db: CommerceStateDbClient,
   conversation_id: string,
+  company_id?: string,
 ): Promise<LoadedCommerceState> {
-  const { data, error } = await db.from("conversation_commerce_state").select("revision, state").eq("conversation_id", conversation_id).maybeSingle();
+  const { data, error } = await db.from("conversation_commerce_state").select("company_id, conversation_id, revision, state").eq("conversation_id", conversation_id).maybeSingle();
   if (error) throw new Error("commerce_state_read_failed");
   if (data === null || data === undefined) return { state: createEmptyConversationCommerceState(), revision: 0 };
   if (!isRecord(data) || !isConversationCommerceState(data["state"])) {
     throw new Error("commerce_state_invalid_snapshot");
+  }
+  // The caller already uses the established conversation/RLS read contract.
+  // When identity fields are returned, refuse a mismatched snapshot before
+  // either a read-only reply or the existing CAS writer can consume it.
+  if ((typeof data.company_id === "string" && company_id && data.company_id !== company_id) ||
+    (typeof data.conversation_id === "string" && data.conversation_id !== conversation_id)) {
+    throw new Error("commerce_state_scope_mismatch");
   }
   const revision = typeof data["revision"] === "number" ? data["revision"] : Number(data["revision"] ?? 0);
   const state = data["state"];
@@ -2471,6 +2479,7 @@ function reduceSingleTurn(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
+  sourceContext?: ContextualSourceContext,
 ): ConversationCommerceState {
   const lifecycle = resolveBoundLifecyclePlan(input, previous);
   // A customer asks which option might be deferred; that is advice, not a
@@ -2508,11 +2517,12 @@ function reduceSingleTurn(
   // Bare product/service names are references; do not commit an LLM's inferred
   // quantity or new transaction without a customer-authored action.
   if (isBareCommerceSubjectMention(input.text,input.semantic_frame)) return previous;
-  const contextual = resolveContextualTurn(input, previous);
+  const contextual = resolveContextualTurn(input, previous, sourceContext);
   if (contextual.route === "targeted_clarification") return previous;
   if (contextual.route === "contextual_scoped_update") {
     return reduceCommerceState(previous, contextualUpdateEvents(
       contextual, previous, input.source_message_id, input.occurred_at,
+      sourceContext ? sourceContext.state_revision + 1 : undefined,
     ));
   }
   const journey = resolveCustomerJourneyTurn(input, previous);
@@ -2871,6 +2881,7 @@ function reduceTurnOperations(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
+  sourceContext?: ContextualSourceContext,
 ): ConversationCommerceState {
   // Resolve conflicting lifecycle clauses before reducing any one of them.
   if (!isReadOnlyCommerceQuestion(input.text,input.semantic_frame) &&
@@ -2901,7 +2912,7 @@ function reduceTurnOperations(
        typeof entries[0][1]==="number" && entries[0][1]===proof.value_mm &&
        !previous.entities.some(e=>e.entity_id===item.entity_ref &&
          ["cancelled","deferred","superseded"].includes(e.status)))
-      return reduceSingleTurn(previous,input,rawHints);
+      return reduceSingleTurn(previous,input,rawHints,sourceContext);
   }
   const semanticCustomerConditions = Boolean(input.semantic_frame?.entities.some((entity) =>
     Object.keys(entity.constraints).length > 0
@@ -2919,7 +2930,7 @@ function reduceTurnOperations(
     !compoundQuantityBindingsValid(clauses,previous,rawHints)) return previous;
   if (clauses.length < 2 || clauses.length > 8 ||
     independentOperations < 2 && !semanticCustomerConditions) {
-    let whole = reduceSingleTurn(previous, input, rawHints);
+    let whole = reduceSingleTurn(previous, input, rawHints, sourceContext);
     if (!isHistoricalOrConditionalCustomerCalculationRequest(input.text)) {
       const scoped = deriveScopedRoomSizeEvents(input, whole);
       if (scoped.length) whole = reduceCommerceState(whole, scoped);
@@ -2948,7 +2959,7 @@ function reduceTurnOperations(
       // semantic action; every other clause stays isolated and read-only.
       semantic_frame: acceptedLifecycleEntityRef({...input,text:clause},state)
         ? input.semantic_frame : null,
-    }, hints);
+    }, hints, sourceContext);
   }
   // A multi-clause customer correction retains one server-validated semantic
   // customer-fact delta. Individual clause reducers deliberately cannot inherit
@@ -3392,8 +3403,130 @@ function sourceBoundWindowOpeningReply(
   return null;
 }
 
+function contextualSourceContext(input: CommerceRuntimeInput, revision: number): ContextualSourceContext {
+  return { company_id: input.company_id, conversation_id: input.conversation_id,
+    source_message_id: input.source_message_id, state_revision: revision };
+}
+
+function hasContextualScopeFactProposal(input: CommerceRuntimeInput): boolean {
+  return Boolean(input.semantic_frame?.customer_facts?.some(fact =>
+    ["contextual_scope_counts", "contextual_goal", "contextual_scope_facts"].includes(fact.key)));
+}
+
+function hasContextualScopeAllocation(input: CommerceRuntimeInput): boolean {
+  return Boolean(input.semantic_frame?.entities.some(entity =>
+    Array.isArray(entity.attributes.scoped_customer_updates)));
+}
+
+/** Scope background uses the existing canonical constraint event and one CAS.
+ * The model never supplies owner/source/revision receipts. A correction updates
+ * only its named scope, preserving each unrelated fact's original provenance. */
+function contextualScopeFactState(previous: ConversationCommerceState,
+  input: CommerceRuntimeInput, context: ContextualSourceContext | undefined): ConversationCommerceState {
+  const proposal = verifiedCurrentScopeFacts({ text: input.text, semantic_frame: input.semantic_frame,
+    state: previous, context });
+  if (!proposal || !context) return previous;
+  const existingGoal = readSourceBoundContextualGoal(previous, context);
+  const goal: SourceBoundContextualGoal = existingGoal?.goal_id === proposal.goal.goal_id
+    ? existingGoal : { ...proposal.goal, recorded_revision: context.state_revision + 1 };
+  const original = previous.customer_constraints.contextual_scope_facts;
+  if (original !== undefined && (!Array.isArray(original) || original.length > 24)) return previous;
+  const facts: SourceBoundScopeFact[] = Array.isArray(original) ? structuredClone(original) : [];
+  for (const proposed of proposal.facts) {
+    const indices = facts.flatMap((fact, index) => fact && fact.goal_id === proposed.goal_id &&
+      fact.scope === proposed.scope ? [index] : []);
+    if (indices.length > 1) return previous;
+    const old = indices.length ? facts[indices[0]] : null;
+    // An identical assertion is not a new fact or a reason to relabel old
+    // facts with the replay/current source. The RPC remains exactly once.
+    if (old && old.count === proposed.count && old.subject_label === proposed.subject_label &&
+      old.company_id === context.company_id && old.conversation_id === context.conversation_id &&
+      Number.isInteger(old.recorded_revision) && old.recorded_revision > 0 &&
+      old.recorded_revision <= context.state_revision) continue;
+    const fact = { ...proposed, recorded_revision: context.state_revision + 1 };
+    if (indices.length) facts[indices[0]] = fact;
+    else facts.push(fact);
+  }
+  if (facts.length > 24) return previous;
+  return reduceCommerceState(previous, [
+    { type: "SET_CUSTOMER_CONSTRAINT", key: "contextual_goal", value: goal },
+    { type: "SET_CUSTOMER_CONSTRAINT", key: "contextual_scope_facts", value: facts },
+    { type: "SET_CONTEXT", intent: "customer_guidance", topic: goal.subject_label },
+  ]);
+}
+
+/** A goal with no product quantity can be cancelled/paused as a goal. Use the
+ * existing exact-subject lifecycle verifier over an ephemeral identity view;
+ * that view is never sent to the reducer or written as a Commerce entity. */
+function contextualGoalLifecycle(input: CommerceRuntimeInput, previous: ConversationCommerceState,
+  context: ContextualSourceContext | undefined): { goal: SourceBoundContextualGoal;
+    status: "cancelled" | "deferred" } | null {
+  if (!context) return null;
+  const goal = readSourceBoundContextualGoal(previous, context), frame = input.semantic_frame;
+  if (!goal || !frame || frame.confidence < 0.9 || frame.ambiguity.is_ambiguous ||
+    frame.additive || frame.customer_facts?.length || frame.requested_facts.length ||
+    !["CANCEL_ITEM", "REMOVE_ITEM", "DEFER"].includes(frame.operation) ||
+    !matchesReferenceLabel(input.text, goal.subject_label) ||
+    previous.entities.some(entity => entity.attributes.contextual_goal_id === goal.goal_id)) return null;
+  if (frame.entities.some(entity => entity.name !== goal.subject_label ||
+    (entity.entity_ref && entity.entity_ref !== goal.goal_id)) ||
+    frame.referents.some(reference => reference.ref !== goal.goal_id ||
+      reference.source !== "persistent_state" || reference.confidence < 0.9)) return null;
+  const virtualId = "contextual-item:" + goal.goal_id;
+  const view = { ...previous, entities: [...previous.entities, {
+    entity_id: virtualId, category: goal.subject_label, quantity: 0, status: "researching" as const,
+    attributes: { product_name: goal.subject_label }, constraints: {},
+    provenance: { source_type: "customer" as const, source_message_id: goal.source_message_id },
+  }] };
+  const plan = resolveEntityLifecyclePlan(input.text, view);
+  const status = frame.operation === "DEFER" ? "deferred" : "cancelled";
+  if (plan.kind !== "mutation" || plan.plans.length !== 1 ||
+    plan.plans[0].action !== status || plan.plans[0].target_category !== goal.subject_label ||
+    (plan.plans[0].target_entity_id && plan.plans[0].target_entity_id !== virtualId)) return null;
+  return { goal, status };
+}
+
+function contextualGoalStatusState(state: ConversationCommerceState,
+  goal: SourceBoundContextualGoal, status: "cancelled" | "deferred" | "superseded",
+  context: ContextualSourceContext): ConversationCommerceState {
+  return reduceCommerceState(state, [{ type: "SET_CUSTOMER_CONSTRAINT", key: "contextual_goal",
+    value: { ...goal, status, status_source_message_id: context.source_message_id,
+      status_recorded_revision: context.state_revision + 1 } }]);
+}
+
+function contextualUpdateCommitted(decision: ContextualDecision,
+  state: ConversationCommerceState, sourceMessageId: string, revision: number): boolean {
+  if (decision.route !== "contextual_scoped_update") return false;
+  const entity = state.entities.find(value => value.entity_id === decision.entity_id &&
+    value.category === decision.topic && !["cancelled", "deferred", "superseded"].includes(value.status));
+  if (!entity || entity.provenance.source_type !== "customer" ||
+    entity.provenance.source_message_id !== sourceMessageId || !decision.updates.length) return false;
+  const rows = entity.attributes.scoped_customer_updates;
+  if (!Array.isArray(rows)) return false;
+  for (const update of decision.updates) {
+    const matches = rows.filter(row => isRecord(row) && row.scope === update.scope &&
+      row.attribute === update.attribute);
+    if (matches.length !== 1) return false;
+    const row = matches[0];
+    if (row.action !== update.action || row.value !== update.value ||
+      row.group_scope !== update.group_scope || row.group_goal_id !== update.group_goal_id ||
+      (update.source_text && (row.source_text !== update.source_text ||
+        row.source_message_id !== sourceMessageId || typeof row.source_revision !== "number" || !Number.isInteger(row.source_revision) ||
+        row.source_revision < 1 || row.source_revision > revision)) ||
+      JSON.stringify(row.scope_count_source ?? null) !== JSON.stringify(update.scope_count_source ?? null)) return false;
+  }
+  return decision.aggregate_quantity === undefined || entity.quantity === decision.aggregate_quantity;
+}
+
 /** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
-export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[]): ConversationCommerceState {
+export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[],
+  sourceContext?: ContextualSourceContext): ConversationCommerceState {
+  // Reserved scope facts have one source-verifying consumer. Never let an
+  // unsupported/forged proposal fall into the general semantic fact adapter.
+  if (hasContextualScopeFactProposal(input)) return contextualScopeFactState(previous, input, sourceContext);
+  const goalLifecycle = contextualGoalLifecycle(input, previous, sourceContext);
+  if (goalLifecycle && sourceContext) return contextualGoalStatusState(previous, goalLifecycle.goal,
+    goalLifecycle.status, sourceContext);
   // A question that only reads canonical customer/Commerce facts must not
   // create an item, change an entity, or rewrite a transaction. Enforce this
   // at the reducer entry as well as in each response/recall branch: a stray
@@ -3433,7 +3566,7 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
     if(owned.length)state=reduceCommerceState(state,owned);
     return state;
   }
-  let state = reduceTurnOperations(previous,input,hints);
+  let state = reduceTurnOperations(previous,input,hints,sourceContext);
   const windowEvents=sourceBoundWindowOpeningEvents(state,input);
   if(windowEvents.length)state=reduceCommerceState(state,windowEvents);
   // A counted room/person in a first service-advice question is not a
@@ -3529,6 +3662,20 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
       state=reduceCommerceState(state,[{type:"ADD_CORRECTION",correction:`${entity.attributes.product_name ?? entity.model ?? entity.category} quantity: change from ${old.quantity} ${unit} to ${entity.quantity} ${unit}`}]);
     }
   }
+  if (sourceContext) {
+    const goal = readSourceBoundContextualGoal(previous, sourceContext);
+    if (goal) {
+      // Once materialized, the entity's canonical status remains the lifecycle
+      // authority. Do not add unrelated goal writes to the frozen B2 transition.
+      const contextual = resolveContextualTurn(input, previous, sourceContext);
+      if (contextual.route === "product_guidance" && contextual.requires_generated_guidance &&
+        contextual.topic !== goal.subject_label) {
+        // A source-quoted new subject changes focus. Retained old scope
+        // counts cannot silently become the new subject's quantities.
+        state = reduceCommerceState(state, [{ type: "SET_CONTEXT", topic: contextual.topic }]);
+      }
+    }
+  }
   return state;
 }
 
@@ -3563,13 +3710,14 @@ export function acknowledgeCurrentCustomerDimensions(
 function resolveContextualTurn(
   input: CommerceRuntimeInput,
   state: ConversationCommerceState,
+  context?: ContextualSourceContext,
 ): ContextualDecision {
   const history = (input.history ?? [])
     .filter((turn) => ["visitor", "user", "customer"].includes(turn.role))
     .slice(0, MAX_HISTORY_TURNS).map((turn) => clean(turn.content));
   const candidate = resolveSemanticContextualCandidate({
     text: input.text, language: input.language, state,
-    semantic_frame: input.semantic_frame,
+    semantic_frame: input.semantic_frame, context,
   }) ?? resolveIndustryContextualCandidate({
     text: input.text, history, state, language: input.language,
   });
@@ -3612,10 +3760,10 @@ export async function persistCommerceTurn(
   revision: number;
   result: string;
 }> {
-  const loaded = await loadCommerceState(db, input.conversation_id);
+  const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
   let expected = loaded.revision;
   let previous = loaded.state;
-  let next = reduceTurn(previous, input, hints);
+  let next = reduceTurn(previous, input, hints, contextualSourceContext(input, expected));
 
   for (let attempt = 0; attempt < 2; attempt++) {
     // A conversational turn that does not alter the canonical commerce state
@@ -3648,6 +3796,12 @@ export async function persistCommerceTurn(
     }
     const parsed = rpcResult(data);
     if (parsed.result === "success") {
+      if ((hasContextualScopeFactProposal(input) || hasContextualScopeAllocation(input) ||
+          contextualGoalLifecycle(input, previous, contextualSourceContext(input, expected))) &&
+        parsed.applied_revision !== expected + 1) {
+        return { previous_state: previous, state: previous, previous_revision: expected,
+          revision: expected, result: "contextual_commit_revision_mismatch" };
+      }
       return {
         previous_state: previous,
         state: next,
@@ -3656,11 +3810,20 @@ export async function persistCommerceTurn(
         result: "success",
       };
     }
+    if (parsed.result === "source_message_already_applied" &&
+      (hasContextualScopeFactProposal(input) || hasContextualScopeAllocation(input))) {
+      // A dedup receipt does not commit the candidate built in this attempt.
+      // Read the canonical state before any source-bound acknowledgement.
+      const reloaded = await loadCommerceState(db, input.conversation_id, input.company_id);
+      return { previous_state: reloaded.state, state: reloaded.state,
+        previous_revision: reloaded.revision, revision: reloaded.revision,
+        result: "source_message_already_applied" };
+    }
     if (parsed.result === "revision_conflict" && attempt === 0) {
-      const reloaded = await loadCommerceState(db, input.conversation_id);
+      const reloaded = await loadCommerceState(db, input.conversation_id, input.company_id);
       expected = reloaded.revision;
       previous = reloaded.state;
-      next = reduceTurn(previous, input, hints);
+      next = reduceTurn(previous, input, hints, contextualSourceContext(input, expected));
       continue;
     }
     return {
@@ -4166,7 +4329,7 @@ export async function runCommerceStateRuntime(
   // Bind adapter-extracted scopes against committed context before semantic
   // inference, so ambiguity is read-only and a unique update can win the
   // shared reply precedence without a phrase-specific generate-reply branch.
-  const contextualBefore = await loadCommerceState(db, input.conversation_id);
+  const contextualBefore = await loadCommerceState(db, input.conversation_id, input.company_id);
   if (!text) return { authority: "CONVERSATION_STATE", reply: null,
     revision: contextualBefore.revision, persist_result: "read_only",
     reason: "read_only_handoff_control", route: "commerce_state_answer" };
@@ -4181,7 +4344,7 @@ export async function runCommerceStateRuntime(
   // is read-only: derive a bounded answer from the source message and return
   // before any Commerce persistence call.
   if (isHistoricalOrConditionalCustomerCalculationRequest(text)) {
-    const loaded = await loadCommerceState(db, input.conversation_id);
+    const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
     const typed = deriveTypedCustomerCalculation({
       question: text,
       current_source_message_id: input.source_message_id,
@@ -4210,6 +4373,20 @@ export async function runCommerceStateRuntime(
   }
 
 
+  const goalLifecycle = contextualGoalLifecycle(input, contextualBefore.state,
+    contextualSourceContext(input, contextualBefore.revision));
+  if (goalLifecycle) {
+    const persisted = await persistCommerceTurn(db, input, []);
+    const goal = persisted.state.customer_constraints.contextual_goal as SourceBoundContextualGoal | undefined;
+    const committed = persisted.result === "success" &&
+      persisted.revision === persisted.previous_revision + 1 &&
+      goal?.goal_id === goalLifecycle.goal.goal_id && goal.status === goalLifecycle.status &&
+      goal.status_source_message_id === input.source_message_id &&
+      goal.status_recorded_revision === persisted.revision;
+    return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
+      persist_result: persisted.result, route: "commerce_state_answer",
+      reason: committed ? "contextual_goal_lifecycle_committed" : "contextual_goal_lifecycle_uncommitted" };
+  }
   const lifecycleIntent = resolveBoundLifecyclePlan(input, contextualBefore.state);
   const proposedLifecycle=verifiedLifecycleProposal(input,contextualBefore.state);
   if(proposedLifecycle && !acceptedLifecycleEntityRef(input,contextualBefore.state)){
@@ -4286,7 +4463,8 @@ export async function runCommerceStateRuntime(
       reason:"contextual_targeted_clarification",
       route:"commerce_state_answer",contextual_decision};
   }
-  const contextualDecision = resolveContextualTurn(input, contextualBefore.state);
+  let contextualDecision = resolveContextualTurn(input, contextualBefore.state,
+    contextualSourceContext(input, contextualBefore.revision));
   const customerJourney = resolveCustomerJourneyTurn(input, contextualBefore.state);
   if (contextualDecision.route === "targeted_clarification") {
     return {
@@ -4299,7 +4477,7 @@ export async function runCommerceStateRuntime(
 
   // Resolve known scoped/aggregate facts before generic clarification.
   if (detectsConstraintRecall(text) || detectsPortfolioRecall(text) || detectsQuoteReadyRecall(text) || detectsQuoteProvenanceRecall(text) || detectsBrandRequirementRecall(text)) {
-    const loaded = await loadCommerceState(db, input.conversation_id);
+    const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
     if (detectsConstraintRecall(text)) {
       const resolved = buildScopedConstraintAnswer(input, loaded.state);
       if (resolved) return { authority: "CONVERSATION_STATE", reply: resolved.reply, revision: loaded.revision, persist_result: "read_only", reason: "read_only_scoped_constraint_recall_resolved", state_path: resolved.path, route: "commerce_state_answer" };
@@ -4320,7 +4498,7 @@ export async function runCommerceStateRuntime(
   // before generic quantity routing or persistence, so a read cannot create a
   // semantic event or rebind the pending facts' provenance.
   if (isReadOnlyCurrentStateAggregateQuery(text, input.semantic_frame) || /(?:有咩|有什么|what).{0,18}(?:仲未|還沒|还没|未|not yet|outstanding|pending).{0,12}(?:confirm|確認|确认)/i.test(text)) {
-    const loaded = await loadCommerceState(db, input.conversation_id);
+    const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
     const aggregateResolution = resolvePendingCheckAggregateQuery(input, loaded.state, loaded.revision);
     if (aggregateResolution) {
       return { ...aggregateResolution, revision: loaded.revision, persist_result: "read_only", route: "commerce_state_answer" };
@@ -4335,7 +4513,7 @@ export async function runCommerceStateRuntime(
     isReadOnlyCommerceQuestion(text, input.semantic_frame) &&
     !establishesDurableProductResearch(text)
   ) {
-    const loaded = await loadCommerceState(db, input.conversation_id);
+    const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
     const attributeResolution = resolveReadOnlyAttributeConstraintQuery(
       input,
       loaded.state,
@@ -4351,7 +4529,7 @@ export async function runCommerceStateRuntime(
   }
 
   if (detectPreorderUnpaidIntent(text)) {
-    const loaded = await loadCommerceState(db, input.conversation_id);
+    const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
     const hasActiveEntity = loaded.state.entities.some(
       (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
     );
@@ -4385,7 +4563,7 @@ export async function runCommerceStateRuntime(
     contextualDecision.route !== "product_guidance" &&
     customerJourney.status !== "advance"
   ) {
-    const loaded = await loadCommerceState(db, input.conversation_id);
+    const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
     const requestedStatePath = compatibleQuantityStatePath(input, loaded.state);
     const decision = resolveCommerceAnswerAuthority({
       question: text,
@@ -4493,6 +4671,16 @@ export async function runCommerceStateRuntime(
       persist_result: persisted.result, reason: "commerce_state_commit_failed", route: "commerce_state_answer" };
   }
   const state = persisted.state;
+  // A CAS retry may load a newer topic, scope count or lifecycle. Rebind the
+  // reply to the snapshot that actually produced the committed payload.
+  contextualDecision = resolveContextualTurn(runtimeInput, persisted.previous_state,
+    contextualSourceContext(runtimeInput, persisted.previous_revision));
+  if (contextualDecision.route === "targeted_clarification" && hasContextualScopeAllocation(runtimeInput)) {
+    return { authority: "CONVERSATION_STATE", reply: contextualDecision.reply,
+      revision: persisted.revision, persist_result: persisted.result,
+      reason: "contextual_targeted_clarification", route: "commerce_state_answer",
+      contextual_decision: contextualDecision };
+  }
   const lifecycleVerified = persisted.result === "success"
     ? verifyEntityLifecycleTransition(text, persisted.previous_state, state, input.source_message_id,
         acceptedLifecycleEntityRef(input,persisted.previous_state))
@@ -4550,6 +4738,21 @@ export async function runCommerceStateRuntime(
       contextualDecision.route === "contextual_scoped_update") &&
     ["success", "no_semantic_change", "source_message_already_applied"].includes(persisted.result)
   ) {
+    if (contextualDecision.route === "contextual_scoped_update" &&
+      !contextualUpdateCommitted(contextualDecision, persisted.state, input.source_message_id, persisted.revision)) {
+      return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
+        persist_result: persisted.result, reason: "contextual_update_commit_unverified", route: "commerce_state_answer" };
+    }
+    if (contextualDecision.route === "contextual_scoped_update") {
+      // The verifier above checks the proposal against the committed values.
+      // B2 and reply metadata must now share those exact server-bound rows,
+      // including their persisted source ids/revisions, never the raw proposal.
+      const accepted = contextualDecision;
+      const entity = persisted.state.entities.find(value => value.entity_id === accepted.entity_id)!;
+      const rows = entity.attributes.scoped_customer_updates as typeof accepted.updates;
+      contextualDecision = { ...accepted, updates: accepted.updates.map(update =>
+        structuredClone(rows.find(row => row.scope === update.scope && row.attribute === update.attribute)!)) };
+    }
     // Pure customer guidance needs the existing grounded generation path;
     // a classification receipt must not become an empty acknowledgement or
     // a hardcoded request for an unrelated customer measurement.
