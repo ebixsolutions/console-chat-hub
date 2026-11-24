@@ -1,0 +1,126 @@
+/** Observer-only adversarial controls. No application fixture, original oracle,
+ * semantic reading, merchant document or original test is modified here. */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {businessAssertions,snapshot,summarizeObservationEvidence} from './p1-observation-diagnostics.mjs';
+import {digest,loadObservationCases} from './p1-observation-fixtures.mjs';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
+const updateReply=(turn,content)=>{
+ turn.reply.content=content;turn.reply.content_sha256=digest(content);
+ turn.reply.metadata.b2_response_hash=digest(content);
+};
+function quantityCase(){
+ const source='source-initial',question='source-question',company='company',ticket='ticket';
+ const state={entities:[{entity_id:'item',category:'generic',quantity:3,status:'tentative',
+  attributes:{product_name:'notebook',unit:'units'},provenance:{source_type:'customer',source_message_id:source}}],
+  conversion:{order_status:'none',payment_status:'none'},delivery:{confirmed:false}};
+ const turn=(id,utterance)=>({turn:id===source?1:2,source_message_id:id,company_id:company,conversation_id:ticket,
+  visitor_found:true,visitor_sha256:digest(utterance),utterance,utterance_sha256:digest(utterance),http:200,kb_dispatch_count:0,
+  input:{reading:{status:'SCRIPTED_PROPOSAL'},kb:{status:'ORIGINAL_SYNTHETIC_SEED',transport_rebinding:[{to_tenant:'34'}]},generation:{status:'NOT_SUPPLIED'}},
+  readback:{status:'ACTUAL_FIXTURE_TABLES',state:structuredClone(state),commerce_revision:1,
+   commerce_company_id:company,commerce_conversation_id:ticket},assertions:[],
+  reply:{source_message_id:id,content:'',content_sha256:'',metadata:{b2_source_message_id:id,b2_expected_company_id:company,
+   b2_commit_source:'commit_ai_reply_tx',b2_response_hash:'',recall_provenance:[]}}});
+ const turns=[turn(source,'I need 3 units of notebook.'),turn(question,'How many notebook units did I request?')];
+ updateReply(turns[0],'Your request was recorded.');updateReply(turns[1],'quantity: 3 units');
+ turns[1].reply.metadata.recall_provenance=[{fact_type:'quantity',state_path:'entities.0.quantity',entity_id:'item',
+  authority:'CURRENT_CUSTOMER_MEMORY',source_message_id:source}];
+ const row={id:'case',kind:'synthetic',turns:turns.map(item=>item.utterance),
+  must:{customer_value:3,customer_unit:'units',prior_source_required:true,merchant_kb_required:false}};
+ return {row,turns};
+}
+const statuses=(row,turns)=>Object.fromEntries(businessAssertions(row,turns).map(check=>[check.id,check.status]));
+test('Delivered quantity and unit need canonical path, prior source and exact B2 reply binding',()=>{
+ const {row,turns}=quantityCase();assert(Object.values(statuses(row,turns)).every(status=>status==='PASS'));
+});
+test('Correct stored count cannot hide a missing unit in the delivered answer',()=>{
+ const {row,turns}=quantityCase();updateReply(turns[1],'quantity: 3');
+ const results=statuses(row,turns);assert.equal(results['must.customer_value'],'PASS');
+ assert.equal(results['must.customer_unit'],'FAIL');
+});
+test('A numeral embedded in a different value cannot satisfy the reply quantity',()=>{
+ const {row,turns}=quantityCase();updateReply(turns[1],'quantity: 3003 units');
+ assert.equal(statuses(row,turns)['must.customer_value'],'FAIL');
+});
+test('A negated or quoted copy of the expected numeral is not a supported numeric answer',()=>{
+ for(const text of ['It is not 3 units.','You asked for 3 units; the current quantity is 5 units.','"Quantity: 3 units"','Quantity: 3 units\nActually: 5 units']){
+  const {row,turns}=quantityCase();updateReply(turns[1],text);
+  assert.equal(statuses(row,turns)['must.customer_value'],'FAIL');
+ }
+});
+test('Wrong source, tenant, entity or reply hash cannot earn quantity PASS',()=>{
+ for(const mutate of [
+  t=>t.reply.metadata.recall_provenance[0].source_message_id='another-source',
+  t=>t.readback.commerce_company_id='another-company',
+  t=>t.reply.metadata.recall_provenance[0].entity_id='another-entity',
+  t=>t.reply.metadata.b2_response_hash='forged',
+  t=>t.readback.state.entities[0].provenance.source_type='system',
+ ]){
+  const {row,turns}=quantityCase();mutate(turns[1]);
+  assert.equal(statuses(row,turns)['must.customer_value'],'FAIL');
+ }
+});
+test('An unrelated mixed-product sum cannot coincidentally satisfy the original requested count',()=>{
+ const {row,turns}=quantityCase(),final=turns[1];
+ final.readback.state.entities[0].quantity=2;
+ final.readback.state.entities.push({...structuredClone(final.readback.state.entities[0]),entity_id:'other',quantity:1,
+  attributes:{product_name:'another-product',unit:'units'}});
+ final.reply.metadata.recall_provenance.push({...final.reply.metadata.recall_provenance[0],entity_id:'other',state_path:'entities.1.quantity'});
+ assert.equal(statuses(row,turns)['must.customer_value'],'FAIL');
+});
+test('Stored state alone cannot certify a customer-facing answer',()=>{
+ const {row,turns}=quantityCase();turns[1].reply.metadata.recall_provenance=[];
+ assert.equal(statuses(row,turns)['must.customer_value'],'FAIL');
+});
+test('Actual KB query and tenant are required; cited oracle names alone cannot pass',()=>{
+ const {row,turns}=quantityCase(),final=turns[1];row.must={merchant_kb_required:true,retain_document_id:'doc',retain_chunk_id:'chunk'};
+ final.kb_dispatch_count=1;final.kb_requests=[{query:'a policy query',query_sha256:digest('a policy query'),company_id:'other-tenant'}];
+ final.input.kb.document_ids=['doc'];final.input.kb.chunk_ids=['chunk'];
+ final.reply.metadata.citation_lineage={selected_document_id:'doc',evidence_chunk_ids:['chunk']};
+ assert(Object.values(statuses(row,turns)).every(status=>status==='FAIL'));
+ final.kb_requests[0].company_id='34';assert(Object.values(statuses(row,turns)).every(status=>status==='PASS'));
+});
+test('Policy prose copied from the frozen oracle remains unproven without independent semantic evidence',()=>{
+ const {turns}=quantityCase(),row={id:'text',kind:'sourced',turns:turns.map(turn=>turn.utterance),
+  must:'Use the published rule and explain the customer next step.',must_not:'Invent a refund.'};
+ updateReply(turns[1],row.must+' '+row.must_not);
+ assert.deepEqual(businessAssertions(row,turns).map(item=>item.status),['NOT_PROVEN','NOT_PROVEN']);
+});
+test('An actual terminal failure is an unmet business reply even if output repeats the oracle',()=>{
+ const {turns}=quantityCase(),row={id:'text',kind:'sourced',turns:turns.map(turn=>turn.utterance),must:'Give a supported answer.'};
+ turns[0].reply.metadata.generation_success=false;
+ assert.equal(statuses(row,turns).must,'FAIL');
+});
+function record(row,turns){return {id:row.id,modes:Object.fromEntries(['no_reading','scripted'].map(mode=>[mode,{
+ status:'FAIL',business_assertions:businessAssertions(row,turns),expected_turns:row.turns.length,executed_turns:turns.length,turns}]))};}
+test('Equal row count with one duplicate and one missing original ID is incomplete',()=>{
+ const {row,turns}=quantityCase(),other={...row,id:'other'};
+ const result=summarizeObservationEvidence([row,other],[record(row,turns),record(row,turns)]);
+ assert.equal(result.complete,false);assert.deepEqual(result.missing_ids,['other']);assert.deepEqual(result.duplicate_ids,['case']);
+ assert.equal(result.expected_turns,8);assert.equal(result.full_oracle,'NOT_PROVEN');
+});
+test('Dropped timeout turns and mutated original utterances remain in the denominator',()=>{
+ const {row,turns}=quantityCase(),r=record(row,turns);
+ r.modes.scripted.turns=[structuredClone(turns[0])];r.modes.scripted.executed_turns=1;
+ r.modes.no_reading.turns[1]={...turns[1],utterance:'Changed input'};
+ const result=summarizeObservationEvidence([row],[r]);
+ assert.equal(result.complete,false);assert.equal(result.expected_turns,4);assert.equal(result.executed_turns,3);
+ assert(result.identity_failures.some(item=>item.reason==='turn_count_mismatch'));
+ assert(result.identity_failures.some(item=>item.reason==='original_turn_identity_mismatch'));
+});
+test('Original 60+7 IDs and the three-colleagues P3 sentence are unchanged',()=>{
+ const {rows}=loadObservationCases(fs,root);assert.equal(rows.length,67);assert.equal(new Set(rows.map(row=>row.id)).size,67);
+ assert.equal(rows.find(row=>row.id==='P3').turns[0],'我想訂蛋糕畀三位同事慶祝，預算500元，請介紹有咩款式。');
+ assert.equal(rows.find(row=>row.id==='P3').reading.quantity,null);
+});
+test('Actual request evidence excludes secret-bearing extra fields and arbitrary RPC payloads',()=>{
+ const f={tables:{conversations:[{id:'ticket',company_id:'company'}],messages:[]},commits:[],requests:[{
+  url:'https://fixture.invalid/rag/context-search',body:{query:'policy',company_id:'34',api_key:'DO_NOT_CAPTURE'}},{
+  url:'https://fixture.invalid/rest/v1/rpc/commit_ai_reply_tx',body:{p_conversation_id:'ticket',secret:'DO_NOT_CAPTURE'}}]};
+ const observed=snapshot(f,{status:200,body:{}},'source');
+ assert.equal(observed.kb_requests[0].query,'policy');assert.equal(observed.kb_requests[0].query_sha256,digest('policy'));
+ assert(!JSON.stringify(observed).includes('DO_NOT_CAPTURE'));
+});

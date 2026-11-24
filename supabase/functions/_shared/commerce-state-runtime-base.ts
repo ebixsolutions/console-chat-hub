@@ -563,8 +563,10 @@ function trustedAttributeReferent(input:CommerceRuntimeInput,state:ConversationC
 }
 
 /** A read-only semantic topic may select an exact stored category when that
- * category has one customer-owned subject and the requested measurement is
- * already canonical. The model supplies no value and grants no writer action.
+ * category has one customer-owned subject. Selecting a subject is separate
+ * from finding its dimension limit: a missing limit requires a targeted
+ * clarification, not another product-identification question.
+ * The model supplies no value and grants no writer action.
  * This also supports older canonical records that have no display-name alias;
  * no industry dictionary or raw-history constraint is restored. */
 function canonicalDimensionReferent(
@@ -590,17 +592,55 @@ function canonicalDimensionReferent(
   const named = active.filter(candidate => sourceOwnedSubjectLabels(candidate).some(label =>
     matchesReferenceLabel(input.text, label)));
   const conflictingReference = frame.referents.some(reference =>
-    reference.source === "persistent_state" && reference.confidence >= 0.9 &&
+    reference.confidence >= 0.9 &&
+    (reference.source === "persistent_state" ||
+      state.entities.some(stored => stored.entity_id === reference.ref)) &&
     reference.ref !== entity.entity_id);
   const conflictingEntity = frame.entities.some(candidate =>
     candidate.confidence >= 0.9 && ((candidate.category_hint && candidate.category_hint !== topic) ||
       (active.some(stored => stored.entity_id === candidate.entity_ref) &&
         candidate.entity_ref !== entity.entity_id)));
   if (named.some(candidate => candidate.entity_id !== entity.entity_id) ||
-    conflictingReference || conflictingEntity ||
-    !stateDimensionConstraint(state, topic, attribute, entity.entity_id))
+    conflictingReference || conflictingEntity)
     return { entity: null, ambiguous: false };
   return { entity, ambiguous: false };
+}
+
+/** A supplied semantic demand is additional evidence to verify, never a
+ * reason to ignore an original-source conflict. This check applies equally
+ * to literal and semantic selectors and does not invent missing readings. */
+function dimensionDemandMatchesTarget(input: CommerceRuntimeInput,
+  state: ConversationCommerceState, entityId: string | undefined): boolean {
+  const frame = input.semantic_frame;
+  if (!frame) return true;
+  if (!["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) ||
+    frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+    frame.explicit_negations.length) return false;
+  const target = entityId ? state.entities.find(entity => entity.entity_id === entityId) : null;
+  const owned = state.entities.filter(entity => entity.provenance.source_type === "customer" &&
+    Boolean(entity.provenance.source_message_id));
+  if (target && frame.referents.some(reference => reference.confidence >= 0.9 &&
+    (reference.source === "persistent_state" ||
+      state.entities.some(entity => entity.entity_id === reference.ref)) &&
+    reference.ref !== target.entity_id)) return false;
+  for (const demand of frame.demands ?? []) {
+    const quote = clean(demand.source_quote, 2400);
+    if (!quote || !clean(input.text, 2400).includes(quote) ||
+      demand.customer_correction || demand.ambiguity.is_ambiguous ||
+      demand.explicit_negations.length) return false;
+    for (const ref of demand.subject_refs) {
+      const subject = clean(ref, 160);
+      if (!subject) return false;
+      const named = owned.filter(entity =>
+        [entity.entity_id, entity.category, ...sourceOwnedSubjectLabels(entity)].some(label =>
+          clean(label, 160).toLowerCase() === subject.toLowerCase()));
+      // A newly mentioned name is evidence of the question's subject, not
+      // evidence that it is this existing item. A literal quote alone cannot
+      // merge the two subjects through a model-proposed topic.
+      if (!target || named.length !== 1 || named[0].entity_id !== target.entity_id) return false;
+    }
+  }
+  return true;
 }
 function resolveAttributeQueryCategory(input: CommerceRuntimeInput,
   state?:ConversationCommerceState): {
@@ -745,12 +785,17 @@ function formatMillimetres(value: number): string {
 function resolveReadOnlyAttributeConstraintQuery(
   input: CommerceRuntimeInput,
   state: ConversationCommerceState,
+  revision: number,
 ): AttributeConstraintQueryResolution | null {
   if (!isReadOnlyCommerceQuestion(input.text, input.semantic_frame)) return null;
   const measurement = parseCommerceDimensionMeasurement(input.text);
   if (!measurement) return null;
 
-  const categoryResolution = resolveAttributeQueryCategory(input,state);
+  let categoryResolution = resolveAttributeQueryCategory(input,state);
+  if (!Number.isSafeInteger(revision) || revision < 1 ||
+    !dimensionDemandMatchesTarget(input, state, categoryResolution.entity_id)) {
+    categoryResolution = { category: null, ambiguous: true };
+  }
   const attribute =
     inferCommerceDimensionAttribute(input.text, input.semantic_frame) ??
     (() => {
@@ -4773,6 +4818,7 @@ export async function runCommerceStateRuntime(
     const attributeResolution = resolveReadOnlyAttributeConstraintQuery(
       input,
       loaded.state,
+      loaded.revision,
     );
     if (attributeResolution) {
       return {

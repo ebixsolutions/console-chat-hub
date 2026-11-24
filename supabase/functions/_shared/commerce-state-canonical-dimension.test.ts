@@ -29,12 +29,12 @@ function snapshot(category: string): ConversationCommerceState {
 }
 
 async function read(state: ConversationCommerceState, semantic: CommerceSemanticFrame | null,
-  text = "Would one 598mm item fit?") {
+  text = "Would one 598mm item fit?", revision = 12) {
   const before = JSON.stringify(state);
   let writes = 0;
   const db: CommerceStateDbClient = {
     from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({
-      data: { company_id: "company-a", conversation_id: "ticket-a", revision: 12, state }, error: null,
+      data: { company_id: "company-a", conversation_id: "ticket-a", revision, state }, error: null,
     }) }) }) }),
     rpc: async () => { writes++; return { data: { result: "success", applied_revision: 13 }, error: null }; },
   };
@@ -109,4 +109,95 @@ Deno.test("Task3C canonical dimension lookup refuses an independently named comp
     provenance: { source_type: "customer", source_message_id: "display-source" } });
   const result = await read(state, frame("packing-case"), "Would Portable display width 598mm fit?");
   assert(result?.reason !== "read_only_attribute_constraint_query_resolved", JSON.stringify(result));
+});
+
+Deno.test("Task3C dimension lookup asks only for the missing limit on its verified canonical subject", async () => {
+  const state = snapshot("packing-case");
+  const reading = frame("packing-case");
+  reading.requested_facts = ["height"];
+  const result = await read(state, reading, "Would a height of 1820mm fit?");
+  assert(result?.reason === "read_only_attribute_constraint_query_unresolved" && !result.state_path,
+    JSON.stringify(result));
+  assert(result.reply?.includes("packing-case") && result.reply.includes("height limit"),
+    "Known subject was discarded instead of asking its missing limit: " + JSON.stringify(result));
+  assert(!result.reply?.includes("1800") && !result.reply?.includes("595"),
+    "Uncommitted history or another dimension supplied the missing limit");
+});
+
+Deno.test("Task3C dimension lookup rejects contradictory original-source demand evidence", async () => {
+  const text = "Would one 598mm item fit?";
+  for (const kind of ["valid", "invented quote", "different subject", "unmentioned subject",
+    "ambiguous demand", "negated demand", "correction demand"] as const) {
+    const state = snapshot("packing-case"), reading = frame("packing-case");
+    state.entities.push({ entity_id: "other", category: "event-display", quantity: 1,
+      status: "researching", attributes: {}, constraints: { max_width_mm: 700 },
+      provenance: { source_type: "customer", source_message_id: "other-source" } });
+    reading.demands = [{ question: text, source_quote: text, subject_refs: ["packing-case:saved"],
+      source_type: "general", requested_facts: ["width"], constraints: {},
+      customer_correction: false, explicit_negations: [],
+      ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null } }];
+    if (kind === "invented quote") reading.demands[0].source_quote = "The customer never said this.";
+    if (kind === "different subject") reading.demands[0].subject_refs = ["other"];
+    if (kind === "unmentioned subject") reading.demands[0].subject_refs = ["a missing subject"];
+    if (kind === "ambiguous demand") reading.demands[0].ambiguity.is_ambiguous = true;
+    if (kind === "negated demand") reading.demands[0].explicit_negations = ["packing-case"];
+    if (kind === "correction demand") reading.demands[0].customer_correction = true;
+    const result = await read(state, reading, text);
+    if (kind === "valid") assert(result?.state_path === "entities.0.constraints.max_width_mm", JSON.stringify(result));
+    else assert(result?.reason !== "read_only_attribute_constraint_query_resolved" && !result?.state_path,
+      kind + ": " + JSON.stringify(result));
+  }
+});
+
+Deno.test("Task3C dimension lookup cannot redirect a known prior-turn identity through a competing topic", async () => {
+  const state = snapshot("packing-case");
+  state.entities.push({ entity_id: "other", category: "event-display", quantity: 1,
+    status: "researching", attributes: {}, constraints: { max_width_mm: 700 },
+    provenance: { source_type: "customer", source_message_id: "other-source" } });
+  const reading = frame("packing-case");
+  reading.referents = [{ ref: "other", source: "prior_turn", confidence: 0.99 }];
+  const result = await read(state, reading);
+  assert(result?.reason !== "read_only_attribute_constraint_query_resolved" && !result?.state_path,
+    JSON.stringify(result));
+});
+
+Deno.test("Task3C dimension lookup never binds a newly named subject by a quoted model echo", async () => {
+  const text = "Would a portable gantry width 598mm fit?";
+  const reading = frame("packing-case");
+  reading.demands = [{ question: text, source_quote: text, subject_refs: ["portable gantry"],
+    source_type: "general", requested_facts: ["width"], constraints: {},
+    customer_correction: false, explicit_negations: [],
+    ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null } }];
+  const result = await read(snapshot("packing-case"), reading, text);
+  assert(result?.reason !== "read_only_attribute_constraint_query_resolved" && !result?.state_path,
+    JSON.stringify(result));
+});
+
+Deno.test("Task3C dimension lookup applies frame exclusions before a literal trusted-reference shortcut", async () => {
+  for (const kind of ["negated", "corrected", "additive", "ambiguous"] as const) {
+    const state = snapshot("packing-case"), reading = frame("packing-case");
+    state.entities[0].attributes.product_name = "Packing crate";
+    reading.referents = [{ ref: "packing-case:saved", source: "persistent_state", confidence: 0.99 }];
+    if (kind === "negated") reading.explicit_negations = ["packing-case"];
+    if (kind === "corrected") reading.customer_correction = true;
+    if (kind === "additive") reading.additive = true;
+    if (kind === "ambiguous") reading.ambiguity.is_ambiguous = true;
+    const result = await read(state, reading, "Would Packing crate width 598mm fit?");
+    assert(result?.reason !== "read_only_attribute_constraint_query_resolved" && !result?.state_path,
+      kind + ": " + JSON.stringify(result));
+  }
+});
+
+Deno.test("Task3C dimension lookup requires a valid committed revision on every selector", async () => {
+  for (const literal of [false, true]) for (const revision of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const state = snapshot("packing-case"), reading = frame("packing-case");
+    if (literal) {
+      state.entities[0].attributes.product_name = "Packing crate";
+      reading.referents = [{ ref: "packing-case:saved", source: "persistent_state", confidence: 0.99 }];
+    }
+    const result = await read(state, reading,
+      literal ? "Would Packing crate width 598mm fit?" : "Would one 598mm item fit?", revision);
+    assert(result?.reason !== "read_only_attribute_constraint_query_resolved" && !result?.state_path,
+      JSON.stringify({ literal, revision, result }));
+  }
 });

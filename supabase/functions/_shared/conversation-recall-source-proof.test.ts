@@ -2,6 +2,8 @@ import {createEmptyConversationCommerceState} from "./commerce-state-contract.ts
 import {reduceTurn,runCommerceStateRuntime,type CommerceStateDbClient} from "./commerce-state-runtime.ts";
 import {buildCanonicalConversationMemory} from "./conversation-long-memory.ts";
 import {prepareConversationRecall,retainedRecapTargets,type ConversationRecallInput} from "./conversation-recall.ts";
+// Additive regressions use the existing original-C3 native test entrypoint.
+import "./conversation-recall-inquiry.test.ts";
 
 function assert(value:unknown,message="assertion failed"):asserts value {if(!value)throw Error(message);}
 const identity={company_id:"recap-company",conversation_id:"recap-ticket"};

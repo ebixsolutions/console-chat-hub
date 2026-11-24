@@ -968,13 +968,15 @@ function selectEntities(
 function verifiedSemanticRecapTarget(input:ConversationRecallInput):CommerceEntity|null {
   const c=input.commerce,m=input.memory;
   const proposal=input.customer_recall_proposal;
+  const summaryInquiry=proposal?.requested_facts.length===1 && keyNorm(proposal.requested_facts[0])==="summary" &&
+    parseQuery(input.question).facts.every(fact=>fact==="summary");
   if(!c||!m||input.explicit_handoff||
     input.trusted_visitor_source_status!=="verified"||
     !input.company_id||!input.conversation_id||!input.source_message_id||
     c.company_id!==input.company_id||c.conversation_id!==input.conversation_id||
     m.company_id!==input.company_id||m.conversation_id!==input.conversation_id||
     m.commerce_state_revision!==c.revision||
-    !hasRequirementsRecapCue(input.question))return null;
+    (!hasRequirementsRecapCue(input.question)&&!summaryInquiry))return null;
   if(proposal && (proposal.company_id!==input.company_id || proposal.conversation_id!==input.conversation_id ||
     proposal.source_message_id!==input.source_message_id || proposal.intent!=="customer_fact_recall" ||
     proposal.requested_facts.some(fact=>fact!=="summary")))return null;
@@ -1003,6 +1005,9 @@ function verifiedSemanticRecapTarget(input:ConversationRecallInput):CommerceEnti
 function verifiedSemanticRecapSelection(input:ConversationRecallInput):{entity:CommerceEntity;source_phrase:string}|null {
   const entity=verifiedSemanticRecapTarget(input);
   if(!entity || isCurrentRequirementsRecap(input.question))return null;
+  // The existing whole-turn grammar below proves recap intent for both
+  // imperatives and inquiries. A second keyword check would reject the same
+  // source-verified target in "What are my ... requirements?".
   let sourcePhrase:string|null=null;
   const accepted=isCurrentRequirementsRecap(input.question,
     input.commerce?retainedRecapTargets(input.commerce.state):[],candidate=>{
@@ -1537,6 +1542,17 @@ function resolveSemanticCustomerRecall(input:ConversationRecallInput):Conversati
   const q=withoutExcludedLookups(input.question);
   if(customerRecallHasAction(input.question)||any(q,EXTERNAL)|| /(?:幾錢|几钱|多少錢|多少钱|how much does|can you book|place (?:an? )?order|幫我(?:預約|下單)|帮我(?:预约|下单))/iu.test(q)||
      proposal.requested_facts.some(k=>UNSAFE_CUSTOMER_RECALL_KEY.test(k)))return fail("CURRENT_KB_REQUIRED","EXTERNAL_OR_MIXED_FACT");
+  // A summary of the current canonical state is not a scalar claim about
+  // words in this new Visitor turn. Delegate only a whole-turn recap to the
+  // existing canonical resolver, which retains the original Company/Ticket,
+  // committed Memory/Commerce source, revision and entity-selection checks.
+  // All historical scalar facts still require the exact-source checks below.
+  if(proposal.requested_facts.length===1 && keyNorm(proposal.requested_facts[0])==="summary") {
+    const targets=input.commerce?retainedRecapTargets(input.commerce.state):[];
+    const semantic=verifiedSemanticRecapSelection(input);
+    if(semantic)targets.push(semantic.source_phrase);
+    if(isCurrentRequirementsRecap(input.question,targets))return null;
+  }
   // A semantic recall label cannot replace effective state with a quote.
   // The original resolver keeps canonical conflict and lifecycle checks.
   if(isCurrentEffectiveQuantityRecall(input.question))return null;
@@ -1629,6 +1645,7 @@ function resolveSemanticCustomerRecall(input:ConversationRecallInput):Conversati
     if(laterCustomerSourceConflicts(input,fact.source_message_id,field,subjects,entity??null,
       applicable[0],clauses.slice(clauses.indexOf(applicable[0])+1)))continue;
     evidence.push({fact_type:field.fact,state_path:`current_customer_facts.${i}.value`,value:fact.value,
+      ...(field.fact==="quantity"?attestedCanonicalQuantityUnit(input,fact.value,fact.source_message_id,fact.entity_id??null)??{}:{}),
       authority:"CURRENT_CUSTOMER_MEMORY",entity_id:fact.entity_id??null,region:fact.region??null,
       evidence_source_message_id:fact.source_message_id,temporal_scope:"current",source_kind:"attested_customer_utterance",attribute_key:fact.key});
   }
@@ -1647,6 +1664,50 @@ function resolveSemanticCustomerRecall(input:ConversationRecallInput):Conversati
 // grammar is bounded; unsupported units stay absent when canonical has no unit.
 const LITERAL_QUANTITY_UNIT = "(部|台|件|套|份|盒|箱|堂|課|课|張|张|units?|items?|pieces?|sets?|boxes?|sessions?|lessons?|licenses?|licences?|seats?|nights?)";
 const LITERAL_QUANTITY_WITH_UNIT = new RegExp("([0-9]{1,4}|[零〇一二兩两三四五六七八九十])\\s*" + LITERAL_QUANTITY_UNIT + "(?![a-z])", "giu");
+
+type QuantityUnitEvidence = Pick<RecallEvidence,
+  "quantity_unit" | "quantity_unit_source_kind" | "quantity_unit_source_message_id">;
+
+/** Unit text comes from the same customer-owned canonical entity. It remains
+ * literal display data; a category, translation or rendering locale supplies
+ * no substitute. Bound the label without enumerating industries or units. */
+function canonicalCustomerQuantityUnit(entity: CommerceEntity): QuantityUnitEvidence | null {
+  const unit=entity.attributes.unit, source=entity.provenance.source_message_id;
+  if(entity.provenance.source_type!=="customer" || typeof source!=="string" || !source.trim() ||
+    typeof unit!=="string" || !unit.trim() || unit.length>64 ||
+    !/^[\p{L}\p{N}\p{M}]+(?:[ ./_-][\p{L}\p{N}\p{M}]+)*$/u.test(unit))return null;
+  return {quantity_unit:unit,quantity_unit_source_kind:"canonical_customer_attribute",
+    quantity_unit_source_message_id:source};
+}
+
+/** An earlier-utterance count may display a current canonical unit only when
+ * that same source, number and unit still agree. A newer unit cannot relabel
+ * an older customer statement, and a source-free Memory scalar cannot borrow
+ * another item's unit. This adds display provenance, never a fact candidate. */
+function attestedCanonicalQuantityUnit(input:ConversationRecallInput,value:unknown,sourceId:string,entityId:string|null):QuantityUnitEvidence|null {
+  const c=input.commerce,m=input.memory;
+  if(!c||!m||typeof value!=="number"||!Number.isFinite(value)||
+    input.trusted_visitor_source_status!=="verified"||
+    c.company_id!==input.company_id||c.conversation_id!==input.conversation_id||
+    m.company_id!==input.company_id||m.conversation_id!==input.conversation_id||m.commerce_state_revision!==c.revision)return null;
+  const originals=(input.trusted_visitor_source_rows??[]).filter(row=>row.id===sourceId);
+  if(originals.length!==1)return null;
+  const candidates=c.state.entities.filter(entity=>(!entityId||entity.entity_id===entityId)&&
+    isCurrentEntity(entity)&&entity.provenance.source_message_id===sourceId&&customerRequestedQuantity(entity)===value);
+  if(candidates.length!==1)return null;
+  const unit=canonicalCustomerQuantityUnit(candidates[0]);
+  if(!unit?.quantity_unit)return null;
+  const source=originals[0].content.normalize("NFKC"),literal=unit.quantity_unit.normalize("NFKC");
+  const words:Record<string,number>={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
+  const numbers=[...numberTokens(source),...Array.from(source.matchAll(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/giu),
+    match=>({value:words[match[1].toLowerCase()],start:match.index!,end:match.index!+match[0].length}))];
+  const found=numbers.filter(number=>{
+    const after=source.slice(number.end).trimStart();
+    return after.toLowerCase().startsWith(literal.toLowerCase()) &&
+      (/[\p{Script=Han}]$/u.test(literal)||!/[\p{L}\p{N}_]/u.test(after[literal.length]??""));
+  });
+  return found.length===1&&found[0].value===value?unit:null;
+}
 
 /** A unit in this already resolved quantity question may label the displayed
  * canonical number. It is not a new canonical fact and cannot change quantity,
@@ -1751,6 +1812,7 @@ function attestedCustomerQuantity(
       .includes(namedSubject.normalize("NFKC").toLowerCase())) continue;
     candidates.push({
       fact_type: "quantity", value: fact.value,
+      ...attestedCanonicalQuantityUnit(input,fact.value,fact.source_message_id,fact.entity_id??null)??{},
       state_path: "current_customer_facts." + i + ".value",
       authority: "CURRENT_CUSTOMER_MEMORY",
       entity_id: fact.entity_id ?? null,
@@ -1780,26 +1842,25 @@ function attestedCustomerQuantity(
       const original=rows.filter(row=>row.id===id);
       const labels=[e.model,e.attributes.product_name].filter(
         (v):v is string=>typeof v==="string"&&v.length>1);
+      const unit=canonicalCustomerQuantityUnit(e);
+      // A prior-count question may name the customer's measurement unit
+      // rather than repeat the item name. Only one active canonical item,
+      // its exact stored unit and the same original source can resolve it.
+      // A unit is never added as an entity alias or used to change state.
+      const unitReference=active.length===1 && unit?.quantity_unit &&
+        keyNorm(quantitySubject(input.question)??"")===keyNorm(unit.quantity_unit);
       if(e.provenance.source_type==="customer"&&id&&id!==input.source_message_id&&
         original.length===1&&labels.some(n=>phrase(original[0].content,n))&&
-        labels.some(n=>phrase(input.question,n))&&Number.isInteger(e.quantity)&&
+        (labels.some(n=>phrase(input.question,n))||unitReference)&&Number.isInteger(e.quantity)&&
         e.quantity>=0&&e.quantity<=1000){
-        const unit=typeof e.attributes.unit==="string"?e.attributes.unit.trim():"";
-        const source=original[0].content.normalize("NFKC");
-        const words:Record<string,number>={one:1,two:2,three:3,four:4,five:5,
-          six:6,seven:7,eight:8,nine:9,ten:10};
-        const number="([0-9]{1,4}|[零〇一二兩两三四五六七八九十]|one|two|three|four|five|six|seven|eight|nine|ten)";
-        const validUnit=unit.length>0&&unit.length<=32&&/^[\p{L}\p{N}]+$/u.test(unit);
-        const found=validUnit?[...source.matchAll(new RegExp(number+"\\s*"+
-          unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\$&"),"giu"))]
-          .map(m=>readNumber(m[1])??words[m[1].toLowerCase()]??null)
-          .filter((n):n is number=>n!==null):[];
+        const attestedUnit=attestedCanonicalQuantityUnit(input,e.quantity,id,e.entity_id);
         const sourceIndex=rows.findIndex(row=>row.id===id);
         const superseded=sourceIndex<0||rows.slice(0,sourceIndex).some(row=>
           labels.some(n=>phrase(row.content,n))&&
           /更正|改為|改为|取消|暫緩|暂缓|change|correct|cancel|defer/iu.test(row.content));
-        if(found.length===1&&found[0]===e.quantity&&!superseded){
+        if(attestedUnit&&!superseded){
           candidates.push({fact_type:"quantity",value:e.quantity,
+            ...attestedUnit,
             state_path:"entities."+commerce.state.entities.indexOf(e)+".quantity",
             authority:"CURRENT_CUSTOMER_MEMORY",entity_id:e.entity_id,region:null,
             evidence_source_message_id:id,temporal_scope:"current",
@@ -1829,14 +1890,12 @@ function canonicalCandidates(
     rank = 0,
   ) => {
     if (!usable(v)) return;
+    const storedUnit=f==="quantity"&&entity?canonicalCustomerQuantityUnit(entity):null;
     out.push({
       fact_type: f,
       value: v,
-      ...(f === "quantity" && entity?.provenance.source_type === "customer" &&
-          entity.provenance.source_message_id && typeof entity.attributes.unit === "string" && entity.attributes.unit.trim()
-        ? { quantity_unit: entity.attributes.unit,
-          quantity_unit_source_kind: "canonical_customer_attribute" as const,
-          quantity_unit_source_message_id: entity.provenance.source_message_id }
+      ...(storedUnit
+        ? storedUnit
         : f === "quantity" && entity && selected.length === 1
           ? currentQuestionQuantityUnit(input, question, entity) ?? {} : {}),
       state_path: path,
@@ -3068,12 +3127,13 @@ export function renderConversationRecall(
         retainedNumberWords[e.value]
       ? retainedNumberWords[e.value][l]
       : display(e.value);
+    const quantityUnitSuffix=e.fact_type==="quantity"&&e.quantity_unit?` ${e.quantity_unit}`:"";
     if (e.source_kind === "attested_customer_utterance") {
       if(e.fact_type==="entity_status"){
         lines.push(l===2?`You said: ${v} (not proof of completed cancellation).`
           :l===1?`你表示：${v}（不代表取消手续已完成）。`
           :`你表示：${v}（不代表取消手續已完成）。`);
-      }else lines.push(`${LABELS[e.fact_type]?.[l] ?? e.attribute_key ?? "Customer information"}: ${v}`);
+      }else lines.push(`${LABELS[e.fact_type]?.[l] ?? e.attribute_key ?? "Customer information"}: ${v}${quantityUnitSuffix}`);
       continue;
     }
     if (e.temporal_scope === "historical") v = ["歷史記錄：", "历史记录：", "Historical record: "][l] + v;
@@ -3115,7 +3175,7 @@ export function renderConversationRecall(
           : LABELS[e.fact_type]?.[l] ?? e.fact_type
       }${
         e.entity_id ? ` (${e.entity_label ?? e.entity_id})` : ""
-      }: ${v}${e.fact_type === "quantity" && e.quantity_unit ? ` ${e.quantity_unit}` : ""}`,
+      }: ${v}${quantityUnitSuffix}`,
     );
   }
   // Avoid asserting an order merely because a quotation exists.
