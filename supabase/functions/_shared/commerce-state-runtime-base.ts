@@ -4755,9 +4755,13 @@ export async function runCommerceStateRuntime(
   // exact entities come from committed, customer-owned canonical state.
   // Preserve an explicitly named new item, corrections, read-only questions
   // and valid additive instructions on their existing guarded paths.
+  // A verified research goal may exist before an item is materialized.
+  // It is not authority to derive a new allocation from an unparsed turn.
+  const activeContextualGoal = readSourceBoundContextualGoal(contextualBefore.state,
+    contextualSourceContext(input, contextualBefore.revision));
   const unboundAllocation = !input.semantic_frame &&
-    contextualBefore.state.entities.some(entity=>
-      !["cancelled","deferred","superseded"].includes(entity.status)) &&
+    (activeContextualGoal !== null || contextualBefore.state.entities.some(entity=>
+      !["cancelled","deferred","superseded"].includes(entity.status))) &&
     isAllocationBreakdown(text) &&
     !isReadOnlyCommerceQuestion(text,input.semantic_frame) &&
     !detectQuantityCorrectionSignal(text) &&
