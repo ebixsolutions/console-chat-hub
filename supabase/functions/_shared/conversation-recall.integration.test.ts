@@ -2214,6 +2214,7 @@ async function executeTurn25Fixture(
 
 Deno.test("C3 captured production turn 25 memory recall is read-only and outranks clarification", async () => {
   const previous = turn55CommerceState();
+  previous.entities[0].attributes.unit = "部";
   const before = JSON.stringify(previous);
   const result = await executeTurn25Fixture("頭先冷氣嗰兩部你仲記唔記得？", turn25SemanticFrame(), previous);
   assert(result.outcome?.authority === "CONVERSATION_STATE", JSON.stringify(result.outcome));

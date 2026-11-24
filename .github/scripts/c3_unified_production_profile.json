@@ -1738,8 +1738,8 @@
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "91849565e41da98dc2fdcc170a3bcf4cae4b6a6b3171ded735349474c02056f0",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "5b8ad3f90ffbcc89f6dd8d44ed5322b256df9e8475e5c3dc1bccc05745dda9d4",
     "supabase/functions/_shared/commerce-subject-resolution.ts": "a379b3b149c3c4838830f23a8e34cd5ab33f34d63703bdc9c3e5b27c41d8adb3",
-    "supabase/functions/_shared/conversation-recall.ts": "55359e360436b19466214dbd00968082f57e6f0b8a48ef682d7c014d81957604",
-    "supabase/functions/generate-reply/index.ts": "472f485660f39c6de79c4edb0bd299e9196c6b9c5ea6d992fbd184bc323da59c",
+    "supabase/functions/_shared/conversation-recall.ts": "bf05bbf55fe3b94b0228f26c07d7bb586745543fd70e29a729204709c300388d",
+    "supabase/functions/generate-reply/index.ts": "7a88d5213831211b9a44d2ef97c96a6beb062c7d8459b28153b44847e148ef82",
     "supabase/functions/_shared/conversation-service-planner.ts": "01113562c4d90c0ace4b653a5906e78a351bb7acb5ab980df390176f688e612e",
     "tests/task1-director/quantity-source-scope.test.mjs": "3d1700e086792d503fc7a375d363be20bb32bfa9b0e5b5f5b0a6f2f65197df84",
     "supabase/functions/_shared/conversation-recall.test.ts": "c2c4cf99651be6253f84abb57408f2a9fe1e3bd3eb9158f84f4e369a70e23faa",
@@ -1776,7 +1776,7 @@
     "tests/task1-director/p1-observation-fixtures.mjs": "2cd55df982facd0937d54b3ffaddb67644c9940a7053ffd708a301ecc91862ad",
     "tests/task1-director/p1-observation-diagnostics.mjs": "a17165528329363b091d911e41078834df7c04fbf03c8d9106f69c0ffa4d9c31",
     "supabase/functions/_shared/contextual-prior-scope-display.test.ts": "75d9577dc7f99d596bb99999122d700841ec22d10e602da06c50c5f584069778",
-    "supabase/functions/_shared/commerce-source-unit.test.ts": "f8f8241ab1fe14cd7088869c0d0d94eee18640bed7bfaa8a1c6b4dfbbe159cb5",
+    "supabase/functions/_shared/commerce-source-unit.test.ts": "58a9e6a8cc862db4e5a0e44fc62fc0888c860bb0120aaa46c7c1b0416e7e048f",
     "tests/task1-director/unit-boundary-register.mjs": "633a034bc297db47492bede25d74680b5f60f00dd1a6bc245035e6e00d774871",
     "tests/task1-director/unit-boundary-runner.mjs": "b4f99a8352068e09c8664e1901842b2250cdb5377fefd68bf89582704ca55253",
     "tests/task1-director/unit-source-register.mjs": "9d37a3496b59b958d62c68905399ceaefc1a7dcf816ea8fc03ac6171da731eed",
@@ -1784,7 +1784,8 @@
     "supabase/functions/_shared/conversation-recall-inquiry.test.ts": "951b077edfa17fbd10d27a908fbaaf1a67a0c1a63fa7e8c52a3c699bb88b7b80",
     "tests/task1-director/p1-observation-business-assertions.test.mjs": "d2c165dca9c7b3dc89ef343321d75cb4ebfc873ea159238db01e8623a435dd84",
     "supabase/functions/_shared/commerce-recall-question-scope.test.ts": "f7c0f45920a44530f78f90d8a9ea59f4acde297309c37fe401d3865b9d321117",
-    "supabase/functions/_shared/lifecycle-focus-display.test.ts": "61c0fd24bfe0281c4daad626d15f8f6d677555b4d47e1c7d5a8b3b22fb6e43de"
+    "supabase/functions/_shared/lifecycle-focus-display.test.ts": "61c0fd24bfe0281c4daad626d15f8f6d677555b4d47e1c7d5a8b3b22fb6e43de",
+    "supabase/functions/_shared/conversation-recall.integration.test.ts": "aca4aa712f9a9944957a388eb34fe71ad046626f7025676b15fa034a7b0ed2a3"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
     "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",

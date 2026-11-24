@@ -5343,6 +5343,13 @@ async function orchestrationGenerateReply(
     source_message_id: _h1SourceMessageId,
     question: _c3R1Question,
     customer_recall_proposal: _c3SemanticCustomerRecall,
+    quantity_reading: !_mixedRequest && _c3SemanticCustomerRecall && _a3SemanticFrame &&
+      _semanticPrepared?.recovery.source_verified && _c3CommerceSnapshot &&
+      _c3CommerceSnapshot.revision === _quantityInputRevision
+      ? { conversation_id, company_id: _criticalE2ExpectedTenantId ?? "",
+          source_message_id: _h1SourceMessageId, commerce_revision: _c3CommerceSnapshot.revision,
+          frame: _a3SemanticFrame }
+      : undefined,
     memory: _c3SourceRetainedMemoryForRecall ?? _c3Memory,
     commerce: _c3CommerceSnapshot,
     trusted_persisted_memory_readback: _c3TrustedPersistedMemoryReadback,
