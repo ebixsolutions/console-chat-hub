@@ -387,7 +387,11 @@ export function withoutExcludedLookups(question: string): string {
 export function hasRequirementsRecapCue(question: string): boolean {
   return /\b(?:recap|summary|summari[sz]e)\b|總結|总结|整理|講返|讲返/i.test(question);
 }
-export function isCurrentRequirementsRecap(question: string, retainedTargets: readonly string[] = []): boolean {
+export function isCurrentRequirementsRecap(
+  question: string,
+  retainedTargets: readonly string[] = [],
+  acceptedSemanticTarget?: (sourcePhrase: string) => boolean,
+): boolean {
   if (typeof question !== "string" || question.length > 2400) return false;
   let text = question.normalize("NFKC").trim();
   if (!text || text.length > 2400 || /["“”「」『』`\n]/u.test(text)) return false;
@@ -403,7 +407,11 @@ export function isCurrentRequirementsRecap(question: string, retainedTargets: re
   text = text.replace(/[。.!?？！]+$/u, "").trim().replace(/\s+/g, " ");
   if (!text || /[;；。!?？！]|\b(?:and|but|then|also|if|unless|not|don't)\b|(?:再介紹|再介绍|同埋|唔使|唔好|不要|不用|如果|若|取消|更正|暫緩|暂缓)/i.test(text)) return false;
   const norm = (s: string) => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
-  const bound = (s: string) => retainedTargets.some(t => norm(t) === norm(s));
+  // Only the already source/scope-verified referent consumer supplies this
+  // optional predicate. It sees the literal grammar target; it cannot bypass
+  // the whole-turn action, compound-demand or quoted-instruction exclusions.
+  const bound = (s: string) => retainedTargets.some(t => norm(t) === norm(s)) ||
+    acceptedSemanticTarget?.(s) === true;
   const globalTarget = /^(?:(?:my|our|the) )?(?:(?:current|latest|recorded) )?(?:requirements?|requests?|needs|setup)$|^(?:everything|where we are now|what we have agreed so far)$/i;
   const zhTarget = /^(?:(?:我(?:哋|們|们)?)(?:而家|目前|之前)?(?:嘅|的)?|(?:呢張|這張|这张)對話嘅|同票)?(?:(?:目前|而家|最新|之前|已記錄的|已记录的|已說過的|已说过的))*?(?:要求|需求|需要|個情況|个情况)$/u;
   const projectedState = new RegExp("^(?:(?:同一張|這張|呢張|这张)(?:票|對話|对话))(?:的|嘅|目前記低的|目前记录的)(?:最新)?" + fields + "(?:(?:[、,，]|和|同|及|以及)" + fields + ")*$", "u");

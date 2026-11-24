@@ -435,6 +435,18 @@ function sourceAttestedTopicInitialism(
     matchesReferenceLabel(customerSource, words.join(" "));
 }
 
+/** The existing return-clause parser, shared by validation and the committed
+ * literal alias receipt. It never derives a label from a category. */
+function trustedResearchReturnSubject(text: string): string {
+  const returning = text.split(/[，,；;。!?！？]/).find((part) =>
+    /(?:講返|说回|講回|返去|回到|back\s+to|return\s+to)/i.test(part));
+  return returning
+    ? returning.replace(/^.*?(?:講返|说回|講回|返去|回到|back\s+to|return\s+to)\s*/iu, "")
+      .replace(/^(?:(?:頭先|头先|之前|先前|剛才|刚才|嗰|呢|那|這|这|個|个|一|兩|两|件|部|台|隻|只|張|张|款|種|种)\s*|(?:the|my|our|that|this|previous|earlier|same|one|it)\b\s*)+/iu, "")
+      .trim()
+    : "";
+}
+
 export function validateTrustedProductTopicFocus(
   input: CommerceRuntimeInput,
   state: ConversationCommerceState,
@@ -452,11 +464,7 @@ export function validateTrustedProductTopicFocus(
   // A new explicit return subject must occur in customer-authored history
   // together with the exact focus product. Deictic-only returns can still
   // use the separately validated unique active focus. No industry noun list.
-  const returnSubject = returning
-    ? returning.replace(/^.*?(?:講返|说回|講回|返去|回到|back\s+to|return\s+to)\s*/iu, "")
-      .replace(/^(?:(?:頭先|头先|之前|先前|剛才|刚才|嗰|呢|那|這|这|個|个|一|兩|两|件|部|台|隻|只|張|张|款|種|种)\s*|(?:the|my|our|that|this|previous|earlier|same|one|it)\b\s*)+/iu, "")
-      .trim()
-    : "";
+  const returnSubject = trustedResearchReturnSubject(input.text);
   if (returnSubject && !(input.history ?? []).some((turn) =>
     ["visitor", "user", "customer"].includes(turn.role) &&
     clean(turn.content).toUpperCase().includes(clean(focus.product).toUpperCase()) &&
@@ -481,8 +489,21 @@ function trustedResearchFocusEvents(input: CommerceRuntimeInput, state: Conversa
   const focus = input.trusted_product_topic_focus;
   if (!focus || !validateTrustedProductTopicFocus(input, state).valid) return [];
   const entity = state.entities.find(e => e.category === focus.topic && e.status !== "cancelled" && e.status !== "deferred")!;
+  const literal = trustedResearchReturnSubject(input.text);
+  const canRetain = literal.length >= 2 && literal.length <= 160 && input.text.length <= 2400 && input.text.includes(literal) &&
+    input.company_id.length > 0 && input.conversation_id.length > 0 && input.source_message_id.length > 0;
+  const priorAliases = Array.isArray(entity.attributes.source_owned_recap_aliases)
+    ? entity.attributes.source_owned_recap_aliases : [];
+  const aliases = canRetain ? [...priorAliases.filter(value => value && typeof value === "object" &&
+    !Array.isArray(value) && (value as Record<string, unknown>).alias !== literal).slice(-7), {
+      contract: "source-owned-recap-alias-v1", alias: literal, entity_id: entity.entity_id,
+      company_id: input.company_id, conversation_id: input.conversation_id,
+      source_message_id: input.source_message_id, source_quote: input.text,
+      model: clean(focus.product).toUpperCase(),
+    }] : null;
   return [{ type: "SET_CONTEXT", topic: focus.topic },
-    { type: "UPDATE_ENTITY", entity_id: entity.entity_id, patch: { model: clean(focus.product).toUpperCase() },
+    { type: "UPDATE_ENTITY", entity_id: entity.entity_id, patch: { model: clean(focus.product).toUpperCase(),
+      ...(aliases ? { attributes: { source_owned_recap_aliases: aliases } } : {}) },
       provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } }];
 }
 

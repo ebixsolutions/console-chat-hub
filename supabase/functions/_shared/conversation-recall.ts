@@ -773,30 +773,33 @@ function entityAliases(e: CommerceEntity): string[] {
   }
   return [...new Set(values)];
 }
-/** A customer-owned canonical category can corroborate a *read-only* initialism,
- * never create or mutate a subject. No industry synonyms or taxonomy aliases. */
-function persistedCategoryInitialism(e: CommerceEntity): string | null {
-  if (e.provenance.source_type !== "customer" ||
-    typeof e.provenance.source_message_id !== "string" ||
-    !e.provenance.source_message_id ||
-    ["cancelled", "deferred", "superseded"].includes(e.status)) return null;
-  const parts = e.category.normalize("NFKC").split(/[_-]+/u).filter(Boolean);
-  if (parts.length < 2 || parts.length > 5 ||
-    !parts.every(part => /^[a-z]{2,32}$/iu.test(part))) return null;
-  return parts.map(part => part[0].toUpperCase()).join("");
-}
-/** Existing entity/referent vocabulary, shared by recap consumers. A derived
- * acronym is exposed only if it uniquely selects one persisted customer item. */
-export function retainedRecapTargets(state: ConversationCommerceState): string[] {
-  const active = state.entities.filter(e =>
-    !["cancelled", "deferred", "superseded"].includes(e.status));
-  const abbreviations = active.flatMap(entity => {
-    const initials = persistedCategoryInitialism(entity);
-    return initials && active.filter(other =>
-      persistedCategoryInitialism(other) === initials).length === 1
-      ? [initials] : [];
+/** Literal receipts written only by the existing source-validated research
+ * focus writer. These labels are read-only recap selectors, never inferred
+ * category initials or general mutation aliases. */
+function persistedRecapAliases(e: CommerceEntity, scope?: RecallScope): string[] {
+  if(e.provenance.source_type!=="customer" || !e.provenance.source_message_id ||
+    ["cancelled","deferred","superseded"].includes(e.status)) return [];
+  const records=Array.isArray(e.attributes.source_owned_recap_aliases)
+    ? e.attributes.source_owned_recap_aliases : [];
+  if(records.length>8)return [];
+  return records.flatMap(value=>{
+    const record=object(value), alias=record?.alias;
+    if(!record || record.contract!=="source-owned-recap-alias-v1" || typeof alias!=="string" ||
+      alias.length<2 || alias.length>160 || record.entity_id!==e.entity_id || record.model!==e.model ||
+      typeof record.company_id!=="string" || !record.company_id ||
+      typeof record.conversation_id!=="string" || !record.conversation_id ||
+      record.source_message_id!==e.provenance.source_message_id ||
+      typeof record.source_quote!=="string" || record.source_quote.length>2400 ||
+      !phrase(record.source_quote,alias) ||
+      records.filter(other=>typeof object(other)?.alias==="string" &&
+        keyNorm(String(object(other)!.alias))===keyNorm(alias)).length!==1 ||
+      scope && (record.company_id!==scope.company_id || record.conversation_id!==scope.conversation_id))return [];
+    return [alias];
   });
-  return [...new Set([...state.entities.flatMap(entityAliases), ...abbreviations])];
+}
+/** Existing canonical names and committed source literals only. */
+export function retainedRecapTargets(state: ConversationCommerceState): string[] {
+  return [...new Set(state.entities.flatMap(entity=>[...entityAliases(entity),...persistedRecapAliases(entity)]))];
 }
 /** The customer's latest retained quantity is an answerable *request*
  * only when one original, same-ticket Visitor row attests it. It cannot
@@ -958,6 +961,7 @@ function selectEntities(
  * The ephemeral question phrase is NOT written as a customer alias. */
 function verifiedSemanticRecapTarget(input:ConversationRecallInput):CommerceEntity|null {
   const c=input.commerce,m=input.memory;
+  const proposal=input.customer_recall_proposal;
   if(!c||!m||input.explicit_handoff||
     input.trusted_visitor_source_status!=="verified"||
     !input.company_id||!input.conversation_id||!input.source_message_id||
@@ -965,26 +969,48 @@ function verifiedSemanticRecapTarget(input:ConversationRecallInput):CommerceEnti
     m.company_id!==input.company_id||m.conversation_id!==input.conversation_id||
     m.commerce_state_revision!==c.revision||
     !hasRequirementsRecapCue(input.question))return null;
+  if(proposal && (proposal.company_id!==input.company_id || proposal.conversation_id!==input.conversation_id ||
+    proposal.source_message_id!==input.source_message_id || proposal.intent!=="customer_fact_recall" ||
+    proposal.requested_facts.some(fact=>fact!=="summary")))return null;
   const allowed=(input.referents??[]).filter(r=>r.confidence>=0.9&&
     ["persistent_state","prior_turn","canonical_commerce"].includes(r.source??""));
   if(allowed.length!==1)return null;
-  const entity=c.state.entities.find(e=>e.entity_id===allowed[0].ref&&
+  const matches=c.state.entities.filter(e=>e.entity_id===allowed[0].ref&&
     e.provenance.source_type==="customer" &&
     !["cancelled","deferred","superseded"].includes(e.status) &&
     typeof e.provenance.source_message_id==="string"&&
     e.provenance.source_message_id.length>0);
-  if(!entity)return null;
+  if(matches.length!==1)return null;
+  const entity=matches[0];
   const sources=(input.trusted_visitor_source_rows??[]).filter(row=>
     row.id===entity.provenance.source_message_id);
   if(sources.length!==1||!entityAliases(entity).some(name=>
     phrase(sources[0].content,name)))return null;
+  // The accepted hint cannot override an explicitly competing source-owned
+  // identity or invent the binding of an unknown model-shaped identifier.
+  if(c.state.entities.some(other=>other.entity_id!==entity.entity_id &&
+    [other.entity_id,...sourceOwnedSubjectLabels(other)].some(name=>phrase(input.question,name))))return null;
+  const identifiers=input.question.match(/\b(?=[a-z0-9-]*[a-z])(?=[a-z0-9-]*\d)[a-z][a-z0-9]*(?:-[a-z0-9]+)+\b/gi)??[];
+  if(identifiers.some(identifier=>!entityAliases(entity).some(name=>keyNorm(identifier)===keyNorm(name))))return null;
   return entity;
 }
-function semanticRecapQuestionSubject(question:string):string|null {
-  // A grammar slot for a recap target, not a domain/translation word list.
-  const normalized=question.normalize("NFKC").trim();
-  const matched=normalized.match(/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:recap|summari[sz]e)\s+(?:my|our)(?:\s+current)?\s+(.{2,90}?)\s+requirements[?.!]?$/iu);
-  return matched?.[1]?.trim()??null;
+function verifiedSemanticRecapSelection(input:ConversationRecallInput):{entity:CommerceEntity;source_phrase:string}|null {
+  const entity=verifiedSemanticRecapTarget(input);
+  if(!entity || isCurrentRequirementsRecap(input.question))return null;
+  let sourcePhrase:string|null=null;
+  const accepted=isCurrentRequirementsRecap(input.question,
+    input.commerce?retainedRecapTargets(input.commerce.state):[],candidate=>{
+      if(candidate.length<2||candidate.length>160||!phrase(input.question,candidate))return false;
+      const proposal=input.customer_recall_proposal;
+      // A scoped proposal must name a literal in this current grammar target.
+      // Without one, retain only the already accepted exact-entity referent
+      // contract above. No label or fact is stored from this ephemeral phrase.
+      if(proposal && !proposal.subject_refs.some(ref=>ref.length>=2&&ref.length<=160&&
+        phrase(candidate,ref)&&phrase(input.question,ref)))return false;
+      sourcePhrase=candidate;
+      return true;
+    });
+  return accepted&&sourcePhrase?{entity,source_phrase:sourcePhrase}:null;
 }
 
 /** Current-turn scope is authoritative; fallback focus never turns a global recap into a scoped one. */
@@ -992,34 +1018,17 @@ function summarySelection(input: ConversationRecallInput, entities: CommerceEnti
   provenance: "explicit_identity" | "explicit_category" | "trusted_referent" | "global";
   entities: CommerceEntity[];
 } {
-  const semanticTarget=verifiedSemanticRecapTarget(input);
-  if(semanticTarget && semanticRecapQuestionSubject(input.question))
+  const semantic=verifiedSemanticRecapSelection(input);
+  if(semantic)
     return {provenance:"trusted_referent",entities:entities.filter(e=>
-      e.entity_id===semanticTarget.entity_id)};
-  // Resolve "my AC requirements" only from the one same-ticket, persisted,
-  // customer-owned category whose recorded *words* yield these initials.
-  // An acronym is not a mutable product synonym, or permission to summarize
-  // another company, stale memory revision, or a competing same-initial item.
-  const acronym = input.question.normalize("NFKC").trim().match(
-    /^(?:what are|can you recap) (?:my|our)(?: current)? ([a-z]{2,5}) requirements[?!.]?$/iu,
-  )?.[1]?.toUpperCase();
-  if (acronym) {
-    const matches = entities.filter(e =>
-      persistedCategoryInitialism(e) === acronym);
-    if (matches.length) {
-      const snapshotMatches = Boolean(input.commerce && input.memory &&
-        !input.explicit_handoff &&
-        input.commerce.company_id === input.company_id &&
-        input.commerce.conversation_id === input.conversation_id &&
-        input.memory.company_id === input.company_id &&
-        input.memory.conversation_id === input.conversation_id &&
-        input.memory.commerce_state_revision === input.commerce.revision);
-      // Never fall back to a global portfolio recap after an explicitly
-      // scoped acronym when the trusted identity, revision or uniqueness
-      // check fails. The original summary resolver will clarify.
-      return { provenance: "explicit_category",
-        entities: snapshotMatches && matches.length === 1 ? matches : [] };
-    }
+      e.entity_id===semantic.entity.entity_id)};
+  const literalAliases=entities.filter(entity=>persistedRecapAliases(entity).some(alias=>phrase(input.question,alias)));
+  if(literalAliases.length){
+    const current=input.commerce&&input.memory&&input.commerce.company_id===input.company_id&&
+      input.commerce.conversation_id===input.conversation_id&&input.memory.company_id===input.company_id&&
+      input.memory.conversation_id===input.conversation_id&&input.memory.commerce_state_revision===input.commerce.revision;
+    const scoped=literalAliases.filter(entity=>persistedRecapAliases(entity,input).some(alias=>phrase(input.question,alias)));
+    return {provenance:"explicit_identity",entities:current&&scoped.length===1?scoped:[]};
   }
   const identity = entities.filter(e => any(input.question, [e.entity_id, e.model,
     ...["product_name", "display_name", "original_name", "sku"].map(k => e.attributes[k])]
@@ -2391,9 +2400,8 @@ function resolveConversationRecallLegacy(
     return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
   }
   const retainedTargets = input.commerce ? retainedRecapTargets(input.commerce.state) : [];
-  const semanticRecapTarget=verifiedSemanticRecapTarget(input);
-  const semanticQuestionSubject=semanticRecapTarget ? semanticRecapQuestionSubject(input.question) : null;
-  if(semanticQuestionSubject) retainedTargets.push(semanticQuestionSubject);
+  const semantic=verifiedSemanticRecapSelection(input);
+  if(semantic) retainedTargets.push(semantic.source_phrase);
   const resolved = summarySelection(input, input.commerce?.state.entities ?? []);
   if (resolved.provenance === "trusted_referent" && resolved.entities.length === 1) retainedTargets.push("it", "that", "this");
   const recap = isCurrentRequirementsRecap(input.question, retainedTargets);
