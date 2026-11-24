@@ -176,15 +176,15 @@ export function resolveSemanticContextualCandidate(input: {
     const scope = row.scope.normalize("NFKC").replace(/\s+/gu, " ").trim();
     const quote = row.source_text.normalize("NFKC").replace(/\s+/gu, " ").trim();
     const sourceUnit = row.unit.normalize("NFKC").trim();
-    // An anonymous group may have a one-character CJK name (e.g. 隊).
+    // A literal scope may have a one-character CJK name (e.g. 隊).
     // Require that exact source character inside one unique current-turn
     // quoted allocation; it never maps to a product/category synonym.
     const grouped = typeof row.scope_count === "number" ||
       typeof row.per_scope_quantity === "number";
     const literalScope = matchesReferenceLabel(quote, scope) ||
-      (grouped && /^[\p{Script=Han}]$/u.test(scope) &&
+      (/^[\p{Script=Han}]$/u.test(scope) &&
         quote.indexOf(scope) >= 0 && quote.indexOf(scope) === quote.lastIndexOf(scope));
-    if (scope.length < (grouped ? 1 : 2) || scope.length > 80 ||
+    if (scope.length < 1 || scope.length > 80 ||
       quote.length < 3 || quote.length > 200 ||
       !/^[\p{L}\p{N}]{1,20}$/u.test(sourceUnit) ||
       !literalScope || scopes.has(scope.toLowerCase())) return invalid();

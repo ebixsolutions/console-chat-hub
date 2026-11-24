@@ -1627,3 +1627,48 @@ Deno.test("Task3C G1 first enquiry uses current source quote without KB or order
     latest.conversion.payment_status==="none",
     JSON.stringify({actual,writes}));
 });
+
+import type { DecisionValue } from "./bounded-decision-context.ts";
+
+/** Independent generic verifier controls; original A/B/C/2a inputs stay intact. */
+function genericAllocationInput(text: string, rows: Record<string, DecisionValue>[], unit: string, language: "zh-TW" | "zh-CN" | "en" = "zh-TW") {
+  const state = createEmptyConversationCommerceState();
+  state.entities = [{entity_id:"service:membership",category:"service",quantity:0,
+    status:"researching",attributes:{product_name:"Membership",unit},constraints:{},
+    provenance:{source_type:"customer",source_message_id:"membership-source"}}];
+  const frame: CommerceSemanticFrame = {
+    version:"commerce-semantic-1.0.0",language,operation:"UPDATE_ITEM",
+    intent:"scoped allocation",topic:"service",entities:[{
+      entity_ref:"service:membership",name:"Membership",kind:"service",category_hint:null,
+      sku:null,model:null,quantity:null,unit,attributes:{scoped_customer_updates:rows},constraints:{},
+      capabilities:{requires_delivery:false,supports_pickup:false,requires_installation:false,
+        requires_booking:false,requires_quote:false,requires_site_check:false,digital_fulfilment:false,
+        recurring_billing:false,rental_return:false,customization:false},confidence:0.99,
+    }],referents:[{ref:"service:membership",source:"persistent_state",confidence:0.99}],
+    customer_correction:false,additive:false,explicit_negations:[],requested_facts:[],
+    transaction_state:"none",payment_state:"none",booking_state:"none",fulfillment_state:"none",
+    ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},confidence:0.99,
+  };
+  return {text,state,language,semantic_frame:frame};
+}
+
+Deno.test("Task3C source-bound single-character scopes do not widen entity matching", () => {
+  const input=genericAllocationInput("門2席，兩個支隊各3席",[
+    {scope:"門",source_text:"門2席",unit:"席",value:2,attribute:"quantity",action:"set"},
+    {scope:"支隊",source_text:"兩個支隊各3席",unit:"席",value:3,scope_count:2,per_scope_quantity:3,attribute:"quantity",action:"set"},
+  ],"席");
+  const good=resolveSemanticContextualCandidate(input);
+  assert(good?.context_sufficient && good.aggregate_quantity===8 && good.values.length===3,JSON.stringify(good));
+  for(const bad of [
+    {...input,text:"門門2席，兩個支隊各3席",semantic_frame:structuredClone(input.semantic_frame)},
+    {...input,semantic_frame:null},
+  ]){
+    if(bad.semantic_frame) (bad.semantic_frame.entities[0].attributes.scoped_customer_updates as Record<string,unknown>[])[0].source_text="門門2席";
+    const result=resolveSemanticContextualCandidate(bad);
+    assert(result===null || !result.context_sufficient,"ambiguous or missing reading accepted");
+  }
+  const unrelated=structuredClone(input);
+  unrelated.semantic_frame.entities[0].entity_ref="service:other";
+  unrelated.semantic_frame.referents=[{ref:"service:other",source:"persistent_state",confidence:0.99}];
+  assert(resolveSemanticContextualCandidate(unrelated)?.context_sufficient===false,"one-character scope granted entity authority");
+});
