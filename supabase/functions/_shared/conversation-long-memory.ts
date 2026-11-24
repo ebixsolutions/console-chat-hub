@@ -8,7 +8,9 @@ import { customerBusinessText as businessMessageText, isCurrentRequirementsRecap
 import { industryEntityLabel } from "./industry-runtime-adapter.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { sameCanonicalJson } from "./canonical-json.ts";
-import { type B2TrustedCorrectionCommit, type B2TrustedLifecycleCommit, verifyEntityLifecycleTransition, resolveEntityLifecyclePlan } from "./b2-journey-progress-contract.ts";
+import { type B2TrustedCorrectionCommit, type B2TrustedLifecycleCommit, type B2TrustedScopedJourneyProgress,
+  type ScopedQuantityCorrectionCommit, readVerifiedScopedQuantityCorrection, scopedQuantityCorrectionSummary,
+  verifyEntityLifecycleTransition, resolveEntityLifecyclePlan } from "./b2-journey-progress-contract.ts";
 import {
   projectConversationRuntimeState,
   deriveRequirementFacts,
@@ -101,6 +103,57 @@ export function verifyCommittedRoomCorrectionMemory(input: {
     fact.value.value === receipt.previous_value
   );
   return Boolean(current && superseded);
+}
+
+function scopedCorrectionReceipt(input: {
+  receipt: B2TrustedScopedJourneyProgress | null;
+  commerce: { company_id: string; source_message_id: string | null; revision: number;
+    state: ConversationCommerceState; conversation_id: string } | null;
+}): ScopedQuantityCorrectionCommit | null {
+  const {receipt,commerce}=input, claimed=receipt?.scoped_correction;
+  if(!receipt || !claimed || !commerce || receipt.update_kind!=="contextual_scoped_update" ||
+    receipt.company_id!==commerce.company_id || receipt.source_message_id!==commerce.source_message_id ||
+    receipt.previous_revision!==claimed.previous_revision || receipt.committed_revision!==commerce.revision ||
+    receipt.entity_id!==claimed.entity_id || receipt.aggregate_quantity!==claimed.current_quantity ||
+    !commerce.conversation_id?.trim() || commerce.conversation_id!==claimed.conversation_id)return null;
+  const ledger=readVerifiedScopedQuantityCorrection({state:commerce.state,company_id:commerce.company_id,
+    conversation_id:commerce.conversation_id,source_message_id:receipt.source_message_id,
+    source_text:receipt.source_text,revision:commerce.revision});
+  const entity=commerce.state.entities.find(value=>value.entity_id===claimed.entity_id);
+  if(!ledger || !sameCanonicalJson(ledger,claimed) || !entity ||
+    !sameCanonicalJson(receipt.committed_updates,entity.attributes.scoped_customer_updates))return null;
+  const changed=new Set(ledger.changes.flatMap(change=>change.target_scopes));
+  const current=receipt.committed_updates.filter(row=>changed.has(row.scope));
+  return sameCanonicalJson(current,receipt.accepted_updates)?ledger:null;
+}
+
+/** Actual post-persistence consumer guard for a generic old/new correction. */
+export function verifyCommittedScopedCorrectionMemory(input: {
+  memory: CanonicalConversationMemory | null;
+  receipt: B2TrustedScopedJourneyProgress | null;
+  commerce: { company_id: string; source_message_id: string | null; revision: number;
+    state: ConversationCommerceState; conversation_id: string } | null;
+}): boolean {
+  const ledger=scopedCorrectionReceipt(input), {memory,commerce}=input;
+  if(!ledger || !memory || !commerce || memory.company_id!==ledger.company_id ||
+    memory.conversation_id!==ledger.conversation_id || memory.source_message_id!==ledger.source_message_id ||
+    memory.commerce_state_revision!==ledger.committed_revision ||
+    !memory.latest_corrections.includes(ledger.source_text) ||
+    !memory.latest_corrections.includes(scopedQuantityCorrectionSummary(ledger)))return false;
+  const entity=commerce.state.entities.find(value=>value.entity_id===ledger.entity_id)!;
+  const active=memory.active_entities.filter(value=>value.entity_id===ledger.entity_id);
+  const current=memory.current_customer_facts.filter(value=>value.key===`entity:${ledger.entity_id}:quantity`);
+  const oldQuantity=memory.cancelled_or_superseded.filter(value=>value.key===`superseded_entity:${ledger.entity_id}:quantity`);
+  const oldRows=memory.cancelled_or_superseded.filter(value=>value.key===`superseded_entity:${ledger.entity_id}:scoped_customer_updates`);
+  return active.length===1 && active[0].quantity===ledger.current_quantity &&
+    sameCanonicalJson(active[0].current_requirements,{...entity.attributes,...entity.constraints}) &&
+    current.length===1 && current[0].value===ledger.current_quantity && current[0].entity_id===ledger.entity_id &&
+    current[0].authority==="canonical_commerce" && current[0].source_message_id===ledger.source_message_id &&
+    oldQuantity.length===1 && oldQuantity[0].value===ledger.previous_quantity &&
+    oldQuantity[0].entity_id===ledger.entity_id && oldQuantity[0].authority==="canonical_commerce" &&
+    oldQuantity[0].source_message_id===ledger.source_message_id &&
+    oldRows.length===1 && oldRows[0].entity_id===ledger.entity_id && oldRows[0].authority==="canonical_commerce" &&
+    oldRows[0].source_message_id===ledger.source_message_id && sameCanonicalJson(oldRows[0].value,ledger.previous_updates);
 }
 
 export function verifyCommittedLifecycleMemory(input: {
@@ -712,6 +765,7 @@ function questionLifecycle(rows: MemoryHistoryRow[], state: ConversationCommerce
 export function buildCanonicalConversationMemory(args: {
   request_decision?: CustomerRequestDecision;
   customer_fact_delta?: ConversationMemoryFact[];
+  committed_scoped_correction?: B2TrustedScopedJourneyProgress | null;
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
   source_factual_turn?: boolean;
   factual_read_request?: FactualReadRequest;
@@ -726,6 +780,12 @@ export function buildCanonicalConversationMemory(args: {
   source_created_at: string;
   next_memory_revision: number;
 }): CanonicalConversationMemory {
+  const scopedCorrection=args.committed_scoped_correction ? scopedCorrectionReceipt({
+    receipt:args.committed_scoped_correction,commerce:args.commerce_state && args.commerce_state_revision!==null
+      ? {company_id:args.company_id,conversation_id:args.conversation_id,source_message_id:args.source_message_id,
+        revision:args.commerce_state_revision,state:args.commerce_state}:null,
+  }):null;
+  if(args.committed_scoped_correction && !scopedCorrection)throw new Error("C3_SCOPED_CORRECTION_RECEIPT_MISMATCH");
   const businessRows = args.newest_first.map(row=>CUSTOMER_ROLES.has(String(row.role ?? ""))
     ? {...row,content:businessMessageText(row.content)} : row)
     .filter(row=>!CUSTOMER_ROLES.has(String(row.role ?? "")) || clean(row.content) && !classifySocialTurn(clean(row.content,1600)) && !isCurrentRequirementsRecap(String(row.content)));
@@ -736,7 +796,13 @@ export function buildCanonicalConversationMemory(args: {
   const retainedRegions = retainedCustomerRegions(businessRows);
   const prior = args.previous &&
       args.previous.conversation_id === args.conversation_id &&
-      args.previous.company_id === args.company_id
+      args.previous.company_id === args.company_id &&
+      (!scopedCorrection || args.previous.commerce_state_revision===scopedCorrection.previous_revision &&
+        args.newest_first.some(row=>row.id===args.previous!.source_message_id && row.id!==args.source_message_id &&
+          CUSTOMER_ROLES.has(String(row.role??""))) &&
+        args.previous.active_entities.filter(entity=>entity.entity_id===scopedCorrection.entity_id &&
+          entity.quantity===scopedCorrection.previous_quantity &&
+          sameCanonicalJson(entity.current_requirements.scoped_customer_updates,scopedCorrection.previous_updates)).length===1)
     ? args.previous
     : null;
   const currentReadAnchor = args.source_factual_turn || args.factual_read_request
@@ -902,12 +968,15 @@ export function buildCanonicalConversationMemory(args: {
     ...(prior?.question_lifecycle_incomplete || lifecycleResult.incomplete ? {question_lifecycle_incomplete: true} : {}),
     active_entities: commerce.active_entities,
     latest_corrections: uniqueStrings([
+      // The legacy Commerce ledger keeps a 300-character display marker.
+      // Only this verified receipt may restore its complete source in Memory.
+      ...(scopedCorrection?[scopedCorrection.source_text,scopedQuantityCorrectionSummary(scopedCorrection)]:[]),
       ...((args.customer_fact_delta ?? []).some(f => (prior?.current_customer_facts ?? []).some(old => old.key === f.key && !sameCanonicalJson(old.value,f.value)))
         ? [businessMessageText(args.newest_first.find(row => row.id === args.source_message_id)?.content ?? "")] : []),
       ...runtime.latest_corrections,
       ...(args.commerce_state?.latest_corrections ?? []),
       ...(prior?.latest_corrections ?? []),
-    ].map(businessMessageText).filter(Boolean), MAX_CORRECTIONS),
+    ].map(businessMessageText).filter(Boolean), MAX_CORRECTIONS, scopedCorrection ? 1200 : 500),
     current_customer_facts: stableFacts([
       ...(prior?.current_customer_facts ?? []).filter((fact) =>
         !fact.key.startsWith("entity:") && !addressKeys.has(clean(fact.key, 120)) &&
@@ -948,6 +1017,12 @@ export function buildCanonicalConversationMemory(args: {
       ...commerce.cancelled_or_superseded,
       ...retained.superseded,
       ...requirements.superseded.map(fact => ({ ...fact, authority: "customer" as const })),
+      ...(scopedCorrection ? [{key:`superseded_entity:${scopedCorrection.entity_id}:quantity`,
+        value:scopedCorrection.previous_quantity,authority:"canonical_commerce" as const,
+        source_message_id:scopedCorrection.source_message_id,entity_id:scopedCorrection.entity_id},
+      {key:`superseded_entity:${scopedCorrection.entity_id}:scoped_customer_updates`,
+        value:structuredClone(scopedCorrection.previous_updates),authority:"canonical_commerce" as const,
+        source_message_id:scopedCorrection.source_message_id,entity_id:scopedCorrection.entity_id}] : []),
     ], MAX_HISTORY),
     open_questions: open,
     pending_actions: uniqueStrings([...commerce.pending_actions,...lifecycle.filter(item=>item.status === "pending" && item.resolution?.includes("professional")).map(item=>item.text)],MAX_ACTIONS),
@@ -968,6 +1043,11 @@ export function buildCanonicalConversationMemory(args: {
   };
   if (memory.current_customer_facts.length > MAX_CURRENT_CUSTOMER_FACTS) throw new Error("C3_CURRENT_FACTS_LIMIT");
   const fitted = fitMemory(memory);
+  if(args.committed_scoped_correction && !verifyCommittedScopedCorrectionMemory({memory:fitted,
+    receipt:args.committed_scoped_correction,commerce:args.commerce_state && args.commerce_state_revision!==null
+      ? {company_id:args.company_id,conversation_id:args.conversation_id,source_message_id:args.source_message_id,
+        revision:args.commerce_state_revision,state:args.commerce_state}:null}))
+    throw new Error("C3_SCOPED_CORRECTION_MEMORY_PARITY_MISMATCH");
   if (args.pending_lifecycle_reply) {
     fitted.pending_lifecycle_reply = structuredClone(args.pending_lifecycle_reply);
     if (JSON.stringify(fitted).length > C3_MEMORY_JSON_CHAR_BUDGET) {
@@ -1123,6 +1203,7 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
   factual_read_request?: FactualReadRequest;
   request_decision?: CustomerRequestDecision;
   customer_fact_delta?: ConversationMemoryFact[];
+  committed_scoped_correction?: B2TrustedScopedJourneyProgress | null;
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
   conversation_id: string;
   company_id: string;
@@ -1133,6 +1214,20 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
   newest_first: MemoryHistoryRow[];
   visitor_turn_count: number;
 }): Promise<{ ok: true; memory: CanonicalConversationMemory; markdown: string; revision: number; idempotent: boolean } | { ok: false; reason: string }> {
+  const verifiedCorrectionReadback = async (memory: CanonicalConversationMemory, markdown: string,
+    revision: number, idempotent: boolean) => {
+    const readback=await readExactConversationMemoryCommit(client,{conversation_id:args.conversation_id,
+      company_id:args.company_id,source_message_id:args.source_message_id,revision,
+      commerce_state_revision:args.commerce_state_revision,memory,markdown_projection:markdown});
+    if(readback.status!=="committed" || !isCanonicalConversationMemory(readback.value.memory) ||
+      !verifyCommittedScopedCorrectionMemory({memory:readback.value.memory,
+        receipt:args.committed_scoped_correction??null,commerce:args.commerce_state && args.commerce_state_revision!==null
+          ? {company_id:args.company_id,conversation_id:args.conversation_id,source_message_id:args.source_message_id,
+            revision:args.commerce_state_revision,state:args.commerce_state}:null}))
+      return {ok:false as const,reason:"scoped_correction_memory_readback_unverified"};
+    return {ok:true as const,memory:readback.value.memory,markdown:readback.value.markdown_projection,
+      revision:readback.value.revision,idempotent};
+  };
   const { data: existing, error: existingError } = await client.from("conversation_memory_state")
     .select("conversation_id,company_id,revision,source_message_id,commerce_state_revision,memory,markdown_projection,memory_hash")
     .eq("conversation_id", args.conversation_id)
@@ -1140,6 +1235,13 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
     .maybeSingle();
   if (existingError) return { ok: false, reason: "memory_lookup_failed" };
   if (existing?.source_message_id === args.source_message_id && isCanonicalConversationMemory(existing.memory)) {
+    if(args.committed_scoped_correction && !verifyCommittedScopedCorrectionMemory({memory:existing.memory,
+      receipt:args.committed_scoped_correction,commerce:args.commerce_state && args.commerce_state_revision!==null
+        ? {company_id:args.company_id,conversation_id:args.conversation_id,source_message_id:args.source_message_id,
+          revision:args.commerce_state_revision,state:args.commerce_state}:null}))
+      return {ok:false,reason:"scoped_correction_memory_mismatch"};
+    if(args.committed_scoped_correction)return await verifiedCorrectionReadback(existing.memory,
+      String(existing.markdown_projection??""),Number(existing.revision),true);
     return { ok: true, memory: existing.memory, markdown: String(existing.markdown_projection ?? ""), revision: Number(existing.revision), idempotent: true };
   }
   const previous = isCanonicalConversationMemory(existing?.memory) ? existing.memory : null;
@@ -1167,6 +1269,10 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
     if (receipt.status !== "committed" || !isCanonicalConversationMemory(receipt.value.memory)) {
       return null;
     }
+    if(args.committed_scoped_correction && !verifyCommittedScopedCorrectionMemory({memory:receipt.value.memory,
+      receipt:args.committed_scoped_correction,commerce:args.commerce_state && args.commerce_state_revision!==null
+        ? {company_id:args.company_id,conversation_id:args.conversation_id,source_message_id:args.source_message_id,
+          revision:args.commerce_state_revision,state:args.commerce_state}:null}))return null;
     return {
       ok: true as const,
       memory: receipt.value.memory,
@@ -1198,6 +1304,8 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
       .maybeSingle();
     if (freshError) return { ok: false, reason: "memory_retry_lookup_failed" };
     if (fresh?.source_message_id === args.source_message_id && isCanonicalConversationMemory(fresh.memory)) {
+      if(args.committed_scoped_correction)return await verifiedCorrectionReadback(fresh.memory,
+        String(fresh.markdown_projection??""),Number(fresh.revision),true);
       return { ok: true, memory: fresh.memory, markdown: String(fresh.markdown_projection ?? ""), revision: Number(fresh.revision), idempotent: true };
     }
     const retryRevision = Number(fresh?.revision ?? 0);
@@ -1225,12 +1333,15 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
       return await recoverAmbiguousCommit(retryMemory, retryMarkdown, retryRevision + 1) ??
         { ok: false, reason: clean(retry.data?.result, 80) || "memory_retry_failed" };
     }
+    if(args.committed_scoped_correction)return await verifiedCorrectionReadback(retryMemory,retryMarkdown,
+      retryRevision+1,Boolean(retry.data.idempotent));
     return { ok: true, memory: retryMemory, markdown: retryMarkdown, revision: Number(retry.data.current_revision ?? retry.data.applied_revision), idempotent: Boolean(retry.data.idempotent) };
   }
   if (result !== "success") {
     return await recoverAmbiguousCommit(memory, markdown, expectedRevision + 1) ??
       { ok: false, reason: result || "memory_commit_unknown" };
   }
+  if(args.committed_scoped_correction)return await verifiedCorrectionReadback(memory,markdown,expectedRevision+1,Boolean(data.idempotent));
   return { ok: true, memory, markdown, revision: Number(data.current_revision ?? data.applied_revision), idempotent: Boolean(data.idempotent) };
 }
 

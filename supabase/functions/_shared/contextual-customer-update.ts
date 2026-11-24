@@ -7,6 +7,10 @@ import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { matchesReferenceLabel } from "./industry-agent-registry.ts";
 import { sourceOwnedSubjectLabels } from "./commerce-subject-resolution.ts";
 import type { CommerceStateEvent } from "./commerce-state-reducer.ts";
+import { isExplicitScopedQuantityCorrectionSource, readVerifiedScopedQuantityCorrection,
+  scopedQuantityCorrectionSummary, scopedQuantityCorrectionSourceMarker, verifyScopedQuantityCorrectionQuote,
+  type ScopedQuantityCorrectionCommit, type ScopedQuantityCorrectionChange } from "./b2-journey-progress-contract.ts";
+import { sameCanonicalJson } from "./canonical-json.ts";
 
 /** Server-bound canonical snapshot identity. Never take this from model output. */
 export interface ContextualSourceContext {
@@ -157,7 +161,16 @@ export function verifiedCurrentScopeFacts(input: {
   if(f.customer_correction && (!old || old.subject_label!==subject))return null;
   const goal_id=old?.subject_label===subject?old.goal_id:"contextual-goal:"+context.source_message_id;
   const active=input.state.entities.filter(entity=>!["cancelled","deferred","superseded"].includes(entity.status));
-  if(active.some(entity=>entity.attributes.contextual_goal_id!==goal_id))return null;
+  const otherActive=active.filter(entity=>entity.attributes.contextual_goal_id!==goal_id);
+  // A separately named, completely sourced planning request may coexist with
+  // previously allocated items. It records context only; none of those items
+  // supplies this subject's counts and no entity is created by this operation.
+  // Keep implicit, mixed-subject and borrowed-referent turns fail-closed.
+  if(otherActive.length && (quote!==text || f.referents.length!==0 ||
+    normalizeSource(f.topic??"")!==subject ||
+    otherActive.some(entity=>sourceOwnedSubjectLabels(entity).some(label=>
+      matchesReferenceLabel(quote,label))) ||
+    (old?.subject_label!==subject && demand.customer_correction)))return null;
   const rows=f.customer_facts[0].value;
   if(!Array.isArray(rows) || rows.length<1 || rows.length>8)return null;
   const facts:SourceBoundScopeFact[]=[], spans:Array<{start:number;end:number}>=[];
@@ -215,6 +228,7 @@ export interface ContextualCandidate {
   values: ScopedCustomerValue[];
   /** Explicit aggregate from the adapter; partial scoped changes must not invent it. */
   aggregate_quantity?: number;
+  scoped_correction?: ScopedQuantityCorrectionCommit;
   context_sufficient: boolean;
   /** Classification only; the established general-answer handler supplies the reply. */
   requires_generated_guidance?: boolean;
@@ -305,16 +319,16 @@ export function resolveSemanticContextualCandidate(input: {
           matchesReferenceLabel(quote, subject) && (!item ||
             subject.normalize("NFKC").trim() === item.name.normalize("NFKC").trim()));
     });
-    const firstTurnGuidance = input.state.entities.length === 0 &&
-      allDemandsSourced;
-    if (!existingAdvisory && !firstTurnGuidance) return null;
+    const firstTurnGuidance = input.state.entities.length === 0 && allDemandsSourced;
+    const verifiedScopedGuidance = !!scopeFacts && allDemandsSourced;
+    if (!existingAdvisory && !firstTurnGuidance && !verifiedScopedGuidance) return null;
     const name = (item?.name ?? requests[0]?.subject_refs[0] ?? "").normalize("NFKC").trim().slice(0, 100);
     return { topic: name, topic_source: "semantic", action: "enquiry",
       values: [], context_sufficient: true, requires_generated_guidance: true,
       reply: "", clarification: question };
   }
   if (!item || f.confidence < 0.9 || item.confidence < 0.9 ||
-    f.ambiguity.is_ambiguous || f.customer_correction || f.additive ||
+    f.ambiguity.is_ambiguous || f.additive ||
     f.explicit_negations.length > 0 ||
     !["UPDATE_ITEM", "SET_QUANTITY"].includes(f.operation) ||
     (f.demands ?? []).length > 0 || f.requested_facts.length>0 || proposed.length < 1 ||
@@ -327,29 +341,38 @@ export function resolveSemanticContextualCandidate(input: {
     !["cancelled", "deferred", "superseded"].includes(e.status));
   const named = active.filter(e => sourceOwnedSubjectLabels(e).some(label =>
     matchesReferenceLabel(text, label)));
+  if(goal && item.entity_ref===goal.goal_id && named.some(entity=>
+    entity.attributes.contextual_goal_id!==goal.goal_id))return invalid();
+  // Replaying the materializing source is bound to its committed goal and
+  // entity provenance, even when another independent item is active. This
+  // exception never lets a new source select an item by a model-only goal ID.
+  const goalReplay = active.filter(e => goal && item.entity_ref===goal.goal_id &&
+    e.attributes.contextual_goal_id===goal.goal_id &&
+    e.provenance.source_message_id===input.context?.source_message_id &&
+    normalizeSource(item.name)===goal.subject_label &&
+    f.referents.length===1 && f.referents[0].ref===goal.goal_id &&
+    f.referents[0].source==="persistent_state" && f.referents[0].confidence>=0.9);
   const referenced = active.filter(e => (item.entity_ref === e.entity_id &&
     f.referents.some(r => r.ref === e.entity_id &&
       r.source === "persistent_state" && r.confidence >= 0.9)) ||
-    // The exact source that materialized this item may replay its original
-    // goal referent. A new turn must use the committed entity reference.
-    (active.length===1 && goal && item.entity_ref===goal.goal_id &&
-      e.attributes.contextual_goal_id===goal.goal_id &&
-      e.provenance.source_message_id===input.context?.source_message_id &&
-      normalizeSource(item.name)===goal.subject_label &&
-      f.referents.some(r=>r.ref===goal.goal_id && r.source==="persistent_state" && r.confidence>=0.9)));
+    goalReplay.includes(e));
   // A model-supplied ID cannot select one of multiple active entities unless
   // the Visitor independently names that existing item in the latest turn.
   const matches = active.length === 1
     ? active.filter(e => named.includes(e) || referenced.includes(e))
-    : active.filter(e => named.includes(e) &&
-      (item.entity_ref === e.entity_id || referenced.includes(e)));
+    : active.filter(e => goalReplay.includes(e) || (named.includes(e) &&
+      (item.entity_ref === e.entity_id || referenced.includes(e))));
   let target:CommerceEntity;
   let newEntity:CommerceEntity|undefined;
   if(matches.length===1) target=matches[0];
-  else if(matches.length===0 && active.length===0 && goal &&
+  else if(matches.length===0 && goal &&
     goal.source_message_id!==input.context?.source_message_id &&
     item.entity_ref===goal.goal_id && normalizeSource(item.name)===goal.subject_label &&
-    f.referents.some(ref=>ref.ref===goal.goal_id && ref.source==="persistent_state" && ref.confidence>=0.9)){
+    f.referents.length===1 && f.referents[0].ref===goal.goal_id &&
+    f.referents[0].source==="persistent_state" && f.referents[0].confidence>=0.9 &&
+    !input.state.entities.some(entity=>entity.attributes.contextual_goal_id===goal.goal_id ||
+      sourceOwnedSubjectLabels(entity).some(label=>
+        normalizeSource(label).toLowerCase()===goal.subject_label.toLowerCase()))){
     const entity_id="contextual-item:"+goal.goal_id;
     if(input.state.entities.some(entity=>entity.entity_id===entity_id))return invalid();
     // This temporary descriptor is never persisted with zero quantity. Only
@@ -360,8 +383,80 @@ export function resolveSemanticContextualCandidate(input: {
       constraints:{},provenance:{source_type:"customer",source_message_id:goal.source_message_id}};
     target=newEntity;
   } else return invalid();
+  // A literal existing subject, proposed name and persistent referent must
+  // agree. Selecting the sole active entity cannot override a contradictory
+  // new-goal Reading, nor may that entity borrow a different current goal.
+  if(!newEntity && ((item.name && !sourceOwnedSubjectLabels(target).some(label=>
+      normalizeSource(label).toLowerCase()===normalizeSource(item.name).toLowerCase())) ||
+    (item.entity_ref && item.entity_ref!==target.entity_id && !goalReplay.includes(target)) ||
+    f.referents.some(ref=>ref.source==="persistent_state" && ref.ref!==target.entity_id &&
+      !(goalReplay.includes(target) && ref.ref===goal?.goal_id)) ||
+    (goal && target.attributes.contextual_goal_id!==goal.goal_id &&
+      (!named.includes(target) || matchesReferenceLabel(text,goal.subject_label)))))return invalid();
   if (item.category_hint && item.category_hint !== target.category)
     return invalid();
+  if(f.customer_correction){
+    const context=input.context;
+    if(newEntity || !validSourceContext(context) || item.entity_ref!==target.entity_id ||
+      f.referents.length!==1 || f.referents[0].ref!==target.entity_id ||
+      f.referents[0].source!=="persistent_state" || f.referents[0].confidence<0.9 ||
+      !named.includes(target) || named.some(entity=>entity.entity_id!==target.entity_id) ||
+      f.customer_facts?.length ||
+      [f.transaction_state,f.payment_state,f.booking_state,f.fulfillment_state].some(value=>value!=="none"&&value!=="unknown") ||
+      !isExplicitScopedQuantityCorrectionSource(text,item.name) || typeof target.attributes.unit!=="string" ||
+      item.unit!==target.attributes.unit)return invalid();
+    const replay=readVerifiedScopedQuantityCorrection({state:input.state,...context,
+      source_text:text,revision:context.state_revision});
+    if(target.provenance.source_message_id===context.source_message_id && !replay)return invalid();
+    const previous=replay?.previous_updates ?? target.attributes.scoped_customer_updates;
+    if(!Array.isArray(previous) || !previous.length || previous.length>24)return invalid();
+    const changes:ScopedQuantityCorrectionChange[]=[], updates:ScopedCustomerValue[]=[];
+    for(const raw of proposed){
+      if(!raw || typeof raw!=="object" || Array.isArray(raw) ||
+        Object.keys(raw).some(key=>!["scope","attribute","action","previous_value","value","unit","source_text"].includes(key)))return invalid();
+      const row=raw as Record<string,unknown>;
+      if(row.attribute!=="quantity" || row.action!=="set" || typeof row.scope!=="string" ||
+        typeof row.source_text!=="string" || typeof row.previous_value!=="number" || typeof row.value!=="number" ||
+        row.unit!==target.attributes.unit)return invalid();
+      const scope=normalizeSource(row.scope), group=previous.filter(value=>value?.group_scope===scope);
+      const direct=previous.filter(value=>value?.scope===scope&&!value.group_scope);
+      if(group.length && direct.length || !group.length && direct.length!==1)return invalid();
+      const targets=group.length?group:direct;
+      const change:ScopedQuantityCorrectionChange={scope,previous_value:row.previous_value,value:row.value,
+        unit:target.attributes.unit,source_text:normalizeSource(row.source_text),target_scopes:targets.map(value=>value.scope)};
+      if(!verifyScopedQuantityCorrectionQuote({...change,grouped:group.length>0}) ||
+        targets.some(value=>value.value!==change.previous_value) ||
+        change.target_scopes.some(scope=>updates.some(value=>value.scope===scope)))return invalid();
+      changes.push(change);
+      updates.push(...targets.map(value=>({...value,value:change.value,source_text:change.source_text,
+        source_message_id:context.source_message_id,source_revision:replay?.committed_revision ?? context.state_revision+1})));
+    }
+    const expected=previous.map(value=>updates.find(update=>update.scope===value.scope)??value);
+    const ledger:ScopedQuantityCorrectionCommit={version:"scoped-quantity-correction-1",
+      company_id:context.company_id,conversation_id:context.conversation_id,source_message_id:context.source_message_id,
+      source_text:text,entity_id:target.entity_id,subject_label:item.name,unit:target.attributes.unit,
+      previous_revision:replay?.previous_revision??context.state_revision,
+      committed_revision:replay?.committed_revision??context.state_revision+1,
+      previous_quantity:replay?.previous_quantity??target.quantity,
+      current_quantity:expected.reduce((sum,value)=>sum+Number(value.value),0),
+      previous_updates:structuredClone(previous),changes};
+    if(replay && !sameCanonicalJson(replay,ledger) ||
+      item.quantity!==null && item.quantity!==ledger.current_quantity)return invalid();
+    const projected=structuredClone(input.state), next=projected.entities.find(value=>value.entity_id===target.entity_id)!;
+    next.quantity=ledger.current_quantity;next.provenance={...next.provenance,source_type:"customer",source_message_id:context.source_message_id};
+    next.attributes.scoped_customer_updates=structuredClone(expected);
+    next.attributes.scoped_quantity_correction=structuredClone(ledger);
+    projected.latest_corrections=[...new Set([...projected.latest_corrections,scopedQuantityCorrectionSourceMarker(text),scopedQuantityCorrectionSummary(ledger)])].slice(-8);
+    if(!readVerifiedScopedQuantityCorrection({state:projected,...context,source_text:text,revision:ledger.committed_revision}))return invalid();
+    const reply=input.language==="en"
+      ? `Updated ${item.name}: ${changes.map(change=>change.source_text).join("; ")}. Total ${ledger.current_quantity} ${ledger.unit}. This is not a confirmed order.`
+      : input.language==="zh-CN"
+      ? `已更新「${item.name}」：${changes.map(change=>change.source_text).join("；")}；合共 ${ledger.current_quantity}${ledger.unit}。尚未下单。`
+      : `已更新「${item.name}」：${changes.map(change=>change.source_text).join("；")}；合共 ${ledger.current_quantity}${ledger.unit}。未落單。`;
+    return {topic:target.category,topic_source:"semantic",entity_id:target.entity_id,action:"scoped_update",
+      values:updates,aggregate_quantity:ledger.current_quantity,scoped_correction:ledger,
+      context_sufficient:true,reply,clarification:question};
+  }
 
   const words: Record<string, number> = {
     "零": 0, "〇": 0, "一": 1, "二": 2, "兩": 2, "两": 2,
@@ -498,6 +593,18 @@ export function resolveSemanticContextualCandidate(input: {
     (item.quantity !== null && item.quantity !== total)) return invalid();
   const previousValues:ScopedCustomerValue[]=Array.isArray(target.attributes.scoped_customer_updates)
     ? target.attributes.scoped_customer_updates : [];
+  // An existing source ID is replay authority only for the exact committed
+  // allocation. An altered quantity/quote must not produce a fresh mutation
+  // attempt or a false success acknowledgement under that receipt.
+  if(goalReplay.includes(target) && (target.quantity!==total ||
+    previousValues.length!==values.length || values.some(value=>{
+      const prior=previousValues.filter(row=>row.scope===value.scope && row.attribute===value.attribute);
+      return prior.length!==1 || prior[0].action!==value.action || prior[0].value!==value.value ||
+        prior[0].source_text!==value.source_text || prior[0].group_scope!==value.group_scope ||
+        prior[0].group_goal_id!==value.group_goal_id ||
+        prior[0].source_message_id!==input.context?.source_message_id ||
+        JSON.stringify(prior[0].scope_count_source??null)!==JSON.stringify(value.scope_count_source??null);
+    })))return invalid();
   const previousScopes=previousValues.length>0;
   // Every earlier logical scope must be covered before replacing an aggregate.
   // Anonymous member suffixes alone are not proof of group ownership.
@@ -548,6 +655,7 @@ export type ContextualDecision =
     new_entity?: CommerceEntity;
     updates: ScopedCustomerValue[];
     aggregate_quantity?: number;
+    scoped_correction?: ScopedQuantityCorrectionCommit;
   };
 
 export function resolveContextualCustomerUpdate(input: {
@@ -570,8 +678,10 @@ export function resolveContextualCustomerUpdate(input: {
   );
   const compatible = active.filter((entity) => entity.category === candidate.topic &&
     (!candidate.entity_id || candidate.entity_id === entity.entity_id));
-  if(candidate.new_entity && active.length===0 &&
-    !input.state.entities.some(entity=>entity.entity_id===candidate.new_entity!.entity_id) &&
+  if(candidate.new_entity && candidate.topic_source==="semantic" &&
+    input.state.current_topic===candidate.new_entity.category &&
+    !input.state.entities.some(entity=>entity.entity_id===candidate.new_entity!.entity_id ||
+      entity.attributes.contextual_goal_id===candidate.new_entity!.attributes.contextual_goal_id) &&
     candidate.new_entity.entity_id===candidate.entity_id &&
     candidate.new_entity.category===candidate.topic &&
     candidate.new_entity.provenance.source_type==="customer" &&
@@ -601,6 +711,7 @@ export function resolveContextualCustomerUpdate(input: {
     ...(candidate.new_entity?{new_entity:candidate.new_entity}:{}),
     updates: candidate.values,
     aggregate_quantity: candidate.aggregate_quantity,
+    ...(candidate.scoped_correction?{scoped_correction:candidate.scoped_correction}:{}),
     reply: candidate.reply,
   };
 }
@@ -655,6 +766,15 @@ export function contextualUpdateEvents(
     value: updates,
     provenance,
   }];
+  if(decision.scoped_correction){
+    const ledger=decision.scoped_correction;
+    if(ledger.source_message_id!==source_message_id || ledger.entity_id!==target.entity_id ||
+      ledger.current_quantity!==decision.aggregate_quantity)return [];
+    events.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:target.entity_id,key:"scoped_quantity_correction",
+      value:structuredClone(ledger),provenance},
+      {type:"ADD_CORRECTION",correction:ledger.source_text},
+      {type:"ADD_CORRECTION",correction:scopedQuantityCorrectionSummary(ledger)});
+  }
   // Only an adapter-authoritative aggregate can change the entity quantity.
   const allocation = updates.filter((v) => v.attribute === "quantity" && typeof v.value === "number");
   if (decision.aggregate_quantity !== undefined && allocation.length === updates.length && allocation.length > 0) {

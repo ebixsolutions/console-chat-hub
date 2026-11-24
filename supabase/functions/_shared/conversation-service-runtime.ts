@@ -45,8 +45,13 @@ export function isReadOnlyCustomerCalculationRequest(text: string): boolean {
   const value = calcClean(text);
   // Use the same typed money parser as calculation/planning/Memory so local
   // currency wording cannot fall through to quantity recall.
-  const hasMoney = deriveTypedCustomerMoneyFacts(value).facts.length > 0;
-  return CALCULATION_REQUEST.test(value) && hasMoney && HISTORICAL_OR_CONDITIONAL.test(value) &&
+  const money = deriveTypedCustomerMoneyFacts(value);
+  // The typed monetary source already owns historical classification used by
+  // Memory. Reuse that classification here: a narrower second phrase matcher
+  // must not send an explicit old/assumed-price calculation to the mutable
+  // legacy path or multiply a separately stated one-off amount per unit.
+  return CALCULATION_REQUEST.test(value) && money.facts.length > 0 &&
+    (money.historical || HISTORICAL_OR_CONDITIONAL.test(value)) &&
     !/(?:落單|下單|下单|付款|支付|購買|购买|訂購|订购|正式報價|正式报价|place an order|checkout|pay now|purchase now|book now)/i.test(value);
 }
 export function isHistoricalOrConditionalCustomerCalculationRequest(text: string): boolean {

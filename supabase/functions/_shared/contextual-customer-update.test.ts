@@ -2594,3 +2594,11 @@ Deno.test("R8 summary and recall show literal labels or neutral wording, never i
     assert(JSON.stringify(s) === before, "presentation changed persisted data");
   }
 });
+
+// Same Closure Contract: independently registered generic twins.
+// Every original callback above remains intact, executed and blocking.
+import "../../../tests/task1-director/phase1-safety-twins.test.ts";
+import "../../../tests/task1-director/phase1-recall-twins.test.ts";
+import "../../../tests/task1-director/phase1-journey-twins.test.ts";
+import "../../../tests/task1-director/phase1-journey-integrity-twins.test.ts";
+import "../../../tests/task1-director/phase1-correction-integrity-twins.test.ts";

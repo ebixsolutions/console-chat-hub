@@ -197,6 +197,7 @@ import {
   reconcileDeliveredMemoryReply,
   verifyCommittedRoomCorrectionMemory,
   verifyCommittedLifecycleMemory,
+  verifyCommittedScopedCorrectionMemory,
 } from "../_shared/conversation-long-memory.ts";
 import {
   type ConversationCommerceState,
@@ -5136,6 +5137,14 @@ async function orchestrationGenerateReply(
           _c3Memory, memoryHistory,
         ).block;
       }
+      if (_a3Commerce?.contextual_decision?.route === "contextual_scoped_update" &&
+        _a3Commerce.contextual_decision.scoped_correction &&
+        !(_a3Commerce.trusted_journey_progress?.update_kind === "contextual_scoped_update" &&
+          _a3Commerce.trusted_journey_progress.scoped_correction)) {
+        await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+        return new Response(JSON.stringify({ success: false, error: "scoped_correction_commit_unverified" }),
+          { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       const memoryOutcome = !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
         ? null
         : await refreshConversationLongMemory(
@@ -5163,6 +5172,9 @@ async function orchestrationGenerateReply(
             } : undefined,
             customer_fact_delta: (_a3SemanticFrame?.customer_facts ?? []).map(f=>({...f,authority:"customer" as const,source_message_id:_h1SourceMessageId})),
             pending_lifecycle_reply: _a3Commerce?.trusted_lifecycle_commit ?? null,
+            committed_scoped_correction: _a3Commerce?.trusted_journey_progress?.update_kind === "contextual_scoped_update" &&
+                _a3Commerce.trusted_journey_progress.scoped_correction
+              ? _a3Commerce.trusted_journey_progress : null,
             newest_first: memoryHistory,
             visitor_turn_count: _pr5VisitorTurnCount ?? 0,
           },
@@ -5569,6 +5581,17 @@ async function orchestrationGenerateReply(
     memory: _c3Memory,
     commerce: _c3CommerceSnapshot,
   });
+  const _c3ScopedCorrectionReceipt = _a3Commerce?.trusted_journey_progress?.update_kind === "contextual_scoped_update" &&
+      _a3Commerce.trusted_journey_progress.scoped_correction
+    ? _a3Commerce.trusted_journey_progress : null;
+  if ((_c3ScopedCorrectionReceipt || (_a3Commerce?.contextual_decision?.route === "contextual_scoped_update" &&
+      _a3Commerce.contextual_decision.scoped_correction)) &&
+    !verifyCommittedScopedCorrectionMemory({ memory: _c3Memory, receipt: _c3ScopedCorrectionReceipt,
+      commerce: _c3CommerceSnapshot ? { ..._c3CommerceSnapshot, conversation_id } : null })) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(JSON.stringify({ success: false, error: "scoped_correction_memory_commerce_mismatch" }),
+      { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+  }
   const _c3CorrectionReceipt = _a3Commerce?.trusted_correction_commit ?? null;
   const _c3VerifiedCorrectionReceipt = _c3CorrectionReceipt &&
       verifyCommittedRoomCorrectionMemory({

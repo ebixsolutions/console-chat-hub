@@ -1,5 +1,5 @@
 import { matchesReferenceLabel } from "./industry-agent-registry.ts";
-import { resolveSourceOwnedSubject } from "./commerce-subject-resolution.ts";
+import { resolveSourceOwnedSubject, sourceOwnedSubjectLabels } from "./commerce-subject-resolution.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { ScopedCustomerValue } from "./contextual-customer-update.ts";
 import { sameCanonicalJson } from "./canonical-json.ts";
@@ -238,6 +238,159 @@ export interface B2TrustedScopedJourneyProgress
   accepted_updates: ScopedCustomerValue[];
   committed_updates: ScopedCustomerValue[];
   aggregate_quantity?: number;
+  /** Source-verified old/new scoped values from the actual committed snapshot. */
+  scoped_correction?: ScopedQuantityCorrectionCommit;
+}
+
+export interface ScopedQuantityCorrectionChange {
+  scope: string;
+  previous_value: number;
+  value: number;
+  unit: string;
+  source_text: string;
+  target_scopes: string[];
+}
+
+/** Latest bounded correction ledger in the existing canonical entity JSON. */
+export interface ScopedQuantityCorrectionCommit {
+  version: "scoped-quantity-correction-1";
+  company_id: string;
+  conversation_id: string;
+  source_message_id: string;
+  source_text: string;
+  entity_id: string;
+  subject_label: string;
+  unit: string;
+  previous_revision: number;
+  committed_revision: number;
+  previous_quantity: number;
+  current_quantity: number;
+  previous_updates: ScopedCustomerValue[];
+  changes: ScopedQuantityCorrectionChange[];
+}
+
+const correctionClean = (value: string): string => value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+const correctionEscape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const correctionNumbers: Record<string, number> = { zero:0, one:1, two:2, three:3, four:4, five:5,
+  six:6, seven:7, eight:8, nine:9, ten:10, "零":0, "〇":0, "一":1, "二":2,
+  "兩":2, "两":2, "三":3, "四":4, "五":5, "六":6, "七":7, "八":8, "九":9, "十":10 };
+const correctionNumberPattern = "([0-9]{1,4}|[零〇一二兩两三四五六七八九十]|zero|one|two|three|four|five|six|seven|eight|nine|ten)";
+const correctionNumber = (value: string): number => correctionNumbers[value.toLowerCase()] ?? Number(value);
+
+/** Syntax only: scope and unit remain literal customer data, never a catalogue. */
+export function verifyScopedQuantityCorrectionQuote(input: {
+  scope: string; previous_value: number; value: number; unit: string; source_text: string; grouped: boolean;
+}): boolean {
+  if (![input.previous_value,input.value].every(value=>Number.isInteger(value)&&value>=1&&value<=1000) ||
+    input.previous_value===input.value || !input.scope || input.scope.length>80 ||
+    !/^[\p{L}\p{N}]{1,20}$/u.test(input.unit) || input.source_text.length>200) return false;
+  const scope=correctionEscape(correctionClean(input.scope)), unit=correctionEscape(input.unit);
+  const each=input.grouped?"\\s+each":"";
+  const patterns=[
+    new RegExp("^"+scope+"\\s+from\\s+"+correctionNumberPattern+"\\s*"+unit+each+
+      "\\s+to\\s+"+correctionNumberPattern+"\\s*"+unit+each+"[.!。]?$","iu"),
+    new RegExp("^"+scope+(input.grouped?"\\s*各":"")+"\\s*(?:由|從|从)\\s*"+correctionNumberPattern+
+      "\\s*"+unit+"\\s*(?:改為|改为|改做|到)\\s*"+correctionNumberPattern+"\\s*"+unit+"[.!。]?$","iu"),
+    new RegExp("^"+scope+(input.grouped?"\\s*各":"")+"\\s*(?:唔係|不是|唔系|不係)\\s*"+correctionNumberPattern+
+      "\\s*"+unit+"\\s*(?:而係|而是|而系)\\s*"+correctionNumberPattern+"\\s*"+unit+"[.!。]?$","iu"),
+  ];
+  const text=correctionClean(input.source_text);
+  return patterns.some(pattern=>{
+    const match=text.match(pattern);
+    return !!match && correctionNumber(match[1])===input.previous_value && correctionNumber(match[2])===input.value;
+  });
+}
+
+export function isExplicitScopedQuantityCorrectionSource(text: string, subject: string): boolean {
+  const source=correctionClean(text);
+  return source.length>=4 && source.length<=1200 && matchesReferenceLabel(source,subject) &&
+    /^(?:(?:please\s+)?(?:correct(?:ion)?|change|update)\b|(?:請|请)?(?:更正|修正|改))/iu.test(source) &&
+    !/[?？]|\b(?:not|don't|never|if|maybe|perhaps|could|should|would)\b|(?:唔好|不要|假如|如果|可能|可唔可以|可不可以)/iu.test(source);
+}
+
+export function scopedQuantityCorrectionSummary(ledger: ScopedQuantityCorrectionCommit): string {
+  return `${ledger.subject_label} quantity: change from ${ledger.previous_quantity} ${ledger.unit} to ${ledger.current_quantity} ${ledger.unit}`;
+}
+
+/** Existing reducer display projection only; never substitutes full source authority. */
+export function scopedQuantityCorrectionSourceMarker(text: string): string {
+  return correctionClean(text).slice(0,300);
+}
+
+/** One shared validator for the writer's readback, Memory and B2 consumers. */
+export function readVerifiedScopedQuantityCorrection(input: {
+  state: ConversationCommerceState; company_id: string; conversation_id: string;
+  source_message_id: string; source_text: string; revision: number;
+}): ScopedQuantityCorrectionCommit | null {
+  if(![input.company_id,input.conversation_id,input.source_message_id].every(value=>
+    typeof value==="string" && value.trim().length>0 && value.length<=200))return null;
+  const candidates=input.state.entities.filter(entity=>{
+    const value=entity.attributes.scoped_quantity_correction;
+    return value && typeof value==="object" && !Array.isArray(value) &&
+      (value as unknown as ScopedQuantityCorrectionCommit).source_message_id===input.source_message_id;
+  });
+  if(candidates.length!==1)return null;
+  const entity=candidates[0], raw=entity.attributes.scoped_quantity_correction;
+  const ledger=raw as unknown as ScopedQuantityCorrectionCommit;
+  if(ledger.version!=="scoped-quantity-correction-1" || ledger.company_id!==input.company_id ||
+    ledger.conversation_id!==input.conversation_id || ledger.source_message_id!==input.source_message_id ||
+    typeof ledger.source_text!=="string" || correctionClean(ledger.source_text)!==correctionClean(input.source_text) ||
+    typeof ledger.subject_label!=="string" || !isExplicitScopedQuantityCorrectionSource(ledger.source_text,ledger.subject_label) ||
+    ledger.entity_id!==entity.entity_id || input.state.entities.filter(value=>value.entity_id===entity.entity_id).length!==1 ||
+    ["cancelled","deferred","superseded"].includes(entity.status) ||
+    entity.provenance.source_type!=="customer" || entity.provenance.source_message_id!==input.source_message_id ||
+    !sourceOwnedSubjectLabels(entity).some(label=>correctionClean(label).toLowerCase()===correctionClean(ledger.subject_label).toLowerCase()) ||
+    typeof ledger.unit!=="string" || entity.attributes.unit!==ledger.unit ||
+    !Number.isInteger(ledger.previous_revision) || ledger.previous_revision<1 ||
+    ledger.committed_revision!==ledger.previous_revision+1 || ledger.committed_revision!==input.revision ||
+    !input.state.latest_corrections.includes(scopedQuantityCorrectionSourceMarker(ledger.source_text)) ||
+    !input.state.latest_corrections.includes(scopedQuantityCorrectionSummary(ledger)) ||
+    !Array.isArray(ledger.previous_updates) || !ledger.previous_updates.length || ledger.previous_updates.length>24 ||
+    !Array.isArray(ledger.changes) || !ledger.changes.length || ledger.changes.length>8)return null;
+  const previous=ledger.previous_updates;
+  if(new Set(previous.map(row=>row?.scope+":"+row?.attribute)).size!==previous.length || previous.some(row=>
+    !row || row.attribute!=="quantity" || row.action!=="set" || typeof row.scope!=="string" || !row.scope.trim() ||
+    typeof row.value!=="number" || !Number.isInteger(row.value) || row.value<1 || row.value>1000 ||
+    typeof row.source_text!=="string" || !row.source_text.trim() || row.source_text.length>200 ||
+    typeof row.source_message_id!=="string" || !row.source_message_id.trim() || row.source_message_id===input.source_message_id ||
+    !Number.isInteger(row.source_revision) || row.source_revision!<1 || row.source_revision!>ledger.previous_revision ||
+    (row.group_scope && (typeof row.group_scope!=="string" || !row.group_scope.trim() ||
+      typeof row.group_goal_id!=="string" || !row.group_goal_id.trim() ||
+      row.group_goal_id!==entity.attributes.contextual_goal_id)) ||
+    (row.scope_count_source && (row.scope_count_source.goal_id!==entity.attributes.contextual_goal_id ||
+      typeof row.scope_count_source.source_text!=="string" || !row.scope_count_source.source_text.trim() ||
+      typeof row.scope_count_source.source_message_id!=="string" || !row.scope_count_source.source_message_id.trim() ||
+      !Number.isInteger(row.scope_count_source.source_revision) || row.scope_count_source.source_revision<1 ||
+      row.scope_count_source.source_revision>ledger.previous_revision))))return null;
+  const expected=structuredClone(previous), seen=new Set<string>(), spans:Array<{start:number;end:number}>=[];
+  const source=correctionClean(ledger.source_text);
+  for(const change of ledger.changes){
+    if(!change || typeof change.scope!=="string" || typeof change.source_text!=="string" ||
+      change.unit!==ledger.unit || !Array.isArray(change.target_scopes) || !change.target_scopes.length ||
+      change.target_scopes.length>24)return null;
+    const group=previous.filter(row=>row.group_scope===change.scope);
+    const direct=previous.filter(row=>row.scope===change.scope && !row.group_scope);
+    if(group.length && direct.length || !group.length && direct.length!==1)return null;
+    const target=group.length?group:direct;
+    if(!sameCanonicalJson(target.map(row=>row.scope),change.target_scopes) ||
+      !verifyScopedQuantityCorrectionQuote({...change,grouped:group.length>0}) ||
+      target.some(row=>row.value!==change.previous_value || seen.has(row.scope)))return null;
+    const quote=correctionClean(change.source_text), at=source.indexOf(quote);
+    if(at<0 || source.indexOf(quote,at+1)>=0 || spans.some(span=>at<span.end&&span.start<at+quote.length))return null;
+    spans.push({start:at,end:at+quote.length});
+    for(const row of target){
+      seen.add(row.scope);
+      const next=expected.find(value=>value.scope===row.scope)!;
+      next.value=change.value;next.source_text=quote;next.source_message_id=input.source_message_id;next.source_revision=input.revision;
+    }
+  }
+  const quantityMentions=[...source.matchAll(new RegExp(correctionNumberPattern+"\\s*"+correctionEscape(ledger.unit),"giu"))];
+  if(quantityMentions.length!==ledger.changes.length*2 || quantityMentions.some(match=>!spans.some(span=>
+    (match.index??-1)>=span.start&&(match.index??-1)+match[0].length<=span.end)))return null;
+  const before=previous.reduce((sum,row)=>sum+Number(row.value),0), after=expected.reduce((sum,row)=>sum+Number(row.value),0);
+  if(before!==ledger.previous_quantity || after!==ledger.current_quantity || after!==entity.quantity ||
+    after<1 || after>1000 || !sameCanonicalJson(expected,entity.attributes.scoped_customer_updates))return null;
+  return ledger;
 }
 
 /** Private server-to-server evidence; never request or assistant metadata. */

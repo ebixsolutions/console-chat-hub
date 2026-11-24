@@ -3581,3 +3581,7 @@ for(const [index,d] of d4Tier1Industries.entries())for(const kind of ['C1_RECALL
   console.log('D4_TIER1|'+JSON.stringify(row));
   assert.equal(instrumentError,null,'D4 fixture instrument error must be fixed, not filed as a product defect');
  });
+
+// Same Closure Contract: generic correction Memory/B2 consumer integration.
+import { registerScopedCorrectionHandlerTests } from "../task1-director/phase1-correction-handler-register.mjs";
+registerScopedCorrectionHandlerTests({test, assert, fixture, uuid, providerWire, root, hash});

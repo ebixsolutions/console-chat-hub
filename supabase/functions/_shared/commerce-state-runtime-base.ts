@@ -81,6 +81,7 @@ import {
   type B2TrustedCorrectionCommit,
   type B2TrustedJourneyProgress,
   type B2TrustedLifecycleCommit,
+  readVerifiedScopedQuantityCorrection,
   resolveEntityLifecyclePlan,
   verifyEntityLifecycleTransition,
 } from "./b2-journey-progress-contract.ts";
@@ -2770,6 +2771,85 @@ function acceptedLifecycleEntityRef(input:CommerceRuntimeInput,state:Conversatio
   if(targets.length!==1||targets[0].entity_id!==proposal.entity.entity_id)return null;
   return proposal.entity.entity_id;
 }
+
+/** A compound lifecycle Reading corroborates the complete existing source plan.
+ * Focus is not a second mutation target. No model ref may extend the parsed
+ * targets, and a partial name cannot cancel an entire canonical aggregate. */
+function acceptedCompoundLifecyclePlan(input: CommerceRuntimeInput, state: ConversationCommerceState): boolean {
+  const frame = input.semantic_frame;
+  if (!frame || frame.confidence < 0.90 || frame.ambiguity.is_ambiguous ||
+      !input.company_id?.trim() || !input.conversation_id?.trim() || !input.source_message_id?.trim() ||
+      frame.additive || frame.explicit_negations.length || frame.customer_facts?.length ||
+      frame.requested_facts.length ||
+      ![frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state]
+        .every(value => value === "none" || value === "unknown")) return false;
+  const action = frame.operation === "DEFER" ? "deferred" :
+    ["CANCEL_ITEM", "REMOVE_ITEM"].includes(frame.operation) ? "cancelled" : null;
+  if (!action) return false;
+  // This path never lends a proposed ref to the parser: every clause must
+  // independently resolve against the current, customer-owned snapshot.
+  const parsed = resolveEntityLifecyclePlan(input.text, state);
+  if (parsed.kind !== "mutation" ||
+      (parsed.plans.length === 1 && !parsed.plans[0].focus_category) ||
+      parsed.plans.some(plan => plan.action !== action)) return false;
+  const targets = parsed.plans.map(plan => state.entities.filter(entity =>
+    plan.target_entity_id ? entity.entity_id === plan.target_entity_id : entity.category === plan.target_category));
+  const activeOwned = (entity: ConversationCommerceState["entities"][number]) =>
+    entity.provenance.source_type === "customer" && Boolean(entity.provenance.source_message_id?.trim()) &&
+    !["cancelled", "deferred", "superseded"].includes(entity.status);
+  if (targets.some(matches => matches.length !== 1 || !activeOwned(matches[0]))) return false;
+  const targetIds = targets.map(matches => matches[0].entity_id);
+  if (new Set(targetIds).size !== targetIds.length) return false;
+  const focusKey = parsed.plans[0].focus_category;
+  if (parsed.plans.some(plan => plan.focus_category !== focusKey)) return false;
+  const focus = focusKey ? state.entities.filter(entity => entity.category === focusKey && activeOwned(entity)) : [];
+  if (focusKey && (focus.length !== 1 || targetIds.includes(focus[0].entity_id))) return false;
+  const allowed = [...targets.map(matches => matches[0]), ...focus];
+  const refs = frame.referents.map(ref => ref.ref);
+  if (new Set(refs).size !== refs.length || targetIds.some(id => !refs.includes(id)) ||
+      frame.referents.some(ref => ref.confidence < 0.90 ||
+        !["persistent_state", "prior_turn"].includes(ref.source) ||
+        !allowed.some(entity => entity.entity_id === ref.ref))) return false;
+  if (frame.entities.some(proposal => {
+    const entity = allowed.find(value => value.entity_id === proposal.entity_ref);
+    const unit = typeof entity?.attributes.unit === "string" ? entity.attributes.unit : null;
+    return !entity || proposal.confidence < 0.90 || proposal.quantity != null ||
+      !sourceOwnedSubjectLabels(entity).includes(proposal.name.normalize("NFKC").trim().toLowerCase()) ||
+      (proposal.unit != null && proposal.unit.normalize("NFKC") !== unit?.normalize("NFKC"));
+  })) return false;
+  const source = input.text.normalize("NFKC").trim();
+  if (frame.demands?.some(demand => demand.source_type !== "general" ||
+      demand.source_quote?.normalize("NFKC").trim() !== source || demand.ambiguity.is_ambiguous ||
+      demand.requested_facts.length || demand.explicit_negations.length ||
+      !demand.subject_refs.length || demand.subject_refs.some(ref =>
+        !allowed.some(entity => entity.entity_id === ref || sourceOwnedSubjectLabels(entity)
+          .includes(ref.normalize("NFKC").trim().toLowerCase()))))) return false;
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return splitCustomerOperationClauses(input.text).every(clause => {
+    const part = resolveEntityLifecyclePlan(clause, state);
+    if (part.kind === "mutation") return part.plans.every(plan => {
+      const matches = targets.filter(([entity]) => plan.target_entity_id ?
+        plan.target_entity_id === entity.entity_id : plan.target_category === entity.category);
+      if (plan.action !== action || matches.length !== 1) return false;
+      const entity = matches[0][0];
+      // The lifecycle parser can recognise a model identifier inside an
+      // otherwise unsafe clause. Whole-subject verification must still reject
+      // reported/conditional/negated instructions and partial aggregate names.
+      // For the parser's exact two-target collective, expand only the subject
+      // to each already verified name for this check; nothing is persisted.
+      const collective = part.plans.length === 2 && /兩樣都|两样都|\bboth\b/iu.test(clause);
+      const label = sourceOwnedSubjectLabels(entity)[0];
+      if (!label) return false;
+      const completeClause = collective ? clause.replace(/兩樣都|两样都|\bboth\b/giu, () => label) : clause;
+      const whole = resolveSourceOwnedSubject({ ...state, entities: [entity] }, completeClause, { mode: "mutation" });
+      return whole.kind === "one" && whole.entity.entity_id === entity.entity_id;
+    });
+    // The only non-mutation clause may focus on the exact retained subject.
+    return focus.length === 1 && sourceOwnedSubjectLabels(focus[0]).some(label =>
+      new RegExp("^(?:focus on|back to|return to|先搞|先處理|先处理)\\s*" + escape(label) + "[。.!]?\\s*$", "iu")
+        .test(clause.normalize("NFKC").trim()));
+  });
+}
 function resolveBoundLifecyclePlan(
   input:CommerceRuntimeInput,state:ConversationCommerceState,
 ): ReturnType<typeof resolveEntityLifecyclePlan> {
@@ -3881,7 +3961,7 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
   // is never permission to mutate a different item or transaction state.
   if(input.semantic_frame && input.semantic_frame.confidence>=0.72 &&
     ["DEFER","CANCEL_ITEM","REMOVE_ITEM"].includes(input.semantic_frame.operation) &&
-    !acceptedLifecycleEntityRef(input,previous))return previous;
+    !acceptedLifecycleEntityRef(input,previous) && !acceptedCompoundLifecyclePlan(input,previous))return previous;
   // A missing lifecycle subject blocks all commerce-state side effects in the
   // turn (including quote/order/payment drafts). Visitor and audit persistence
   // remain outside this reducer.
@@ -4185,10 +4265,25 @@ function buildTrustedJourneyProgress(input: {
   reason: string;
 }): B2TrustedJourneyProgress | undefined {
   const { runtime_input, persisted } = input;
-  if (
-    persisted.result !== "success" ||
-    persisted.revision !== persisted.previous_revision + 1
-  ) return undefined;
+  const proposedCorrection = input.contextual.route === "contextual_scoped_update"
+    ? input.contextual.scoped_correction : undefined;
+  const scopedCorrection = proposedCorrection ? readVerifiedScopedQuantityCorrection({
+    state: persisted.state, company_id: runtime_input.company_id,
+    conversation_id: runtime_input.conversation_id,
+    source_message_id: runtime_input.source_message_id, source_text: runtime_input.text,
+    revision: persisted.revision,
+  }) : null;
+  if (proposedCorrection && (!scopedCorrection ||
+    JSON.stringify(proposedCorrection) !== JSON.stringify(scopedCorrection))) return undefined;
+  const committedNow = persisted.result === "success" &&
+    persisted.revision === persisted.previous_revision + 1;
+  // Recovery after a committed correction may reuse only that exact source's
+  // canonical ledger. It grants no new write, revision or allocation authority.
+  const replayedCorrection = Boolean(scopedCorrection &&
+    ["no_semantic_change", "source_message_already_applied"].includes(persisted.result) &&
+    persisted.previous_revision === persisted.revision &&
+    JSON.stringify(persisted.previous_state) === JSON.stringify(persisted.state));
+  if (!committedNow && !replayedCorrection) return undefined;
   const transaction_before = b2JourneyTransactionBoundary(
     persisted.previous_state,
   );
@@ -4211,6 +4306,25 @@ function buildTrustedJourneyProgress(input: {
     if (!entity || !Array.isArray(committed) || !contextual.updates.length) {
       return undefined;
     }
+    if (scopedCorrection && committedNow) {
+      const previous = persisted.previous_state.entities.find(value => value.entity_id === entity.entity_id);
+      if (!previous || previous.quantity !== scopedCorrection.previous_quantity ||
+        scopedCorrection.previous_revision !== persisted.previous_revision ||
+        JSON.stringify(previous.attributes.scoped_customer_updates) !== JSON.stringify(scopedCorrection.previous_updates) ||
+        persisted.previous_state.entities.length !== persisted.state.entities.length ||
+        persisted.previous_state.entities.some(value => value.entity_id !== entity.entity_id &&
+          JSON.stringify(value) !== JSON.stringify(persisted.state.entities.find(next => next.entity_id === value.entity_id)))) return undefined;
+      // Only the accepted rows, their ledger, quantity and customer provenance
+      // may change on this item. A correction cannot borrow sibling attributes.
+      const retained = structuredClone(entity);
+      retained.quantity = previous.quantity;
+      retained.provenance = structuredClone(previous.provenance);
+      retained.attributes.scoped_customer_updates = structuredClone(previous.attributes.scoped_customer_updates);
+      if (Object.hasOwn(previous.attributes, "scoped_quantity_correction")) {
+        retained.attributes.scoped_quantity_correction = structuredClone(previous.attributes.scoped_quantity_correction);
+      } else delete retained.attributes.scoped_quantity_correction;
+      if (JSON.stringify(retained) !== JSON.stringify(previous)) return undefined;
+    }
     const goal = activeCustomerGoal(persisted.state, entity.category)?.goal;
     return {
       contract: "journey-progress-after-accepted-update-v1",
@@ -4218,7 +4332,7 @@ function buildTrustedJourneyProgress(input: {
       company_id: runtime_input.company_id,
       source_message_id: runtime_input.source_message_id,
       source_text: runtime_input.text,
-      previous_revision: persisted.previous_revision,
+      previous_revision: scopedCorrection?.previous_revision ?? persisted.previous_revision,
       committed_revision: persisted.revision,
       entity_id: entity.entity_id,
       category: entity.category,
@@ -4230,6 +4344,7 @@ function buildTrustedJourneyProgress(input: {
       reply: input.reply,
       accepted_updates: structuredClone(contextual.updates),
       committed_updates: structuredClone(committed),
+      ...(scopedCorrection ? { scoped_correction: structuredClone(scopedCorrection) } : {}),
       ...(contextual.aggregate_quantity === undefined
         ? {}
         : { aggregate_quantity: contextual.aggregate_quantity }),
@@ -5079,11 +5194,32 @@ export async function runCommerceStateRuntime(
     const target = lifecycleVerified.targetIds.map(id =>
       entityLabel(state.entities.find(e => e.entity_id === id)!, language)).join("同");
     const genericEnglish = language === "en" && lifecycleVerified.targetIds.every(id=>state.entities.find(e=>e.entity_id===id)?.entity_id.startsWith("generic:"));
-    const reply = genericEnglish ? lifecycleVerified.targetIds.map(id=>renderEnglishRequirement(state.entities.find(e=>e.entity_id===id)!,entityLabel(state.entities.find(e=>e.entity_id===id)!,language))).join("; ")+"." : lifecycleVerified.plans[0].action === "cancelled"
+    const acknowledgement = genericEnglish ? lifecycleVerified.targetIds.map(id=>renderEnglishRequirement(state.entities.find(e=>e.entity_id===id)!,entityLabel(state.entities.find(e=>e.entity_id===id)!,language))).join("; ")+"." : lifecycleVerified.plans[0].action === "cancelled"
       ? (language === "en" ? `${target} is cancelled.` : `${target}已取消。`)
       : language === "en"
       ? `Okay, ${target} is ${lifecycleVerified.plans[0].action === "deferred" ? "paused" : "cancelled"}. ${focusLabel ? `We can continue with ${focusLabel}; its requirements remain in place.` : "The other product requirements remain in place."}`
       : `好，${target}${lifecycleVerified.plans[0].action === "deferred" ? "先暫停" : "已取消"}；${focusLabel ? `而家繼續處理${focusLabel}，之前嘅要求同數量會保留。` : "其他產品嘅要求同數量會保留。"}`;
+    const targetCategories = new Set(lifecycleVerified.targetIds.map(id =>
+      state.entities.find(entity => entity.entity_id === id)!.category));
+    // This committed lifecycle receipt may also identify retained siblings.
+    // Each count and literal unit must already belong to that customer's
+    // canonical item; unrelated totals and unlike units are never combined.
+    const retained = state.entities.flatMap(entity => {
+      const label = customerOwnedDisplayLabel(entity), unit = entity.attributes.unit;
+      const quantity = customerRequestedQuantity(entity);
+      if (lifecycleVerified.targetIds.includes(entity.entity_id) || !targetCategories.has(entity.category) ||
+        !["researching", "tentative", "confirmed"].includes(entity.status) || !label ||
+        entity.provenance.source_type !== "customer" || !entity.provenance.source_message_id?.trim() ||
+        entity.attributes.quantity_basis !== "customer_explicit" || quantity === null ||
+        !Number.isSafeInteger(quantity) || quantity < 0 ||
+        typeof unit !== "string" || !unit.trim() || unit.length > 64 ||
+        !/^[\p{L}\p{N}\p{M}]+(?:[ ./_-][\p{L}\p{N}\p{M}]+)*$/u.test(unit)) return [];
+      return [`${label}: ${quantity} ${unit}`];
+    });
+    const reply = acknowledgement + (retained.length ? (language === "en"
+      ? " Retained requirements: " + retained.join("; ") + "."
+      : language === "zh-CN" ? " 保留的要求：" + retained.join("；") + "。"
+      : " 保留嘅要求：" + retained.join("；") + "。") : "");
     return {
       authority: "CONVERSATION_STATE", reply, revision: persisted.revision,
       persist_result: "success", reason: "authoritative_scoped_lifecycle_applied", route: "commerce_state_answer",
@@ -5144,6 +5280,17 @@ export async function runCommerceStateRuntime(
     const reply = contextualDecision.route === "product_guidance" &&
         contextualDecision.requires_generated_guidance
       ? null : contextualDecision.reply;
+    const trustedJourneyProgress = reply === null ? undefined : buildTrustedJourneyProgress({
+      runtime_input: runtimeInput, persisted, journey: customerJourney,
+      contextual: contextualDecision, reply, route: contextualDecision.route,
+      reason: contextualDecision.reason,
+    });
+    if (contextualDecision.route === "contextual_scoped_update" &&
+      contextualDecision.scoped_correction && !trustedJourneyProgress) {
+      return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
+        persist_result: persisted.result, reason: "scoped_correction_commit_unverified", route: "commerce_state_answer",
+        contextual_decision: contextualDecision };
+    }
     return {
       authority: "CONVERSATION_STATE",
       reply,
@@ -5152,15 +5299,7 @@ export async function runCommerceStateRuntime(
       reason: contextualDecision.reason,
       route: contextualDecision.route,
       contextual_decision: contextualDecision,
-      trusted_journey_progress: reply === null ? undefined : buildTrustedJourneyProgress({
-        runtime_input: runtimeInput,
-        persisted,
-        journey: customerJourney,
-        contextual: contextualDecision,
-        reply,
-        route: contextualDecision.route,
-        reason: contextualDecision.reason,
-      }),
+      trusted_journey_progress: trustedJourneyProgress,
     };
   }
   if (

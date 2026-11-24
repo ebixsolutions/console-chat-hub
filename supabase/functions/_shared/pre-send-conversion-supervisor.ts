@@ -24,6 +24,8 @@ import {
   type B2TrustedCorrectionCommit,
   type B2TrustedJourneyProgress,
   type B2TrustedLifecycleCommit,
+  readVerifiedScopedQuantityCorrection,
+  scopedQuantityCorrectionSourceMarker,
   verifyEntityLifecycleTransition,
 } from "./b2-journey-progress-contract.ts";
 import { roomSizeCorrection, retainedRoomSizes } from "./conversation-long-memory.ts";
@@ -1215,6 +1217,30 @@ function isTrustedLifecycleCommit(input: B2EvaluationInput, draft: string): bool
     equalJson(transition.targetIds, proof.target_entity_ids);
 }
 
+/** A current committed correction cannot lose its private proof by dropping
+ * metadata. Older ledgers remain history and do not capture unrelated turns. */
+function hasCurrentScopedQuantityCorrection(snapshot: B2CanonicalSnapshot): boolean {
+  const currentSnapshot = snapshot.commerce_state_source_message_id === snapshot.source_message_id;
+  const source = clean(snapshot.source_message_content);
+  const marker = scopedQuantityCorrectionSourceMarker(source);
+  const currentCorrection = currentSnapshot && source.length > 0 &&
+    snapshot.state.latest_corrections.some(correction => scopedQuantityCorrectionSourceMarker(correction) === marker);
+  return snapshot.state.entities.some(entity => {
+    const currentEntity = currentSnapshot && entity.provenance.source_message_id === snapshot.source_message_id;
+    const updates = entity.attributes.scoped_customer_updates;
+    // Independent canonical correction text and current quantity-row sources
+    // keep the proof mandatory even if the ledger or all its markers vanish.
+    if (currentCorrection && currentEntity && Array.isArray(updates) && updates.some(update =>
+      isRecord(update) && update.attribute === "quantity" && update.source_message_id === snapshot.source_message_id)) return true;
+    if (!Object.hasOwn(entity.attributes, "scoped_quantity_correction")) return false;
+    const ledger = entity.attributes.scoped_quantity_correction;
+    if (isRecord(ledger) && ledger.source_message_id === snapshot.source_message_id) return true;
+    return currentEntity && (!isRecord(ledger) || ledger.committed_revision === snapshot.commerce_state_revision ||
+      typeof ledger.source_text === "string" && typeof snapshot.source_message_content === "string" &&
+      clean(ledger.source_text).length > 0 && clean(ledger.source_text) === clean(snapshot.source_message_content));
+  });
+}
+
 function isTrustedJourneyProgressAfterAcceptedUpdate(
   input: B2EvaluationInput,
   draft: string,
@@ -1222,6 +1248,22 @@ function isTrustedJourneyProgressAfterAcceptedUpdate(
   const proof = input.trusted_journey_progress;
   const metadata = input.metadata;
   if (!proof || !isRecord(metadata) || input.persistence_kind !== "ai_reply") return false;
+  const scopedCorrection = proof.update_kind === "contextual_scoped_update" && proof.scoped_correction
+    ? readVerifiedScopedQuantityCorrection({ state: input.snapshot.state,
+      company_id: input.snapshot.company_id, conversation_id: input.snapshot.conversation_id,
+      source_message_id: input.snapshot.source_message_id,
+      source_text: input.snapshot.source_message_content ?? "", revision: input.snapshot.commerce_state_revision })
+    : null;
+  const verifiedScopedCorrection = Boolean(scopedCorrection && proof.update_kind === "contextual_scoped_update" &&
+    equalJson(scopedCorrection, proof.scoped_correction));
+  const committed = metadata.commerce_state_persist_result === "success" &&
+    metadata.commerce_state_persistence_classification === "COMMITTED";
+  // Only an exact current-source correction ledger can recover a response
+  // after the original mutation committed. Other journey proofs remain bound
+  // to their existing success/COMMITTED contract.
+  const replayedCorrection = verifiedScopedCorrection &&
+    ["no_semantic_change", "source_message_already_applied"].includes(String(metadata.commerce_state_persist_result)) &&
+    metadata.commerce_state_persistence_classification === "NO_SEMANTIC_CHANGE";
   if (
     proof.contract !== "journey-progress-after-accepted-update-v1" ||
     proof.company_id !== input.snapshot.company_id ||
@@ -1234,8 +1276,7 @@ function isTrustedJourneyProgressAfterAcceptedUpdate(
     metadata.response_route !== proof.response_route ||
     metadata.commerce_reason !== proof.response_reason ||
     metadata.commerce_authority !== "CONVERSATION_STATE" ||
-    metadata.commerce_state_persist_result !== "success" ||
-    metadata.commerce_state_persistence_classification !== "COMMITTED" ||
+    (!committed && !replayedCorrection) ||
     Number(metadata.commerce_state_revision) !== proof.committed_revision ||
     !equalJson(proof.transaction_before, proof.transaction_after) ||
     !equalJson(
@@ -1292,10 +1333,22 @@ function isTrustedJourneyProgressAfterAcceptedUpdate(
     !equalJson(contextualMetadata.updates, proof.accepted_updates) ||
     contextualMetadata.aggregate_quantity !== proof.aggregate_quantity
   ) return false;
-  const committed = Array.isArray(entity.attributes.scoped_customer_updates)
+  if (proof.scoped_correction || contextualMetadata.scoped_correction || hasCurrentScopedQuantityCorrection(input.snapshot)) {
+    if (!verifiedScopedCorrection || !scopedCorrection ||
+      !equalJson(scopedCorrection, contextualMetadata.scoped_correction) ||
+      scopedCorrection.entity_id !== proof.entity_id ||
+      scopedCorrection.previous_revision !== proof.previous_revision ||
+      scopedCorrection.committed_revision !== proof.committed_revision ||
+      scopedCorrection.current_quantity !== proof.aggregate_quantity) return false;
+    const correctedScopes = new Set(scopedCorrection.changes.flatMap(change => change.target_scopes));
+    if (proof.accepted_updates.length !== correctedScopes.size ||
+      new Set(proof.accepted_updates.map(update => update.scope)).size !== correctedScopes.size ||
+      proof.accepted_updates.some(update => !correctedScopes.has(update.scope))) return false;
+  }
+  const committedUpdates = Array.isArray(entity.attributes.scoped_customer_updates)
     ? entity.attributes.scoped_customer_updates
     : [];
-  if (!equalJson(committed, proof.committed_updates)) return false;
+  if (!equalJson(committedUpdates, proof.committed_updates)) return false;
   for (const update of proof.accepted_updates) {
     const matched = proof.committed_updates.find((candidate) =>
       candidate.scope === update.scope && candidate.attribute === update.attribute
@@ -1574,6 +1627,17 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     input,
     draft,
   );
+  const contextualMetadata = isRecord(input.metadata?.contextual_decision)
+    ? input.metadata.contextual_decision : null;
+  const declaredScopedCorrection = input.persistence_kind === "ai_reply" &&
+    ((input.trusted_journey_progress?.update_kind === "contextual_scoped_update" &&
+      input.trusted_journey_progress.scoped_correction != null) || contextualMetadata?.scoped_correction != null ||
+      hasCurrentScopedQuantityCorrection(input.snapshot));
+  if (declaredScopedCorrection && !(trustedJourneyProgress &&
+    input.trusted_journey_progress?.update_kind === "contextual_scoped_update" &&
+    input.trusted_journey_progress.scoped_correction)) {
+    return { decision: "block", code: "UNPROVEN_SCOPED_QUANTITY_CORRECTION" };
+  }
   const trustedCorrection = isTrustedCorrectionCommit(input, draft);
   const trustedLifecycle = isTrustedLifecycleCommit(input, draft);
   if ((input.trusted_lifecycle_commit || input.metadata?.commerce_reason === "authoritative_scoped_lifecycle_applied") && !trustedLifecycle) {
