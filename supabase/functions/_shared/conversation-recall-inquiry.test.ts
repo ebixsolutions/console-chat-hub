@@ -1,6 +1,8 @@
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
 import { buildCanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { prepareConversationRecall, type ConversationRecallInput } from "./conversation-recall.ts";
+import "./commerce-recall-question-scope.test.ts";
+import "./lifecycle-focus-display.test.ts";
 
 function assert(value: unknown, message = "assertion failed"): asserts value {
   if (!value) throw new Error(message);

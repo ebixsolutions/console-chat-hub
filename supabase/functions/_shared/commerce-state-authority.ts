@@ -218,7 +218,7 @@ function questionLooksLikeCustomerState(question: string): boolean {
 
 function explicitCustomerMutation(question: string): boolean {
   const text = clean(question).replace(/(?:最新|之前|先前)更正(?:嘅|的)/g, "").replace(/(?:已(?:提供(?:同|及|和))?)?更正(?:過|後|后|完)|previously corrected/gi, "").replace(/(?:不要|唔好|不需|不用|do not|don't)\s*(?:新增或更改|新增|更改|更正|改變|改变|add or change|add|change)(?:任何)?(?:要求|需求|資料|资料|anything|requirements?)?/gi, "");
-  return /(?:更正|改(?:做|成|為|为|返)|變成|变成|加多|再加|新增|另外加|唔係.+?(?:改|而係|而系)|不是.+?(?:改|而是)|(?:而家要|現在要|现在要|目前要)(?!求))\s*(?:[一二兩两三四五六七八九十]|\d{1,4})?\s*(?:部|台|件|個|个|套)?/i.test(text) ||
+  return /(?:更正|改(?:做|成|為|为|返)|變成|变成|加多|再加|新增|另外加|唔係.+?(?:改|而係|而系)|不是.+?(?:改|而是)|(?:而家要|現在要|现在要|目前要)(?!求|\s*(?:幾多|几多|多少)))\s*(?:[一二兩两三四五六七八九十]|\d{1,4})?\s*(?:部|台|件|個|个|套)?/i.test(text) ||
     /(?:取消|移除|刪除|删除)\s*(?:其中|呢|這|这|嗰|那|一|[一二兩两三四五六七八九十]|\d)/i.test(text) ||
     /\b(?:change|set|make)\b.{0,24}\bto\b|\badd\b(?:\s+(?:another|one|two|three|\d+))?|\b(?:please\s+)?(?:cancel|remove)\b/i.test(text);
 }
@@ -319,8 +319,8 @@ export function isSourceOwnedActiveAdviceGoal(text:string):boolean {
 }
 
 /**
- * Shared READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL contract. A counted noun in
- * an interrogative/recall utterance is a fact target, never mutation authority.
+ * Shared READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL contract. The quantity must
+ * be asked for or recalled; a declared count in another clause is only context.
  * Explicit SET/ADD/CANCEL language remains outside this class.
  */
 export function isReadOnlyMemoryOrCurrentStateRecall(
@@ -332,20 +332,24 @@ export function isReadOnlyMemoryOrCurrentStateRecall(
   if(semantic?.operation==="ASK_FACT" && isSourceOwnedActiveAdviceGoal(text))return false;
   const requested = (semantic?.requested_facts ?? []).join(" ");
   const semanticRead = ["ASK_FACT", "NO_STATE_CHANGE"].includes(String(semantic?.operation ?? ""));
+  const semanticQuantityFact = semanticRead && /(?:quantity|current_quantity)/i.test(requested);
   const recallLanguage = /(?:記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|還記得|頭先|头先|之前最後|之前最后|最後話|最后说|提我|提醒我|do you remember|remind me|settled on|have now)/i.test(text);
   const interrogative = /[?？]|呢\s*$|嗎\s*$|吗\s*$|(?:幾多|几多|多少|how many|what quantity|what.*(?:have|settled))/i.test(text);
   const deicticQuantity = recallLanguage &&
     /(?:嗰|那|這|这|呢)\s*(?:件|個|个|部|台|套)/i.test(text);
   const dimensionMeasurement = parseCommerceDimensionMeasurement(text);
-  const explicitQuantityFact = /(?:quantity|current_quantity)/i.test(requested) ||
+  const explicitQuantityFact = semanticQuantityFact ||
     /(?:數量|数量|quantity|how many|幾多|几多|多少)/i.test(text) ||
     /(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚).{0,20}?(?:定|還是|还是|or)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:件|個|个|部|台|份|位|張|张|套|間|间|晚)/i.test(text);
   // A product article followed by a dimension (for example, "一部598mm")
   // is not a quantity fact. It remains available to attribute-compatible
   // entity/constraint routing instead of inheriting a known quantity.
+  // A count plus an unrelated question mark is not a recall target either.
+  // Preserve actual quantity questions, alternatives and historical recalls;
+  // do not infer an advice goal or create a customer entity from this boundary.
   const quantity = (!dimensionMeasurement || explicitQuantityFact) &&
     (quantityRecallTarget(text) || deicticQuantity ||
-      /(?:quantity|current_quantity)/i.test(requested));
+      semanticQuantityFact) && (explicitQuantityFact || recallLanguage);
   const status = /(?:狀態|状态|status|係咪取消|是否取消|仲要|仍然要|still active|cancelled|canceled)/i.test(text) ||
     /(?:status|current_state)/i.test(requested);
   const currentAttribute = isDeliveryScheduleCurrentFactQuery(text) ||

@@ -264,14 +264,16 @@ function resolvePendingCheckAggregateScope(
   }) ?? [];
   const explicitDeictic = /(?:呢|這|这|嗰|那)(?:一|兩|两|二|\d+)?(?:部|件|個|个|樣|样|位)|\bthis\s+(?:one|item|unit|product|installation|refrigerator|fridge|air\s*conditioner)\b|\bfor\s+(?:this|the)\b/i.test(text);
   const active = state.entities.filter((entity) =>
-    entity.status !== "cancelled" && entity.status !== "deferred"
+    ["researching", "tentative", "confirmed"].includes(entity.status)
   );
   // A customer-named, already persisted product/service is a scoped read,
   // even when this industry has no registered vocabulary and the semantic
   // frame omits an entity. Never turn that question into a global aggregate.
   // Full recorded labels only: no partial category guess, raw-history
   // promotion, model-only name, new entity, or state mutation.
-  const sourceNamed = active.filter((entity) =>
+  // A named inactive item is still an entity-scoped question. Its absence
+  // from the active candidates cannot turn the question into a global read.
+  const sourceNamed = state.entities.filter((entity) =>
     entity.provenance.source_type === "customer" &&
     Boolean(entity.provenance.source_message_id) &&
     sourceOwnedSubjectLabels(entity).some((label) =>
@@ -284,11 +286,19 @@ function resolvePendingCheckAggregateScope(
   // An incidental model reference cannot narrow a global question above.
   // Only a source-scoped read can consume one exact persisted identity.
   const frame = input.semantic_frame;
+  // Literal customer names do not erase a supplied conflicting operation.
+  // Apply these exclusions before choosing either literal or semantic targets.
+  if (frame && (!["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) ||
+    frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+    frame.explicit_negations.length || frame.customer_facts?.length))
+    return { mode: "entity", entity_id: null };
   const qualified = frame && ["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) &&
     frame.confidence >= 0.9 && !frame.ambiguity.is_ambiguous && !frame.customer_correction &&
     !frame.additive && !frame.customer_facts?.length && input.company_id &&
     input.conversation_id && input.source_message_id;
-  const suppliedDemands = qualified ? frame.demands ?? [] : [];
+  // Confidence controls positive selection, not whether contradictory
+  // supplied evidence can be discarded before a literal-name fallback.
+  const suppliedDemands = frame?.demands ?? [];
   if ((qualified && frame.explicit_negations.length) || suppliedDemands.some(demand =>
     demand.customer_correction || demand.ambiguity.is_ambiguous || demand.explicit_negations.length ||
     !clean(demand.source_quote,2400) || !text.includes(clean(demand.source_quote,2400))))
@@ -330,17 +340,24 @@ function resolvePendingCheckAggregateScope(
     candidates = active;
   }
   const target = candidates.length === 1 ? candidates[0] : null;
-  if (!target) return { mode: "entity", entity_id: null };
+  if (!target || target.provenance.source_type !== "customer" ||
+    !target.provenance.source_message_id) return { mode: "entity", entity_id: null };
+  if (frame?.referents.some(reference => reference.confidence >= 0.9 &&
+    (reference.source === "persistent_state" ||
+      state.entities.some(entity => entity.entity_id === reference.ref)) &&
+    reference.ref !== target.entity_id)) return { mode: "entity", entity_id: null };
   // Validate only supplied demand facts. Empty/absent demand lists add no gate.
   const owned = state.entities.filter(entity => entity.provenance.source_type === "customer" &&
     Boolean(entity.provenance.source_message_id));
   for (const demand of suppliedDemands) for (const ref of demand.subject_refs) {
-    const subject = clean(ref,160), quote = clean(demand.source_quote,2400);
+    const subject = clean(ref,160);
     if (!subject) return { mode: "entity", entity_id: null };
     const named = owned.filter(entity => [entity.entity_id,entity.category,...sourceOwnedSubjectLabels(entity)]
       .some(label => clean(label,160).toLowerCase() === subject.toLowerCase()));
-    if ((named.length && (named.length !== 1 || named[0].entity_id !== target.entity_id)) ||
-      (!named.length && !matchesReferenceLabel(quote,subject))) return { mode: "entity", entity_id: null };
+    // A new name in the exact current quote is not a stored alias for this
+    // item. Only a unique customer-owned canonical identity can bind it.
+    if (named.length !== 1 || named[0].entity_id !== target.entity_id)
+      return { mode: "entity", entity_id: null };
   }
   return { mode: "entity", entity_id: target.entity_id };
 }
@@ -379,7 +396,7 @@ function resolvePendingCheckAggregateQuery(
   ) return null;
   const scope = resolvePendingCheckAggregateScope(input, state, revision);
   if (
-    revision === 0 ||
+    !Number.isSafeInteger(revision) || revision < 1 ||
     (scope.mode === "global" && hasPendingCheckDomainAmbiguity(input)) ||
     (scope.mode === "entity" &&
       (scope.entity_id === null || hasPendingCheckDomainAmbiguity(input)))
@@ -5029,6 +5046,21 @@ export async function runCommerceStateRuntime(
     : { valid: false } as const;
   if (lifecycleVerified.valid) {
     const focus = lifecycleVerified.plans[0].focus_category;
+    // Presentation follows the snapshot that passed the lifecycle/CAS check.
+    // A category is not a translated customer name, and an inactive or
+    // unowned entity cannot supply one merely because it shares that category.
+    const focusEntities = focus ? state.entities.filter(entity =>
+      entity.category === focus && !["cancelled", "deferred", "superseded"].includes(entity.status) &&
+      !lifecycleVerified.targetIds.includes(entity.entity_id)) : [];
+    const focusEntity = focusEntities.length === 1 &&
+      focusEntities[0].provenance.source_type === "customer" &&
+      typeof focusEntities[0].provenance.source_message_id === "string" &&
+      focusEntities[0].provenance.source_message_id.trim().length > 0 ? focusEntities[0] : null;
+    const focusLabel = (focusEntity ? [focusEntity.attributes.product_name,
+      focusEntity.attributes.name, focusEntity.attributes.original_name,
+      focusEntity.attributes.display_name, focusEntity.model]
+      .find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim()
+      : null) ?? focus;
     const target = lifecycleVerified.targetIds.map(id => {
       const entity = state.entities.find(e => e.entity_id === id)!;
       if (typeof entity.attributes.product_name === "string") return entity.attributes.product_name;
@@ -5039,8 +5071,8 @@ export async function runCommerceStateRuntime(
     const reply = genericEnglish ? lifecycleVerified.targetIds.map(id=>renderCanonicalRequirement(state.entities.find(e=>e.entity_id===id)!,language)).join("; ")+"." : lifecycleVerified.plans[0].action === "cancelled"
       ? (language === "en" ? `${target} is cancelled.` : `${target}已取消。`)
       : language === "en"
-      ? `Okay, ${target} is ${lifecycleVerified.plans[0].action === "deferred" ? "paused" : "cancelled"}. ${focus ? `We can continue with ${focus}; its requirements remain in place.` : "The other product requirements remain in place."}`
-      : `好，${target}${lifecycleVerified.plans[0].action === "deferred" ? "先暫停" : "已取消"}；${focus ? `而家繼續處理${focus === "air_conditioner" ? "冷氣" : focus === "refrigerator" ? "雪櫃" : focus}，之前嘅要求同數量會保留。` : "其他產品嘅要求同數量會保留。"}`;
+      ? `Okay, ${target} is ${lifecycleVerified.plans[0].action === "deferred" ? "paused" : "cancelled"}. ${focusLabel ? `We can continue with ${focusLabel}; its requirements remain in place.` : "The other product requirements remain in place."}`
+      : `好，${target}${lifecycleVerified.plans[0].action === "deferred" ? "先暫停" : "已取消"}；${focusLabel ? `而家繼續處理${focusLabel}，之前嘅要求同數量會保留。` : "其他產品嘅要求同數量會保留。"}`;
     return {
       authority: "CONVERSATION_STATE", reply, revision: persisted.revision,
       persist_result: "success", reason: "authoritative_scoped_lifecycle_applied", route: "commerce_state_answer",

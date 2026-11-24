@@ -122,3 +122,76 @@ Deno.test("Task3C pending selector rejects foreign owner metadata without writes
     assert(error.includes("commerce_state_scope_mismatch"),"foreign snapshot read: "+error);
   }
 });
+
+Deno.test("Task3C a quoted unknown subject cannot inherit another item's pending checks", async () => {
+  const frame=reading(),text="For this portable gantry, how many checks are still pending?";
+  frame.demands=[{question:text,source_quote:text,subject_refs:["portable gantry"],source_type:"general",
+    requested_facts:["pending_checks"],constraints:{},customer_correction:false,explicit_negations:[],
+    ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}];
+  const result=await read(state(),frame,text);
+  assert(result?.reason==="read_only_current_state_aggregate_query_unresolved" && !result.state_path,
+    "an exact current quote became an unproved canonical alias: "+JSON.stringify(result));
+});
+
+Deno.test("Task3C pending selectors reject a competing known prior-turn canonical identity", async () => {
+  const frame=reading();
+  frame.referents.push({ref:"display-b",source:"prior_turn",confidence:0.99});
+  const result=await read(state(),frame,"How many checks are still pending for this item?");
+  assert(result?.reason==="read_only_current_state_aggregate_query_unresolved" && !result.state_path,
+    "competing prior-turn identity was ignored: "+JSON.stringify(result));
+});
+
+Deno.test("Task3C literal pending reads cannot bypass supplied correction negation or write intent", async () => {
+  for(const kind of ["correction","negation","additive","write operation","ambiguous"] as const){
+    const frame=reading();frame.referents=[];
+    if(kind==="correction")frame.customer_correction=true;
+    if(kind==="negation")frame.explicit_negations=["training-a"];
+    if(kind==="additive")frame.additive=true;
+    if(kind==="write operation")frame.operation="REMOVE_ITEM";
+    if(kind==="ambiguous")frame.ambiguity={is_ambiguous:true,reasons:["unresolved customer scope"],clarification_question:null};
+    const result=await read(state(),frame,"For this Training kit, what checks are still pending confirmation?");
+    assert(result?.reason==="read_only_current_state_aggregate_query_unresolved" && !result.state_path,
+      kind+" was ignored: "+JSON.stringify(result));
+  }
+});
+
+Deno.test("Task3C every pending read requires a positive safe integer canonical revision", async () => {
+  for(const revision of [-1,1.5,Number.MAX_SAFE_INTEGER+1]){
+    for(const text of ["For this Training kit, how many checks are still pending?","How many checks are still pending?"]){
+      const result=await read(state(),null,text,{revision});
+      assert(result?.authority==="INSUFFICIENT_INFORMATION" && !result.state_path,
+        "invalid revision supplied authoritative checks: "+JSON.stringify({revision,result}));
+    }
+  }
+});
+
+Deno.test("Task3C weak semantic proposals cannot erase contradictory pending-read evidence", async () => {
+  const text="For this Training kit, how many checks are still pending?";
+  for(const kind of ["conflicting subject","fabricated quote"] as const){
+    const frame=reading();frame.confidence=0.8;
+    frame.demands=[{question:text,source_quote:kind==="fabricated quote"?"The visitor never said this.":text,
+      subject_refs:[kind==="conflicting subject"?"display-b":"training-a"],source_type:"general",
+      requested_facts:["pending_checks"],constraints:{},customer_correction:false,explicit_negations:[],
+      ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}];
+    const result=await read(state(),frame,text);
+    assert(result?.authority==="INSUFFICIENT_INFORMATION" && !result.state_path,
+      kind+": "+JSON.stringify(result));
+  }
+});
+
+Deno.test("Task3C literal and deictic pending reads require an active customer-owned target", async () => {
+  for(const kind of ["superseded","unknown status","unowned","missing source"] as const){
+    const s=state();s.entities=s.entities.slice(0,1);
+    if(kind==="superseded") (s.entities[0] as {status:string}).status="superseded";
+    if(kind==="unknown status") (s.entities[0] as {status:string}).status="future-status";
+    if(kind==="unowned")s.entities[0].provenance.source_type="system";
+    if(kind==="missing source")s.entities[0].provenance.source_message_id=null;
+    const texts=["For this Training kit, how many checks are still pending?","How many checks are still pending for this item?"];
+    if(kind==="superseded"||kind==="unknown status")texts.push("How many Training kit checks are still pending?");
+    for(const text of texts){
+      const result=await read(s,null,text);
+      assert(result?.authority==="INSUFFICIENT_INFORMATION" && !result.state_path,
+        kind+": "+JSON.stringify(result));
+    }
+  }
+});
