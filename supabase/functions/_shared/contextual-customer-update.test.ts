@@ -20,6 +20,7 @@ import {
 import { reduceCommerceState } from "./commerce-state-reducer.ts";
 import {
   type CommerceStateDbClient,
+  buildTransactionSummary,
   runCommerceStateRuntime,
   validateTrustedProductTopicFocus,
 } from "./commerce-state-runtime.ts";
@@ -2560,3 +2561,36 @@ for (const name of ["B", "C", "E", "live-recall"] as const) {
     }
   });
 }
+
+Deno.test("R8 customer-visible quantity uses the committed source subject not contextual-item ID", async () => {
+  const f = fixture();
+  await f.ask(introduction, [], undefined, ownerApprovedReading("live-recall", 1));
+  await f.ask("係廳一部，房各一部", [introduction], undefined, ownerApprovedReading("live-recall", 2));
+  const before = JSON.stringify(f.snapshot());
+  const result = await f.ask("我而家要幾多部冷氣？", [introduction, "係廳一部，房各一部"]);
+  assert(result.reply?.includes("冷氣") && /3|三/.test(result.reply) &&
+    !/contextual-(?:item|goal)|source-1|scope#/.test(result.reply), JSON.stringify(result));
+  assert(JSON.stringify(f.snapshot()) === before, "display mutated state");
+  const recap = buildTransactionSummary(f.snapshot().state, "zh-TW");
+  assert(recap.includes("冷氣") && !/contextual-(?:item|goal)|source-1|scope#/.test(recap), recap);
+});
+
+Deno.test("R8 summary and recall show literal labels or neutral wording, never internal identifiers", () => {
+  for (const label of ["Studio Lighting Rental", "冷凍食品批發", "contextual-item:source-1", undefined]) {
+    const s = createEmptyConversationCommerceState();
+    s.entities = [{ entity_id: "contextual-item:source-1", category: "contextual-item", quantity: 3,
+      status: "tentative", attributes: label === undefined ? { unit: "cartons" } : { product_name: label, unit: "cartons" },
+      constraints: {}, provenance: { source_type: "customer", source_message_id: "source-1" } }];
+    const before = JSON.stringify(s);
+    for (const language of ["zh-TW", "zh-CN", "en"] as const) {
+      const reply = buildTransactionSummary(s, language);
+      assert(!/contextual-item|source-1/.test(reply), reply);
+      if (label && !label.startsWith("contextual-item:")) assert(reply.includes(label), reply);
+      const read = prepareConversationRecall({ company_id:"company", conversation_id:"conversation",
+        source_message_id:"read-source", question:"What is my current quantity?", memory:null,
+        commerce:{company_id:"company",conversation_id:"conversation",source_message_id:"source-1",revision:1,state:s} }, language);
+      assert(!read.reply || !/contextual-item|source-1/.test(read.reply), JSON.stringify(read));
+    }
+    assert(JSON.stringify(s) === before, "presentation changed persisted data");
+  }
+});

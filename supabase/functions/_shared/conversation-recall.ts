@@ -1,5 +1,5 @@
 import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
-import { resolveSourceOwnedSubject,sourceOwnedSubjectLabels } from "./commerce-subject-resolution.ts";
+import { resolveSourceOwnedSubject,sourceOwnedSubjectLabels,customerOwnedDisplayLabel,safeCustomerDisplayText } from "./commerce-subject-resolution.ts";
 /** C3: deterministic, read-only fact ownership routing. No KB, model or state writes. */
 import type {
   CommerceEntity,
@@ -902,8 +902,7 @@ function resolveSourceVerifiedCanonicalActiveRetention(
       quantity_unit: typeof current.attributes.unit === "string" ? current.attributes.unit : corrected.unit,
       value:current.quantity,authority:"CANONICAL_COMMERCE_STATE",
       entity_id:current.entity_id,
-      entity_label:typeof current.attributes.product_name==="string"
-        ? current.attributes.product_name:current.category,
+      entity_label:customerOwnedDisplayLabel(current),
       region:typeof current.attributes.region==="string"?current.attributes.region:null,
       evidence_source_message_id:corrected.source_id,
       temporal_scope:"current",source_kind:"canonical_state"},
@@ -1904,10 +1903,7 @@ function canonicalCandidates(
         : "CURRENT_CUSTOMER_MEMORY",
       entity_id: entity?.entity_id ?? null,
       entity_label: entity
-        ? String(
-          entity.attributes?.display_name ?? entity.attributes?.name ??
-            correctedInactiveEntityLabel(input, entity) ?? entity.category,
-        )
+        ? customerOwnedDisplayLabel(entity) ?? safeCustomerDisplayText(correctedInactiveEntityLabel(input, entity), entity.entity_id)
         : null,
       region: typeof entity?.attributes?.region === "string"
         ? entity.attributes.region
@@ -3174,7 +3170,7 @@ export function renderConversationRecall(
           ? ["實際保留", "实际保留", "Actually retained"][l]
           : LABELS[e.fact_type]?.[l] ?? e.fact_type
       }${
-        e.entity_id ? ` (${e.entity_label ?? e.entity_id})` : ""
+        safeCustomerDisplayText(e.entity_label, e.entity_id) ? ` (${safeCustomerDisplayText(e.entity_label, e.entity_id)})` : ""
       }: ${v}${quantityUnitSuffix}`,
     );
   }
@@ -3267,10 +3263,8 @@ function renderCustomerRecap(value: unknown, language: string): string {
   const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
   const entities = (Array.isArray(v.entity_details) ? v.entity_details : []) as CommerceEntity[];
   const active = entities.filter(e => !["deferred", "cancelled"].includes(e.status));
-  const label = (e: CommerceEntity) => typeof e.attributes.product_name === "string"
-    ? display(e.attributes.product_name)
-    : (typeof e.attributes.name === "string" ? display(e.attributes.name) : null)
-      ?? (e.model ? display(e.model) : display(e.category.replace(/_/g, " ")));
+  const label = (e: CommerceEntity) => customerOwnedDisplayLabel(e) ??
+    ["已記錄項目", "已记录项目", "recorded item"][l];
   const unitLabels: Record<string, [string, string]> = {
     seat: ["席", "席"], seats: ["席", "席"], session: ["節", "节"], sessions: ["節", "节"],
     item: ["個", "个"], items: ["個", "个"], unit: ["個", "个"], units: ["個", "个"],

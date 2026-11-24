@@ -11,6 +11,27 @@ export function sourceOwnedSubjectLabels(e: CommerceEntity): string[] {
     ...(Array.isArray(e.attributes.customer_subject_aliases) ? e.attributes.customer_subject_aliases : [])]
     .map(clean).filter(v=>v.length>=2))].slice(0,20);
 }
+/** Presentation only: committed customer labels, never internal IDs. */
+export function safeCustomerDisplayText(value: unknown, internalId?: string | null): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text || text.length > 160 || /[\x00-\x1f\x7f]/u.test(text) ||
+    /^(?:contextual-(?:item|goal)(?::|$)|generic:|entity:)|(?:^|\s)scope#\d+/iu.test(text) ||
+    (internalId && text.toLowerCase() === internalId.trim().toLowerCase())) return null;
+  return text;
+}
+export function customerOwnedDisplayLabel(entity: CommerceEntity): string | null {
+  if (entity.provenance.source_type !== "customer" ||
+      typeof entity.provenance.source_message_id !== "string" ||
+      !entity.provenance.source_message_id.trim()) return null;
+  for (const value of [entity.attributes.product_name, entity.attributes.name,
+    entity.attributes.original_name, entity.attributes.display_name, entity.model, entity.attributes.sku]) {
+    const label = safeCustomerDisplayText(value, entity.entity_id);
+    if (label) return label;
+  }
+  return null;
+}
+
 function score(q: string,label:string):number {
   if(matchesReferenceLabel(q,label))return 1000+label.length;
   // Only substrings of a customer's actually recorded name; never a category synonym.

@@ -18,7 +18,7 @@ import { retainedRecapTargets } from "./conversation-recall.ts";
  */
 
 import { matchesReferenceLabel } from "./industry-agent-registry.ts";
-import { resolveSourceOwnedSubject,sourceOwnedSubjectLabels } from "./commerce-subject-resolution.ts";
+import { resolveSourceOwnedSubject,sourceOwnedSubjectLabels,customerOwnedDisplayLabel,safeCustomerDisplayText } from "./commerce-subject-resolution.ts";
 import {
   type ConversationCommerceState,
   createEmptyConversationCommerceState,
@@ -56,8 +56,7 @@ import {
 import {
   buildCapabilityAwarePreorderNextStep,
   buildGenericCommerceEntityHints,
-  genericEntityLabelFromId,
-  renderCanonicalRequirement,
+  renderEnglishRequirement,
 } from "./commerce-capability-runtime.ts";
 import { resumeCommittedLifecycleReply } from "./revision-bound-reply.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
@@ -67,7 +66,7 @@ import {
   semanticFrameToStateEvents,
   sourceBoundMixedCustomerFactEvents,
 } from "./commerce-semantic-adapter.ts";
-import { industryEntityLabel, industryEntityQuantityUnit, resolveIndustryContextualCandidate, resolveIndustryCustomerJourney, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
+import { industryEntityQuantityUnit, resolveIndustryContextualCandidate, resolveIndustryCustomerJourney, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
 import { contextualUpdateEvents, readSourceBoundContextualGoal, resolveContextualCustomerUpdate, resolveSemanticContextualCandidate, verifiedCurrentScopeFacts } from "./contextual-customer-update.ts";
 import { deriveTypedCustomerCalculation, isHistoricalOrConditionalCustomerCalculationRequest } from "./conversation-service-runtime.ts";
 import type { ContextualDecision, ContextualSourceContext, SourceBoundContextualGoal, SourceBoundScopeFact } from "./contextual-customer-update.ts";
@@ -1049,19 +1048,9 @@ function detectReferencedRooms(text: string) {
   return [...rooms.values()];
 }
 
-function entityLabel(entityId: string, language: CommerceLanguage): string {
-  const generic = genericEntityLabelFromId(entityId);
-  if (generic) return generic;
-  const industry = industryEntityLabel(entityId, language);
-  if (industry) return industry;
-  const [categoryKey, roomKey] = entityId.split(":");
-  const category = CATEGORY_SPECS.find((x) => x.key === categoryKey);
-  const room = ROOM_SPECS.find((x) => x.key === roomKey);
-  const categoryText = category ? category.label[language] : clean(categoryKey, 60);
-  if (!room) return categoryText;
-  return language === "en"
-    ? `${room.label.en} ${categoryText}`
-    : `${room.label[language]}${categoryText}`;
+function entityLabel(entity: ConversationCommerceState["entities"][number], language: CommerceLanguage): string {
+  return customerOwnedDisplayLabel(entity) ??
+    (language === "en" ? "recorded item" : language === "zh-CN" ? "已记录项目" : "已記錄項目");
 }
 
 /** Build entity hints from the whole conversation so state survives topic drift. */
@@ -1459,7 +1448,7 @@ function detectsBrandRequirementRecall(text: string): boolean {
 
 function buildEntityPortfolioAnswer(state: ConversationCommerceState, language: CommerceLanguage, quoteReadyOnly: boolean): string {
   const entities = state.entities.filter((entity) => entity.status !== "cancelled" && (!quoteReadyOnly || entity.status !== "deferred"));
-  const labels = entities.map((entity) => `${entityLabel(entity.entity_id, language)} ${customerRequestedQuantity(entity) === null ? (language === "en" ? "quantity not confirmed" : "數量待確認") : "x" + entity.quantity}`);
+  const labels = entities.map((entity) => `${entityLabel(entity, language)} ${customerRequestedQuantity(entity) === null ? (language === "en" ? "quantity not confirmed" : "數量待確認") : "x" + entity.quantity}`);
   if (language === "en") return labels.length ? `${quoteReadyOnly ? "The currently active items are" : "You are currently considering"}: ${labels.join(", ")}.` : `There are currently no ${quoteReadyOnly ? "active items" : "items under consideration"}.`;
   if (language === "zh-CN") return labels.length ? `${quoteReadyOnly ? "目前有效项目是" : "你目前正在考虑的是"}：${labels.join("、")}。` : `目前没有${quoteReadyOnly ? "有效" : "正在考虑"}的产品。`;
   return labels.length ? `${quoteReadyOnly ? "而家有效嘅項目係" : "你而家睇緊嘅係"}：${labels.join("、")}。` : `而家未有${quoteReadyOnly ? "有效" : "考慮中"}嘅產品。`;
@@ -1485,8 +1474,7 @@ function buildScopedConstraintAnswer(input: CommerceRuntimeInput, state: Convers
     else labels.push(key.startsWith("excluded_") ? `${dimension}唔接受 ${formatMillimetres(value)}mm` : `${dimension}上限 ${formatMillimetres(value)}mm`);
   }
   if (!labels.length) return null;
-  const product=clean(entity.attributes.product_name ?? entity.model ??
-    categoryLabel(category,input.language),120);
+  const product=entityLabel(entity,input.language);
   const reply = input.language === "en" ? `The current ${product} constraint is: ${labels.join(", ")}.` : input.language === "zh-CN" ? `目前${product}的限制是：${labels.join("、")}。` : `而家${product}嘅限制係：${labels.join("、")}。`;
   return { reply, path: `entities.${state.entities.indexOf(entity)}.constraints` };
 }
@@ -4381,10 +4369,10 @@ export function buildTransactionSummary(
     });
     const horsepower = clean(entity.attributes.horsepower, 80);
     const details = [horsepower, ...constraints].filter(Boolean);
-    return `${entityLabel(entity.entity_id, language)} ${customerRequestedQuantity(entity) === null ? (language === "en" ? "quantity not yet confirmed" : language === "zh-CN" ? "数量待确认" : "數量待確認") : `x${entity.quantity}`} (${statusLabel(entity.status, language)}${details.length ? `；${details.join("、")}` : ""})`;
+    return `${entityLabel(entity, language)} ${customerRequestedQuantity(entity) === null ? (language === "en" ? "quantity not yet confirmed" : language === "zh-CN" ? "数量待确认" : "數量待確認") : `x${entity.quantity}`} (${statusLabel(entity.status, language)}${details.length ? `；${details.join("、")}` : ""})`;
   };
   lines.push(`${t.items[language]}: ${active.length ? active.map(renderEntity).join("、") : t.none[language]}`);
-  if (inactive.length) lines.push(`${t.removed[language]}: ${inactive.map((e) => `${entityLabel(e.entity_id, language)} (${statusLabel(e.status, language)})`).join("、")}`);
+  if (inactive.length) lines.push(`${t.removed[language]}: ${inactive.map((e) => `${entityLabel(e, language)} (${statusLabel(e.status, language)})`).join("、")}`);
   const delivery = state.delivery;
   const deliveryParts = [delivery.preferred_date, delivery.preferred_window, delivery.address, delivery.recipient_name, delivery.recipient_phone].map((x) => clean(x, 180)).filter(Boolean);
   lines.push(`${t.delivery[language]}: ${deliveryParts.length ? deliveryParts.join(" / ") : t.none[language]}`);
@@ -4412,7 +4400,7 @@ function buildQuantityAnswer(state: ConversationCommerceState, language: Commerc
   if (!active.length) return null;
   if (active.some(e=>customerRequestedQuantity(e) === null)) return language === "en" ? "The requested quantity is not yet confirmed." : language === "zh-CN" ? "所需数量尚未确认。" : "所需數量尚未確認。";
   const total = active.reduce((sum, e) => sum + e.quantity, 0);
-  const breakdown = active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、");
+  const breakdown = active.map((e) => `${entityLabel(e, language)} x${e.quantity}`).join("、");
   if (language === "en") return `You currently have ${total} unit(s) in total: ${breakdown}.`;
   if (language === "zh-CN") return `你目前合共 ${total} 个单位：${breakdown}。`;
   return `你而家合共 ${total} 個單位：${breakdown}。`;
@@ -4425,7 +4413,7 @@ function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, va
     if (entity && entity.status !== "cancelled" && entity.status !== "deferred") {
       if (customerRequestedQuantity(entity) === null) return language === "en" ? "The requested quantity is not yet confirmed." : language === "zh-CN" ? "所需数量尚未确认。" : "所需數量尚未確認。";
       const quantity = typeof value === "number" ? value : entity.quantity;
-      const label = entityLabel(entity.entity_id, language);
+      const label = entityLabel(entity, language);
       // A canonical quantity has a known count but may have no customer-
       // supplied measurement unit. Express the unit as unrecorded rather
       // than guessing one from the product category. Keep the numeric count
@@ -4462,7 +4450,7 @@ function buildResolvedEntityStatusChangeAnswer(input: CommerceRuntimeInput, stat
   const entity = changed[0];
   // Generic products share a schema category, never a quantity aggregate.
   // The lifecycle event verifies this specific entity, not unrelated items.
-  const label = entityLabel(entity.entity_id, input.language);
+  const label = entityLabel(entity, input.language);
   const status = statusLabel(entity.status, input.language);
   if (input.language === "en") return `${label} is ${status}. Other recorded items remain unchanged.`;
   if (input.language === "zh-CN") return `${label}${status}；其他已记录项目保持不变。`;
@@ -4612,7 +4600,7 @@ function buildCalculationAnswer(language: CommerceLanguage, calculation: { expre
 
 function buildProfessionalConfirmationAnswer(language: CommerceLanguage, state: ConversationCommerceState): string {
   const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
-  const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} ${customerRequestedQuantity(e)===null ? (language==="en"?"quantity unconfirmed":"數量待確認") : "x"+e.quantity}`).join("、") : "";
+  const known = active.length ? active.map((e) => `${entityLabel(e, language)} ${customerRequestedQuantity(e)===null ? (language==="en"?"quantity unconfirmed":"數量待確認") : "x"+e.quantity}`).join("、") : "";
   if (language === "en") return `${known ? `I still have your details on record: ${known}. ` : ""}For safety and accuracy, our technician needs to inspect the site in person before we can confirm whether the installation is suitable.`;
   if (language === "zh-CN") return `${known ? `我们已保留您之前提供的资料：${known}。` : ""}为确保安全和准确，需要师傅上门检查窗口尺寸、承托及安装环境后再确认是否适合安装。`;
   return `${known ? `我哋已保留您之前提供嘅資料：${known}。` : ""}為確保安全同準確，需要師傅上門檢查窗口尺寸、承托同安裝環境後先可以確認是否適合安裝。`;
@@ -4626,7 +4614,7 @@ export function buildCurrentPriceValidityAnswer(language: CommerceLanguage): str
 
 export function buildPreorderUnpaidAnswer(language: CommerceLanguage, state: ConversationCommerceState): string {
   const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
-  const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} ${customerRequestedQuantity(e)===null ? (language==="en"?"quantity unconfirmed":"數量待確認") : "x"+e.quantity}`).join("、") : "";
+  const known = active.length ? active.map((e) => `${entityLabel(e, language)} ${customerRequestedQuantity(e)===null ? (language==="en"?"quantity unconfirmed":"數量待確認") : "x"+e.quantity}`).join("、") : "";
   const nextStep = buildCapabilityAwarePreorderNextStep(state, language);
   if (language === "en") return `${known ? `Got it — you want to reserve ${known}. ` : "Got it — you want to proceed. "}Since payment has not been made yet, this is not a completed or confirmed order. ${nextStep}`;
   if (language === "zh-CN") return `${known ? `好的，我知道你想预订${known}。` : "好的，我知道你想继续预订。"}由于目前还未付款，所以现在还不算已完成或已确认订单。${nextStep}`;
@@ -4745,7 +4733,7 @@ export async function runCommerceStateRuntime(
       const receipt=resumeCommittedLifecycleReply({conversation_id:input.conversation_id,company_id:input.company_id,source_message_id:input.source_message_id,memory:stored.memory,commerce:{company_id:commerce.company_id,source_message_id:typeof commerce.source_message_id==="string"?commerce.source_message_id:null,revision:Number(commerce.revision),state:commerce.state}});
       if(receipt)return {authority:"CONVERSATION_STATE",reply:receipt.reply,revision:receipt.committed_revision,persist_result:"success",reason:"authoritative_scoped_lifecycle_applied",route:"commerce_state_answer",trusted_lifecycle_commit:receipt};
     }
-    const names=lifecycleIntent.plans.map(plan=>contextualBefore.state.entities.find(entity=>plan.target_entity_id?entity.entity_id===plan.target_entity_id:entity.category===plan.target_category)!).map(entity=>typeof entity.attributes.product_name === "string" ? entity.attributes.product_name : entity.model ?? entity.category.replace(/_/g," "));
+    const names=lifecycleIntent.plans.map(plan=>contextualBefore.state.entities.find(entity=>plan.target_entity_id?entity.entity_id===plan.target_entity_id:entity.category===plan.target_category)!).map(entity=>entityLabel(entity,language));
     const cancelled=lifecycleIntent.plans.every(plan=>plan.action==="cancelled");
     return {authority:"CONVERSATION_STATE",reply:language==="en"?names.join("; ")+(cancelled?" has already been cancelled.":" remains paused."):names.join("、")+(cancelled?"已取消。":"仍然暫緩。"),revision:contextualBefore.revision,persist_result:"read_only",reason:"read_only_lifecycle_already_applied",route:"commerce_state_answer"};
   }
@@ -5060,19 +5048,12 @@ export async function runCommerceStateRuntime(
       focusEntities[0].provenance.source_type === "customer" &&
       typeof focusEntities[0].provenance.source_message_id === "string" &&
       focusEntities[0].provenance.source_message_id.trim().length > 0 ? focusEntities[0] : null;
-    const focusLabel = (focusEntity ? [focusEntity.attributes.product_name,
-      focusEntity.attributes.name, focusEntity.attributes.original_name,
-      focusEntity.attributes.display_name, focusEntity.model]
-      .find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim()
-      : null) ?? focus;
-    const target = lifecycleVerified.targetIds.map(id => {
-      const entity = state.entities.find(e => e.entity_id === id)!;
-      if (typeof entity.attributes.product_name === "string") return entity.attributes.product_name;
-      return (typeof entity.attributes.name === "string" ? entity.attributes.name : null) ??
-         entity.model ?? entity.category.replace(/_/g, " ");
-    }).join("同");
+    const focusLabel = (focusEntity ? customerOwnedDisplayLabel(focusEntity) : null) ??
+      (focus && matchesReferenceLabel(text,focus) ? safeCustomerDisplayText(focus) : null);
+    const target = lifecycleVerified.targetIds.map(id =>
+      entityLabel(state.entities.find(e => e.entity_id === id)!, language)).join("同");
     const genericEnglish = language === "en" && lifecycleVerified.targetIds.every(id=>state.entities.find(e=>e.entity_id===id)?.entity_id.startsWith("generic:"));
-    const reply = genericEnglish ? lifecycleVerified.targetIds.map(id=>renderCanonicalRequirement(state.entities.find(e=>e.entity_id===id)!,language)).join("; ")+"." : lifecycleVerified.plans[0].action === "cancelled"
+    const reply = genericEnglish ? lifecycleVerified.targetIds.map(id=>renderEnglishRequirement(state.entities.find(e=>e.entity_id===id)!,entityLabel(state.entities.find(e=>e.entity_id===id)!,language))).join("; ")+"." : lifecycleVerified.plans[0].action === "cancelled"
       ? (language === "en" ? `${target} is cancelled.` : `${target}已取消。`)
       : language === "en"
       ? `Okay, ${target} is ${lifecycleVerified.plans[0].action === "deferred" ? "paused" : "cancelled"}. ${focusLabel ? `We can continue with ${focusLabel}; its requirements remain in place.` : "The other product requirements remain in place."}`
