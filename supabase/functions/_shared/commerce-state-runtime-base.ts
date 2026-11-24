@@ -4505,7 +4505,12 @@ export async function runCommerceStateRuntime(
       contextualDecision.route === "contextual_scoped_update") &&
     ["success", "no_semantic_change", "source_message_already_applied"].includes(persisted.result)
   ) {
-    const reply = contextualDecision.reply;
+    // Pure customer guidance needs the existing grounded generation path;
+    // a classification receipt must not become an empty acknowledgement or
+    // a hardcoded request for an unrelated customer measurement.
+    const reply = contextualDecision.route === "product_guidance" &&
+        contextualDecision.requires_generated_guidance
+      ? null : contextualDecision.reply;
     return {
       authority: "CONVERSATION_STATE",
       reply,
@@ -4514,7 +4519,7 @@ export async function runCommerceStateRuntime(
       reason: contextualDecision.reason,
       route: contextualDecision.route,
       contextual_decision: contextualDecision,
-      trusted_journey_progress: buildTrustedJourneyProgress({
+      trusted_journey_progress: reply === null ? undefined : buildTrustedJourneyProgress({
         runtime_input: runtimeInput,
         persisted,
         journey: customerJourney,

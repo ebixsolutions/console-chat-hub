@@ -1,5 +1,5 @@
 import { resolveIndustryProfile } from "./industry-runtime-adapter.ts";
-import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
+import { normalizeCommerceSemanticFrame, type CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import {
   type ContextualCandidate,
   contextualUpdateEvents,
@@ -1553,7 +1553,6 @@ Deno.test("Task3C G2 source-quoted distributive groups expand without trade voca
 
 Deno.test("Task3C G1 first enquiry uses current source quote without KB or order claims", async () => {
   const text="想問 Training sessions 給三個小組怎樣安排，先提供指引。";
-  const normalizedText=text.normalize("NFKC").replace(/\s+/gu," ").trim();
   const frame: CommerceSemanticFrame = {
     version:"commerce-semantic-1.0.0",language:"zh-TW",
     operation:"ASK_FACT",intent:"customer_guidance",topic:"training",
@@ -1570,12 +1569,12 @@ Deno.test("Task3C G1 first enquiry uses current source quote without KB or order
     referents:[],
     demands:[{
       question:text,source_quote:text,subject_refs:["Training sessions"],
-      source_type:"general",requested_facts:["selection advice"],constraints:{},
+      source_type:"general",requested_facts:[],constraints:{},
       customer_correction:false,explicit_negations:[],
       ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
     }],
     customer_correction:false,additive:false,explicit_negations:[],
-    requested_facts:["selection advice"],
+    requested_facts:[],
     transaction_state:"none",payment_state:"none",booking_state:"none",
     fulfillment_state:"none",
     ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
@@ -1584,11 +1583,19 @@ Deno.test("Task3C G1 first enquiry uses current source quote without KB or order
   const state=createEmptyConversationCommerceState();
   const candidate=resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:frame});
   assert(candidate?.action==="enquiry" && candidate.context_sufficient &&
-    candidate.reply.includes(normalizedText) && candidate.reply.includes("面積") &&
-    !/已確認訂單|已收款|庫存足夠|現價/.test(candidate.reply),
+    candidate.requires_generated_guidance === true && candidate.reply === "",
     JSON.stringify(candidate));
   const decision=resolveContextualCustomerUpdate({candidate,state});
-  assert(decision.route==="product_guidance",JSON.stringify(decision));
+  assert(decision.route==="product_guidance" && decision.requires_generated_guidance===true,
+    JSON.stringify(decision));
+  // The producer's complete sourced demand needs no fabricated item. The
+  // existing answer-generation path, not this verifier, supplies advice.
+  const demandOnly=normalizeCommerceSemanticFrame({...frame,entities:[]});
+  assert(demandOnly && demandOnly.entities.length===0 && demandOnly.requested_facts.length===0,
+    "producer contract did not retain the general demand");
+  const fromDemand=resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:demandOnly});
+  assert(fromDemand?.requires_generated_guidance===true && fromDemand.reply==="",
+    JSON.stringify(fromDemand));
   const invented=structuredClone(frame);
   invented.demands![0].source_quote="I want a discount that was never requested";
   assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:invented})===null,
@@ -1597,6 +1604,18 @@ Deno.test("Task3C G1 first enquiry uses current source quote without KB or order
   transaction.demands![0].source_type="transaction";
   assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:transaction})===null,
     "transaction disguised as guidance");
+  for (const source_type of ["product","policy","unknown"] as const) {
+    const merchant=structuredClone(frame);
+    merchant.demands![0].source_type=source_type;
+    merchant.demands![0].requested_facts=["price"];
+    merchant.requested_facts=["price"];
+    assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:merchant})===null,
+      "merchant facts bypassed KB: "+source_type);
+  }
+  const incorrectFact=structuredClone(frame);
+  incorrectFact.demands![0].requested_facts=["selection advice"];
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:incorrectFact})===null,
+    "requested_facts repurposed as customer clarification");
   const model=structuredClone(frame);
   model.entities[0].model="TRAINING-M100";
   assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:model})===null,
@@ -1619,10 +1638,10 @@ Deno.test("Task3C G1 first enquiry uses current source quote without KB or order
   };
   const actual=await runCommerceStateRuntime(db,{
     company_id:"company",conversation_id:"conv",source_message_id:"first-source",
-    text,language:"zh-TW",history:[],semantic_frame:frame,
+    text,language:"zh-TW",history:[],semantic_frame:demandOnly,
   });
   assert(actual !== null && actual.route==="product_guidance" &&
-    actual.reply?.includes(normalizedText) && actual.reply?.includes("面積") &&
+    actual.reply===null && latest.entities.length===0 &&
     latest.conversion.order_status==="none" &&
     latest.conversion.payment_status==="none",
     JSON.stringify({actual,writes}));
