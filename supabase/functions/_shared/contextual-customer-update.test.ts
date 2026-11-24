@@ -1983,3 +1983,5 @@ import "./commerce-state-canonical-fractional.test.ts";
 import "./commerce-state-scoped-pending.test.ts";
 
 import "./contextual-prior-scope-display.test.ts";
+
+import "./commerce-source-unit.test.ts";

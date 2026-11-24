@@ -180,6 +180,7 @@ import {
   type CommerceRuntimeOutcome,
   type CommerceStateDbClient,
   acknowledgeCurrentCustomerDimensions,
+  sourceBoundQuantityUnit,
   resolveCommittedAddressCorrection,
   runCommerceStateRuntime,
 } from "../_shared/commerce-state-runtime.ts";
@@ -4840,7 +4841,25 @@ async function orchestrationGenerateReply(
         requested_facts:[...new Set([..._a3SemanticFrame.requested_facts,..._a3SemanticFrame.demands[0].requested_facts])],
         subject_refs:_a3SemanticFrame.demands[0].subject_refs}
       : undefined;
-  const _customerRequestDecision = resolveCustomerRequestDecision(_semanticRequestQuestion,_a3SemanticFrame,_semanticRoutingHistory);
+  // A pure, source-verified quantity/unit correction owns customer state.
+  // Do not manufacture a merchant lookup from its empty general demand.
+  // This scoped preparation is routing evidence only: the writer revalidates
+  // against the CAS snapshot, and the ACK requires committed readback below.
+  const _quantityInputRevision = _semanticPrepared?.input_state?.commerce?.revision;
+  const _pureSourceQuantityUnit = _criticalE2ExpectedTenantId && _semanticPrepared?.commerce &&
+    _semanticPrepared.recovery.source_verified && Number.isSafeInteger(_quantityInputRevision) &&
+    (_quantityInputRevision ?? 0) > 0 && _a3SemanticFrame &&
+    !_a3SemanticFrame.customer_facts?.length && _a3SemanticFrame.requested_facts.length === 0 &&
+    _a3SemanticFrame.demands?.length === 1 && _a3SemanticFrame.demands[0].source_type === "general" &&
+    _a3SemanticFrame.demands[0].requested_facts.length === 0 &&
+    _a3SemanticFrame.demands[0].source_quote.normalize("NFKC").trim() === _h1LastMsg.normalize("NFKC").trim()
+      ? sourceBoundQuantityUnit({company_id:_criticalE2ExpectedTenantId,conversation_id,
+        source_message_id:_h1SourceMessageId,text:_h1LastMsg,language:_visitorLang === "en" ? "en" : _visitorLang === "zh-CN" ? "zh-CN" : "zh-TW",
+        semantic_frame:_a3SemanticFrame},_semanticPrepared.commerce) : null;
+  const _customerRequestDecision = _pureSourceQuantityUnit
+    ? {kind:"other" as const,continuation:false,general_request:null,merchant_request:null,
+      latest_requirements:_h1LastMsg,semantic_demands:_a3SemanticFrame!.demands}
+    : resolveCustomerRequestDecision(_semanticRequestQuestion,_a3SemanticFrame,_semanticRoutingHistory);
   if(_criticalE2ExpectedTenantId&&_h1SourceMessageId)await writeProtectedPipelineEvidence(supabaseAdmin,{
     company_id:_criticalE2ExpectedTenantId,conversation_id,source_message_id:_h1SourceMessageId,
   },"knowledge_ownership_routing",{decision:_customerRequestDecision.kind,

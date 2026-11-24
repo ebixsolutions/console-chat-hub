@@ -65,6 +65,10 @@ export interface RecallEvidence {
   source_kind: string;
   /** Customer field label only; never a merchant or transaction authority. */
   attribute_key?: string;
+  /** Exact sourced display unit; never a locale or industry default. */
+  quantity_unit?: string;
+  quantity_unit_source_kind?: "canonical_customer_attribute" | "current_customer_question";
+  quantity_unit_source_message_id?: string;
 }
 export interface RecallProvenance extends RecallScope {
   memory_revision: number | null;
@@ -805,7 +809,7 @@ export function retainedRecapTargets(state: ConversationCommerceState): string[]
  * only when one original, same-ticket Visitor row attests it. It cannot
  * certify a completed business cancellation or overwrite state. */
 function verifiedRetainedCustomerCorrection(input:ConversationRecallInput):
-  {value:number;text:string;source_id:string}|null {
+  {value:number;unit:string;text:string;source_id:string}|null {
   const m=input.memory,c=input.commerce,rows=input.trusted_visitor_source_rows;
   if(!m||!c||input.trusted_visitor_source_status!=="verified"||!rows?.length||
     m.company_id!==input.company_id||m.conversation_id!==input.conversation_id||
@@ -821,7 +825,8 @@ function verifiedRetainedCustomerCorrection(input:ConversationRecallInput):
   const at=rows.findIndex(r=>r.id===source[0].id);
   if(at<0||rows.slice(0,at).some(r=>r.id!==input.source_message_id &&
     retainedQuantity(r.content)!==null && retainedQuantity(r.content)!==latest.value))return null;
-  return {value:latest.value,text,source_id:source[0].id};
+  const unit = retainedQuantityLiteral(text)?.unit;
+  return unit ? {value:latest.value,unit,text,source_id:source[0].id} : null;
 }
 
 /** A canonical active portion and the cancelled legacy aggregate can
@@ -894,6 +899,7 @@ function resolveSourceVerifiedCanonicalActiveRetention(
   // retained historical quantity_basis bookkeeping. No state is written.
   const facts:RecallEvidence[]=[
     {fact_type:"quantity",state_path:"entities."+c.state.entities.indexOf(current)+".quantity",
+      quantity_unit: typeof current.attributes.unit === "string" ? current.attributes.unit : corrected.unit,
       value:current.quantity,authority:"CANONICAL_COMMERCE_STATE",
       entity_id:current.entity_id,
       entity_label:typeof current.attributes.product_name==="string"
@@ -1100,13 +1106,12 @@ function correctedValue(text: string, f: RecallFact): unknown {
   return usable(v) ? v : null;
 }
 
-function retainedQuantity(text: string): number | null {
+function retainedQuantityLiteral(text: string): { quantity: number; unit: string } | null {
   const match = norm(text).match(
-    /(?:只|僅|仅|目前|現在|现在|而家|實際|实际)?\s*(?:保留|留下|剩下|剩餘|剩余|餘下|余下|keep|kept|retain|retained|remain(?:ing)?)\D{0,48}?([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|units?|items?)/i,
+    /(?:只|僅|仅|目前|現在|现在|而家|實際|实际)?\s*(?:保留|留下|剩下|剩餘|剩余|餘下|余下|keep|kept|retain|retained|remain(?:ing)?)\D{0,48}?([一二兩两三四五六七八九十]|\d{1,4})\s*(部|台|件|個|个|套|units?|items?)/i,
   );
-  if (!match?.[1]) return null;
-  if (/^\d+$/.test(match[1])) return Number(match[1]);
-  return ({
+  if (!match?.[1] || !match[2]) return null;
+  const quantity = /^\d+$/.test(match[1]) ? Number(match[1]) : ({
     一: 1,
     二: 2,
     兩: 2,
@@ -1120,6 +1125,10 @@ function retainedQuantity(text: string): number | null {
     九: 9,
     十: 10,
   } as Record<string, number>)[match[1]] ?? null;
+  return quantity === null ? null : { quantity, unit: match[2] };
+}
+function retainedQuantity(text: string): number | null {
+  return retainedQuantityLiteral(text)?.quantity ?? null;
 }
 
 function asksRetainedQuantity(question: string): boolean {
@@ -1634,6 +1643,64 @@ function resolveSemanticCustomerRecall(input:ConversationRecallInput):Conversati
  * This is an evidence type, not a phrase-triggered answer. The model cannot
  * supply a count or source ID here, and a stale/conflicting canonical aggregate
  * is never used to overwrite the literal customer statement. */
+// Reuse the existing attested-customer quantity grammar unchanged. This legacy
+// grammar is bounded; unsupported units stay absent when canonical has no unit.
+const LITERAL_QUANTITY_UNIT = "(部|台|件|套|份|盒|箱|堂|課|课|張|张|units?|items?|pieces?|sets?|boxes?|sessions?|lessons?|licenses?|licences?|seats?|nights?)";
+const LITERAL_QUANTITY_WITH_UNIT = new RegExp("([0-9]{1,4}|[零〇一二兩两三四五六七八九十])\\s*" + LITERAL_QUANTITY_UNIT + "(?![a-z])", "giu");
+
+/** A unit in this already resolved quantity question may label the displayed
+ * canonical number. It is not a new canonical fact and cannot change quantity,
+ * subject selection, source provenance, or any persisted state. */
+function currentQuestionQuantityUnit(
+  input: ConversationRecallInput, question: string, entity: CommerceEntity,
+): Pick<RecallEvidence, "quantity_unit" | "quantity_unit_source_kind" | "quantity_unit_source_message_id"> | null {
+  const snapshot = input.commerce;
+  if (!snapshot || snapshot.company_id !== input.company_id ||
+      snapshot.conversation_id !== input.conversation_id || !input.source_message_id?.trim() ||
+      !Number.isInteger(snapshot.revision) || snapshot.revision <= 0 ||
+      !isCurrentEntity(entity) || entity.provenance.source_type !== "customer" ||
+      !entity.provenance.source_message_id || customerRequestedQuantity(entity) === null ||
+      !isReadOnlyMemoryOrCurrentStateRecall(question) ||
+      sourceClauses(input.question).length !== 1 || sourceClauses(question).length !== 1 ||
+      sourceClauses(input.question)[0] !== sourceClauses(question)[0]) return null;
+  const source = question.trim();
+  if (!source || !input.question.includes(source)) return null;
+  const numbers = numberTokens(source);
+  const literal = [...source.matchAll(LITERAL_QUANTITY_WITH_UNIT)];
+  const units = new Set([...source.matchAll(new RegExp("(?<![a-z])" + LITERAL_QUANTITY_UNIT + "(?![a-z])", "giu"))]
+    .map(match => match[1].toLowerCase()));
+  // Use full numeric-token boundaries, not the suffix of 30 / 3.5 / 兩萬.
+  if (numbers.length !== 1 || numbers[0].value !== entity.quantity || literal.length !== 1 || units.size !== 1 ||
+      literal[0].index !== numbers[0].start ||
+      literal[0].index! + literal[0][1].length !== numbers[0].end) return null;
+  const selected = selectEntities({ ...input, question: source, recent_questions: [], referents: [] }, snapshot.state.entities);
+  if (selected.length !== 1 || selected[0].entity_id !== entity.entity_id ||
+      snapshot.state.entities.some(other => other.entity_id !== entity.entity_id &&
+        sourceOwnedSubjectLabels(other).some(label => phrase(input.question, label)))) return null;
+  const labels = sourceOwnedSubjectLabels(entity);
+  if (labels.length) {
+    // A named entity must share this literal noun phrase with the count. A
+    // background count elsewhere in the clause cannot label its quantity.
+    const lower = source.toLowerCase(), start = literal[0].index!, end = start + literal[0][0].length;
+    const adjacent = labels.some(label => {
+      const at = lower.indexOf(label);
+      if (at < 0 || lower.indexOf(label, at + label.length) >= 0) return false;
+      const gap = at + label.length <= start ? source.slice(at + label.length, start)
+        : end <= at ? source.slice(end, at) : null;
+      return gap !== null && /^[\s:：()（）\[\]「」『』]*$/u.test(gap);
+    });
+    if (!adjacent) return null;
+  } else {
+    // Preserve the pre-existing single-active legacy read contract. No new
+    // category synonym is manufactured to supply a missing literal name.
+    const active = snapshot.state.entities.filter(isCurrentEntity);
+    if (active.length !== 1 || active[0].entity_id !== entity.entity_id ||
+        snapshot.state.current_topic !== entity.category) return null;
+  }
+  return { quantity_unit: literal[0][2], quantity_unit_source_kind: "current_customer_question",
+    quantity_unit_source_message_id: input.source_message_id };
+}
+
 function attestedCustomerQuantity(
   input: ConversationRecallInput,
 ): Candidate | null {
@@ -1651,9 +1718,8 @@ function attestedCustomerQuantity(
     return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 1000 ? n : null;
   };
   const countsIn = (value: string): number[] => {
-    const tokens = [...value.matchAll(
-      /([0-9]{1,4}|[零〇一二兩两三四五六七八九十])\s*(?:部|台|件|套|份|盒|箱|堂|課|课|張|张|units?|items?|pieces?|sets?|boxes?|sessions?|lessons?|licenses?|licences?|seats?|nights?)(?![a-z])/giu,
-    )].map((m) => readNumber(m[1])).filter((x): x is number => x !== null);
+    const tokens = [...value.matchAll(LITERAL_QUANTITY_WITH_UNIT)]
+      .map((m) => readNumber(m[1])).filter((x): x is number => x !== null);
     const total = value.match(
       /(?:合共|總共|总共|共計|共计|一共|總數|总数|in total|altogether|total(?: of)?)\s*(?:需|要|有|是|為|为|:|：)?\s*([0-9]{1,4}|[零〇一二兩两三四五六七八九十])\s*(?:部|台|件|套|份|盒|箱|堂|課|课|units?|items?|pieces?|sets?|boxes?|sessions?|lessons?|licenses?|licences?|seats?|nights?)/iu,
     );
@@ -1749,6 +1815,7 @@ function canonicalCandidates(
   input: ConversationRecallInput,
   f: RecallFact,
   selected: CommerceEntity[],
+  question = input.question,
 ): Candidate[] {
   const snapshot = input.commerce;
   if (!snapshot) return [];
@@ -1765,6 +1832,13 @@ function canonicalCandidates(
     out.push({
       fact_type: f,
       value: v,
+      ...(f === "quantity" && entity?.provenance.source_type === "customer" &&
+          entity.provenance.source_message_id && typeof entity.attributes.unit === "string" && entity.attributes.unit.trim()
+        ? { quantity_unit: entity.attributes.unit,
+          quantity_unit_source_kind: "canonical_customer_attribute" as const,
+          quantity_unit_source_message_id: entity.provenance.source_message_id }
+        : f === "quantity" && entity && selected.length === 1
+          ? currentQuestionQuantityUnit(input, question, entity) ?? {} : {}),
       state_path: path,
       authority: rank === 0
         ? "CANONICAL_COMMERCE_STATE"
@@ -2531,7 +2605,7 @@ function resolveConversationRecallLegacy(
           e.provenance.source_message_id===sourceCorrection.source_id &&
           e.quantity!==sourceCorrection.value))
           return fail("AMBIGUOUS","CONFLICTING_CURRENT_QUANTITY",facts);
-        evidence.push({fact_type:"quantity",value:sourceCorrection.value,
+        evidence.push({fact_type:"quantity",value:sourceCorrection.value,quantity_unit:sourceCorrection.unit,
           state_path:"latest_corrections.source_verified_quantity",
           authority:"CURRENT_CUSTOMER_MEMORY",entity_id:null,region:null,
           evidence_source_message_id:sourceCorrection.source_id,
@@ -2725,7 +2799,7 @@ function resolveConversationRecallLegacy(
       ]) && !any(input.question, ["current", "latest", "現在", "最新"])
     ) return fail("AMBIGUOUS", "HISTORICAL_VALUE_NOT_CURRENT", facts);
     const candidates = [
-      ...canonicalCandidates(input, f, selected),
+      ...canonicalCandidates(input, f, selected, slot.question),
       ...memoryCandidates(input, f, selected),
     ].sort((a, b) => a.rank - b.rank);
     if (f === "quantity") {
@@ -3041,7 +3115,7 @@ export function renderConversationRecall(
           : LABELS[e.fact_type]?.[l] ?? e.fact_type
       }${
         e.entity_id ? ` (${e.entity_label ?? e.entity_id})` : ""
-      }: ${v}${e.fact_type === "quantity" ? l === 2 ? " units" : " 部" : ""}`,
+      }: ${v}${e.fact_type === "quantity" && e.quantity_unit ? ` ${e.quantity_unit}` : ""}`,
     );
   }
   // Avoid asserting an order merely because a quotation exists.
@@ -3104,6 +3178,10 @@ export function prepareConversationRecall(
         region: e.region,
         temporal_scope: e.temporal_scope,
         source_kind: e.source_kind,
+        ...(e.quantity_unit_source_kind ? {
+          quantity_unit_source_kind: e.quantity_unit_source_kind,
+          quantity_unit_source_message_id: e.quantity_unit_source_message_id,
+        } : {}),
       }))
       : [],
   };

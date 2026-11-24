@@ -2330,6 +2330,84 @@ function sourceBoundAffirmativeAggregateGoal(
     ? quantity : null;
 }
 
+/** A reading may propose a replacement count/unit; only the current Visitor
+ * literal bound to one existing customer subject supplies the value. No unit
+ * equivalence, translation, industry vocabulary or historical text is used. */
+export function sourceBoundQuantityUnit(
+  input: CommerceRuntimeInput,
+  previous: ConversationCommerceState,
+): { entity_id: string; name: string; quantity: number; unit: string; source_text: string } | null {
+  const frame = input.semantic_frame;
+  if (!frame || frame.confidence < 0.72 || frame.ambiguity.is_ambiguous ||
+      frame.explicit_negations.length ||
+      (frame.demands ?? []).some(demand => demand.explicit_negations.length) ||
+      frame.additive || frame.entities.length !== 1 ||
+      !(frame.operation === "SET_QUANTITY" ||
+        frame.operation === "UPDATE_ITEM" && frame.customer_correction) ||
+      !input.company_id || !input.conversation_id || !input.source_message_id) return null;
+  const proposed = frame.entities[0];
+  if (proposed.confidence < 0.72 || proposed.quantity === null ||
+      !Number.isSafeInteger(proposed.quantity) || proposed.quantity < 0 || proposed.quantity > 100000 ||
+      typeof proposed.unit !== "string" || proposed.unit !== proposed.unit.trim() ||
+      !/^[\p{L}\p{M}][\p{L}\p{M}\p{N} '\/-]{0,63}$/u.test(proposed.unit)) return null;
+  const target = previous.entities.find(entity => entity.entity_id === proposed.entity_ref);
+  if (!target || target.provenance.source_type !== "customer" ||
+      !target.provenance.source_message_id ||
+      ["cancelled", "deferred", "superseded"].includes(target.status)) return null;
+  const name = proposed.name.normalize("NFKC").trim().toLowerCase();
+  if (!name || !sourceOwnedSubjectLabels(target).includes(name) ||
+      !matchesReferenceLabel(input.text, name)) return null;
+  const owners = previous.entities.filter(entity =>
+    !["cancelled", "deferred", "superseded"].includes(entity.status) &&
+    sourceOwnedSubjectLabels(entity).includes(name));
+  if (owners.length !== 1 || owners[0].entity_id !== target.entity_id ||
+      frame.referents.some(ref => ref.source === "persistent_state" &&
+        (ref.confidence < 0.72 || ref.ref !== target.entity_id))) return null;
+  // An optional quote is corroboration, not a substitute for the server-owned
+  // current source. A supplied empty, foreign or repeated quote is invalid.
+  for (const demand of frame.demands ?? []) {
+    if (Object.prototype.hasOwnProperty.call(demand, "source_quote")) {
+      const quote = demand.source_quote;
+      const source = input.text.normalize("NFKC");
+      const quoted = typeof quote === "string" ? quote.normalize("NFKC") : "";
+      if (!quoted.trim() || source.indexOf(quoted) < 0 ||
+          source.indexOf(quoted) !== source.lastIndexOf(quoted)) return null;
+    }
+    if (demand.ambiguity.is_ambiguous || demand.subject_refs.some(ref =>
+        ref !== target.entity_id && ref.normalize("NFKC").trim().toLowerCase() !== name)) return null;
+  }
+  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Consume the entire numeral so 30, 3.5 or 三十 cannot attest quantity 3.
+  const count = "([0-9]+(?:\\.[0-9]+)?|[零〇一二兩两三四五六七八九十百千萬万億亿兆]+)";
+  const pattern = new RegExp(count + "\\s*" + escape(proposed.unit), "gu");
+  const literals = [...input.text.matchAll(pattern)].filter(match => {
+    const start = match.index ?? 0, end = start + match[0].length;
+    const before = input.text.slice(0, start).at(-1) ?? "";
+    const after = input.text.slice(end);
+    if (/[0-9.]/u.test(before) ||
+        after && !/^[\s,，。;；.!?！？:：]/u.test(after) &&
+        !after.normalize("NFKC").toLowerCase().startsWith(name)) return false;
+    return true;
+  });
+  if (literals.length !== 1 || countTokenValue(literals[0][1]) !== proposed.quantity) return null;
+  const literal = literals[0], at = literal.index ?? 0;
+  const clauses = input.text.split(/[，,。；;!?！？\n]+/u);
+  let offset = 0;
+  for (const clause of clauses) {
+    const start = input.text.indexOf(clause, offset), end = start + clause.length;
+    offset = end + 1;
+    if (at < start || at >= end) continue;
+    if (!matchesReferenceLabel(clause, name)) return null;
+    const competing = previous.entities.filter(entity => entity.entity_id !== target.entity_id &&
+      !["cancelled", "deferred", "superseded"].includes(entity.status) &&
+      sourceOwnedSubjectLabels(entity).some(label => matchesReferenceLabel(clause, label)));
+    if (competing.length) return null;
+    return { entity_id: target.entity_id, name: proposed.name, quantity: proposed.quantity,
+      unit: proposed.unit, source_text: literal[0] };
+  }
+  return null;
+}
+
 function hasSourceBoundQuantityMutation(
   event: Extract<CommerceStateEvent, { type: "SET_ENTITY_QUANTITY" }>,
   input: CommerceRuntimeInput,
@@ -2339,6 +2417,22 @@ function hasSourceBoundQuantityMutation(
   const active = previous.entities.filter(entity =>
     !["cancelled", "deferred", "superseded"].includes(entity.status));
   const target = active.find(entity => entity.entity_id === event.entity_id);
+  const quantityReading = input.semantic_frame;
+  if (quantityReading && quantityReading.confidence >= 0.72 &&
+      ["SET_QUANTITY", "UPDATE_ITEM"].includes(quantityReading.operation) &&
+      (quantityReading.explicit_negations.length ||
+        (quantityReading.demands ?? []).some(demand => demand.explicit_negations.length))) return false;
+  const sourceUnit = sourceBoundQuantityUnit(input, previous);
+  if (sourceUnit?.entity_id === event.entity_id && sourceUnit.quantity === event.quantity) return true;
+  const proposedUnit = input.semantic_frame?.entities.find(entity => entity.entity_ref === event.entity_id ||
+    target && sourceOwnedSubjectLabels(target).includes(entity.name.normalize("NFKC").trim().toLowerCase()));
+  // A changed unit is part of the quantity value. Refuse the whole proposed
+  // change when the current source does not attest that new dimension.
+  if (target && proposedUnit && typeof proposedUnit.unit === "string" &&
+      typeof target.attributes.unit === "string" && target.attributes.unit.trim().length > 0 &&
+      proposedUnit.unit !== target.attributes.unit &&
+      proposedUnit.quantity === event.quantity &&
+      input.semantic_frame && ["SET_QUANTITY", "UPDATE_ITEM"].includes(input.semantic_frame.operation)) return false;
   // A shared category word is not a unique referent when several current
   // items of that category exist. Require one source-named distinct identity.
   const sameCategory=target ? active.filter(entity=>entity.category===target.category) : [];
@@ -2878,7 +2972,8 @@ function reduceSingleTurn(
     // A room count describes spatial scope, never machine count. The frozen
     // generic reducer still supports room-based products in their own domain.
     if (event.type !== "SET_ENTITY_QUANTITY" || machineQuantity !== null) return true;
-    return false; // No literal count: model cannot change a quantity in any category.
+    const sourceUnit = sourceBoundQuantityUnit(input, previous);
+    return sourceUnit?.entity_id === event.entity_id && sourceUnit.quantity === event.quantity;
   }).map(event => {
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
       const proposedEntity=event.entity;
@@ -2947,10 +3042,20 @@ function reduceSingleTurn(
           attributes: { quantity_basis: "customer_explicit" } }) },
         provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } }]
     : [];
+  const sourceUnit = sourceBoundQuantityUnit(input, previous);
+  const unitEvents: CommerceStateEvent[] = sourceUnit && quantityEvents.some(event =>
+    event.type === "SET_ENTITY_QUANTITY" && event.entity_id === sourceUnit.entity_id &&
+    event.quantity === sourceUnit.quantity)
+    ? [{ type: "SET_ENTITY_ATTRIBUTE", entity_id: sourceUnit.entity_id, key: "unit", value: sourceUnit.unit,
+         provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } },
+       { type: "SET_ENTITY_ATTRIBUTE", entity_id: sourceUnit.entity_id, key: "quantity_basis", value: "customer_explicit",
+         provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } }]
+    : [];
   const orderedEvents = [
     ...quantityEvents.filter(event => event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY"),
     ...quantityEvents.filter(event => event.type !== "ENSURE_ENTITY" && event.type !== "ADD_ENTITY"),
     ...newGoalEvents,
+    ...unitEvents,
   ];
   const withoutCorrections=orderedEvents.filter(event=>event.type!=="ADD_CORRECTION");
   const candidate=reduceCommerceState(previous,withoutCorrections);
@@ -3175,6 +3280,8 @@ function sourceBoundPartialUnitRetention(
 ):CommerceStateEvent[] | null {
   const frame=input.semantic_frame;
   if(!frame || frame.confidence<0.72 || frame.ambiguity.is_ambiguous ||
+    frame.explicit_negations.length ||
+    (frame.demands ?? []).some(demand=>demand.explicit_negations.length) ||
     !frame.customer_correction ||
     !["SET_QUANTITY","UPDATE_ITEM"].includes(frame.operation) ||
     frame.entities.length!==1 || frame.additive ||
@@ -3796,14 +3903,16 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
     state=reduceCommerceState(state,[{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",
       value:{...original,site_observation:value}}]);
   }
-  if (detectQuantityCorrectionSignal(input.text)) {
-    for (const entity of state.entities.filter(e=>e.entity_id.startsWith("generic:"))) {
+  const currentUnitCorrection = sourceBoundQuantityUnit(input, previous);
+  if (detectQuantityCorrectionSignal(input.text) || currentUnitCorrection) {
+    for (const entity of state.entities.filter(e=>e.entity_id.startsWith("generic:") || e.entity_id === currentUnitCorrection?.entity_id)) {
       const old=previous.entities.find(e=>e.entity_id===entity.entity_id);
-      if (!old || old.quantity===entity.quantity) continue;
-      const unit=String(entity.attributes.unit ?? "units");
+      if (!old || old.quantity===entity.quantity && old.attributes.unit===entity.attributes.unit) continue;
+      const unit = typeof entity.attributes.unit === "string" && entity.attributes.unit ? " " + entity.attributes.unit : "";
+      const oldUnit = typeof old.attributes.unit === "string" && old.attributes.unit ? " " + old.attributes.unit : "";
       state={...state,latest_corrections:state.latest_corrections.filter(entry=>entry !== input.text &&
         !(input.text.includes(entry) && /change/i.test(entry) && entry.includes(String(entity.attributes.product_name))))};
-      state=reduceCommerceState(state,[{type:"ADD_CORRECTION",correction:`${entity.attributes.product_name ?? entity.model ?? entity.category} quantity: change from ${old.quantity} ${unit} to ${entity.quantity} ${unit}`}]);
+      state=reduceCommerceState(state,[{type:"ADD_CORRECTION",correction:`${entity.attributes.product_name ?? entity.model ?? entity.category} quantity: change from ${old.quantity}${oldUnit} to ${entity.quantity}${unit}`}]);
     }
   }
   if (sourceContext) {
@@ -4822,6 +4931,39 @@ export async function runCommerceStateRuntime(
       persist_result: persisted.result, reason: "commerce_state_commit_failed", route: "commerce_state_answer" };
   }
   const state = persisted.state;
+  const quantityUnit = sourceBoundQuantityUnit(runtimeInput, persisted.previous_state);
+  const pureQuantityTurn = quantityUnit && runtimeInput.semantic_frame?.requested_facts.length === 0 &&
+    (runtimeInput.semantic_frame.demands ?? []).every(demand => demand.source_type === "general" &&
+      demand.requested_facts.length === 0 &&
+      (!Object.prototype.hasOwnProperty.call(demand, "source_quote") ||
+        clean(demand.source_quote) === clean(runtimeInput.text))) &&
+    runtimeInput.semantic_frame.entities.every(entity =>
+      Object.keys(entity.attributes).length === 0 && Object.keys(entity.constraints).length === 0);
+  if (pureQuantityTurn && persisted.result === "success") {
+    // A successful RPC alone is not an acknowledgement: verify the actual
+    // same-owner/source/revision readback before saying the unit was changed.
+    let readback: LoadedCommerceState | null = null;
+    try { readback = await loadCommerceState(db, input.conversation_id, input.company_id); } catch { /* fail closed */ }
+    const entity = readback?.state.entities.find(value => value.entity_id === quantityUnit.entity_id);
+    const verified = persisted.revision === persisted.previous_revision + 1 &&
+      readback?.revision === persisted.revision &&
+      JSON.stringify(readback.state) === JSON.stringify(persisted.state) &&
+      entity?.provenance.source_type === "customer" && entity.provenance.source_message_id === input.source_message_id &&
+      entity.quantity === quantityUnit.quantity && entity.attributes.unit === quantityUnit.unit &&
+      !["cancelled", "deferred", "superseded"].includes(entity.status) &&
+      JSON.stringify(b2JourneyTransactionBoundary(persisted.previous_state)) ===
+        JSON.stringify(b2JourneyTransactionBoundary(readback.state));
+    if (!verified || !readback || !entity) return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
+      persist_result: "quantity_unit_readback_unverified", reason: "quantity_unit_commit_unverified", route: "commerce_state_answer" };
+    const reply = language === "en"
+      ? `Updated ${quantityUnit.name} to ${entity.quantity} ${entity.attributes.unit}.`
+      : language === "zh-CN"
+      ? `已将${quantityUnit.name}数量更新为 ${entity.quantity} ${entity.attributes.unit}。`
+      : `已將${quantityUnit.name}數量更新為 ${entity.quantity} ${entity.attributes.unit}。`;
+    return { authority: "CONVERSATION_STATE", reply, revision: readback.revision,
+      persist_result: "success", reason: "source_bound_quantity_unit_committed",
+      state_path: `entities.${readback.state.entities.indexOf(entity)}.quantity`, route: "commerce_state_answer" };
+  }
   // A CAS retry may load a newer topic, scope count or lifecycle. Rebind the
   // reply to the snapshot that actually produced the committed payload.
   contextualDecision = resolveContextualTurn(runtimeInput, persisted.previous_state,
