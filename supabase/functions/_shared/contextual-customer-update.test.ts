@@ -1680,6 +1680,7 @@ Deno.test("Task3C English distributive each may follow the unit in its own sourc
   ],"slots","en");
   const input=make(), good=resolveSemanticContextualCandidate(input);
   assert(good?.context_sufficient && good.aggregate_quantity===8 && good.values.length===3,JSON.stringify(good));
+  assert(good.reply.includes("2 teams with 3 slots each") && !good.reply.includes("teams#"),good.reply);
   for(const quote of ["2 teams with 3 slots; each", "2 teams with 3 slots, another service each", "2 teams with 3 slots"]){
     const bad=make();bad.text="lobby 2 slots, "+quote;
     (bad.semantic_frame.entities[0].attributes.scoped_customer_updates as Record<string,unknown>[])[1].source_text=quote;
@@ -1688,4 +1689,27 @@ Deno.test("Task3C English distributive each may follow the unit in its own sourc
   const invented=make();
   (invented.semantic_frame.entities[0].attributes.scoped_customer_updates as Record<string,unknown>[])[1].scope_count=3;
   assert(resolveSemanticContextualCandidate(invented)?.context_sufficient===false,"invented group count");
+});
+
+Deno.test("Task3C scoped confirmation preserves customer phrases and individual source provenance", () => {
+  const input=genericAllocationInput("門2台，兩個支隊各3台",[
+    {scope:"門",source_text:"門2台",unit:"台",value:2,attribute:"quantity",action:"set"},
+    {scope:"支隊",source_text:"兩個支隊各3台",unit:"台",value:3,scope_count:2,per_scope_quantity:3,attribute:"quantity",action:"set"},
+  ],"台");
+  const candidate=resolveSemanticContextualCandidate(input);
+  assert(candidate?.context_sufficient && candidate.reply.includes("門2台") &&
+    candidate.reply.includes("兩個支隊各3台") && !candidate.reply.includes("#") && !candidate.reply.includes("部"),JSON.stringify(candidate));
+  const decision=resolveContextualCustomerUpdate({state:input.state,candidate});
+  const next=reduceCommerceState(input.state,contextualUpdateEvents(decision,input.state,"allocation-source"));
+  const records=next.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+  assert(records.every(r=>r.source_message_id==="allocation-source" && !!r.source_text),JSON.stringify(records));
+  assert(records.some(r=>r.scope==="支隊#1") && records.some(r=>r.scope==="支隊#2"),"stable internal group members lost");
+  const partial=genericAllocationInput("門4台",[{scope:"門",source_text:"門4台",unit:"台",value:4,attribute:"quantity",action:"set"}],"台");
+  partial.state=next;
+  const changed=resolveSemanticContextualCandidate(partial);
+  assert(changed?.aggregate_quantity===undefined,"partial change fabricated aggregate");
+  const latest=reduceCommerceState(next,contextualUpdateEvents(resolveContextualCustomerUpdate({state:next,candidate:changed}),next,"correction-source"));
+  const latestRows=latest.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+  assert(latest.entities[0].quantity===8 && latestRows.find(r=>r.scope==="門")?.source_message_id==="correction-source" &&
+    latestRows.filter(r=>r.scope.startsWith("支隊#")).every(r=>r.source_message_id==="allocation-source"),"old scopes were reattributed or partial aggregate overwritten");
 });

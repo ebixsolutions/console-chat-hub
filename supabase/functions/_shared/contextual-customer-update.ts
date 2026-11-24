@@ -13,6 +13,10 @@ export interface ScopedCustomerValue {
   attribute: string;
   action: "set";
   value: string | number | boolean;
+  /** Exact verified customer phrase; member ids stay separate from display. */
+  source_text?: string;
+  source_message_id?: string;
+  source_revision?: number;
 }
 
 export interface ContextualCandidate {
@@ -161,6 +165,7 @@ export function resolveSemanticContextualCandidate(input: {
   const scopes = new Set<string>();
   const spans: Array<{ start: number; end: number }> = [];
   const values: ScopedCustomerValue[] = [];
+  const displayQuotes: string[] = [];
   // Evidence counts follow distinct Visitor quantity phrases, not the
   // derived number of anonymous members in an explicitly counted group.
   let quotedQuantityPhrases = 0;
@@ -234,12 +239,13 @@ export function resolveSemanticContextualCandidate(input: {
       for (let index = 1; index <= n; index++) {
         const distinct = scope + "#" + index;
         if (scopes.has(distinct.toLowerCase())) return invalid();
-        values.push({scope: distinct, attribute: "quantity", action: "set", value: each});
+        values.push({scope: distinct, attribute: "quantity", action: "set", value: each, source_text: quote});
       }
       unit = sourceUnit;
       scopes.add(scope.toLowerCase());
       spans.push({start: at, end: at + quote.length});
       quotedQuantityPhrases++;
+      displayQuotes.push(quote);
       continue;
     }
     const counts = [...quote.matchAll(new RegExp(quantityPattern + "\\s*" + sourceUnit, "giu"))];
@@ -251,8 +257,9 @@ export function resolveSemanticContextualCandidate(input: {
     unit = sourceUnit;
     scopes.add(scope.toLowerCase());
     spans.push({ start: at, end: at + quote.length });
-    values.push({ scope, attribute: "quantity", action: "set", value: count });
+    values.push({ scope, attribute: "quantity", action: "set", value: count, source_text: quote });
     quotedQuantityPhrases++;
+    displayQuotes.push(quote);
   }
   if (unit === null || values.length > 24) return invalid();
   // Expanded members preserve the exact N×M customer count, while requiring
@@ -269,7 +276,7 @@ export function resolveSemanticContextualCandidate(input: {
   const name = typeof target.attributes.product_name === "string" &&
     target.attributes.product_name.trim()
     ? target.attributes.product_name : target.model ?? target.category;
-  const entries = values.map(v => v.scope + " " + v.value + unit);
+  const entries = displayQuotes;
   const reply = input.language === "en"
     ? "Noted for " + name + ": " + entries.join(", ") +
       (previousScopes ? ". Existing other scopes remain." : ". Total " + total + " " + unit + ".") +
@@ -362,7 +369,8 @@ export function contextualUpdateEvents(
       Boolean(value && typeof value === "object" && typeof value.scope === "string" && typeof value.attribute === "string"))
     : [];
   const merged = new Map(records.map((value) => [value.scope + ":" + value.attribute, value]));
-  for (const value of decision.updates) merged.set(value.scope + ":" + value.attribute, value);
+  for (const value of decision.updates) merged.set(value.scope + ":" + value.attribute,
+    value.source_text ? { ...value, source_message_id } : value);
   const updates = [...merged.values()];
   const events: CommerceStateEvent[] = [{
     type: "SET_ENTITY_ATTRIBUTE",

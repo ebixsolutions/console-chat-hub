@@ -1754,8 +1754,8 @@
     "tests/task1-director/p1-observation-register.mjs": "b39fa3b2cdb7aebde931dc75077d08226cc38a64fbf35a1230400beb12e8bd2b",
     "tests/task1-director/fixtures/task3c-replay/observations-60-plus-7.json": "b1b820e5bc8fcda0365d5738d4b973c1193c3c49953c70de93daf24ca158e3ba",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "2e214ef1e0d21b7fa4029bf188392caed4474c0762c5faa28e9ce3eaa78aa739",
-    "supabase/functions/_shared/contextual-customer-update.ts": "167f9061761e600310b1244a6b8d02bfae77b327a4471ff3b1227b9c9201e2f6",
-    "supabase/functions/_shared/contextual-customer-update.test.ts": "be9a9d7ff06ffd9cd74c6db91c69856dc2a325ab64e92723288c0b65024d500a"
+    "supabase/functions/_shared/contextual-customer-update.ts": "398fcf1a18e3b99c0b2207620bf489d6d13a4384102209282fda5007dd9d215d",
+    "supabase/functions/_shared/contextual-customer-update.test.ts": "f6c43162f67c4ff773ee7189c8b7556873cf1f653309da72be4061dbf7285d4e"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
     "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",
