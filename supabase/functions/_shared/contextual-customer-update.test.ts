@@ -1672,3 +1672,20 @@ Deno.test("Task3C source-bound single-character scopes do not widen entity match
   unrelated.semantic_frame.referents=[{ref:"service:other",source:"persistent_state",confidence:0.99}];
   assert(resolveSemanticContextualCandidate(unrelated)?.context_sufficient===false,"one-character scope granted entity authority");
 });
+
+Deno.test("Task3C English distributive each may follow the unit in its own source clause", () => {
+  const make=()=>genericAllocationInput("lobby 2 slots, 2 teams with 3 slots each",[
+    {scope:"lobby",source_text:"lobby 2 slots",unit:"slots",value:2,attribute:"quantity",action:"set"},
+    {scope:"teams",source_text:"2 teams with 3 slots each",unit:"slots",value:3,scope_count:2,per_scope_quantity:3,attribute:"quantity",action:"set"},
+  ],"slots","en");
+  const input=make(), good=resolveSemanticContextualCandidate(input);
+  assert(good?.context_sufficient && good.aggregate_quantity===8 && good.values.length===3,JSON.stringify(good));
+  for(const quote of ["2 teams with 3 slots; each", "2 teams with 3 slots, another service each", "2 teams with 3 slots"]){
+    const bad=make();bad.text="lobby 2 slots, "+quote;
+    (bad.semantic_frame.entities[0].attributes.scoped_customer_updates as Record<string,unknown>[])[1].source_text=quote;
+    assert(resolveSemanticContextualCandidate(bad)?.context_sufficient===false,"unbound distributive accepted: "+quote);
+  }
+  const invented=make();
+  (invented.semantic_frame.entities[0].attributes.scoped_customer_updates as Record<string,unknown>[])[1].scope_count=3;
+  assert(resolveSemanticContextualCandidate(invented)?.context_sufficient===false,"invented group count");
+});

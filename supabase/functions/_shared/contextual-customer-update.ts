@@ -219,10 +219,15 @@ export function resolveSemanticContextualCandidate(input: {
         return invalid();
       const middle = quote.slice(first.index! + first[0].length, second.index!);
       const after = quote.slice(second.index! + second[0].length).trim();
-      const sourceName = middle.indexOf(scope);
-      if (sourceName < 0 || middle.indexOf(scope, sourceName + 1) >= 0 ||
-        !/(?:各|每|\beach\b|\bper\b)/iu.test(middle) ||
-        !after.startsWith(sourceUnit)) return invalid();
+      const sourceName = middle.toLowerCase().indexOf(scope.toLowerCase());
+      const afterUnit = after.slice(sourceUnit.length);
+      const beforeEach = /(?:各|每|\beach\b|\bper\b)/iu.test(middle);
+      const trailingEach = /^\s+each\s*[.!。]?$/iu.test(afterUnit);
+      if (sourceName < 0 || middle.toLowerCase().indexOf(scope.toLowerCase(), sourceName + 1) >= 0 ||
+        /[,，;；.!。!?？]/u.test(middle) ||
+        !(beforeEach || trailingEach) ||
+        !after.toLowerCase().startsWith(sourceUnit.toLowerCase()) ||
+        /^[\p{L}\p{N}]/u.test(afterUnit)) return invalid();
       // Reject extra written per-unit quantities inside the same phrase.
       if ([...quote.matchAll(new RegExp(quantityPattern + "\\s*" + sourceUnit, "giu"))].length !== 1)
         return invalid();
