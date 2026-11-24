@@ -815,8 +815,15 @@ function inferKnownCustomerStatePath(
   if (entityStatus) return entityStatus;
 
   if (questionExplicitlyAsksQuantity(question)) {
+    // No-reading compatibility can read a sole existing customer fact; an
+    // inactive item, system container or unconfirmed zero is not that fact.
+    // This does not infer a new quantity from a noun, classifier or history.
     const active = state.entities.filter(
-      (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
+      (entity) => ["researching", "tentative", "confirmed"].includes(entity.status) &&
+        entity.provenance.source_type === "customer" &&
+        typeof entity.provenance.source_message_id === "string" && Boolean(entity.provenance.source_message_id.trim()) &&
+        entity.attributes.quantity_basis !== "system_default" && Number.isFinite(entity.quantity) &&
+        (entity.quantity > 0 || entity.quantity === 0 && entity.attributes.quantity_basis === "customer_explicit"),
     );
     if (active.length === 1) {
       return {

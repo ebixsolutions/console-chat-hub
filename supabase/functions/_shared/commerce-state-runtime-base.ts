@@ -814,9 +814,68 @@ function resolveReadOnlyAttributeConstraintQuery(
   };
 }
 
+type CanonicalQuantityRead =
+  | { kind: "not_applicable" }
+  | { kind: "unresolved" }
+  | { kind: "resolved"; entity: ConversationCommerceState["entities"][number] };
+
+/** Read one already committed quantity from an exact semantic category. A
+ * reading selects the record; its proposed numbers never supply the answer.
+ * A rejected qualified selector cannot fall through to singleton inference.
+ * No reading / no exact topic retains the existing read-only compatibility. */
+function canonicalQuantityReferent(input: CommerceRuntimeInput,
+  state: ConversationCommerceState, revision: number): CanonicalQuantityRead {
+  const frame = input.semantic_frame;
+  const quantityFields = new Set(["quantity", "current_quantity"]);
+  if (!frame || frame.operation !== "ASK_FACT" || frame.confidence < 0.9 ||
+    !frame.requested_facts.length || !frame.requested_facts.every(fact => quantityFields.has(fact)) ||
+    !input.company_id || !input.conversation_id || !input.source_message_id ||
+    !isReadOnlyCommerceQuestion(input.text, frame)) return { kind: "not_applicable" };
+  const topic = clean(frame.topic, 160);
+  if (!topic) return { kind: "not_applicable" };
+  const unresolved: CanonicalQuantityRead = { kind: "unresolved" };
+  if (!Number.isSafeInteger(revision) || revision < 1 ||
+    frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+    frame.explicit_negations.length || frame.customer_facts?.length ||
+    (frame.demands ?? []).some(demand => demand.customer_correction || demand.ambiguity.is_ambiguous ||
+      demand.explicit_negations.length || demand.requested_facts.some(fact => !quantityFields.has(fact)))) return unresolved;
+  const owned = state.entities.filter(entity => entity.provenance.source_type === "customer" &&
+    Boolean(entity.provenance.source_message_id));
+  const active = owned.filter(entity =>
+    ["researching", "tentative", "confirmed"].includes(entity.status));
+  const matches = active.filter(entity => entity.category === topic);
+  if (matches.length !== 1) return unresolved;
+  const entity = matches[0], count = customerRequestedQuantity(entity);
+  if (count === null || !Number.isFinite(count) || count < 0 ||
+    (count === 0 && entity.attributes.quantity_basis !== "customer_explicit")) return unresolved;
+  if (active.some(candidate => candidate.entity_id !== entity.entity_id &&
+    sourceOwnedSubjectLabels(candidate).some(label => matchesReferenceLabel(input.text, label))) ||
+    frame.referents.some(reference => reference.confidence >= 0.9 &&
+      (reference.source === "persistent_state" || active.some(candidate => candidate.entity_id === reference.ref)) &&
+      reference.ref !== entity.entity_id) ||
+    frame.entities.some(candidate => candidate.quantity !== null || (candidate.confidence >= 0.9 &&
+      ((candidate.category_hint && candidate.category_hint !== topic) ||
+        (candidate.entity_ref && candidate.entity_ref !== entity.entity_id))))) return unresolved;
+  for (const demand of frame.demands ?? []) {
+    const quote = clean(demand.source_quote, 2400);
+    if (!quote || !clean(input.text, 2400).includes(quote)) return unresolved;
+    for (const ref of demand.subject_refs) {
+      const subject = clean(ref, 160);
+      if (!subject) return unresolved;
+      const named = owned.filter(candidate =>
+        [candidate.entity_id, candidate.category, ...sourceOwnedSubjectLabels(candidate)]
+          .some(label => clean(label, 160).toLowerCase() === subject.toLowerCase()));
+      if (named.length && (named.length !== 1 || named[0].entity_id !== entity.entity_id)) return unresolved;
+      if (!named.length && !matchesReferenceLabel(quote, subject)) return unresolved;
+    }
+  }
+  return { kind: "resolved", entity };
+}
+
 function compatibleQuantityStatePath(
   input: CommerceRuntimeInput,
   state: ConversationCommerceState,
+  canonicalQuantity: ConversationCommerceState["entities"][number] | null = null,
 ): string | null {
   const requested = (input.semantic_frame?.requested_facts ?? []).join(" ");
   const text = clean(input.text);
@@ -859,6 +918,7 @@ function compatibleQuantityStatePath(
       input.text,
     );
   if (!asksQuantity) return null;
+  if (canonicalQuantity) return `entities.${state.entities.indexOf(canonicalQuantity)}.quantity`;
   const resolved = resolveAttributeQueryCategory(input);
   if (resolved.ambiguous || !resolved.category) return null;
   const compatible = state.entities.filter(
@@ -4613,7 +4673,14 @@ export async function runCommerceStateRuntime(
     customerJourney.status !== "advance"
   ) {
     const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
-    const requestedStatePath = compatibleQuantityStatePath(input, loaded.state);
+    const quantityRead = canonicalQuantityReferent(input, loaded.state, loaded.revision);
+    if (quantityRead.kind === "unresolved") return {
+      authority: "INSUFFICIENT_INFORMATION", state_path: null, reply: null,
+      revision: loaded.revision, persist_result: "read_only",
+      reason: "read_only_memory_or_current_state_recall_unresolved", route: "commerce_state_answer",
+    };
+    const requestedStatePath = compatibleQuantityStatePath(input, loaded.state,
+      quantityRead.kind === "resolved" ? quantityRead.entity : null);
     const decision = resolveCommerceAnswerAuthority({
       question: text,
       state: loaded.state,

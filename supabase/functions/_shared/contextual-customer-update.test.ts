@@ -1979,3 +1979,5 @@ import "./conversation-recall-source-proof.test.ts";
 import "./source-owned-advice-goal.test.ts";
 import "./source-bound-lifecycle-guard.test.ts";
 import "./pre-send-field-scope.test.ts";
+import "./commerce-state-canonical-quantity.test.ts";
+import "./commerce-state-canonical-fractional.test.ts";
