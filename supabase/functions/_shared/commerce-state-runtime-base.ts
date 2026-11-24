@@ -38,7 +38,6 @@ import {
   type CommerceAnswerAuthority,
   type CommerceCalculationTerm,
   type CommerceDimensionAttribute,
-  type AdviceGoalCurrentSource,
   inferCommerceDimensionAttribute,
   isCurrentRequirementsRecap,
   isBareCommerceSubjectMention,
@@ -1195,8 +1194,6 @@ export function isReadOnlyCommerceQuestion(
 export function isReadOnlyCurrentStateQuery(
   text: string,
   semanticFrame?: CommerceSemanticFrame | null,
-  state?: ConversationCommerceState,
-  source?: AdviceGoalCurrentSource,
 ): boolean {
   // A genuine customer-owned first selection goal remains a state-bearing
   // statement even when the same message also asks a product question. A
@@ -1212,7 +1209,7 @@ export function isReadOnlyCurrentStateQuery(
   if(explicitGenericGoal)return false;
   if (isCurrentRequirementsRecap(text)) return true;
   if (isReadOnlyCurrentStateAggregateQuery(text, semanticFrame)) return true;
-  if (isReadOnlyMemoryOrCurrentStateRecall(text, semanticFrame, state, source)) return true;
+  if (isReadOnlyMemoryOrCurrentStateRecall(text, semanticFrame)) return true;
   if (!isReadOnlyCommerceQuestion(text, semanticFrame)) return false;
   const t = clean(text);
   const requested = (semanticFrame?.requested_facts ?? []).join(" ");
@@ -1780,7 +1777,7 @@ function deriveA3RuntimeEvents(
   if (previous.entities.length === 0 && frame && frame.confidence >= 0.72 &&
       !frame.ambiguity.is_ambiguous && frame.operation === "ASK_FACT" &&
       ["customer_guidance","ask_for_advice"].includes(frame.intent) &&
-      isSourceOwnedActiveAdviceGoal(input.text, frame, previous, input)) {
+      isSourceOwnedActiveAdviceGoal(input.text)) {
     events.push({type:"SET_CONTEXT",intent:"customer_guidance"});
   }
 
@@ -2658,7 +2655,7 @@ function reduceSingleTurn(
   // but its canonical state payload remains byte-for-byte unchanged.
   const durableResearchTurn = establishesDurableProductResearch(input.text);
   const affirmativeAggregateGoal = sourceBoundAffirmativeAggregateGoal(input, previous);
-  if (isReadOnlyCurrentStateQuery(input.text, input.semantic_frame, previous, input) && !durableResearchTurn && affirmativeAggregateGoal === null && !input.trusted_product_topic_focus) {
+  if (isReadOnlyCurrentStateQuery(input.text, input.semantic_frame) && !durableResearchTurn && affirmativeAggregateGoal === null && !input.trusted_product_topic_focus) {
     return previous;
   }
   // Bare product/service names are references; do not commit an LLM's inferred
@@ -3686,7 +3683,7 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
   // model with unknown quantity), not an inferred shopping transaction.
   if (input.semantic_frame &&
       ["ASK_FACT","ASK_CALCULATION","NO_STATE_CHANGE"].includes(input.semantic_frame.operation) &&
-      isReadOnlyCurrentStateQuery(input.text,input.semantic_frame,previous,input) &&
+      isReadOnlyCurrentStateQuery(input.text,input.semantic_frame) &&
       !input.trusted_product_topic_focus &&
       // Mixed question + customer-owned correction must retain its factual
       // part after exact sentence/source validation; no invented entity.
@@ -3725,7 +3722,7 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
      !advisoryFrame.additive && advisoryFrame.entities.length===0 &&
      !advisoryFrame.customer_facts?.length &&
      ["customer_guidance","ask_for_advice"].includes(advisoryFrame.intent) &&
-     isSourceOwnedActiveAdviceGoal(input.text, advisoryFrame, previous, input) &&
+     isSourceOwnedActiveAdviceGoal(input.text) &&
      previous.entities.length===0 && state.entities.length===0 &&
      state.current_intent!=="customer_guidance") {
     state=reduceCommerceState(state,[{type:"SET_CONTEXT",intent:"customer_guidance"}]);
@@ -3871,7 +3868,7 @@ function resolveContextualTurn(
   return resolveContextualCustomerUpdate({
     candidate,
     state,
-    read_only: isReadOnlyCurrentStateQuery(input.text, input.semantic_frame, state, input),
+    read_only: isReadOnlyCurrentStateQuery(input.text, input.semantic_frame),
   });
 }
 
@@ -4703,7 +4700,7 @@ export async function runCommerceStateRuntime(
     input.semantic_frame.customer_facts?.length);
   if (
     !validatedCustomerFactUpdate &&
-    isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame, contextualBefore.state, input) &&
+    isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame) &&
     !input.trusted_product_topic_focus &&
     !/(?:講返|说回|講回|返去|回到|back to|return to|about that)/i.test(text) &&
     !detectExplicitCalculationRequest(text) &&
@@ -4960,8 +4957,6 @@ export async function runCommerceStateRuntime(
   const readOnlyCurrentStateQuery = isReadOnlyCurrentStateQuery(
     text,
     input.semantic_frame,
-    state,
-    input,
   );
 
   const summaryIntent = detectTransactionSummaryIntent(text);

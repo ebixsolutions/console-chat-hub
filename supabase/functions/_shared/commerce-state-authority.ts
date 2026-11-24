@@ -2,8 +2,6 @@ import { factualSubject } from "./conversation-semantic-contract.ts";
 import { classifyHandoffIntent, splitHandoffClauses } from "./handoff-intent.ts";
 import type { CommerceSemanticDemand, CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
-import { matchesReferenceLabel } from "./industry-agent-registry.ts";
-import { sourceOwnedSubjectLabels } from "./commerce-subject-resolution.ts";
 
 /** A superseded numeric requirement is not an item cancellation. Only this
  * mutation projection changes; durable visitor text keeps the entire correction. */
@@ -303,84 +301,21 @@ export function isDeliveryScheduleCurrentFactQuery(question: string): boolean {
   return interrogative && deliveryAndSchedule;
 }
 
-type AdviceGoalReading = {
-  operation?: string | null;
-  intent?: string | null;
-  confidence?: number;
-  requested_facts?: string[] | null;
-  ambiguity?: CommerceSemanticFrame["ambiguity"];
-  demands?: CommerceSemanticDemand[];
-  entities?: CommerceSemanticFrame["entities"];
-  referents?: CommerceSemanticFrame["referents"];
-  customer_correction?: boolean;
-  additive?: boolean;
-  customer_facts?: CommerceSemanticFrame["customer_facts"];
-  transaction_state?: string;
-  payment_state?: string;
-  booking_state?: string;
-  fulfillment_state?: string;
-};
-
-/** Supplied by the current server turn, never by the model's JSON. */
-export interface AdviceGoalCurrentSource {
-  company_id: string;
-  conversation_id: string;
-  source_message_id: string;
-  text: string;
-}
-
-/** The existing Reading owns speech-act classification. This verifier accepts
- * only its exact current Visitor quotes and literal/committed subjects; it
- * does not infer intent from pronouns, verbs, historical words or negations.
- * A positive result authorizes guidance context only, never an item or order. */
-export function isSourceOwnedActiveAdviceGoal(text: string,
-  semantic?: AdviceGoalReading | null, state?: ConversationCommerceState,
-  source?: AdviceGoalCurrentSource): boolean {
-  const t = text.normalize("NFKC").replace(/\s+/gu, " ").trim();
-  const sourceBound = Boolean(source && [source.company_id, source.conversation_id, source.source_message_id]
-    .every(value => typeof value === "string" && value.length > 0 && value.length <= 200) &&
-    typeof source.text === "string" && source.text.normalize("NFKC").replace(/\s+/gu, " ").trim() === t);
-  if (source && !sourceBound) return false;
-  if (!t || t.length > 2400 || !semantic || semantic.operation !== "ASK_FACT" ||
-    !Number.isFinite(semantic.confidence) || Number(semantic.confidence) < 0.9 ||
-    semantic.ambiguity?.is_ambiguous !== false ||
-    !["customer_guidance", "ask_for_advice"].includes(semantic.intent ?? "") ||
-    semantic.customer_correction || semantic.additive || semantic.customer_facts?.length ||
-    !Array.isArray(semantic.requested_facts) || semantic.requested_facts.length ||
-    [semantic.transaction_state, semantic.payment_state, semantic.booking_state, semantic.fulfillment_state]
-      .some(value => value !== undefined && value !== "none" && value !== "unknown")) return false;
-  const demands = semantic.demands ?? [];
-  // Earlier accepted Reading transports can classify pure guidance without
-  // optional demands. Preserve that intent-only contract when the existing
-  // server turn binds the original message. No words infer the speech act,
-  // and this cannot authorize an entity, quantity or transaction change.
-  if (!Array.isArray(demands) || demands.length > 8 || (!demands.length && !sourceBound)) return false;
-  const active = state?.entities.filter(entity => entity.provenance.source_type === "customer" &&
-    Boolean(entity.provenance.source_message_id) && !["cancelled", "deferred", "superseded"].includes(entity.status)) ?? [];
-  const named = active.filter(entity => sourceOwnedSubjectLabels(entity).some(label =>
-    matchesReferenceLabel(t, label)));
-  const boundSubject = (subject: string, quote: string): boolean => {
-    if (matchesReferenceLabel(quote, subject)) return true;
-    const selected = active.filter(entity => entity.entity_id === subject &&
-      semantic.referents?.some(reference => reference.ref === entity.entity_id &&
-        reference.source === "persistent_state" && reference.confidence >= 0.9));
-    return selected.length === 1 && (active.length === 1 ||
-      named.length === 1 && named[0].entity_id === selected[0].entity_id);
-  };
-  const spans: Array<{ start: number; end: number }> = [];
-  for (const demand of demands) {
-    if (demand.source_type !== "general" || demand.ambiguity.is_ambiguous ||
-      demand.customer_correction || demand.requested_facts.length) return false;
-    const quote = demand.source_quote.normalize("NFKC").replace(/\s+/gu, " ").trim();
-    const start = t.indexOf(quote);
-    if (quote.length < 2 || start < 0 || t.indexOf(quote, start + 1) >= 0 ||
-      spans.some(span => start < span.end && span.start < start + quote.length) ||
-      demand.subject_refs.some(subject => !boundSubject(subject, quote))) return false;
-    spans.push({ start, end: start + quote.length });
-  }
-  return (semantic.entities ?? []).every(entity => entity.confidence >= 0.9 &&
-    (entity.quantity === null || entity.quantity === undefined) &&
-    (matchesReferenceLabel(t, entity.name) || boundSubject(entity.entity_ref, t)));
+/** A present visitor-authored selection goal is not historical quantity
+ * recall. This classifies a speech act, never an item, industry or order. */
+export function isSourceOwnedActiveAdviceGoal(text:string):boolean {
+ const t=clean(text);
+ // This classifies the customer's own *current* planning speech act only.
+ // It never chooses a product/industry, item count, price or merchant fact:
+ // those must be sourced separately through the canonical semantic + CAS/B2 path.
+ if(!t || t.length>2400 ||
+   /(?:以前|之前|上次|曾經|曾经|previously|last time|used to|remember|記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|唔想|不想|不要|唔要|不需要|不打算|don't|do not)/iu.test(t))return false;
+ // First-person present goal grammar, with no category, industry noun or
+ // purchase/booking verb inventory. Neither a count nor a named item is inferred.
+ return /^(?:(?:我|我哋|我們|我们)\s*)?(?:想|打算|需要)\S/iu.test(t) ||
+   /(?:我|我哋|我們|我们).{0,8}(?:想|要|需要|打算)\S/iu.test(t) ||
+   /\b(?:i|we)\s+(?:(?:really|currently|now)\s+)?(?:want|need|plan)\s+to\b/iu.test(t) ||
+   /\b(?:i'm|i am|we're|we are)\s+looking\s+to\b/iu.test(t);
 }
 
 /**
@@ -390,13 +325,11 @@ export function isSourceOwnedActiveAdviceGoal(text: string,
  */
 export function isReadOnlyMemoryOrCurrentStateRecall(
   question: string,
-  semantic?: AdviceGoalReading | null,
-  state?: ConversationCommerceState,
-  source?: AdviceGoalCurrentSource,
+  semantic?: { operation?: string | null; requested_facts?: string[] | null } | null,
 ): boolean {
   const text = clean(question);
   if (!text || explicitCustomerMutation(text)) return false;
-  if(semantic?.operation==="ASK_FACT" && isSourceOwnedActiveAdviceGoal(text,semantic,state,source))return false;
+  if(semantic?.operation==="ASK_FACT" && isSourceOwnedActiveAdviceGoal(text))return false;
   const requested = (semantic?.requested_facts ?? []).join(" ");
   const semanticRead = ["ASK_FACT", "NO_STATE_CHANGE"].includes(String(semantic?.operation ?? ""));
   const recallLanguage = /(?:記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|還記得|頭先|头先|之前最後|之前最后|最後話|最后说|提我|提醒我|do you remember|remind me|settled on|have now)/i.test(text);

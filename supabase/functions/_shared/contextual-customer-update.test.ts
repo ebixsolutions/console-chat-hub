@@ -1976,7 +1976,6 @@ import "./commerce-state-canonical-dimension.test.ts";
 import "./commerce-state-contextual-scope-runtime.test.ts";
 import "./contextual-semantic-reference.test.ts";
 import "./conversation-recall-source-proof.test.ts";
-import "./source-owned-advice-goal.test.ts";
 import "./source-bound-lifecycle-guard.test.ts";
 import "./pre-send-field-scope.test.ts";
 import "./commerce-state-canonical-quantity.test.ts";

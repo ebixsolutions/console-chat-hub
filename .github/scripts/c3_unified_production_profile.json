@@ -1732,8 +1732,8 @@
     "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
   },
   "authorized_task3c_d4_no_industry_sha256": {
-    "supabase/functions/_shared/commerce-state-authority.ts": "cbe0d0cb9f7c71adc882a53c2bf10ff5f195328fefbd116565a49660b004e881",
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "301fbbe3897b84e284689a3bea22521aebfc96143dfc29d2f73f94d27ac81b2d",
+    "supabase/functions/_shared/commerce-state-authority.ts": "766988a3fa2304faa97923d9f1ba00884bcefdd116f469de9840ebfa0bb6b24d",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "8ed91e6a28733633402a650013a7862887d9efd483ba3be2ece821b379d0e11b",
     "tests/task1-director/source-chain.test.mjs": "e834f1d984834366c76480411bebfb6ca8da2b4200bcb303a422a0b3a8b9ffa4",
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "91849565e41da98dc2fdcc170a3bcf4cae4b6a6b3171ded735349474c02056f0",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "5b8ad3f90ffbcc89f6dd8d44ed5322b256df9e8475e5c3dc1bccc05745dda9d4",
@@ -1756,7 +1756,7 @@
     "tests/task1-director/fixtures/task3c-replay/observations-60-plus-7.json": "b1b820e5bc8fcda0365d5738d4b973c1193c3c49953c70de93daf24ca158e3ba",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "2e214ef1e0d21b7fa4029bf188392caed4474c0762c5faa28e9ce3eaa78aa739",
     "supabase/functions/_shared/contextual-customer-update.ts": "89b57a93523e0a98c09571580accd3b4636fde7d00328cb19b26839a7ed32bfc",
-    "supabase/functions/_shared/contextual-customer-update.test.ts": "0b4dd2c925c2a2396ca57aa3748a75fda587c14f61bace06a5e7890a39789df7",
+    "supabase/functions/_shared/contextual-customer-update.test.ts": "4210b0dd5b2e3b821cd6b0c4f5de3b3066d4259a8f77ae5a1b250723d148ce19",
     "supabase/functions/_shared/commerce-state-canonical-dimension.test.ts": "daf3bbad92dda7f92cb5a7817091b60f3ffebff24a524d5f2c6f0308fdeef624",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "aba4a6165851d0590e154b56a83dda1275f01b004c3e9feedcc5889e91fa8e08",
     "supabase/functions/_shared/commerce-state-contextual-scope-runtime.test.ts": "1150eab4bbcaf7e9c7c492a32c108a780574878f916438e67d247abb60b75829",
@@ -1768,7 +1768,6 @@
     "tests/task1-director/customer-fact-kb-retention-register.mjs": "fafbfa405ae3bfecc5be47c7b9ef8c96bd5dceeb36325e60614100dd5a0f0154",
     "tests/task1-director/customer-fact-kb-retention-runner.mjs": "9a7e75736b927e7c36616df88090dccc327bc852afefb87e9326f802a6fcf542",
     "supabase/functions/_shared/conversation-recall-source-proof.test.ts": "a26bd8c94c177f59b89a24bffa26e96eea274bbe954efbadcb98a331b574e2e5",
-    "supabase/functions/_shared/source-owned-advice-goal.test.ts": "4db9f6d7120f464e755e85d6627d2ce1b7fbbb6bd134a0fdffab8a35701ec10d",
     "supabase/functions/_shared/source-bound-lifecycle-guard.test.ts": "a1ad135448a0c09488f356295dc003a7510c822a3c3e4074331cc065e969fa3c",
     "supabase/functions/_shared/pre-send-field-scope.test.ts": "71ed8c9de8545f88deb78b4feb2ca581718ee58a9f948166c15835eee126cbf1",
     "supabase/functions/_shared/commerce-state-canonical-quantity.test.ts": "c89cfb2891b8ad33ea54587269379c839da2127e0b64ac4001dce0dd24a18a5b",
