@@ -588,11 +588,89 @@ function fail(
 ): ConversationRecallDecision {
   return { handled: false, reason, detail, requested_facts };
 }
+/** A quantity question identifies a field, not a new amount or unit.
+ * Use the existing same-ticket customer-owned subject, not a vocabulary of
+ * classifiers/units. Accepted Reading can identify the field only after
+ * exact current-turn scope and quote validation. Older explicit field cues
+ * continue through the original compatibility parser. */
+type QuantityQueryScope = Pick<ConversationRecallInput,
+  "company_id" | "conversation_id" | "source_message_id" | "commerce" |
+  "quantity_reading" | "explicit_handoff">;
+function sourceBoundQuantityQuery(q: string, input?: QuantityQueryScope): boolean {
+  const c = input?.commerce;
+  if (!input || !c || input.explicit_handoff || !input.company_id ||
+      !input.conversation_id || !input.source_message_id ||
+      c.company_id !== input.company_id || c.conversation_id !== input.conversation_id ||
+      c.state.version !== "commerce-state-1.0.0" || !Number.isSafeInteger(c.revision) ||
+      c.revision < 1 || sourceClauses(q).length !== 1 || customerRecallHasAction(q) ||
+      any(withoutExcludedLookups(q), EXTERNAL) ||
+      /(?:\b(?:and|or|but|then|also|if|unless)\b|同埋|以及|或者|還是|还是|如果)/iu.test(q))
+    return false;
+  const source = q.normalize("NFKC").trim();
+  if (!/(?:幾多|几多|多少|幾|几|\bhow\s+many\b|\bquantity\b|\bcount\b)/iu.test(source))
+    return false;
+  const named = c.state.entities.filter(e =>
+    e.provenance.source_type === "customer" && Boolean(e.provenance.source_message_id) &&
+    sourceOwnedSubjectLabels(e).some(label => phrase(source, label)));
+  if (named.length !== 1 || !isCurrentEntity(named[0])) return false;
+  const entity = named[0], labels = sourceOwnedSubjectLabels(entity);
+  const reading = input.quantity_reading;
+  if (reading) {
+    const frame = reading.frame;
+    const demand = frame.demands?.[0];
+    const matches = (ref: string) => ref === entity.entity_id ||
+      labels.some(label => keyNorm(label) === keyNorm(ref));
+    return reading.company_id === input.company_id &&
+      reading.conversation_id === input.conversation_id &&
+      reading.source_message_id === input.source_message_id &&
+      reading.commerce_revision === c.revision &&
+      frame.version === "commerce-semantic-1.0.0" &&
+      frame.intent === "customer_fact_recall" && frame.operation === "ASK_FACT" &&
+      frame.confidence >= 0.72 && !frame.ambiguity.is_ambiguous &&
+      !frame.customer_correction && !frame.additive && !frame.explicit_negations.length &&
+      !frame.customer_facts?.length &&
+      [frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state]
+        .every(status => status === "none" || status === "unknown") &&
+      frame.requested_facts.length === 1 && keyNorm(frame.requested_facts[0]) === "quantity" &&
+      frame.demands?.length === 1 && !!demand && demand.source_type === "general" &&
+      typeof demand.source_quote === "string" &&
+      demand.source_quote.normalize("NFKC").trim() === source &&
+      demand.requested_facts.length === 1 && keyNorm(demand.requested_facts[0]) === "quantity" &&
+      !demand.customer_correction && !demand.explicit_negations.length &&
+      !demand.ambiguity.is_ambiguous && demand.subject_refs.length > 0 &&
+      demand.subject_refs.every(matches) &&
+      frame.referents.every(ref => ref.source === "persistent_state" &&
+        ref.confidence >= 0.72 && matches(ref.ref)) &&
+      frame.entities.every(e => e.entity_ref === entity.entity_id &&
+        labels.some(label => keyNorm(label) === keyNorm(e.name)) &&
+        (e.quantity == null || e.quantity === entity.quantity));
+  }
+  // In an unframed legacy turn, recognize an exact stored subject adjacent to
+  // a count interrogative. A stored, source-owned unit may disambiguate the
+  // grammar but is never inferred from the question.
+  const esc = (value: string) => value.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
+  const stored = canonicalCustomerQuantityUnit(entity)?.quantity_unit;
+  const unit = stored ? "(?:\\s*" + esc(stored.normalize("NFKC")) + ")?" : "";
+  const count = "(?:幾多|几多|多少|幾|几)";
+  const ending = "\\s*(?:呢|嗎|吗)?[?？]?$";
+  const subject = quantitySubject(source);
+  return labels.some(label => {
+    const literal = esc(label.normalize("NFKC"));
+    return new RegExp(literal + "\\s*(?:的|嘅)?\\s*(?:有|係|是|要)?\\s*" +
+      count + unit + ending, "iu").test(source) ||
+      new RegExp(count + unit + "\\s*" + literal + ending, "iu").test(source) ||
+      (/\bhow\s+many\b/iu.test(source) && !!subject &&
+        (keyNorm(subject) === keyNorm(label) ||
+          !!stored && keyNorm(subject) === keyNorm(stored + " " + label)));
+  });
+}
+
 function parseQuery(
   q: string,
   recentQuestions: string[] = [],
   retainedTargets: string[] = [],
   completedCompoundRecap = false,
+  quantityScope?: QuantityQueryScope,
 ): { facts: RecallFact[]; stop?: ConversationRecallDecision } {
   if (!q.trim() || q.length > 2400) {
     return {
@@ -614,11 +692,7 @@ function parseQuery(
     f !== "summary" && hasField(q, f)
   );
   if (summary) facts = ["summary"];
-  // Domain-neutral quantity slots across commerce and service industries.
-  // This identifies a fact type, never a customer source or its value;
-  // ownership, external-fact and same-ticket provenance remain mandatory.
-  if (!facts.length && owner && question &&
-      /(?:幾多|几多|多少|幾|几|how many)\s*(?:部|台|件|套|份|盒|箱|堂|課|课|位|張|张|units?|items?|pieces?|sets?|boxes?|sessions?|lessons?|licenses?|licences?|seats?|nights?)/iu.test(q)) facts = ["quantity"];
+  if (!facts.length && sourceBoundQuantityQuery(q, quantityScope)) facts = ["quantity"];
   if (!facts.length && /[?？][\s\S]+[?？]/u.test(q)) {
     return { facts: [], stop: fail("NOT_A_RECALL_QUERY", "MULTIPLE_UNRESOLVED_QUESTIONS") };
   }
@@ -838,11 +912,11 @@ function verifiedRetainedCustomerCorrection(input:ConversationRecallInput):
 function resolveSourceVerifiedCanonicalActiveRetention(
   input:ConversationRecallInput,
 ):ConversationRecallDecision|null {
-  if(input.explicit_handoff||!isCurrentEffectiveQuantityRecall(input.question)||
+  if(input.explicit_handoff||!isCurrentEffectiveQuantityRecall(input.question, input)||
     customerRecallHasAction(input.question)||
     input.trusted_visitor_source_status!=="verified"||
     !hasTrustedPersistedMemoryReadback(input))return null;
-  const parsed=parseQuery(input.question);
+  const parsed=parseQuery(input.question, [], [], false, input);
   if(parsed.stop||parsed.facts.length!==2||
     !parsed.facts.includes("quantity")||
     !parsed.facts.includes("entity_status")||
@@ -1403,10 +1477,11 @@ function laterCustomerSourceConflicts(input: ConversationRecallInput, sourceId: 
 /** Keep effective quantities on the existing canonical/lifecycle proof path.
  * The parser owns the fact and read-only scope; temporal words distinguish the
  * present retained state from the customer's earlier quoted statement. */
-export function isCurrentEffectiveQuantityRecall(question: string): boolean {
-  const parsed = parseQuery(question);
+export function isCurrentEffectiveQuantityRecall(question: string, scope?: QuantityQueryScope): boolean {
+  const parsed = parseQuery(question, [], [], false, scope);
   if (parsed.stop || !parsed.facts.includes("quantity") ||
-      !isReadOnlyMemoryOrCurrentStateRecall(question) || customerRecallHasAction(question)) return false;
+      (!isReadOnlyMemoryOrCurrentStateRecall(question) && !sourceBoundQuantityQuery(question, scope)) ||
+      customerRecallHasAction(question)) return false;
   return asksRetainedQuantity(question) ||
     /(?:目前|現在|现在|而家|現時|现时|實際|实际|最新|更正後|更正后|取消後|取消后)|\b(?:current|currently|now|actual|latest|remaining)\b/iu
       .test(question.replace(/\bjust\s+now\b/giu, ""));
@@ -1470,7 +1545,7 @@ export async function loadScopedRecallVisitorSources(input: {
   if (new Set(recent.map(row => row.id)).size !== recent.length) return denied("failed");
   if (!scope.enabled) return { status: "not_requested", rows: recent, targeted_count: 0 };
 
-  const originalFacts = parseQuery(scope.question).facts;
+  const originalFacts = parseQuery(scope.question, [], [], false, scope).facts;
   const names = new Set([...(scope.requested_facts ?? []).map(keyNorm),
     ...originalFacts.map(keyNorm)]);
   const interested = (key: string) => !names.size ||
@@ -1557,7 +1632,7 @@ function resolveSemanticCustomerRecall(input:ConversationRecallInput):Conversati
   }
   // A semantic recall label cannot replace effective state with a quote.
   // The original resolver keeps canonical conflict and lifecycle checks.
-  if(isCurrentEffectiveQuantityRecall(input.question))return null;
+  if(isCurrentEffectiveQuantityRecall(input.question, input))return null;
   // A caller without a server-owned source verification result cannot
   // establish historical customer speech, even if it supplies retained facts.
   if (input.trusted_visitor_source_status !== "verified")
@@ -1718,7 +1793,7 @@ function currentQuestionQuantityUnit(
       !Number.isInteger(snapshot.revision) || snapshot.revision <= 0 ||
       !isCurrentEntity(entity) || entity.provenance.source_type !== "customer" ||
       !entity.provenance.source_message_id || customerRequestedQuantity(entity) === null ||
-      !isReadOnlyMemoryOrCurrentStateRecall(question) ||
+      (!isReadOnlyMemoryOrCurrentStateRecall(question) && !sourceBoundQuantityQuery(input.question, input)) ||
       sourceClauses(input.question).length !== 1 || sourceClauses(question).length !== 1 ||
       sourceClauses(input.question)[0] !== sourceClauses(question)[0]) return null;
   const reading = input.quantity_reading, frame = reading?.frame;
@@ -2473,7 +2548,7 @@ export function resolveConversationRecall(
   // number (the original 6 vs 3 defect). Operational current status/quantity
   // is separately governed by canonical lifecycle and revision controls.
   const historicalCustomerQuantity = any(input.question, OWNER) &&
-    hasField(input.question, "quantity") &&
+    (hasField(input.question, "quantity") || sourceBoundQuantityQuery(input.question, input)) &&
     /(?:剛才|刚才|頭先|头先|之前|先前|曾經|曾经|說過|说过|講過|讲过|提過|提过|previously|earlier|did (?:i|we) say|told you)/iu.test(input.question);
   if (historicalCustomerQuantity &&
       input.trusted_visitor_source_status !== "verified") {
@@ -2508,7 +2583,7 @@ export function resolveConversationRecall(
   // room, contact, constraints) or compound fields without extra model/KB.
   const supportedScalar = (fact: RecallFact) =>
     CUSTOMER_RECALL_FIELDS.some(field => field.fact === fact);
-  const parsedFields = parseQuery(input.question).facts;
+  const parsedFields = parseQuery(input.question, [], [], false, input).facts;
   const unsupportedTypedField = parsedFields.some(f => !supportedScalar(f)) ||
     (input.customer_recall_proposal?.requested_facts ?? []).some(key =>
       !CUSTOMER_RECALL_FIELDS.some(f => f.keys.some(k =>
@@ -2569,13 +2644,13 @@ function resolveConversationRecallLegacy(
   const resolved = summarySelection(input, input.commerce?.state.entities ?? []);
   if (resolved.provenance === "trusted_referent" && resolved.entities.length === 1) retainedTargets.push("it", "that", "this");
   const recap = isCurrentRequirementsRecap(input.question, retainedTargets);
-  const parsed = parseQuery(input.question, input.recent_questions, retainedTargets, hasSourceBoundCompletedRecap(input));
+  const parsed = parseQuery(input.question, input.recent_questions, retainedTargets, hasSourceBoundCompletedRecap(input), input);
   const m = input.memory, c = input.commerce;
   // A current effective quantity read may legitimately target a previous
   // committed correction. Its memory source is not this question's source.
   // Do not relax the original source guard for historical speech or any
   // read lacking exact persisted CAS lineage and original Visitor proof.
-  const verifiedCorrection = isCurrentEffectiveQuantityRecall(input.question)
+  const verifiedCorrection = isCurrentEffectiveQuantityRecall(input.question, input)
     ? verifiedRetainedCustomerCorrection(input) : null;
   const persistedEffectiveRead = Boolean(verifiedCorrection && m && c &&
     hasTrustedPersistedMemoryReadback(input) &&

@@ -308,3 +308,67 @@ Deno.test("Task3C R9 accepted scoped current Reading labels arbitrary exact unit
     }
   }
 });
+
+
+Deno.test("Task3C R9 unframed named count questions use stored subject and literal unit rather than a unit list",()=>{
+  for (const row of [
+    {name:"紫藤種苗",unit:"籮",question:"我嘅紫藤種苗幾籮？",expect:"2 籮"},
+    {name:"壓力校準器",unit:"簍",question:"我嘅壓力校準器幾多簍？",expect:"2 簍"},
+    {name:"紫藤種苗",unit:null,question:"紫藤種苗幾多？",expect:"2"},
+  ]) {
+    const state=seed(row.name,row.unit??"");
+    if(row.unit===null)delete state.entities[0].attributes.unit;
+    const before=JSON.stringify(state);
+    const request:ConversationRecallInput={...owner,source_message_id:"read-source",question:row.question,memory:null,
+      commerce:{...owner,source_message_id:"prior-source",revision:1,state}};
+    const result=prepareConversationRecall(request,"zh-TW");
+    assert(result.decision.handled&&result.decision.value===2&&result.reply?.includes(row.expect),JSON.stringify(result));
+    assert(result.decision.provenance.evidence.some(e=>e.fact_type==="quantity"&&
+      e.evidence_source_message_id==="prior-source"&&
+      (row.unit===null?!e.quantity_unit:e.quantity_unit===row.unit)),JSON.stringify(result));
+    assert(JSON.stringify(state)===before,"quantity recognition changed state");
+  }
+  for(const question of ["我嘅未知商品幾籮？","紫藤種苗幾多公斤？","紫藤種苗幾籮？同埋查庫存。",
+    "我嘅紫藤種苗幾籮？取消紫藤種苗。"]) {
+    const state=seed("紫藤種苗","籮"),before=JSON.stringify(state);
+    const result=prepareConversationRecall({...owner,source_message_id:"read-source",question,memory:null,
+      commerce:{...owner,source_message_id:"prior-source",revision:1,state}},"zh-TW");
+    assert(!result.decision.handled,question+": "+JSON.stringify(result));
+    assert(JSON.stringify(state)===before,"rejected count query changed state");
+  }
+});
+
+Deno.test("Task3C R9 Reading selects an unlisted count question only within exact committed subject scope",()=>{
+  const subject="紫藤種苗",question="我嘅紫藤種苗幾籮？";
+  const state=seed(subject);delete state.entities[0].attributes.unit;
+  const frame=input(subject,"籮",question).semantic_frame!;
+  frame.language="zh-TW";frame.operation="ASK_FACT";frame.intent="customer_fact_recall";
+  frame.customer_correction=false;frame.entities[0].quantity=2;frame.requested_facts=["quantity"];
+  frame.demands![0].customer_correction=false;frame.demands![0].requested_facts=["quantity"];
+  const request:ConversationRecallInput={...owner,source_message_id:"read-source",question,memory:null,
+    commerce:{...owner,source_message_id:"prior-source",revision:1,state},
+    quantity_reading:{...owner,source_message_id:"read-source",commerce_revision:1,frame}};
+  const before=JSON.stringify(state),actual=prepareConversationRecall(request,"zh-TW");
+  assert(actual.decision.handled&&actual.decision.value===2&&
+    actual.decision.provenance.evidence.every(e=>!e.quantity_unit),JSON.stringify(actual));
+  assert(JSON.stringify(state)===before,"Reading selector changed state");
+  for(const variant of ["missing","foreign","revision","source","quote","merchant","wrong subject","negation","mixed","handoff","inactive","unowned","competing"]){
+    const bad=structuredClone(request),reading=bad.quantity_reading!;
+    if(variant==="missing")delete bad.quantity_reading;
+    if(variant==="foreign")reading.company_id="foreign";
+    if(variant==="revision")reading.commerce_revision=2;
+    if(variant==="source")reading.source_message_id="foreign-source";
+    if(variant==="quote")reading.frame.demands![0].source_quote="foreign quote";
+    if(variant==="merchant")reading.frame.demands![0].source_type="product";
+    if(variant==="wrong subject")reading.frame.demands![0].subject_refs=["unknown"];
+    if(variant==="negation")reading.frame.explicit_negations=["不要"];
+    if(variant==="mixed")reading.frame.demands![0].requested_facts.push("price");
+    if(variant==="handoff")bad.explicit_handoff=true;
+    if(variant==="inactive")bad.commerce!.state.entities[0].status="cancelled";
+    if(variant==="unowned")bad.commerce!.state.entities[0].provenance.source_type="system";
+    if(variant==="competing")bad.commerce!.state.entities.push({...structuredClone(state.entities[0]),entity_id:"other"});
+    const saved=JSON.stringify(bad.commerce!.state),result=prepareConversationRecall(bad,"zh-TW");
+    assert(!result.decision.handled,variant+": "+JSON.stringify(result));
+    assert(JSON.stringify(bad.commerce!.state)===saved,"rejected Reading changed state");
+  }
+});
