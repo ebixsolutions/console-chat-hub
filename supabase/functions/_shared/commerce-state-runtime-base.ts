@@ -2446,6 +2446,31 @@ function verifiedLifecycleProposal(input:CommerceRuntimeInput,state:Conversation
     !["cancelled","deferred","superseded"].includes(e.status));
   if(!entity||frame.entities.some(e=>e.confidence>=0.72&&e.entity_ref&&
     e.entity_ref!==entity.entity_id))return null;
+  // A correction to a named part is not permission to cancel the complete
+  // multi-unit subject. The Reading chooses the operation; its target must
+  // name one complete, customer-owned canonical subject in the current source.
+  // A stored unit is a data constraint, never a classifier vocabulary. An
+  // unpartitioned group needs clarification rather than invented child rows.
+  if(entity.quantity>1){
+    const proposed=frame.entities.length===1?frame.entities[0]:null;
+    const unit=typeof entity.attributes.unit==="string"?entity.attributes.unit.trim():null;
+    const name=proposed?.name.normalize("NFKC").trim().toLowerCase()??"";
+    // Reuse the existing whole-subject mutation verifier without granting it
+    // the proposed reference. An accepted ref may select a row, but cannot
+    // turn a partial phrase into authority over the complete group.
+    const whole=resolveSourceOwnedSubject(state,input.text,{mode:"mutation"});
+    if(whole.kind!=="one" || whole.entity.entity_id!==entity.entity_id ||
+      frame.entities.length>1 || frame.additive || (frame.explicit_negations?.length??0)>0)return null;
+    // Earlier accepted sparse readings can name the complete target by their
+    // sole ref and current literal alone. Validate optional entity data when
+    // supplied; its absence does not create a new input requirement.
+    if(proposed && (proposed.confidence<0.90 || proposed.entity_ref!==entity.entity_id ||
+      (proposed.quantity!==null && proposed.quantity!==undefined) ||
+      !sourceOwnedSubjectLabels(entity).includes(name) ||
+      !matchesReferenceLabel(input.text,proposed.name) ||
+      (proposed.unit!==null && proposed.unit!==undefined &&
+        (!unit || proposed.unit.normalize("NFKC").trim()!==unit.normalize("NFKC")))))return null;
+  }
   const sameCategory=state.entities.filter(e=>e.category===entity.category&&
     !["cancelled","deferred","superseded"].includes(e.status));
   if(sameCategory.length!==1){
