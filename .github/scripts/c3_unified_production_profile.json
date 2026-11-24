@@ -1789,12 +1789,12 @@
     "supabase/functions/_shared/conversation-service-runtime.ts": "cb23c636a8cfeb9c3eacb30ff30a0e605c708812be01ff7fa3b27c4a99fadcec",
     "supabase/functions/_shared/conversation-long-memory.ts": "66da11a4c973921ee057c234f5ead29f9b1a52757554f4f3a9d37aee8a654354",
     "tests/task1-director/phase1-safety-twins.test.ts": "c7d8f3009dec7a3bb09ae0f1628f02d6512caaba32b94ba79f2717a990469ac9",
-    "tests/task1-director/phase1-recall-twins.test.ts": "f33feadf3563abfdb156e2c02ceff86f68d5c06be78ae45da459b8f26e2ffe13",
-    "tests/task1-director/phase1-journey-twins.test.ts": "09fff0ddb1fccad1bc430a0fd161354bdf09ec81fb6fda836fcc389b33782147",
-    "tests/task1-director/phase1-journey-integrity-twins.test.ts": "086e051b79e49c7f77697b540c058ab3b42c24b8401ea47a71e733a9fb3069ac",
-    "tests/task1-director/phase1-correction-integrity-twins.test.ts": "e38fa5cd4d8b1833037a7b735d510cf7cf8451f9e1d84d7e27c43266f548f8bc",
+    "tests/task1-director/phase1-recall-twins.test.ts": "d7a14cdfa4503c0b003300b7851f508068a5d66caa33f936d6f688d8aebb2a21",
+    "tests/task1-director/phase1-journey-twins.test.ts": "3b213122754ad085d29855f9136ea8505a451b40c83906865ccee8619a9082bb",
+    "tests/task1-director/phase1-journey-integrity-twins.test.ts": "b8014e661f1204950ed13414f4ac8d4647b76b9e512b76380a132da9ae895d71",
+    "tests/task1-director/phase1-correction-integrity-twins.test.ts": "5bf43bccb052205b4461ec09c2ad9cf846443d13c5ee08dee202af8ade33fb4f",
     "tests/task1-director/phase1-correction-handler-register.mjs": "3574982f7244bebda28a8e1ce95d0dff7f1ecc378dd779b312973fcf92ce49ea",
-    "tests/task1-director/phase1-twin-coverage.json": "3f0c3eb48fff48c8bee85557e8b80b6f6c739c5729f3f668fe924b8527985316"
+    "tests/task1-director/phase1-twin-coverage.json": "cfc8936056cf5347f4b90ca0fc5328e384a4abc3805a6ffe928bbd1e5f25ab47"
   },
   "authorized_task3c_t06_turn2_source_sha256": {
     "supabase/functions/_shared/conversation-recall.ts": "5be5f9f8ba6697c42f23bc8a94b7850c74bb65e003b34b2c68345f523a92b071",

@@ -98,7 +98,13 @@ for (const mode of ["missing-memory", "missing-receipt", "missing-commerce", "me
     if (mode === "commerce-tenant") p.commerce!.company_id = "foreign-company";
     if (mode === "memory-source") p.memory!.source_message_id = "other-source";
     if (mode === "commerce-source") p.commerce!.source_message_id = "other-source";
-    if (mode === "memory-revision") p.memory!.commerce_state_revision--;
+    if (mode === "memory-revision") {
+      const memory = p.memory;
+      assert(memory && typeof memory.commerce_state_revision === "number" &&
+        Number.isInteger(memory.commerce_state_revision) && memory.commerce_state_revision > 0,
+        "memory-revision negative requires a real committed numeric revision");
+      memory.commerce_state_revision--;
+    }
     if (mode === "commerce-revision") p.commerce!.revision--;
     if (mode === "missing-active") p.memory!.active_entities = [];
     if (mode === "missing-deferred") p.memory!.cancelled_or_superseded = [];

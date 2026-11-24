@@ -195,10 +195,10 @@
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "fbb0ec1777b1a95fdeb0554e3697ae8d4495c87672e87411265501e3ca39e3ba",
     "supabase/functions/generate-reply/index.ts": "99ee72c3baeae1b275787108f9e4cf92a0e7886526f85d31d453dbd17e7cf5e8",
     "tests/task1-director/phase1-safety-twins.test.ts": "c7d8f3009dec7a3bb09ae0f1628f02d6512caaba32b94ba79f2717a990469ac9",
-    "tests/task1-director/phase1-recall-twins.test.ts": "f33feadf3563abfdb156e2c02ceff86f68d5c06be78ae45da459b8f26e2ffe13",
-    "tests/task1-director/phase1-journey-twins.test.ts": "09fff0ddb1fccad1bc430a0fd161354bdf09ec81fb6fda836fcc389b33782147",
-    "tests/task1-director/phase1-journey-integrity-twins.test.ts": "086e051b79e49c7f77697b540c058ab3b42c24b8401ea47a71e733a9fb3069ac",
-    "tests/task1-director/phase1-correction-integrity-twins.test.ts": "e38fa5cd4d8b1833037a7b735d510cf7cf8451f9e1d84d7e27c43266f548f8bc",
+    "tests/task1-director/phase1-recall-twins.test.ts": "d7a14cdfa4503c0b003300b7851f508068a5d66caa33f936d6f688d8aebb2a21",
+    "tests/task1-director/phase1-journey-twins.test.ts": "3b213122754ad085d29855f9136ea8505a451b40c83906865ccee8619a9082bb",
+    "tests/task1-director/phase1-journey-integrity-twins.test.ts": "b8014e661f1204950ed13414f4ac8d4647b76b9e512b76380a132da9ae895d71",
+    "tests/task1-director/phase1-correction-integrity-twins.test.ts": "5bf43bccb052205b4461ec09c2ad9cf846443d13c5ee08dee202af8ade33fb4f",
     "supabase/functions/_shared/contextual-customer-update.test.ts": "5efc8a90c38371f37e0449a39ee55b0691069c32285cc088650077d4e2832d57",
     "tests/emergency-p0/chain.test.mjs": "55ab8a3206c767a021e5d6d99246e8b78f0e7909a2d5e1eba3540b7905feabe2",
     "tests/task1-director/phase1-correction-handler-register.mjs": "3574982f7244bebda28a8e1ce95d0dff7f1ecc378dd779b312973fcf92ce49ea"
@@ -1381,6 +1381,61 @@
     ],
     "new_file": {
       "path": "tests/task1-director/phase1-journey-integrity-twins.test.ts",
+      "sha256": "b8014e661f1204950ed13414f4ac8d4647b76b9e512b76380a132da9ae895d71",
+      "status": "FROZEN after actual native runtime validation",
+      "registered": 20,
+      "positive": 1,
+      "negative": 19,
+      "test_names": [
+        "P1TW-W19 integrity positive: actual generic lifecycle receipt agrees with canonical Memory",
+        "P1TW-W19 Memory negative: missing-memory",
+        "P1TW-W19 Memory negative: missing-receipt",
+        "P1TW-W19 Memory negative: missing-commerce",
+        "P1TW-W19 Memory negative: memory-tenant",
+        "P1TW-W19 Memory negative: commerce-tenant",
+        "P1TW-W19 Memory negative: memory-source",
+        "P1TW-W19 Memory negative: commerce-source",
+        "P1TW-W19 Memory negative: memory-revision",
+        "P1TW-W19 Memory negative: commerce-revision",
+        "P1TW-W19 Memory negative: missing-active",
+        "P1TW-W19 Memory negative: missing-deferred",
+        "P1TW-W19 Memory negative: active-quantity",
+        "P1TW-W19 Memory negative: active-requirements",
+        "P1TW-W19 Memory negative: duplicate-active",
+        "P1TW-W19 Memory negative: duplicate-deferred",
+        "P1TW-W19 Memory negative: inactive-as-active",
+        "P1TW-W19 B2 negative: wrong-target cannot reach reply persistence",
+        "P1TW-W19 B2 negative: retained-quantity cannot reach reply persistence",
+        "P1TW-W19 B2 negative: ghost-entity cannot reach reply persistence"
+      ],
+      "command": "DENO_NO_PACKAGE_JSON=1 deno test --no-lock --no-check --node-modules-dir=manual --allow-read tests/task1-director/phase1-safety-twins.test.ts tests/task1-director/phase1-recall-twins.test.ts tests/task1-director/phase1-journey-twins.test.ts tests/task1-director/phase1-journey-integrity-twins.test.ts tests/task1-director/phase1-correction-integrity-twins.test.ts",
+      "exit": 0,
+      "result": "20 PASS /0 FAIL",
+      "log": "validation-evidence/final-native-twins-typefix-runtime.log",
+      "type_check": "NOT CLAIMED by --no-check",
+      "aggregate_run_passed": 289
+    },
+    "frozen_safety": {
+      "path": "tests/task1-director/phase1-safety-twins.test.ts",
+      "sha256": "c7d8f3009dec7a3bb09ae0f1628f02d6512caaba32b94ba79f2717a990469ac9",
+      "registered": 139,
+      "status": "Unchanged"
+    },
+    "remaining": [
+      {
+        "kind": "historical review finding resolved for generic quantity correction",
+        "detail": "Actual accepted non-appliance old→new scope correction now carries canonical source-bound ledger, unchanged sibling/other-scope preservation, exact prior/new aggregate, current/superseded canonical Memory after durable state+event readback, actual B2 read/evaluate/revalidate/commit, and source-replay recovery without duplicate mutation."
+      },
+      {
+        "kind": "remaining scope limit",
+        "detail": "Full original 16-turn combined business journey is not reproduced by component and quantity-correction twins.; The source-bound generic quantity correction chain is now implemented and tested; original room-size ontology and arbitrary attribute correction are not claimed equivalent.; Actual current KB/model/Hosted/usefulness, authenticated database RLS and real concurrent transaction evidence remain separate original requirements."
+      }
+    ],
+    "parked_originals": [],
+    "workflow_exemptions": [],
+    "runtime_edits_by_this_agent": [],
+    "initial_4963_new_file_evidence": {
+      "path": "tests/task1-director/phase1-journey-integrity-twins.test.ts",
       "sha256": "086e051b79e49c7f77697b540c058ab3b42c24b8401ea47a71e733a9fb3069ac",
       "status": "FROZEN after actual native runtime validation",
       "registered": 20,
@@ -1413,26 +1468,7 @@
       "result": "20 PASS /0 FAIL",
       "log": "validation-evidence/journey-integrity-twins.log",
       "type_check": "NOT CLAIMED by --no-check"
-    },
-    "frozen_safety": {
-      "path": "tests/task1-director/phase1-safety-twins.test.ts",
-      "sha256": "c7d8f3009dec7a3bb09ae0f1628f02d6512caaba32b94ba79f2717a990469ac9",
-      "registered": 139,
-      "status": "Unchanged"
-    },
-    "remaining": [
-      {
-        "kind": "historical review finding resolved for generic quantity correction",
-        "detail": "Actual accepted non-appliance old→new scope correction now carries canonical source-bound ledger, unchanged sibling/other-scope preservation, exact prior/new aggregate, current/superseded canonical Memory after durable state+event readback, actual B2 read/evaluate/revalidate/commit, and source-replay recovery without duplicate mutation."
-      },
-      {
-        "kind": "remaining scope limit",
-        "detail": "Full original 16-turn combined business journey is not reproduced by component and quantity-correction twins.; The source-bound generic quantity correction chain is now implemented and tested; original room-size ontology and arbitrary attribute correction are not claimed equivalent.; Actual current KB/model/Hosted/usefulness, authenticated database RLS and real concurrent transaction evidence remain separate original requirements."
-      }
-    ],
-    "parked_originals": [],
-    "workflow_exemptions": [],
-    "runtime_edits_by_this_agent": []
+    }
   },
   "generic_correction_integrity_coverage": {
     "task": "Task3C existing manual patch / original PR12, internal correction integrity implementation; no new gate",
@@ -1483,7 +1519,7 @@
       }
     ],
     "validation": {
-      "command": "DENO_NO_PACKAGE_JSON=1 /workspace/scratch/857704bbb86e/native-tools/node_modules/.bin/deno test --no-lock --no-check --node-modules-dir=manual --allow-read tests/task1-director/phase1-correction-integrity-twins.test.ts",
+      "command": "DENO_NO_PACKAGE_JSON=1 deno test --no-lock --no-check --node-modules-dir=manual --allow-read tests/task1-director/phase1-safety-twins.test.ts tests/task1-director/phase1-recall-twins.test.ts tests/task1-director/phase1-journey-twins.test.ts tests/task1-director/phase1-journey-integrity-twins.test.ts tests/task1-director/phase1-correction-integrity-twins.test.ts",
       "cwd": "/workspace/scratch/857704bbb86e/console-chat-hub",
       "exit_code": 0,
       "passed": 74,
@@ -1491,10 +1527,13 @@
       "independently_registered_callbacks": 74,
       "explicit_negative_callbacks": 69,
       "positive_or_compatibility_callbacks": 5,
-      "log": "/workspace/scratch/857704bbb86e/validation-evidence/correction-integrity-native-final.log",
+      "log": "validation-evidence/final-native-twins-typefix-runtime.log",
       "runtime": "Actual nativeDeno2.9.6, original runtime imports, deterministic database harness; no import replacements",
       "typecheck_in_command": false,
-      "hosted": false
+      "hosted": false,
+      "aggregate_run_passed": 289,
+      "aggregate_run_steps": 37,
+      "module_callbacks_passed": 74
     },
     "independent_validation": {
       "reviewer": "ci_recall_review",
@@ -1503,7 +1542,8 @@
       "passed": 354,
       "failed": 0,
       "exit_code": 0,
-      "log": "/workspace/scratch/857704bbb86e/validation-evidence/scoped-correction-b2-final.log"
+      "log": "/workspace/scratch/857704bbb86e/validation-evidence/scoped-correction-b2-final.log",
+      "evidence_revision": "Historical initial4963, preserved; successorCI separately required"
     },
     "obligation_groups": [
       {
@@ -1698,7 +1738,7 @@
       "supabase/functions/_shared/contextual-customer-update.ts": "b1c47a2c83331f00832b078f3f348cc815412c5e1db64799137a38b80c019f22",
       "supabase/functions/_shared/conversation-long-memory.ts": "66da11a4c973921ee057c234f5ead29f9b1a52757554f4f3a9d37aee8a654354",
       "supabase/functions/_shared/b2-journey-progress-contract.ts": "367d2bae82405f7936861b8d0abf740b787b1c84c7e9e5838308a517db251f5d",
-      "tests/task1-director/phase1-correction-integrity-twins.test.ts": "e38fa5cd4d8b1833037a7b735d510cf7cf8451f9e1d84d7e27c43266f548f8bc"
+      "tests/task1-director/phase1-correction-integrity-twins.test.ts": "5bf43bccb052205b4461ec09c2ad9cf846443d13c5ee08dee202af8ade33fb4f"
     },
     "unchanged_limits": [
       "Original300-character legacy reducer display projection remains unchanged; sharedprojection used onlyas independent must-have-proof marker, not source authority",
@@ -1706,7 +1746,38 @@
       "Existing C3Memory JSON totalbudget remains unchanged; parity fails closed if evidence cannot fit",
       "No new tables, RPCs, functions, unit/industry catalogue, deployment, or Production traffic"
     ],
-    "remaining_root_work": "Final combined and original tests, source pins, build/typecheck, same-branch CI and package. Native success does not approve any original test deferral."
+    "remaining_root_work": "Final combined and original tests, source pins, build/typecheck, same-branch CI and package. Native success does not approve any original test deferral.",
+    "initial_4963_runtime_evidence": {
+      "validation": {
+        "command": "DENO_NO_PACKAGE_JSON=1 /workspace/scratch/857704bbb86e/native-tools/node_modules/.bin/deno test --no-lock --no-check --node-modules-dir=manual --allow-read tests/task1-director/phase1-correction-integrity-twins.test.ts",
+        "cwd": "/workspace/scratch/857704bbb86e/console-chat-hub",
+        "exit_code": 0,
+        "passed": 74,
+        "failed": 0,
+        "independently_registered_callbacks": 74,
+        "explicit_negative_callbacks": 69,
+        "positive_or_compatibility_callbacks": 5,
+        "log": "/workspace/scratch/857704bbb86e/validation-evidence/correction-integrity-native-final.log",
+        "runtime": "Actual nativeDeno2.9.6, original runtime imports, deterministic database harness; no import replacements",
+        "typecheck_in_command": false,
+        "hosted": false
+      },
+      "independent_validation": {
+        "reviewer": "ci_recall_review",
+        "new_callbacks": 74,
+        "existing_B2_callbacks": 280,
+        "passed": 354,
+        "failed": 0,
+        "exit_code": 0,
+        "log": "/workspace/scratch/857704bbb86e/validation-evidence/scoped-correction-b2-final.log"
+      },
+      "frozen_owned_files_sha256": {
+        "supabase/functions/_shared/contextual-customer-update.ts": "b1c47a2c83331f00832b078f3f348cc815412c5e1db64799137a38b80c019f22",
+        "supabase/functions/_shared/conversation-long-memory.ts": "66da11a4c973921ee057c234f5ead29f9b1a52757554f4f3a9d37aee8a654354",
+        "supabase/functions/_shared/b2-journey-progress-contract.ts": "367d2bae82405f7936861b8d0abf740b787b1c84c7e9e5838308a517db251f5d",
+        "tests/task1-director/phase1-correction-integrity-twins.test.ts": "e38fa5cd4d8b1833037a7b735d510cf7cf8451f9e1d84d7e27c43266f548f8bc"
+      }
+    }
   },
   "same_source_guidance_handler_validation": {
     "command": "C3_CONSOLE_SDK_ROOT=<exact Supabase SDK 2.45.0> node tests/task1-director/contextual-guidance-runner.mjs",
@@ -1716,5 +1787,55 @@
     "failed": 0,
     "exit_code": 0,
     "scope": "Existing complete-handler G1/R4 and merchant boundary cases with scripted provider/KB. Real model, real KB and Hosted NOT RUN."
+  },
+  "test_typecheck_repair": {
+    "initial_commit": "4963c26eaf1a2e48dcb929c36580f33778e22e1b",
+    "initial_C3_run": 45429174104,
+    "initial_preproduction_job": 138572213875,
+    "initial_exit_code": 1,
+    "initial_type_errors": 11,
+    "initial_final_native_suite": "NOT_RUN_TYPECHECK_FAILED",
+    "initial_handler_passed": 584,
+    "changes": [
+      "Assert actual nonnull string runtime replies before later B2 use",
+      "Assert actual numeric Memory revision before stale-value mutation",
+      "Read actual post-await entity array without stale literal type narrowing",
+      "Use legal confirmed transaction enum in correction rejection test"
+    ],
+    "changed_test_sha256": {
+      "tests/task1-director/phase1-recall-twins.test.ts": "d7a14cdfa4503c0b003300b7851f508068a5d66caa33f936d6f688d8aebb2a21",
+      "tests/task1-director/phase1-journey-twins.test.ts": "3b213122754ad085d29855f9136ea8505a451b40c83906865ccee8619a9082bb",
+      "tests/task1-director/phase1-journey-integrity-twins.test.ts": "b8014e661f1204950ed13414f4ac8d4647b76b9e512b76380a132da9ae895d71",
+      "tests/task1-director/phase1-correction-integrity-twins.test.ts": "5bf43bccb052205b4461ec09c2ad9cf846443d13c5ee08dee202af8ade33fb4f"
+    },
+    "new_callbacks_removed": 0,
+    "original_callbacks_changed": 0,
+    "typecheck_suppression_added": false,
+    "runtime_rerun": {
+      "command": "DENO_NO_PACKAGE_JSON=1 deno test --no-lock --no-check --node-modules-dir=manual --allow-read tests/task1-director/phase1-safety-twins.test.ts tests/task1-director/phase1-recall-twins.test.ts tests/task1-director/phase1-journey-twins.test.ts tests/task1-director/phase1-journey-integrity-twins.test.ts tests/task1-director/phase1-correction-integrity-twins.test.ts",
+      "exit_code": 0,
+      "passed": 289,
+      "steps_passed": 37,
+      "failed": 0,
+      "log": "validation-evidence/final-native-twins-typefix-runtime.log",
+      "typecheck": false
+    },
+    "local_checked_attempts": [
+      {
+        "scope": "recall",
+        "exit_code": 1,
+        "result": "DEPENDENCY_NETWORK_TTL_EXPIRED",
+        "log": "validation-evidence/recall-typecheck-repair.log"
+      },
+      {
+        "scope": "journey integrity and correction",
+        "exit_code": 130,
+        "result": "INTERRUPTED_STALLED_DEPENDENCY_IMPORTS",
+        "log": "validation-evidence/three-twins-types-runtime-fix.log"
+      }
+    ],
+    "successor_checked_CI": "MUST_VERIFY_EXACT_SUCCESSOR",
+    "parked_originals": 0,
+    "ci_exemptions": 0
   }
 }

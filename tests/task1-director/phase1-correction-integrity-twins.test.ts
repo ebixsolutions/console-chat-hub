@@ -288,7 +288,7 @@ for(const mode of ["old-value","forged-quote","new-value","unit","unknown-scope"
     if(mode==="missing-reading")f.input.semantic_frame=null;
     if(mode==="wrong-reference"){frame.entities[0].entity_ref=f.sibling.entity_id;frame.referents[0].ref=f.sibling.entity_id;}
     if(mode==="extra-reference")frame.referents.push({ref:f.sibling.entity_id,source:"persistent_state",confidence:.99});
-    if(mode==="transaction")frame.transaction_state="order_confirmed";
+    if(mode==="transaction")frame.transaction_state="confirmed";
     if(mode==="question")f.input.text+="?";
     if(mode==="negation")f.input.text="Please do not "+f.input.text;
     if(mode==="blank-old-source")old[0].source_message_id=" ";

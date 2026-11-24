@@ -130,9 +130,10 @@ for (const [id, subject, unit] of [
     const s = storage(); const first = await s.ask(scope("scope-source", subject));
     assert(first?.route === "product_guidance" && s.live.state.entities.length === 0, "scope became a phantom item");
     const input = allocate(goal(s.live.state), "allocation-source", unit);
-    const result = await s.ask(input); const entity = s.live.state.entities[0];
+    const result = await s.ask(input); const currentEntities = [...s.live.state.entities];
+    const entity = currentEntities[0];
     assert(result?.route === "contextual_scoped_update" && result.persist_result === "success" &&
-      s.live.state.entities.length === 1 && entity.quantity === 3 && entity.attributes.product_name === subject,
+      currentEntities.length === 1 && entity.quantity === 3 && entity.attributes.product_name === subject,
       JSON.stringify(result));
     const rows = entity.attributes.scoped_customer_updates as ScopedCustomerValue[];
     assert(rows.length === 3 && rows.every(row => row.value === 1 && row.source_message_id === input.source_message_id &&

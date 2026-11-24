@@ -229,6 +229,7 @@ Deno.test("Phase1 twin T016: resolved cancellation and deferral acknowledge the 
     s.conversion.tentative_entity_ids.push(other.entity_id);
     const before = JSON.stringify([s.entities[0], other]), { live, db } = storage(s);
     const result = await runCommerceStateRuntime(db, lifecycle(s, "CANCEL_ITEM"));
+    assert(result !== null && typeof result.reply === "string", "Lifecycle acknowledgement must contain a reply");
     assert(result?.reply?.includes("Atlas training sessions: 2 sessions") &&
       result.reply.includes("Gamma training sessions: 7 passes") && !/\b9\b|\btotal\b/iu.test(result.reply),
       "Unlike source units were lost or summed: " + JSON.stringify(result));
@@ -264,6 +265,7 @@ Deno.test("Phase1 twin T17: latest source-bound correction and cancellation dete
   const text = "How many Atlas training sessions do I currently have?";
   reading.demands = [demand(text, "retained", ["current_quantity"])];
   const result = await runCommerceStateRuntime(db, turn(text, reading, "query-source"));
+  assert(result !== null && typeof result.reply === "string", "Current quantity readback must contain a reply");
   assert(result?.persist_result === "read_only" && result.state_path === "entities.0.quantity" && result.reply?.includes("2 sessions"),
     `Current quantity was replaced by tentative history: ${JSON.stringify(result)}`);
   const recalled = prepareConversationRecall({ ...owner, source_message_id: "query-source", question: text,
@@ -326,6 +328,7 @@ Deno.test("Phase1 twin T27: dimension comparison uses its canonical target and r
       assert(live.writes === 0 && JSON.stringify(live.state) === before && live.revision === (variant === "bad-revision" ? 0 : 21),
         `${variant}: dimension query changed canonical state`);
       if (variant === "canonical-limit") {
+        assert(result != null && typeof result.reply === "string", "Canonical dimension comparison must contain a reply");
         assert(!error && result?.reason === "read_only_attribute_constraint_query_resolved" &&
           result.route === "commerce_state_answer" && result.persist_result === "read_only" && result.revision === 21 &&
           result.state_path === "entities.2.constraints.max_width_mm" && result.reply?.includes("598") && result.reply.includes("595"),
@@ -376,7 +379,11 @@ Deno.test("Phase1 twin recap partition: named scope and global recap retain inac
       const invalid = structuredClone(input);
       if (kind === "company") invalid.company_id = "other-company";
       if (kind === "ticket") invalid.conversation_id = "other-ticket";
-      if (kind === "stale-memory") invalid.memory!.commerce_state_revision--;
+      if (kind === "stale-memory") {
+        assert(invalid.memory !== null && typeof invalid.memory.commerce_state_revision === "number",
+          "Stale-memory negative requires an actual bound numeric revision");
+        invalid.memory.commerce_state_revision--;
+      }
       const denied = prepareConversationRecall(invalid, "en");
       assert(!denied.decision.handled, `${kind}: unbound recap was answered`);
     }
