@@ -2,7 +2,7 @@ import test from 'node:test';
 import {transformSync as task1Transpile, buildSync as task3cBuildCanonical} from 'esbuild';
 import {readFileSync as task1SourceRead} from 'node:fs';
 import assert from 'node:assert/strict';
-import {resolveCustomerRequestDecision,isBareCommerceSubjectMention,isSourceOwnedActiveAdviceGoal,hasSourceBoundCurrentAdviceGoal,isReadOnlyMemoryOrCurrentStateRecall} from '../../supabase/functions/_shared/commerce-state-authority.ts';
+import {resolveCustomerRequestDecision,isBareCommerceSubjectMention,isSourceOwnedActiveAdviceGoal,hasSourceBoundCurrentAdviceGoal,acceptsInitialAdviceGoalReading,isReadOnlyMemoryOrCurrentStateRecall} from '../../supabase/functions/_shared/commerce-state-authority.ts';
 import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
 import {reduceTurn, isReadOnlyCommerceQuestion} from '../../supabase/functions/_shared/commerce-state-runtime-base.ts';
 import {sourceBoundMixedCustomerFactEvents, semanticFrameToStateEvents} from '../../supabase/functions/_shared/commerce-semantic-adapter.ts';
@@ -633,4 +633,31 @@ test("Task3C P1 complete advice Reading cannot manufacture authority",()=>{
   assert.equal(s.quotes.length,0);
   assert.equal(s.conversion.order_status,"none");
  }
+});
+
+test("Task3C P1 rejected structured advice Reading cannot use sparse legacy goal authority",()=>{
+ const text="We want to choose a rental for 2 departments; which option?";
+ const base=sourceAdviceReading(text,"rental");
+ assert.equal(isSourceOwnedActiveAdviceGoal(text),true,"legacy grammar control");
+ const sparse=semantic({operation:"ASK_FACT",intent:"customer_guidance",requested_facts:[],entities:[],customer_facts:[]});
+ assert.equal(acceptsInitialAdviceGoalReading(sourceAdviceInput(text,sparse),sparse),true,"original sparse contract preserved");
+ const variants=[
+  {...base,demands:[{...base.demands[0],source_quote:"An unrelated question"}]},
+  {...base,demands:[{...base.demands[0],subject_refs:["unrelated subject"]}]},
+  {...base,demands:[{...base.demands[0],source_type:"product",requested_facts:["current_price"]}]},
+  {...base,demands:[{...base.demands[0],ambiguity:{is_ambiguous:true,reasons:["unclear scope"],clarification_question:null}}]},
+ ];
+ for(const f of variants){
+  const input=sourceAdviceInput(text,f);
+  assert.equal(hasSourceBoundCurrentAdviceGoal(input,f),false);
+  assert.equal(acceptsInitialAdviceGoalReading(input,f),false);
+  const state=reduceTurn(createEmptyConversationCommerceState(),input,[]);
+  assert.notEqual(state.current_intent,"customer_guidance");
+  assert.equal(state.entities.length,0);
+  assert.equal(state.quotes.length,0);
+  assert.equal(state.conversion.order_status,"none");
+ }
+ const validText="How should I choose a training course?";
+ const valid=sourceAdviceReading(validText,"training course");
+ assert.equal(acceptsInitialAdviceGoalReading(sourceAdviceInput(validText,valid),valid),true);
 });

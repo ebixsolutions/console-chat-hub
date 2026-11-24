@@ -358,6 +358,19 @@ export function hasSourceBoundCurrentAdviceGoal(source: {
     decision.semantic_demands[0].source_type === "general";
 }
 
+/** Shared authority for initial advice-goal persistence. A supplied structured
+ * demand must satisfy its source-bound contract; legacy speech grammar can
+ * interpret only a sparse frame, never override a rejected structured demand.
+ * This grants context intent only, not an entity or transaction authority. */
+export function acceptsInitialAdviceGoalReading(
+  source: Parameters<typeof hasSourceBoundCurrentAdviceGoal>[0],
+  reading: CommerceSemanticFrame,
+): boolean {
+  return reading.demands?.length
+    ? hasSourceBoundCurrentAdviceGoal(source, reading)
+    : isSourceOwnedActiveAdviceGoal(source.text);
+}
+
 /**
  * Shared READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL contract. The quantity must
  * be asked for or recalled; a declared count in another clause is only context.
