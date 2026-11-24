@@ -229,6 +229,555 @@ Deno.test("universal context: ambiguity, cross-domain and read-only never mutate
   console.log("UNIVERSAL|ambiguous=PASS|cross_domain=PASS|read_only=PASS");
 });
 
+// OWNER 2a: exact eight frame slots from memory 4de4c26c (blob 736b7599),
+// explicitly approved in memory 82467101. No production semantic overrides.
+const ownerApproved2aFrames: Record<"B" | "C" | "E" | "live-recall", CommerceSemanticFrame[]> = {
+  "B": [
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "customer_guidance",
+      "customer_facts": [
+        {
+          "key": "contextual_scope_counts",
+          "value": [
+            {
+              "count": 2,
+              "scope": "房",
+              "source_text": "兩間房",
+              "subject_label": "冷氣"
+            }
+          ]
+        }
+      ],
+      "topic": "冷氣",
+      "entities": [],
+      "referents": [],
+      "demands": [
+        {
+          "question": "我想問冷氣匹數,兩間房加個廳。",
+          "source_quote": "我想問冷氣匹數,兩間房加個廳。",
+          "subject_refs": [
+            "冷氣"
+          ],
+          "source_type": "general",
+          "requested_facts": [],
+          "constraints": {},
+          "customer_correction": false,
+          "explicit_negations": [],
+          "ambiguity": {
+            "is_ambiguous": false,
+            "reasons": [],
+            "clarification_question": null
+          }
+        }
+      ],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    },
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "scoped allocation",
+      "customer_facts": [],
+      "topic": "冷氣",
+      "entities": [
+        {
+          "entity_ref": "contextual-goal:source-1",
+          "name": "冷氣",
+          "kind": "unknown",
+          "category_hint": null,
+          "sku": null,
+          "model": null,
+          "quantity": null,
+          "unit": "部",
+          "attributes": {
+            "scoped_customer_updates": [
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "scope": "廳",
+                "source_text": "廳一部",
+                "unit": "部",
+                "value": 1
+              },
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "per_scope_quantity": 1,
+                "scope": "房",
+                "scope_count": null,
+                "source_text": "房各一部",
+                "unit": "部",
+                "value": 1
+              }
+            ]
+          },
+          "constraints": {},
+          "capabilities": {
+            "requires_delivery": false,
+            "supports_pickup": false,
+            "requires_installation": false,
+            "requires_booking": false,
+            "requires_quote": false,
+            "requires_site_check": false,
+            "digital_fulfilment": false,
+            "recurring_billing": false,
+            "rental_return": false,
+            "customization": false
+          },
+          "confidence": 0.99
+        }
+      ],
+      "referents": [
+        {
+          "ref": "contextual-goal:source-1",
+          "source": "persistent_state",
+          "confidence": 0.99
+        }
+      ],
+      "demands": [],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    }
+  ],
+  "C": [
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "customer_guidance",
+      "customer_facts": [
+        {
+          "key": "contextual_scope_counts",
+          "value": [
+            {
+              "count": 2,
+              "scope": "房",
+              "source_text": "兩間房",
+              "subject_label": "冷氣"
+            }
+          ]
+        }
+      ],
+      "topic": "冷氣",
+      "entities": [],
+      "referents": [],
+      "demands": [
+        {
+          "question": "我想問冷氣匹數,兩間房加個廳。",
+          "source_quote": "我想問冷氣匹數,兩間房加個廳。",
+          "subject_refs": [
+            "冷氣"
+          ],
+          "source_type": "general",
+          "requested_facts": [],
+          "constraints": {},
+          "customer_correction": false,
+          "explicit_negations": [],
+          "ambiguity": {
+            "is_ambiguous": false,
+            "reasons": [],
+            "clarification_question": null
+          }
+        }
+      ],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    },
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "scoped allocation",
+      "customer_facts": [],
+      "topic": "冷氣",
+      "entities": [
+        {
+          "entity_ref": "contextual-goal:source-1",
+          "name": "冷氣",
+          "kind": "unknown",
+          "category_hint": null,
+          "sku": null,
+          "model": null,
+          "quantity": null,
+          "unit": "部",
+          "attributes": {
+            "scoped_customer_updates": [
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "scope": "客廳",
+                "source_text": "客廳一部",
+                "unit": "部",
+                "value": 1
+              },
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "per_scope_quantity": 1,
+                "scope": "房",
+                "scope_count": 2,
+                "source_text": "兩間房各一部",
+                "unit": "部",
+                "value": 1
+              }
+            ]
+          },
+          "constraints": {},
+          "capabilities": {
+            "requires_delivery": false,
+            "supports_pickup": false,
+            "requires_installation": false,
+            "requires_booking": false,
+            "requires_quote": false,
+            "requires_site_check": false,
+            "digital_fulfilment": false,
+            "recurring_billing": false,
+            "rental_return": false,
+            "customization": false
+          },
+          "confidence": 0.99
+        }
+      ],
+      "referents": [
+        {
+          "ref": "contextual-goal:source-1",
+          "source": "persistent_state",
+          "confidence": 0.99
+        }
+      ],
+      "demands": [],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    }
+  ],
+  "E": [
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "customer_guidance",
+      "customer_facts": [
+        {
+          "key": "contextual_scope_counts",
+          "value": [
+            {
+              "count": 2,
+              "scope": "房",
+              "source_text": "兩間房",
+              "subject_label": "冷氣"
+            }
+          ]
+        }
+      ],
+      "topic": "冷氣",
+      "entities": [],
+      "referents": [],
+      "demands": [
+        {
+          "question": "我想問冷氣匹數,兩間房加個廳。",
+          "source_quote": "我想問冷氣匹數,兩間房加個廳。",
+          "subject_refs": [
+            "冷氣"
+          ],
+          "source_type": "general",
+          "requested_facts": [],
+          "constraints": {},
+          "customer_correction": false,
+          "explicit_negations": [],
+          "ambiguity": {
+            "is_ambiguous": false,
+            "reasons": [],
+            "clarification_question": null
+          }
+        }
+      ],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    },
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "scoped allocation",
+      "customer_facts": [],
+      "topic": "冷氣",
+      "entities": [
+        {
+          "entity_ref": "contextual-goal:source-1",
+          "name": "冷氣",
+          "kind": "unknown",
+          "category_hint": null,
+          "sku": null,
+          "model": null,
+          "quantity": null,
+          "unit": "部",
+          "attributes": {
+            "scoped_customer_updates": [
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "scope": "廤",
+                "source_text": "廤一部",
+                "unit": "部",
+                "value": 1
+              },
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "per_scope_quantity": 1,
+                "scope": "房",
+                "scope_count": 2,
+                "source_text": "兩間房各一部",
+                "unit": "部",
+                "value": 1
+              }
+            ]
+          },
+          "constraints": {},
+          "capabilities": {
+            "requires_delivery": false,
+            "supports_pickup": false,
+            "requires_installation": false,
+            "requires_booking": false,
+            "requires_quote": false,
+            "requires_site_check": false,
+            "digital_fulfilment": false,
+            "recurring_billing": false,
+            "rental_return": false,
+            "customization": false
+          },
+          "confidence": 0.99
+        }
+      ],
+      "referents": [
+        {
+          "ref": "contextual-goal:source-1",
+          "source": "persistent_state",
+          "confidence": 0.99
+        }
+      ],
+      "demands": [],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    }
+  ],
+  "live-recall": [
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "customer_guidance",
+      "customer_facts": [
+        {
+          "key": "contextual_scope_counts",
+          "value": [
+            {
+              "count": 2,
+              "scope": "房",
+              "source_text": "兩間房",
+              "subject_label": "冷氣"
+            }
+          ]
+        }
+      ],
+      "topic": "冷氣",
+      "entities": [],
+      "referents": [],
+      "demands": [
+        {
+          "question": "我想問冷氣匹數,兩間房加個廳。",
+          "source_quote": "我想問冷氣匹數,兩間房加個廳。",
+          "subject_refs": [
+            "冷氣"
+          ],
+          "source_type": "general",
+          "requested_facts": [],
+          "constraints": {},
+          "customer_correction": false,
+          "explicit_negations": [],
+          "ambiguity": {
+            "is_ambiguous": false,
+            "reasons": [],
+            "clarification_question": null
+          }
+        }
+      ],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    },
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "scoped allocation",
+      "customer_facts": [],
+      "topic": "冷氣",
+      "entities": [
+        {
+          "entity_ref": "contextual-goal:source-1",
+          "name": "冷氣",
+          "kind": "unknown",
+          "category_hint": null,
+          "sku": null,
+          "model": null,
+          "quantity": null,
+          "unit": "部",
+          "attributes": {
+            "scoped_customer_updates": [
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "scope": "廳",
+                "source_text": "廳一部",
+                "unit": "部",
+                "value": 1
+              },
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "per_scope_quantity": 1,
+                "scope": "房",
+                "scope_count": null,
+                "source_text": "房各一部",
+                "unit": "部",
+                "value": 1
+              }
+            ]
+          },
+          "constraints": {},
+          "capabilities": {
+            "requires_delivery": false,
+            "supports_pickup": false,
+            "requires_installation": false,
+            "requires_booking": false,
+            "requires_quote": false,
+            "requires_site_check": false,
+            "digital_fulfilment": false,
+            "recurring_billing": false,
+            "rental_return": false,
+            "customization": false
+          },
+          "confidence": 0.99
+        }
+      ],
+      "referents": [
+        {
+          "ref": "contextual-goal:source-1",
+          "source": "persistent_state",
+          "confidence": 0.99
+        }
+      ],
+      "demands": [],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    }
+  ]
+};
+function ownerApprovedReading(name: string, turn: 1 | 2): CommerceSemanticFrame | undefined {
+  if (!Object.hasOwn(ownerApproved2aFrames, name)) return undefined;
+  return structuredClone(ownerApproved2aFrames[name as keyof typeof ownerApproved2aFrames][turn - 1]);
+}
+
 function fixture(initial = createEmptyConversationCommerceState()) {
   let state = initial;
   let revision = initial.entities.length ? 1 : 0;
@@ -253,7 +802,7 @@ function fixture(initial = createEmptyConversationCommerceState()) {
     },
   };
   let turn = 0;
-  const ask = async (text: string, history: string[] = [], trusted_product_topic_focus?: { topic: string; product: string; resolution_strategy: "PER_TOPIC_REFERENT_HISTORY" }) => {
+  const ask = async (text: string, history: string[] = [], trusted_product_topic_focus?: { topic: string; product: string; resolution_strategy: "PER_TOPIC_REFERENT_HISTORY" }, semantic_frame?: CommerceSemanticFrame) => {
     turn += 1;
     const result = await runCommerceStateRuntime(db, {
       company_id: "company",
@@ -263,6 +812,7 @@ function fixture(initial = createEmptyConversationCommerceState()) {
       language: "zh-TW",
       history: history.map((content) => ({ role: "visitor", content })),
       trusted_product_topic_focus,
+      ...(semantic_frame === undefined ? {} : { semantic_frame }),
     });
     assert(result, "runtime_empty");
     return result;
@@ -362,8 +912,8 @@ Deno.test("home appliance A: useful guidance rather than generic clarification",
 for (const [label, text] of variants) {
   Deno.test(`home appliance ${label}: scoped allocation from established context`, async () => {
     const f = fixture();
-    await f.ask(introduction);
-    const reply = await f.ask(text, [introduction]);
+    await f.ask(introduction, [], undefined, ownerApprovedReading(label, 1));
+    const reply = await f.ask(text, [introduction], undefined, ownerApprovedReading(label, 2));
     const s = f.snapshot().state;
     assert(reply.route === "contextual_scoped_update", JSON.stringify(reply));
     assert(
@@ -380,7 +930,8 @@ for (const [label, text] of variants) {
       "one_each",
     );
     assert(
-      /客廳|兩間房/.test(reply.reply ?? "") && /三部/.test(reply.reply ?? ""),
+      /客廳|兩間房/.test(reply.reply ?? "") &&
+        (label === "B" || label === "C" || label === "E" ? /(?:三部|(?<![0-9])3 ?部)/ : /三部/).test(reply.reply ?? ""),
       String(reply.reply),
     );
     assert(
@@ -1310,8 +1861,8 @@ Deno.test("W9 fresh and incompatible quantity references remain targeted and rea
 
 Deno.test("live runtime read-only recall preserves state and source provenance", async () => {
   const f = fixture();
-  await f.ask(introduction);
-  await f.ask("係廳一部，房各一部", [introduction]);
+  await f.ask(introduction, [], undefined, ownerApprovedReading("live-recall", 1));
+  await f.ask("係廳一部，房各一部", [introduction], undefined, ownerApprovedReading("live-recall", 2));
   const before = JSON.stringify(f.snapshot());
   const reply = await f.ask("我而家要幾多部冷氣？", [
     introduction,
@@ -1985,3 +2536,27 @@ import "./commerce-state-scoped-pending.test.ts";
 import "./contextual-prior-scope-display.test.ts";
 
 import "./commerce-source-unit.test.ts";
+
+// Independent negative controls for each authorized input pair, not extra original passes.
+for (const name of ["B", "C", "E", "live-recall"] as const) {
+  const allocation = name === "live-recall" ? variants[0][1] : variants.find(([label]) => label === name)![1];
+  Deno.test("Owner 2a " + name + ": missing and invalid allocation reading cannot commit", async () => {
+    for (const mode of ["missing", "wrong-scope-count", "wrong-per-scope", "wrong-quote", "wrong-goal", "wrong-unit", "injected-total"] as const) {
+      const f = fixture();
+      await f.ask(introduction, [], undefined, ownerApprovedReading(name, 1));
+      const before = JSON.stringify(f.snapshot());
+      const frame = ownerApprovedReading(name, 2)!;
+      const e = frame.entities[0];
+      const updates = e.attributes.scoped_customer_updates as Record<string, DecisionValue>[];
+      if (mode === "wrong-scope-count") updates[1].scope_count = 9;
+      if (mode === "wrong-per-scope") { updates[1].value = 5; updates[1].per_scope_quantity = 5; }
+      if (mode === "wrong-quote") updates[1].source_text = "unsupported quotation";
+      if (mode === "wrong-goal") { e.entity_ref = "unrelated-goal"; frame.referents[0].ref = "unrelated-goal"; }
+      if (mode === "wrong-unit") { e.unit = "kg"; for (const u of updates) u.unit = "kg"; }
+      if (mode === "injected-total") e.quantity = 5;
+      const result = await f.ask(allocation, [introduction], undefined, mode === "missing" ? undefined : frame);
+      assert(result.route !== "contextual_scoped_update" && JSON.stringify(f.snapshot()) === before,
+        name + ":" + mode + ":" + JSON.stringify(result));
+    }
+  });
+}

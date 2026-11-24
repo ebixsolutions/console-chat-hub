@@ -1756,7 +1756,7 @@
     "tests/task1-director/fixtures/task3c-replay/observations-60-plus-7.json": "b1b820e5bc8fcda0365d5738d4b973c1193c3c49953c70de93daf24ca158e3ba",
     ".github/workflows/task-ai-abc-c3-final-gate.yml": "2e214ef1e0d21b7fa4029bf188392caed4474c0762c5faa28e9ce3eaa78aa739",
     "supabase/functions/_shared/contextual-customer-update.ts": "cc2900dc228aca7735844afb9a6da4cf4fdef2e8cd895e8bf3acdc75a0626778",
-    "supabase/functions/_shared/contextual-customer-update.test.ts": "37795a22afae64d4f6e33bbcf63b4435b3c6de32205bcb741bc9451dd41dbfba",
+    "supabase/functions/_shared/contextual-customer-update.test.ts": "e7cd52b6ed905c0197764951e1c49fe89007f9051c9a9fb2c3d02d1df93634bf",
     "supabase/functions/_shared/commerce-state-canonical-dimension.test.ts": "b72a0a5e3e97fdb981c1a670f72a72febaeb585f5578044bcd272b42e680426e",
     "supabase/functions/_shared/commerce-semantic-frame.ts": "aba4a6165851d0590e154b56a83dda1275f01b004c3e9feedcc5889e91fa8e08",
     "supabase/functions/_shared/commerce-state-contextual-scope-runtime.test.ts": "1150eab4bbcaf7e9c7c492a32c108a780574878f916438e67d247abb60b75829",
