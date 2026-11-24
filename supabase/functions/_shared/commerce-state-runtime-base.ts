@@ -228,7 +228,7 @@ type PendingCheckAggregateResolution = {
 };
 
 type PendingCheckAggregateScope =
-  | { mode: "global"; source_conflict?: true }
+  | { mode: "global" }
   | { mode: "entity"; entity_id: string | null };
 
 function pendingCheckLabel(check: string, language: CommerceLanguage): string {
@@ -280,26 +280,28 @@ function resolvePendingCheckAggregateScope(
   );
   const explicitScope = categories.length > 0 || rooms.length > 0 ||
     semanticRefs.length > 0 || explicitDeictic || sourceNamed.length > 0;
-  // The same source/operation exclusions apply before EITHER global or
-  // entity selection. A global question does not waive contradictory supplied
-  // Reading evidence, but incidental references alone cannot narrow its scope.
-  const frame = input.semantic_frame;
-  const suppliedDemands = frame?.demands ?? [];
-  const invalidProposal = Boolean(frame && (!["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) ||
-    frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
-    frame.explicit_negations.length || frame.customer_facts?.length)) ||
-    suppliedDemands.some(demand =>
-      demand.customer_correction || demand.ambiguity.is_ambiguous || demand.explicit_negations.length ||
-      !clean(demand.source_quote,2400) || !text.includes(clean(demand.source_quote,2400)));
-  if (!explicitScope) return invalidProposal ? { mode: "global", source_conflict: true } : { mode: "global" };
-  if (invalidProposal) return { mode: "entity", entity_id: null };
+  if (!explicitScope) return { mode: "global" };
 
+  // An incidental model reference cannot narrow a global question above.
   // Only a source-scoped read can consume one exact persisted identity.
-  // Confidence controls positive selection, not validation of supplied evidence.
+  const frame = input.semantic_frame;
+  // Literal customer names do not erase a supplied conflicting operation.
+  // Apply these exclusions before choosing either literal or semantic targets.
+  if (frame && (!["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) ||
+    frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+    frame.explicit_negations.length || frame.customer_facts?.length))
+    return { mode: "entity", entity_id: null };
   const qualified = frame && ["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) &&
     frame.confidence >= 0.9 && !frame.ambiguity.is_ambiguous && !frame.customer_correction &&
     !frame.additive && !frame.customer_facts?.length && input.company_id &&
     input.conversation_id && input.source_message_id;
+  // Confidence controls positive selection, not whether contradictory
+  // supplied evidence can be discarded before a literal-name fallback.
+  const suppliedDemands = frame?.demands ?? [];
+  if ((qualified && frame.explicit_negations.length) || suppliedDemands.some(demand =>
+    demand.customer_correction || demand.ambiguity.is_ambiguous || demand.explicit_negations.length ||
+    !clean(demand.source_quote,2400) || !text.includes(clean(demand.source_quote,2400))))
+    return { mode: "entity", entity_id: null };
   const references = qualified ? frame.referents.filter(reference =>
     reference.source === "persistent_state" && reference.confidence >= 0.9) : [];
   const referenceIds = [...new Set(references.map(reference => reference.ref))];
@@ -392,14 +394,6 @@ function resolvePendingCheckAggregateQuery(
     !/(?:有咩|有什么|what).{0,18}(?:仲未|還沒|还没|未|not yet|outstanding|pending).{0,12}(?:confirm|確認|确认)|(?:仲未|還沒|还没|not yet).{0,12}(?:confirm|確認|确认).{0,12}(?:有咩|有什么|what)/i.test(input.text)
   ) return null;
   const scope = resolvePendingCheckAggregateScope(input, state, revision);
-  if (scope.mode === "global" && scope.source_conflict) {
-    const reply = input.language === "en"
-      ? "I couldn't verify the current pending-check request. Please confirm whether you want all pending checks or a particular item's checks."
-      : input.language === "zh-CN"
-        ? "暂时无法确认这次待确认事项查询的范围。请确认是查看全部事项，还是某件产品的事项。"
-        : "暫時未能確認今次待確認事項查詢嘅範圍。你係想查看全部事項，定係某件產品嘅事項？";
-    return { authority: "INSUFFICIENT_INFORMATION", reason: "read_only_current_state_aggregate_query_unresolved", reply, state_path: null };
-  }
   if (
     !Number.isSafeInteger(revision) || revision < 1 ||
     (scope.mode === "global" && hasPendingCheckDomainAmbiguity(input)) ||
