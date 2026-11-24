@@ -1981,3 +1981,5 @@ import "./pre-send-field-scope.test.ts";
 import "./commerce-state-canonical-quantity.test.ts";
 import "./commerce-state-canonical-fractional.test.ts";
 import "./commerce-state-scoped-pending.test.ts";
+
+import "./contextual-prior-scope-display.test.ts";

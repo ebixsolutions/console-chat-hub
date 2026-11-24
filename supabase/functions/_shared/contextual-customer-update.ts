@@ -465,7 +465,12 @@ export function resolveSemanticContextualCandidate(input: {
       scopes.add(scope.toLowerCase());
       spans.push({start: at, end: at + quote.length});
       quotedQuantityPhrases++;
-      displayQuotes.push(quote);
+      // Show the exact counted-scope receipt only when it supplied this
+      // allocation's omitted count. Persisted source text and member ids stay
+      // unchanged; unrelated prior dialogue is never part of the display.
+      displayQuotes.push(fromPrior
+        ? quote + (input.language === "en" ? " (" + fromPrior.source_text + ")" : "（" + fromPrior.source_text + "）")
+        : quote);
       continue;
     }
     const counts = [...quote.matchAll(new RegExp(quantityPattern + "\\s*" + sourceUnit, "giu"))];
