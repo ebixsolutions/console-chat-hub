@@ -264,3 +264,42 @@ Deno.test("Task3C current recall display rejects absent conflicting background f
     assert(!result.decision.handled||result.decision.provenance.evidence.every(e=>!e.quantity_unit),variant+": "+JSON.stringify(result));
   }
 });
+
+
+Deno.test("Task3C R9 accepted scoped current Reading labels arbitrary exact units without persisting",()=>{
+  for(const unit of ["位","間","斤","kg","hours","rooms","training slots"]){
+    const state=seed();delete state.entities[0].attributes.unit;const before=JSON.stringify(state);
+    const question="Do you remember my quantity for Workspace 2 "+unit+"?";
+    const frame=input("Workspace",unit,question).semantic_frame!;
+    frame.operation="ASK_FACT";frame.intent="customer_fact_recall";frame.customer_correction=false;
+    frame.entities[0].quantity=2;frame.demands![0].customer_correction=false;
+    const request:ConversationRecallInput={...owner,source_message_id:"read-source",question,memory:null,
+      commerce:{...owner,source_message_id:"prior-source",revision:1,state},
+      quantity_reading:{...owner,source_message_id:"read-source",commerce_revision:1,frame}};
+    const actual=prepareConversationRecall(request,"en");
+    assert(actual.decision.handled&&actual.reply?.includes("2 "+unit),JSON.stringify(actual));
+    assert(actual.decision.provenance.evidence.some(e=>e.quantity_unit===unit&&
+      e.quantity_unit_source_message_id==="read-source"&&e.evidence_source_message_id==="prior-source"),JSON.stringify(actual));
+    assert(JSON.stringify(state)===before,"read-only unit mutated state");
+    for(const variant of ["missing","foreign","revision","source","wrong unit","wrong quantity","ambiguous","weak","wrong target","negation","quote","merchant","competing"]){
+      const bad=structuredClone(request),reading=bad.quantity_reading!;
+      if(variant==="missing")delete bad.quantity_reading;
+      if(variant==="foreign")reading.company_id="foreign";
+      if(variant==="revision")reading.commerce_revision=2;
+      if(variant==="source")reading.source_message_id="foreign-source";
+      if(variant==="wrong unit")reading.frame.entities[0].unit="unwritten";
+      if(variant==="wrong quantity")reading.frame.entities[0].quantity=3;
+      if(variant==="ambiguous")reading.frame.ambiguity.is_ambiguous=true;
+      if(variant==="weak")reading.frame.confidence=.2;
+      if(variant==="wrong target")reading.frame.entities[0].entity_ref="other";
+      if(variant==="negation")reading.frame.explicit_negations=["not "+unit];
+      if(variant==="quote")reading.frame.demands![0].source_quote="foreign quote";
+      if(variant==="merchant")reading.frame.demands![0].source_type="product";
+      if(variant==="competing")bad.commerce!.state.entities.push({...structuredClone(state.entities[0]),entity_id:"other"});
+      const beforeBad=JSON.stringify(bad.commerce!.state);
+      const result=prepareConversationRecall(bad,"en");
+      assert(!result.decision.handled||result.decision.provenance.evidence.every(e=>!e.quantity_unit),variant+": "+JSON.stringify(result));
+      assert(JSON.stringify(bad.commerce!.state)===beforeBad,"negative mutated state");
+    }
+  }
+});

@@ -7,6 +7,7 @@ import type {
 } from "./commerce-state-contract.ts";
 import { splitCustomerOperationClauses, hasRequirementsRecapCue, isCurrentRequirementsRecap, isReadOnlyMemoryOrCurrentStateRecall, withoutExcludedLookups } from "./commerce-state-authority.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 // Phase 1 recap never imports an industry-specific display vocabulary.
 import { renderEnglishRequirement } from "./commerce-capability-runtime.ts";
 import { classifyCanonicalConversationTurn } from "./conversation-semantic-contract.ts";
@@ -112,6 +113,8 @@ export interface ConversationRecallInput extends RecallScope {
     requested_facts: readonly string[];
     subject_refs: readonly string[];
   };
+  /** Private accepted current-turn Reading, bound by the server to the loaded Commerce revision. */
+  quantity_reading?: RecallScope & { commerce_revision: number; frame: CommerceSemanticFrame };
   explicit_handoff?: boolean;
   /** True only after both scoped DB reads succeed and return no row. */
   empty_state_verified?: boolean;
@@ -1659,11 +1662,6 @@ function resolveSemanticCustomerRecall(input:ConversationRecallInput):Conversati
  * This is an evidence type, not a phrase-triggered answer. The model cannot
  * supply a count or source ID here, and a stale/conflicting canonical aggregate
  * is never used to overwrite the literal customer statement. */
-// Reuse the existing attested-customer quantity grammar unchanged. This legacy
-// grammar is bounded; unsupported units stay absent when canonical has no unit.
-const LITERAL_QUANTITY_UNIT = "(部|台|件|套|份|盒|箱|堂|課|课|張|张|units?|items?|pieces?|sets?|boxes?|sessions?|lessons?|licenses?|licences?|seats?|nights?)";
-const LITERAL_QUANTITY_WITH_UNIT = new RegExp("([0-9]{1,4}|[零〇一二兩两三四五六七八九十])\\s*" + LITERAL_QUANTITY_UNIT + "(?![a-z])", "giu");
-
 type QuantityUnitEvidence = Pick<RecallEvidence,
   "quantity_unit" | "quantity_unit_source_kind" | "quantity_unit_source_message_id">;
 
@@ -1723,41 +1721,62 @@ function currentQuestionQuantityUnit(
       !isReadOnlyMemoryOrCurrentStateRecall(question) ||
       sourceClauses(input.question).length !== 1 || sourceClauses(question).length !== 1 ||
       sourceClauses(input.question)[0] !== sourceClauses(question)[0]) return null;
-  const source = question.trim();
-  if (!source || !input.question.includes(source)) return null;
-  const numbers = numberTokens(source);
-  const literal = [...source.matchAll(LITERAL_QUANTITY_WITH_UNIT)];
-  const units = new Set([...source.matchAll(new RegExp("(?<![a-z])" + LITERAL_QUANTITY_UNIT + "(?![a-z])", "giu"))]
-    .map(match => match[1].toLowerCase()));
-  // Use full numeric-token boundaries, not the suffix of 30 / 3.5 / 兩萬.
-  if (numbers.length !== 1 || numbers[0].value !== entity.quantity || literal.length !== 1 || units.size !== 1 ||
-      literal[0].index !== numbers[0].start ||
-      literal[0].index! + literal[0][1].length !== numbers[0].end) return null;
+  const reading = input.quantity_reading, frame = reading?.frame;
+  if (!reading || !frame ||
+      reading.company_id !== input.company_id || reading.conversation_id !== input.conversation_id ||
+      reading.source_message_id !== input.source_message_id || reading.commerce_revision !== snapshot.revision ||
+      frame.version !== "commerce-semantic-1.0.0" || frame.intent !== "customer_fact_recall" ||
+      frame.operation !== "ASK_FACT" || frame.confidence < 0.72 || frame.ambiguity.is_ambiguous ||
+      frame.additive || frame.customer_correction || frame.customer_facts?.length || frame.explicit_negations.length ||
+      frame.entities.length !== 1 || frame.demands?.length !== 1 ||
+      [frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state]
+        .some(status => status !== "none" && status !== "unknown") ||
+      frame.requested_facts.some(f => keyNorm(f) !== "quantity")) return null;
+  const proposed = frame.entities[0], demand = frame.demands[0];
+  const source = question.normalize("NFKC").trim();
+  const name = proposed.name.normalize("NFKC").trim().toLowerCase();
+  const unit = proposed.unit;
+  if (!source || source !== input.question.normalize("NFKC").trim() ||
+      typeof unit !== "string" || unit !== unit.trim() || unit.length > 64 ||
+      !/^[\p{L}\p{M}][\p{L}\p{M}\p{N} ._\/-]*$/u.test(unit) ||
+      proposed.quantity !== entity.quantity || proposed.confidence < 0.72 ||
+      proposed.entity_ref !== entity.entity_id || entity.status === "superseded" ||
+      !sourceOwnedSubjectLabels(entity).includes(name) ||
+      demand.source_type !== "general" || demand.ambiguity.is_ambiguous ||
+      demand.customer_correction || demand.explicit_negations.length ||
+      demand.requested_facts.some(f => keyNorm(f) !== "quantity") ||
+      demand.source_quote.normalize("NFKC").trim() !== source ||
+      !demand.subject_refs.length ||
+      demand.subject_refs.some(ref => ref !== entity.entity_id && ref.normalize("NFKC").trim().toLowerCase() !== name) ||
+      frame.referents.some(ref => ref.ref !== entity.entity_id || ref.confidence < 0.72) ||
+      /(?:\bor\b|\beither\b|或者|抑或|還是|还是|定係)/iu.test(source)) return null;
   const selected = selectEntities({ ...input, question: source, recent_questions: [], referents: [] }, snapshot.state.entities);
   if (selected.length !== 1 || selected[0].entity_id !== entity.entity_id ||
       snapshot.state.entities.some(other => other.entity_id !== entity.entity_id &&
         sourceOwnedSubjectLabels(other).some(label => phrase(input.question, label)))) return null;
-  const labels = sourceOwnedSubjectLabels(entity);
-  if (labels.length) {
-    // A named entity must share this literal noun phrase with the count. A
-    // background count elsewhere in the clause cannot label its quantity.
-    const lower = source.toLowerCase(), start = literal[0].index!, end = start + literal[0][0].length;
-    const adjacent = labels.some(label => {
-      const at = lower.indexOf(label);
-      if (at < 0 || lower.indexOf(label, at + label.length) >= 0) return false;
-      const gap = at + label.length <= start ? source.slice(at + label.length, start)
-        : end <= at ? source.slice(end, at) : null;
-      return gap !== null && /^[\s:：()（）\[\]「」『』]*$/u.test(gap);
-    });
-    if (!adjacent) return null;
-  } else {
-    // Preserve the pre-existing single-active legacy read contract. No new
-    // category synonym is manufactured to supply a missing literal name.
-    const active = snapshot.state.entities.filter(isCurrentEntity);
-    if (active.length !== 1 || active[0].entity_id !== entity.entity_id ||
-        snapshot.state.current_topic !== entity.category) return null;
-  }
-  return { quantity_unit: literal[0][2], quantity_unit_source_kind: "current_customer_question",
+  const owners = snapshot.state.entities.filter(other => isCurrentEntity(other) &&
+    sourceOwnedSubjectLabels(other).includes(name));
+  if (owners.length !== 1 || owners[0].entity_id !== entity.entity_id) return null;
+  // A Reading proposes a unit; it never provides quantity authority.
+  // Match a whole numeric token and the exact customer-written unit in
+  // the same noun phrase as the committed label; do not infer unit aliases.
+  const literalUnit = unit.normalize("NFKC");
+  const numbers = numberTokens(source);
+  if (numbers.length !== 1 || numbers[0].value !== entity.quantity) return null;
+  const token = numbers[0];
+  const following = source.slice(token.end);
+  const leading = following.length - following.trimStart().length;
+  const written = following.slice(leading, leading + literalUnit.length);
+  if (written.toLowerCase() !== literalUnit.toLowerCase()) return null;
+  const finish = token.end + leading + written.length;
+  const lower = source.toLowerCase(), at = lower.indexOf(name);
+  if (at < 0 || lower.indexOf(name, at + name.length) >= 0) return null;
+  const gap = at + name.length <= token.start ? source.slice(at + name.length, token.start)
+    : finish <= at ? source.slice(finish, at) : null;
+  if (gap === null || !/^[\s:：()（）\[\]「」『』]*$/u.test(gap)) return null;
+  if (!/[\p{Script=Han}]$/u.test(written) &&
+      /[\p{L}\p{N}_]/u.test(source[finish] ?? "") && finish !== at) return null;
+  return { quantity_unit: written, quantity_unit_source_kind: "current_customer_question",
     quantity_unit_source_message_id: input.source_message_id };
 }
 
@@ -1769,22 +1788,43 @@ function attestedCustomerQuantity(
   if (!memory || !rows?.length || rows.length > 500 ||
       !any(input.question, OWNER) ||
       !/(?:剛才|刚才|頭先|头先|之前|先前|曾經|曾经|講過|讲过|說過|说过|提過|提过|記得|记得|提到|mentioned|previously|earlier|told you|did (?:i|we) say|(?:i|we) said)/iu.test(input.question)) return null;
-  const readNumber = (token: string): number | null => {
-    const numerals: Record<string, number> = {
-      "零":0,"〇":0,"一":1,"二":2,"兩":2,"两":2,"三":3,
-      "四":4,"五":5,"六":6,"七":7,"八":8,"九":9,"十":10,
+  // A prior quantity may be attested without a display unit. Read a whole
+  // source number and its scoped noun phrase/explicit total; a literal label
+  // is not promoted into a measurement unit unless canonical proof supplies it.
+  const subject = quantitySubject(input.question);
+  const countsIn = (value: string, storedUnit?: string): number[] => {
+    const source = value.normalize("NFKC");
+    const named = subject?.normalize("NFKC").trim() ?? "";
+    const totals: number[] = [], counts: number[] = [];
+    const totalCue = /(?:合共|總共|总共|共計|共计|一共|總數|总数|in total|altogether|total(?: of)?)\s*(?:需|要|有|是|為|为|:|：)?\s*$/iu;
+    const startsWithLabel = (text: string, label: string) => {
+      if (!label || !text.toLowerCase().startsWith(label.toLowerCase())) return false;
+      return /[\p{Script=Han}]$/u.test(label) || !/[\p{L}\p{N}_]/u.test(text[label.length] ?? "");
     };
-    const n = /^[0-9]{1,4}$/.test(token) ? Number(token) : numerals[token];
-    return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 1000 ? n : null;
-  };
-  const countsIn = (value: string): number[] => {
-    const tokens = [...value.matchAll(LITERAL_QUANTITY_WITH_UNIT)]
-      .map((m) => readNumber(m[1])).filter((x): x is number => x !== null);
-    const total = value.match(
-      /(?:合共|總共|总共|共計|共计|一共|總數|总数|in total|altogether|total(?: of)?)\s*(?:需|要|有|是|為|为|:|：)?\s*([0-9]{1,4}|[零〇一二兩两三四五六七八九十])\s*(?:部|台|件|套|份|盒|箱|堂|課|课|units?|items?|pieces?|sets?|boxes?|sessions?|lessons?|licenses?|licences?|seats?|nights?)/iu,
-    );
-    const exact = total ? readNumber(total[1]) : null;
-    return exact === null ? [...new Set(tokens)] : [exact];
+    for (const clause of sourceClauses(source)) {
+      for (const token of numberTokens(clause)) {
+        if (!Number.isInteger(token.value) || token.value < 0 || token.value > 1000) continue;
+        const before = clause.slice(0, token.start), after = clause.slice(token.end).trimStart();
+        if (/(?:[$€£¥]|HKD|USD|TWD|NTD|CNY)\s*$/iu.test(before) ||
+            /^(?:元|蚊|%|percent|dollars?|港幣|港币|台幣|台币)/iu.test(after)) continue;
+        const direct = named && startsWithLabel(after, named);
+        const saved = storedUnit && startsWithLabel(after, storedUnit) &&
+          (!named || phrase(source, named));
+        if (direct || saved) counts.push(token.value);
+        if (!totalCue.test(before)) continue;
+        // Chinese quantified noun phrases can repeat the counter in the
+        // total clause and the subject elsewhere in this same source row.
+        // Verify both literal spans, not a hard-coded counter vocabulary.
+        const splitSubject = named && /^[\p{Script=Han}]{2,}$/u.test(named) &&
+          Array.from(named).slice(1,-1).some((_,i) => {
+            const n=i+1;
+            return startsWithLabel(after,named.slice(0,n)) && phrase(source,named.slice(n));
+          });
+        if ((named ? direct || saved || splitSubject || phrase(clause,named) : !!after || hasField(before,"quantity")) &&
+            (!named || direct || saved || splitSubject || phrase(source,named))) totals.push(token.value);
+      }
+    }
+    return totals.length === 1 ? totals : totals.length > 1 ? [] : [...new Set(counts)];
   };
   const candidates: Candidate[] = [];
   for (let i = 0; i < memory.current_customer_facts.length; i++) {
@@ -1798,17 +1838,9 @@ function attestedCustomerQuantity(
       row.content.length > 0 && row.content.length <= 2400,
     );
     if (matching.length !== 1) continue;
-    const exact = countsIn(matching[0].content);
+    const savedUnit = attestedCanonicalQuantityUnit(input, fact.value, fact.source_message_id, fact.entity_id ?? null);
+    const exact = countsIn(matching[0].content, savedUnit?.quantity_unit);
     if (exact.length !== 1 || exact[0] !== fact.value) continue;
-    // Bind an explicit quantified subject to the same Visitor utterance.
-    // A generic quantity from an AC discussion must never answer a separate
-    // course/license/booking question. Unresolvable cross-language synonyms
-    // remain ambiguous rather than becoming invented equivalence.
-    const namedEnglish = input.question.match(/\bhow\s+many\s+(.{2,70}?)(?=\s+(?:did|do|have|was|were|are|is|would|will|i|we|you|the|there)\b|[?!.,]|$)/iu)?.[1]?.trim();
-    const namedChinese = input.question.match(/(?:幾多|几多|多少)\s*(?:[0-9一二兩两三四五六七八九十]+\s*)?(?:部|台|件|套|份|盒|箱|堂|課|课|張|张|個|个)?\s*([\p{Script=Han}A-Za-z][\p{Script=Han}A-Za-z0-9_-]{1,22})/u)?.[1]?.trim();
-    const namedSubject = namedEnglish || namedChinese;
-    if (namedSubject && !matching[0].content.normalize("NFKC").toLowerCase()
-      .includes(namedSubject.normalize("NFKC").toLowerCase())) continue;
     candidates.push({
       fact_type: "quantity", value: fact.value,
       ...attestedCanonicalQuantityUnit(input,fact.value,fact.source_message_id,fact.entity_id??null)??{},
