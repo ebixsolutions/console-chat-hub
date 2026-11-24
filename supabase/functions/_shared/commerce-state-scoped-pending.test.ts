@@ -195,3 +195,40 @@ Deno.test("Task3C literal and deictic pending reads require an active customer-o
     }
   }
 });
+
+
+Deno.test("Task3C global pending reads cannot bypass contradictory supplied Reading evidence", async () => {
+  const text = "How many checks are still pending?";
+  for (const kind of ["valid", "wrong operation", "correction", "additive",
+    "frame negation", "frame ambiguity", "fabricated quote",
+    "demand correction", "demand negation", "demand ambiguity"] as const) {
+    const frame = reading();
+    frame.demands = [{ question: text, source_quote: text, subject_refs: [],
+      source_type: "general", requested_facts: ["pending_checks"], constraints: {},
+      customer_correction: false, explicit_negations: [],
+      ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null } }];
+    if (kind === "wrong operation") frame.operation = "REMOVE_ITEM";
+    if (kind === "correction") frame.customer_correction = true;
+    if (kind === "additive") frame.additive = true;
+    if (kind === "frame negation") frame.explicit_negations = ["pending checks"];
+    if (kind === "frame ambiguity") frame.ambiguity.is_ambiguous = true;
+    if (kind === "fabricated quote") frame.demands[0].source_quote = "Unrelated proposal text.";
+    if (kind === "demand correction") frame.demands[0].customer_correction = true;
+    if (kind === "demand negation") frame.demands[0].explicit_negations = ["pending checks"];
+    if (kind === "demand ambiguity") frame.demands[0].ambiguity.is_ambiguous = true;
+    // An incidental reference must not narrow a valid global query.
+    // Lower confidence must not silently discard contradictory evidence.
+    if (kind !== "valid") frame.confidence = 0.8;
+    const result = await read(state(), frame, text);
+    if (kind === "valid") {
+      assert(result?.state_path === "installation.pending_checks" &&
+        result.reply?.includes("3"), JSON.stringify(result));
+    } else {
+      assert(result?.reason === "read_only_current_state_aggregate_query_unresolved" &&
+        result.authority === "INSUFFICIENT_INFORMATION" && !result.state_path &&
+        result.reply?.includes("couldn't verify") &&
+        !/training-a|display-b|currently 3/.test(result.reply),
+        kind + ": " + JSON.stringify(result));
+    }
+  }
+});
