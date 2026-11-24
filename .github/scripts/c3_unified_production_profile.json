@@ -1732,9 +1732,9 @@
     "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
   },
   "authorized_task3c_d4_no_industry_sha256": {
-    "supabase/functions/_shared/commerce-state-authority.ts": "bc461d956498b85df9e89f57368c5823d0598b4697aea33592e5988dfacc257a",
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "0918f2d0468c0c3cb8d08c90deca8a62919d40e5ca47e04a9f25191320889a32",
-    "tests/task1-director/source-chain.test.mjs": "e834f1d984834366c76480411bebfb6ca8da2b4200bcb303a422a0b3a8b9ffa4",
+    "supabase/functions/_shared/commerce-state-authority.ts": "c636b78cfd3860d39c594a291b3a97460c1a3618ac55ebcbffcaf3990eb182c7",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "7293166e4ebe4b05e32f1482a849fe0bfa3143facf2e3a26b4ebf0ca940d7294",
+    "tests/task1-director/source-chain.test.mjs": "51d6e6f1e67b98d5fc7884d7d9ae2d04ec0f3fbe6fb6a54a63b8029a2015f4ab",
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "91849565e41da98dc2fdcc170a3bcf4cae4b6a6b3171ded735349474c02056f0",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "5b8ad3f90ffbcc89f6dd8d44ed5322b256df9e8475e5c3dc1bccc05745dda9d4",
     "supabase/functions/_shared/commerce-subject-resolution.ts": "a379b3b149c3c4838830f23a8e34cd5ab33f34d63703bdc9c3e5b27c41d8adb3",

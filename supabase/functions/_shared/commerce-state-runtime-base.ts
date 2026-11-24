@@ -46,6 +46,7 @@ import {
   withoutExcludedLookups,
   customerBusinessText,
   isSourceOwnedActiveAdviceGoal,
+  hasSourceBoundCurrentAdviceGoal,
   requirementMutationText,
   splitCustomerOperationClauses,
   isReadOnlyCurrentStateAggregateQuery,
@@ -1827,7 +1828,7 @@ function deriveA3RuntimeEvents(
   if (previous.entities.length === 0 && frame && frame.confidence >= 0.72 &&
       !frame.ambiguity.is_ambiguous && frame.operation === "ASK_FACT" &&
       ["customer_guidance","ask_for_advice"].includes(frame.intent) &&
-      isSourceOwnedActiveAdviceGoal(input.text)) {
+      (isSourceOwnedActiveAdviceGoal(input.text) || hasSourceBoundCurrentAdviceGoal(input,frame))) {
     events.push({type:"SET_CONTEXT",intent:"customer_guidance"});
   }
 
@@ -3882,7 +3883,7 @@ export function reduceTurn(previous: ConversationCommerceState,input: CommerceRu
      !advisoryFrame.additive && advisoryFrame.entities.length===0 &&
      !advisoryFrame.customer_facts?.length &&
      ["customer_guidance","ask_for_advice"].includes(advisoryFrame.intent) &&
-     isSourceOwnedActiveAdviceGoal(input.text) &&
+     (isSourceOwnedActiveAdviceGoal(input.text) || hasSourceBoundCurrentAdviceGoal(input,advisoryFrame)) &&
      previous.entities.length===0 && state.entities.length===0 &&
      state.current_intent!=="customer_guidance") {
     state=reduceCommerceState(state,[{type:"SET_CONTEXT",intent:"customer_guidance"}]);

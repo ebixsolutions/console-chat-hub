@@ -1,4 +1,5 @@
 import { factualSubject } from "./conversation-semantic-contract.ts";
+import { matchesReferenceLabel } from "./industry-agent-registry.ts";
 import { classifyHandoffIntent, splitHandoffClauses } from "./handoff-intent.ts";
 import type { CommerceSemanticDemand, CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
@@ -301,6 +302,10 @@ export function isDeliveryScheduleCurrentFactQuery(question: string): boolean {
   return interrogative && deliveryAndSchedule;
 }
 
+function excludedAdviceGoalSource(text: string): boolean {
+  return /(?:以前|之前|上次|曾經|曾经|previously|last time|used to|remember|記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|唔想|不想|不要|唔要|不需要|不打算|don't|do not)/iu.test(text);
+}
+
 /** A present visitor-authored selection goal is not historical quantity
  * recall. This classifies a speech act, never an item, industry or order. */
 export function isSourceOwnedActiveAdviceGoal(text:string):boolean {
@@ -308,14 +313,49 @@ export function isSourceOwnedActiveAdviceGoal(text:string):boolean {
  // This classifies the customer's own *current* planning speech act only.
  // It never chooses a product/industry, item count, price or merchant fact:
  // those must be sourced separately through the canonical semantic + CAS/B2 path.
- if(!t || t.length>2400 ||
-   /(?:以前|之前|上次|曾經|曾经|previously|last time|used to|remember|記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|唔想|不想|不要|唔要|不需要|不打算|don't|do not)/iu.test(t))return false;
+ if(!t || t.length>2400 || excludedAdviceGoalSource(t))return false;
  // First-person present goal grammar, with no category, industry noun or
  // purchase/booking verb inventory. Neither a count nor a named item is inferred.
  return /^(?:(?:我|我哋|我們|我们)\s*)?(?:想|打算|需要)\S/iu.test(t) ||
    /(?:我|我哋|我們|我们).{0,8}(?:想|要|需要|打算)\S/iu.test(t) ||
    /\b(?:i|we)\s+(?:(?:really|currently|now)\s+)?(?:want|need|plan)\s+to\b/iu.test(t) ||
    /\b(?:i'm|i am|we're|we are)\s+looking\s+to\b/iu.test(t);
+}
+
+/** A complete same-turn general-demand Reading can establish an initial
+ * advice goal without the legacy first-person grammar. This is context only:
+ * it grants no entity, quantity, transaction, KB or provider authority.
+ * Reuse the canonical customer request decision and the existing negative
+ * speech-act boundary; a sparse/mismatched Reading never adds authority. */
+export function hasSourceBoundCurrentAdviceGoal(source: {
+  conversation_id: string; company_id: string; source_message_id: string; text: string;
+}, reading?: CommerceSemanticFrame | null): boolean {
+  if (![source.conversation_id, source.company_id, source.source_message_id]
+      .every(value => typeof value === "string" && value.trim().length > 0)) return false;
+  const normalize = (value: string) => value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  const text = normalize(source.text);
+  if (!text || text.length > 1200 || excludedAdviceGoalSource(text) ||
+      !reading || reading.version !== "commerce-semantic-1.0.0" ||
+      reading.operation !== "ASK_FACT" ||
+      !["customer_guidance", "ask_for_advice"].includes(reading.intent) ||
+      !Number.isFinite(reading.confidence) || reading.confidence < 0.90 ||
+      reading.ambiguity.is_ambiguous || reading.customer_correction || reading.additive ||
+      reading.entities.length || reading.referents.length || reading.customer_facts?.length ||
+      reading.requested_facts.length || reading.explicit_negations.length ||
+      reading.transaction_state !== "none" || reading.payment_state !== "none" ||
+      reading.booking_state !== "none" || reading.fulfillment_state !== "none" ||
+      reading.demands?.length !== 1) return false;
+  const demand = reading.demands[0];
+  if (demand.source_type !== "general" || demand.ambiguity.is_ambiguous ||
+      demand.customer_correction || demand.explicit_negations.length ||
+      demand.requested_facts.length || Object.keys(demand.constraints).length ||
+      normalize(demand.source_quote) !== text ||
+      demand.subject_refs.some(ref => !matchesReferenceLabel(text, ref)) ||
+      isReadOnlyMemoryOrCurrentStateRecall(text, reading)) return false;
+  const decision = resolveCustomerRequestDecision(text, reading);
+  return decision.kind === "guidance" && !decision.merchant_request &&
+    !decision.continuation && decision.semantic_demands?.length === 1 &&
+    decision.semantic_demands[0].source_type === "general";
 }
 
 /**

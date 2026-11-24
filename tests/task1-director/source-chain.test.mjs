@@ -2,7 +2,7 @@ import test from 'node:test';
 import {transformSync as task1Transpile, buildSync as task3cBuildCanonical} from 'esbuild';
 import {readFileSync as task1SourceRead} from 'node:fs';
 import assert from 'node:assert/strict';
-import {resolveCustomerRequestDecision,isBareCommerceSubjectMention,isSourceOwnedActiveAdviceGoal,isReadOnlyMemoryOrCurrentStateRecall} from '../../supabase/functions/_shared/commerce-state-authority.ts';
+import {resolveCustomerRequestDecision,isBareCommerceSubjectMention,isSourceOwnedActiveAdviceGoal,hasSourceBoundCurrentAdviceGoal,isReadOnlyMemoryOrCurrentStateRecall} from '../../supabase/functions/_shared/commerce-state-authority.ts';
 import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
 import {reduceTurn, isReadOnlyCommerceQuestion} from '../../supabase/functions/_shared/commerce-state-runtime-base.ts';
 import {sourceBoundMixedCustomerFactEvents, semanticFrameToStateEvents} from '../../supabase/functions/_shared/commerce-semantic-adapter.ts';
@@ -574,4 +574,63 @@ for(const text of [
  assert.notEqual(s.current_intent,"customer_guidance");
  assert.equal(s.entities.length,0);
  assert.equal(s.quotes.length,0);
+});
+
+
+// Source-bound advice goal: complete demand evidence, not a sparse intent label.
+// All pre-existing raw-source positive and negative assertions above stay unchanged.
+const sourceAdviceDemand=(text,subject)=>({
+ question:text,source_quote:text,subject_refs:[subject],source_type:"general",
+ requested_facts:[],constraints:{},customer_correction:false,explicit_negations:[],
+ ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}
+});
+const sourceAdviceReading=(text,subject)=>({
+ ...semantic({requested_facts:[]}),demands:[sourceAdviceDemand(text,subject)]
+});
+const sourceAdviceInput=(text,reading)=>({text,semantic_frame:reading,
+ source_message_id:SRC,conversation_id:CID,company_id:TID,language:"en"});
+for(const [text,subject] of [
+ ["How should I choose a training course?","training course"],
+ ["How should I compare rental periods?","rental periods"],
+ ["Please compare the selection criteria for subscription plans.","subscription plans"]
+]) test("Task3C P1 complete Reading establishes source-owned advice goal: "+subject,()=>{
+ const f=sourceAdviceReading(text,subject),input=sourceAdviceInput(text,f);
+ assert.equal(isSourceOwnedActiveAdviceGoal(text),false);
+ assert.equal(hasSourceBoundCurrentAdviceGoal(input,f),true);
+ const s=reduceTurn(createEmptyConversationCommerceState(),input,[]);
+ assert.equal(s.current_intent,"customer_guidance");
+ assert.equal(s.entities.length,0);
+ assert.equal(s.quotes.length,0);
+ assert.equal(s.conversion.order_status,"none");
+});
+test("Task3C P1 complete advice Reading cannot manufacture authority",()=>{
+ const text="How should I choose a training course?";
+ const base=sourceAdviceReading(text,"training course");
+ const source=sourceAdviceInput(text,base);
+ const cases=[
+  [source,null],[source,{...base,demands:[]}],
+  [source,{...base,confidence:0.5}],
+  [source,{...base,customer_correction:true}],
+  [source,{...base,explicit_negations:["training course"]}],
+  [source,{...base,payment_state:"paid"}],
+  [source,{...base,demands:[{...base.demands[0],source_quote:"How should I choose?"}]}],
+  [source,{...base,demands:[{...base.demands[0],subject_refs:["unrelated subject"]}]}],
+  [{...source,company_id:""},base],
+  [{...source,source_message_id:""},base],
+  [{...source,conversation_id:""},base]
+ ];
+ for(const [input,f] of cases)assert.equal(hasSourceBoundCurrentAdviceGoal(input,f),false);
+ for(const text of [
+  "Do you remember we wanted to buy 2 chairs?",
+  "We do not want to buy 3 seats.",
+  "How should I compare your current prices?",
+  "Please connect me to a human agent."
+ ]){
+  const f=sourceAdviceReading(text,text),input=sourceAdviceInput(text,f);
+  assert.equal(hasSourceBoundCurrentAdviceGoal(input,f),false,text);
+  const s=reduceTurn(createEmptyConversationCommerceState(),input,[]);
+  assert.notEqual(s.current_intent,"customer_guidance",text);
+  assert.equal(s.quotes.length,0);
+  assert.equal(s.conversion.order_status,"none");
+ }
 });
