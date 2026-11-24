@@ -1978,3 +1978,4 @@ import "./contextual-semantic-reference.test.ts";
 import "./conversation-recall-source-proof.test.ts";
 import "./source-owned-advice-goal.test.ts";
 import "./source-bound-lifecycle-guard.test.ts";
+import "./pre-send-field-scope.test.ts";

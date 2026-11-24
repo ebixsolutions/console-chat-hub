@@ -383,7 +383,7 @@ function scalarText(value: unknown): string | null {
   return null;
 }
 
-function aliasesForKey(key: string): string[] {
+function aliasesForKey(key: string, canonicalPath = key): string[] {
   const normalized = key
     .replace(/[._-]+/g, " ")
     .trim()
@@ -430,9 +430,14 @@ function aliasesForKey(key: string): string[] {
     status: ["status", "狀態", "状态"],
   };
   const leaf = key.split(/[._-]/).at(-1) ?? key;
-  for (const item of common[leaf] ?? []) aliases.add(item.toLowerCase());
+  // `kind` is a generic data field. Only the canonical installation item
+  // kind owns the existing installation labels; a course/cake/plan kind does not.
+  const fieldLabels = (field: string): string[] => field === "kind" &&
+      !/^installation\.items\.\d+\.kind$/.test(canonicalPath)
+    ? [] : common[field] ?? [];
+  for (const item of fieldLabels(leaf)) aliases.add(item.toLowerCase());
   const semanticKey = key.replace(/[.\s-]+/g, "_").toLowerCase();
-  for (const item of common[semanticKey] ?? []) aliases.add(item.toLowerCase());
+  for (const item of fieldLabels(semanticKey)) aliases.add(item.toLowerCase());
   return [...aliases].filter((item) => item.length >= 2);
 }
 
@@ -545,7 +550,7 @@ export function collectKnownCommerceFacts(state: ConversationCommerceState): Kno
       : "UNVERIFIED";
     // Wrappers retain the semantic field name, not generic `value`/array indices.
     const semantic = segments.filter(x => !/^\d+$/.test(x) && x !== "value").at(-1) ?? fact.path;
-    fact.field_aliases = aliasesForKey(semantic);
+    fact.field_aliases = aliasesForKey(semantic, fact.path);
     fact.aliases = [...new Set([...fact.field_aliases, lower(fact.value)])];
   }
   return facts;
