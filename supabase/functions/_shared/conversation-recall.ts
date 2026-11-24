@@ -1743,7 +1743,7 @@ function currentQuestionQuantityUnit(
       typeof unit !== "string" || unit !== unit.trim() || unit.length > 64 ||
       !/^[\p{L}\p{M}][\p{L}\p{M}\p{N} ._\/-]*$/u.test(unit) ||
       proposed.quantity !== entity.quantity || proposed.confidence < 0.72 ||
-      proposed.entity_ref !== entity.entity_id || entity.status === "superseded" ||
+      proposed.entity_ref !== entity.entity_id || ["superseded"].includes(entity.status) ||
       !sourceOwnedSubjectLabels(entity).includes(name) ||
       demand.source_type !== "general" || demand.ambiguity.is_ambiguous ||
       demand.customer_correction || demand.explicit_negations.length ||
