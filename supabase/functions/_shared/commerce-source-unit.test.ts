@@ -209,8 +209,13 @@ Deno.test("Task3C an explicit current recall unit labels only the equal canonica
     {subject:"Orientation",unit:"licences",question:"Do you remember my quantity for Orientation 2 licences?",language:"en"},
     {subject:"投影機",unit:"台",question:"頭先投影機兩台你仲記唔記得？",language:"zh-TW"}]) {
     const state=seed(row.subject);delete state.entities[0].attributes.unit;const before=JSON.stringify(state);
+    const frame=input(row.subject,row.unit,row.question).semantic_frame!;
+    frame.language=row.language;
+    frame.operation="ASK_FACT";frame.intent="customer_fact_recall";frame.customer_correction=false;
+    frame.entities[0].quantity=2;frame.demands![0].customer_correction=false;
     const request:ConversationRecallInput={...owner,source_message_id:"read-source",question:row.question,memory:null,
-      commerce:{...owner,source_message_id:"prior-source",revision:1,state}};
+      commerce:{...owner,source_message_id:"prior-source",revision:1,state},
+      quantity_reading:{...owner,source_message_id:"read-source",commerce_revision:1,frame}};
     const result=prepareConversationRecall(request,row.language);
     assert(result.decision.handled&&result.reply?.includes(`2 ${row.unit}`),JSON.stringify(result));
     if(!result.decision.handled)throw new Error("missing decision");

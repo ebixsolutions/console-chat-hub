@@ -1733,10 +1733,13 @@ function currentQuestionQuantityUnit(
         .some(status => status !== "none" && status !== "unknown") ||
       frame.requested_facts.some(f => keyNorm(f) !== "quantity")) return null;
   const proposed = frame.entities[0], demand = frame.demands[0];
-  const source = question.normalize("NFKC").trim();
+  // The legacy slot parser strips terminal punctuation. Bind the proof to the
+  // original server-owned whole turn, not the derived slot; the single-clause
+  // equality guard above still excludes mixed or foreign clauses.
+  const source = input.question.normalize("NFKC").trim();
   const name = proposed.name.normalize("NFKC").trim().toLowerCase();
   const unit = proposed.unit;
-  if (!source || source !== input.question.normalize("NFKC").trim() ||
+  if (!source ||
       typeof unit !== "string" || unit !== unit.trim() || unit.length > 64 ||
       !/^[\p{L}\p{M}][\p{L}\p{M}\p{N} ._\/-]*$/u.test(unit) ||
       proposed.quantity !== entity.quantity || proposed.confidence < 0.72 ||
