@@ -4085,7 +4085,9 @@ function sourceBoundMixedDimensionStatement(input: CommerceRuntimeInput): string
   }
   const statement = clauses[0];
   if (!statement || clauses.some(clause => clause !== statement) ||
-      looksInterrogative(statement) || !/[.!;。！；]$/u.test(statement)) return null;
+      looksInterrogative(statement) || !/[.!;。！；]$/u.test(statement) ||
+      item.confidence < 0.9 || !matchesReferenceLabel(statement, item.name) ||
+      [item.model, item.sku].some(label => label && !matchesReferenceLabel(statement, label))) return null;
   const demands = frame.demands ?? [];
   const merchant = demands.filter(demand => ["product","policy"].includes(demand.source_type) && demand.requested_facts.length > 0);
   if (merchant.length !== 1 || demands.some(demand => demand.ambiguity.is_ambiguous ||
@@ -4374,6 +4376,34 @@ function scopedQuantityReductionConsistent(previous: ConversationCommerceState, 
   return true;
 }
 
+/** The mixed turn has a single typed dimension owner. Use the existing
+ * semantic adapter/reducer, not unrelated history or lexical hint candidates.
+ * This only proposes a state; sourceBoundDimensionReduction still verifies
+ * the complete original source, every value, exact owner and transaction
+ * boundary before the existing CAS writer is allowed to commit it. Recompute
+ * the target from the snapshot supplied to this reduction, including retry. */
+function mixedDimensionCandidate(previous: ConversationCommerceState,
+  input: CommerceRuntimeInput, frame: CommerceSemanticFrame): ConversationCommerceState {
+  const item = frame.entities[0];
+  const normalize = (value: string) => value.normalize("NFKC").trim().toLowerCase();
+  const named = previous.entities.filter(entity => sourceOwnedSubjectLabels(entity)
+    .some(label => normalize(label) === normalize(item.name)));
+  const referenced = previous.entities.filter(entity => entity.entity_id === item.entity_ref ||
+    sourceOwnedSubjectLabels(entity).some(label => normalize(label) === normalize(item.entity_ref)));
+  let scopedHints = semanticFrameToEntityHints(frame);
+  if (named.length || referenced.length) {
+    if (frame.operation !== "UPDATE_ITEM" || named.length !== 1 || referenced.length !== 1 ||
+        named[0].entity_id !== referenced[0].entity_id) return previous;
+    const target = named[0];
+    scopedHints = [{ entity_id: target.entity_id, category: target.category,
+      model: target.model, aliases: [item.name, item.entity_ref] }];
+  } else if (frame.operation !== "ADD_ITEM" || scopedHints.length !== 1 ||
+    previous.entities.some(entity => entity.entity_id === scopedHints[0].entity_id)) return previous;
+  return reduceCommerceState(previous, semanticFrameToStateEvents(
+    frame, previous, scopedHints, input.source_message_id, input.occurred_at ?? null,
+  ));
+}
+
 function sourceBoundTurnReduction(previous: ConversationCommerceState, input: CommerceRuntimeInput,
   hints: CommerceTurnEntityHint[], sourceContext?: ContextualSourceContext): { state: ConversationCommerceState; rejected: boolean; dimension_rejected?: boolean } {
   const frame = input.semantic_frame;
@@ -4387,10 +4417,8 @@ function sourceBoundTurnReduction(previous: ConversationCommerceState, input: Co
   // All proposed dimensions are still independently checked below, and an
   // invalid proposal rejects these context/fact events together as one turn.
   const mixedStatement = sourceBoundMixedDimensionStatement(input);
-  const candidate = mixedStatement && frame ? reduceSingleTurn(previous, {
-    ...input, text: mixedStatement, trusted_product_topic_focus: null,
-    semantic_frame: { ...frame, requested_facts: [], demands: [] },
-  }, hints, sourceContext) : guidanceContextOnly ? reduceCommerceState(previous, [
+  const candidate = mixedStatement && frame ? mixedDimensionCandidate(previous, input, frame)
+    : guidanceContextOnly ? reduceCommerceState(previous, [
     { type: "SET_CONTEXT", language: input.language, intent: "customer_guidance", topic: guidance.topic },
     ...sourceBoundMixedCustomerFactEvents(frame, previous, input.text, input.source_message_id, input.occurred_at ?? null),
   ]) : reduceTurnCandidate(previous, input, hints, sourceContext);
@@ -5462,10 +5490,16 @@ export async function runCommerceStateRuntime(
     }
   }
 
+  // A complete source-bound statement plus an independent merchant question
+  // is not a dimension-comparison-only turn. The whole-turn interrogative
+  // classifier must not consume its customer-owned statement before the
+  // existing CAS reducer can validate it. This flag does not grant a write.
+  const mixedDimensionStatement = sourceBoundMixedDimensionStatement(input);
   // Dimension/attribute questions must be bound before the generic recall
   // shortcut. Otherwise an article such as "一部598mm" can be mistaken for
   // a quantity target and inherit the first active entity's known quantity.
   if (
+    !mixedDimensionStatement &&
     parseCommerceDimensionMeasurement(text) &&
     isReadOnlyCommerceQuestion(text, input.semantic_frame) &&
     !(contextualDecision.route === "product_guidance" && contextualDecision.requires_generated_guidance &&
@@ -5516,7 +5550,7 @@ export async function runCommerceStateRuntime(
     ["UPDATE_ITEM", "ADD_ITEM"].includes(input.semantic_frame.operation) &&
     input.semantic_frame.customer_facts?.length);
   if (
-    !validatedCustomerFactUpdate &&
+    !validatedCustomerFactUpdate && !mixedDimensionStatement &&
     isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame) &&
     !input.trusted_product_topic_focus &&
     !/(?:講返|说回|講回|返去|回到|back to|return to|about that)/i.test(text) &&
@@ -5701,6 +5735,21 @@ export async function runCommerceStateRuntime(
       persist_result: persisted.result, reason: "commerce_state_commit_failed", route: "commerce_state_answer" };
   }
   const state = persisted.state;
+  if (mixedDimensionStatement && persisted.result === "success") {
+    // The dimension mutation is not a merchant answer or a transaction.
+    // Verify the existing CAS receipt against the same scoped stored state
+    // before continuing the independent question on the ordinary KB path.
+    const actual = await loadCommerceState(db, input.conversation_id, input.company_id);
+    if (actual.revision !== persisted.revision ||
+        persisted.revision !== persisted.previous_revision + 1 ||
+        JSON.stringify(actual.state) !== JSON.stringify(state))
+      return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
+        persist_result: "dimension_commit_readback_unverified",
+        reason: "dimension_commit_readback_unverified", route: "commerce_state_answer" };
+    return { authority: "CURRENT_KB_REQUIRED", reply: null, revision: actual.revision,
+      persist_result: "success", reason: "source_bound_dimension_with_merchant_question",
+      route: "commerce_kb_required" };
+  }
   // A dimension-only update may acknowledge only the committed same-owner
   // values, never a raw model proposal or a successful-looking RPC alone.
   const dimensionFrame = runtimeInput.semantic_frame;
