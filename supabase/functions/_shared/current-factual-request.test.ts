@@ -425,6 +425,7 @@ Deno.test("literal Memory anchor names require the same original customer source
   const question = "How much?", history = [
     {id: "new-service", role: "visitor", content: "Tell me about the Atlas Circle offer"}, ...previous,
   ];
+  assert(typeof history[0].content === "string", "literal customer source fixture must contain text");
   const anchor = {source_message_id: "new-service", created_at: "2026-10-30T03:48:41Z",
     customer_text: history[0].content, subjects: ["Atlas Circle"], subject_source_message_ids: ["new-service"], requested_facts: ["service scope"]};
   const memory = {factual_read_anchors: [anchor]} as unknown as NonNullable<Parameters<typeof resolveCurrentFactualRequest>[0]["memory"]>;
@@ -1040,9 +1041,10 @@ Deno.test("Task3 P0-1 multilingual semantic re-query never revives a cited produ
  ];
  const nonFact="¿Sigue disponible?";
  const framed=demanded(demand(nonFact,"product",["availability"],[]));
- framed.operation="CONVERSATION_MEMORY";
+ // Deliberately malformed semantic input must retain its original wire value.
+ const nonFactualFrame={...framed,operation:"CONVERSATION_MEMORY"} as unknown as CommerceSemanticFrame;
  const negative=resolveCurrentFactualRequest({question:nonFact,source_message_id:"now",
-   trusted_company_id:company,history:cited,semantic:framed});
+   trusted_company_id:company,history:cited,semantic:nonFactualFrame});
  assert(negative.subject!==subject,"a non-factual semantic operation resurrected a merchant subject");
  const switched="Another topic: is that consultancy available?";
  const changed=resolveCurrentFactualRequest({question:switched,source_message_id:"now",
@@ -1089,7 +1091,7 @@ function task3V5MalformedEntity(question: string, mode: "ASK_FACT" | "UPDATE_ITE
       customer_correction:false,explicit_negations:[],
       ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}],
     entities:[{name:"current customer model candidate",kind:"physical_product"}],...extra};
-  const walk = (value:unknown,path:string[]=[]):Array<Record<string,unknown>> => {
+  const walk = (value:unknown,path:string[]=[]):Array<Record<string,unknown> & {path:string[];kind:string}> => {
     const kind = value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
     return [{path,kind,...(kind === "string" ? {text:value} :
       kind === "number" ? {number:value} : kind === "boolean" ? {boolean:value} : {})},

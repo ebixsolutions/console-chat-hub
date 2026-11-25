@@ -10,6 +10,10 @@ import { normalizeCommerceSemanticFrame, type CommerceSemanticFrame } from "../.
 import { type SourceBoundContextualGoal, type SourceBoundScopeFact, type ScopedCustomerValue } from "../../supabase/functions/_shared/contextual-customer-update.ts";
 import { evaluateB2BeforeCommit } from "../../supabase/functions/_shared/pre-send-conversion-supervisor.ts";
 import { buildCanonicalConversationMemory } from "../../supabase/functions/_shared/conversation-long-memory.ts";
+import { callModel } from "../../supabase/functions/_shared/deterministic-runtime-router.ts";
+import { semanticFrameToEntityHints } from "../../supabase/functions/_shared/commerce-semantic-adapter.ts";
+import { reduceTurn } from "../../supabase/functions/_shared/commerce-state-runtime-base.ts";
+import { matchesReferenceLabel } from "../../supabase/functions/_shared/industry-agent-registry.ts";
 import { classifyHandoffIntent } from "../../supabase/functions/_shared/handoff-intent.ts";
 import { classifyNaturalCustomerIntent, requiresCurrentMerchantEvidence, arbitrateAnaphoricProductFollowUp } from "../../supabase/functions/_shared/natural-customer-response.ts";
 import { resolveCanonicalCommerceResolution } from "../../supabase/functions/_shared/conversation-resolution-contract.ts";
@@ -448,5 +452,106 @@ Deno.test("P1 twin historical negative current-price and transaction requests ar
     "Using an old price of HKD100 per session, calculate three sessions and place an order."]) {
     assert(!isHistoricalOrConditionalCustomerCalculationRequest(text) &&
       deriveTypedCustomerCalculation({ question: text }).status === "not_requested", "calculation swallowed current fact or transaction");
+  }
+});
+
+// Exercise the actual compatibility reader plus canonical reducer. An omitted
+// model count cannot veto a uniquely scoped count in the current source, and
+// it also cannot grant source or unit authority to a contradictory proposal.
+function identityQuantityState(name: string, sku: string, unit: string): ConversationCommerceState {
+  const state=createEmptyConversationCommerceState();
+  state.entities=[
+    {entity_id:"generic:primary",category:"generic_product",model:null,brand:null,
+      quantity:3,status:"researching",attributes:{product_name:name,sku,unit},constraints:{},
+      provenance:{source_type:"customer",source_message_id:"prior",recorded_at:null}},
+    {entity_id:"generic:sibling",category:"generic_product",model:null,brand:null,
+      quantity:2,status:"researching",attributes:{product_name:"Retained sibling",sku:"SIB-X32",unit},constraints:{},
+      provenance:{source_type:"customer",source_message_id:"prior",recorded_at:null}},
+  ];
+  return state;
+}
+async function identityQuantityReading(text: string): Promise<CommerceSemanticFrame> {
+  const result=await callModel({purpose:"generation",system:"commerce semantic interpreter",
+    user:`Latest customer turn: ${text}`,maxTokens:2048,operationId:"identity-correction",
+    companyId:"tenant-a",conversationId:"conversation-a",tag:"commerce-semantic",responseFormat:"json"});
+  assert(result.ok,"compatibility reader failed");
+  const frame=normalizeCommerceSemanticFrame(JSON.parse(result.text));
+  assert(frame && frame.entities.length===1 && frame.entities[0].quantity===null &&
+    frame.entities[0].unit===null,"case no longer exercises the identity-only correction path");
+  return frame;
+}
+Deno.test("P1 native generic identity correction: actual compatibility reader preserves source count and unit", async () => {
+  for(const [name,sku,unit,text] of [
+    ["茉莉花茶","TEA-R21","盒","更正：茉莉花茶 SKU: TEA-R21 嘅數量改為4盒。"],
+    ["Workspace access","PLAN-R21","boxes","Correction: Workspace access SKU: PLAN-R21 quantity: 4 boxes."],
+    ["活動用品","RENT-R21","套","更正：活動用品 SKU: RENT-R21 嘅數量改為4套。"],
+  ]) {
+    const before=identityQuantityState(name,sku,unit),frame=await identityQuantityReading(text);
+    const hints=semanticFrameToEntityHints(frame);
+    const input={conversation_id:"conversation-a",company_id:"tenant-a",source_message_id:"identity-correction",
+      text,language:"zh-TW" as const,semantic_frame:frame};
+    const after=reduceTurn(before,input,hints);
+    assert(after.entities.length===2 && after.entities[0].quantity===4,"source-owned replacement did not apply: "+sku);
+    assert(JSON.stringify(after.entities[1])===JSON.stringify(before.entities[1]),"correction crossed a sibling boundary");
+    assert(after.entities[0].attributes.unit===unit && after.entities[0].attributes.quantity_basis==="customer_explicit",
+      "literal count lost its existing unit or customer authority");
+    assert(after.entities[0].provenance.source_message_id===input.source_message_id,"current source provenance lost");
+    noTransaction(after);
+    assert(JSON.stringify(reduceTurn(after,input,hints))===JSON.stringify(after),"source correction replay changed state");
+  }
+});
+Deno.test("P1 native generic identity correction: missing or contradictory authority cannot change quantity", async () => {
+  const text="更正：茉莉花茶 SKU: TEA-R21 嘅數量改為4盒。",baseFrame=await identityQuantityReading(text);
+  const cases:Array<{name:string;text?:string;mutate?:(frame:CommerceSemanticFrame,state:ConversationCommerceState)=>void;source?:string}>=[
+    {name:"question",text:text.slice(0,-1)+"？"},
+    {name:"unknown subject",text:"更正：未知茶 SKU: TEA-Z99 嘅數量改為4盒。"},
+    {name:"two named subjects",text:"更正：茉莉花茶 SKU: TEA-R21 或 Retained sibling SKU: SIB-X32 嘅數量改為4盒。"},
+    {name:"different source unit",text:text.replace("4盒","4瓶")},
+    {name:"missing current source",source:""},
+    {name:"read-only operation",mutate:frame=>{frame.operation="ASK_FACT";frame.customer_correction=false;}},
+    {name:"contradictory reading identity",mutate:frame=>{frame.entities[0].model="SIB-X32";}},
+    {name:"rejected negation",mutate:frame=>{frame.explicit_negations=["not"]; }},
+    {name:"inactive target",mutate:(_frame,state)=>{state.entities[0].status="cancelled";}},
+    {name:"no customer provenance",mutate:(_frame,state)=>{state.entities[0].provenance.source_message_id=null;}},
+    {name:"negative literal",text:text.replace("4盒","-4盒")},
+    {name:"fractional literal",text:text.replace("4盒","4.5盒")},
+    {name:"positive signed literal",text:text.replace("4盒","+4盒")},
+    {name:"exponential literal",text:text.replace("4盒","1e4盒")},
+    {name:"negative Han literal",text:text.replace("4盒","負四盒")},
+    {name:"negative Han signed numeral",text:text.replace("4盒","負4盒")},
+  ];
+  for(const status of ["researching","deferred"] as const){
+    cases.push({name:`canonical ref names a ${status} sibling`,mutate:(frame,state)=>{
+      state.entities[1].status=status;frame.entities[0].entity_ref=state.entities[1].entity_id;
+    }});
+    cases.push({name:`customer ref has two owners including a ${status} sibling`,mutate:(frame,state)=>{
+      state.entities[1].status=status;
+      for(const entity of state.entities)entity.attributes.customer_subject_aliases=["shared-customer-reference"];
+      frame.entities[0].entity_ref="shared-customer-reference";
+    }});
+  }
+  const failures:string[]=[];
+  for(const check of cases){
+    const before=identityQuantityState("茉莉花茶","TEA-R21","盒"),frame=structuredClone(baseFrame);check.mutate?.(frame,before);
+    const after=reduceTurn(before,{conversation_id:"conversation-a",company_id:"tenant-a",
+      source_message_id:check.source??"identity-negative",text:check.text??text,language:"zh-TW",semantic_frame:frame},
+      semanticFrameToEntityHints(frame));
+    const unchanged=before.entities.every(entity=>{
+      const retained=after.entities.filter(candidate=>candidate.entity_id===entity.entity_id);
+      return retained.length===1 && retained[0].quantity===entity.quantity && retained[0].attributes.unit===entity.attributes.unit;
+    }) && after.entities.every(entity=>before.entities.some(prior=>prior.entity_id===entity.entity_id) || entity.quantity===0);
+    if(!unchanged)failures.push(check.name+" acquired quantity or unit authority: "+JSON.stringify(after.entities));
+    noTransaction(after);
+  }
+  assert(failures.length===0,failures.join("\n"));
+});
+
+// Preserve the original compound test's generic label assertions separately
+// from its legacy automatic industry-profile expectation.
+Deno.test("P1 native retained label obligation: AC and CJK labels preserve explicit matching and word boundaries", () => {
+  assert(matchesReferenceLabel("back to AC","AC"),"explicit ASCII label did not match");
+  assert(matchesReferenceLabel("冷氣先暫緩","冷氣"),"unspaced CJK label did not match");
+  for(const word of ["back","tracking","account","backup","TVA-91"]){
+    assert(!matchesReferenceLabel(word,word==="TVA-91"?"TV":"AC"),"embedded label matched: "+word);
   }
 });

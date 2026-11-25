@@ -2569,6 +2569,60 @@ export function sourceBoundQuantityUnit(
   return null;
 }
 
+/** An identity-only correction can omit its count while the current source
+ * states one exact count in the existing customer's unit. It cannot create a
+ * subject, infer/change a unit, borrow a sibling, or override a read-only frame.
+ * This admits only an existing event to the original source-quantity verifier. */
+function isSourceBoundIdentityQuantityCorrection(
+  event: Extract<CommerceStateEvent, { type: "SET_ENTITY_QUANTITY" }>,
+  input: CommerceRuntimeInput,
+  previous: ConversationCommerceState,
+): boolean {
+  const frame = input.semantic_frame;
+  if (!frame || frame.confidence < 0.72 || frame.ambiguity.is_ambiguous ||
+      frame.operation !== "UPDATE_ITEM" || !frame.customer_correction || frame.additive ||
+      frame.explicit_negations.length || frame.customer_facts?.length ||
+      (frame.demands ?? []).length || frame.entities.length !== 1 ||
+      ![input.company_id,input.conversation_id,input.source_message_id]
+        .every(value => typeof value === "string" && !!value.trim()) ||
+      [frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state]
+        .some(value => !["none","unknown"].includes(value)) ||
+      looksInterrogative(input.text) || isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return false;
+  const proposed = frame.entities[0];
+  if (proposed.confidence < 0.72 || proposed.quantity !== null || proposed.unit !== null ||
+      Object.keys(proposed.attributes).length || Object.keys(proposed.constraints).length) return false;
+  const target = previous.entities.find(entity => entity.entity_id === event.entity_id);
+  if (!target || target.provenance.source_type !== "customer" || !target.provenance.source_message_id ||
+      ["cancelled","deferred","superseded"].includes(target.status)) return false;
+  const unit = target.attributes.unit;
+  if (typeof unit !== "string" || !unit.trim() || unit !== unit.trim() || unit.length > 64) return false;
+  // A compatibility-local ref may be opaque, but a ref that resolves to a
+  // saved ID or customer alias may not contradict the independently named owner.
+  const ref = proposed.entity_ref.normalize("NFKC").trim().toLowerCase();
+  const refOwners = previous.entities.filter(entity =>
+    entity.entity_id.normalize("NFKC").trim().toLowerCase() === ref ||
+    sourceOwnedSubjectLabels(entity).includes(ref));
+  if (refOwners.length > 1 || refOwners.some(entity => entity.entity_id !== target.entity_id)) return false;
+  const labels = sourceOwnedSubjectLabels(target);
+  const proposedLabels = [proposed.name,proposed.model,proposed.sku]
+    .filter((value): value is string => typeof value === "string" && !!value.trim())
+    .map(value => value.normalize("NFKC").trim().toLowerCase());
+  if (!proposedLabels.length || proposedLabels.some(label => !labels.includes(label)) ||
+      !proposedLabels.some(label => matchesReferenceLabel(input.text,label)) ||
+      frame.referents.some(ref => ref.confidence < 0.72 || ref.ref !== target.entity_id)) return false;
+  // Every current literal subject must identify this same canonical owner.
+  // Include inactive siblings so a cancelled named subject cannot borrow it.
+  const named = previous.entities.filter(entity => sourceOwnedSubjectLabels(entity)
+    .some(label => matchesReferenceLabel(input.text,label)));
+  if (named.length !== 1 || named[0].entity_id !== target.entity_id) return false;
+  const escapedUnit = unit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const count = "([0-9]+(?:\\.[0-9]+)?|[零〇一二兩两三四五六七八九十百千萬万億亿兆]+)";
+  const literals = [...input.text.matchAll(new RegExp(count + "\\s*" + escapedUnit, "gu"))]
+    .filter(match => !/[0-9.]/u.test(input.text.slice(0,match.index).at(-1) ?? "") &&
+      /^(?:$|[\s,，。;；.!?！？:：])/u.test(input.text.slice((match.index ?? 0)+match[0].length)));
+  return literals.length === 1 && countTokenValue(literals[0][1]) === event.quantity;
+}
+
 function hasSourceBoundQuantityMutation(
   event: Extract<CommerceStateEvent, { type: "SET_ENTITY_QUANTITY" }>,
   input: CommerceRuntimeInput,
@@ -3191,7 +3245,8 @@ function reduceSingleTurn(
     if(semanticRejectsLifecycle && event.type==="SET_ENTITY_STATUS" &&
       (event.status==="cancelled" || event.status==="deferred"))return false;
     if(guidanceUncounted && event.type==="SET_CONVERSION")return false;
-    if(itemCountUnknown && event.type==="SET_ENTITY_QUANTITY")return false;
+    if(itemCountUnknown && event.type==="SET_ENTITY_QUANTITY" &&
+       !isSourceBoundIdentityQuantityCorrection(event,input,previous))return false;
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
       const named=typeof event.entity.attributes.product_name==="string"
         ? event.entity.attributes.product_name : "";

@@ -771,7 +771,18 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
     assert.equal(mixed.f.tables.conversation_commerce_state[0].revision,mixed.before.revision+1);
     assertMerchant(mixed,model,'1,460');
     assert.equal(reply.metadata.transaction_mutation,'NONE');
-    memoryParity(mixed.f); await replay(mixed);
+    memoryParity(mixed.f);
+    const commerceRow=mixed.f.tables.conversation_commerce_state[0];
+    const memoryRow=mixed.f.tables.conversation_memory_state[0];
+    const projected=memoryRow.memory.active_entities.filter(entity=>entity.entity_id===stored.entity_id);
+    assert.equal(projected.length,1,'Canonical Memory lost or duplicated the committed dimension item');
+    assert.equal(projected[0].current_requirements.max_width_mm,600);
+    assert.deepEqual(projected[0].current_requirements,{...stored.attributes,...stored.constraints});
+    assert.equal(memoryRow.source_message_id,mixed.source);
+    assert.equal(memoryRow.memory.source_message_id,mixed.source);
+    assert.equal(memoryRow.commerce_state_revision,commerceRow.revision);
+    assert.equal(memoryRow.memory.commerce_state_revision,commerceRow.revision);
+    await replay(mixed);
     const questionOnly='Should ER-LM84 be at most 590mm wide?';
     const rejected=await dialogue.ask({text:questionOnly,reading:f=>wire({
       intent:'customer_context_update',topic:model,
