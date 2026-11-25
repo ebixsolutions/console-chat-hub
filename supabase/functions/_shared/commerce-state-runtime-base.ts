@@ -1943,7 +1943,8 @@ function deriveA3RuntimeEvents(
   // Persist dimension constraints against the same uniquely scoped product
   // used by the reader, preventing cross-entity carryover.
   const dimensionCategory=resolveAttributeQueryCategory(input,previous);
-  if(!dimensionCategory.ambiguous&&dimensionCategory.category&&!looksInterrogative(text)){
+  const interpretedDimensions = input.semantic_frame?.entities.some(item => Object.keys(item.constraints).some(key => dimensionKeyAxis(key)));
+  if(!interpretedDimensions&&!dimensionCategory.ambiguous&&dimensionCategory.category&&!looksInterrogative(text)){
     const category=dimensionCategory.category;
     const candidates=previous.entities.filter(e=>e.category===category&&
       !["cancelled","deferred","superseded"].includes(e.status));
@@ -4026,6 +4027,34 @@ const dimensionKeyAxis = (key: string): CommerceDimensionAttribute | null => {
   return match ? match[1] as CommerceDimensionAttribute : null;
 };
 
+
+// Closed numeric/unit verification only. Semantic axis, bound and speech act
+// come from the Reading; a literal measurement alone cannot authorize a write.
+function literalDimensionSpans(text: string): { quote: string; index: number; value_mm: number }[] {
+  const units: Record<string, number> = {
+    mm:1, 毫米:1, cm:10, 厘米:10, 公分:10, m:1000, 米:1000, 公尺:1000,
+    inch:25.4, inches:25.4, 吋:25.4, 英寸:25.4, 英吋:25.4,
+    ft:304.8, foot:304.8, feet:304.8, 呎:304.8, 英尺:304.8,
+  };
+  return [...text.matchAll(/(?<![\p{Script=Latin}\p{N}_.+\-−])(\d{1,5}(?:\.\d+)?)\s*(mm\b|cm\b|m\b|inches\b|inch\b|feet\b|foot\b|ft\b|毫米|厘米|公分|公尺|英寸|英吋|英尺|米|吋|呎)/giu)]
+    .flatMap(match => {
+      const scale = units[match[2].toLowerCase()], value = Number(match[1]);
+      return scale && Number.isFinite(value) && value > 0
+        ? [{ quote: match[0], index: match.index!, value_mm: Math.round(value * scale * 1000) / 1000 }]
+        : [];
+    });
+}
+function literalDimensionValue(text: string): number | null {
+  const spans = literalDimensionSpans(text);
+  return spans.length === 1 && spans[0].index === 0 && spans[0].quote === text ? spans[0].value_mm : null;
+}
+function dimensionBound(key: string): "maximum" | "minimum" | "excluded" | "exact" | null {
+  if (/^(?:max_(?:width|height|depth)|(?:width|height|depth)_max)(?:_mm)?$/u.test(key)) return "maximum";
+  if (/^min_(?:width|height|depth)(?:_mm)?$/u.test(key)) return "minimum";
+  if (/^excluded_(?:width|height|depth)(?:_mm)?$/u.test(key)) return "excluded";
+  return /^(?:width|height|depth)(?:_mm)?$/u.test(key) ? "exact" : null;
+}
+
 /** Validate proposed dimensions at the complete reduction boundary. A model
  * key, an old message or a copied hint cannot supply the customer's dimension.
  * These technical axis/unit checks corroborate an accepted Reading; they never
@@ -4044,7 +4073,9 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
   const frame = input.semantic_frame;
   const proposals = frame?.entities.flatMap(item => Object.entries(item.constraints)
     .filter(([key]) => dimensionKeyAxis(key)).map(([key, value]) => ({ item, key, value }))) ?? [];
-  if (!changed.length && !proposals.length) return true;
+  if (!changed.length && !proposals.length) return !frame?.entities.some(item => Object.hasOwn(item.attributes, "dimension_source_proofs"));
+  // A legacy word/hint-derived dimension event is not an accepted Reading.
+  if (!proposals.length) return false;
   if (!frame || frame.confidence < 0.9 || frame.ambiguity.is_ambiguous || frame.additive ||
     !(guidanceContextOnly ? frame.operation === "ASK_FACT" : ["ADD_ITEM", "UPDATE_ITEM"].includes(frame.operation)) ||
     ![input.company_id, input.conversation_id, input.source_message_id].every(value => value.trim()) ||
@@ -4065,7 +4096,13 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
   const resolveRef = (ref: string) => previous.entities.filter(entity => entity.entity_id === ref ||
     sourceOwnedSubjectLabels(entity).some(label => normalize(label) === normalize(ref)));
   const targets = new Map<string, string[]>();
-  const proposalWrites: DimensionWrite[] = [];
+  const proposalWrites: (DimensionWrite & { proof: unknown })[] = [];
+  for (const item of frame.entities) {
+    const keys = Object.keys(item.constraints).filter(key => dimensionKeyAxis(key));
+    const proofs = item.attributes.dimension_source_proofs;
+    if (keys.length ? !isRecord(proofs) || Object.keys(proofs).length !== keys.length || keys.some(key => !Object.hasOwn(proofs, key))
+      : proofs !== undefined) return false;
+  }
   for (const { item, key, value } of proposals) {
     if (item.confidence < 0.9 || !item.name.trim() || !matchesReferenceLabel(text, item.name)) return false;
     const refs = resolveRef(item.entity_ref ?? "");
@@ -4075,11 +4112,10 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
     let contextValue = value;
     if (guidanceContextOnly && isRecord(value)) {
       if (Object.keys(value).length !== 2 || typeof value.amount !== "number" || !Number.isFinite(value.amount) ||
-        value.amount <= 0 || typeof value.unit !== "string" ||
-        !/^(?:mm|毫米|cm|厘米|公分|inch(?:es)?|吋)$/iu.test(value.unit)) return false;
-      const measurement = parseCommerceDimensionMeasurement(`${value.amount}${value.unit}`);
-      if (!measurement) return false;
-      contextValue = measurement.value_mm;
+        value.amount <= 0 || typeof value.unit !== "string") return false;
+      const measurement = literalDimensionValue(`${value.amount}${value.unit}`);
+      if (measurement === null) return false;
+      contextValue = measurement;
     }
     if (refs.length || named.length) {
       if (refs.length !== 1 || named.length !== 1 || refs[0].entity_id !== named[0].entity_id || !owned(refs[0])) return false;
@@ -4090,7 +4126,8 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
         // reducer entity, a quantity or a persisted dimension constraint.
         const id = item.entity_ref || item.name;
         targets.set(id, [normalize(item.name)]);
-        proposalWrites.push({ entity_id: id, key, value: contextValue, remove: false });
+        proposalWrites.push({ entity_id: id, key, value: contextValue, remove: false,
+          proof: (item.attributes.dimension_source_proofs as Record<string, unknown>)[key] });
         continue;
       }
       if (frame.operation !== "ADD_ITEM") return false;
@@ -4100,7 +4137,8 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
       target = created[0];
     }
     targets.set(target.entity_id, [...new Set([...sourceOwnedSubjectLabels(target), normalize(item.name)])]);
-    proposalWrites.push({ entity_id: target.entity_id, key, value: contextValue, remove: false });
+    proposalWrites.push({ entity_id: target.entity_id, key, value: contextValue, remove: false,
+      proof: (item.attributes.dimension_source_proofs as Record<string, unknown>)[key] });
   }
   for (const change of changed) {
     const current = next.entities.find(entity => entity.entity_id === change.entity_id);
@@ -4140,63 +4178,125 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
     if (!targets.has(entity.entity_id) && JSON.stringify(entity) !== JSON.stringify(old)) return false;
     if (targets.has(entity.entity_id) && old && (entity.quantity !== old.quantity || entity.status !== old.status)) return false;
   }
-  const clauses = text.split(/[;；。!?！？\n]+|\.(?=\s|$)/u).filter(Boolean);
-  const axisOf = (token: string): CommerceDimensionAttribute => /(?:width|wide|闊|寬|宽)/iu.test(token)
-    ? "width" : /(?:height|high|tall|高)/iu.test(token) ? "height" : "depth";
-  const proofsFor = (id: string, axis: CommerceDimensionAttribute) => {
-    const labels = targets.get(id) ?? [];
-    return clauses.filter(clause => labels.some(label => matchesReferenceLabel(clause, label)) &&
-      !previous.entities.some(entity => entity.entity_id !== id && sourceOwnedSubjectLabels(entity)
-        .some(label => matchesReferenceLabel(clause, label)))).flatMap(clause => {
-      const axes = [...clause.matchAll(/\b(?:width|wide|wider|height|high|higher|tall|taller|depth|deep|deeper)\b|闊度?|寬度?|宽度?|高度?|深度?/giu)];
-      const measures = [...clause.matchAll(/(?<![\p{Script=Latin}\p{N}_.+\-−])\d{1,5}(?:\.\d+)?\s*(?:mm\b|毫米|cm\b|厘米|公分|inch(?:es)?\b|吋)/giu)];
-      return measures.flatMap((measure, index) => {
-        const at = measure.index ?? -1, end = at + measure[0].length;
-        const candidates = axes.map(token => ({ axis: axisOf(token[0]),
-          distance: (token.index ?? 0) >= end ? (token.index ?? 0) - end : at - ((token.index ?? 0) + token[0].length) }))
-          .filter(candidate => candidate.distance >= 0).sort((a, b) => a.distance - b.distance);
-        if (!candidates.length || candidates[0].axis !== axis ||
-          (candidates[1]?.distance === candidates[0].distance && candidates[1].axis !== axis)) return [];
-        const measurement = parseCommerceDimensionMeasurement(measure[0]);
-        if (!measurement) return [];
-        const prefix = clause.slice(index ? (measures[index - 1].index ?? 0) + measures[index - 1][0].length : 0, at);
-        // Comparative upper bounds must attach to this literal measurement and
-        // its corroborated axis; a limit on a sibling axis is not authority.
-        const comparative = prefix.match(/\b(?:no|not)\s+(?:wider|higher|taller|deeper)\s+than\s*$|最\s*(?:闊|寬|宽|高|深)(?:度)?\s*(?:只可以|只可|只能|僅可|仅可)\s*$/iu);
-        const comparativeMaximum = !!comparative && axisOf(comparative[0]) === axis;
-        // "not wider than" is a bound, not a negated measurement; all other
-        // negation remains evidence against the proposal.
-        const negationPrefix = comparativeMaximum && comparative
-          ? prefix.slice(0, comparative.index) : prefix;
-        const deniedComparative = comparativeMaximum &&
-          /(?:\b(?:not|never|no longer)\s+(?:required|necessary|needed|a requirement|a limit)|\b(?:need not|do(?:es)? not need|don't need|doesn't need|do(?:es)? not have to|don't have to|doesn't have to|previously|formerly|used to|last time|historically)\b|無需|无需|毋須|唔需要|不需要|不用|唔使|不再|之前|以前|上次|曾經|曾经)/iu.test(clause);
-        const negated = deniedComparative ||
-          /(?:\bnot\b(?!\s+more\s+than)|\bnever\b|不是|唔係|並非|并非|唔好改|不要改)/iu.test(negationPrefix) ||
-          (/\bfrom\s*$/iu.test(negationPrefix) && /\bto\b/iu.test(clause.slice(end)));
-        return [{ value: measurement.value_mm, negated, clause, comparativeMaximum }];
-      });
-    });
+  // Every actual change must belong to an independently verified Reading.
+  // Extra lexical candidates, copied hints and implicit removals fail closed.
+  if (changed.some(change => change.remove || !proposalWrites.some(write =>
+    write.entity_id === change.entity_id && write.key === change.key && write.value === change.value))) return false;
+  const occupied = new Set<number>();
+  const keys = new Set<string>();
+  const uniqueIndex = (source: string, quote: string): number => {
+    const i = source.indexOf(quote);
+    return i >= 0 && source.indexOf(quote, i + 1) < 0 ? i : -1;
   };
-  for (const write of [...proposalWrites, ...changed]) {
-    const axis = dimensionKeyAxis(write.key);
-    if (!axis) return false;
-    if (write.remove) {
-      const labels = targets.get(write.entity_id) ?? [];
-      if (!clauses.some(clause => labels.some(label => matchesReferenceLabel(clause, label)) &&
-        dimensionConstraintCancellation(clause) && inferCommerceDimensionAttribute(clause) === axis)) return false;
+  for (const write of proposalWrites) {
+    const identity = write.entity_id + "\0" + write.key;
+    if (keys.has(identity)) return false;
+    keys.add(identity);
+    const axis = dimensionKeyAxis(write.key), bound = dimensionBound(write.key), proof = write.proof;
+    // Preserve the supported canonical maximum/fit contract. Never translate
+    // a lower bound into a maximum; unsupported comparisons clarify.
+    const withdrawal = write.value === null;
+    if (!axis || !bound || bound === "minimum" || !isRecord(proof) ||
+      !Object.keys(proof).every(key => ["axis","bound","status","clause","measurement","prior_measurement","expected_value_mm"].includes(key)) ||
+      proof.axis !== axis || proof.bound !== bound ||
+      proof.status !== (withdrawal ? "withdrawn" : "current_affirmative") ||
+      typeof proof.clause !== "string") return false;
+    if (withdrawal) {
+      // Withdrawal removes one already committed customer requirement. Its
+      // expected old value is a model proposal checked against the actual
+      // current snapshot on EVERY CAS attempt; it is not new source evidence.
+      if (guidanceContextOnly || frame.operation !== "UPDATE_ITEM" || !frame.customer_correction ||
+        frame.explicit_negations.length || frame.customer_facts?.length ||
+        (frame.demands ?? []).some(demand => demand.explicit_negations.length) ||
+        frame.entities.some(item => item.quantity !== null || Object.keys(item.attributes).some(key => key !== "dimension_source_proofs") ||
+          Object.keys(item.constraints).some(key => !dimensionKeyAxis(key))) ||
+        (proof.measurement !== undefined && proof.measurement !== null) ||
+        typeof proof.expected_value_mm !== "number" || !Number.isFinite(proof.expected_value_mm) ||
+        proof.expected_value_mm <= 0) return false;
+      const old = previous.entities.find(entity => entity.entity_id === write.entity_id);
+      if (!old || !owned(old) || old.constraints[write.key] !== proof.expected_value_mm ||
+        JSON.stringify(b2JourneyTransactionBoundary(previous)) !== JSON.stringify(b2JourneyTransactionBoundary(next))) return false;
+    } else if (proof.expected_value_mm !== undefined ||
+      typeof proof.measurement !== "string" || typeof write.value !== "number" ||
+      !Number.isFinite(write.value) || write.value <= 0) return false;
+    const clause = proof.clause.normalize("NFKC").replace(/\s+/gu, " ").trim();
+    if (!clause || clause.length > 300) return false;
+    const at = uniqueIndex(text, clause);
+    const labels = targets.get(write.entity_id) ?? [];
+    if (at < 0 || !labels.some(label => matchesReferenceLabel(clause, label)) ||
+      previous.entities.some(entity => entity.entity_id !== write.entity_id && sourceOwnedSubjectLabels(entity)
+        .some(label => matchesReferenceLabel(clause, label)))) return false;
+    const local = literalDimensionSpans(clause);
+    if (withdrawal) {
+      // No current number is invented when the customer withdraws a bound.
+      // If they quote its old number, prove that literal against the stored
+      // value; otherwise the clause must not contain another measurement.
+      if (proof.prior_measurement !== undefined && proof.prior_measurement !== null) {
+        if (typeof proof.prior_measurement !== "string") return false;
+        const oldQuote = proof.prior_measurement.normalize("NFKC").replace(/\s+/gu," ").trim();
+        const oldSpans = local.filter(span => span.quote === oldQuote);
+        if (oldSpans.length !== 1 || oldSpans[0].value_mm !== proof.expected_value_mm ||
+          occupied.has(at + oldSpans[0].index)) return false;
+        occupied.add(at + oldSpans[0].index);
+      }
+      // Keep the same explicit-axis contradiction veto used for new values.
+      // A model supplies the withdrawal intent; no new positive phrase list.
+      const axes = [...clause.matchAll(/\b(?:width|wide|wider|height|high|higher|tall|taller|depth|deep|deeper)\b|闊度?|寬度?|宽度?|高度?|深度?/giu)];
+      const explicitAxes = new Set(axes.map(token => /(?:width|wide|闊|寬|宽)/iu.test(token[0]) ? "width" :
+        /(?:height|high|tall|高)/iu.test(token[0]) ? "height" : "depth"));
+      if (explicitAxes.size === 1 && !explicitAxes.has(axis)) return false;
+      if (local.some(span => !occupied.has(at + span.index))) return false;
+      const committed = next.entities.find(entity => entity.entity_id === write.entity_id);
+      const prior = previous.entities.find(entity => entity.entity_id === write.entity_id);
+      if (!committed || !prior || committed.constraints[write.key] !== null) return false;
+      const { constraints: _oldConstraints, provenance: _oldProvenance, ...oldIdentity } = prior;
+      const { constraints: _newConstraints, provenance: _newProvenance, ...newIdentity } = committed;
+      if (JSON.stringify(oldIdentity) !== JSON.stringify(newIdentity)) return false;
+      // This is an ephemeral candidate null. It is converted to a deletion
+      // by the same checked reducer boundary below, never persisted as null.
       continue;
     }
-    if (typeof write.value !== "number" || !Number.isFinite(write.value) || write.value <= 0) return false;
-    const proofs = proofsFor(write.entity_id, axis);
-    const positive = proofs.filter(proof => !proof.negated);
-    if (!positive.length || positive.some(proof => proof.value !== write.value)) return false;
-    if (/^(?:max_|.*_max)/u.test(write.key) && !positive.every(proof => proof.comparativeMaximum || maximumConstraintLanguage(proof.clause) ||
-      /(?:\blimit\b|限制|位得|位置得)/iu.test(proof.clause))) return false;
-    if (/^min_/u.test(write.key) || /^excluded_/u.test(write.key) &&
-      !positive.every(proof => /(?:就唔好|就不要|唔接受|不接受|排除|exclude|reject)/iu.test(proof.clause))) return false;
-    const old = previous.entities.find(entity => entity.entity_id === write.entity_id)?.constraints[write.key];
-    if (proofs.some(proof => proof.negated && (!frame.customer_correction || proof.value !== old))) return false;
+    const measurement = (proof.measurement as string).normalize("NFKC").replace(/\s+/gu, " ").trim();
+    if (!measurement) return false;
+    const matching = local.filter(span => span.quote === measurement);
+    if (matching.length !== 1 || matching[0].value_mm !== write.value) return false;
+    const current = matching[0], absolute = at + current.index;
+    if (occupied.has(absolute)) return false;
+    occupied.add(absolute);
+    // Existing explicit axis recognition is a negative contradiction veto only.
+    // Absence of a known word or a multi-axis clause supplies no semantic veto.
+    const axes = [...clause.matchAll(/\b(?:width|wide|wider|height|high|higher|tall|taller|depth|deep|deeper)\b|闊度?|寬度?|宽度?|高度?|深度?/giu)];
+    const axisOf = (token: string) => /(?:width|wide|闊|寬|宽)/iu.test(token) ? "width" :
+      /(?:height|high|tall|高)/iu.test(token) ? "height" : "depth";
+    const explicitAxes = new Set(axes.map(token => axisOf(token[0])));
+    if (explicitAxes.size === 1 && !explicitAxes.has(axis)) return false;
+    // Retained explicit-denial safeguards are negative only, never a source
+    // of the axis, comparator, subject or value.
+    if (/(?:\b(?:not|never|no longer)\s+(?:required|necessary|needed|a requirement|a limit)|\b(?:need not|do(?:es)? not need|don't need|doesn't need|do(?:es)? not have to|don't have to|doesn't have to|previously|formerly|used to|last time|historically)\b|無需|无需|毋須|唔需要|不需要|不用|唔使|不再|之前|以前|上次|曾經|曾经)/iu.test(clause)) return false;
+    const previousSpan = local.filter(span => span.index < current.index).at(-1);
+    let prefix = clause.slice(previousSpan ? previousSpan.index + previousSpan.quote.length : 0, current.index);
+    // Old comparative exception narrows the negative veto only. The Reading,
+    // not this pattern, supplies the bound.
+    const comparative = prefix.match(/\b(?:no|not)\s+(?:wider|higher|taller|deeper)\s+than\s*$/iu);
+    if (comparative) prefix = prefix.slice(0, comparative.index);
+    if (/(?:\bnot\b(?!\s+more\s+than)|\bnever\b|不是|唔係|並非|并非|唔好改|不要改)/iu.test(prefix)) return false;
+    if (proof.prior_measurement !== undefined && proof.prior_measurement !== null) {
+      if (!frame.customer_correction || typeof proof.prior_measurement !== "string") return false;
+      const oldQuote = proof.prior_measurement.normalize("NFKC").replace(/\s+/gu, " ").trim();
+      const oldSpans = local.filter(span => span.quote === oldQuote);
+      const old = previous.entities.find(entity => entity.entity_id === write.entity_id)?.constraints[write.key];
+      if (oldSpans.length !== 1 || oldSpans[0].value_mm !== old ||
+        occupied.has(at + oldSpans[0].index)) return false;
+      occupied.add(at + oldSpans[0].index);
+    }
+    if (!guidanceContextOnly) {
+      const committed = next.entities.find(entity => entity.entity_id === write.entity_id);
+      if (!committed || committed.constraints[write.key] !== write.value) return false;
+    }
   }
+  // No partial interpretation may silently discard another literal dimension.
+  // Several independently bound measurements are accepted.
+  if (literalDimensionSpans(text).some(span => !occupied.has(span.index))) return false;
   return true;
 }
 
@@ -4233,7 +4333,20 @@ function sourceBoundTurnReduction(previous: ConversationCommerceState, input: Co
     ...sourceBoundMixedCustomerFactEvents(frame, previous, input.text, input.source_message_id, input.occurred_at ?? null),
   ]) : reduceTurnCandidate(previous, input, hints, sourceContext);
   const accepted = sourceBoundDimensionReduction(previous, candidate, input, guidanceContextOnly) && scopedQuantityReductionConsistent(previous, candidate);
-  return { state: accepted ? candidate : previous, rejected: !accepted };
+  if (!accepted) return { state: previous, rejected: true };
+  const removals: CommerceStateEvent[] = [];
+  for (const entity of candidate.entities) {
+    const old = previous.entities.find(value => value.entity_id === entity.entity_id);
+    for (const [key,value] of Object.entries(entity.constraints)) {
+      if (!dimensionKeyAxis(key) || value !== null || old?.constraints[key] === null) continue;
+      // A changed dimension null has already passed the complete proof
+      // boundary above. Preserve unrelated fields and the active entity.
+      removals.push({type:"REMOVE_ENTITY_CONSTRAINT",entity_id:entity.entity_id,key,
+        provenance:{source_type:"customer",source_message_id:input.source_message_id,recorded_at:input.occurred_at??null}});
+    }
+  }
+  const state = removals.length ? reduceCommerceState(candidate, removals) : candidate;
+  return { state, rejected: false };
 }
 
 export function reduceTurn(previous: ConversationCommerceState, input: CommerceRuntimeInput, hints: CommerceTurnEntityHint[],
@@ -4524,7 +4637,8 @@ export async function persistCommerceTurn(
     }
     const parsed = rpcResult(data);
     if (parsed.result === "success") {
-      if ((hasContextualScopeFactProposal(input) || hasContextualScopeAllocation(input) ||
+      if ((input.semantic_frame?.entities.some(item => Object.keys(item.constraints).some(key => dimensionKeyAxis(key))) ||
+          hasContextualScopeFactProposal(input) || hasContextualScopeAllocation(input) ||
           contextualGoalLifecycle(input, previous, contextualSourceContext(input, expected))) &&
         parsed.applied_revision !== expected + 1) {
         return { previous_state: previous, state: previous, previous_revision: expected,
@@ -5463,6 +5577,57 @@ export async function runCommerceStateRuntime(
       persist_result: persisted.result, reason: "commerce_state_commit_failed", route: "commerce_state_answer" };
   }
   const state = persisted.state;
+  // A dimension-only update may acknowledge only the committed same-owner
+  // values, never a raw model proposal or a successful-looking RPC alone.
+  const dimensionFrame = runtimeInput.semantic_frame;
+  if (persisted.result === "success" && dimensionFrame?.operation === "UPDATE_ITEM" &&
+      dimensionFrame.entities.length > 0 && !dimensionFrame.customer_facts?.length &&
+      !dimensionFrame.requested_facts.length && (dimensionFrame.demands ?? []).every(demand =>
+        demand.source_type === "general" && !demand.requested_facts.length) &&
+      dimensionFrame.entities.every(item => item.quantity === null &&
+        Object.keys(item.attributes).every(key => key === "dimension_source_proofs") &&
+        Object.keys(item.constraints).length > 0 && Object.keys(item.constraints).every(key => dimensionKeyAxis(key)))) {
+    let actual: LoadedCommerceState | null = null;
+    try { actual = await loadCommerceState(db, input.conversation_id, input.company_id); } catch { /* no unverified acknowledgment */ }
+    const rows: string[] = [];
+    let path: string | null = null;
+    let valid = false;
+    if (actual?.revision === persisted.revision && persisted.revision === persisted.previous_revision + 1 &&
+        JSON.stringify(actual.state) === JSON.stringify(state)) {
+      valid = true;
+      for (const item of dimensionFrame.entities) {
+        const matches = actual.state.entities.filter(entity =>
+          sourceOwnedSubjectLabels(entity).some(label => label.normalize("NFKC").trim().toLowerCase() === item.name.normalize("NFKC").trim().toLowerCase()) &&
+          entity.provenance.source_type === "customer" && entity.provenance.source_message_id === input.source_message_id &&
+          !["cancelled","deferred","superseded"].includes(entity.status));
+        if (matches.length !== 1) { valid = false; break; }
+        const entity = matches[0], label = customerOwnedDisplayLabel(entity);
+        if (!label) { valid = false; break; }
+        for (const [key,value] of Object.entries(item.constraints)) {
+          const axis = dimensionKeyAxis(key)!, bound = dimensionBound(key);
+          const removed = value === null;
+          if (!bound || (removed ? Object.hasOwn(entity.constraints,key) :
+            typeof value !== "number" || entity.constraints[key] !== value)) { valid = false; break; }
+          const dimension = language === "en" ? axis : axis === "width" ? (language === "zh-CN" ? "宽度" : "闊度") : axis === "height" ? "高度" : "深度";
+          const qualifier = bound === "maximum" ? (language === "en" ? "maximum " : "最大") :
+            bound === "excluded" ? (language === "en" ? "excluded " : "排除") : "";
+          rows.push(label + ": " + qualifier + dimension + (removed ?
+            (language === "en" ? " limit removed" : language === "zh-CN" ? "限制已移除" : "限制已移除") :
+            " " + value + " mm"));
+          path = removed ? "commerce.authoritative_projection" :
+            "entities." + actual.state.entities.indexOf(entity) + ".constraints." + key;
+        }
+        if (!valid) break;
+      }
+    }
+    if (!valid || rows.length !== dimensionFrame.entities.reduce((sum,item) => sum + Object.keys(item.constraints).length,0))
+      return { authority:"CONVERSATION_STATE", reply:null, revision:persisted.revision,
+        persist_result:"dimension_commit_readback_unverified", reason:"dimension_commit_readback_unverified", route:"commerce_state_answer" };
+    return { authority:"CONVERSATION_STATE", reply:(language === "en" ? "Recorded your requirement: " :
+      language === "zh-CN" ? "已记录你的要求：" : "已記錄你嘅要求：") + rows.join("; ") + (language === "en" ? "." : "。"),
+      revision:persisted.revision, persist_result:"success", reason:"source_bound_dimension_committed",
+      state_path:rows.length === 1 ? path : "commerce.authoritative_projection", route:"commerce_state_answer" };
+  }
   const quantityUnit = sourceBoundQuantityUnit(runtimeInput, persisted.previous_state);
   const pureQuantityTurn = quantityUnit && runtimeInput.semantic_frame?.requested_facts.length === 0 &&
     (runtimeInput.semantic_frame.demands ?? []).every(demand => demand.source_type === "general" &&

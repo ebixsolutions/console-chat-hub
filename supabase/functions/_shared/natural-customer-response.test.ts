@@ -384,11 +384,11 @@ Deno.test("C3 production-parity semantic ASK_FACT still persists and scopes prod
   assert(unframed?.reason==="read_only_attribute_constraint_query_unresolved" &&
     state.entities.length===0,"unbound topic cannot create a merchant/item state");
 
-  const acceptedItem=(name:string,id:string,width:number|null):CommerceSemanticFrame=>({
+  const acceptedItem=(name:string,id:string,width:number|null,clause?:string):CommerceSemanticFrame=>({
     ...semantic("generic_product",["width"]),operation:"ADD_ITEM",
     topic:"generic_product",entities:[{entity_ref:id,name,kind:"physical_product",
       category_hint:"generic_product",sku:null,model:null,quantity:null,unit:null,
-      attributes:{},constraints:width===null?{}:{max_width_mm:width},
+      attributes:width===null?{}:{dimension_source_proofs:{max_width_mm:{axis:"width",bound:"maximum",status:"current_affirmative",clause:clause!,measurement:`${width}mm`}}},constraints:width===null?{}:{max_width_mm:width},
       capabilities:{requires_delivery:false,supports_pickup:false,requires_installation:false,
         requires_booking:false,requires_quote:false,requires_site_check:false,
         digital_fulfilment:false,recurring_billing:false,rental_return:false,
@@ -398,7 +398,7 @@ Deno.test("C3 production-parity semantic ASK_FACT still persists and scopes prod
     CommerceSemanticFrame=>({...semantic("generic_product",["constraints"]),
       operation,referents:[{ref:id,source:"persistent_state",confidence:.99}]});
 
-  const initial=await run(21,initialText,acceptedItem("雪櫃","generic:source-fridge",600),[]);
+  const initial=await run(21,initialText,acceptedItem("雪櫃","generic:source-fridge",600,initialText),[]);
   const fridge=state.entities.find(e=>e.attributes.product_name==="雪櫃");
   assert(initial?.persist_result==="success" &&
     fridge?.category==="generic_product"&&fridge.quantity===0 &&
@@ -424,14 +424,27 @@ Deno.test("C3 production-parity semantic ASK_FACT still persists and scopes prod
 
   // Only an independent literal 600mm source with the accepted Washer ID
   // can commit its own width. No model or category supplies the missing unit.
-  const washerProof=await run(62,"洗衣機闊度上限600mm。",
-    scoped(washer.entity_id,"UPDATE_ITEM"),[]);
+  const washerLimitText="洗衣機闊度上限600mm。";
+  const washerLimitReading:CommerceSemanticFrame={
+    ...acceptedItem("洗衣機",washer.entity_id,600,washerLimitText),
+    operation:"UPDATE_ITEM",requested_facts:[],
+    referents:[{ref:washer.entity_id,source:"persistent_state",confidence:.99}],
+  };
+  const washerProof=await run(62,washerLimitText,washerLimitReading,[]);
   assert(washerProof?.persist_result==="success" &&
     state.entities.find(e=>e.entity_id===washer.entity_id)?.constraints.max_width_mm===600,
     "second item's own sourced unit must be saved under its own entity");
 
-  const correction=await run(63,"之前雪櫃嗰個闊度限制取消啦。",
-    scoped(fridge.entity_id,"UPDATE_ITEM"),[
+  const withdrawalText="之前雪櫃嗰個闊度限制取消啦。";
+  const withdrawalReading:CommerceSemanticFrame={
+    ...acceptedItem("雪櫃",fridge.entity_id,null),
+    operation:"UPDATE_ITEM",customer_correction:true,requested_facts:[],
+    referents:[{ref:fridge.entity_id,source:"persistent_state",confidence:.99}],
+  };
+  withdrawalReading.entities[0].constraints={max_width_mm:null};
+  withdrawalReading.entities[0].attributes={dimension_source_proofs:{max_width_mm:{
+    axis:"width",bound:"maximum",status:"withdrawn",clause:withdrawalText,expected_value_mm:600}}};
+  const correction=await run(63,withdrawalText,withdrawalReading,[
       {role:"visitor",content:"前置式，8kg左右。"},
       {role:"visitor",content:washerText},
     ]);
