@@ -83,6 +83,9 @@ export interface ResolveCurrentFactualRequestInput {
   commerce?: ConversationCommerceState | null;
   memory?: CanonicalConversationMemory | null;
   request_decision?: CustomerRequestDecision;
+  /** Private caller receipt, only after original Commerce CAS and exact
+   * scoped readback succeeded for this mixed source. Not merchant authority. */
+  committed_dimension_write?: {company_id: string; source_message_id: string; revision: number};
 }
 
 const CUSTOMER = new Set(["visitor", "customer", "user"]);
@@ -503,6 +506,69 @@ function subjectConstraints(subjects: string[], input: ResolveCurrentFactualRequ
     result = mergeDecisionContext(result, entity.constraints);
   }
   return result;
+}
+
+/** Keep a committed customer requirement in Commerce/Memory, not as an
+ * applicability condition of an independently quoted exact-item price/stock
+ * question. Old constraints, explicit demand conditions and unresolved reads
+ * remain on the original evidence path. */
+function independentCommittedDimensionKeys(input: ResolveCurrentFactualRequestInput,
+  demand: CommerceSemanticDemand, subjects: string[], facts: string[]): string[] {
+  const receipt = input.committed_dimension_write, frame = trustedFrame(input.semantic);
+  const quote = clean(demand.source_quote), full = clean(input.question);
+  if (!receipt || !clean(input.trusted_company_id) || !clean(input.source_message_id) ||
+      receipt.company_id !== input.trusted_company_id || receipt.source_message_id !== input.source_message_id ||
+      !Number.isSafeInteger(receipt.revision) || receipt.revision < 1 ||
+      !frame || frame.confidence < 0.9 || !["ADD_ITEM","UPDATE_ITEM"].includes(frame.operation) ||
+      frame.additive || frame.customer_correction || frame.explicit_negations.length ||
+      frame.customer_facts?.length || frame.entities.length !== 1 || frame.demands?.length !== 1 ||
+      [frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state]
+        .some(value=>!["none","unknown"].includes(value)) ||
+      demand.source_type !== "product" || demand.ambiguity.is_ambiguous || demand.customer_correction ||
+      demand.explicit_negations.length || Object.keys(demand.constraints).length ||
+      subjects.length !== 1 || !facts.length || facts.some(fact=>!["price","stock"].includes(fact)) ||
+      clean(demand.question) !== quote || !/[?？]$/u.test(quote) ||
+      POINTER.test(quote) || EXPLICIT_COMPARISON.test(quote) ||
+      LIFECYCLE_BOUNDARY.test(quote) || TOPIC_BOUNDARY.test(quote) ||
+      /(?:\b(?:if|when|unless|provided|assuming|depends?|subject\s+to|fits?|width|wide|height|depth|deep|size|dimensions?|requirements?|criteria|constraints?|compatib\w*|suitab\w*)\b|假如|如果|假設|假设|條件|条件|限制|尺寸|闊度|宽度|寬度|高度|深度|符合|適合|适合|配合)/iu.test(quote)) return [];
+  const identifiers = exactProductIdentifiers(quote), item = frame.entities[0];
+  if (identifiers.length !== 1 || norm(identifiers[0]) !== norm(subjects[0]) ||
+      item.confidence < 0.9 || item.quantity !== null ||
+      ![item.name,item.model,item.sku].some(label=>norm(label)===norm(subjects[0]))) return [];
+  const owners = (input.commerce?.entities ?? []).filter(entity=>!INACTIVE.has(entity.status) &&
+    entityNames(entity).some(label=>norm(label)===norm(subjects[0])));
+  if (owners.length !== 1 || owners[0].provenance.source_type !== "customer" ||
+      owners[0].provenance.source_message_id !== receipt.source_message_id) return [];
+  const proposed = Object.entries(item.constraints), proofs = item.attributes.dimension_source_proofs;
+  if (!proposed.length || !proofs || typeof proofs !== "object" || Array.isArray(proofs) ||
+      Object.keys(proofs).length !== proposed.length) return [];
+  let statement = "";
+  for (const [key,value] of proposed) {
+    const proof = proofs[key];
+    if (!/^(?:(?:max_|excluded_)?(?:width|height|depth)|(?:width|height|depth)_max)(?:_mm)?$/u.test(key) ||
+        typeof value !== "number" || !Number.isFinite(value) || value <= 0 ||
+        owners[0].constraints[key] !== value ||
+        !proof || typeof proof !== "object" || Array.isArray(proof) ||
+        proof.status !== "current_affirmative" || typeof proof.clause !== "string" ||
+        !clean(proof.clause) || (statement && statement !== clean(proof.clause))) return [];
+    statement = clean(proof.clause);
+  }
+  if (!/[.!;。！；]$/u.test(statement) || /[?？]/u.test(statement) ||
+      !literalFactualSubject(statement,[subjects[0]]) ||
+      ![statement+" "+quote,statement+quote,quote+" "+statement,quote+statement].includes(full)) return [];
+  return proposed.map(([key])=>key);
+}
+
+function semanticDemandConstraints(input: ResolveCurrentFactualRequestInput,
+  demand: CommerceSemanticDemand, subjects: string[], facts: string[],
+  optionConstraints?: Record<string, DecisionValue>): Record<string, DecisionValue> {
+  const inherited = subjectConstraints(subjects,input);
+  if (!optionConstraints) {
+    for (const key of independentCommittedDimensionKeys(input,demand,subjects,facts)) {
+      delete inherited[key];
+    }
+  }
+  return mergeDecisionContext(inherited, optionConstraints ?? demand.constraints);
 }
 
 function isKbDemand(demand: CurrentFactualDemand): boolean {
@@ -1203,7 +1269,7 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
         ? unique([...criteria.criteria.scope.map(item => item.source_message_id), criteria.criteria.specification.source_message_id, input.source_message_id ?? ""])
         : unique(located.map(binding => binding.source_message_id ?? "")),
       source_type: demand.source_type, requested_facts: correctedFacts,
-      constraints: sourceFallback ? {} : mergeDecisionContext(subjectConstraints(subjects, input), criteria?.constraints ?? demand.constraints),
+      constraints: sourceFallback ? {} : semanticDemandConstraints(input,demand,subjects,correctedFacts,criteria?.constraints),
       ...(criteria ? {option_criteria:criteria.criteria} : {}),
       customer_correction: demand.customer_correction, explicit_negations: [...demand.explicit_negations], ambiguity,
     };

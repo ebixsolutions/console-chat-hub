@@ -5131,6 +5131,18 @@ async function orchestrationGenerateReply(
             memory: _semanticPrepared?.memory ?? null,
             semantic: _a3SemanticFrame,
             commerce: commerceState,
+            // Only the existing successful writer and exact company/ticket,
+            // source and revision readback may distinguish its own dimension
+            // statement from the independent merchant demand. Never infer
+            // this receipt from model fields or a successful KB transport.
+            committed_dimension_write: _a3Commerce?.reason === "source_bound_dimension_with_merchant_question" &&
+              _a3Commerce.persist_result === "success" &&
+              _c3CommerceSnapshot?.conversation_id === conversation_id &&
+              _c3CommerceSnapshot.company_id === _criticalE2ExpectedTenantId &&
+              _c3CommerceSnapshot.source_message_id === _h1SourceMessageId &&
+              _c3CommerceSnapshot.revision === _a3Commerce.revision
+                ? {company_id: _criticalE2ExpectedTenantId, source_message_id: _h1SourceMessageId,
+                    revision: _a3Commerce.revision} : undefined,
             request_decision: _customerRequestDecision,
           });
         }

@@ -1509,3 +1509,50 @@ Deno.test("Task3C V6 source-owned prefix excludes mixed private and independent 
       !String(r.query??"").includes(prefix.trim()),"private/independent prefix entered KB read");
   }
 });
+
+Deno.test("committed current dimension statement and independent exact price demand keep distinct authority", () => {
+  const subject = "QX-582", source = "current-dimension-source", company = "own-company";
+  const statement = "I need QX-582 to be at most 600mm wide.";
+  const quote = "What is the current price of QX-582?";
+  const question = statement + " " + quote;
+  const semantic = demanded(demand(quote,"product",["price"],[subject]));
+  semantic.operation = "ADD_ITEM"; semantic.intent = "customer_requirements"; semantic.confidence = .99;
+  semantic.entities = [{entity_ref:"current:1",name:subject,kind:"physical_product",category_hint:null,
+    model:subject,sku:null,quantity:null,unit:null,confidence:.99,
+    attributes:{dimension_source_proofs:{max_width_mm:{axis:"width",bound:"maximum",
+      status:"current_affirmative",clause:statement,measurement:"600mm"}}},
+    constraints:{max_width_mm:600},
+    capabilities:{requires_delivery:false,supports_pickup:false,requires_installation:false,
+      requires_booking:false,requires_quote:false,requires_site_check:false,digital_fulfilment:false,
+      recurring_billing:false,rental_return:false,customization:false}}];
+  const commerce = createEmptyConversationCommerceState();
+  commerce.entities = [{entity_id:"generic:qx-582",category:"generic_product",model:subject,quantity:0,
+    status:"tentative",attributes:{product_name:subject},constraints:{max_width_mm:600},
+    provenance:{source_type:"customer",source_message_id:source}}];
+  const receipt = {company_id:company,source_message_id:source,revision:2};
+  const input = {question,semantic,commerce,source_message_id:source,trusted_company_id:company,
+    history:[{id:source,role:"visitor",content:question}],committed_dimension_write:receipt};
+  const before = JSON.stringify(commerce);
+  const result = resolveCurrentFactualRequest(input);
+  equal(result.demands[0].constraints,{}); equal(result.requested_facts,["price"]);
+  assert(result.query?.includes(quote)&&!result.query.includes("max_width_mm"),"customer dimension became a price condition");
+  assert(result.answer_request?.includes(statement),"original statement disappeared from complete answer context");
+  equal(JSON.stringify(commerce),before,"read projection mutated committed customer constraints");
+  for (const badReceipt of [undefined,{...receipt,company_id:"wrong-company"},{...receipt,source_message_id:"older-source"},{...receipt,revision:0}]) {
+    const retained = resolveCurrentFactualRequest({...input,committed_dimension_write:badReceipt});
+    equal(retained.demands[0].constraints.max_width_mm,600,"unverified receipt suppressed a condition");
+  }
+  const conditioned = structuredClone(semantic);
+  conditioned.demands![0].constraints = {max_width_mm:600};
+  equal(resolveCurrentFactualRequest({...input,semantic:conditioned}).demands[0].constraints.max_width_mm,600,
+    "explicit demand constraint was suppressed");
+  const conditionalQuote = "What is the price of QX-582 subject to the width limit?";
+  conditioned.demands = [demand(conditionalQuote,"product",["price"],[subject])];
+  const conditionalSource = statement+" "+conditionalQuote;
+  const conditionedResult = resolveCurrentFactualRequest({...input,question:conditionalSource,semantic:conditioned,
+    history:[{id:source,role:"visitor",content:conditionalSource}]});
+  equal(conditionedResult.demands[0].constraints.max_width_mm,600,"conditional price lost customer applicability context");
+  const extra = structuredClone(commerce); extra.entities[0].constraints.requires_delivery = true;
+  equal(resolveCurrentFactualRequest({...input,commerce:extra}).demands[0].constraints,{requires_delivery:true},
+    "unrelated retained customer condition was removed");
+});
