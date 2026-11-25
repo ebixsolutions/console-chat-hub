@@ -18,12 +18,6 @@ function clean(value: unknown, max = 200): string {
     : "";
 }
 
-// Source evidence is transient Reading metadata, not a customer attribute.
-function persistedSemanticAttributes(entity: CommerceSemanticEntity): Record<string, DecisionValue> {
-  const { dimension_source_proofs: _proofs, ...attributes } = entity.attributes;
-  return attributes;
-}
-
 function slugify(raw: string): string {
   return clean(raw, 160)
     .toLowerCase()
@@ -105,7 +99,7 @@ export function semanticFrameToEntityHints(
         semantic_payment_state: frame.payment_state,
         semantic_booking_state: frame.booking_state,
         semantic_fulfillment_state: frame.fulfillment_state,
-        semantic_attributes: persistedSemanticAttributes(entity),
+        semantic_attributes: entity.attributes,
         capabilities: entity.capabilities,
       },
       constraints: entity.constraints,
@@ -367,7 +361,7 @@ export function semanticFrameToStateEvents(
               unit: entity.unit,
               commerce_kind: entity.kind,
               quantity_basis: entity.quantity === null ? "system_default" : "customer_explicit",
-              semantic_attributes: persistedSemanticAttributes(entity),
+              semantic_attributes: entity.attributes,
               capabilities: entity.capabilities,
             },
             constraints: {
@@ -406,15 +400,14 @@ export function semanticFrameToStateEvents(
       frame.operation !== "CANCEL_ITEM" &&
       frame.operation !== "REMOVE_ITEM"
     ) {
-      const customerAttributes = persistedSemanticAttributes(entity);
-      if (Object.keys(customerAttributes).length) {
+      if (Object.keys(entity.attributes).length) {
         events.push({
           type: "SET_ENTITY_ATTRIBUTE",
           entity_id: id,
           key: "semantic_attributes",
           value: mergeDecisionContext(
             existing.attributes.semantic_attributes,
-            customerAttributes,
+            entity.attributes,
           ),
           provenance: p,
         });

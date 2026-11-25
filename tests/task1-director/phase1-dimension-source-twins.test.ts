@@ -52,22 +52,10 @@ function storage(initial = initialState(), revision = 21) {
   };
   return { live, db };
 }
-// Independent scripted Reading evidence; original customer strings and
-// assertions are unchanged. The expected axis and bound are fixture truth,
-// not derived from the proposed canonical key.
-function dimensionReadingAttributes(text: string, axis: string, bound = "maximum"): CommerceSemanticFrame["entities"][number]["attributes"] {
-  const clause = text.split(";")[0].trim();
-  const measurements = [...clause.matchAll(/\d+(?:\.\d+)?\s*(?:mm\b|cm\b|inches\b|inch\b|毫米|厘米|公分|吋)/giu)].map(match => match[0]);
-  if (!measurements.length) return {};
-  const prior = text.startsWith("Correction: ") ? measurements[1] : undefined;
-  return { dimension_source_proofs: { ["max_" + axis + "_mm"]: {
-    axis, bound, status: "current_affirmative", clause, measurement: measurements[0],
-    ...(prior === undefined ? {} : { prior_measurement: prior }) } } };
-}
 function turn(text: string, value = 600, key = "max_width_mm", ref = "display", source_message_id = "dimension-source"): CommerceRuntimeInput {
   const frame = reading();
   frame.entities = [{ entity_ref: ref, name: "Portable exhibition frame", kind: "physical_product", category_hint: "display-rental",
-    model: null, sku: null, quantity: null, unit: null, attributes: dimensionReadingAttributes(text, "width"), constraints: { [key]: value },
+    model: null, sku: null, quantity: null, unit: null, attributes: {}, constraints: { [key]: value },
     capabilities, confidence: 0.99 }];
   frame.referents = [{ ref, source: "persistent_state", confidence: 0.99 }];
   frame.demands = [{ question: text, source_quote: text, subject_refs: [ref], source_type: "general", requested_facts: [],
@@ -136,7 +124,6 @@ function businessTurn(spec: DimensionBusiness, text = `${spec.name} ${spec.axis}
   const frame = input.semantic_frame;
   assert(frame, "Business dimension needs a real normalized Reading object");
   frame.topic = spec.business; frame.entities[0].name = spec.name; frame.entities[0].category_hint = spec.business;
-  frame.entities[0].attributes = dimensionReadingAttributes(text, spec.axis);
   return input;
 }
 function noTransaction(state: ConversationCommerceState): void {
@@ -355,10 +342,7 @@ function dimensionAdvice(spec: DimensionBusiness): CommerceRuntimeInput {
   frame.intent = "customer_guidance"; frame.topic = null;
   frame.customer_facts = [{ key: "preference", value: "stability" }];
   frame.entities = [{ entity_ref: "semantic:1", name: spec.name, kind: "physical_product", category_hint: null,
-    model: null, sku: null, quantity: null, unit: null, capabilities, confidence: 0.99,
-    attributes: { dimension_source_proofs: {
-      width: {axis:"width",bound:"exact",status:"current_affirmative",clause:text,measurement:`${spec.value}${spec.unit}`},
-      depth: {axis:"depth",bound:"exact",status:"current_affirmative",clause:text,measurement:"560mm"} } },
+    model: null, sku: null, quantity: null, unit: null, attributes: {}, capabilities, confidence: 0.99,
     constraints: { width: { amount: spec.value, unit: spec.unit }, depth: { amount: 560, unit: "mm" } } }];
   return { ...owner, text, language: "en", semantic_frame: frame, source_message_id: "dimension-advice-source" };
 }
@@ -477,15 +461,6 @@ const comparativeDimensionNegatives = [
 for (const row of comparativeDimensionNegatives) {
   Deno.test("P1 comparative dimension source negative: " + row.name, async () => {
     const s = storage(), input = turn(row.text, row.mm, "max_" + row.axis + "_mm");
-    // The original oracle remains: a conflicting typed bound/status cannot
-    // authorize the proposed update.
-    const proof = (input.semantic_frame?.entities[0].attributes.dimension_source_proofs as Record<string, unknown> | undefined)?.max_width_mm;
-    if (proof && typeof proof === "object" && !Array.isArray(proof)) {
-      const fields = proof as Record<string, unknown>;
-      if (row.name === "lower bound") fields.bound = "minimum";
-      if (row.name === "historical") fields.status = "historical";
-      if (row.name === "not required" || row.name === "removed requirement" || row.name === "Cantonese negation") fields.status = "withdrawn";
-    }
     const before = JSON.stringify(s.live.state);
     const result = await persistCommerceTurn(s.db, input, []);
     assert(result.result !== "success" && s.live.writes === 0 && s.live.revision === 21 &&

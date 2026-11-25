@@ -270,9 +270,7 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
         const ref = entityReference(f, context);
         return wire({ intent: 'customer_context_update', topic: context.subject,
           customer_correction: previous !== undefined,
-          entities: [proposalEntity(context, ref, [], { attributes: { dimension_source_proofs: { max_width_mm: {
-            axis:"width", bound:"maximum", status:"current_affirmative", clause:text, measurement:`${value}mm`,
-            ...(previous === undefined ? {} : { prior_measurement:`${previous}mm` }) } } }, constraints: { max_width_mm: value } })],
+          entities: [proposalEntity(context, ref, [], { constraints: { max_width_mm: value } })],
           referents: [{ ref, source: 'persistent_state', confidence: .99 }],
           demands: [{ ...demand(text, context.subject), customer_correction: previous !== undefined }] });
       } };
@@ -726,7 +724,7 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
       const entry=await dialogue.ask({text,reading:f=>{
         const target=mode==='wrongtarget'?secondary:primary,ref=entityReference(f,target);
         return wire({intent:'customer_context_update',topic:target.subject,
-          entities:[proposalEntity(target,ref,[],{attributes:{dimension_source_proofs:{max_width_mm:{axis:mode==='wrongaxis'?'height':'width',bound:'maximum',status:'current_affirmative',clause:text,measurement:mode==='no-number'?'':'590mm'}}},constraints:{max_width_mm:mode==='wrongvalue'?600:590}})],
+          entities:[proposalEntity(target,ref,[],{constraints:{max_width_mm:mode==='wrongvalue'?600:590}})],
           referents:[{ref,source:'persistent_state',confidence:.99}],demands:[demand(text,primary.subject)]});
       }});
       const reply=entry.f.commits[0];
