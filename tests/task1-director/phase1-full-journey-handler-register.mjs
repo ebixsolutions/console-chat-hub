@@ -744,5 +744,46 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
       noTransaction(entry.f);await replay(entry);
     });
   }
+  // P1-LEGACY-01: a valid source-owned requirement and a separate merchant
+  // question must both survive the same real handler/decoder/CAS/B2 call.
+  // A question-only proposal must still never become a dimension write.
+  register('natural dialogue valid dimension and independent merchant answer both persist', ['NATURAL-DIALOGUE'], ['rentals'], async dialogue => {
+    const retained=BUSINESS_CONTEXTS[2], model='ER-LM84', context={subject:model,unit:'kits'};
+    const first=await dialogue.ask(directItem(retained));
+    const original=structuredClone(item(first.f,retained.subject));
+    const statement='I need ER-LM84 to be at most 600mm wide.';
+    const question='What is the current price of ER-LM84?';
+    const text=statement+' '+question;
+    const dimensionEntity=(ref,clause,value)=>proposalEntity(context,ref,[],{
+      kind:'physical_product',model,unit:null,quantity:null,
+      attributes:{dimension_source_proofs:{max_width_mm:{axis:'width',bound:'maximum',status:'current_affirmative',clause,measurement:value+'mm'}}},
+      constraints:{max_width_mm:value}
+    });
+    const mixed=await dialogue.ask({text,kb:rag(sourceDocument(model,{price:1460})),
+      reading:wire({intent:'customer_requirements',topic:model,requested_facts:['price'],
+        entities:[dimensionEntity('current:1',statement,600)],demands:[demand(question,model,['price'],'product')]},'ADD_ITEM')});
+    const stored=item(mixed.f,model), reply=mixed.f.commits[0];
+    assert.equal(stored.constraints.max_width_mm,600,'Valid dimension was lost before the merchant answer');
+    assert.equal(stored.provenance.source_message_id,mixed.source);
+    assert.equal(stored.quantity,0,'Research requirement invented a requested quantity');
+    assert.equal(state(mixed.f).entities.length,2);
+    assert.deepEqual(item(mixed.f,retained.subject),original);
+    assert.equal(mixed.f.tables.conversation_commerce_state[0].revision,mixed.before.revision+1);
+    assertMerchant(mixed,model,'1,460');
+    assert.equal(reply.metadata.transaction_mutation,'NONE');
+    memoryParity(mixed.f); await replay(mixed);
+    const questionOnly='Should ER-LM84 be at most 590mm wide?';
+    const rejected=await dialogue.ask({text:questionOnly,reading:f=>wire({
+      intent:'customer_context_update',topic:model,
+      entities:[dimensionEntity(entityReference(f,context),questionOnly.slice(0,-1),590)],
+      referents:[{ref:entityReference(f,context),source:'persistent_state',confidence:.99}],
+      demands:[demand(questionOnly,model)]
+    },'UPDATE_ITEM')});
+    assert.deepEqual(rejected.f.tables.conversation_commerce_state[0],rejected.before,
+      'A question fragment acquired dimension mutation authority');
+    assert.equal(item(rejected.f,model).constraints.max_width_mm,600);
+    assert.equal(rejected.f.requests.filter(row=>/\/rpc\/upsert_conversation_commerce_state_v1$/.test(row.url)).length,0);
+    noTransaction(rejected.f);
+  });
   return labels;
 }

@@ -1735,7 +1735,7 @@
   },
   "authorized_task3c_d4_no_industry_sha256": {
     "supabase/functions/_shared/commerce-state-authority.ts": "6cecc87547163bf51da59fb1ed9c8a348dd0f7c8ed352c7ab0adc4764acc87f6",
-    "supabase/functions/_shared/commerce-state-runtime-base.ts": "067ea4f7e46fe634568902f12a0c4e77daf332b9a1d61f83f1eee4418e068582",
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "fce3badc9eda90dccec1a0edfbb85c90eddc0d1588349e72dee667ff5878f93e",
     "tests/task1-director/source-chain.test.mjs": "d381f63f9d90c44ed3c284f0d2eab439de1b907c2e36918040a25dcc7c3255ca",
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "367d2bae82405f7936861b8d0abf740b787b1c84c7e9e5838308a517db251f5d",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "cf27814aac3b9341e14f452f8bd13d8996024b68e70a282a18b4ac33b9513536",
@@ -1807,7 +1807,7 @@
     "tests/task1-director/phase1-bounded-json-storage.test.ts": "11e1a7cf949d809286efff59ba8ebac6bcdf3e5b7e70c378886b3a49d6042326",
     "tests/task1-director/phase1-business-context-twins.test.ts": "7340f6ebe97d9efc2059f09c426462ceb6ba7bc7379c04c7f82e56c6054aeea8",
     "tests/task1-director/phase1-dimension-source-twins.test.ts": "073e18044148c36f82dff9bb65f0d205bf7c3bd570150d720f73367b747215ee",
-    "tests/task1-director/phase1-full-journey-handler-register.mjs": "33d5e2c7fb152204260e08decf4d11c8400ee13e9a1df1a44dfdbb3385355382",
+    "tests/task1-director/phase1-full-journey-handler-register.mjs": "8279d5ea0f38948d9ab2909b67b5150f381b9fdcf53cb387c9e0874243314971",
     "tests/task1-director/phase1-full-journey-twins.test.ts": "298374a229b0b1bf147b57c6cdf02b278f714a4bb5ef1b98d16108510d63e9d2",
     "tests/task1-director/phase1-lifecycle-storage-twins.test.ts": "db1882cd9339a96c7ecba2a2c64b6bc7786c5ca1b0c99329f99ad84718a5e7f4",
     "tests/task1-director/phase1-recap-clause-twins.test.ts": "6bb318ac6553f192b6c4547b50184a45f82b2cb546927ad9fbd16b075ea17762"

@@ -4056,6 +4056,53 @@ function dimensionBound(key: string): "maximum" | "minimum" | "excluded" | "exac
   return /^(?:width|height|depth)(?:_mm)?$/u.test(key) ? "exact" : null;
 }
 
+/** A complete, separately quoted customer dimension statement may coexist
+ * with one independently sourced merchant question. Only the existing typed
+ * dimension writer owns the statement; the entire original turn remains the
+ * authority for validation and the subsequent KB request. No phrase supplies
+ * the operation or measurement. Other compound shapes retain fail-closed
+ * behavior rather than guessing a partial write.
+ */
+function sourceBoundMixedDimensionStatement(input: CommerceRuntimeInput): string | null {
+  const frame = input.semantic_frame;
+  if (!frame || frame.confidence < 0.9 || frame.ambiguity.is_ambiguous ||
+      !["ADD_ITEM", "UPDATE_ITEM"].includes(frame.operation) ||
+      frame.additive || frame.customer_correction || frame.explicit_negations.length ||
+      frame.customer_facts?.length || frame.entities.length !== 1 ||
+      [frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state]
+        .some(value => !["none", "unknown"].includes(value))) return null;
+  const item = frame.entities[0], proofs = item.attributes.dimension_source_proofs;
+  const entries = Object.entries(item.constraints);
+  if (item.quantity !== null || Object.keys(item.attributes).some(key => key !== "dimension_source_proofs") ||
+      !entries.length || !isRecord(proofs)) return null;
+  const normalize = (value: string) => value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  const clauses: string[] = [];
+  for (const [key,value] of entries) {
+    const proof = proofs[key];
+    if (!dimensionKeyAxis(key) || typeof value !== "number" || !Number.isFinite(value) || value <= 0 ||
+        !isRecord(proof) || proof.status !== "current_affirmative" || typeof proof.clause !== "string") return null;
+    clauses.push(normalize(proof.clause));
+  }
+  const statement = clauses[0];
+  if (!statement || clauses.some(clause => clause !== statement) ||
+      looksInterrogative(statement) || !/[.!;。！；]$/u.test(statement)) return null;
+  const demands = frame.demands ?? [];
+  const merchant = demands.filter(demand => ["product","policy"].includes(demand.source_type) && demand.requested_facts.length > 0);
+  if (merchant.length !== 1 || demands.some(demand => demand.ambiguity.is_ambiguous ||
+      demand.customer_correction || demand.explicit_negations.length)) return null;
+  const question = normalize(merchant[0].source_quote ?? "");
+  if (!question || !looksInterrogative(question) || !/[?？]$/u.test(question) ||
+      demands.some(demand => demand !== merchant[0] &&
+        !(demand.source_type === "general" && !demand.requested_facts.length &&
+          normalize(demand.source_quote ?? "") === statement))) return null;
+  const text = normalize(input.text);
+  // Exact complete clauses, in either order. No hidden prefix, omitted
+  // negation, overlapping question fragment or unaccounted source text.
+  if (![statement + " " + question, statement + question,
+        question + " " + statement, question + statement].includes(text)) return null;
+  return statement;
+}
+
 /** Validate proposed dimensions at the complete reduction boundary. A model
  * key, an old message or a copied hint cannot supply the customer's dimension.
  * These technical axis/unit checks corroborate an accepted Reading; they never
@@ -4082,7 +4129,10 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
     ![input.company_id, input.conversation_id, input.source_message_id].every(value => value.trim()) ||
     [frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state]
       .some(value => !["none", "unknown"].includes(value)) ||
-    (!guidanceContextOnly && looksInterrogative(input.text)) || /(?:\bif\b|\bwhen\b|hypothetic|假如|如果|假設|假设)/iu.test(input.text)) return false;
+    (!guidanceContextOnly && looksInterrogative(input.text) && !sourceBoundMixedDimensionStatement(input)) || /(?:\bif\b|\bwhen\b|hypothetic|假如|如果|假設|假设)/iu.test(input.text)) return false;
+  const mixedDimensionStatement = sourceBoundMixedDimensionStatement(input);
+  if (mixedDimensionStatement && JSON.stringify(b2JourneyTransactionBoundary(previous)) !==
+      JSON.stringify(b2JourneyTransactionBoundary(next))) return false;
   if (guidanceContextOnly && (changed.length || frame.customer_correction || frame.explicit_negations.length ||
     frame.entities.some(item => item.quantity !== null) ||
     JSON.stringify(previous.entities) !== JSON.stringify(next.entities) ||
@@ -4178,6 +4228,14 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
     const old = previous.entities.find(value => value.entity_id === entity.entity_id);
     if (!targets.has(entity.entity_id) && JSON.stringify(entity) !== JSON.stringify(old)) return false;
     if (targets.has(entity.entity_id) && old && (entity.quantity !== old.quantity || entity.status !== old.status)) return false;
+    if (mixedDimensionStatement && targets.has(entity.entity_id)) {
+      if (!old && (entity.quantity !== 0 || entity.status !== "tentative")) return false;
+      if (old) {
+        const { constraints: _priorConstraints, provenance: _priorProvenance, ...priorIdentity } = old;
+        const { constraints: _nextConstraints, provenance: _nextProvenance, ...nextIdentity } = entity;
+        if (JSON.stringify(priorIdentity) !== JSON.stringify(nextIdentity)) return false;
+      }
+    }
   }
   // Every actual change must belong to an independently verified Reading.
   // Extra lexical candidates, copied hints and implicit removals fail closed.
@@ -4328,7 +4386,11 @@ function sourceBoundTurnReduction(previous: ConversationCommerceState, input: Co
   // purchase/hint parser and materialize default or duplicate entities.
   // All proposed dimensions are still independently checked below, and an
   // invalid proposal rejects these context/fact events together as one turn.
-  const candidate = guidanceContextOnly ? reduceCommerceState(previous, [
+  const mixedStatement = sourceBoundMixedDimensionStatement(input);
+  const candidate = mixedStatement && frame ? reduceSingleTurn(previous, {
+    ...input, text: mixedStatement, trusted_product_topic_focus: null,
+    semantic_frame: { ...frame, requested_facts: [], demands: [] },
+  }, hints, sourceContext) : guidanceContextOnly ? reduceCommerceState(previous, [
     { type: "SET_CONTEXT", language: input.language, intent: "customer_guidance", topic: guidance.topic },
     ...sourceBoundMixedCustomerFactEvents(frame, previous, input.text, input.source_message_id, input.occurred_at ?? null),
   ]) : reduceTurnCandidate(previous, input, hints, sourceContext);
