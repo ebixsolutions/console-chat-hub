@@ -3,7 +3,7 @@ import {
   type SemanticHistoryRow,
 } from "./conversation-semantic-contract.ts";
 import {
-  classifyNaturalCustomerIntent, exactProductIdentifiers, productFactualFacets,
+  classifyNaturalCustomerIntent, exactProductIdentifiers, isProductOperationFailure, productFactualFacets,
 } from "./natural-customer-response.ts";
 import { catalogueFactRequest } from "./kb-product-record.ts";
 import {
@@ -373,6 +373,53 @@ function recentCustomerDiscourseFocus(input: ResolveCurrentFactualRequestInput):
 }
 
 type DemandSubjectResolution = {bindings: SubjectBinding[]; question: string; unresolved: boolean};
+
+/** Verify an explicit historical selector using identified original customer
+ * introductions. Anonymous history and Assistant answers cannot establish
+ * ordering. First/second have explicit order; a relative former/latter or
+ * earlier reference needs a unique pair. No new locator is invented here. */
+function sourceBoundHistoricalSelector(input: ResolveCurrentFactualRequestInput, quote: string,
+  refs: string[], bindings: SubjectBinding[]): boolean {
+  if(refs.length!==1 || bindings.length!==1 || bindings[0].current || !clean(bindings[0].source_message_id))return false;
+  const first=/(?:最初|原先|第一)(?:嗰|那|的|嘅)?(?:款|部|件|個|个|產品|产品|服務|服务)?|\b(?:first|original)\s+(?:one|item|product|model|service|plan|option)\b/iu.test(quote);
+  const second=/第二(?:嗰|那|的|嘅)?(?:款|部|件|個|个|產品|产品|服務|服务)?|\bsecond\s+(?:one|item|product|model|service|plan|option)\b/iu.test(quote);
+  const earlier=/前者|\b(?:earlier|previous)\s+(?:one|item|product|model|service|plan|option)\b|\bthe former\b/iu.test(quote);
+  const later=/後者|后者|\bthe latter\b/iu.test(quote);
+  if(!first && !second && !earlier && !later)return true;
+  if(Number(first)+Number(second)+Number(earlier)+Number(later)!==1)return false;
+  const candidates:Array<{subject:string;first_index:number}>=[];
+  for(const [index,row] of (input.history??[]).entries()){
+    const id=clean(row.id),text=clean(row.content);
+    if(!id || id===input.source_message_id || !CUSTOMER.has(String(row.role??"").toLowerCase()) ||
+      !text || text===clean(input.question) || CONTROL_ONLY.test(text))continue;
+    // Reuse the existing source locator and verified Memory anchors. Customer
+    // scope/quantity/lifecycle statements are not competing merchant models.
+    const anchored=(input.memory?.factual_read_anchors??[]).some(anchor=>
+      anchor.source_message_id===id && clean(anchor.customer_text)===text &&
+      anchor.subjects.some(subject=>literalFactualSubject(text,[subject])));
+    if(!currentFacets(text).length && !exactProductIdentifiers(text).length && !anchored)continue;
+    // A cancellation updates lifecycle, not the order of original products.
+    // Its effect on the selected historical product is still checked by the
+    // existing bindSemanticSubject below, so a cancelled first item cannot
+    // silently turn the next product into the first.
+    if(LIFECYCLE_BOUNDARY.test(text) && !/(?:policy|政策|\bif\b|如果|唔好取消|不要取消|do not cancel|don't cancel)/iu.test(text))continue;
+    const subjects=explicitCustomerSubjects(text,customerSubjectHints(input,row))
+      .filter(subject=>!explicitlyNegatesSubject(text,subject));
+    if(!subjects.length)continue;
+    if(subjects.length!==1)return false;
+    const subject=subjects[0];
+    const prior=candidates.find(candidate=>norm(candidate.subject)===norm(subject));
+    if(prior)prior.first_index=index;
+    else candidates.push({subject,first_index:index});
+  }
+  candidates.sort((a,b)=>b.first_index-a.first_index);
+  const selected=first?candidates[0]:second?candidates[1]:
+    candidates.length===2?candidates[later?1:0]:earlier && candidates.length===1?candidates[0]:null;
+  const bound=selected?bindSemanticSubject(selected.subject,input):null;
+  return Boolean(bound && !bound.current && norm(bound.subject)===norm(bindings[0].subject) &&
+    bound.source_message_id===bindings[0].source_message_id);
+}
+
 function resolveDemandSubjects(
   input: ResolveCurrentFactualRequestInput, demand: CommerceSemanticDemand, refs: string[], currentSubjects: string[],
 ): DemandSubjectResolution {
@@ -399,8 +446,11 @@ function resolveDemandSubjects(
     demand.source_type !== "policy" && subjectlessFactualFollowup && !mentioned.length;
   if (!dependent) return unchanged();
   if (mentioned.length && !explicit.length) return {bindings: [], question: quote, unresolved: true};
-  if (!explicit.length && (EXPLICIT_HISTORY_REFERENCE.test(quote) ||
-    refs.length > 1 && (PLURAL_POINTER.test(quote) || EXPLICIT_COMPARISON.test(quote)))) return unchanged();
+  if (!explicit.length && EXPLICIT_HISTORY_REFERENCE.test(quote)) {
+    return sourceBoundHistoricalSelector(input,quote,refs,originalBindings)
+      ? unchanged() : {bindings:[],question:quote,unresolved:true};
+  }
+  if (!explicit.length && refs.length > 1 && (PLURAL_POINTER.test(quote) || EXPLICIT_COMPARISON.test(quote))) return unchanged();
 
   // The prior cited recommendation is a locator for a fresh price/stock
   // query, not evidence that the current merchant amount or inventory is valid.
@@ -1415,7 +1465,41 @@ function resolveLegacyCurrentFactualRequest(input: ResolveCurrentFactualRequestI
   return request;
 }
 
+/** A source-bound operating-failure report asks for the existing diagnostic
+ * next step, not a merchant fact. This grants no product, repair or transaction
+ * authority. The whole source must be one literal report and diagnostic ask;
+ * mixed facts, extra clauses and provider-only intent labels stay ordinary KB
+ * requests. Callers must supply the independently scoped Visitor source. */
+export function isSourceBoundOperationFailureRequest(input: ResolveCurrentFactualRequestInput): boolean {
+  const frame=input.semantic, text=clean(input.question);
+  if(!frame || !clean(input.trusted_company_id) || !clean(input.source_message_id) ||
+    input.memory && input.memory.company_id!==input.trusted_company_id ||
+    frame.operation!=="ASK_FACT" || frame.confidence<.9 || frame.ambiguity.is_ambiguous ||
+    frame.customer_correction || frame.additive || frame.explicit_negations.length ||
+    frame.entities.length || frame.referents.length || frame.customer_facts?.length ||
+    frame.requested_facts.length || frame.demands?.length!==1 ||
+    ![frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state].every(value=>value==="none") ||
+    !text || text.length>600 || /["“”「」『』`\r\n]/u.test(input.question) ||
+    !isProductOperationFailure(text))return false;
+  const demand=frame.demands[0], models=exactProductIdentifiers(text);
+  if(models.length!==1 || demand.source_type!=="general" || demand.requested_facts.length ||
+    clean(demand.source_quote)!==text || clean(demand.question)!==text ||
+    demand.subject_refs.length!==1 || norm(demand.subject_refs[0])!==norm(models[0]) ||
+    frame.topic && norm(frame.topic)!==norm(models[0]) || demand.customer_correction ||
+    demand.ambiguity.is_ambiguous || demand.explicit_negations.length || Object.keys(demand.constraints).length)return false;
+  const model=models[0].replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  // This bounded speech-act grammar reuses the existing failure classifier;
+  // it does not guess symptoms, an industry, a repair or a merchant policy.
+  return new RegExp(`^${model}\\s+(?:is\\s+not\\s+working|won['’]?t\\s+(?:start|turn\\s+on)|(?:does\\s+not|doesn['’]?t)\\s+turn\\s+on)[.!]?\\s+(?:what\\s+should\\s+I\\s+(?:check|do)|how\\s+can\\s+I\\s+check\\s+it)[?]?$`,"iu").test(text) ||
+    new RegExp(`^${model}\\s*(?:開唔到機|开不了机|開不了機|不能開機|无法开机)[，,。]?\\s*(?:點處理|点处理|怎麼處理|怎么处理)[?？]?$`,"iu").test(text);
+}
+
 export function resolveCurrentFactualRequest(input: ResolveCurrentFactualRequestInput): CurrentFactualRequest {
+  if(isSourceBoundOperationFailureRequest(input)) {
+    // Keep the accepted complete general demand. The planner's existing
+    // product_operation_failure branch supplies a question, never KB facts.
+    return resolveSemanticDemands(input,input.semantic!.demands!);
+  }
   const pending=resolveVerifiedClarificationContinuation(input);
   if(pending)return pending;
   if (input.semantic && input.semantic.confidence >= .62 &&

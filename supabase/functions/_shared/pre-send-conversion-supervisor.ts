@@ -215,7 +215,15 @@ function isTrustedReadOnlyRecap(input: B2EvaluationInput, draft: string): boolea
   )) return false;
   const inactive = s.state.entities.filter((e) => e.status === "cancelled" || e.status === "deferred");
   if (inactive.some(e => !p.memory.cancelled_or_superseded.some(f => f.entity_id === e.entity_id && f.value === e.status && f.source_message_id === e.provenance.source_message_id))) return false;
-  if (inactive.some((e) => new RegExp(`(?:${e.category === "refrigerator" ? "雪櫃|冰箱|refrigerator" : e.category}).{0,18}(?:而家|現在|目前|current|active|繼續處理|仍要)`, "i").test(draft))) return false;
+  if (inactive.some((e) => {
+    // Entity labels are literal data. A later punctuated sentence about current
+    // facts is not an assertion that this inactive entity is active again.
+    // Keep clean() normalization: a line wrap alone does not end a claim.
+    const label = e.category === "refrigerator"
+      ? "雪櫃|冰箱|refrigerator"
+      : e.category.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:${label})[^。.!?！？;；]{0,18}(?:而家|現在|目前|current|active|繼續處理|仍要)`, "i").test(draft);
+  })) return false;
   for (const entity of active) {
     const sizes = entity.attributes.room_sizes;
     if (sizes && typeof sizes === "object" && !Array.isArray(sizes)) {

@@ -79,7 +79,7 @@ import {
   requiresCurrentMerchantEvidence,
 } from "../_shared/natural-customer-response.ts";
 import { productKbSemanticContract } from "../_shared/product-kb-semantic-contract.ts";
-import { resolveCurrentFactualRequest, type CurrentFactualRequest } from "../_shared/current-factual-request.ts";
+import { isSourceBoundOperationFailureRequest, resolveCurrentFactualRequest, type CurrentFactualRequest } from "../_shared/current-factual-request.ts";
 import { buildCurrentFactualRequestPrompt, currentFactualFollowupContext, currentFactualRequestContext, currentFactualRequestReceipt, renderUnverifiedFactualNextStep } from "../_shared/factual-request-context.ts";
 import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer, resolveSourceRecordedPartialRecovery, type FactualEvidenceBundle} from "../_shared/factual-evidence-selection.ts";
 import {buildGroundingEvidencePrompt, type GroundingEvidence} from "../_shared/grounding-evidence.ts";
@@ -182,6 +182,8 @@ import {
   acknowledgeCurrentCustomerDimensions,
   sourceBoundQuantityUnit,
   resolveCommittedAddressCorrection,
+  readSourceBoundDimensionComparison,
+  sourceBoundDimensionComparison,
   runCommerceStateRuntime,
 } from "../_shared/commerce-state-runtime.ts";
 import { prepareSemanticRequest, type PreparedSemanticRequest } from "../_shared/prepare-semantic-request.ts";
@@ -4857,7 +4859,10 @@ async function orchestrationGenerateReply(
       ? sourceBoundQuantityUnit({company_id:_criticalE2ExpectedTenantId,conversation_id,
         source_message_id:_h1SourceMessageId,text:_h1LastMsg,language:_visitorLang === "en" ? "en" : _visitorLang === "zh-CN" ? "zh-CN" : "zh-TW",
         semantic_frame:_a3SemanticFrame},_semanticPrepared.commerce) : null;
-  const _customerRequestDecision = _pureSourceQuantityUnit
+  const _pureSourceOperationFailure = Boolean(_semanticPrepared?.recovery.source_verified &&
+    isSourceBoundOperationFailureRequest({question:_h1LastMsg,source_message_id:_h1SourceMessageId,
+      trusted_company_id:_criticalE2ExpectedTenantId,semantic:_a3SemanticFrame}));
+  const _customerRequestDecision = _pureSourceQuantityUnit || _pureSourceOperationFailure
     ? {kind:"other" as const,continuation:false,general_request:null,merchant_request:null,
       latest_requirements:_h1LastMsg,semantic_demands:_a3SemanticFrame!.demands}
     : resolveCustomerRequestDecision(_semanticRequestQuestion,_a3SemanticFrame,_semanticRoutingHistory);
@@ -4959,8 +4964,28 @@ async function orchestrationGenerateReply(
     !_a3SemanticFrame.customer_facts?.length && !_a3SemanticFrame.entities.length &&
     !_a3SemanticFrame.requested_facts.length &&
     [_a3SemanticFrame.transaction_state,_a3SemanticFrame.payment_state,_a3SemanticFrame.booking_state,_a3SemanticFrame.fulfillment_state].every(s=>s==="none"||s==="unknown"));
+  const _sourceDimensionInput: Parameters<typeof readSourceBoundDimensionComparison>[1] = {
+    company_id: _criticalE2ExpectedTenantId ?? "", conversation_id,
+    source_message_id: _h1SourceMessageId, text: _h1LastMsg,
+    language: _visitorLang === "en" ? "en" : _visitorLang === "zh-CN" ? "zh-CN" : "zh-TW",
+    semantic_frame: _a3SemanticFrame,
+  };
+  let _sourceDimensionComparison: CommerceRuntimeOutcome | null = null;
+  if (_criticalE2ExpectedTenantId && _pureFactualSubjectRead) {
+    try {
+      // Read only. A single complete source-measured comparison is proved
+      // against the actual scoped snapshot; merchant reads never enter a writer.
+      _sourceDimensionComparison = await readSourceBoundDimensionComparison(
+        supabaseAdmin as unknown as CommerceStateDbClient, _sourceDimensionInput);
+      if (_sourceDimensionComparison) _a3Commerce = _sourceDimensionComparison;
+    } catch (error) {
+      console.error("[generate-reply] dimension comparison read failed closed", error);
+      return new Response(JSON.stringify({success:false,error:"commerce_state_unavailable",retryable:false}),
+        {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    }
+  }
   if (
-    _criticalE2ExpectedTenantId && !_pureFactualSubjectRead && !_purePriorGroundedTransform &&
+    _criticalE2ExpectedTenantId && !_pureFactualSubjectRead && !_purePriorGroundedTransform && !_pureSourceOperationFailure &&
     (!requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) || _customerOwnedDelta || Boolean(_a3SemanticFrame) ||
       (_productFollowUpArbitration.kind === "resolved" &&
         _productFollowUpArbitration.resolution_strategy === "PER_TOPIC_REFERENT_HISTORY" &&
@@ -5014,6 +5039,10 @@ async function orchestrationGenerateReply(
     outcome: _a3Commerce,
     authoritative_address_correction: false,
   });
+  const _c3RejectedCustomerRequirement = _a3Commerce?.persist_result === "read_only" &&
+    _a3Commerce.reason === "contextual_targeted_clarification" &&
+    _a3Commerce.contextual_decision?.route === "targeted_clarification" &&
+    _a3Commerce.contextual_decision.reason === "UNVERIFIED_CUSTOMER_REQUIREMENT";
 
   // ===== AI-ABC-C3: canonical bounded long-conversation memory =====
   // The source visitor turn is already durable and A3 has resolved canonical
@@ -5065,17 +5094,19 @@ async function orchestrationGenerateReply(
         };
       }
       try {
-        _currentFactualRequest = resolveCurrentFactualRequest({
-          question: _semanticRequestQuestion,
-          source_message_id: _h1SourceMessageId,
-          trusted_company_id: _criticalE2ExpectedTenantId,
-          history: _semanticHistory,
-          memory: _semanticPrepared?.memory ?? null,
-          semantic: _a3SemanticFrame,
-          commerce: commerceState,
-          request_decision: _customerRequestDecision,
-        });
-        if (_criticalE2ExpectedTenantId && _h1SourceMessageId) await writeProtectedPipelineEvidence(supabaseAdmin, {
+        if (!_sourceDimensionComparison && !_c3RejectedCustomerRequirement) {
+          _currentFactualRequest = resolveCurrentFactualRequest({
+            question: _semanticRequestQuestion,
+            source_message_id: _h1SourceMessageId,
+            trusted_company_id: _criticalE2ExpectedTenantId,
+            history: _semanticHistory,
+            memory: _semanticPrepared?.memory ?? null,
+            semantic: _a3SemanticFrame,
+            commerce: commerceState,
+            request_decision: _customerRequestDecision,
+          });
+        }
+        if (_currentFactualRequest && _criticalE2ExpectedTenantId && _h1SourceMessageId) await writeProtectedPipelineEvidence(supabaseAdmin, {
           company_id:_criticalE2ExpectedTenantId,conversation_id,source_message_id:_h1SourceMessageId,
         }, "knowledge_ownership_routing", {subject_resolution:{
           missing_evidence:_currentFactualRequest.missing_evidence,
@@ -5145,7 +5176,7 @@ async function orchestrationGenerateReply(
         return new Response(JSON.stringify({ success: false, error: "scoped_correction_commit_unverified" }),
           { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-      const memoryOutcome = !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
+      const memoryOutcome = _c3RejectedCustomerRequirement || !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
         ? null
         : await refreshConversationLongMemory(
           supabaseAdmin as unknown as Parameters<
@@ -5617,12 +5648,33 @@ async function orchestrationGenerateReply(
     outcome: _a3Commerce,
     authoritative_address_correction: Boolean(_c3ResolvedAddressCorrection),
   });
+  const _dimensionRevalidated = _sourceDimensionComparison && _c3CommerceSnapshot
+    ? sourceBoundDimensionComparison(_sourceDimensionInput, { ..._c3CommerceSnapshot,
+      conversation_id: _c3CommerceSnapshot.conversation_id ?? "" }) : null;
+  const _c3VerifiedDimensionComparison = Boolean(_sourceDimensionComparison && _dimensionRevalidated &&
+    _dimensionRevalidated.revision === _sourceDimensionComparison.revision &&
+    _dimensionRevalidated.state_path === _sourceDimensionComparison.state_path &&
+    _dimensionRevalidated.reply === _sourceDimensionComparison.reply);
+  if (_sourceDimensionComparison && !_c3VerifiedDimensionComparison) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(JSON.stringify({success:false,error:"dimension_comparison_state_changed",retryable:true}),
+      {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+  }
   const _customerGuidance = _customerRequestDecision.kind === "guidance" &&
     classifyLocalTopicRisk(_h1LastMsg)?.level !== "high";
+  // A source-derived read-only calculation is already resolved. A legacy
+  // product-name clarification (for example from the word "price") must not
+  // commit first and prevent the existing calculation proof/B2 path below.
+  const _c3ReadyCustomerCalculation = _c3ServicePlan.action === "historical_calculation" &&
+    _c3RuntimeInputs.calculation_status === "ready" &&
+    _a3Commerce?.reason === "read_only_customer_calculation" &&
+    _a3Commerce.authority === "CONVERSATION_STATE" && _a3Commerce.persist_result === "read_only" &&
+    typeof _a3Commerce.calculation?.result === "number" && Number.isFinite(_a3Commerce.calculation.result) &&
+    _a3Commerce.calculation.result === _c3ServicePlan.calculation?.total;
   // A product clarification may coexist with customer-owned changes. Commit
   // those changes and refresh bounded context before emitting an AI reply.
   // Explicit R1 is handled by its control transaction farther below.
-  if (!_explicitHandoffRequested && !_c3CustomerRecallRoute && !_customerGuidance && _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")) {
+  if (!_explicitHandoffRequested && !_c3CustomerRecallRoute && !_customerGuidance && !_c3ReadyCustomerCalculation && !_c3VerifiedDimensionComparison && !_c3RejectedCustomerRequirement && _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")) {
     const immediate = await persistNaturalImmediateResponse(
       supabaseAdmin, conversation_id, _h1SourceMessageId,
       _effectiveNaturalCustomerIntent, _w2FixedLanguage, undefined, undefined, _w2PresentationLocale,
@@ -5639,7 +5691,7 @@ async function orchestrationGenerateReply(
     { explicit_handoff: isHandoffIntent(_h1LastMsg) },
   );
   if (
-    !_explicitHandoffRequested && !_customerGuidance && _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
+    !_explicitHandoffRequested && !_customerGuidance && !_c3ReadyCustomerCalculation && !_c3VerifiedDimensionComparison && !_c3RejectedCustomerRequirement && _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
     _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
   ) {
@@ -5902,9 +5954,9 @@ Latest applicable corrections replace old values; an answered clarification is n
     (_a3Commerce?.reason === "explicit_address_correction_applied"
       ? null
       : _a3Commerce?.reply ?? null);
-  if (_c3CommerceReply && !_explicitHandoffRequested && (!_customerGuidance && !_mixedRequest || Boolean(_c3VerifiedCorrectionReceipt || _c3LifecycleReceipt)) &&
-    _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
-    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)) {
+  if (_c3CommerceReply && !_explicitHandoffRequested && (_c3RejectedCustomerRequirement || !_customerGuidance && !_mixedRequest || Boolean(_c3VerifiedCorrectionReceipt || _c3LifecycleReceipt)) &&
+    (_c3RejectedCustomerRequirement || _c3VerifiedDimensionComparison || (_c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
+    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)))) {
     const commerceReply = _a3Commerce?.reason ===
         "previous_quote_not_authoritative_for_current_price"
       ? historicalQuoteValidityReply(_visitorLang)
@@ -5949,6 +6001,10 @@ Latest applicable corrections replace old values; an answered clarification is n
             _a3Commerce.state_path,
           )
           : null,
+        // A source-proved comparison or a non-writing rejected interpretation
+        // preserves the prior Memory source. Each still needs its original
+        // readback or targeted-clarification proof in B2 before reply commit.
+        ...(_c3VerifiedDimensionComparison || _c3RejectedCustomerRequirement ? { transaction_mutation: "NONE" } : {}),
         commerce_calculation: _a3Commerce?.calculation ?? null,
         correction_resolution: _c3ResolvedAddressCorrection?.status ?? null,
         correction_operation: _c3ResolvedAddressCorrection?.operation ?? null,

@@ -98,12 +98,15 @@ export interface CommerceStateQueryResult {
   error: unknown;
 }
 
+export interface CommerceStateFilteredQuery {
+  maybeSingle(): Promise<CommerceStateQueryResult>;
+  eq?(column: string, value: string): CommerceStateFilteredQuery;
+}
+
 export interface CommerceStateDbClient {
   from(table: string): {
     select(columns: string): {
-      eq(column: string, value: string): {
-        maybeSingle(): Promise<CommerceStateQueryResult>;
-      };
+      eq(column: string, value: string): CommerceStateFilteredQuery;
     };
   };
   rpc(fn: string, params: Record<string, unknown>): Promise<CommerceStateQueryResult>;
@@ -939,6 +942,83 @@ function resolveReadOnlyAttributeConstraintQuery(
   };
 }
 
+/** A complete customer-supplied comparison may be answered without treating
+ * the stated measurement as a request for a merchant's dimensions. This is a
+ * read probe only: the existing dimension resolver supplies the actual answer.
+ */
+export function sourceBoundDimensionComparison(input: CommerceRuntimeInput, snapshot: {
+  company_id: string; conversation_id: string; source_message_id: string | null;
+  revision: number; state: ConversationCommerceState;
+}): CommerceRuntimeOutcome | null {
+  const frame = input.semantic_frame, source = clean(input.text, 2400);
+  if (!frame || frame.operation !== "ASK_FACT" || frame.confidence < 0.9 ||
+    frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+    frame.explicit_negations.length || frame.customer_facts?.length || frame.entities.length ||
+    frame.referents.length !== 1 || frame.demands?.length !== 1 ||
+    !input.company_id?.trim() || !input.conversation_id?.trim() || !input.source_message_id?.trim() ||
+    snapshot.company_id !== input.company_id || snapshot.conversation_id !== input.conversation_id ||
+    !snapshot.source_message_id?.trim() || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 1 ||
+    !isConversationCommerceState(snapshot.state) || !source || source.length > 600 ||
+    /["“”「」『』`\n]/u.test(input.text) ||
+    ![frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state]
+      .every(value => value === "none" || value === "unknown")) return null;
+  const measurement = parseCommerceDimensionMeasurement(source);
+  const axis = inferCommerceDimensionAttribute(source);
+  const demand = frame.demands[0];
+  if (!measurement || !axis || frame.requested_facts.length !== 1 || frame.requested_facts[0] !== axis ||
+    demand.requested_facts.length !== 1 || demand.requested_facts[0] !== axis ||
+    !["general", "unknown"].includes(demand.source_type) || clean(demand.source_quote, 2400) !== source ||
+    clean(demand.question, 2400) !== source || demand.subject_refs.length !== 1 ||
+    demand.customer_correction || demand.ambiguity.is_ambiguous || demand.explicit_negations.length ||
+    Object.keys(demand.constraints).length) return null;
+  const reference = frame.referents[0];
+  if (reference.confidence < 0.9 || !["persistent_state", "prior_turn"].includes(reference.source)) return null;
+  const norm = (value: string) => value.normalize("NFKC").trim().toLowerCase();
+  const candidates = snapshot.state.entities.filter(entity =>
+    sourceOwnedSubjectLabels(entity).some(label => matchesReferenceLabel(source, label)));
+  if (candidates.length !== 1) return null;
+  const target = candidates[0], labels = sourceOwnedSubjectLabels(target);
+  if (target.provenance.source_type !== "customer" || !target.provenance.source_message_id?.trim() ||
+    ["cancelled", "deferred", "superseded"].includes(target.status)) return null;
+  const binds = (value: string) => value === target.entity_id || labels.includes(norm(value));
+  if (!binds(reference.ref) || !binds(demand.subject_refs[0]) ||
+    (frame.topic && !labels.includes(norm(frame.topic)))) return null;
+  // Reuse the existing unit parser; a raw source span is used only to prove
+  // that no second clause, merchant fact or unquoted measurement is omitted.
+  const spans = (source.match(/\d{1,5}(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|inch(?:es)?|吋)(?![\p{L}\p{N}])/giu) ?? [])
+    .filter(value => parseCommerceDimensionMeasurement(value));
+  if (spans.length !== 1 || parseCommerceDimensionMeasurement(spans[0])?.value_mm !== measurement.value_mm) return null;
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const complete = labels.some(label => {
+    const name = escape(label), number = escape(spans[0]);
+    return new RegExp(`^(?:would ${name} ${axis}|(?:back to ${name}:\\s*)would (?:a )?${axis}(?: of)?)\\s+${number}\\s+fit[?？]?$`, "iu").test(source);
+  });
+  if (!complete) return null;
+  const boundFrame: CommerceSemanticFrame = { ...frame,
+    referents: [{ ...reference, ref: target.entity_id }],
+    demands: [{ ...demand, subject_refs: [target.entity_id] }] };
+  const result = resolveReadOnlyAttributeConstraintQuery({ ...input, semantic_frame: boundFrame }, snapshot.state, snapshot.revision);
+  return result?.authority === "CONVERSATION_STATE" && result.reason === "read_only_attribute_constraint_query_resolved" && result.state_path
+    ? { ...result, revision: snapshot.revision, persist_result: "read_only", route: "commerce_state_answer" } : null;
+}
+
+export async function readSourceBoundDimensionComparison(db: CommerceStateDbClient,
+  input: CommerceRuntimeInput): Promise<CommerceRuntimeOutcome | null> {
+  if (input.semantic_frame?.operation !== "ASK_FACT" || !parseCommerceDimensionMeasurement(input.text)) return null;
+  const scoped = db.from("conversation_commerce_state")
+    .select("company_id,conversation_id,source_message_id,revision,state")
+    .eq("conversation_id", input.conversation_id);
+  if (typeof scoped.eq !== "function") throw new Error("commerce_state_scope_filter_unavailable");
+  const { data, error } = await scoped.eq("company_id", input.company_id).maybeSingle();
+  if (error) throw new Error("commerce_state_read_failed");
+  if (!isRecord(data) || !isConversationCommerceState(data.state)) return null;
+  if (data.company_id !== input.company_id || data.conversation_id !== input.conversation_id)
+    throw new Error("commerce_state_scope_mismatch");
+  return sourceBoundDimensionComparison(input, { company_id: input.company_id, conversation_id: input.conversation_id,
+    source_message_id: typeof data.source_message_id === "string" ? data.source_message_id : null,
+    revision: Number(data.revision), state: data.state });
+}
+
 type CanonicalQuantityRead =
   | { kind: "not_applicable" }
   | { kind: "unresolved" }
@@ -1710,7 +1790,7 @@ function attestedItemQuantity(text:string,name:string,proposed:number|null,unit?
    six:6,seven:7,eight:8,nine:9,ten:10};
  const spans=new Map<string,number>();
  for(const [i,clause] of text.normalize("NFKC").toLowerCase()
-   .split(/[，,。；;!?！？\n]+/u).map(s=>s.trim()).filter(Boolean).entries()){
+   .split(/[，,。；;!?！？\n]+|(?<!\d)\.(?=\s|$)|(?<=\d)\.(?!\d)(?=\s|$)/u).map(s=>s.trim()).filter(Boolean).entries()){
   for(const form of [...new Set(forms)]){
    if(!matchesReferenceLabel(clause,form))continue;
    const at=clause.indexOf(form),tail=at+form.length;
@@ -1730,8 +1810,10 @@ function attestedItemQuantity(text:string,name:string,proposed:number|null,unit?
       (/^\s*[\p{Script=Han}]{1,2}\s*$/u.test(before) &&
       (!unit || before.trim()===unit)) || unitForItem);
     const after=start>=tail?clause.slice(tail,start):null;
+    const remainder=clause.slice(end).trim();
     const suffix=after!==null && /^\s*(?:[:：×x]\s*)?$/u.test(after) &&
-      (clause.slice(end).trim()==="" || (unit && clause.slice(end).trim()===unit));
+      (remainder==="" || (sourceUnit && (remainder===sourceUnit ||
+        remainder.startsWith(sourceUnit) && /^\s/u.test(remainder.slice(sourceUnit.length)))));
     if(prefix||suffix)spans.set(i+":"+start+":"+at,n);
    }
   }
@@ -2805,13 +2887,24 @@ function acceptedCompoundLifecyclePlan(input: CommerceRuntimeInput, state: Conve
   const focus = focusKey ? state.entities.filter(entity => entity.category === focusKey && activeOwned(entity)) : [];
   if (focusKey && (focus.length !== 1 || targetIds.includes(focus[0].entity_id))) return false;
   const allowed = [...targets.map(matches => matches[0]), ...focus];
-  const refs = frame.referents.map(ref => ref.ref);
-  if (new Set(refs).size !== refs.length || targetIds.some(id => !refs.includes(id)) ||
+  // Older projected identifiers may be redacted. An exact visible customer
+  // name can bind the same already-parsed subject, without guessing its ID
+  // or granting the Reading any additional lifecycle target.
+  const boundReference = (ref: string): ConversationCommerceState["entities"][number] | null => {
+    const direct = allowed.find(entity => entity.entity_id === ref);
+    if (direct) return direct;
+    const label = ref.normalize("NFKC").trim().toLowerCase();
+    if (!label || label.length > 160 || !matchesReferenceLabel(input.text, label)) return null;
+    const matches = state.entities.filter(entity => sourceOwnedSubjectLabels(entity).includes(label));
+    return matches.length === 1 && activeOwned(matches[0]) &&
+      allowed.some(entity => entity.entity_id === matches[0].entity_id) ? matches[0] : null;
+  };
+  const refs = frame.referents.map(ref => boundReference(ref.ref)?.entity_id ?? null);
+  if (refs.some(ref => ref === null) || new Set(refs).size !== refs.length || targetIds.some(id => !refs.includes(id)) ||
       frame.referents.some(ref => ref.confidence < 0.90 ||
-        !["persistent_state", "prior_turn"].includes(ref.source) ||
-        !allowed.some(entity => entity.entity_id === ref.ref))) return false;
+        !["persistent_state", "prior_turn"].includes(ref.source))) return false;
   if (frame.entities.some(proposal => {
-    const entity = allowed.find(value => value.entity_id === proposal.entity_ref);
+    const entity = proposal.entity_ref ? boundReference(proposal.entity_ref) : null;
     const unit = typeof entity?.attributes.unit === "string" ? entity.attributes.unit : null;
     return !entity || proposal.confidence < 0.90 || proposal.quantity != null ||
       !sourceOwnedSubjectLabels(entity).includes(proposal.name.normalize("NFKC").trim().toLowerCase()) ||
@@ -2822,8 +2915,7 @@ function acceptedCompoundLifecyclePlan(input: CommerceRuntimeInput, state: Conve
       demand.source_quote?.normalize("NFKC").trim() !== source || demand.ambiguity.is_ambiguous ||
       demand.requested_facts.length || demand.explicit_negations.length ||
       !demand.subject_refs.length || demand.subject_refs.some(ref =>
-        !allowed.some(entity => entity.entity_id === ref || sourceOwnedSubjectLabels(entity)
-          .includes(ref.normalize("NFKC").trim().toLowerCase()))))) return false;
+        !boundReference(ref)))) return false;
   const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return splitCustomerOperationClauses(input.text).every(clause => {
     const part = resolveEntityLifecyclePlan(clause, state);
@@ -3825,7 +3917,7 @@ function hasContextualScopeFactProposal(input: CommerceRuntimeInput): boolean {
 
 function hasContextualScopeAllocation(input: CommerceRuntimeInput): boolean {
   return Boolean(input.semantic_frame?.entities.some(entity =>
-    Array.isArray(entity.attributes.scoped_customer_updates)));
+    Object.prototype.hasOwnProperty.call(entity.attributes, "scoped_customer_updates")));
 }
 
 /** Scope background uses the existing canonical constraint event and one CAS.
@@ -3928,8 +4020,218 @@ function contextualUpdateCommitted(decision: ContextualDecision,
   return decision.aggregate_quantity === undefined || entity.quantity === decision.aggregate_quantity;
 }
 
+type DimensionWrite = { entity_id: string; key: string; value: unknown; remove: boolean };
+const dimensionKeyAxis = (key: string): CommerceDimensionAttribute | null => {
+  const match = key.match(/^(?:(?:max|min|excluded)_)?(width|height|depth)(?:_max)?(?:_mm)?$/u);
+  return match ? match[1] as CommerceDimensionAttribute : null;
+};
+
+/** Validate proposed dimensions at the complete reduction boundary. A model
+ * key, an old message or a copied hint cannot supply the customer's dimension.
+ * These technical axis/unit checks corroborate an accepted Reading; they never
+ * infer a mutation operation or an industry from prose. */
+function sourceBoundDimensionReduction(previous: ConversationCommerceState,
+  next: ConversationCommerceState, input: CommerceRuntimeInput, guidanceContextOnly = false): boolean {
+  const changed: DimensionWrite[] = [];
+  for (const entity of next.entities) {
+    const old = previous.entities.find(value => value.entity_id === entity.entity_id);
+    for (const key of new Set([...Object.keys(old?.constraints ?? {}), ...Object.keys(entity.constraints)])) {
+      if (dimensionKeyAxis(key) && JSON.stringify(old?.constraints[key]) !== JSON.stringify(entity.constraints[key]))
+        changed.push({ entity_id: entity.entity_id, key, value: entity.constraints[key],
+          remove: !Object.prototype.hasOwnProperty.call(entity.constraints, key) });
+    }
+  }
+  const frame = input.semantic_frame;
+  const proposals = frame?.entities.flatMap(item => Object.entries(item.constraints)
+    .filter(([key]) => dimensionKeyAxis(key)).map(([key, value]) => ({ item, key, value }))) ?? [];
+  if (!changed.length && !proposals.length) return true;
+  if (!frame || frame.confidence < 0.9 || frame.ambiguity.is_ambiguous || frame.additive ||
+    !(guidanceContextOnly ? frame.operation === "ASK_FACT" : ["ADD_ITEM", "UPDATE_ITEM"].includes(frame.operation)) ||
+    ![input.company_id, input.conversation_id, input.source_message_id].every(value => value.trim()) ||
+    [frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state]
+      .some(value => !["none", "unknown"].includes(value)) ||
+    (!guidanceContextOnly && looksInterrogative(input.text)) || /(?:\bif\b|\bwhen\b|hypothetic|假如|如果|假設|假设)/iu.test(input.text)) return false;
+  if (guidanceContextOnly && (changed.length || frame.customer_correction || frame.explicit_negations.length ||
+    frame.entities.some(item => item.quantity !== null) ||
+    JSON.stringify(previous.entities) !== JSON.stringify(next.entities) ||
+    JSON.stringify(b2JourneyTransactionBoundary(previous)) !== JSON.stringify(b2JourneyTransactionBoundary(next)))) return false;
+  const text = input.text.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  if (!text || text.length > 2400) return false;
+  const normalize = (value: string) => value.normalize("NFKC").trim().toLowerCase();
+  const owned = (entity: ConversationCommerceState["entities"][number]) =>
+    entity.provenance.source_type === "customer" &&
+    typeof entity.provenance.source_message_id === "string" && !!entity.provenance.source_message_id.trim() &&
+    !["cancelled", "deferred", "superseded"].includes(entity.status);
+  const resolveRef = (ref: string) => previous.entities.filter(entity => entity.entity_id === ref ||
+    sourceOwnedSubjectLabels(entity).some(label => normalize(label) === normalize(ref)));
+  const targets = new Map<string, string[]>();
+  const proposalWrites: DimensionWrite[] = [];
+  for (const { item, key, value } of proposals) {
+    if (item.confidence < 0.9 || !item.name.trim() || !matchesReferenceLabel(text, item.name)) return false;
+    const refs = resolveRef(item.entity_ref ?? "");
+    const named = previous.entities.filter(entity => sourceOwnedSubjectLabels(entity)
+      .some(label => normalize(label) === normalize(item.name)));
+    let target: ConversationCommerceState["entities"][number] | undefined;
+    let contextValue = value;
+    if (guidanceContextOnly && isRecord(value)) {
+      if (Object.keys(value).length !== 2 || typeof value.amount !== "number" || !Number.isFinite(value.amount) ||
+        value.amount <= 0 || typeof value.unit !== "string" ||
+        !/^(?:mm|毫米|cm|厘米|公分|inch(?:es)?|吋)$/iu.test(value.unit)) return false;
+      const measurement = parseCommerceDimensionMeasurement(`${value.amount}${value.unit}`);
+      if (!measurement) return false;
+      contextValue = measurement.value_mm;
+    }
+    if (refs.length || named.length) {
+      if (refs.length !== 1 || named.length !== 1 || refs[0].entity_id !== named[0].entity_id || !owned(refs[0])) return false;
+      target = refs[0];
+    } else {
+      if (guidanceContextOnly) {
+        // This temporary identity selects source spans only. It is never a
+        // reducer entity, a quantity or a persisted dimension constraint.
+        const id = item.entity_ref || item.name;
+        targets.set(id, [normalize(item.name)]);
+        proposalWrites.push({ entity_id: id, key, value: contextValue, remove: false });
+        continue;
+      }
+      if (frame.operation !== "ADD_ITEM") return false;
+      const created = next.entities.filter(entity => !previous.entities.some(old => old.entity_id === entity.entity_id) &&
+        normalize(String(entity.attributes.product_name ?? "")) === normalize(item.name));
+      if (created.length !== 1 || !owned(created[0])) return false;
+      target = created[0];
+    }
+    targets.set(target.entity_id, [...new Set([...sourceOwnedSubjectLabels(target), normalize(item.name)])]);
+    proposalWrites.push({ entity_id: target.entity_id, key, value: contextValue, remove: false });
+  }
+  for (const change of changed) {
+    const current = next.entities.find(entity => entity.entity_id === change.entity_id);
+    const old = previous.entities.find(entity => entity.entity_id === change.entity_id);
+    if (!current || !owned(current) || current.provenance.source_message_id !== input.source_message_id ||
+      (old && !owned(old))) return false;
+    if (!targets.has(change.entity_id)) {
+      // The existing sparse UPDATE_ITEM contract has no entity proposal. Its
+      // exact current customer name and unique persisted reference still bind.
+      if (proposals.length || !old || frame.operation !== "UPDATE_ITEM" || frame.entities.length) return false;
+      const refs = frame.referents.filter(ref => ref.confidence >= 0.9 &&
+        ["persistent_state", "prior_turn"].includes(ref.source));
+      if (refs.length !== 1 || resolveRef(refs[0].ref).length !== 1 ||
+        resolveRef(refs[0].ref)[0].entity_id !== old.entity_id) return false;
+      targets.set(old.entity_id, sourceOwnedSubjectLabels(old));
+    }
+  }
+  if (!targets.size) return false;
+  const permittedRef = (ref: string) => {
+    const existing = resolveRef(ref);
+    if (existing.length) return existing.length === 1 && targets.has(existing[0].entity_id);
+    return [...targets].some(([id, labels]) => id === ref || labels.some(label => normalize(label) === normalize(ref)));
+  };
+  if (frame.referents.some(ref => ref.confidence < 0.9 || !permittedRef(ref.ref) ||
+    guidanceContextOnly && ["persistent_state", "prior_turn"].includes(ref.source) && resolveRef(ref.ref).length !== 1)) return false;
+  for (const demand of frame.demands ?? []) {
+    const quote = demand.source_quote?.normalize("NFKC").replace(/\s+/gu, " ").trim();
+    // A lookup classification is neither evidence for nor a veto of the
+    // independently attested customer statement in this same source quote.
+    if (!quote || !text.includes(quote) || demand.ambiguity.is_ambiguous ||
+      demand.subject_refs.some(ref => !permittedRef(ref))) return false;
+  }
+  // A verified dimension cannot incidentally create a shadow item or revise a
+  // sibling. Non-entity customer facts still pass through the original reducer.
+  for (const entity of next.entities) {
+    const old = previous.entities.find(value => value.entity_id === entity.entity_id);
+    if (!targets.has(entity.entity_id) && JSON.stringify(entity) !== JSON.stringify(old)) return false;
+    if (targets.has(entity.entity_id) && old && (entity.quantity !== old.quantity || entity.status !== old.status)) return false;
+  }
+  const clauses = text.split(/[;；。!?！？\n]+|\.(?=\s|$)/u).filter(Boolean);
+  const axisOf = (token: string): CommerceDimensionAttribute => /(?:width|wide|闊|寬|宽)/iu.test(token)
+    ? "width" : /(?:height|high|tall|高)/iu.test(token) ? "height" : "depth";
+  const proofsFor = (id: string, axis: CommerceDimensionAttribute) => {
+    const labels = targets.get(id) ?? [];
+    return clauses.filter(clause => labels.some(label => matchesReferenceLabel(clause, label)) &&
+      !previous.entities.some(entity => entity.entity_id !== id && sourceOwnedSubjectLabels(entity)
+        .some(label => matchesReferenceLabel(clause, label)))).flatMap(clause => {
+      const axes = [...clause.matchAll(/\b(?:width|wide|height|high|tall|depth|deep)\b|闊度?|寬度?|宽度?|高度?|深度?/giu)];
+      const measures = [...clause.matchAll(/(?<![\p{Script=Latin}\p{N}_.+\-−])\d{1,5}(?:\.\d+)?\s*(?:mm\b|毫米|cm\b|厘米|公分|inch(?:es)?\b|吋)/giu)];
+      return measures.flatMap((measure, index) => {
+        const at = measure.index ?? -1, end = at + measure[0].length;
+        const candidates = axes.map(token => ({ axis: axisOf(token[0]),
+          distance: (token.index ?? 0) >= end ? (token.index ?? 0) - end : at - ((token.index ?? 0) + token[0].length) }))
+          .filter(candidate => candidate.distance >= 0).sort((a, b) => a.distance - b.distance);
+        if (!candidates.length || candidates[0].axis !== axis ||
+          (candidates[1]?.distance === candidates[0].distance && candidates[1].axis !== axis)) return [];
+        const measurement = parseCommerceDimensionMeasurement(measure[0]);
+        if (!measurement) return [];
+        const prefix = clause.slice(index ? (measures[index - 1].index ?? 0) + measures[index - 1][0].length : 0, at);
+        const negated = /(?:\bnot\b(?!\s+more\s+than)|\bnever\b|不是|唔係|並非|并非|唔好改|不要改)/iu.test(prefix) ||
+          (/\bfrom\s*$/iu.test(prefix) && /\bto\b/iu.test(clause.slice(end)));
+        return [{ value: measurement.value_mm, negated, clause }];
+      });
+    });
+  };
+  for (const write of [...proposalWrites, ...changed]) {
+    const axis = dimensionKeyAxis(write.key);
+    if (!axis) return false;
+    if (write.remove) {
+      const labels = targets.get(write.entity_id) ?? [];
+      if (!clauses.some(clause => labels.some(label => matchesReferenceLabel(clause, label)) &&
+        dimensionConstraintCancellation(clause) && inferCommerceDimensionAttribute(clause) === axis)) return false;
+      continue;
+    }
+    if (typeof write.value !== "number" || !Number.isFinite(write.value) || write.value <= 0) return false;
+    const proofs = proofsFor(write.entity_id, axis);
+    const positive = proofs.filter(proof => !proof.negated);
+    if (!positive.length || positive.some(proof => proof.value !== write.value)) return false;
+    if (/^(?:max_|.*_max)/u.test(write.key) && !positive.every(proof => maximumConstraintLanguage(proof.clause) ||
+      /(?:\blimit\b|限制|位得|位置得)/iu.test(proof.clause))) return false;
+    if (/^min_/u.test(write.key) || /^excluded_/u.test(write.key) &&
+      !positive.every(proof => /(?:就唔好|就不要|唔接受|不接受|排除|exclude|reject)/iu.test(proof.clause))) return false;
+    const old = previous.entities.find(entity => entity.entity_id === write.entity_id)?.constraints[write.key];
+    if (proofs.some(proof => proof.negated && (!frame.customer_correction || proof.value !== old))) return false;
+  }
+  return true;
+}
+
+/** A raw scalar fallback cannot contradict already committed per-scope
+ * quantities. Partial row updates may leave an explicitly unreconfirmed total;
+ * changing the aggregate itself requires the complete current allocation. */
+function scopedQuantityReductionConsistent(previous: ConversationCommerceState, next: ConversationCommerceState): boolean {
+  for (const old of previous.entities) {
+    const entity = next.entities.find(value => value.entity_id === old.entity_id);
+    if (!entity || entity.quantity === old.quantity || !Array.isArray(old.attributes.scoped_customer_updates)) continue;
+    if (!old.attributes.scoped_customer_updates.some(row => isRecord(row) && row.attribute === "quantity")) continue;
+    const rows = entity.attributes.scoped_customer_updates;
+    if (!Array.isArray(rows) || !rows.length || rows.some(row => !isRecord(row) || row.attribute !== "quantity" ||
+      typeof row.value !== "number" || !Number.isInteger(row.value) || row.value < 0)) return false;
+    if (rows.reduce((sum, row) => sum + row.value, 0) !== entity.quantity) return false;
+  }
+  return true;
+}
+
+function sourceBoundTurnReduction(previous: ConversationCommerceState, input: CommerceRuntimeInput,
+  hints: CommerceTurnEntityHint[], sourceContext?: ContextualSourceContext): { state: ConversationCommerceState; rejected: boolean } {
+  const frame = input.semantic_frame;
+  const guidance = frame?.operation === "ASK_FACT" && frame.entities.some(item =>
+    Object.keys(item.constraints).some(key => dimensionKeyAxis(key)))
+    ? resolveContextualTurn(input, previous, sourceContext) : null;
+  const guidanceContextOnly = guidance?.route === "product_guidance" && guidance.requires_generated_guidance === true;
+  // The existing source-bound advice consumer accepted requirements for a
+  // generated comparison. Its dimension context must not enter the generic
+  // purchase/hint parser and materialize default or duplicate entities.
+  // All proposed dimensions are still independently checked below, and an
+  // invalid proposal rejects these context/fact events together as one turn.
+  const candidate = guidanceContextOnly ? reduceCommerceState(previous, [
+    { type: "SET_CONTEXT", language: input.language, intent: "customer_guidance", topic: guidance.topic },
+    ...sourceBoundMixedCustomerFactEvents(frame, previous, input.text, input.source_message_id, input.occurred_at ?? null),
+  ]) : reduceTurnCandidate(previous, input, hints, sourceContext);
+  const accepted = sourceBoundDimensionReduction(previous, candidate, input, guidanceContextOnly) && scopedQuantityReductionConsistent(previous, candidate);
+  return { state: accepted ? candidate : previous, rejected: !accepted };
+}
+
+export function reduceTurn(previous: ConversationCommerceState, input: CommerceRuntimeInput, hints: CommerceTurnEntityHint[],
+  sourceContext?: ContextualSourceContext): ConversationCommerceState {
+  return sourceBoundTurnReduction(previous, input, hints, sourceContext).state;
+}
+
 /** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
-export function reduceTurn(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[],
+function reduceTurnCandidate(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[],
   sourceContext?: ContextualSourceContext): ConversationCommerceState {
   // Reserved scope facts have one source-verifying consumer. Never let an
   // unsupported/forged proposal fall into the general semantic fact adapter.
@@ -4175,9 +4477,12 @@ export async function persistCommerceTurn(
   const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
   let expected = loaded.revision;
   let previous = loaded.state;
-  let next = reduceTurn(previous, input, hints, contextualSourceContext(input, expected));
+  let reduction = sourceBoundTurnReduction(previous, input, hints, contextualSourceContext(input, expected));
+  let next = reduction.state;
 
   for (let attempt = 0; attempt < 2; attempt++) {
+    if (reduction.rejected) return { previous_state: previous, state: previous,
+      previous_revision: expected, revision: expected, result: "unverified_customer_requirement" };
     // A conversational turn that does not alter the canonical commerce state
     // has no mutation receipt by design. Preserve revision and provenance, and
     // let the B2 readback contract prove the authoritative no-op.
@@ -4235,7 +4540,8 @@ export async function persistCommerceTurn(
       const reloaded = await loadCommerceState(db, input.conversation_id, input.company_id);
       expected = reloaded.revision;
       previous = reloaded.state;
-      next = reduceTurn(previous, input, hints, contextualSourceContext(input, expected));
+      reduction = sourceBoundTurnReduction(previous, input, hints, contextualSourceContext(input, expected));
+      next = reduction.state;
       continue;
     }
     return {
@@ -4962,6 +5268,9 @@ export async function runCommerceStateRuntime(
   if (
     parseCommerceDimensionMeasurement(text) &&
     isReadOnlyCommerceQuestion(text, input.semantic_frame) &&
+    !(contextualDecision.route === "product_guidance" && contextualDecision.requires_generated_guidance &&
+      input.semantic_frame?.operation === "ASK_FACT" && input.semantic_frame.entities.some(item =>
+        Object.keys(item.constraints).some(key => dimensionKeyAxis(key)))) &&
     !establishesDurableProductResearch(text)
   ) {
     const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
@@ -5123,6 +5432,19 @@ export async function runCommerceStateRuntime(
   const runtimeInput = { ...input, industry_identifier: null };
 
   const persisted = await persistCommerceTurn(db, runtimeInput, hints);
+  if (persisted.result === "unverified_customer_requirement") {
+    // No candidate was written. A rejected interpretation is a clarification,
+    // not a storage outage, and supplies no target, value or mutation receipt.
+    const reply = language === "en"
+      ? "Which item do you want to update? Please restate the exact measurement or quantity and its unit."
+      : language === "zh-CN"
+      ? "你想更改哪一项？请重新说明确切的尺寸或数量，以及单位。"
+      : "你想更改邊一項？請重新講清楚確實嘅尺寸或數量，同埋單位。";
+    return { authority: "CONVERSATION_STATE", reply, revision: persisted.previous_revision,
+      persist_result: "read_only", reason: "contextual_targeted_clarification", route: "commerce_state_answer",
+      contextual_decision: { route: "targeted_clarification", reason: "UNVERIFIED_CUSTOMER_REQUIREMENT",
+        reply, updates: [] } };
+  }
   if (!["success", "no_semantic_change", "source_message_already_applied"].includes(persisted.result)) {
     // A proposed reducer snapshot is not authority until its CAS commit succeeds.
     // Preserve the failed receipt without returning an uncommitted acknowledgement.

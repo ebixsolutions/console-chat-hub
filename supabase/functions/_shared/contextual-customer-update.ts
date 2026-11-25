@@ -146,10 +146,26 @@ export function verifiedCurrentScopeFacts(input: {
     f.confidence<0.9 || f.ambiguity.is_ambiguous || f.additive || f.entities.length ||
     f.explicit_negations.length || f.requested_facts.length ||
     !["customer_guidance","ask_for_advice","customer_context_update"].includes(f.intent) ||
-    f.customer_facts?.length!==1 || f.customer_facts[0].key!=="contextual_scope_counts" ||
+    !Array.isArray(f.customer_facts) || !f.customer_facts.length || f.customer_facts.length>16 ||
     f.demands?.length!==1 ||
     [f.transaction_state,f.payment_state,f.booking_state,f.fulfillment_state].some(value=>
       value!=="none" && value!=="unknown"))return null;
+  // A compound customer turn may also contain independent preferences or
+  // measurements. Select this consumer's one proposal explicitly; never take
+  // the first fact or let duplicate keys choose a scope/receipt silently.
+  // Other facts retain their existing separate Memory handling and obtain no
+  // scope, entity, merchant or transaction authority from this verifier.
+  const keys=new Set<string>();
+  for(const fact of f.customer_facts){
+    if(!fact || typeof fact!=="object" || Array.isArray(fact) ||
+      Object.keys(fact).some(key=>key!=="key" && key!=="value") ||
+      typeof fact.key!=="string" || !fact.key || fact.key!==normalizeSource(fact.key) ||
+      keys.has(fact.key) ||
+      ["__proto__","constructor","prototype","contextual_goal","contextual_scope_facts"].includes(fact.key))return null;
+    keys.add(fact.key);
+  }
+  const scopeProposals=f.customer_facts.filter(fact=>fact.key==="contextual_scope_counts");
+  if(scopeProposals.length!==1)return null;
   const text=normalizeSource(input.text), demand=f.demands[0];
   const quote=normalizeSource(demand.source_quote);
   if(text.length<4 || text.length>1200 || demand.source_type!=="general" ||
@@ -171,7 +187,7 @@ export function verifiedCurrentScopeFacts(input: {
     otherActive.some(entity=>sourceOwnedSubjectLabels(entity).some(label=>
       matchesReferenceLabel(quote,label))) ||
     (old?.subject_label!==subject && demand.customer_correction)))return null;
-  const rows=f.customer_facts[0].value;
+  const rows=scopeProposals[0].value;
   if(!Array.isArray(rows) || rows.length<1 || rows.length>8)return null;
   const facts:SourceBoundScopeFact[]=[], spans:Array<{start:number;end:number}>=[];
   for(const raw of rows){
@@ -289,6 +305,12 @@ export function resolveSemanticContextualCandidate(input: {
   });
   const item = f.entities.length === 1 ? f.entities[0] : null;
   const proposed = item?.attributes["scoped_customer_updates"];
+  // A reserved scoped proposal cannot fall through to general entity updates
+  // merely because its envelope has extra entities or an invalid value type.
+  // Other multi-entity readings without this reserved field remain independent.
+  const hasScopedProposal = f.entities.some(entity =>
+    Object.prototype.hasOwnProperty.call(entity.attributes, "scoped_customer_updates"));
+  if (hasScopedProposal && (!item || !Array.isArray(proposed))) return invalid();
   if (!Array.isArray(proposed)) {
     const scopeFacts=f.operation==="UPDATE_ITEM" ? verifiedCurrentScopeFacts(input) : null;
     // General advice is a route, not a completed deterministic answer.

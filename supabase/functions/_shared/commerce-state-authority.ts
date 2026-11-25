@@ -452,6 +452,12 @@ export function isCurrentRequirementsRecap(
   if (typeof question !== "string" || question.length > 2400) return false;
   let text = question.normalize("NFKC").trim();
   if (!text || text.length > 2400 || /["“”「」『』`\n]/u.test(text)) return false;
+  // A leading reply-language instruction is presentation, not an additional
+  // customer-state request. Consume one complete clause only, with one literal
+  // language designator, then verify the entire remaining recap as before.
+  // Keep the original source text everywhere else; no suffix or action clause
+  // is discarded and no proposed fact/transaction gains authority here.
+  text = text.replace(/^(?:(?:please\s+)?(?:reply|respond|answer)\s+in\s+\p{L}{2,24}\s*[.:：。]|(?:請|请)?用\p{L}{2,24}(?:回覆|回复|回答)\s*[.:：。])\s*/iu, "");
   // Consume only presentation/negative-mutation modifiers of a recap. No
   // arbitrary suffix is thrown away; each remaining clause must be understood.
   text = text.replace(/(?:[。.;；,，]\s*)?(?:只用我提供過嘅資料|只覆述我自己的資料|不要新增或更改任何要求|(?:唔查|唔好查|不要查)(?:商家政策|外部資料|外部资料))[。.;；,，]?$/u, "").trim();

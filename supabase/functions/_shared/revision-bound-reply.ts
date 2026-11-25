@@ -3,6 +3,7 @@ import type { B2TrustedLifecycleCommit } from "./b2-journey-progress-contract.ts
 import { verifyCommittedLifecycleMemory,
   type CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
+import { readStoredLifecycleReceipt } from "./lifecycle-receipt-storage.ts";
 
 /** A pending reply receipt guards only the visitor turn that created it. */
 export function hasUnresolvedLifecycleReplyForSource(
@@ -24,7 +25,7 @@ export function resumeCommittedLifecycleReply(input: {
     revision: number; state: ConversationCommerceState } | null;
 }): B2TrustedLifecycleCommit | null {
   const { memory, commerce } = input;
-  const receipt = memory?.pending_lifecycle_reply ?? null;
+  const receipt = readStoredLifecycleReceipt(memory?.pending_lifecycle_reply);
   return memory?.conversation_id === input.conversation_id &&
       commerce?.source_message_id === input.source_message_id &&
       receipt?.company_id === input.company_id &&

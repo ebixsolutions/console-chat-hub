@@ -3585,3 +3585,7 @@ for(const [index,d] of d4Tier1Industries.entries())for(const kind of ['C1_RECALL
 // Same Closure Contract: generic correction Memory/B2 consumer integration.
 import { registerScopedCorrectionHandlerTests } from "../task1-director/phase1-correction-handler-register.mjs";
 registerScopedCorrectionHandlerTests({test, assert, fixture, uuid, providerWire, root, hash});
+
+// Same Closure Contract: stateful generic final-answer, requery and human-control paths.
+import { registerFullJourneyHandlerTests } from "../task1-director/phase1-full-journey-handler-register.mjs";
+registerFullJourneyHandlerTests({test, assert, fixture, uuid, root});

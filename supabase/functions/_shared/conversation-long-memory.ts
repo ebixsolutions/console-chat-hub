@@ -8,6 +8,8 @@ import { customerBusinessText as businessMessageText, isCurrentRequirementsRecap
 import { industryEntityLabel } from "./industry-runtime-adapter.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { sameCanonicalJson } from "./canonical-json.ts";
+import { compactLifecycleReceipt, packLifecycleReceipt, readStoredLifecycleReceipt,
+  type StoredLifecycleReceipt } from "./lifecycle-receipt-storage.ts";
 import { type B2TrustedCorrectionCommit, type B2TrustedLifecycleCommit, type B2TrustedScopedJourneyProgress,
   type ScopedQuantityCorrectionCommit, readVerifiedScopedQuantityCorrection, scopedQuantityCorrectionSummary,
   verifyEntityLifecycleTransition, resolveEntityLifecyclePlan } from "./b2-journey-progress-contract.ts";
@@ -158,10 +160,11 @@ export function verifyCommittedScopedCorrectionMemory(input: {
 
 export function verifyCommittedLifecycleMemory(input: {
   memory: CanonicalConversationMemory | null;
-  receipt: B2TrustedLifecycleCommit | null;
+  receipt: StoredLifecycleReceipt | null;
   commerce: { company_id: string; source_message_id: string | null; revision: number; state: ConversationCommerceState } | null;
 }): boolean {
-  const { memory, receipt, commerce } = input;
+  const { memory, commerce } = input;
+  const receipt = readStoredLifecycleReceipt(input.receipt);
   if (!memory || !receipt || !commerce || memory.company_id !== receipt.company_id ||
     commerce.company_id !== receipt.company_id ||
     memory.source_message_id !== receipt.source_message_id ||
@@ -211,7 +214,7 @@ export interface CanonicalConversationMemory {
   current_goal_source_message_id?: string | null;
   current_topic_source_message_id?: string | null;
   /** Server-derived receipt kept in the existing bounded memory row for same-source reply retry. */
-  pending_lifecycle_reply?: B2TrustedLifecycleCommit;
+  pending_lifecycle_reply?: StoredLifecycleReceipt;
   version: typeof CONVERSATION_MEMORY_VERSION;
   memory_revision: number;
   conversation_id: string;
@@ -1042,7 +1045,7 @@ export function buildCanonicalConversationMemory(args: {
     updated_at: args.source_created_at,
   };
   if (memory.current_customer_facts.length > MAX_CURRENT_CUSTOMER_FACTS) throw new Error("C3_CURRENT_FACTS_LIMIT");
-  const fitted = fitMemory(memory);
+  let fitted = fitMemory(memory);
   if(args.committed_scoped_correction && !verifyCommittedScopedCorrectionMemory({memory:fitted,
     receipt:args.committed_scoped_correction,commerce:args.commerce_state && args.commerce_state_revision!==null
       ? {company_id:args.company_id,conversation_id:args.conversation_id,source_message_id:args.source_message_id,
@@ -1051,9 +1054,23 @@ export function buildCanonicalConversationMemory(args: {
   if (args.pending_lifecycle_reply) {
     fitted.pending_lifecycle_reply = structuredClone(args.pending_lifecycle_reply);
     if (JSON.stringify(fitted).length > C3_MEMORY_JSON_CHAR_BUDGET) {
+      const compact = compactLifecycleReceipt(args.pending_lifecycle_reply);
+      if (!compact) throw new Error("C3_LIFECYCLE_RECEIPT_INVALID");
+      fitted.pending_lifecycle_reply = compact;
+    }
+    if (JSON.stringify(fitted).length > C3_MEMORY_JSON_CHAR_BUDGET) {
+      const packed = packLifecycleReceipt(args.pending_lifecycle_reply);
+      if (!packed) throw new Error("C3_LIFECYCLE_RECEIPT_INVALID");
+      fitted.pending_lifecycle_reply = packed;
+    }
+    if (JSON.stringify(fitted).length > C3_MEMORY_JSON_CHAR_BUDGET) {
       fitted.prior_topics = fitted.prior_topics.slice(-4);
       fitted.open_questions = fitted.open_questions.slice(0, 3);
       fitted.grounded_reference_lineage = fitted.grounded_reference_lineage.slice(0, 3);
+      // Apply the existing bounded-history/excerpt policy to the complete
+      // envelope, including the receipt. Current facts and the lossless proof
+      // remain intact; the established Memory limit is not increased.
+      fitted = fitMemory(fitted);
     }
     if (JSON.stringify(fitted).length > C3_MEMORY_JSON_CHAR_BUDGET) {
       throw new Error("C3_LIFECYCLE_RECEIPT_EXCEEDS_MEMORY_BUDGET");
