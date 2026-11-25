@@ -443,7 +443,7 @@ Deno.test("C3 production-parity semantic ASK_FACT still persists and scopes prod
   };
   withdrawalReading.entities[0].constraints={max_width_mm:null};
   withdrawalReading.entities[0].attributes={dimension_source_proofs:{max_width_mm:{
-    axis:"width",bound:"maximum",status:"withdrawn",clause:withdrawalText,expected_value_mm:600}}};
+    axis:"width",bound:"maximum",status:"withdrawn",clause:withdrawalText}}};
   const correction=await run(63,withdrawalText,withdrawalReading,[
       {role:"visitor",content:"前置式，8kg左右。"},
       {role:"visitor",content:washerText},

@@ -52,6 +52,7 @@ import {
   isReadOnlyMemoryOrCurrentStateRecall,
   parseCommerceDimensionMeasurement,
   resolveCommerceAnswerAuthority,
+  resolveCustomerRequestDecision,
 } from "./commerce-state-authority.ts";
 import {
   buildCapabilityAwarePreorderNextStep,
@@ -4197,27 +4198,26 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
     // a lower bound into a maximum; unsupported comparisons clarify.
     const withdrawal = write.value === null;
     if (!axis || !bound || bound === "minimum" || !isRecord(proof) ||
-      !Object.keys(proof).every(key => ["axis","bound","status","clause","measurement","prior_measurement","expected_value_mm"].includes(key)) ||
+      !Object.keys(proof).every(key => ["axis","bound","status","clause","measurement","prior_measurement"].includes(key)) ||
       proof.axis !== axis || proof.bound !== bound ||
       proof.status !== (withdrawal ? "withdrawn" : "current_affirmative") ||
       typeof proof.clause !== "string") return false;
     if (withdrawal) {
-      // Withdrawal removes one already committed customer requirement. Its
-      // expected old value is a model proposal checked against the actual
-      // current snapshot on EVERY CAS attempt; it is not new source evidence.
+      // The old bound comes only from the same-owner committed snapshot.
+      // The Reading proposes the field to withdraw, never an unstated old number.
+      // A withdrawal cannot be retried across a changed CAS snapshot.
       if (guidanceContextOnly || frame.operation !== "UPDATE_ITEM" || !frame.customer_correction ||
         frame.explicit_negations.length || frame.customer_facts?.length ||
         (frame.demands ?? []).some(demand => demand.explicit_negations.length) ||
         frame.entities.some(item => item.quantity !== null || Object.keys(item.attributes).some(key => key !== "dimension_source_proofs") ||
           Object.keys(item.constraints).some(key => !dimensionKeyAxis(key))) ||
-        (proof.measurement !== undefined && proof.measurement !== null) ||
-        typeof proof.expected_value_mm !== "number" || !Number.isFinite(proof.expected_value_mm) ||
-        proof.expected_value_mm <= 0) return false;
+        (proof.measurement !== undefined && proof.measurement !== null)) return false;
       const old = previous.entities.find(entity => entity.entity_id === write.entity_id);
-      if (!old || !owned(old) || old.constraints[write.key] !== proof.expected_value_mm ||
+      const oldValue = old?.constraints[write.key];
+      if (!old || !owned(old) || typeof oldValue !== "number" ||
+        !Number.isFinite(oldValue) || oldValue <= 0 ||
         JSON.stringify(b2JourneyTransactionBoundary(previous)) !== JSON.stringify(b2JourneyTransactionBoundary(next))) return false;
-    } else if (proof.expected_value_mm !== undefined ||
-      typeof proof.measurement !== "string" || typeof write.value !== "number" ||
+    } else if (typeof proof.measurement !== "string" || typeof write.value !== "number" ||
       !Number.isFinite(write.value) || write.value <= 0) return false;
     const clause = proof.clause.normalize("NFKC").replace(/\s+/gu, " ").trim();
     if (!clause || clause.length > 300) return false;
@@ -4235,7 +4235,7 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
         if (typeof proof.prior_measurement !== "string") return false;
         const oldQuote = proof.prior_measurement.normalize("NFKC").replace(/\s+/gu," ").trim();
         const oldSpans = local.filter(span => span.quote === oldQuote);
-        if (oldSpans.length !== 1 || oldSpans[0].value_mm !== proof.expected_value_mm ||
+        if (oldSpans.length !== 1 || oldSpans[0].value_mm !== previous.entities.find(entity => entity.entity_id === write.entity_id)?.constraints[write.key] ||
           occupied.has(at + oldSpans[0].index)) return false;
         occupied.add(at + oldSpans[0].index);
       }
@@ -4317,7 +4317,7 @@ function scopedQuantityReductionConsistent(previous: ConversationCommerceState, 
 }
 
 function sourceBoundTurnReduction(previous: ConversationCommerceState, input: CommerceRuntimeInput,
-  hints: CommerceTurnEntityHint[], sourceContext?: ContextualSourceContext): { state: ConversationCommerceState; rejected: boolean } {
+  hints: CommerceTurnEntityHint[], sourceContext?: ContextualSourceContext): { state: ConversationCommerceState; rejected: boolean; dimension_rejected?: boolean } {
   const frame = input.semantic_frame;
   const guidance = frame?.operation === "ASK_FACT" && frame.entities.some(item =>
     Object.keys(item.constraints).some(key => dimensionKeyAxis(key)))
@@ -4332,8 +4332,11 @@ function sourceBoundTurnReduction(previous: ConversationCommerceState, input: Co
     { type: "SET_CONTEXT", language: input.language, intent: "customer_guidance", topic: guidance.topic },
     ...sourceBoundMixedCustomerFactEvents(frame, previous, input.text, input.source_message_id, input.occurred_at ?? null),
   ]) : reduceTurnCandidate(previous, input, hints, sourceContext);
-  const accepted = sourceBoundDimensionReduction(previous, candidate, input, guidanceContextOnly) && scopedQuantityReductionConsistent(previous, candidate);
-  if (!accepted) return { state: previous, rejected: true };
+  const dimensionAccepted = sourceBoundDimensionReduction(previous, candidate, input, guidanceContextOnly);
+  const quantityAccepted = scopedQuantityReductionConsistent(previous, candidate);
+  if (!dimensionAccepted || !quantityAccepted) return { state: previous, rejected: true,
+    dimension_rejected: !dimensionAccepted && quantityAccepted && Boolean(frame?.entities.some(item =>
+      Object.keys(item.constraints).some(key => dimensionKeyAxis(key)))) };
   const removals: CommerceStateEvent[] = [];
   for (const entity of candidate.entities) {
     const old = previous.entities.find(value => value.entity_id === entity.entity_id);
@@ -4597,6 +4600,7 @@ export async function persistCommerceTurn(
   previous_revision: number;
   revision: number;
   result: string;
+  dimension_rejected?: boolean;
 }> {
   const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
   let expected = loaded.revision;
@@ -4606,7 +4610,8 @@ export async function persistCommerceTurn(
 
   for (let attempt = 0; attempt < 2; attempt++) {
     if (reduction.rejected) return { previous_state: previous, state: previous,
-      previous_revision: expected, revision: expected, result: "unverified_customer_requirement" };
+      previous_revision: expected, revision: expected, result: "unverified_customer_requirement",
+      dimension_rejected: reduction.dimension_rejected };
     // A conversational turn that does not alter the canonical commerce state
     // has no mutation receipt by design. Preserve revision and provenance, and
     // let the B2 readback contract prove the authoritative no-op.
@@ -4663,6 +4668,14 @@ export async function persistCommerceTurn(
     }
     if (parsed.result === "revision_conflict" && attempt === 0) {
       const reloaded = await loadCommerceState(db, input.conversation_id, input.company_id);
+      // A withdrawal is bound to the initial server-read field/revision, not
+      // an invented old value from the model. On conflict never delete a newer
+      // requirement (including a same-value replacement with new provenance).
+      if (input.semantic_frame?.entities.some(item => Object.entries(item.constraints).some(
+        ([key,value]) => dimensionKeyAxis(key) && value === null))) return {
+        previous_state: reloaded.state, state: reloaded.state,
+        previous_revision: reloaded.revision, revision: reloaded.revision,
+        result: "unverified_customer_requirement", dimension_rejected: true };
       expected = reloaded.revision;
       previous = reloaded.state;
       reduction = sourceBoundTurnReduction(previous, input, hints, contextualSourceContext(input, expected));
@@ -5558,9 +5571,58 @@ export async function runCommerceStateRuntime(
 
   const persisted = await persistCommerceTurn(db, runtimeInput, hints);
   if (persisted.result === "unverified_customer_requirement") {
-    // No candidate was written. A rejected interpretation is a clarification,
-    // not a storage outage, and supplies no target, value or mutation receipt.
-    const reply = language === "en"
+    // A rejected dimension proposal is not a storage outage. It never grants
+    // write authority. An independent current answer request may still use
+    // the ordinary response path, without promoting the rejected proposal.
+    const rejected = runtimeInput.semantic_frame;
+    if (persisted.dimension_rejected && rejected && rejected.confidence >= 0.90 &&
+      !rejected.ambiguity.is_ambiguous && !rejected.additive &&
+      ["ASK_FACT","UPDATE_ITEM"].includes(rejected.operation) &&
+      [rejected.transaction_state,rejected.payment_state,rejected.booking_state,rejected.fulfillment_state]
+        .every(value => ["none","unknown"].includes(value))) {
+      const decision = resolveCustomerRequestDecision(runtimeInput.text, rejected);
+      const normalized = runtimeInput.text.normalize("NFKC").replace(/\s+/gu," ").trim();
+      const independentDemands = (decision.semantic_demands ?? []).filter(demand => {
+        const quote = demand.source_quote.normalize("NFKC").replace(/\s+/gu," ").trim();
+        return Boolean(quote && normalized.includes(quote) && !demand.ambiguity.is_ambiguous &&
+          ["general","product","policy","unknown"].includes(demand.source_type) &&
+          // A mutation cannot become a merchant lookup merely because the
+          // older request classifier normalized an empty update demand.
+          // On UPDATE_ITEM require a distinct actual question, not the update.
+          (rejected.operation === "ASK_FACT" ||
+            (quote !== normalized && looksInterrogative(quote))));
+      });
+      // ASK_FACT can be ordinary advice with no separate demand list. For a
+      // mutation-classified turn, require a source-bound independent demand;
+      // a pure update or withdrawal must never claim it was completed.
+      const guidance = decision.kind === "guidance" &&
+        ((rejected.operation === "ASK_FACT" && !rejected.customer_correction) ||
+          independentDemands.some(demand => demand.source_type === "general" && !demand.customer_correction));
+      const merchant = ["merchant_facts","mixed"].includes(decision.kind) &&
+        independentDemands.some(demand => ["product","policy","unknown"].includes(demand.source_type) &&
+          demand.requested_facts.length > 0 && !demand.customer_correction);
+      if (guidance || merchant) return {
+        authority: merchant ? "CURRENT_KB_REQUIRED" : "CONVERSATION_STATE",
+        reply: null, revision: persisted.previous_revision, persist_result: "read_only",
+        reason: "unverified_dimension_context_answer_only",
+        route: merchant ? "commerce_kb_required" : "product_guidance",
+      };
+    }
+    // No candidate was written; ask only for the missing proof. Preserve
+    // the old exact rejection result consumed by B2 and Memory.
+    const knownDimensionSubject = persisted.dimension_rejected && rejected?.entities.length === 1 &&
+      matchesReferenceLabel(runtimeInput.text, rejected.entities[0].name) &&
+      persisted.previous_state.entities.filter(entity =>
+        entity.provenance.source_type === "customer" &&
+        !["cancelled","deferred","superseded"].includes(entity.status) &&
+        sourceOwnedSubjectLabels(entity).some(label =>
+          label.normalize("NFKC").trim().toLowerCase() === rejected.entities[0].name.normalize("NFKC").trim().toLowerCase()) &&
+        (entity.entity_id === rejected.entities[0].entity_ref ||
+          sourceOwnedSubjectLabels(entity).some(label => label.normalize("NFKC").trim().toLowerCase() === rejected.entities[0].entity_ref.normalize("NFKC").trim().toLowerCase()))).length === 1;
+    const reply = knownDimensionSubject
+      ? language === "en" ? "Please confirm the exact measurement and unit for this requirement."
+        : language === "zh-CN" ? "请确认这项要求的确切尺寸和单位。" : "請確認呢項要求嘅確實尺寸同單位。"
+      : language === "en"
       ? "Which item do you want to update? Please restate the exact measurement or quantity and its unit."
       : language === "zh-CN"
       ? "你想更改哪一项？请重新说明确切的尺寸或数量，以及单位。"

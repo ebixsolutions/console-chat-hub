@@ -503,7 +503,7 @@ function withdrawalInput(text = "Remove the width limit for Portable exhibition 
   frame.customer_correction = true;
   frame.entities[0].constraints = { max_width_mm: null };
   frame.entities[0].attributes = { dimension_source_proofs: {
-    max_width_mm: { axis: "width", bound: "maximum", status: "withdrawn", clause: text, expected_value_mm: 600 }
+    max_width_mm: { axis: "width", bound: "maximum", status: "withdrawn", clause: text }
   } };
   return input;
 }
@@ -533,10 +533,11 @@ for (const mode of ["wrong-old", "wrong-axis", "wrong-target", "missing-proof", 
     s.live.state.entities[2].constraints = { max_width_mm: 600, max_height_mm: 1200 };
     const text = mode === "conditional" ? "If Portable exhibition frame has a width limit, remove it." :
       mode === "question" ? "Would removing the width limit for Portable exhibition frame help?" :
+      mode === "wrong-old" ? "Remove the 599mm width limit for Portable exhibition frame." :
       "Remove the width limit for Portable exhibition frame.";
     const input = withdrawalInput(text), frame = input.semantic_frame!;
     const proof = (frame.entities[0].attributes.dimension_source_proofs as Record<string, unknown>).max_width_mm as Record<string, unknown>;
-    if (mode === "wrong-old") proof.expected_value_mm = 599;
+    if (mode === "wrong-old") proof.prior_measurement = "599mm";
     if (mode === "wrong-axis") proof.axis = "height";
     if (mode === "wrong-target") frame.entities[0].entity_ref = "retained";
     if (mode === "missing-proof") frame.entities[0].attributes = {};
@@ -563,4 +564,22 @@ Deno.test("P1 dimension withdrawal revalidates the old field after CAS conflict"
   const result = await runCommerceStateRuntime(s.db, withdrawalInput());
   assert(s.live.writes === 1 && s.live.revision === 22 && JSON.stringify(s.live.state) === fresh &&
     result?.persist_result !== "success", "CAS retry removed a newer limit");
+});
+
+// Structural invariant: rejecting an unverified dimension write cannot block
+// independent advice, and must not change canonical state or grant authority.
+Deno.test("P1 rejected dimension proof preserves the independent answer-only path", async () => {
+  for (const mode of ["missing-proof", "wrong-value"] as const) {
+    const input = dimensionAdvice(businessDimensions[0]);
+    const s = storage(createEmptyConversationCommerceState());
+    const frame = input.semantic_frame!;
+    if (mode === "missing-proof") frame.entities[0].attributes = {};
+    else frame.entities[0].constraints.depth = { amount: 559, unit: "mm" };
+    const before = JSON.stringify(s.live.state), result = await runCommerceStateRuntime(s.db, input);
+    assert(result?.route === "product_guidance" && result.reply === null && result.persist_result === "read_only" &&
+      result.reason === "unverified_dimension_context_answer_only" &&
+      s.live.writes === 0 && s.live.revision === 21 && JSON.stringify(s.live.state) === before,
+      "Rejected background dimensions blocked the question or gained write authority: " + JSON.stringify(result));
+    noTransaction(s.live.state);
+  }
 });

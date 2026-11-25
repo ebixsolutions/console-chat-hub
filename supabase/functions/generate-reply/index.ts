@@ -5035,6 +5035,34 @@ async function orchestrationGenerateReply(
         {status:503,headers:{...corsHeaders,"Content-Type":"application/json"}});
     }
   }
+  // The writer definitively refused an unverified dimension proposal.
+  // Keep the actual independent answer request, but never forward rejected
+  // model dimensions/facts as canonical state, query constraints or evidence.
+  const _c3UnverifiedDimensionContextAnswerOnly = _a3Commerce?.persist_result === "read_only" &&
+    _a3Commerce.reason === "unverified_dimension_context_answer_only";
+  if (_c3UnverifiedDimensionContextAnswerOnly && _a3SemanticFrame) {
+    const normalizedSource = _h1LastMsg.normalize("NFKC").replace(/\s+/gu," ").trim().toLowerCase();
+    const literalName = (value: string | null | undefined) => Boolean(value?.trim() &&
+      normalizedSource.includes(value.normalize("NFKC").replace(/\s+/gu," ").trim().toLowerCase()));
+    const readDemands = _a3SemanticFrame.demands?.filter(demand =>
+      literalName(demand.source_quote) && !demand.ambiguity.is_ambiguous)
+      .map(demand => ({...demand, question:demand.source_quote, constraints:{}, customer_correction:false}));
+    _a3SemanticFrame = {
+      ..._a3SemanticFrame, operation:"ASK_FACT", customer_correction:false, additive:false,
+      topic:literalName(_a3SemanticFrame.topic) ? _a3SemanticFrame.topic : null,
+      customer_facts:[],
+      entities:_a3SemanticFrame.entities.filter(item => literalName(item.name)).map(item => ({
+        ...item, attributes:{}, constraints:{}, quantity:null, unit:null, model:null, sku:null, category_hint:null,
+      })),
+      demands:readDemands,
+    };
+    // Keep the existing source-validated knowledge-ownership decision.
+    // Its demands must also be free of rejected model-supplied constraints.
+    if (_customerRequestDecision.semantic_demands)
+      _customerRequestDecision.semantic_demands = _customerRequestDecision.semantic_demands
+        .filter(demand => literalName(demand.source_quote) && !demand.ambiguity.is_ambiguous)
+        .map(demand => ({...demand, question:demand.source_quote, constraints:{}, customer_correction:false}));
+  }
   const _c3PreMemoryResolution = resolveCanonicalCommerceResolution({
     outcome: _a3Commerce,
     authoritative_address_correction: false,
@@ -5131,7 +5159,7 @@ async function orchestrationGenerateReply(
         !_mixedRequest && !_explicitHandoffRequested && !_customerOwnedDelta &&
         !(_a3SemanticFrame?.customer_facts?.length) &&
         !_currentFactualRequest?.transaction_required);
-      if ((readOnlyRecap || readOnlyEffectiveRetention) && persistedMemory && commerceRow &&
+      if ((readOnlyRecap || readOnlyEffectiveRetention || _c3UnverifiedDimensionContextAnswerOnly) && persistedMemory && commerceRow &&
         isCanonicalConversationMemory(persistedMemory.memory) &&
         persistedMemory.conversation_id === conversation_id &&
         persistedMemory.company_id === _criticalE2ExpectedTenantId &&
@@ -5176,7 +5204,7 @@ async function orchestrationGenerateReply(
         return new Response(JSON.stringify({ success: false, error: "scoped_correction_commit_unverified" }),
           { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-      const memoryOutcome = _c3RejectedCustomerRequirement || !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
+      const memoryOutcome = _c3RejectedCustomerRequirement || _c3UnverifiedDimensionContextAnswerOnly || !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
         ? null
         : await refreshConversationLongMemory(
           supabaseAdmin as unknown as Parameters<
@@ -5774,6 +5802,7 @@ ${JSON.stringify({
     active_constraints:_c3Memory?.active_constraints ?? [],latest_customer_turn:_h1LastMsg,
   })}
 Latest applicable corrections replace old values; an answered clarification is not a new transaction. Inactive entities stay inactive. Customer requirements never authorize merchant claims.
+${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was not saved or withdrawn. Answer the independent current question using the actual customer text and verified prior context only. Treat any stated dimensions as customer-reported, not verified fit or committed changes. Do not claim any requirement was recorded, updated or removed by this turn. Do not substitute a rejected model value for the literal source." : ""}
 [/EFFECTIVE_CUSTOMER_REQUIREMENTS]`;
   const _mixedGuidanceInstruction = _mixedRequest && _customerRequestDecision.general_request
     ? "[MIXED_REQUEST] Give useful conditional general decision criteria separately from merchant facts. Only the merchant facet was queried. Current E* full content alone supports named merchant/model/policy facts; never let general guidance imply those claims are verified. When no eligible evidence was returned, answer the general facet and state only that the specific merchant facts remain unverified. A failed transport/admission is not no-match. [/MIXED_REQUEST]" : "";
