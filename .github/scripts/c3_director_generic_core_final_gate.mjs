@@ -82,6 +82,9 @@ console.log(JSON.stringify({ assertion: "candidate_identity", head: git("rev-par
 
 const commands = [
   ["git", ["diff", "--check", baseline, "HEAD"]],
+  ...(process.env.CI ? [["node", [".github/scripts/c3_named_legacy_checker.mjs", "ci-isolated",
+    ".github/scripts/c3_named_legacy_policy.json", process.cwd(),
+    process.env.RUNNER_TEMP + "/c3-named-legacy-isolated", process.env.C3_NAMED_LEGACY_AUX_DIR ?? ""]]] : [
   ["deno", ["test", "--no-lock", "--allow-read", "--node-modules-dir=manual", "supabase/functions/_shared/natural-dialogue-generic-core.test.ts",
     "tests/edge/verified-widget-auth.test.ts"]],
   ["deno", ["test", "--no-lock", "--allow-read", "--node-modules-dir=manual", "tests/section15/compound-dialogue-state.test.ts"]],
@@ -89,12 +92,13 @@ const commands = [
   ["deno", ["test", "--no-lock", "--allow-read", "--node-modules-dir=manual", "supabase/functions/_shared/conversation-recall.integration.test.ts",
     "supabase/functions/_shared/transaction-closure-handoff.test.ts",
     "supabase/functions/_shared/pre-send-conversion-supervisor.test.ts"]],
+  ]),
   ["node", [".github/scripts/task_a2_commerce_reducer_authority_final_gate.mjs"]],
   ["./node_modules/.bin/tsc", ["--noEmit", "--project", "tsconfig.json"]],
   ["npm", ["run", "build"]],
 ];
 for (const [cmd, args] of commands) {
-  const result = spawnSync(cmd, args, { stdio: "inherit", timeout: 240000,
+  const result = spawnSync(cmd, args, { stdio: "inherit", timeout: cmd === "node" && args[0] === ".github/scripts/c3_named_legacy_checker.mjs" ? 1000000 : 240000,
     env: { ...process.env, CI: "true" } });
   console.log(JSON.stringify({ command: [cmd, ...args], exit_code: result.status, signal: result.signal }));
   if (result.status !== 0) fail("command_failed", [cmd, ...args].join(" "));
