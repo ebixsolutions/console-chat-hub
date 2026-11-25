@@ -1741,7 +1741,7 @@
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "cf27814aac3b9341e14f452f8bd13d8996024b68e70a282a18b4ac33b9513536",
     "supabase/functions/_shared/commerce-subject-resolution.ts": "a379b3b149c3c4838830f23a8e34cd5ab33f34d63703bdc9c3e5b27c41d8adb3",
     "supabase/functions/_shared/conversation-recall.ts": "9a3942b0ebcce79f5de6582d653d4e3cba2d6c9990b4f3403f9ebe6b7df4ab6b",
-    "supabase/functions/generate-reply/index.ts": "abc9c75f70623aa5711de737d6a064744429742ca0bcd1166d62f3a5d8f244d5",
+    "supabase/functions/generate-reply/index.ts": "39fb5e7c5904992eb3ede748d63d78672a129f207ba1430e95ad71700d015f02",
     "supabase/functions/_shared/conversation-service-planner.ts": "01113562c4d90c0ace4b653a5906e78a351bb7acb5ab980df390176f688e612e",
     "tests/task1-director/quantity-source-scope.test.mjs": "3d1700e086792d503fc7a375d363be20bb32bfa9b0e5b5f5b0a6f2f65197df84",
     "supabase/functions/_shared/conversation-recall.test.ts": "c2c4cf99651be6253f84abb57408f2a9fe1e3bd3eb9158f84f4e369a70e23faa",

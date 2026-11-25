@@ -7517,6 +7517,19 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
           reference_authority: referenceAuthorityMetadata(_c1AuthorityDecision),
           response_route: route,
           answer_kind: _canonicalKbDirectAnswer.kind,
+          // The successful dimension writer already proved that transaction
+          // state was unchanged. Carry that fact only from its exact scoped
+          // readback, and bind the final KB reply to the same committed revision.
+          ...(_a3Commerce?.reason === "source_bound_dimension_with_merchant_question" &&
+            _a3Commerce.persist_result === "success" && _criticalE2ExpectedTenantId &&
+            source_message_id === _h1SourceMessageId &&
+            _c3CommerceSnapshot?.conversation_id === conversation_id &&
+            _c3CommerceSnapshot.company_id === _criticalE2ExpectedTenantId &&
+            _c3CommerceSnapshot.source_message_id === source_message_id &&
+            _c3CommerceSnapshot.revision === _a3Commerce.revision &&
+            Number.isSafeInteger(_a3Commerce.revision) && _a3Commerce.revision > 0
+              ? { transaction_mutation: "NONE", commerce_state_revision: _a3Commerce.revision }
+              : {}),
           unresolved_fact_fields: _canonicalKbDirectAnswer.unresolved_fact_fields ?? [],
           kb_retrieval_request: ragResult?.query_text_preview ?? null,
           kb_request_contract: ragResult?.trace_metadata?.kb_request_contract ?? null,
