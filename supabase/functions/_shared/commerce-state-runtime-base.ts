@@ -4148,7 +4148,7 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
     return clauses.filter(clause => labels.some(label => matchesReferenceLabel(clause, label)) &&
       !previous.entities.some(entity => entity.entity_id !== id && sourceOwnedSubjectLabels(entity)
         .some(label => matchesReferenceLabel(clause, label)))).flatMap(clause => {
-      const axes = [...clause.matchAll(/\b(?:width|wide|height|high|tall|depth|deep)\b|闊度?|寬度?|宽度?|高度?|深度?/giu)];
+      const axes = [...clause.matchAll(/\b(?:width|wide|wider|height|high|higher|tall|taller|depth|deep|deeper)\b|闊度?|寬度?|宽度?|高度?|深度?/giu)];
       const measures = [...clause.matchAll(/(?<![\p{Script=Latin}\p{N}_.+\-−])\d{1,5}(?:\.\d+)?\s*(?:mm\b|毫米|cm\b|厘米|公分|inch(?:es)?\b|吋)/giu)];
       return measures.flatMap((measure, index) => {
         const at = measure.index ?? -1, end = at + measure[0].length;
@@ -4160,9 +4160,20 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
         const measurement = parseCommerceDimensionMeasurement(measure[0]);
         if (!measurement) return [];
         const prefix = clause.slice(index ? (measures[index - 1].index ?? 0) + measures[index - 1][0].length : 0, at);
-        const negated = /(?:\bnot\b(?!\s+more\s+than)|\bnever\b|不是|唔係|並非|并非|唔好改|不要改)/iu.test(prefix) ||
-          (/\bfrom\s*$/iu.test(prefix) && /\bto\b/iu.test(clause.slice(end)));
-        return [{ value: measurement.value_mm, negated, clause }];
+        // Comparative upper bounds must attach to this literal measurement and
+        // its corroborated axis; a limit on a sibling axis is not authority.
+        const comparative = prefix.match(/\b(?:no|not)\s+(?:wider|higher|taller|deeper)\s+than\s*$|最\s*(?:闊|寬|宽|高|深)(?:度)?\s*(?:只可以|只可|只能|僅可|仅可)\s*$/iu);
+        const comparativeMaximum = !!comparative && axisOf(comparative[0]) === axis;
+        // "not wider than" is a bound, not a negated measurement; all other
+        // negation remains evidence against the proposal.
+        const negationPrefix = comparativeMaximum && comparative
+          ? prefix.slice(0, comparative.index) : prefix;
+        const deniedComparative = comparativeMaximum &&
+          /(?:\b(?:not|never|no longer)\s+(?:required|necessary|needed|a requirement|a limit)|\b(?:need not|do(?:es)? not need|don't need|doesn't need|do(?:es)? not have to|don't have to|doesn't have to|previously|formerly|used to|last time|historically)\b|無需|无需|毋須|唔需要|不需要|不用|唔使|不再|之前|以前|上次|曾經|曾经)/iu.test(clause);
+        const negated = deniedComparative ||
+          /(?:\bnot\b(?!\s+more\s+than)|\bnever\b|不是|唔係|並非|并非|唔好改|不要改)/iu.test(negationPrefix) ||
+          (/\bfrom\s*$/iu.test(negationPrefix) && /\bto\b/iu.test(clause.slice(end)));
+        return [{ value: measurement.value_mm, negated, clause, comparativeMaximum }];
       });
     });
   };
@@ -4179,7 +4190,7 @@ function sourceBoundDimensionReduction(previous: ConversationCommerceState,
     const proofs = proofsFor(write.entity_id, axis);
     const positive = proofs.filter(proof => !proof.negated);
     if (!positive.length || positive.some(proof => proof.value !== write.value)) return false;
-    if (/^(?:max_|.*_max)/u.test(write.key) && !positive.every(proof => maximumConstraintLanguage(proof.clause) ||
+    if (/^(?:max_|.*_max)/u.test(write.key) && !positive.every(proof => proof.comparativeMaximum || maximumConstraintLanguage(proof.clause) ||
       /(?:\blimit\b|限制|位得|位置得)/iu.test(proof.clause))) return false;
     if (/^min_/u.test(write.key) || /^excluded_/u.test(write.key) &&
       !positive.every(proof => /(?:就唔好|就不要|唔接受|不接受|排除|exclude|reject)/iu.test(proof.clause))) return false;

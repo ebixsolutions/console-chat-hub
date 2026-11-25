@@ -410,3 +410,61 @@ for (const path of ["canonical-writer", "guidance-context"] as const) {
       JSON.stringify(s.live.state) === before, "An incomplete inch unit acquired write authority: " + JSON.stringify(result));
   });
 }
+
+
+// Accepted Reading remains mandatory. Comparative words corroborate only a
+// current literal upper bound on the exact owned subject and matching axis.
+const comparativeDimensionCases = [
+  { name: "Cantonese maximum", text: "Portable exhibition frame 最闊只可以 600mm。", axis: "width", mm: 600, language: "zh-TW" },
+  { name: "English width", text: "Portable exhibition frame must be no wider than 60 cm.", axis: "width", mm: 600, language: "en" },
+  { name: "Traditional Chinese height", text: "Conference welcome banner 最高只可 120 cm。", axis: "height", mm: 1200, language: "zh-TW" },
+  { name: "Simplified Chinese width", text: "Portable exhibition frame 最宽只能 60厘米。", axis: "width", mm: 600, language: "zh-CN" },
+  { name: "English height", text: "Conference welcome banner must be no taller than 120 cm.", axis: "height", mm: 1200, language: "en" },
+  { name: "English depth", text: "Reusable shipping crate must be not deeper than 24 inches.", axis: "depth", mm: 609.6, language: "en" },
+] as const;
+for (const row of comparativeDimensionCases) {
+  Deno.test("P1 comparative dimension source positive: " + row.name, async () => {
+    const spec = businessDimensions.find(value => value.axis === row.axis)!;
+    const s = storage(businessState(spec));
+    const input = businessTurn(spec, row.text, row.mm);
+    input.language = row.language;
+    assert(input.semantic_frame, "Comparative dimension Reading missing");
+    input.semantic_frame.language = row.language;
+    const siblings = JSON.stringify(s.live.state.entities.slice(0, 2));
+    const result = await runCommerceStateRuntime(s.db, input);
+    assert(result?.persist_result === "success" && s.live.writes === 1 && s.live.revision === 22 &&
+      s.live.state.entities[2].constraints["max_" + row.axis + "_mm"] === row.mm &&
+      s.live.state.entities[2].provenance.source_message_id === input.source_message_id &&
+      JSON.stringify(s.live.state.entities.slice(0, 2)) === siblings &&
+      s.live.state.entities[2].quantity === 1 && s.live.state.entities.length === 3,
+      "Valid comparative bound was refused or changed another subject: " + JSON.stringify(result));
+    noTransaction(s.live.state);
+    const before = JSON.stringify(s.live.state);
+    await runCommerceStateRuntime(s.db, input);
+    assert(s.live.writes === 1 && s.live.revision === 22 && JSON.stringify(s.live.state) === before,
+      "Comparative same-source replay wrote again");
+  });
+}
+const comparativeDimensionNegatives = [
+  { name: "wrong amount", text: "Portable exhibition frame must be no wider than 60 cm.", axis: "width", mm: 590 },
+  { name: "wrong axis", text: "Portable exhibition frame must be no wider than 60 cm.", axis: "height", mm: 600 },
+  { name: "lower bound", text: "Portable exhibition frame must be wider than 60 cm.", axis: "width", mm: 600 },
+  { name: "not required", text: "Portable exhibition frame is not required to be no wider than 60 cm.", axis: "width", mm: 600 },
+  { name: "removed requirement", text: "Portable exhibition frame must be no wider than 60 cm is no longer required.", axis: "width", mm: 600 },
+  { name: "historical", text: "Previously Portable exhibition frame had to be no wider than 60 cm.", axis: "width", mm: 600 },
+  { name: "Cantonese negation", text: "Portable exhibition frame 唔需要最闊只可以 600mm。", axis: "width", mm: 600 },
+  { name: "other subject", text: "Atlas training sessions must be no wider than 60 cm.", axis: "width", mm: 600 },
+  { name: "other axis bound", text: "Portable exhibition frame must be no wider than 60 cm and height 120 cm.", axis: "height", mm: 1200 },
+  { name: "conditional", text: "If Portable exhibition frame must be no wider than 60 cm.", axis: "width", mm: 600 },
+  { name: "question", text: "Should Portable exhibition frame be no wider than 60 cm?", axis: "width", mm: 600 },
+] as const;
+for (const row of comparativeDimensionNegatives) {
+  Deno.test("P1 comparative dimension source negative: " + row.name, async () => {
+    const s = storage(), input = turn(row.text, row.mm, "max_" + row.axis + "_mm");
+    const before = JSON.stringify(s.live.state);
+    const result = await persistCommerceTurn(s.db, input, []);
+    assert(result.result !== "success" && s.live.writes === 0 && s.live.revision === 21 &&
+      JSON.stringify(s.live.state) === before, "Unverified comparative proposal gained write authority: " + JSON.stringify(result));
+    noTransaction(s.live.state);
+  });
+}
