@@ -314,3 +314,59 @@ test('mixed unresolved cancellation never infers an independently authorized com
    assert.deepEqual(after,f.state,text);
  }
 });
+
+
+// R3: partial lifecycle acknowledgement must describe the two committed
+// portions, not the entire subject. The actual reducer derives the state;
+// the isolated DB readback fixture supplies only the server-owned snapshot.
+for (const c of [
+ ['retail','書枱','張','zh-TW',3,2,'更正，只保留兩張書枱，第三張暫時取消。','cancelled'],
+ ['service','套餐','份','zh-TW',3,2,'更正，只保留兩份套餐，第三份取消。','cancelled'],
+ ['service','英語課','課','zh-TW',3,2,'更正，只保留兩課，第三課延後再談。','deferred'],
+ ['service','美容療程','堂','zh-TW',3,2,'更正，只保留兩堂療程，第三堂暫緩。','deferred'],
+ ['subscription','licenses','licenses','en',3,2,'Correction: keep two licenses; postpone the third.','deferred'],
+ ['b2b_product','paper cups','cartons','en',120,60,'Correction: keep 60 cartons under review and postpone the other 60 cartons.','deferred'],
+]) {
+ test('R3 verified partial unit acknowledgement '+c[1],async()=>{
+  const {buildVerifiedPartialUnitStatusAnswer}=await import('../../supabase/functions/_shared/commerce-state-runtime-base.ts');
+  const [category,name,unit,language,prior,kept,source,status]=c;
+  const f=fixture([category,name,unit]),parent=f.state.entities[0];
+  parent.model=null;parent.brand=null;parent.quantity=prior;
+  parent.attributes.product_name=name;parent.attributes.name=name;
+  parent.attributes.customer_subject_aliases=[name];
+  const semantic=frame(f,{operation:'SET_QUANTITY',quantity:kept,topic:category,facts:[]});
+  Object.assign(semantic.entities[0],{name,model:null,unit});
+  semantic.language=language;
+  const input={text:source,semantic_frame:semantic,source_message_id:'partial-source',
+   conversation_id:'fixture-ticket',company_id:'fixture-company',language};
+  const state=reduceTurn(f.state,input,[{entity_id:parent.entity_id,category,aliases:[name],
+   attributes:{product_name:name,unit}}]);
+  const active=state.entities.find(e=>e.entity_id===parent.entity_id);
+  const child=state.entities.find(e=>e.attributes.customer_part_of_entity_id===parent.entity_id);
+  assert.equal(active?.quantity,kept);assert.equal(child?.quantity,prior-kept);
+  assert.equal(child?.status,status);
+  const snapshot={company_id:input.company_id,conversation_id:input.conversation_id,
+    source_message_id:input.source_message_id,revision:5,state};
+  const receipt={previous_state:f.state,state,previous_revision:4,revision:5,result:'success'};
+  const db=data=>({from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data,error:null})})})}),
+   rpc:async()=>{throw Error('acknowledgement must never write')}});
+  const result=await buildVerifiedPartialUnitStatusAnswer(db(snapshot),input,receipt);
+  assert.equal(typeof result,'string');
+  assert(result.includes(String(kept)+' '+unit),result);
+  assert(result.includes(String(prior-kept)+' '+unit),result);
+  assert.match(result,language==='en'?/retained/:/保留/);
+  assert.match(result,language==='en'?/deferred requirement/:status==='cancelled'?/取消嘅要求/:/暫緩嘅要求/);
+  for(const [key,value] of [['company_id','other-company'],['conversation_id','other-ticket'],
+    ['source_message_id','older-source'],['revision',4],['state',f.state]]) {
+   assert.equal(await buildVerifiedPartialUnitStatusAnswer(db({...snapshot,[key]:value}),input,receipt),null,key);
+  }
+  const wrongState=structuredClone(state);
+  wrongState.entities.find(e=>e.entity_id===child.entity_id).quantity=999;
+  assert.equal(await buildVerifiedPartialUnitStatusAnswer(db({...snapshot,state:wrongState}),input,{...receipt,state:wrongState}),null);
+  assert.equal(await buildVerifiedPartialUnitStatusAnswer(db(snapshot),input,{...receipt,result:'revision_conflict'}),null);
+  assert.equal(await buildVerifiedPartialUnitStatusAnswer(db(snapshot),{...input,source_message_id:'another-source'},receipt),null);
+  const mixed=structuredClone(input);
+  mixed.semantic_frame.requested_facts=['price'];
+  assert.equal(await buildVerifiedPartialUnitStatusAnswer(db(snapshot),mixed,receipt),null);
+ });
+}

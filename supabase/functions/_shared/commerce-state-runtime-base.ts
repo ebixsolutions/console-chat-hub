@@ -5169,6 +5169,88 @@ function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, va
   return `按你之前提供嘅資料：${rendered}。`;
 }
 
+/** A partial-unit split is not a cancellation of the entire subject.
+ * Recompute the existing source-bound transition from the actual preimage,
+ * then require the same owner/ticket/source/revision in a fresh DB readback.
+ * No new industry vocabulary, event, mutation or B2 authority is introduced.
+ * A rejected or stale partition never falls through to the full-item reply. */
+export async function buildVerifiedPartialUnitStatusAnswer(
+  db: CommerceStateDbClient, input: CommerceRuntimeInput,
+  persisted: Awaited<ReturnType<typeof persistCommerceTurn>>,
+): Promise<string | null> {
+  if (persisted.result !== "success" ||
+      !input.company_id || !input.conversation_id || !input.source_message_id ||
+      !Number.isSafeInteger(persisted.previous_revision) ||
+      persisted.revision !== persisted.previous_revision + 1) return null;
+  const frame = input.semantic_frame;
+  if (!frame || frame.requested_facts.length || (frame.demands ?? []).some(d =>
+      d.requested_facts.length || d.source_type !== "general")) return null;
+  const events = sourceBoundPartialUnitRetention(persisted.previous_state, input);
+  if (!events) return null;
+  let expected = reduceCommerceState(persisted.previous_state, events);
+  const owned = sourceBoundMixedCustomerFactEvents(frame, expected, input.text,
+    input.source_message_id, input.occurred_at ?? null);
+  if (owned.length) expected = reduceCommerceState(expected, owned);
+  if (JSON.stringify(expected) !== JSON.stringify(persisted.state) ||
+      JSON.stringify(b2JourneyTransactionBoundary(persisted.previous_state)) !==
+        JSON.stringify(b2JourneyTransactionBoundary(expected))) return null;
+  const children = expected.entities.filter(e =>
+    e.attributes.customer_unit_partition === "source_bound_status" &&
+    e.constraints.source_bound_partial_unit === true &&
+    e.provenance.source_type === "customer" &&
+    e.provenance.source_message_id === input.source_message_id &&
+    ["cancelled","deferred"].includes(e.status));
+  if (children.length !== 1) return null;
+  const child = children[0], parentId = child.attributes.customer_part_of_entity_id;
+  if (typeof parentId !== "string" || !parentId || parentId === child.entity_id ||
+      child.entity_id !== parentId + ":unit-status:" + input.source_message_id) return null;
+  const parents = expected.entities.filter(e => e.entity_id === parentId);
+  const previousParents = persisted.previous_state.entities.filter(e => e.entity_id === parentId);
+  if (parents.length !== 1 || previousParents.length !== 1 ||
+      persisted.previous_state.entities.some(e => e.entity_id === child.entity_id)) return null;
+  const parent = parents[0], before = previousParents[0], unit = parent.attributes.unit;
+  const label = customerOwnedDisplayLabel(parent);
+  if (!label || typeof unit !== "string" || unit !== unit.trim() || !unit ||
+      unit.length > 64 || !/^[\p{L}\p{N}\p{M}]+(?:[ ./_-][\p{L}\p{N}\p{M}]+)*$/u.test(unit) ||
+      child.attributes.unit !== unit || before.attributes.unit !== unit ||
+      parent.attributes.quantity_basis !== "customer_explicit" ||
+      child.attributes.quantity_basis !== "customer_explicit" ||
+      before.attributes.quantity_basis !== "customer_explicit" ||
+      parent.provenance.source_type !== "customer" || before.provenance.source_type !== "customer" ||
+      !before.provenance.source_message_id ||
+      parent.provenance.source_message_id !== input.source_message_id ||
+      ["cancelled","deferred","superseded"].includes(parent.status) ||
+      parent.status !== before.status || parent.category !== child.category ||
+      parent.category !== before.category || parent.model !== child.model ||
+      parent.model !== before.model || customerOwnedDisplayLabel(child) !== label ||
+      customerOwnedDisplayLabel(before) !== label ||
+      !Number.isSafeInteger(parent.quantity) || parent.quantity < 1 ||
+      !Number.isSafeInteger(child.quantity) || child.quantity < 1 ||
+      !Number.isSafeInteger(before.quantity) || parent.quantity + child.quantity !== before.quantity ||
+      parent.constraints.customer_inactive_unit_count !== child.quantity ||
+      parent.constraints.customer_inactive_unit_status !== child.status) return null;
+  try {
+    const {data,error} = await db.from("conversation_commerce_state")
+      .select("company_id,conversation_id,source_message_id,revision,state")
+      .eq("conversation_id",input.conversation_id).maybeSingle();
+    if (error || !isRecord(data) || data.company_id !== input.company_id ||
+        data.conversation_id !== input.conversation_id ||
+        data.source_message_id !== input.source_message_id ||
+        data.revision !== persisted.revision || !isConversationCommerceState(data.state) ||
+        JSON.stringify(data.state) !== JSON.stringify(expected)) return null;
+  } catch { return null; }
+  // The recorded customer requirement is distinct from a merchant order,
+  // entitlement, refund or booking. Do not acknowledge a business transaction.
+  const status = child.status === "cancelled"
+    ? (input.language === "en" ? "cancelled requirement" : input.language === "zh-CN" ? "取消的需求" : "取消嘅要求")
+    : (input.language === "en" ? "deferred requirement" : input.language === "zh-CN" ? "暂缓的需求" : "暫緩嘅要求");
+  if (input.language === "en")
+    return `Recorded your requirements for ${label}: retained ${parent.quantity} ${unit}; ${status}: ${child.quantity} ${unit}.`;
+  if (input.language === "zh-CN")
+    return `已记录你的${label}需求：保留 ${parent.quantity} ${unit}；${status}：${child.quantity} ${unit}。`;
+  return `已記錄你嘅${label}要求：保留 ${parent.quantity} ${unit}；${status}：${child.quantity} ${unit}。`;
+}
+
 function buildResolvedEntityStatusChangeAnswer(input: CommerceRuntimeInput, state: ConversationCommerceState): string | null {
   if (!detectCancellation(input.text) && !detectDeferral(input.text)) return null;
   const changed = state.entities.filter((entity) =>
@@ -5178,6 +5260,10 @@ function buildResolvedEntityStatusChangeAnswer(input: CommerceRuntimeInput, stat
   // Only this turn's uniquely resolved entity may bypass clarification.
   if (changed.length !== 1) return null;
   const entity = changed[0];
+  // Partial portions are never whole-item lifecycle acknowledgements.
+  if (entity.attributes.customer_unit_partition === "source_bound_status" ||
+      entity.constraints.source_bound_partial_unit === true ||
+      Object.prototype.hasOwnProperty.call(entity.attributes,"customer_part_of_entity_id")) return null;
   // Generic products share a schema category, never a quantity aggregate.
   // The lifecycle event verifies this specific entity, not unrelated items.
   const label = entityLabel(entity, input.language);
@@ -6082,6 +6168,21 @@ export async function runCommerceStateRuntime(
       : decision.reason,
   };
 
+  const currentPartial = state.entities.some(entity =>
+    entity.provenance.source_message_id === input.source_message_id &&
+    (entity.attributes.customer_unit_partition === "source_bound_status" ||
+      entity.constraints.source_bound_partial_unit === true ||
+      Object.prototype.hasOwnProperty.call(entity.attributes,"customer_part_of_entity_id")));
+  const purePartial = currentPartial && runtimeInput.semantic_frame &&
+    runtimeInput.semantic_frame.requested_facts.length === 0 &&
+    (runtimeInput.semantic_frame.demands ?? []).every(d =>
+      d.requested_facts.length === 0 && d.source_type === "general");
+  if (purePartial) {
+    const reply = await buildVerifiedPartialUnitStatusAnswer(db,runtimeInput,persisted);
+    return { ...base, authority:"CONVERSATION_STATE",reply,
+      reason:reply ? "explicit_entity_status_change_applied" : "partial_unit_status_commit_unverified",
+      route:"commerce_state_answer" };
+  }
   const resolvedStatusChangeReply = persisted.result === "success"
     ? buildResolvedEntityStatusChangeAnswer(runtimeInput, state)
     : null;
