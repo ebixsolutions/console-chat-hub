@@ -192,6 +192,62 @@ function mixedReading(row,turn,language){
  {semantic:wire({language,intent:'mixed_customer_and_merchant_facts',referents,requested_facts:['quantity','price'],demands:[demand(quantityClause,'general','quantity'),demand(priceClause,'product','price')]},'ASK_FACT'),status:'SCRIPTED_PROPOSAL',source_quote:question,coverage:'INDEPENDENT_CUSTOMER_QUANTITY_AND_CURRENT_MERCHANT_PRICE'};
 }
 
+// R2 quotation-only reports: source speech, never completed transaction evidence.
+const quoteOnlyReadings=Object.freeze({
+  "SYNTHETIC-retail-transaction": [
+    "我只要求書枱報價，尚未下單或付款。",
+    "目前只是查詢報價，還是已完成交易？"
+  ],
+  "SYNTHETIC-restaurant-transaction": [
+    "我只是查詢兩份套餐，沒有確認訂位、落單或付款。",
+    "目前只是查詢報價，還是已完成交易？"
+  ],
+  "SYNTHETIC-education-transaction": [
+    "我只是索取課程費用，沒有確認報名或付款。",
+    "目前只是查詢報價，還是已完成交易？"
+  ],
+  "SYNTHETIC-beauty-transaction": [
+    "我只是查詢療程報價，尚未付款或確認預約。",
+    "目前只是查詢報價，還是已完成交易？"
+  ],
+  "SYNTHETIC-saas-transaction": [
+    "I requested a quotation only. No subscription, payment, or renewal has been confirmed.",
+    "Is this a quotation or a completed transaction?"
+  ],
+  "SYNTHETIC-b2b-wholesale-transaction": [
+    "I only asked for a written quotation for paper cups. I have not placed an order, paid or arranged shipping.",
+    "Do I have an accepted wholesale order yet?"
+  ]
+});
+const quoteOnlyNegations=Object.freeze({
+  "retail": [
+    "尚未下單或付款"
+  ],
+  "restaurant": [
+    "沒有確認訂位、落單或付款"
+  ],
+  "education": [
+    "沒有確認報名或付款"
+  ],
+  "beauty": [
+    "尚未付款或確認預約"
+  ],
+  "saas": [
+    "No subscription, payment, or renewal has been confirmed."
+  ],
+  "b2b-wholesale": [
+    "I have not placed an order, paid or arranged shipping."
+  ]
+});
+function quoteOnlyReading(row,turn,language){
+ const source=quoteOnlyReadings[row.id];if(!source)return null;
+ if(row.turns.length!==2||row.turns.some((v,i)=>v!==source[i]))throw Error('observer_quote_only_source_drift:'+row.id);
+ const text=source[turn];if(turn===0){const negative=quoteOnlyNegations[row.domain];if(!negative||negative.some(v=>!text.includes(v)))throw Error('observer_quote_negation_drift:'+row.id);
+ return {semantic:wire({language,intent:'customer_reported_quote_only',customer_facts:[{key:'customer_reported_quote_request',value:text}],explicit_negations:negative,requested_facts:[]},'NO_STATE_CHANGE'),status:'SCRIPTED_PROPOSAL',source_quote:text,coverage:'QUOTATION_ONLY_EXPLICIT_NEGATIONS'};}
+ const fields=row.domain==='b2b-wholesale'?['order_status']:['quote_status','order_status','payment_status'];
+ return {semantic:wire({language,intent:'transaction_status',requested_facts:fields,demands:[{question:text,source_quote:text,subject_refs:[],source_type:'transaction',requested_facts:fields,constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]},'ASK_FACT'),status:'SCRIPTED_PROPOSAL',source_quote:text,coverage:'REQUEST_TRANSACTION_VERIFICATION_NOT_CONFIRMATION'};
+}
+
 function proposedReading(row,turn,wrong=false){
  const text=row.turns[turn],language=row.domain==='saas'||row.domain==='b2b-wholesale'?'en':'zh-TW';
  if(row.kind==='probe')return {semantic:{operation:row.reading.operation,intent:row.reading.intent,confidence:.98,
@@ -205,6 +261,7 @@ function proposedReading(row,turn,wrong=false){
  if(hasCorrectionReading(row)&&turn>0)return correctionReading(row,turn,subject,language,wrong);
  if(wrong)throw Error('observer_wrong_reading_outside_named_family:'+row.id);
  const mixed=mixedReading(row,turn,language);if(mixed)return mixed;
+ const quoteOnly=quoteOnlyReading(row,turn,language);if(quoteOnly)return quoteOnly;
  if(subject&&turn===0&&['-recall','-correction','-mixed-known-unknown'].some(suffix=>row.id.endsWith(suffix))){
   // These fixed proposals are separate from the original visitor corpus. Each
   // entity name/unit is checked against the exact current source before use.
