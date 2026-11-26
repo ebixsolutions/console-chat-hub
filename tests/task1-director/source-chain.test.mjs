@@ -661,3 +661,42 @@ test("Task3C P1 rejected structured advice Reading cannot use sparse legacy goal
  const valid=sourceAdviceReading(validText,"training course");
  assert.equal(acceptsInitialAdviceGoalReading(sourceAdviceInput(validText,valid),valid),true);
 });
+
+
+// P1: preserve separate, source-bound customer recall and merchant demands.
+// This exercises the actual routing implementation. It does not attest values.
+test('P1 mixed quantity recall keeps merchant lookup and customer question independent',()=>{
+ const pairs=[
+  ['我之前提過幾張書枱？','另外目前每張官方售價是多少？'],
+  ['我之前提過幾份套餐？','今天每份官方售價是多少？'],
+  ['我之前提過幾課英語課？','現在每課學費是多少？'],
+  ['我之前提過幾堂療程？','現在每堂售價是多少？'],
+  ['How many licenses did I mention earlier','what is their current official price?'],
+  ['How many cartons did I mention','what is the current official wholesale price?'],
+ ];
+ const make=(q,m)=>({...semantic({intent:'mixed_customer_and_merchant_facts',requested_facts:['quantity','price']}),
+ demands:[{...ownershipFrame(q).demands[0],requested_facts:['quantity']},
+ {...ownershipFrame(m).demands[0],source_type:'product',requested_facts:['price']}]});
+ for(const [q,m] of pairs){
+   const source=q+' '+m,frame=make(q,m),copy=structuredClone(frame);
+   const d=resolveCustomerRequestDecision(source,frame);
+   assert.equal(d.kind,'mixed',JSON.stringify(d));
+   assert.equal(d.customer_quantity_recall_request,q);
+   assert.equal(d.merchant_request,m);
+   assert.deepEqual(d.semantic_demands.map(x=>x.source_type),['general','product']);
+   assert.deepEqual(frame,copy);
+ }
+ for(const q of ['How many licenses are in stock?','How many orders did I mention?','How many licenses are available from your store?','我之前提過幾多貨存？']){
+   const m='what is the current official price?',d=resolveCustomerRequestDecision(q+' '+m,make(q,m));
+   assert.equal(d.customer_quantity_recall_request,undefined,q);
+   assert.ok(d.merchant_request);
+ }
+ const [q,m]=pairs[0],source=q+' '+m;
+ const invented=resolveCustomerRequestDecision(m,make(q,m));assert.equal(invented.customer_quantity_recall_request,undefined);
+ const ambiguous=make(q,m);ambiguous.demands[0].ambiguity.is_ambiguous=true;
+ assert.equal(resolveCustomerRequestDecision(source,ambiguous).customer_quantity_recall_request,undefined);
+ const correction=make(q,m);correction.demands[0].customer_correction=true;
+ assert.equal(resolveCustomerRequestDecision(source,correction).customer_quantity_recall_request,undefined);
+ const control=resolveCustomerRequestDecision(source+' 請轉真人客服',make(q,m));
+ assert.equal(control.customer_quantity_recall_request,undefined);
+});

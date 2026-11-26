@@ -138,7 +138,7 @@ import {
   selectCanonicalGrounding,
 } from "../_shared/canonical-grounding.ts";
 import type { ReferenceAuthorityDecision } from "../_shared/commerce-state-authority.ts";
-import { customerBusinessText, isCustomerGuidanceRequest, resolveCustomerRequestDecision, applyCustomerRequestDecision } from "../_shared/commerce-state-authority.ts";
+import { customerBusinessText, isCustomerGuidanceRequest, resolveCustomerRequestDecision, applyCustomerRequestDecision, type CustomerRequestDecision } from "../_shared/commerce-state-authority.ts";
 import { buildCitationMetadata } from "../_shared/citation-lineage.ts";
 import {
   type CanonicalKbDirectAnswer,
@@ -4925,7 +4925,7 @@ async function orchestrationGenerateReply(
   const _pureSourceOperationFailure = Boolean(_semanticPrepared?.recovery.source_verified &&
     isSourceBoundOperationFailureRequest({question:_h1LastMsg,source_message_id:_h1SourceMessageId,
       trusted_company_id:_criticalE2ExpectedTenantId,semantic:_a3SemanticFrame}));
-  const _customerRequestDecision = _pureSourceQuantityUnit || _pureSourceOperationFailure
+  const _customerRequestDecision: CustomerRequestDecision = _pureSourceQuantityUnit || _pureSourceOperationFailure
     ? {kind:"other" as const,continuation:false,general_request:null,merchant_request:null,
       latest_requirements:_h1LastMsg,semantic_demands:_a3SemanticFrame!.demands}
     : resolveCustomerRequestDecision(_semanticRequestQuestion,_a3SemanticFrame,_semanticRoutingHistory);
@@ -5458,7 +5458,10 @@ async function orchestrationGenerateReply(
   // This original Visitor query is authoritative for read-only recall.
   // A semantic merchant label must not rewrite customer speech into a KB
   // question before independent source proof; mixed actions stay separate.
-  const _c3R1Question=_mixedRequest?_productFactualRequest:_h1LastMsg;
+  const _mixedQuantityQuestion = _mixedRequest && !_explicitHandoffRequested &&
+    !_currentFactualRequest?.transaction_required && classifyLocalTopicRisk(_h1LastMsg)?.level !== "high"
+    ? _customerRequestDecision.customer_quantity_recall_request : undefined;
+  const _c3R1Question=_mixedQuantityQuestion ?? (_mixedRequest?_productFactualRequest:_h1LastMsg);
   // Task3C D3 (F1/F3/S3): one bounded, server-owned Visitor-source lookup
   // for BOTH semantic and canonical recall. A failed or empty DB read is never
   // silently treated as a verified empty source list.
@@ -5526,6 +5529,13 @@ async function orchestrationGenerateReply(
     trusted_visitor_source_status: _c3RecallSources.status,
   };
   const _c3Recall = prepareConversationRecall(_c3RecallInput,_visitorLang);
+  // Independently attested customer facts survive a merchant evidence gap,
+  // but mixed requests never acquire the pure-recall shortcut.
+  const _mixedVerifiedQuantity = _mixedQuantityQuestion && _c3Recall.reply &&
+    _c3Recall.decision.handled && _c3Recall.decision.fact_type==="quantity" &&
+    _c3Recall.decision.provenance.evidence.length===1 &&
+    hasAttestedUnlabelledCustomerRecall(_c3RecallInput,_c3Recall.decision)
+    ? _c3Recall : null;
   const _c3R1Verified = Boolean(!_mixedRequest&&!_explicitHandoffRequested&&
     !_currentFactualRequest?.transaction_required&&
     hasAttestedUnlabelledCustomerRecall(_c3RecallInput,_c3Recall.decision));
@@ -5698,10 +5708,10 @@ async function orchestrationGenerateReply(
       committed_source_message_id: _c3CommerceSnapshot?.source_message_id === _h1SourceMessageId ? _h1SourceMessageId : undefined,
       language: _visitorLang,
       recall:
-        !_c3CustomerRecallRoute &&
+        _mixedQuantityQuestion || (!_c3CustomerRecallRoute &&
         requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent) &&
           (_effectiveNaturalCustomerIntent.kind === "product_factual_query" ||
-            !_c3Recall.decision.handled)
+            !_c3Recall.decision.handled))
           ? {
             handled: false,
             reason: "CURRENT_KB_REQUIRED",
@@ -6721,6 +6731,31 @@ ${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was n
   );
 
   let _mixedEvidenceUnavailable=false;
+  // Only the existing no-current-evidence admission and R1 checks may reach
+  // this partial reply. B2 still revalidates the exact Commerce revision.
+  const persistMixedQuantityEvidenceGap = async (trace:Record<string,unknown>):Promise<Response|null> => {
+    if (!_mixedVerifiedQuantity?.reply || !_canPersistBoundedNoCurrentEvidence) return null;
+    const unknown = _visitorLang==="en"
+      ? "I could not verify the current merchant information requested; I will not substitute a historical value."
+      : _visitorLang==="zh-CN"
+      ? "另一个问题涉及的商户现行资料暂未核实，不能用旧资料代替。"
+      : "另一個問題涉及的商戶現行資料暫未核實，不能用舊資料代替。";
+    const committed = await commitAiReplyWithControlGate(
+      supabaseAdmin,conversation_id,source_message_id,_mixedVerifiedQuantity.reply+"\n"+unknown,
+      {...trace,..._mixedVerifiedQuantity.metadata,response_route:"mixed_customer_guidance",
+        service_action:"partial_answer",knowledge_state:"no_match",grounding_state:"no_current_evidence",
+        factual_grounding_required:true,historical_evidence_promoted:false,
+        merchant_evidence_unavailable:true,handoff_required:false});
+    await cleanupThinking(supabaseAdmin,conversation_id,source_message_id);
+    if(!committed.ok){
+      if(["human_control","resolved","superseded_source"].includes(committed.result))
+        return new Response(JSON.stringify({success:true,skipped:committed.result}),{headers:{...corsHeaders,"Content-Type":"application/json"}});
+      return new Response(JSON.stringify({success:false,error:"mixed_quantity_partial_commit_"+committed.result}),{status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+    }
+    return new Response(JSON.stringify({success:true,reply:_mixedVerifiedQuantity.reply+"\n"+unknown,
+      response_route:"mixed_customer_guidance",grounding_state:"no_current_evidence",
+      no_answer:false,handoff_required:false,idempotent:committed.idempotent}),{headers:{...corsHeaders,"Content-Type":"application/json"}});
+  };
   kbRetrieval: if (flags.ENABLE_KB && !_g1SkipKB) {
     const _kbTenantResult = await resolveTenantScope(
       conversation_id,
@@ -6928,6 +6963,8 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
       }
       if (_canPersistBoundedNoCurrentEvidence) {
         if(_mixedRequest) {
+          const partialQuantity = await persistMixedQuantityEvidenceGap( {rag_api_status:"success_empty",execution_failure:executionFailure("KB_NO_MATCH")} );
+          if(partialQuantity) return partialQuantity;
           _mixedEvidenceUnavailable=true; _kbDone=true;
           ragResult={...ragResult,chunks:[],documents:[],llm_context:undefined,no_answer:true};
           break kbRetrieval;
@@ -7142,6 +7179,8 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
       }
       if (boundedNoEvidenceWithoutConflict) {
         if(_mixedRequest) {
+          const partialQuantity = await persistMixedQuantityEvidenceGap( {...traceMetadata,evidence_decision:_boundedNoCurrentEvidenceDecision.kind} );
+          if(partialQuantity) return partialQuantity;
           _mixedEvidenceUnavailable=true; _kbDone=true;
           ragResult={...ragResult,chunks:[],documents:[],llm_context:undefined,no_answer:true};
           break kbRetrieval;
@@ -7331,6 +7370,8 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
       }
       if (_canPersistBoundedNoCurrentEvidence) {
         if(_mixedRequest) {
+          const partialQuantity = await persistMixedQuantityEvidenceGap( {...traceMetadata,evidence_decision:_boundedNoCurrentEvidenceDecision.kind} );
+          if(partialQuantity) return partialQuantity;
           _mixedEvidenceUnavailable=true; _kbDone=true;
           ragResult={...ragResult,chunks:[],documents:[],llm_context:undefined,no_answer:true};
           break kbRetrieval;
@@ -7845,6 +7886,7 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
         _customerGuidanceInstruction,
       _effectiveRequirementsBlock,
       _mixedGuidanceInstruction,
+      _mixedVerifiedQuantity?.reply ? "[VERIFIED_CUSTOMER_RECALL]"+JSON.stringify(_mixedVerifiedQuantity.reply)+" Answer this customer-owned fact separately; it is not merchant evidence. [/VERIFIED_CUSTOMER_RECALL]" : "",
         _emotionReplyStrategyBlock,
         buildMaskedContextBlock(customerContext, opaqueCustomerRef),
         buildRagBlock(ragResult),
@@ -8012,9 +8054,10 @@ source_error_code:llm.code,
         supabaseAdmin,
         conversation_id,
         source_message_id,
-        partial?.reply ?? unverifiedReply ?? clarificationReply,
+        partial?.reply ?? (_mixedVerifiedQuantity?.reply ? _mixedVerifiedQuantity.reply+"\n"+(unverifiedReply ?? clarificationReply) : unverifiedReply ?? clarificationReply),
         {
           ...recoveryTrace,
+          ...(_mixedVerifiedQuantity ? _mixedVerifiedQuantity.metadata : {}),
           ...(!partial && humanSupportOffer ? {human_support_offer:humanSupportOffer} : {}),
           ...(partial ? {...partial.citation_metadata,recorded_kb_facts:partial.recorded_facts,
             authoritative_kb_facts:[],partial_recovery:{contract:"canonical-source-field-recovery-1",

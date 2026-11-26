@@ -572,6 +572,8 @@ export type CustomerRequestDecision = {
   /** Source-validated semantic scope; this does not authorize evidence reads. */
   semantic_demands?: CommerceSemanticDemand[];
   excluded_lookup_quotes?: string[];
+  /** A read proposal, never authority for a quantity value. */
+  customer_quantity_recall_request?: string;
 };
 type RequestHistory = {id?:string|null;role:string;content:string;metadata?:unknown;created_at?:string|null};
 /** One source-bound decision for the writer, planner, query and generation.
@@ -619,8 +621,29 @@ export function resolveCustomerRequestDecision(question:string, semantic: {
       (row.metadata as Record<string,unknown>|undefined)?.response_route==="customer_guidance");
     const customerContinuation=priorGuidance && semantic.operation==="UPDATE_ITEM" &&
       !semantic.ambiguity.is_ambiguous && Boolean(semantic.customer_facts?.length) && !semantic.additive;
-    const active = demands.filter(demand => !excluded.includes(demand)).map(demand=>{
-      if(demand.source_type!=="general")return demand;
+    // Preserve an independent customer recall alongside a merchant demand.
+    // This proposal selects the existing recall reader, not a fact value.
+    const remaining = demands.filter(demand=>!excluded.includes(demand));
+    const recallDemand = remaining.length===2 && semantic.operation==="ASK_FACT" &&
+      semantic.confidence>=0.72 && !semantic.ambiguity.is_ambiguous &&
+      !semantic.additive && !semantic.customer_facts?.length &&
+      remaining.some(d=>["product","policy","unknown"].includes(d.source_type) &&
+        !d.ambiguity.is_ambiguous && !d.customer_correction)
+      ? remaining.find(d=>{
+          const q=clean(d.source_quote);
+          const other=remaining.find(x=>x!==d);
+          const qn=normalize(q), on=normalize(other?.source_quote??"");
+          return d.source_type==="general" && !d.ambiguity.is_ambiguous &&
+            !d.customer_correction && !d.explicit_negations.length &&
+            d.requested_facts.length===1 && ["quantity","current_quantity"].includes(d.requested_facts[0]) &&
+            !!on && !qn.includes(on) && !on.includes(qn) &&
+            !MERCHANT_FACT_REQUEST.test(q) &&
+            !/\b(?:order|payment|refund|booking|entitlement|stock|inventory|your)\b|訂單|订单|付款|退款|預約|预约|權益|权益|貨存|货存|你[哋們们]/iu.test(q) &&
+            /(?:我(?:哋|們|们)?[^。！？?]{0,60}(?:提過|提过|提到|講過|讲过|說過|说过|曾經|曾经)|\b(?:did\s+(?:i|we)\s+(?:mention|say|request)|(?:i|we)\s+(?:mentioned|said|requested))\b)/iu.test(q) &&
+            isReadOnlyMemoryOrCurrentStateRecall(q,{operation:"ASK_FACT",requested_facts:d.requested_facts});
+        }) : undefined;
+    const active = remaining.map(demand=>{
+      if(demand.source_type!=="general" || demand===recallDemand)return demand;
       // Source ownership, not an industry/feature name allowlist. Only genuine
       // decision criteria or an already-bound customer clarification admit a
       // no-KB route. Unproven business/how-to/company facts remain lookup needs.
@@ -641,6 +664,7 @@ export function resolveCustomerRequestDecision(question:string, semantic: {
       ? general.length || transactions.length ? "mixed" : "merchant_facts"
       : general.length && !transactions.length ? "guidance" : "other";
     return {...empty, kind, semantic_demands: active,
+      ...(kind==="mixed" && recallDemand ? {customer_quantity_recall_request:recallDemand.source_quote} : {}),
       excluded_lookup_quotes: excluded.map(demand => demand.source_quote),
       general_request: general.length ? general.map(demand => demand.source_quote).join("; ") : null,
       merchant_request: kb.length ? kb.map(demand => demand.source_quote).join("; ") : null};
