@@ -32,6 +32,7 @@ import { roomSizeCorrection, retainedRoomSizes } from "./conversation-long-memor
 import { isCanonicalConversationMemory, type CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
 import { canonicalJson, sameCanonicalJson } from "./canonical-json.ts";
+import { canonicalUnitPartitions,renderCanonicalUnitPartition } from "./commerce-subject-resolution.ts";
 
 export type B2DecisionKind = "allow" | "block" | "indeterminate";
 
@@ -1519,7 +1520,43 @@ function evaluateCorrections(text: string, snapshot: B2CanonicalSnapshot): B2Dec
   return null;
 }
 
-function evaluateCancellation(text: string, state: ConversationCommerceState): B2Decision | null {
+/** Resolve the proven same-name split, never authorize a restored entity.
+ * B2 independently recomputes the exact deterministic two-portion statement
+ * from its freshly scoped canonical snapshot. Arbitrary prose, stale source,
+ * ambiguous relations and altered counts still use the original guard. */
+function isBoundPartitionStatement(input:B2EvaluationInput,draft:string):boolean {
+  const s=input.snapshot,m=input.metadata;
+  if (input.persistence_kind!=="ai_reply" || !isRecord(m) || !s.company_id ||
+      !s.conversation_id || !s.source_message_id ||
+      !Number.isSafeInteger(s.commerce_state_revision) || s.commerce_state_revision<1 ||
+      !s.commerce_state_source_message_id ||
+      Number(m.commerce_state_revision) !== s.commerce_state_revision) return false;
+  const pairs=canonicalUnitPartitions(s.state,s.commerce_state_source_message_id).filter(pair=>
+    ["en","zh-TW","zh-CN"].some(language=>clean(renderCanonicalUnitPartition(pair,language))===draft));
+  if(pairs.length!==1)return false;
+  const pair=pairs[0];
+  if(m.response_route==="commerce_state_answer" &&
+      m.commerce_reason==="source_bound_partial_unit_status_committed" &&
+      m.commerce_authority==="CONVERSATION_STATE" &&
+      s.commerce_state_source_message_id===s.source_message_id &&
+      classifyB2AuthoritativePersistence(input)==="COMMITTED") return true;
+  if(m.response_route!=="canonical_memory_recall" || m.recall_fact_type!=="quantity+unit_partition" ||
+      m.recall_authority!=="CANONICAL_COMMERCE_STATE" || pair.source===s.source_message_id ||
+      !Array.isArray(m.recall_provenance) || m.recall_provenance.length!==3) return false;
+  const proof=(entity:CommerceEntity,field:string,scope:string)=>{
+    const path="entities."+s.state.entities.indexOf(entity)+"."+(field==="quantity"?"quantity":"status");
+    return (m.recall_provenance as unknown[]).filter(e=>isRecord(e)&&e.entity_id===entity.entity_id&&
+      e.fact_type===field&&e.state_path===path&&e.temporal_scope===scope&&
+      e.authority==="CANONICAL_COMMERCE_STATE"&&e.source_kind==="canonical_partial_unit_partition"&&
+      e.source_message_id===pair.source&&
+      (field!=="quantity"||e.quantity_unit_source_kind==="canonical_customer_attribute"&&
+        e.quantity_unit_source_message_id===pair.source)).length===1;
+  };
+  return proof(pair.parent,"quantity","current") && proof(pair.child,"quantity","excluded") &&
+    proof(pair.child,"entity_status","excluded");
+}
+
+function evaluateCancellation(text: string, state: ConversationCommerceState, boundPartition = false): B2Decision | null {
   if (!RESTORE_OR_ACTIVE.test(text)) return null;
   const cancelledEntities = state.entities.filter(entity => entity.status === "cancelled");
   const activeEntities = state.entities.filter(entity => entity.status !== "cancelled" && entity.status !== "deferred");
@@ -1529,7 +1566,7 @@ function evaluateCancellation(text: string, state: ConversationCommerceState): B
   const clauses = text.split(/([。.!?;；\n,，]|\b(?:and|but)\b|但(?:係|是)?)/i);
   let inherited: {start:number;end:number;ids:string[]} | undefined;
   let coordinatedObject=false;
-  for (let clauseIndex=0;clauseIndex<clauses.length;clauseIndex+=2) {
+  for (let clauseIndex=0;!boundPartition && clauseIndex<clauses.length;clauseIndex+=2) {
     const clause=clauses[clauseIndex];
     if(!clause.trim())continue;
     if(clauseIndex>0 && /[。.!?;；\n]/.test(clauses[clauseIndex-1])){inherited=undefined;coordinatedObject=false;}
@@ -1615,6 +1652,10 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     };
   }
   const state = input.snapshot.state;
+  const boundPartition=isBoundPartitionStatement(input,draft);
+  if ((input.metadata?.commerce_reason==="source_bound_partial_unit_status_committed" ||
+       input.metadata?.recall_fact_type==="quantity+unit_partition") && !boundPartition)
+    return {decision:"block",code:"UNPROVEN_CANONICAL_UNIT_PARTITION"};
   const kbPriceDecision = input.metadata?.response_route === "canonical_kb_direct_answer" &&
       input.metadata.answer_kind === "price" || input.trusted_kb_price_proof
     ? evaluateCurrentKbSellingPrice(input, draft)
@@ -1658,7 +1699,7 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
   ) return { decision: "block", code: "UNPROVEN_CORRECTION_COMMIT" };
   return (
     (authoritativeNoSemanticChange || trustedLifecycle || trustedReadOnlyRecap || trustedCustomerCalculation ? null : correctionDecision) ??
-    evaluateCancellation(draft, state) ??
+    evaluateCancellation(draft, state, boundPartition) ??
     (kbPriceDecision || trustedCustomerCalculation ? null : evaluateQuoteReality(draft, state, input)) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
     // A declared, committed planner transition requires its original private

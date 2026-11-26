@@ -157,6 +157,55 @@ const quantityStatement=text=>{
  return match?{value:Number(match[1].replace(/,/gu,'')),unit:match[2]?.trim()??null}:null;
 };
 
+// Independent structural adjudication of a deterministic compound reply.
+// Only actual persisted pair/source/path/revision plus the delivered, B2-bound
+// two labelled values may establish this. The oracle is not a data source.
+function partitionEvidence(turns){
+ const final=turns.at(-1),prior=turns.at(-2),state=final?.readback?.state,
+  proofs=final?.reply?.metadata?.recall_provenance??[];
+ if(!Array.isArray(proofs)||!proofs.some(p=>p.source_kind==='canonical_partial_unit_partition'))return null;
+ const find=(field,scope)=>proofs.filter(p=>p.fact_type===field&&p.temporal_scope===scope);
+ const a=find('quantity','current'),b=find('quantity','excluded'),s=find('entity_status','excluded');
+ const entity=p=>/^entities\.\d+\.(?:quantity|status)$/u.test(p?.state_path??'')?
+  pathValue(state,p.state_path.replace(/\.(?:quantity|status)$/u,'')):null;
+ const parent=entity(a[0]),child=entity(b[0]),statusEntity=entity(s[0]);
+ const sources=sourceTurns(turns.slice(0,-1)),source=a[0]?.source_message_id,
+  unit=parent?.attributes?.unit,label=parent?.attributes?.product_name;
+ const bound=proofs.length===3&&a.length===1&&b.length===1&&s.length===1&&
+  parent&&child&&statusEntity&&parent.entity_id!==child.entity_id&&statusEntity.entity_id===child.entity_id&&
+  a[0].entity_id===parent.entity_id&&b[0].entity_id===child.entity_id&&s[0].entity_id===child.entity_id&&
+  a[0].state_path.endsWith('.quantity')&&b[0].state_path.endsWith('.quantity')&&s[0].state_path.endsWith('.status')&&
+  proofs.every(p=>p.source_kind==='canonical_partial_unit_partition'&&p.authority==='CANONICAL_COMMERCE_STATE'&&p.source_message_id===source)&&
+  sources.has(source)&&parent.provenance?.source_type==='customer'&&child.provenance?.source_type==='customer'&&
+  parent.provenance?.source_message_id===source&&child.provenance?.source_message_id===source&&
+  !['cancelled','deferred','superseded'].includes(parent.status)&&['cancelled','deferred'].includes(child.status)&&
+  child.attributes?.customer_part_of_entity_id===parent.entity_id&&child.attributes?.customer_unit_partition==='source_bound_status'&&
+  child.constraints?.source_bound_partial_unit===true&&child.entity_id===parent.entity_id+':unit-status:'+source&&
+  parent.constraints?.customer_inactive_unit_count===child.quantity&&parent.constraints?.customer_inactive_unit_status===child.status&&
+  parent.attributes?.quantity_basis==='customer_explicit'&&child.attributes?.quantity_basis==='customer_explicit'&&
+  typeof unit==='string'&&unit.length>0&&child.attributes?.unit===unit&&typeof label==='string'&&label.length>0&&child.attributes?.product_name===label&&
+  [a[0],b[0]].every(p=>p.quantity_unit_source_kind==='canonical_customer_attribute'&&p.quantity_unit_source_message_id===source)&&
+  Number.isSafeInteger(parent.quantity)&&parent.quantity>0&&Number.isSafeInteger(child.quantity)&&child.quantity>0&&
+  replyBound(final)&&canonicalBound(final)&&canonicalBound(prior)&&final.readback.commerce_revision===prior.readback.commerce_revision&&
+  final.readback.commerce_source_message_id===source&&!final.readback.commerce_commit_for_this_source&&
+  final.readback.memory_company_id===final.company_id&&final.readback.memory_conversation_id===final.conversation_id&&
+  final.readback.memory_commerce_revision===final.readback.commerce_revision&&
+  final.kb_dispatch_count===0;
+ const text=String(final?.reply?.content??'').normalize('NFKC').trim();
+ const patterns=[
+  {pattern:/^Recorded your requirements for (.+): retained (\d+) ([^;]+); (cancelled|deferred) requirement: (\d+) ([^.;]+)\.$/u,status:x=>x},
+  {pattern:/^已記錄你嘅(.+)要求:保留 (\d+) ([^;]+);(取消|暫緩)嘅要求: (\d+) ([^。]+)。$/u,status:x=>x==='取消'?'cancelled':'deferred'},
+  {pattern:/^已记录你的(.+)需求:保留 (\d+) ([^;]+);(取消|暂缓)的需求: (\d+) ([^。]+)。$/u,status:x=>x==='取消'?'cancelled':'deferred'}
+ ];
+ const matched=patterns.flatMap(({pattern,status})=>{const m=text.match(pattern);return m?[{label:m[1],retained:Number(m[2]),unit:m[3],status:status(m[4]),inactive:Number(m[5]),inactive_unit:m[6]}]:[]});
+ const parsed=matched.length===1?matched[0]:null;
+ const rendered=!!bound&&!!parsed&&parsed.label===label.normalize('NFKC')&&parsed.retained===parent.quantity&&
+  parsed.inactive===child.quantity&&parsed.unit===unit.normalize('NFKC')&&parsed.inactive_unit===parsed.unit&&parsed.status===child.status;
+ return {pass:!!bound&&rendered,rendered,statement:parsed,retained:parent?.quantity??null,inactive:child?.quantity??null,
+  parent_id:parent?.entity_id??null,child_id:child?.entity_id??null,status:child?.status??null,
+  canonical_bound:!!bound,source_message_id:source??null,unit:unit??null};
+}
+
 function quantityEvidence(turns,expected,{historical=false}={}){
  const final=turns.at(-1),state=final?.readback?.state,sources=sourceTurns(turns.slice(0,-1));
  const proofs=Array.isArray(final?.reply?.metadata?.recall_provenance)?final.reply.metadata.recall_provenance:[];
@@ -239,10 +288,15 @@ function structuredOriginalCheck(key,expected,row,turns){
   }),{proofs:selected,prior_source_ids:[...prior.keys()],reply_bound:replyBound(final)});
  }
  if(key==='retained_count'||key==='cancelled_or_deferred_count'){
+  const partition=partitionEvidence(turns);
+  if(partition)return decide(partition.pass&&(key==='retained_count'?partition.retained:partition.inactive)===expected,partition);
   const quantity=quantityEvidence(turns,expected,{historical:key==='cancelled_or_deferred_count'});
   return decide(quantity.pass,quantity);
  }
  if(key==='do_not_merge_current_and_future'){
+  const partition=partitionEvidence(turns);
+  if(partition)return decide(partition.pass&&partition.retained===row.must.retained_count&&
+    partition.inactive===row.must.cancelled_or_deferred_count&&partition.parent_id!==partition.child_id,partition);
   const current=quantityEvidence(turns,row.must.retained_count),historical=quantityEvidence(turns,row.must.cancelled_or_deferred_count,{historical:true});
   const disjoint=current.verified.every(item=>!historical.verified.some(other=>other.entity_id===item.entity_id));
   const observations=[check('active_and_historical_partitions',current.pass&&historical.pass&&disjoint,

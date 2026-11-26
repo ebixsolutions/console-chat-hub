@@ -1,5 +1,5 @@
 import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
-import { resolveSourceOwnedSubject,sourceOwnedSubjectLabels,customerOwnedDisplayLabel,safeCustomerDisplayText } from "./commerce-subject-resolution.ts";
+import { resolveSourceOwnedSubject,sourceOwnedSubjectLabels,customerOwnedDisplayLabel,safeCustomerDisplayText,canonicalUnitPartitions,renderUnitPartition,type CanonicalUnitPartition } from "./commerce-subject-resolution.ts";
 /** C3: deterministic, read-only fact ownership routing. No KB, model or state writes. */
 import type {
   CommerceEntity,
@@ -11,6 +11,7 @@ import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 // Phase 1 recap never imports an industry-specific display vocabulary.
 import { renderEnglishRequirement } from "./commerce-capability-runtime.ts";
 import { classifyCanonicalConversationTurn } from "./conversation-semantic-contract.ts";
+import { sameCanonicalJson } from "./canonical-json.ts";
 
 export type RecallFact =
   | "quantity"
@@ -909,6 +910,103 @@ function verifiedRetainedCustomerCorrection(input:ConversationRecallInput):
 /** A canonical active portion and the cancelled legacy aggregate can
  * coexist after one source-proven partial cancellation. A current count is
  * attested by the same original correction; it is not the old aggregate. */
+
+/** Accepted typed read selects an existing committed pair only. No industry
+ * name/unit list, no parsed historical answer, and no model-proposed value.
+ * This is deliberately a whole-turn, read-only quantity/status request. */
+function selectSourceBoundPartitionRead(input:QuantityQueryScope & {question:string}):CanonicalUnitPartition|null {
+  const c=input.commerce, r=input.quantity_reading, f=r?.frame, q=input.question;
+  if (!c || !r || !f || input.explicit_handoff || !input.company_id || !input.conversation_id ||
+      !input.source_message_id || c.company_id!==input.company_id || c.conversation_id!==input.conversation_id ||
+      r.company_id!==input.company_id || r.conversation_id!==input.conversation_id ||
+      r.source_message_id!==input.source_message_id || r.commerce_revision!==c.revision ||
+      !Number.isSafeInteger(c.revision) || c.revision<1 ||
+      f.version!=="commerce-semantic-1.0.0" || f.operation!=="ASK_FACT" ||
+      f.intent!=="customer_fact_recall" || f.confidence<0.72 || f.ambiguity.is_ambiguous ||
+      f.customer_correction || f.additive || f.explicit_negations.length || f.customer_facts?.length ||
+      f.entities.length || [f.transaction_state,f.payment_state,f.booking_state,f.fulfillment_state]
+        .some(s=>s!=="none"&&s!=="unknown") ||
+      !isReadOnlyMemoryOrCurrentStateRecall(q,f) || any(withoutExcludedLookups(q),EXTERNAL)) return null;
+  const fields=(values:readonly string[])=>values.length===2 && values.includes("quantity") && values.includes("entity_status");
+  const d=f.demands?.[0];
+  if (!fields(f.requested_facts) || f.demands?.length!==1 || !d || d.source_type!=="general" ||
+      d.ambiguity.is_ambiguous || d.customer_correction || d.explicit_negations.length ||
+      Object.keys(d.constraints).length || !fields(d.requested_facts) ||
+      d.source_quote.normalize("NFKC").trim()!==q.normalize("NFKC").trim() ||
+      d.question.normalize("NFKC").trim()!==q.normalize("NFKC").trim() || !d.subject_refs.length ||
+      !f.referents.length) return null;
+  // Keep the existing mutation detector. An interrogative status clause
+  // (including a passive lifecycle question) is not a mutation solely
+  // because it contains a lifecycle verb. Require the existing question cue
+  // and read-only guard in that clause; do not admit an imperative tail.
+  if (splitCustomerOperationClauses(q).some(clause =>
+      ["CORRECTION","CUSTOMER_CONTEXT_UPDATE","EXPLICIT_HANDOFF"].includes(classifyCanonicalConversationTurn(clause,[]).operation) ||
+      customerRecallHasAction(clause) && !( /[?？]$/u.test(clause) && any(clause,ASK) &&
+        isReadOnlyMemoryOrCurrentStateRecall(clause,f)))) return null;
+  const pairs=canonicalUnitPartitions(c.state,c.source_message_id).filter(pair=>{
+    const refs=[pair.parent.entity_id,...sourceOwnedSubjectLabels(pair.parent)];
+    const matches=(ref:string)=>refs.some(value=>keyNorm(value)===keyNorm(ref));
+    if (!d.subject_refs.every(matches) || !f.referents.every(ref=>ref.confidence>=0.72 &&
+      ["prior_turn","persistent_state"].includes(ref.source) && matches(ref.ref))) return false;
+    const named=c.state.entities.filter(e=>sourceOwnedSubjectLabels(e).some(label=>phrase(q,label)));
+    if (named.some(e=>e.entity_id!==pair.parent.entity_id&&e.entity_id!==pair.child.entity_id)) return false;
+    // A short unit-only followup is safe only when the existing canonical
+    // subject is unique. The unit is the committed literal, not an allowlist.
+    return named.length>0 || c.state.entities.length===2 && phrase(q,pair.unit);
+  });
+  return pairs.length===1?pairs[0]:null;
+}
+export function isSourceBoundPartitionReadRequest(input:QuantityQueryScope & {question:string}):boolean {
+  return selectSourceBoundPartitionRead(input)!==null;
+}
+
+/** Both portions must agree with the persisted Memory and current Commerce
+ * revision. The original scoped Visitor correction is required; neither
+ * latest_corrections nor a closed unit vocabulary supplies the authority. */
+function resolveSourceVerifiedUnitPartition(input:ConversationRecallInput):ConversationRecallDecision|null {
+  const pair=selectSourceBoundPartitionRead(input),m=input.memory,c=input.commerce;
+  if (!pair || !m || !c || !hasTrustedPersistedMemoryReadback(input) ||
+      input.trusted_visitor_source_status!=="verified" ||
+      pair.source===input.source_message_id || m.source_message_id!==pair.source ||
+      c.source_message_id!==pair.source) return null;
+  const source=input.trusted_visitor_source_rows?.filter(row=>row.id===pair.source)??[];
+  if (source.length!==1 || !source[0].content.trim() || source[0].content.length>2400 ||
+      !phrase(source[0].content,pair.unit)) return null;
+  const active=m.active_entities.filter(e=>e.entity_id===pair.parent.entity_id);
+  const inactive=m.cancelled_or_superseded.filter(e=>e.key==="entity:"+pair.child.entity_id);
+  if (active.length!==1 || active[0].status!=="active" || active[0].quantity!==pair.parent.quantity ||
+      active[0].requested_quantity!==pair.parent.quantity ||
+      !sameCanonicalJson(active[0].current_requirements,{...pair.parent.attributes,...pair.parent.constraints}) ||
+      m.active_entities.some(e=>e.entity_id===pair.child.entity_id) ||
+      inactive.length!==1 || inactive[0].entity_id!==pair.child.entity_id ||
+      inactive[0].authority!=="canonical_commerce" || inactive[0].value!==pair.status ||
+      inactive[0].source_message_id!==pair.source) return null;
+  // The retained count and unit must occur in the exact verified source.
+  // The inactive count is the committed linked portion, independently checked
+  // against the parent's inactive constraint and Memory status above.
+  const text=source[0].content.normalize("NFKC");
+  const words:Record<string,number>={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
+  const numbers=[...numberTokens(text),...Array.from(text.matchAll(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/giu),
+    match=>({value:words[match[1].toLowerCase()],start:match.index!,end:match.index!+match[0].length}))];
+  if (!numbers.some(n=>n.value===pair.parent.quantity && phrase(text.slice(n.end).trimStart(),pair.unit) &&
+    text.slice(n.end).trimStart().toLowerCase().startsWith(pair.unit.normalize("NFKC").toLowerCase()))) return null;
+  const evidence=(entity:CommerceEntity,field:"quantity"|"entity_status",temporal_scope:"current"|"excluded"):RecallEvidence=>({
+    fact_type:field,state_path:"entities."+c.state.entities.indexOf(entity)+"."+(field==="quantity"?"quantity":"status"),
+    value:field==="quantity"?entity.quantity:entity.status,
+    authority:"CANONICAL_COMMERCE_STATE",entity_id:entity.entity_id,entity_label:pair.label,
+    region:typeof entity.attributes.region==="string"?entity.attributes.region:null,
+    evidence_source_message_id:pair.source,temporal_scope,source_kind:"canonical_partial_unit_partition",
+    ...(field==="quantity"?{quantity_unit:pair.unit,quantity_unit_source_kind:"canonical_customer_attribute" as const,
+      quantity_unit_source_message_id:pair.source}:{})
+  });
+  const facts=[evidence(pair.parent,"quantity","current"),evidence(pair.child,"quantity","excluded"),
+    evidence(pair.child,"entity_status","excluded")];
+  return {handled:true,authority:"CANONICAL_COMMERCE_STATE",fact_type:"quantity+unit_partition",
+    state_path:facts.map(e=>e.state_path).join("|"),value:facts.map(e=>({fact_type:e.fact_type,entity_id:e.entity_id,value:e.value})),
+    provenance:{company_id:input.company_id,conversation_id:input.conversation_id,source_message_id:input.source_message_id,
+      memory_revision:m.memory_revision,commerce_state_revision:c.revision,commerce_source_message_id:c.source_message_id,evidence:facts}};
+}
+
 function resolveSourceVerifiedCanonicalActiveRetention(
   input:ConversationRecallInput,
 ):ConversationRecallDecision|null {
@@ -1510,6 +1608,7 @@ export async function loadScopedRecallVisitorSources(input: {
   memory: CanonicalConversationMemory | null;
   commerce: RecallCommerceSnapshot | null;
   requested_facts?: readonly string[];
+  quantity_reading?: ConversationRecallInput["quantity_reading"];
   enabled: boolean;
   recent_rows: readonly TrustedRecallVisitorRow[] | null;
   fetch_missing: (ids: readonly string[]) => Promise<{
@@ -1583,6 +1682,8 @@ export async function loadScopedRecallVisitorSources(input: {
         e.provenance.source_type==="customer" &&
         e.provenance.source_message_id===retainedSource))
     add(retainedSource);
+  const partition=selectSourceBoundPartitionRead(scope);
+  if(partition)add(partition.source);
   const needed = ids.filter(id => !recent.some(row => row.id === id));
   // Only absent source rows cost a targeted DB read. A long canonical source
   // lineage already present in verified recent history is not an over-cap read.
@@ -2540,6 +2641,8 @@ export function resolveConversationRecall(
   input: ConversationRecallInput,
 ): ConversationRecallDecision {
   if (input.explicit_handoff) return fail("NOT_A_RECALL_QUERY", "HANDOFF_PRECEDENCE");
+  const partition=resolveSourceVerifiedUnitPartition(input);
+  if(partition)return partition;
   const canonicalActiveRetention=resolveSourceVerifiedCanonicalActiveRetention(input);
   if(canonicalActiveRetention)return canonicalActiveRetention;
   const typedCustomer=sourceAttestedTypedCustomerAttribute(input);
@@ -3198,6 +3301,22 @@ export function renderConversationRecall(
   language: string = "zh-TW",
 ): string | null {
   if (!decision.handled) return null;
+  if(decision.fact_type==="quantity+unit_partition"){
+    const facts=decision.provenance.evidence;
+    const a=facts.find(e=>e.fact_type==="quantity"&&e.temporal_scope==="current");
+    const b=facts.find(e=>e.fact_type==="quantity"&&e.temporal_scope==="excluded");
+    const s=facts.find(e=>e.fact_type==="entity_status"&&e.temporal_scope==="excluded");
+    if(facts.length!==3 || !a || !b || !s || !a.entity_id || !b.entity_id ||
+       a.entity_id===b.entity_id || b.entity_id!==s.entity_id ||
+       !a.entity_label || a.entity_label!==b.entity_label || a.entity_label!==s.entity_label ||
+       !a.quantity_unit || a.quantity_unit!==b.quantity_unit ||
+       typeof a.value!=="number" || typeof b.value!=="number" ||
+       !Number.isSafeInteger(a.value) || a.value<1 || !Number.isSafeInteger(b.value) || b.value<1 ||
+       (s.value!=="cancelled"&&s.value!=="deferred") ||
+       facts.some(e=>e.authority!=="CANONICAL_COMMERCE_STATE" || e.source_kind!=="canonical_partial_unit_partition" ||
+         !e.evidence_source_message_id || e.evidence_source_message_id!==a.evidence_source_message_id)) return null;
+    return renderUnitPartition({label:a.entity_label,unit:a.quantity_unit,retained:a.value,inactive:b.value,status:s.value},language);
+  }
   const l = language === "en" ? 2 : language === "zh-CN" ? 1 : 0;
   const lines: string[] = [];
   for (const e of decision.provenance.evidence) {

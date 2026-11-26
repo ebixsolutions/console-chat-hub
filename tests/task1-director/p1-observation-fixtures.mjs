@@ -114,8 +114,14 @@ function correctionReading(row,turn,subject,language,wrong=false){
    'SET_QUANTITY')};
  // Ask for both current quantity and the inactive member/status without
  // providing either expected value or any answer/merchant evidence.
+ const selected=wrong?{...prior,ref:'__P1_WRONG_SUBJECT__'}:prior;
+ // Bind the complete original compound question in the same accepted general
+ // demand shape as the real provider contract. No expected values are supplied.
  return {...proof,semantic:wire({language,intent:'customer_fact_recall',
-  requested_facts:['quantity','entity_status'],referents:[wrong?{...prior,ref:'__P1_WRONG_SUBJECT__'}:prior]},
+  requested_facts:['quantity','entity_status'],referents:[selected],
+  demands:[{question:text,source_quote:text,subject_refs:[selected.ref],source_type:'general',
+   requested_facts:['quantity','entity_status'],constraints:{},customer_correction:false,
+   explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]},
   'ASK_FACT')};
 }
 

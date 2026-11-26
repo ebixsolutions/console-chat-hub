@@ -661,3 +661,91 @@ test('Task3C D4 K1: all six customer-written unit counts use identical generic p
  }
  assert(decisions.every(d=>JSON.stringify(d)===JSON.stringify(decisions[0])),'K1 unequal generic decisions');
 });
+
+
+// P1 R3 compound quantity/status recall: exercise the real reducer and
+// canonical Memory builder. Every fault must reject the partition route,
+// and B2 must independently reject altered declarations/drafts.
+for(const [category,name,unit,language,total,keep,correction,question,status] of [
+ ['generic_product','書枱','張','zh-TW',3,2,'更正，只保留兩張書枱，第三張暫時取消。','現在保留幾張書枱？哪一張取消了？','cancelled'],
+ ['generic_product','套餐','份','zh-TW',3,2,'更正，只保留兩份套餐，第三份取消。','現在保留幾份套餐？取消了哪一份？','cancelled'],
+ ['service','英語課','課','zh-TW',3,2,'更正，只保留兩課，第三課延後再談。','我現在保留幾課？哪課只是未來討論？','deferred'],
+ ['service','美容療程','堂','zh-TW',3,2,'更正，只保留兩堂療程，第三堂暫緩。','目前保留幾堂？哪一堂暫緩？','deferred'],
+ ['subscription','licenses','licenses','en',3,2,'Correction: keep two licenses; postpone the third.','How many licenses are currently retained, and what was postponed?','deferred'],
+ ['b2b_product','paper cups','cartons','en',120,60,'Correction: keep 60 cartons under review and postpone the other 60 cartons.','How many cartons remain under review, and how many are postponed?','deferred'],
+]){
+ test('R3 generic committed partition recall and B2 '+name,async()=>{
+  const {evaluateB2BeforeCommit}=await import('../../supabase/functions/_shared/pre-send-conversion-supervisor.ts');
+  const {loadScopedRecallVisitorSources,isSourceBoundPartitionReadRequest}=await import('../../supabase/functions/_shared/conversation-recall.ts');
+  const previous=createEmptyConversationCommerceState(),id='generic:partition-parent',source='partition-correction';
+  previous.current_topic=category;
+  previous.entities=[{entity_id:id,category,brand:null,model:null,quantity:total,status:'tentative',
+   attributes:{product_name:name,customer_subject_aliases:[name],unit,quantity_basis:'customer_explicit'},
+   constraints:{},provenance:{source_type:'customer',source_message_id:'initial-source'}}];
+  const ambiguity={is_ambiguous:false,reasons:[],clarification_question:null};
+  const frame={version:'commerce-semantic-1.0.0',language,operation:'SET_QUANTITY',intent:'customer_correction',
+   topic:category,confidence:.98,ambiguity,entities:[{entity_ref:id,name,kind:'service',category_hint:category,
+    sku:null,model:null,quantity:keep,unit,attributes:{},constraints:{},capabilities:{},confidence:.98}],
+   referents:[],customer_facts:[],requested_facts:[],customer_correction:true,additive:false,explicit_negations:[],
+   transaction_state:'none',payment_state:'none',booking_state:'none',fulfillment_state:'none'};
+  const state=reduceTurn(previous,{...scope,text:correction,source_message_id:source,language,semantic_frame:frame},
+   [{entity_id:id,category,aliases:[name],attributes:{product_name:name,unit}}]);
+  const child=state.entities.find(e=>e.attributes.customer_part_of_entity_id===id);
+  assert.equal(state.entities.find(e=>e.entity_id===id)?.quantity,keep);
+  assert.equal(child?.quantity,total-keep);assert.equal(child?.status,status);
+  const memory=buildCanonicalConversationMemory({...scope,source_message_id:source,
+   commerce_state_revision:2,commerce_state:state,next_memory_revision:3,visitor_turn_count:2,
+   source_created_at:'2026-11-26T00:02:00Z',newest_first:[{id:source,role:'visitor',content:correction,created_at:'2026-11-26T00:02:00Z'}]});
+  const read={...frame,operation:'ASK_FACT',intent:'customer_fact_recall',entities:[],
+   customer_correction:false,referents:[{ref:name,source:'prior_turn',confidence:.98}],requested_facts:['quantity','entity_status'],
+   demands:[{question,source_quote:question,subject_refs:[name],source_type:'general',
+    requested_facts:['quantity','entity_status'],constraints:{},customer_correction:false,explicit_negations:[],ambiguity}]};
+  const input={...scope,question,memory,commerce:{...scope,source_message_id:source,revision:2,state},
+   quantity_reading:{...scope,commerce_revision:2,frame:read},
+   customer_recall_proposal:{...scope,intent:'customer_fact_recall',requested_facts:read.requested_facts,subject_refs:[name]},
+   trusted_visitor_source_status:'verified',trusted_visitor_source_rows:[{id:source,content:correction}],
+   trusted_persisted_memory_readback:{contract:'persisted-memory-readback-v1',...scope,source_message_id:source,
+    memory_revision:memory.memory_revision,commerce_state_revision:2,memory_hash:'a'.repeat(64)}};
+  assert.equal(isSourceBoundPartitionReadRequest(input),true);
+  const sourceRead=await loadScopedRecallVisitorSources({...input,enabled:true,recent_rows:[],
+   fetch_missing:async ids=>({rows:ids.map(id=>({id,conversation_id:scope.conversation_id,role:'visitor',is_recalled:false,content:correction}))})});
+  assert.equal(sourceRead.status,'verified');assert(sourceRead.rows.some(row=>row.id===source));
+  const result=prepareConversationRecall(input,language);
+  assert.equal(result.decision.fact_type,'quantity+unit_partition',JSON.stringify(result.decision));
+  assert.equal(result.decision.provenance.evidence.length,3);
+  const values=result.decision.provenance.evidence.map(e=>[e.fact_type,e.value,e.temporal_scope,e.entity_id]);
+  assert.deepEqual(values,[['quantity',keep,'current',id],['quantity',total-keep,'excluded',child.entity_id],
+   ['entity_status',status,'excluded',child.entity_id]]);
+  assert.match(result.reply,language==='en'?/retained/:/保留/);
+  const b2={proposed_response:result.reply,persistence_kind:'ai_reply',
+   snapshot:{...scope,source_message_content:question,commerce_state_revision:2,commerce_state_source_message_id:source,state},
+   metadata:result.metadata};
+  assert.equal(evaluateB2BeforeCommit(b2).decision,'allow',JSON.stringify(evaluateB2BeforeCommit(b2)));
+  const ack={...b2,snapshot:{...b2.snapshot,source_message_id:source,source_message_content:correction},
+   metadata:{response_route:'commerce_state_answer',commerce_reason:'source_bound_partial_unit_status_committed',
+    commerce_authority:'CONVERSATION_STATE',commerce_state_revision:2,commerce_state_persist_result:'success',
+    commerce_state_persistence_classification:'COMMITTED'}};
+  assert.equal(evaluateB2BeforeCommit(ack).decision,'allow',JSON.stringify(evaluateB2BeforeCommit(ack)));
+  for(const mutate of [
+    x=>x.memory.company_id='foreign-company',x=>x.commerce.conversation_id='foreign-ticket',
+    x=>x.trusted_persisted_memory_readback.memory_revision--,x=>x.trusted_persisted_memory_readback=null,
+    x=>x.trusted_visitor_source_status='missing',x=>x.trusted_visitor_source_rows=[],
+    x=>x.quantity_reading.commerce_revision--,x=>x.quantity_reading.frame.demands[0].subject_refs=['foreign-item'],
+    x=>x.quantity_reading.frame.referents[0].ref='foreign-item',
+    x=>x.quantity_reading.frame.demands[0].source_quote='Different question',
+    x=>x.commerce.state.entities[1].attributes.customer_part_of_entity_id='foreign-parent',
+    x=>x.memory.cancelled_or_superseded=[],x=>x.memory.active_entities[0].quantity=999,
+    x=>x.explicit_handoff=true,x=>x.quantity_reading.frame.demands[0].source_type='product',
+    x=>{x.question+=' Please cancel the item.';x.quantity_reading.frame.demands[0].question=x.question;x.quantity_reading.frame.demands[0].source_quote=x.question;},
+  ]){const wrong=structuredClone(input);mutate(wrong);
+    assert.notEqual(prepareConversationRecall(wrong,language).decision.fact_type,'quantity+unit_partition');}
+  for(const mutate of [
+    x=>x.proposed_response+=' Confirmed order.',x=>x.proposed_response=x.proposed_response.replace(String(keep),'999'),
+    x=>x.metadata.recall_provenance[0].entity_id=child.entity_id,x=>x.metadata.recall_provenance[1].temporal_scope='current',
+    x=>x.metadata.recall_provenance[2].source_message_id='foreign-source',x=>x.snapshot.commerce_state_revision++,
+    x=>x.snapshot.commerce_state_source_message_id='foreign-source',x=>x.snapshot.state.entities[1].quantity=999,
+  ]){const wrong=structuredClone(b2);mutate(wrong);assert.notEqual(evaluateB2BeforeCommit(wrong).decision,'allow');}
+  const tampered=structuredClone(ack);tampered.proposed_response+=' Confirmed order.';
+  assert.notEqual(evaluateB2BeforeCommit(tampered).decision,'allow');
+ });
+}

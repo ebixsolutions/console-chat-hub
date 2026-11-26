@@ -68,3 +68,78 @@ export function resolveSourceOwnedSubject(
   const top=matched.filter(m=>m.score===max);
   return top.length===1?{kind:"one",entity:top[0].entity}:{kind:"ambiguous",entity_ids:top.map(m=>m.entity.entity_id)};
 }
+
+/** A source-bound partial-unit partition is one customer requirement with two
+ * disjoint persisted portions, not two independent same-named products.
+ * Read-only structural proof shared by the reply producer and B2. A category
+ * label, model proposal or string match cannot create a partition. */
+export interface CanonicalUnitPartition {
+  parent: CommerceEntity;
+  child: CommerceEntity;
+  label: string;
+  unit: string;
+  source: string;
+  status: "cancelled" | "deferred";
+}
+export function canonicalUnitPartitions(
+  state: ConversationCommerceState, source: string | null | undefined,
+): CanonicalUnitPartition[] {
+  if (!source || !source.trim()) return [];
+  return state.entities.flatMap(child => {
+    if (child.attributes.customer_unit_partition !== "source_bound_status" ||
+        child.constraints.source_bound_partial_unit !== true ||
+        (child.status !== "cancelled" && child.status !== "deferred") ||
+        child.provenance.source_type !== "customer" ||
+        child.provenance.source_message_id !== source ||
+        child.attributes.quantity_basis !== "customer_explicit" ||
+        !Number.isSafeInteger(child.quantity) || child.quantity < 1) return [];
+    const parentId = child.attributes.customer_part_of_entity_id;
+    if (typeof parentId !== "string" || !parentId || parentId === child.entity_id ||
+        child.entity_id !== parentId + ":unit-status:" + source ||
+        state.entities.filter(e => e.entity_id === child.entity_id).length !== 1 ||
+        state.entities.filter(e => e.attributes.customer_part_of_entity_id === parentId &&
+          e.attributes.customer_unit_partition === "source_bound_status").length !== 1) return [];
+    const parents = state.entities.filter(e => e.entity_id === parentId);
+    if (parents.length !== 1) return [];
+    const parent = parents[0], unit = parent.attributes.unit, label = customerOwnedDisplayLabel(parent);
+    if (!label || typeof unit !== "string" || !unit || unit !== unit.trim() ||
+        unit.length > 64 || !/^[\p{L}\p{N}\p{M}]+(?:[ ./_-][\p{L}\p{N}\p{M}]+)*$/u.test(unit) ||
+        child.attributes.unit !== unit || customerOwnedDisplayLabel(child) !== label ||
+        parent.provenance.source_type !== "customer" || parent.provenance.source_message_id !== source ||
+        parent.attributes.quantity_basis !== "customer_explicit" ||
+        Object.prototype.hasOwnProperty.call(parent.attributes,"customer_part_of_entity_id") ||
+        ["cancelled","deferred","superseded"].includes(parent.status) ||
+        parent.category !== child.category || parent.model !== child.model || parent.brand !== child.brand ||
+        !Number.isSafeInteger(parent.quantity) || parent.quantity < 1 ||
+        !Number.isSafeInteger(parent.quantity + child.quantity) ||
+        parent.constraints.customer_inactive_unit_count !== child.quantity ||
+        parent.constraints.customer_inactive_unit_status !== child.status) return [];
+    // A competing item with the same customer-owned label cannot be silently
+    // folded into this pair. No category-wide quantity or status is inferred.
+    const aliases = sourceOwnedSubjectLabels(parent);
+    if (state.entities.some(e => e.entity_id !== parentId && e.entity_id !== child.entity_id &&
+      sourceOwnedSubjectLabels(e).some(alias => aliases.includes(alias)))) return [];
+    return [{parent,child,label,unit,source,status:child.status}];
+  });
+}
+
+/** Exactly the two customer requirement portions. Not merchant order,
+ * refund, booking, entitlement or completed cancellation authority. */
+export function renderUnitPartition(
+  value: {label:string;unit:string;retained:number;inactive:number;status:"cancelled"|"deferred"},
+  language: string,
+): string {
+  const {label,unit,retained,inactive,status}=value;
+  const inactiveLabel = status === "cancelled"
+    ? (language === "en" ? "cancelled requirement" : language === "zh-CN" ? "取消的需求" : "取消嘅要求")
+    : (language === "en" ? "deferred requirement" : language === "zh-CN" ? "暂缓的需求" : "暫緩嘅要求");
+  if (language === "en")
+    return "Recorded your requirements for " + label + ": retained " + retained + " " + unit + "; " + inactiveLabel + ": " + inactive + " " + unit + ".";
+  if (language === "zh-CN")
+    return "已记录你的" + label + "需求：保留 " + retained + " " + unit + "；" + inactiveLabel + "：" + inactive + " " + unit + "。";
+  return "已記錄你嘅" + label + "要求：保留 " + retained + " " + unit + "；" + inactiveLabel + "：" + inactive + " " + unit + "。";
+}
+export function renderCanonicalUnitPartition(pair:CanonicalUnitPartition, language:string):string {
+  return renderUnitPartition({label:pair.label,unit:pair.unit,retained:pair.parent.quantity,
+    inactive:pair.child.quantity,status:pair.status},language);
+}

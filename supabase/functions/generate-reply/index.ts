@@ -8,6 +8,8 @@ import {
   prepareConversationRecall,
   loadScopedRecallVisitorSources,
   isCurrentEffectiveQuantityRecall,
+  isSourceBoundPartitionReadRequest,
+  type ConversationRecallInput,
   hasProvenCurrentRequirementsRecap,
   hasAttestedUnlabelledCustomerRecall,
   renderCanonicalCustomerFactRecap,
@@ -4944,6 +4946,8 @@ async function orchestrationGenerateReply(
   // Refresh still writes this turn's pending question for exactly-once resolution.
   let _c3SourceRetainedMemoryForRecall: CanonicalConversationMemory | null = null;
   let _c3CommerceSnapshot: RecallCommerceSnapshot | null = null;
+  let _c3BoundQuantityReading: ConversationRecallInput["quantity_reading"];
+  let _c3PartitionRead = false;
   let _currentFactualRequest: CurrentFactualRequest | undefined;
   let _factualContextLimit = false;
   // A factual subject/reference is not a customer-owned purchase requirement.
@@ -5164,10 +5168,20 @@ async function orchestrationGenerateReply(
       // still requires source-attested correction, exact tenant/revisions,
       // one active + one cancelled canonical record and read-only semantics.
       // Never derive this proof from the model, a widget or a transcript.
+      _c3BoundQuantityReading = !_mixedRequest && _c3SemanticCustomerRecall && _a3SemanticFrame &&
+        _semanticPrepared?.recovery.source_verified && _c3CommerceSnapshot &&
+        _c3CommerceSnapshot.revision === _quantityInputRevision
+        ? {conversation_id,company_id:_criticalE2ExpectedTenantId??"",source_message_id:_h1SourceMessageId,
+            commerce_revision:_c3CommerceSnapshot.revision,frame:_a3SemanticFrame} : undefined;
+      _c3PartitionRead = Boolean(!_mixedRequest && !_explicitHandoffRequested && !_customerOwnedDelta &&
+        !_currentFactualRequest?.transaction_required &&
+        isSourceBoundPartitionReadRequest({conversation_id,company_id:_criticalE2ExpectedTenantId??"",
+          source_message_id:_h1SourceMessageId,question:_h1LastMsg,commerce:_c3CommerceSnapshot,
+          quantity_reading:_c3BoundQuantityReading,explicit_handoff:_explicitHandoffRequested}));
       const readOnlyEffectiveRetention = Boolean(
         // Current state is proved by persisted Memory/Commerce and original Visitor
         // sources, not by an optional provider-proposed customer-recall label.
-        isCurrentEffectiveQuantityRecall(_h1LastMsg) &&
+        (isCurrentEffectiveQuantityRecall(_h1LastMsg) || _c3PartitionRead) &&
         !_mixedRequest && !_explicitHandoffRequested && !_customerOwnedDelta &&
         !(_a3SemanticFrame?.customer_facts?.length) &&
         !_currentFactualRequest?.transaction_required);
@@ -5199,9 +5213,9 @@ async function orchestrationGenerateReply(
         // Preserve the attested pre-refresh correction lineage only when the
         // canonical source presents exactly one live and one cancelled record.
         // Actual original Visitor proof and equality are checked in the resolver.
-        if (readOnlyEffectiveRetention && commerceState?.entities.length === 2 &&
+        if (readOnlyEffectiveRetention && (_c3PartitionRead || commerceState?.entities.length === 2 &&
             commerceState.entities.filter(e => e.status === "cancelled").length === 1 &&
-            commerceState.entities.filter(e => e.status === "tentative" || e.status === "researching").length === 1) {
+            commerceState.entities.filter(e => e.status === "tentative" || e.status === "researching").length === 1)) {
           _c3SourceRetainedMemoryForRecall = persistedMemory.memory;
         }
         _c3MemoryContext = buildBoundedConversationContext(
@@ -5386,6 +5400,7 @@ async function orchestrationGenerateReply(
     memory: _c3SourceRetainedMemoryForRecall ?? _c3Memory,
     commerce: _c3CommerceSnapshot,
     requested_facts: _c3SemanticCustomerRecall?.requested_facts,
+    quantity_reading: _c3BoundQuantityReading,
     // Source admission is independent of an external model's intent label.
     // Only missing IDs (max five) trigger a scoped DB lookup; this never
     // dispatches a KB or model request.
@@ -5426,13 +5441,7 @@ async function orchestrationGenerateReply(
     source_message_id: _h1SourceMessageId,
     question: _c3R1Question,
     customer_recall_proposal: _c3SemanticCustomerRecall,
-    quantity_reading: !_mixedRequest && _c3SemanticCustomerRecall && _a3SemanticFrame &&
-      _semanticPrepared?.recovery.source_verified && _c3CommerceSnapshot &&
-      _c3CommerceSnapshot.revision === _quantityInputRevision
-      ? { conversation_id, company_id: _criticalE2ExpectedTenantId ?? "",
-          source_message_id: _h1SourceMessageId, commerce_revision: _c3CommerceSnapshot.revision,
-          frame: _a3SemanticFrame }
-      : undefined,
+    quantity_reading: _c3BoundQuantityReading,
     memory: _c3SourceRetainedMemoryForRecall ?? _c3Memory,
     commerce: _c3CommerceSnapshot,
     trusted_persisted_memory_readback: _c3TrustedPersistedMemoryReadback,
@@ -5541,7 +5550,22 @@ async function orchestrationGenerateReply(
       a3_reason:_a3Commerce?.reason ?? null,
     });
   }
-  const _c3CustomerRecallRoute = _c3SourceAttestedCustomerRecall || _c3CurrentEffectiveRecall ||
+  const _c3VerifiedPartitionRecall = Boolean(_c3PartitionRead && _c3TrustedPersistedMemoryReadback &&
+    _c3RecallSources.status==="verified" && !_mixedRequest && !_explicitHandoffRequested && !_customerOwnedDelta &&
+    !_currentFactualRequest?.transaction_required && _c3CommerceSnapshot &&
+    _c3SourceRetainedMemoryForRecall && _c3Memory &&
+    _c3Recall.decision.handled && _c3Recall.decision.fact_type==="quantity+unit_partition" &&
+    _c3Recall.decision.provenance.company_id===_criticalE2ExpectedTenantId &&
+    _c3Recall.decision.provenance.conversation_id===conversation_id &&
+    _c3Recall.decision.provenance.source_message_id===_h1SourceMessageId &&
+    _c3Recall.decision.provenance.memory_revision===_c3SourceRetainedMemoryForRecall.memory_revision &&
+    _c3Recall.decision.provenance.commerce_state_revision===_c3CommerceSnapshot.revision &&
+    _c3Memory.commerce_state_revision===_c3CommerceSnapshot.revision &&
+    _c3Recall.decision.provenance.commerce_source_message_id===_c3CommerceSnapshot.source_message_id &&
+    _c3Recall.decision.provenance.evidence.length===3 &&
+    _c3Recall.decision.provenance.evidence.every(e=>e.authority==="CANONICAL_COMMERCE_STATE" &&
+      e.source_kind==="canonical_partial_unit_partition"));
+  const _c3CustomerRecallRoute = _c3VerifiedPartitionRecall || _c3SourceAttestedCustomerRecall || _c3CurrentEffectiveRecall ||
     _c3R1Verified || Boolean(
     _c3SemanticCustomerRecall && !_mixedRequest && !_explicitHandoffRequested &&
     !_c3Recall.decision.handled && _c3Recall.decision.reason === "AMBIGUOUS" &&

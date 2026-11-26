@@ -124,3 +124,39 @@ test('Actual request evidence excludes secret-bearing extra fields and arbitrary
  assert.equal(observed.kb_requests[0].query,'policy');assert.equal(observed.kb_requests[0].query_sha256,digest('policy'));
  assert(!JSON.stringify(observed).includes('DO_NOT_CAPTURE'));
 });
+
+
+test('Compound partition observer checks delivered labels and both canonical paths even when counts are equal',()=>{
+ const {turns}=quantityCase(),source=turns[0].source_message_id,final=turns[1],id='item',childId=id+':unit-status:'+source;
+ const parent={entity_id:id,category:'generic',quantity:60,status:'tentative',
+  attributes:{product_name:'notebook',unit:'units',quantity_basis:'customer_explicit'},
+  constraints:{customer_inactive_unit_count:60,customer_inactive_unit_status:'deferred'},
+  provenance:{source_type:'customer',source_message_id:source}};
+ const child={...structuredClone(parent),entity_id:childId,status:'deferred',
+  attributes:{...parent.attributes,customer_part_of_entity_id:id,customer_unit_partition:'source_bound_status'},
+  constraints:{source_bound_partial_unit:true}};
+ const state={...turns[0].readback.state,entities:[parent,child]};
+ for(const t of turns){t.readback.state=structuredClone(state);t.readback.commerce_source_message_id=source;
+  t.readback.memory_company_id=t.company_id;t.readback.memory_conversation_id=t.conversation_id;
+  t.readback.memory_commerce_revision=t.readback.commerce_revision;t.readback.commerce_commit_for_this_source=false;}
+ const proof=(fact_type,state_path,entity_id,temporal_scope)=>({fact_type,state_path,entity_id,temporal_scope,
+  authority:'CANONICAL_COMMERCE_STATE',source_kind:'canonical_partial_unit_partition',source_message_id:source,
+  ...(fact_type==='quantity'?{quantity_unit_source_kind:'canonical_customer_attribute',quantity_unit_source_message_id:source}:{})});
+ final.reply.metadata.recall_provenance=[proof('quantity','entities.0.quantity',id,'current'),
+  proof('quantity','entities.1.quantity',childId,'excluded'),proof('entity_status','entities.1.status',childId,'excluded')];
+ updateReply(final,'Recorded your requirements for notebook: retained 60 units; deferred requirement: 60 units.');
+ const row={id:'partition',kind:'synthetic',turns:turns.map(t=>t.utterance),
+  must:{retained_count:60,cancelled_or_deferred_count:60,do_not_merge_current_and_future:true}};
+ assert.deepEqual(Object.values(statuses(row,turns)),['PASS','PASS','PASS']);
+ for(const mutate of [
+  t=>updateReply(t,'Recorded your requirements for notebook: retained 60 units; cancelled requirement: 60 units.'),
+  t=>updateReply(t,'Recorded your requirements for notebook: retained 120 units; deferred requirement: 60 units.'),
+  t=>updateReply(t,'Recorded your requirements for notebook: retained 60 units; deferred requirement: 60 cartons.'),
+  t=>updateReply(t,t.reply.content+' Order confirmed.'),
+  t=>t.reply.metadata.recall_provenance[1].temporal_scope='current',
+  t=>t.reply.metadata.recall_provenance[0].entity_id=childId,
+  t=>t.reply.metadata.recall_provenance[2].source_message_id='foreign',
+  t=>t.readback.commerce_revision++,
+  t=>t.kb_dispatch_count=1,t=>t.readback.state.entities[1].attributes.customer_part_of_entity_id='foreign',
+ ]){const wrong=structuredClone(turns);mutate(wrong[1]);assert(Object.values(statuses(row,wrong)).every(s=>s==='FAIL'));}
+});

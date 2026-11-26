@@ -18,7 +18,7 @@ import { retainedRecapTargets } from "./conversation-recall.ts";
  */
 
 import { matchesReferenceLabel } from "./industry-agent-registry.ts";
-import { resolveSourceOwnedSubject,sourceOwnedSubjectLabels,customerOwnedDisplayLabel,safeCustomerDisplayText } from "./commerce-subject-resolution.ts";
+import { resolveSourceOwnedSubject,sourceOwnedSubjectLabels,customerOwnedDisplayLabel,safeCustomerDisplayText,canonicalUnitPartitions,renderCanonicalUnitPartition } from "./commerce-subject-resolution.ts";
 import {
   type ConversationCommerceState,
   createEmptyConversationCommerceState,
@@ -5239,16 +5239,9 @@ export async function buildVerifiedPartialUnitStatusAnswer(
         data.revision !== persisted.revision || !isConversationCommerceState(data.state) ||
         JSON.stringify(data.state) !== JSON.stringify(expected)) return null;
   } catch { return null; }
-  // The recorded customer requirement is distinct from a merchant order,
-  // entitlement, refund or booking. Do not acknowledge a business transaction.
-  const status = child.status === "cancelled"
-    ? (input.language === "en" ? "cancelled requirement" : input.language === "zh-CN" ? "取消的需求" : "取消嘅要求")
-    : (input.language === "en" ? "deferred requirement" : input.language === "zh-CN" ? "暂缓的需求" : "暫緩嘅要求");
-  if (input.language === "en")
-    return `Recorded your requirements for ${label}: retained ${parent.quantity} ${unit}; ${status}: ${child.quantity} ${unit}.`;
-  if (input.language === "zh-CN")
-    return `已记录你的${label}需求：保留 ${parent.quantity} ${unit}；${status}：${child.quantity} ${unit}。`;
-  return `已記錄你嘅${label}要求：保留 ${parent.quantity} ${unit}；${status}：${child.quantity} ${unit}。`;
+  const pairs=canonicalUnitPartitions(expected,input.source_message_id).filter(pair=>
+    pair.parent.entity_id===parent.entity_id&&pair.child.entity_id===child.entity_id);
+  return pairs.length===1?renderCanonicalUnitPartition(pairs[0],input.language):null;
 }
 
 function buildResolvedEntityStatusChangeAnswer(input: CommerceRuntimeInput, state: ConversationCommerceState): string | null {
@@ -6180,7 +6173,7 @@ export async function runCommerceStateRuntime(
   if (purePartial) {
     const reply = await buildVerifiedPartialUnitStatusAnswer(db,runtimeInput,persisted);
     return { ...base, authority:"CONVERSATION_STATE",reply,
-      reason:reply ? "explicit_entity_status_change_applied" : "partial_unit_status_commit_unverified",
+      reason:reply ? "source_bound_partial_unit_status_committed" : "partial_unit_status_commit_unverified",
       route:"commerce_state_answer" };
   }
   const resolvedStatusChangeReply = persisted.result === "success"
