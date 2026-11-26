@@ -274,6 +274,36 @@ function fixture(text,options={}) {
     if(options.handoffSetsHumanControl)conversation.status='human_control';
     return Response.json({result:'success'});
    }
+   // P1 original FB-03 / BE-01 reached the real application's existing R2
+   // clarification RPC. Before this adapter the isolated transport threw
+   // "unhandled isolated RPC", which is NOT evidence of a production RPC fault.
+   // Match the existing SQL result/metadata contract; do not manufacture an
+   // atomic AI-reply B2 receipt or promote this isolated readback to native DB PASS.
+   if(options.fullChain && rpc==='required_escalation_clarification_tx') {
+    const value=(x)=>typeof x==='string'?x.trim():'';
+    const finish=(result,extra={})=>Response.json({result,...extra});
+    if(body.p_conversation_id==null||body.p_source_message_id==null)return finish('invalid_input');
+    if(body.p_escalation_rule!=='R2')return finish('invalid_rule');
+    const content=value(body.p_clarification_content),reason=value(body.p_reason_code);
+    if(!content||[...content].length>1200||content==='__THINKING__')return finish('invalid_input',{reason:'clarification_content_invalid'});
+    if(!reason||[...reason].length>200)return finish('invalid_input',{reason:'reason_code_invalid'});
+    if(foreign||body.p_conversation_id!==conversation.id)return finish('not_found');
+    if(['resolved','closed'].includes(conversation.status))return finish('already_resolved');
+    if(conversation.status==='transferred'||conversation.assigned_agent_id!=null)return finish('already_under_human_control');
+    if(!tables.messages.some(m=>m.id===body.p_source_message_id&&m.conversation_id===conversation.id&&m.role==='visitor'&&!m.is_recalled))return finish('invalid_source_message');
+    const prior=tables.messages.filter(m=>m.conversation_id===conversation.id&&m.role==='assistant'&&!m.is_recalled&&m.metadata?.escalation_rule==='R2'&&m.metadata?.escalation_action==='clarification');
+    const existing=prior.find(m=>m.metadata.source_message_id===body.p_source_message_id);
+    if(existing)return finish('already_handled',{message_id:existing.id});
+    if(prior.length>=1)return finish('max_clarifications_reached',{clarification_attempts:prior.length});
+    const reply={id:uuid(Number(body.p_source_message_id.slice(-6))+1000),conversation_id:conversation.id,role:'assistant',
+     content,status:'delivered',is_recalled:false,created_at:new Date(Date.parse(visitor.created_at)+1).toISOString(),
+     metadata:{source_message_id:body.p_source_message_id,escalation_rule:'R2',escalation_action:'clarification',reason_code:reason}};
+    tables.messages.push(reply);
+    commits.push(reply);
+    (tables.audit_log??=[]).push({actor_id:null,actor_type:'ai',action:'required_escalation_clarification',resource_type:'message',resource_id:reply.id,
+     diff:{conversation_id:conversation.id,source_message_id:body.p_source_message_id,escalation_rule:'R2',reason_code:reason,clarification_attempt:1}});
+    return finish('success',{message_id:reply.id,escalation_rule:'R2',clarification_attempt:1});
+   }
    if(rpc==='commit_ai_reply_tx') {
     assert.equal(body.p_conversation_id,ticket);assert.equal(body.p_source_message_id,source);
     assert.equal(body.p_metadata.b2_expected_company_id,company);
@@ -368,7 +398,7 @@ function fixture(text,options={}) {
    tables.visitor_session=[{id:session,channel_config_id:channel,visitor_fingerprint:'widget-live-test:'+actor,visitor_metadata:{source:'widget_live_test',test_mode:true,exclude_training:true,owner_user_id:actor,scope_mode:'canonical'}}];
    })();await previewInitialization;
   }
-  const response=await handler(new Request('http://isolated.invalid/functions/v1/generate-reply',{method:'POST',headers:options.originalPreview?{Authorization:'Bearer isolated-service-jwt'}:{},body:JSON.stringify({conversation_id:ticket,source_message_id:source})}));return {status:response.status,body:await response.json()};},requests,logs,commits,events,tables,env,load,setMode:v=>{mode=v},setForeign:()=>{foreign=true}};
+  const response=await handler(new Request('http://isolated.invalid/functions/v1/generate-reply',{method:'POST',headers:options.originalPreview?{Authorization:'Bearer isolated-service-jwt'}:{},body:JSON.stringify({conversation_id:ticket,source_message_id:source})}));return {status:response.status,body:await response.json()};},requests,logs,commits,events,tables,env,load,isolatedRpc:(rpc,args)=>network('http://isolated.invalid/rest/v1/rpc/'+rpc,{method:'POST',body:JSON.stringify(args)}).then(r=>r.json()),setMode:v=>{mode=v},setForeign:()=>{foreign=true}};
 }
 const social=['hi how are you',"what's your name",'who are you?','Hey, how have you been?','hello and how are you doing today?','早晨！你今日好唔好？','你好，你是誰？','你叫咩名？','Are you a real person?','Are you an AI assistant?','What can you help me with?','Hi，你係真人嗎？','thank you','明白啦'];
 test('Director natural-language counterexample executes complete handler without semantic or KB dispatch',async()=>{
@@ -3638,4 +3668,31 @@ for(const [label,utterance,mutate] of [
    semantic:providerWire({intent:"other",requested_facts:[]},"NO_STATE_CHANGE")});
  await f.run();
  assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
+});
+
+
+// Isolated DB transport parity for an actually reached existing R2 RPC.
+// This test does not execute SQL or claim native/Hosted RLS acceptance.
+test('P1 R2 clarification transport persists exact source once, honors cap and refuses unrelated sources',async()=>{
+ const f=fixture('What policy applies?',{fullChain:true});
+ const args={p_conversation_id:ticket,p_source_message_id:source,p_escalation_rule:'R2',
+  p_clarification_content:'  Which date did you receive the item?  ',p_reason_code:'clarification_required_before_r2'};
+ const run=patch=>f.isolatedRpc('required_escalation_clarification_tx',{...args,...patch});
+ for(const [patch,expected] of [
+  [{p_conversation_id:null},'invalid_input'],[{p_escalation_rule:'R1'},'invalid_rule'],
+  [{p_clarification_content:'__THINKING__'},'invalid_input'],[{p_reason_code:''},'invalid_input'],
+  [{p_conversation_id:uuid(995)},'not_found'],[{p_source_message_id:uuid(996)},'invalid_source_message']
+ ]){assert.equal((await run(patch)).result,expected);assert.equal(f.commits.length,0);}
+ const c=f.tables.conversations[0];c.status='resolved';
+ assert.equal((await run({})).result,'already_resolved');c.status='open';c.assigned_agent_id=uuid(15);
+ assert.equal((await run({})).result,'already_under_human_control');c.assigned_agent_id=null;
+ const first=await run({});assert.equal(first.result,'success');assert.equal(f.commits.length,1);
+ assert.equal(f.commits[0].content,'Which date did you receive the item?');
+ assert.deepEqual(f.commits[0].metadata,{source_message_id:source,escalation_rule:'R2',escalation_action:'clarification',reason_code:args.p_reason_code});
+ assert.equal(f.tables.audit_log.length,1);assert.equal(f.tables.audit_log[0].diff.source_message_id,source);
+ const repeated=await run({});assert.equal(repeated.result,'already_handled');assert.equal(repeated.message_id,first.message_id);
+ const next=uuid(997);f.tables.messages.push({id:next,conversation_id:ticket,role:'visitor',content:'Another question',is_recalled:false});
+ assert.equal((await run({p_source_message_id:next})).result,'max_clarifications_reached');
+ assert.equal(f.commits.length,1);assert.equal(f.tables.audit_log.length,1);
+ assert(!f.requests.some(x=>x.url.includes('aiplatform')||x.url.includes('context-search')));
 });

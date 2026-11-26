@@ -28,6 +28,7 @@ const selectedReply=reply=>reply?{id:reply.id,source_message_id:reply.metadata?.
   execution_failure:reply.metadata?.execution_failure,generation_success:reply.metadata?.generation_success,
   b2_commit_source:reply.metadata?.b2_commit_source,b2_source_message_id:reply.metadata?.b2_source_message_id,
   b2_expected_company_id:reply.metadata?.b2_expected_company_id,b2_response_hash:reply.metadata?.b2_response_hash,
+  escalation_rule:reply.metadata?.escalation_rule,escalation_action:reply.metadata?.escalation_action,
   recall_provenance:reply.metadata?.recall_provenance,citation_lineage:reply.metadata?.citation_lineage,
   grounding_verification:reply.metadata?.grounding_verification,
   factual_evidence_coverage:reply.metadata?.factual_evidence_coverage,
@@ -43,8 +44,14 @@ export function snapshot(fixture,result,source){
   visitor_sha256:visitor?digest(visitor.content):null,conversation_status:tables?.conversations?.[0]?.status??null,
   http:result?.status??null,response:{error:result?.body?.error,code:result?.body?.code,
    skipped:result?.body?.skipped,response_route:result?.body?.response_route,
-   escalation_rule:result?.body?.escalation_rule,handoff_persisted:result?.body?.handoff_persisted},
+   escalation_rule:result?.body?.escalation_rule,handoff_persisted:result?.body?.handoff_persisted,
+   clarification_persisted:result?.body?.clarification_persisted,rpc_result:result?.body?.rpc_result},
   reply_count:fixture?.commits?.length??0,reply:selectedReply(fixture?.commits?.[0]),
+  // Bounded diagnostic codes only. Do not assert a B2 reply receipt merely
+  // because the legacy clarification RPC returned success.
+  b2_verdicts:(tables?.rag_trace??[]).filter(row=>row.kb_source==='protected_pipeline_diagnostic'&&row.retrieved_chunks?.stage==='b2_verdict')
+   .map(row=>{const payload=row.retrieved_chunks?.payload??row.retrieved_chunks?.data??row.retrieved_chunks;
+     const decision=payload?.decision;return {decision:decision?.decision??null,code:decision?.code??null,committed:payload?.committed??null};}),
   kb_dispatch_count:(fixture?.requests??[]).filter(request=>request.url.includes('/rag/context-search')).length,
   semantic_dispatch_count:(fixture?.requests??[]).filter(request=>request.url.endsWith(':generateContent')&&
    request.body?.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.')).length,
