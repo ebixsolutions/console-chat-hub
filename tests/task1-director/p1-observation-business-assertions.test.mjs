@@ -191,13 +191,13 @@ test('R2 archived sourced stubs preserve scope and absent rescheduling rule',()=
 });
 
 test('R2 source-bound scripted generation is present only for exact selected scripted input, not empty/wrong Reading',()=>{
- const {rows}=loadObservationCases(fs,root);let count=0;
+ const {rows}=loadObservationCases(fs,root);let count=0;const keys=[];
  for(const row of rows)for(let t=0;t<row.turns.length;t++){
   const pos=buildTurnInput(row,t,'scripted',fs,root),neg=buildTurnInput(row,t,'no_reading',fs,root);
   assert.equal(neg.options.answer,'');assert.equal(neg.options.verifierGrounded,false);
   assert.equal(neg.proof.generation.status,'NOT_SUPPLIED');
   if(pos.proof.generation.status==='SCRIPTED_DRAFT_AND_REVIEWER_NOT_REAL_MODEL'){
-   count++;assert.equal(pos.proof.generation.source_quote,row.turns[t]);
+   count++;keys.push(row.id+':'+t);assert.equal(pos.proof.generation.source_quote,row.turns[t]);
    assert.equal(pos.proof.generation.answer_sha256,digest(pos.options.answer));
    assert.equal(pos.proof.generation.reviewer_sha256,digest(pos.options.verifierResponses[0]));
    assert(pos.proof.generation.required_chunk_ids.every(id=>pos.proof.kb.chunk_ids.includes(id)));
@@ -206,5 +206,6 @@ test('R2 source-bound scripted generation is present only for exact selected scr
    assert.throws(()=>buildTurnInput(altered,t,'scripted',fs,root));
   }
  }
- assert.equal(count,14);
+ assert.equal(count,25);
+ assert.deepEqual(keys.sort(),["BE-04:1","BE-05:2","ED-02:1","ED-03:1","ED-05:1","FB-01:0","FB-01:1","FB-02:1","P1:0","P2:0","R1:0","R2:0","R3:0","RT-02:1","SA-04:2","SYNTHETIC-b2b-wholesale-merchant-topic:0","SYNTHETIC-b2b-wholesale-mixed-known-unknown:2","SYNTHETIC-beauty-merchant-topic:0","SYNTHETIC-education-merchant-topic:0","SYNTHETIC-restaurant-merchant-topic:0","SYNTHETIC-retail-merchant-topic:0","SYNTHETIC-retail-mixed-known-unknown:2","SYNTHETIC-saas-merchant-topic:0","WH-01:1","WH-05:1"].sort());
 });

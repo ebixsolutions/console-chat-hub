@@ -2066,6 +2066,340 @@ const observationDrafts={
       ],
       "body_scope_valid": true
     }
+  },
+  "RT-02:1": {
+    "source_quote": "送到量度得 55 厘米。你哋容差係幾多？超出咗可以點？",
+    "answer": "按你提供的尺寸，58 厘米與 55 厘米相差 3 厘米。訂造及傢俬貨品的尺寸容差為 ±2 厘米，因此超出容差 1 厘米。貨品送達後 7 日內可申請退換，須保留原包裝；仍須核對實際尺寸及退換條件。",
+    "required_chunks": [
+      "R-K2",
+      "R-K1"
+    ],
+    "prior_quotes": [
+      "我訂咗張書枱，網頁寫深度 58 厘米。"
+    ],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1",
+        "E2"
+      ],
+      "question_resolution": "partial",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": [
+            "E1"
+          ]
+        },
+        {
+          "demand_id": "demand-2",
+          "status": "partial",
+          "evidence_ids": [
+            "E2"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "FB-01:0": {
+    "source_quote": "我啱啱落咗單，一分鐘內就發現揀錯嘢，想取消退款。",
+    "answer": "明白，你剛落單就發現選錯。餐廳未接單前可取消並全數退款；接單後不設取消。暫時未能確認餐廳是否已接單，請提供訂單編號以便核對，現時未有取消或退款成功的確認。",
+    "required_chunks": [
+      "F-K1"
+    ],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "partial",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "partial",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "FB-02:1": {
+    "source_quote": "遲幾耐先有補償？我呢單計唔計？",
+    "answer": "外送比預計時間遲超過 30 分鐘，可獲 HK$50 優惠券。按你所述的 20 至 30 分鐘預計時間及 70 分鐘實際時間，延遲為 40 至 50 分鐘，超過門檻。仍須核對該訂單的時間紀錄才可確認實際資格，未有發券確認。",
+    "required_chunks": [
+      "F-K2"
+    ],
+    "prior_quotes": [
+      "App 寫 20 至 30 分鐘送到，我等咗 70 分鐘先收到。"
+    ],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "partial",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": [
+            "E1"
+          ]
+        },
+        {
+          "demand_id": "demand-2",
+          "status": "partial",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "ED-02:1": {
+    "source_quote": "上咗第一堂覺得太淺，我想退學退款。可以退幾多？",
+    "answer": "理解你覺得課程程度不合適。現有條款只列明開課日 7 日或之前退學，扣除 HK$500 行政費後退回餘款。你表示已上第一堂，這項條款未能確認開課後的退款安排，因此不能根據你所述約 26,500 元的付款推算實際退款。",
+    "required_chunks": [
+      "E-K1"
+    ],
+    "prior_quotes": [
+      "我喺書展報咗個英文課程，一次過畀咗大約 26,500。"
+    ],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "partial",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "partial",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "ED-03:1": {
+    "source_quote": "我入學評估係第 7 級，個保證啱唔啱我用？",
+    "answer": "保證達標條款只適用於入學評估達第 9 級或以上的學員。按你所述的第 7 級，未符合這項條件；實際評估紀錄仍須由校方核對。",
+    "required_chunks": [
+      "E-K2"
+    ],
+    "prior_quotes": [
+      "我報咗 IELTS 保證 6 分班，第一個月學費同模擬試費各約 6,000。"
+    ],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "ED-05:1": {
+    "source_quote": "我未開課就想取消同攞返按金。",
+    "answer": "現有條款列明開課日 7 日或之前退學，扣除 HK$500 行政費後退回餘款。你表示尚未開課，但仍需知道開課日期，以及這筆 7,800 元按金是否適用該退學條款，才能確認退款金額。你原定哪天開課？",
+    "required_chunks": [
+      "E-K1"
+    ],
+    "prior_quotes": [
+      "我畀咗 7,800 按金報五日課程，話完成後支票退回。"
+    ],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "partial",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "partial",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "BE-04:1": {
+    "source_quote": "分店改咗名之後話每次要 588。我張套票喺其他分店用使唔使加錢？",
+    "answer": "現有條款列明套票可於本集團任何分店使用，不另收費。你所述的新收費 588 元仍需核對；如果你的套票仍有效，另一分店亦屬同一集團，按這項條款不應另收費。",
+    "required_chunks": [
+      "B-K3"
+    ],
+    "prior_quotes": [
+      "我之前買咗 50 次療程，每次 100，共 5,000。"
+    ],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "partial",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "partial",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "BE-05:2": {
+    "source_quote": "等等，我講錯，係加 15。照你哋規定應唔應該加？",
+    "answer": "你更正的額外收費是 15 元，不是 20 元。套票條款列明可於本集團任何分店使用，不另收費。如果剪髮券屬適用套票、仍有效，第二間分店亦屬同一集團，按條款不應加收這筆費用；仍須核對券的適用範圍。",
+    "required_chunks": [
+      "B-K3"
+    ],
+    "prior_quotes": [
+      "我買咗剪髮券，每次 35。",
+      "原本間分店執咗，去第二間要我加 20。"
+    ],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "partial",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "partial",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "SA-04:2": {
+    "source_quote": "咁即係減幾多個？幾時生效？",
+    "answer": "按你最新更正的 110 個席位，由 200 個減至 110 個，即減少 90 個。減少用戶席位於下一個帳單周期生效，本周期已收費用不退；實際日期須核對帳單周期，現時未有變更成功的確認。",
+    "required_chunks": [
+      "S-K2"
+    ],
+    "prior_quotes": [
+      "我哋而家有 200 個席位，想減到 101 個。",
+      "更正：係減到 110 個，唔係 101。"
+    ],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": []
+        },
+        {
+          "demand_id": "demand-2",
+          "status": "supported",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "WH-01:1": {
+    "source_quote": "The first shipment has fewer bags than the documents say. What do we need to do, and by when?",
+    "answer": "If the delivered quantity differs from the packing list, the claim must be submitted in writing within 7 days of receipt. Compare the delivered count with the packing list and include the discrepancy and receipt date in the written claim. The actual shortage and any remedy still need verification.",
+    "required_chunks": [
+      "W-K3"
+    ],
+    "prior_quotes": [
+      "We ordered paper bags worth 34,000. We paid 20% in advance and another 16,000 when the first shipment left."
+    ],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "WH-05:1": {
+    "source_quote": "What late-payment interest do you apply, and what are your standard payment terms?",
+    "answer": "The standard payment terms are a 30% deposit when placing the order, with the remaining balance payable before shipment. The available terms do not specify a late-payment interest rate, so I cannot confirm any interest charge on the two overdue invoices you mentioned.",
+    "required_chunks": [
+      "W-K2"
+    ],
+    "prior_quotes": [
+      "我哋有兩張發票過咗期未收到款。"
+    ],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "partial",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "unavailable",
+          "evidence_ids": []
+        },
+        {
+          "demand_id": "demand-2",
+          "status": "supported",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
   }
 };
 
