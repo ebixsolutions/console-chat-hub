@@ -194,8 +194,8 @@ function partitionEvidence(turns){
  const text=String(final?.reply?.content??'').normalize('NFKC').trim();
  const patterns=[
   {pattern:/^Recorded your requirements for (.+): retained (\d+) ([^;]+); (cancelled|deferred) requirement: (\d+) ([^.;]+)\.$/u,status:x=>x},
-  {pattern:/^已記錄你嘅(.+)要求:保留 (\d+) ([^;]+);(取消|暫緩)嘅要求: (\d+) ([^。]+)。$/u,status:x=>x==='取消'?'cancelled':'deferred'},
-  {pattern:/^已记录你的(.+)需求:保留 (\d+) ([^;]+);(取消|暂缓)的需求: (\d+) ([^。]+)。$/u,status:x=>x==='取消'?'cancelled':'deferred'}
+  {pattern:/^已記錄你嘅(.+)要求:保留 (\d+) ([^;]+);(取消|暫緩)嘅要求: ?(\d+) ([^。]+)。$/u,status:x=>x==='取消'?'cancelled':'deferred'},
+  {pattern:/^已记录你的(.+)需求:保留 (\d+) ([^;]+);(取消|暂缓)的需求: ?(\d+) ([^。]+)。$/u,status:x=>x==='取消'?'cancelled':'deferred'}
  ];
  const matched=patterns.flatMap(({pattern,status})=>{const m=text.match(pattern);return m?[{label:m[1],retained:Number(m[2]),unit:m[3],status:status(m[4]),inactive:Number(m[5]),inactive_unit:m[6]}]:[]});
  const parsed=matched.length===1?matched[0]:null;

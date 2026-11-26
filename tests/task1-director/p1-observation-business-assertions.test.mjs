@@ -148,6 +148,12 @@ test('Compound partition observer checks delivered labels and both canonical pat
  const row={id:'partition',kind:'synthetic',turns:turns.map(t=>t.utterance),
   must:{retained_count:60,cancelled_or_deferred_count:60,do_not_merge_current_and_future:true}};
  assert.deepEqual(Object.values(statuses(row,turns)),['PASS','PASS','PASS']);
+ // Same canonical pair in the exact Chinese renderer grammar, including NFKC colons.
+ for(const statement of ['已記錄你嘅notebook要求：保留 60 units；暫緩嘅要求：60 units。','已记录你的notebook需求：保留 60 units；暂缓的需求：60 units。']){
+  updateReply(final,statement);assert.deepEqual(Object.values(statuses(row,turns)),['PASS','PASS','PASS']);
+  updateReply(final,statement+' Order confirmed.');assert(Object.values(statuses(row,turns)).every(s=>s==='FAIL'));
+ }
+ updateReply(final,'Recorded your requirements for notebook: retained 60 units; deferred requirement: 60 units.');
  for(const mutate of [
   t=>updateReply(t,'Recorded your requirements for notebook: retained 60 units; cancelled requirement: 60 units.'),
   t=>updateReply(t,'Recorded your requirements for notebook: retained 120 units; deferred requirement: 60 units.'),
