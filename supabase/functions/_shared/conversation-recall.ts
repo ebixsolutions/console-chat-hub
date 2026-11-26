@@ -2038,6 +2038,24 @@ function structuredQuantityEvidence(input:ConversationRecallInput):RecallEvidenc
     source_kind:"attested_customer_utterance",attribute_key:key,...unit};
 }
 
+/** Private routing proposal for two disjoint clauses. No count, price or
+ * transaction authority leaves the existing attested recall reader. */
+export function isStructuredMixedQuantityCandidate(input:ConversationRecallInput):boolean {
+  return Boolean(input.quantity_reading?.full_question &&
+    input.quantity_reading.frame.demands?.length===2 && selectStructuredQuantitySubject(input));
+}
+export function resolveStructuredMixedQuantityBinding(input:ConversationRecallInput):
+  {quote:string;merchant_quote:string;subject:string;unit:string}|null {
+  if(!isStructuredMixedQuantityCandidate(input))return null;
+  const evidence=structuredQuantityEvidence(input),e=selectStructuredQuantitySubject(input);
+  if(!evidence?.quantity_unit||!e)return null;
+  const subject=e.attributes.product_name??e.model??e.attributes.name;
+  const original=input.trusted_visitor_source_rows?.find(row=>row.id===e.provenance.source_message_id);
+  const merchant=input.quantity_reading!.frame.demands!.find(d=>d.source_type==="product");
+  if(typeof subject!=="string"||!subject.trim()||!original||!phrase(original.content,subject)||!merchant)return null;
+  return {quote:input.question,merchant_quote:merchant.source_quote,subject,unit:evidence.quantity_unit};
+}
+
 /** A unit in this already resolved quantity question may label the displayed
  * canonical number. It is not a new canonical fact and cannot change quantity,
  * subject selection, source provenance, or any persisted state. */

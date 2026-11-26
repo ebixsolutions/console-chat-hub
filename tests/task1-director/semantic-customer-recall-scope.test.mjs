@@ -894,3 +894,39 @@ test('S2 independently re-attests complete structured reply receipt before mixed
   }
  }
 });
+
+
+// S2 generic-first: keep the original six cases, add natural mixed counterparts.
+// A merchant price lookup can bind only the independently attested subject.
+test('S2 structured mixed quantity binds original and natural price requests identically',async()=>{
+ const {resolveStructuredMixedQuantityBinding}=await import('../../supabase/functions/_shared/conversation-recall.ts');
+ const {resolveCustomerRequestDecision}=await import('../../supabase/functions/_shared/commerce-state-authority.ts');
+ const {resolveCurrentFactualRequest}=await import('../../supabase/functions/_shared/current-factual-request.ts');
+ for(const row of s2Counts){
+  const queries=[];
+  for(const q of [row[5],row[7]]){
+   const input=s2QuantityFixture(row,q,true), before=JSON.stringify(input);
+   const proof=resolveStructuredMixedQuantityBinding(input);
+   assert.ok(proof,row[0]+' '+q);
+   assert.equal(proof.subject,row[1]);assert.equal(proof.unit,row[2]);
+   assert.equal(Object.hasOwn(proof,'quantity'),false);
+   const question=input.quantity_reading.full_question,semantic=input.quantity_reading.frame;
+   const decision=resolveCustomerRequestDecision(question,semantic,[],proof.quote);
+   assert.equal(decision.kind,'mixed',row[0]);assert.equal(decision.customer_quantity_recall_request,q);
+   const opts={question,source_message_id:input.source_message_id,trusted_company_id:input.company_id,
+     semantic,commerce:input.commerce.state,memory:input.memory,request_decision:decision,
+     structured_mixed_quantity_recall:input,history:[{id:'original-source',role:'visitor',content:row[4]}]};
+   const result=resolveCurrentFactualRequest(opts), merchant=result.demands.find(d=>d.source_type==='product');
+   assert.ok(merchant,row[0]);assert.deepEqual(merchant.subjects,[row[1]]);
+   assert.equal(merchant.question,row[1]+' '+row[6]);assert.equal(result.kb_required,true);
+   assert.ok(result.query);assert.ok(!result.query.includes(row[4]));assert.ok(!result.query.includes(q));
+   queries.push(merchant.question);
+   const stale=structuredClone(input);stale.commerce.revision++;
+   assert.equal(resolveStructuredMixedQuantityBinding(stale),null);
+   const denied=resolveCurrentFactualRequest({...opts,structured_mixed_quantity_recall:stale});
+   assert.equal(denied.demands.find(d=>d.source_type==='product').subjects.length,0);
+   assert.equal(JSON.stringify(input),before);
+  }
+  assert.equal(queries[0],queries[1]);
+ }
+});

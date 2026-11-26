@@ -13,6 +13,8 @@ import {
 import type { CommerceSemanticAmbiguity, CommerceSemanticDemand, CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import type { ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { resolveStructuredMixedQuantityBinding, type ConversationRecallInput } from "./conversation-recall.ts";
+import { sameCanonicalJson } from "./canonical-json.ts";
 import { DecisionContextLimitError, mergeDecisionContext, normalizeDecisionContext, type DecisionValue } from "./bounded-decision-context.ts";
 
 export type FactualDemandSourceType = "product" | "policy" | "transaction" | "general" | "unknown";
@@ -83,6 +85,8 @@ export interface ResolveCurrentFactualRequestInput {
   commerce?: ConversationCommerceState | null;
   memory?: CanonicalConversationMemory | null;
   request_decision?: CustomerRequestDecision;
+  /** Server-private source proof; never serialized into KB or supplied by the model. */
+  structured_mixed_quantity_recall?: ConversationRecallInput;
   /** Private caller receipt, only after original Commerce CAS and exact
    * scoped readback succeeded for this mixed source. Not merchant authority. */
   committed_dimension_write?: {company_id: string; source_message_id: string; revision: number};
@@ -1168,7 +1172,34 @@ function sourceBoundMixedUnitCharge(input:ResolveCurrentFactualRequestInput,dema
   const recallQuote=input.request_decision?.customer_quantity_recall_request;
   const literalUnit=sourceUnitChargeQuestion(quote);
   const omittedEnglish=sourceOmittedEnglishPriceQuestion(quote);
-  const unit=literalUnit??(omittedEnglish&&recallQuote?sourceQuantityRecallUnit(recallQuote):null);
+  const structured=input.structured_mixed_quantity_recall;
+  const structuredFacet=Boolean(structured && (literalUnit||omittedEnglish) && recallQuote &&
+    input.request_decision?.kind==="mixed" && demand.source_type==="product");
+  const unit=literalUnit??(omittedEnglish&&recallQuote?
+    (structuredFacet ? resolveStructuredMixedQuantityBinding(structured!)?.unit??null : sourceQuantityRecallUnit(recallQuote)):null);
+  if(structuredFacet){
+    const proof=resolveStructuredMixedQuantityBinding(structured!);
+    if(!proof||!unit||norm(proof.unit)!==norm(unit)||!validSubject(proof.subject)||
+        structured!.company_id!==input.trusted_company_id||structured!.source_message_id!==input.source_message_id||
+        clean(structured!.quantity_reading?.full_question)!==full||clean(proof.quote)!==clean(recallQuote)||
+        clean(proof.merchant_quote)!==quote||!sameCanonicalJson(structured!.commerce?.state,input.commerce)||
+        !sameCanonicalJson(structured!.memory,input.memory)||
+        proposed.length!==2||!frame||frame.operation!=="ASK_FACT"||frame.additive||frame.customer_correction||
+        frame.explicit_negations.length||frame.customer_facts?.length||
+        ![frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state].every(x=>x==="none"||x==="unknown")||
+        demand.customer_correction||demand.ambiguity.is_ambiguous||demand.explicit_negations.length||
+        Object.keys(demand.constraints).length||demand.requested_facts.length!==1||demand.requested_facts[0]!=="price")
+      return {bindings:[],question:quote,unresolved:true};
+    const sibling=proposed.find(d=>d!==demand&&clean(d.source_quote)===clean(proof.quote));
+    const selected=input.commerce?.entities.find(e=>norm(e.attributes.product_name??e.model??e.attributes.name)===norm(proof.subject));
+    if(!sibling||sibling.source_type!=="general"||sibling.ambiguity.is_ambiguous||sibling.customer_correction||
+        sibling.explicit_negations.length||sibling.requested_facts.length!==1||
+        sibling.requested_facts[0]!=="quantity"||!selected||
+        ![...demand.subject_refs,...sibling.subject_refs].every(ref=>entityNames(selected).some(n=>norm(n)===norm(ref))))
+      return {bindings:[],question:quote,unresolved:true};
+    return {bindings:[{subject:proof.subject,source_message_id:input.source_message_id??null,customer_text:full,current:true}],
+      question:proof.subject+" "+quote,unresolved:false};
+  }
   if(!unit||!recallQuote||input.request_decision?.kind!=="mixed"||!frame||
       !input.trusted_company_id||!input.source_message_id||input.memory&&input.memory.company_id!==input.trusted_company_id||
       proposed.length!==2||demand.source_type!=="product"||frame.operation!=="ASK_FACT"||

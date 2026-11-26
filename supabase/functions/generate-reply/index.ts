@@ -9,6 +9,8 @@ import {
   resolveSourceBoundQuoteConversation,
   isSourceBoundQuoteStatusQuestion,
   loadScopedRecallVisitorSources,
+  isStructuredMixedQuantityCandidate,
+  resolveStructuredMixedQuantityBinding,
   isCurrentEffectiveQuantityRecall,
   isSourceBoundPartitionReadRequest,
   type ConversationRecallInput,
@@ -4938,10 +4940,50 @@ async function orchestrationGenerateReply(
   const _pureSourceOperationFailure = Boolean(_semanticPrepared?.recovery.source_verified &&
     isSourceBoundOperationFailureRequest({question:_h1LastMsg,source_message_id:_h1SourceMessageId,
       trusted_company_id:_criticalE2ExpectedTenantId,semantic:_a3SemanticFrame}));
+  // Generic-first S2: exact accepted Reading and original scoped source proof
+  // may preserve an independently asked customer count before KB projection.
+  // The existing late reader/B2/CAS still own the answer and persistence.
+  let _s2MixedQuantityInput: ConversationRecallInput|undefined;
+  const _s2Frame=_semanticPrepared?.semantic.frame;
+  const _s2State=_semanticPrepared?.input_state?.commerce;
+  const _s2Clause=_s2Frame?.demands?.find(d=>d.source_type==="general"&&
+    d.requested_facts.length===1&&d.requested_facts[0]==="quantity");
+  if(_semanticPrepared?.recovery.source_verified&&_semanticPrepared.memory&&
+      _semanticPrepared.commerce&&_semanticPrepared.memory_readback&&_s2Frame&&_s2State&&_s2Clause&&
+      _criticalE2ExpectedTenantId&&!_explicitHandoffRequested&&classifyLocalTopicRisk(_h1LastMsg)?.level!=="high"&&
+      _semanticRequestQuestion.normalize("NFKC").trim()===_h1LastMsg.normalize("NFKC").trim()){
+    const scope={conversation_id,company_id:_criticalE2ExpectedTenantId,source_message_id:_h1SourceMessageId};
+    const candidate:ConversationRecallInput={...scope,question:_s2Clause.source_quote,
+      memory:_semanticPrepared.memory,commerce:{...scope,source_message_id:_s2State.source_message_id,
+        revision:_s2State.revision,state:_semanticPrepared.commerce},
+      trusted_persisted_memory_readback:_semanticPrepared.memory_readback,
+      quantity_reading:{...scope,commerce_revision:_s2State.revision,frame:_s2Frame,full_question:_h1LastMsg}};
+    if(isStructuredMixedQuantityCandidate(candidate)){
+      const sources=await loadScopedRecallVisitorSources({...scope,question:candidate.question,
+        memory:candidate.memory,commerce:candidate.commerce,quantity_reading:candidate.quantity_reading,
+        requested_facts:["quantity"],enabled:true,
+        recent_rows:_pr5HistoryReadError||!Array.isArray(_pr5HistoryRows)?null:
+          ((_pr5HistoryRows??[]) as MemoryHistoryRow[]).map(row=>({
+            id:String(row.id??""),conversation_id:String((row as MemoryHistoryRow & {conversation_id?:unknown}).conversation_id??""),
+            role:String(row.role??""),is_recalled:(row as MemoryHistoryRow & {is_recalled?:unknown}).is_recalled!==false,
+            content:String(row.content??""),created_at:row.created_at,
+          })),
+        fetch_missing:async ids=>{
+          const {data,error}=await supabaseAdmin.from("messages")
+            .select("id, conversation_id, role, content, created_at, is_recalled")
+            .eq("conversation_id",conversation_id).eq("role","visitor").eq("is_recalled",false)
+            .neq("content","__THINKING__").or(sourceBoundaryFilter(sourceVisitorMessage)).in("id",[...ids]).limit(5);
+          return {rows:data,error};
+        }});
+      const verified:ConversationRecallInput={...candidate,trusted_visitor_source_rows:sources.rows,
+        trusted_visitor_source_status:sources.status};
+      if(resolveStructuredMixedQuantityBinding(verified))_s2MixedQuantityInput=verified;
+    }
+  }
   const _customerRequestDecision: CustomerRequestDecision = _pureSourceQuantityUnit || _pureSourceOperationFailure
     ? {kind:"other" as const,continuation:false,general_request:null,merchant_request:null,
       latest_requirements:_h1LastMsg,semantic_demands:_a3SemanticFrame!.demands}
-    : resolveCustomerRequestDecision(_semanticRequestQuestion,_a3SemanticFrame,_semanticRoutingHistory);
+    : resolveCustomerRequestDecision(_semanticRequestQuestion,_a3SemanticFrame,_semanticRoutingHistory,_s2MixedQuantityInput?.question);
   if(_criticalE2ExpectedTenantId&&_h1SourceMessageId)await writeProtectedPipelineEvidence(supabaseAdmin,{
     company_id:_criticalE2ExpectedTenantId,conversation_id,source_message_id:_h1SourceMessageId,
   },"knowledge_ownership_routing",{decision:_customerRequestDecision.kind,
@@ -5222,6 +5264,7 @@ async function orchestrationGenerateReply(
                 ? {company_id: _criticalE2ExpectedTenantId, source_message_id: _h1SourceMessageId,
                     revision: _a3Commerce.revision} : undefined,
             request_decision: _customerRequestDecision,
+            structured_mixed_quantity_recall: _s2MixedQuantityInput ? {..._s2MixedQuantityInput,commerce:_c3CommerceSnapshot} : undefined,
           });
         }
         if (_currentFactualRequest && _criticalE2ExpectedTenantId && _h1SourceMessageId) await writeProtectedPipelineEvidence(supabaseAdmin, {

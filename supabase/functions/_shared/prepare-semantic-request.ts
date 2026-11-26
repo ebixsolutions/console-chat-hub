@@ -1,5 +1,6 @@
 import {writeProtectedPipelineEvidence} from "./protected-pipeline-evidence.ts";
 import type {ModelTurnBudget} from "./llm-router.ts";
+import type {TrustedPersistedMemoryReadback} from "./conversation-recall.ts";
 import {
   buildPersistentCommerceStateSummary,
   interpretCommerceSemantics,
@@ -40,6 +41,7 @@ export interface PreparedSemanticRequest {
   memory: CanonicalConversationMemory | null;
   commerce: ConversationCommerceState | null;
   recovery: Awaited<ReturnType<typeof recoverSemanticHistory>>;
+  memory_readback?: TrustedPersistedMemoryReadback;
   input_state?: {
     commerce: {revision: number; source_message_id: string} | null;
     memory: {revision: number; source_message_id: string} | null;
@@ -71,7 +73,7 @@ export async function prepareSemanticRequest(
   ]);
   const reads = await Promise.allSettled([
     client.from("conversation_memory_state")
-      .select("conversation_id,company_id,source_message_id,revision,memory")
+      .select("conversation_id,company_id,source_message_id,revision,commerce_state_revision,memory_hash,memory")
       .eq("conversation_id", input.conversation_id)
       .eq("company_id", input.company_id).abortSignal(contextSignal).maybeSingle(),
     client.from("conversation_commerce_state")
@@ -145,7 +147,16 @@ export async function prepareSemanticRequest(
   });
   // Raw capture is private and must never escape through a caller result.
   delete semantic.success_evidence;
-  return {semantic, history, memory, commerce, recovery, input_state:{
+  const memory_readback: TrustedPersistedMemoryReadback|undefined =
+    memory && commerce && memoryRow.source_message_id===memory.source_message_id &&
+    memoryRow.revision===memory.memory_revision && memoryRow.commerce_state_revision===memory.commerce_state_revision &&
+    memory.commerce_state_revision===commerceRow.revision &&
+    typeof memoryRow.memory_hash==="string" && /^[a-f0-9]{64}$/i.test(memoryRow.memory_hash)
+      ? {contract:"persisted-memory-readback-v1",conversation_id:input.conversation_id,company_id:input.company_id,
+          source_message_id:memoryRow.source_message_id,memory_revision:memoryRow.revision,
+          commerce_state_revision:memoryRow.commerce_state_revision,memory_hash:memoryRow.memory_hash}
+      : undefined;
+  return {semantic, history, memory, commerce, recovery, memory_readback, input_state:{
     commerce:commerce ? {revision:commerceRow.revision,source_message_id:commerceRow.source_message_id} : null,
     memory:memory ? {revision:memoryRow.revision,source_message_id:memoryRow.source_message_id} : null,
   }};
