@@ -800,6 +800,17 @@ function s2QuantityFixture(row,question,mixed=false){
  input.quantity_reading={...scope,commerce_revision:2,frame,...(mixed?{full_question:question+((industry==='saas'||industry==='b2b')?', and ':'')+price}:{})};
  return input;
 }
+test('S2 nominal recorded requirements do not become a new advice goal by subject length',async()=>{
+ const {isSourceOwnedActiveAdviceGoal,isReadOnlyMemoryOrCurrentStateRecall}=await import('../../supabase/functions/_shared/commerce-state-authority.ts');
+ for(const row of s2Counts){
+  assert.equal(isSourceOwnedActiveAdviceGoal(row[7]),false,row[7]);
+  assert.equal(isReadOnlyMemoryOrCurrentStateRecall(row[7],{operation:'ASK_FACT',requested_facts:['quantity']}),true,row[7]);
+ }
+ for(const q of ['我現在要三張書枱','我需要三份套餐','我想選英語課','我打算買書枱']){
+  assert.equal(isSourceOwnedActiveAdviceGoal(q),true,q);
+  assert.equal(isReadOnlyMemoryOrCurrentStateRecall(q,{operation:'ASK_FACT',requested_facts:['quantity']}),false,q);
+ }
+});
 for(const row of s2Counts)for(const [kind,q,mixed] of [['original',row[5],true],['natural',row[7],false]]){
  test('S2 structured source count '+row[0]+' '+kind,async()=>{
   const input=s2QuantityFixture(row,q,mixed),before=JSON.stringify(input);

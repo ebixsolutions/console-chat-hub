@@ -1734,7 +1734,7 @@
     "tests/section15/human-service-routing.test.mjs": "663b58b2b65f7e9b8570b9b7d9338e6572b853a7837f02248ce6c28133c6f3fe"
   },
   "authorized_task3c_d4_no_industry_sha256": {
-    "supabase/functions/_shared/commerce-state-authority.ts": "20d0f68f9a1f710bebfb5415ccc11ad31662268243fb7d9f8f50002fbeace0a9",
+    "supabase/functions/_shared/commerce-state-authority.ts": "12d9215d8a13319441733cca05f603629be532abd22a05f7a448e9b62ae0afc1",
     "supabase/functions/_shared/commerce-state-runtime-base.ts": "99c26fca40a3b4b89e28e3840f1e19c68fddb1424d92f6af82c935335345f054",
     "tests/task1-director/source-chain.test.mjs": "6b8e3d475ee23e579a64bba275964890ff07e8836aa69e74690d9717a42181c5",
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "367d2bae82405f7936861b8d0abf740b787b1c84c7e9e5838308a517db251f5d",
@@ -1749,7 +1749,7 @@
     "tests/emergency-p0/protected-evidence.test.ts": "ede44d12f42355dd116f7cc5046715f340b46d464ee4bde37e1b984ae441d708",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "b2e8014c302d1e6ef9dcd375f8d767248fdd47757848ab1cf6e6b9cc0a18d99c",
     "supabase/functions/_shared/conversation-service-planner.test.ts": "2cb675ff27a5ea993bea80a527a6e836706a8d99d07f281b00201be56f9f4702",
-    "tests/task1-director/semantic-customer-recall-scope.test.mjs": "e1ebe842802080e4f1f1c3971512a981d8b2c7af238e2f7393e0f5ce6de8e38d",
+    "tests/task1-director/semantic-customer-recall-scope.test.mjs": "da58a2bbf685659ceccebbef81e8da51470a5c20770333caabfcf65a38277346",
     "supabase/functions/_shared/natural-customer-response.test.ts": "a3d79abf34b45d8eeacbd07c03d713020c76cad882211a32dae31262bc010917",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "446e41c9a68af29da995d0fa2a420170563739c4b247a5ae93b8d80215d1e10b",
     "tests/emergency-p0/chain.test.mjs": "8e4b20dfd4e73514c5a8924bc8fe79f63e07683e2b36d70353d4ddeef32d215a",

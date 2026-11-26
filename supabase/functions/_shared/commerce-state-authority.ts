@@ -317,7 +317,7 @@ export function isSourceOwnedActiveAdviceGoal(text:string):boolean {
  // First-person present goal grammar, with no category, industry noun or
  // purchase/booking verb inventory. Neither a count nor a named item is inferred.
  return /^(?:(?:我|我哋|我們|我们)\s*)?(?:想|打算|需要)\S/iu.test(t) ||
-   /(?:我|我哋|我們|我们).{0,8}(?:想|要|需要|打算)\S/iu.test(t) ||
+   /(?:我|我哋|我們|我们).{0,8}(?:想|要(?!求)|需要|打算)\S/iu.test(t) ||
    /\b(?:i|we)\s+(?:(?:really|currently|now)\s+)?(?:want|need|plan)\s+to\b/iu.test(t) ||
    /\b(?:i'm|i am|we're|we are)\s+looking\s+to\b/iu.test(t);
 }
