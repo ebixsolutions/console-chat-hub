@@ -1749,7 +1749,7 @@
     "tests/emergency-p0/protected-evidence.test.ts": "ede44d12f42355dd116f7cc5046715f340b46d464ee4bde37e1b984ae441d708",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "b2e8014c302d1e6ef9dcd375f8d767248fdd47757848ab1cf6e6b9cc0a18d99c",
     "supabase/functions/_shared/conversation-service-planner.test.ts": "2cb675ff27a5ea993bea80a527a6e836706a8d99d07f281b00201be56f9f4702",
-    "tests/task1-director/semantic-customer-recall-scope.test.mjs": "c0de7af8383c583c88870a76849228a7bcbba31b3438cc1cad16e81e9261bcf0",
+    "tests/task1-director/semantic-customer-recall-scope.test.mjs": "e1ebe842802080e4f1f1c3971512a981d8b2c7af238e2f7393e0f5ce6de8e38d",
     "supabase/functions/_shared/natural-customer-response.test.ts": "a3d79abf34b45d8eeacbd07c03d713020c76cad882211a32dae31262bc010917",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "446e41c9a68af29da995d0fa2a420170563739c4b247a5ae93b8d80215d1e10b",
     "tests/emergency-p0/chain.test.mjs": "8e4b20dfd4e73514c5a8924bc8fe79f63e07683e2b36d70353d4ddeef32d215a",

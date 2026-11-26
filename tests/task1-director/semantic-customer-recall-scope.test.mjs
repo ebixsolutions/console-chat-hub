@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { reduceTurn, buildCommerceEntityHints } from '../../supabase/functions/_shared/commerce-state-runtime-base.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {prepareConversationRecall,hasAttestedUnlabelledCustomerRecall,loadScopedRecallVisitorSources} from '../../supabase/functions/_shared/conversation-recall.ts';
+import {prepareConversationRecall,hasAttestedUnlabelledCustomerRecall} from '../../supabase/functions/_shared/conversation-recall.ts';
 import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
 import {buildCanonicalConversationMemory} from '../../supabase/functions/_shared/conversation-long-memory.ts';
 import {resolveIndustryRuntime as d4ResolveIndustryRuntime,resolveIndustryCustomerJourney,resolveIndustryProfile,industryEntityLabel,industryEntityQuantityUnit} from '../../supabase/functions/_shared/industry-runtime-adapter.ts';
