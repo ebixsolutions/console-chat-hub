@@ -1550,18 +1550,6 @@ function scanNegatedTransaction(text: string): NegatedTransactionScan {
   };
 }
 
-function explicitOrderConfirmation(text: string): boolean {
-  return /(?:已付款|已付|付咗|paid\b|正式落單|正式下单|確認落單|确认下单|confirm(?:ed)? (?:the )?order|已預約|已预约|booked)/i.test(text);
-}
-
-function explicitPaymentConfirmation(text: string): boolean {
-  return /(?:已付款|已付|付咗|已支付|paid\b)/i.test(text);
-}
-
-function explicitBookingConfirmation(text: string): boolean {
-  return /(?:已預約|已预约|已約|已约|已安排|booked|scheduled)/i.test(text);
-}
-
 function quotationOnlySignal(text: string): boolean {
   return /(?:報價|报价|quotation|quote|先問價|先问价)/i.test(text);
 }
@@ -2208,46 +2196,62 @@ export function customerHistoricalQuoteProof(
   });
 }
 
+// A customer turn is not a merchant transaction readback.  Neither the
+// compatibility extractor nor a semantic proposal may authorize a completed
+// order, payment, verified quotation, or fulfilment.  Keep the frozen A2
+// reducer available for separately authorized events; constrain its callers here.
+type CustomerTurnConversion = Partial<ConversationCommerceState["conversion"]>;
+function hasProtectedTransactionLifecycle(value: CustomerTurnConversion): boolean {
+  return value.funnel_stage === "order_confirmed" || value.funnel_stage === "post_purchase" ||
+    (value.order_status !== undefined && ["confirmed", "completed", "cancelled"].includes(value.order_status)) ||
+    (value.payment_status !== undefined && ["paid", "failed", "refunded", "partially_refunded"].includes(value.payment_status)) ||
+    (value.quotation_status !== undefined && ["verified", "accepted", "expired", "cancelled"].includes(value.quotation_status));
+}
+
+function preserveCustomerTurnTransactionAuthority(
+  previous: ConversationCommerceState, candidate: ConversationCommerceState,
+): ConversationCommerceState {
+  // A persisted prior lifecycle is not re-verified by this function. Preserve
+  // it verbatim; do not use a customer utterance to promote OR erase it.
+  // In particular, a paid word in a historical report or negated list cannot
+  // manufacture payment authority. A separately trusted transaction reader
+  // must supply any actual business-state change.
+  const protectConversion = hasProtectedTransactionLifecycle(previous.conversion) ||
+    hasProtectedTransactionLifecycle(candidate.conversion);
+  const protectDelivery = previous.delivery.confirmed !== candidate.delivery.confirmed;
+  if (!protectConversion && !protectDelivery) return candidate;
+  return {
+    ...candidate,
+    conversion: protectConversion ? {
+      ...candidate.conversion,
+      funnel_stage: previous.conversion.funnel_stage,
+      quotation_status: previous.conversion.quotation_status,
+      order_status: previous.conversion.order_status,
+      payment_status: previous.conversion.payment_status,
+    } : candidate.conversion,
+    delivery: protectDelivery ? {...candidate.delivery, confirmed: previous.delivery.confirmed} : candidate.delivery,
+  };
+}
+
 function enforceQuotationNotOrderEvents(
   text: string,
   state: ConversationCommerceState,
   frame?: CommerceSemanticFrame | null,
 ): CommerceStateEvent[] {
-  const scan = scanNegatedTransaction(text);
-  const positiveOrder = explicitOrderConfirmation(scan.positive);
-  const positivePayment = explicitPaymentConfirmation(scan.positive);
-  const positiveBooking = explicitBookingConfirmation(scan.positive);
-  const events: CommerceStateEvent[] = [];
-
-  if (scan.negated_booking && !positiveBooking && state.delivery.confirmed) {
-    events.push({ type: "SET_DELIVERY", patch: { confirmed: false }, provenance: { source_type: "derived" } });
-  }
-  if (positiveOrder) return events;
-
-  const promoted = state.conversion.order_status === "confirmed" || state.conversion.order_status === "completed" || state.conversion.funnel_stage === "order_confirmed";
-  const paidDrift = !positivePayment && scan.negated_payment && (state.conversion.payment_status === "paid" || state.conversion.payment_status === "pending_payment");
-
-  if (!promoted && !paidDrift) {
-    // Source-owned budget and a denied quote lookup are not merchant quote
-    // authority when a confident semantic frame asks for guidance instead.
-    if (frame && frame.confidence>=0.72 && !frame.ambiguity.is_ambiguous &&
-        frame.operation==="ASK_FACT" &&
-        (frame.intent==="customer_guidance" || frame.intent==="ask_for_advice"))
-      return events;
-    if (quotationOnlySignal(text) && state.conversion.quotation_status === "none") {
-      events.push({ type: "SET_CONVERSION", patch: { funnel_stage: "quotation", quotation_status: "draft" } });
-    }
-    return events;
-  }
-
-  const patch: Partial<ConversationCommerceState["conversion"]> = {
-    funnel_stage: "quotation",
-    quotation_status: state.conversion.quotation_status === "none" ? "draft" : state.conversion.quotation_status,
-  };
-  if (promoted) patch.order_status = "draft";
-  if (paidDrift) patch.payment_status = "pending_quote";
-  events.push({ type: "SET_CONVERSION", patch });
-  return events;
+  // Draft quotation intent remains a supported customer-owned operation. Do
+  // not derive a merchant confirmation or downgrade a prior lifecycle from
+  // words such as "paid", "booked", or "not paid".
+  if (hasProtectedTransactionLifecycle(state.conversion)) return [];
+  if (frame && frame.confidence >= 0.72 && !frame.ambiguity.is_ambiguous &&
+      frame.operation === "ASK_FACT" &&
+      (frame.intent === "customer_guidance" || frame.intent === "ask_for_advice")) return [];
+  if (!quotationOnlySignal(text) || state.conversion.quotation_status !== "none") return [];
+  const negation = scanNegatedTransaction(text);
+  const quoteOnly = explicitQuotationOnlySignal(text) || negation.negated_order || negation.negated_payment;
+  const patch: CustomerTurnConversion = {funnel_stage: "quotation", quotation_status: "draft"};
+  if (quoteOnly && state.conversion.order_status === "none") patch.order_status = "draft";
+  if (quoteOnly && state.conversion.payment_status === "none") patch.payment_status = "pending_quote";
+  return [{type: "SET_CONVERSION", patch}];
 }
 
 export function detectExplicitEntityCreationSignal(text: string): boolean {
@@ -3249,7 +3253,12 @@ function reduceSingleTurn(
        refusedNewIds.has(event.entity_id))return false;
     if(semanticRejectsLifecycle && event.type==="SET_ENTITY_STATUS" &&
       (event.status==="cancelled" || event.status==="deferred"))return false;
-    if(guidanceUncounted && event.type==="SET_CONVERSION")return false;
+    // All candidate events in this reducer originate in the customer turn,
+    // including legacy extraction, semantic proposals and journey hints.
+    // None is an authorized merchant transaction readback.
+    if (event.type === "SET_CONVERSION" &&
+        (guidanceUncounted || hasProtectedTransactionLifecycle(event.patch) ||
+         hasProtectedTransactionLifecycle(previous.conversion))) return false;
     if(itemCountUnknown && event.type==="SET_ENTITY_QUANTITY" &&
        !isSourceBoundIdentityQuantityCorrection(event,input,previous))return false;
     if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
@@ -4499,7 +4508,9 @@ function sourceBoundTurnReduction(previous: ConversationCommerceState, input: Co
     }
   }
   const state = removals.length ? reduceCommerceState(candidate, removals) : candidate;
-  return { state, rejected: false };
+  // Apply the same authority postcondition to every candidate path, including
+  // compound turns and source-attested early-return operations.
+  return { state: preserveCustomerTurnTransactionAuthority(previous, state), rejected: false };
 }
 
 export function reduceTurn(previous: ConversationCommerceState, input: CommerceRuntimeInput, hints: CommerceTurnEntityHint[],

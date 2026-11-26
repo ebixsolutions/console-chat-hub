@@ -401,3 +401,62 @@ test('generic specification allocation cannot synthesize a horsepower field',()=
   }
  }
 });
+
+
+// Actual original P1 observation exposed these five source statements writing
+// order_confirmed / confirmed / paid without a merchant transaction readback.
+// This is a runtime reducer regression, not a replacement for the original
+// handler observer, its oracle, or real Hosted authority checks.
+test('P1 customer-reported and negated transactions cannot create merchant completion',()=>{
+ const observed=[
+  "I only asked for a written quotation for paper cups. I have not placed an order, paid or arranged shipping.",
+  "I'm on the annual plan paid monthly, 60 a month. I've paid 4 months.",
+  "I paid 20 on 5 Feb and cancelled on 3 Mar. On 5 Mar I was charged 30.",
+  "We ordered paper bags worth 34,000. We paid 20% in advance and another 16,000 when the first shipment left.",
+  "We paid for micro SD cards but received different goods.",
+  "The deposit was paid last year, but please verify the current booking.",
+  "我只是查詢療程報價，尚未付款或確認預約。",
+  "未落單、付款或安排送貨，只係想報價。",
+  "我上次已付錢，今次想核對付款紀錄。"
+ ];
+ for (const text of observed) {
+  for (const semantic_frame of [undefined, {
+    version:'commerce-semantic-1.0.0',language:'en',operation:'NO_STATE_CHANGE',
+    intent:'other',topic:'transaction',confidence:.98,
+    ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+    entities:[],referents:[],customer_facts:[],requested_facts:[],
+    customer_correction:false,additive:false,explicit_negations:[],
+    transaction_state:'confirmed',payment_state:'paid',booking_state:'confirmed',fulfillment_state:'fulfilled'
+  }]) {
+   const before=createEmptyConversationCommerceState();
+   const after=reduceTurn(before,{text,semantic_frame,source_message_id:'transaction-customer-source',
+     conversation_id:'fixture-ticket',company_id:'fixture-company',language:/[\u3400-\u9fff]/u.test(text)?'zh-TW':'en'},[]);
+   assert(!['confirmed','completed'].includes(after.conversion.order_status),text);
+   assert(!['order_confirmed','post_purchase'].includes(after.conversion.funnel_stage),text);
+   assert.notEqual(after.conversion.payment_status,'paid',text);
+   assert.equal(after.delivery.confirmed,false,text);
+   assert(!['verified','accepted'].includes(after.conversion.quotation_status),text);
+  }
+ }
+});
+
+test('P1 quote intent remains draft and existing transaction lifecycle cannot be rewritten by customer turns',()=>{
+ const initial=createEmptyConversationCommerceState();
+ const base={source_message_id:'quote-source',conversation_id:'fixture-ticket',company_id:'fixture-company',language:'en'};
+ const draft=reduceTurn(initial,{...base,text:'Please prepare a quotation only.'},[]);
+ assert.equal(draft.conversion.quotation_status,'draft');
+ assert.notEqual(draft.conversion.order_status,'confirmed');
+ assert.notEqual(draft.conversion.payment_status,'paid');
+ for(const text of ['I only asked for a quotation. I have not paid.',
+  'No delivery has been scheduled.', 'Please check the order status.',
+  '我尚未付款或確認訂單。','I paid last month.']) {
+  const prior=createEmptyConversationCommerceState();
+  prior.conversion={...prior.conversion,funnel_stage:'order_confirmed',
+   quotation_status:'accepted',order_status:'confirmed',payment_status:'paid'};
+  prior.delivery={...prior.delivery,confirmed:true,provenance:{source_type:'tool',source_reference:'existing-authorized-readback'}};
+  const next=reduceTurn(prior,{...base,text},[]);
+  for(const key of ['funnel_stage','quotation_status','order_status','payment_status'])
+    assert.equal(next.conversion[key],prior.conversion[key],text+' '+key);
+  assert.equal(next.delivery.confirmed,true,text);
+ }
+});
