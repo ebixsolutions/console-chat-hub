@@ -248,6 +248,1151 @@ function quoteOnlyReading(row,turn,language){
  return {semantic:wire({language,intent:'transaction_status',requested_facts:fields,demands:[{question:text,source_quote:text,subject_refs:[],source_type:'transaction',requested_facts:fields,constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]},'ASK_FACT'),status:'SCRIPTED_PROPOSAL',source_quote:text,coverage:'REQUEST_TRANSACTION_VERIFICATION_NOT_CONFIRMATION'};
 }
 
+// R2 source complaints: attributed reports, corrections and independently scoped questions.
+// The table belongs solely to the observation fixture, never live routing.
+const complaintReadings=Object.freeze({
+  "RT-01": {
+    "0": {
+      "source": "我上星期喺你哋網店買咗一部手提電腦，連三份贈品。",
+      "kind": "r",
+      "facts": {
+        "reported_item": "手提電腦",
+        "reported_purchase_quantity": 1,
+        "reported_gift_quantity": 3,
+        "reported_purchase_time": "上星期"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "送嚟嗰箱得贈品，冇電腦。之後收到封新訂單電郵叫我再畀錢，我係咪要畀多次？",
+      "kind": "q",
+      "facts": {
+        "reported_received": "贈品",
+        "reported_missing": "電腦",
+        "reported_new_payment_request": "新訂單電郵"
+      },
+      "demands": [
+        [
+          "transaction",
+          "我係咪要畀多次？",
+          [
+            "payment_status",
+            "duplicate_payment_requirement"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "RT-02": {
+    "0": {
+      "source": "我訂咗張書枱，網頁寫深度 58 厘米。",
+      "kind": "r",
+      "facts": {
+        "reported_item": "書枱",
+        "reported_listing_depth": {
+          "amount": 58,
+          "unit": "cm"
+        }
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "送到量度得 55 厘米。你哋容差係幾多？超出咗可以點？",
+      "kind": "q",
+      "facts": {
+        "reported_measured_depth": {
+          "amount": 55,
+          "unit": "cm"
+        }
+      },
+      "demands": [
+        [
+          "policy",
+          "你哋容差係幾多？",
+          [
+            "dimension_tolerance"
+          ]
+        ],
+        [
+          "policy",
+          "超出咗可以點？",
+          [
+            "remedy_policy"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "RT-03": {
+    "0": {
+      "source": "我訂造梳化：總長 120 吋，每個座位 26 吋，貴妃位 30 吋。",
+      "kind": "r",
+      "facts": {
+        "reported_item": "訂造梳化",
+        "total_length": {
+          "amount": 120,
+          "unit": "in"
+        },
+        "seat_width": {
+          "amount": 26,
+          "unit": "in"
+        },
+        "chaise_length": {
+          "amount": 30,
+          "unit": "in"
+        }
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "更正：貴妃位改 31 吋，其餘唔變。",
+      "kind": "c",
+      "facts": {
+        "chaise_length": {
+          "amount": 31,
+          "unit": "in"
+        }
+      },
+      "demands": [],
+      "neg": [
+        "其餘唔變"
+      ]
+    },
+    "2": {
+      "source": "幫我覆述而家全部尺寸。",
+      "kind": "q",
+      "facts": {},
+      "demands": [
+        [
+          "general",
+          "幫我覆述而家全部尺寸。",
+          [
+            "total_length",
+            "seat_width",
+            "chaise_length"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "RT-04": {
+    "0": {
+      "source": "兩個星期前落單買咗 10 盒，共 1,200，到而家都未出貨。",
+      "kind": "r",
+      "facts": {
+        "reported_order_quantity": 10,
+        "reported_unit": "盒",
+        "reported_total": 1200,
+        "reported_order_time": "兩個星期前",
+        "reported_shipping_status": "未出貨"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "我想取消其中 4 盒，其餘 6 盒照要。幾時有貨？",
+      "kind": "q",
+      "facts": {
+        "requested_cancel_quantity": 4,
+        "requested_retain_quantity": 6,
+        "requested_unit": "盒"
+      },
+      "demands": [
+        [
+          "policy",
+          "我想取消其中 4 盒，其餘 6 盒照要。",
+          [
+            "partial_cancellation_procedure"
+          ]
+        ],
+        [
+          "product",
+          "幾時有貨？",
+          [
+            "availability",
+            "restock_time"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "RT-05": {
+    "0": {
+      "source": "我買咗 3 張活動門票，當日打八號風球去唔到。可唔可以改期？",
+      "kind": "q",
+      "facts": {
+        "reported_ticket_quantity": 3,
+        "reported_item": "活動門票",
+        "reported_attendance_issue": "八號風球去唔到"
+      },
+      "demands": [
+        [
+          "policy",
+          "可唔可以改期？",
+          [
+            "rescheduling_policy"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "FB-01": {
+    "0": {
+      "source": "我啱啱落咗單，一分鐘內就發現揀錯嘢，想取消退款。",
+      "kind": "q",
+      "facts": {
+        "reported_order_time": "啱啱",
+        "reported_error_delay": "一分鐘內",
+        "requested_action": "取消退款"
+      },
+      "demands": [
+        [
+          "policy",
+          "想取消退款。",
+          [
+            "cancellation_refund_procedure"
+          ]
+        ]
+      ],
+      "neg": []
+    },
+    "1": {
+      "source": "餐廳接咗單未？接咗係咪就退唔到？",
+      "kind": "q",
+      "facts": {},
+      "demands": [
+        [
+          "transaction",
+          "餐廳接咗單未？",
+          [
+            "order_acceptance_status"
+          ]
+        ],
+        [
+          "policy",
+          "接咗係咪就退唔到？",
+          [
+            "refund_eligibility"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "FB-02": {
+    "0": {
+      "source": "App 寫 20 至 30 分鐘送到，我等咗 70 分鐘先收到。",
+      "kind": "r",
+      "facts": {
+        "reported_estimated_delivery_minutes": [
+          20,
+          30
+        ],
+        "reported_actual_delivery_minutes": 70
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "遲幾耐先有補償？我呢單計唔計？",
+      "kind": "q",
+      "facts": {},
+      "demands": [
+        [
+          "policy",
+          "遲幾耐先有補償？",
+          [
+            "compensation_policy"
+          ]
+        ],
+        [
+          "transaction",
+          "我呢單計唔計？",
+          [
+            "compensation_eligibility"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "FB-03": {
+    "0": {
+      "source": "我揀咗外賣自取，去到商場個地址根本冇呢間舖。",
+      "kind": "r",
+      "facts": {
+        "reported_fulfillment_method": "外賣自取",
+        "reported_pickup_problem": "去到商場個地址根本冇呢間舖"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "我要全數退款，同埋你哋打唔打得通餐廳？",
+      "kind": "q",
+      "facts": {
+        "requested_action": "全數退款"
+      },
+      "demands": [
+        [
+          "policy",
+          "我要全數退款",
+          [
+            "refund_procedure"
+          ]
+        ],
+        [
+          "transaction",
+          "你哋打唔打得通餐廳？",
+          [
+            "restaurant_contact_status"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "FB-04": {
+    "0": {
+      "source": "我經平台訂咗二人下午茶，優惠價 298，另加一。",
+      "kind": "r",
+      "facts": {
+        "reported_item": "二人下午茶",
+        "reported_offer_price": 298,
+        "reported_surcharge": "另加一"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "店員話唔使預先畀錢，但埋單收我 388 加一。我應該畀邊個價？",
+      "kind": "q",
+      "facts": {
+        "reported_staff_statement": "唔使預先畀錢",
+        "reported_checkout_price": 388,
+        "reported_surcharge": "加一"
+      },
+      "demands": [
+        [
+          "transaction",
+          "我應該畀邊個價？",
+          [
+            "verified_payable_amount"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "FB-05": {
+    "0": {
+      "source": "我訂咗自助餐晚宴，時段寫 17:00 至 22:30，分兩期畀咗共 5 萬。",
+      "kind": "r",
+      "facts": {
+        "reported_item": "自助餐晚宴",
+        "booked_time_range": [
+          "17:00",
+          "22:30"
+        ],
+        "reported_paid_total": 50000,
+        "reported_payment_installments": 2
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "你哋話自助餐只供應 2 個鐘。我要求成個時段都供應。",
+      "kind": "r",
+      "facts": {
+        "reported_merchant_service_hours": 2,
+        "requested_service_duration": "成個時段"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "2": {
+      "source": "覆述一次我訂嘅時段同已付金額。",
+      "kind": "q",
+      "facts": {},
+      "demands": [
+        [
+          "general",
+          "覆述一次我訂嘅時段同已付金額。",
+          [
+            "booked_time_range",
+            "reported_paid_total"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "ED-01": {
+    "0": {
+      "source": "我幫個女報咗英文補習，一年 4,500，一星期三日、每次一個鐘。",
+      "kind": "r",
+      "facts": {
+        "reported_service": "英文補習",
+        "reported_annual_fee": 4500,
+        "reported_weekly_days": 3,
+        "reported_session_hours": 1
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "第一堂冇老師上門。我報嗰個係咪上門補習？",
+      "kind": "q",
+      "facts": {
+        "reported_first_session_issue": "冇老師上門"
+      },
+      "demands": [
+        [
+          "transaction",
+          "我報嗰個係咪上門補習？",
+          [
+            "enrolled_service_type"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "ED-02": {
+    "0": {
+      "source": "我喺書展報咗個英文課程，一次過畀咗大約 26,500。",
+      "kind": "r",
+      "facts": {
+        "reported_service": "英文課程",
+        "reported_payment": {
+          "amount": 26500,
+          "approximate": true
+        },
+        "reported_purchase_location": "書展"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "上咗第一堂覺得太淺，我想退學退款。可以退幾多？",
+      "kind": "q",
+      "facts": {
+        "reported_course_issue": "上咗第一堂覺得太淺",
+        "requested_action": "退學退款"
+      },
+      "demands": [
+        [
+          "policy",
+          "可以退幾多？",
+          [
+            "refund_policy",
+            "refund_amount"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "ED-03": {
+    "0": {
+      "source": "我報咗 IELTS 保證 6 分班，第一個月學費同模擬試費各約 6,000。",
+      "kind": "r",
+      "facts": {
+        "reported_course": "IELTS 保證 6 分班",
+        "reported_tuition": {
+          "amount": 6000,
+          "approximate": true
+        },
+        "reported_mock_exam_fee": {
+          "amount": 6000,
+          "approximate": true
+        },
+        "reported_period": "第一個月"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "我入學評估係第 7 級，個保證啱唔啱我用？",
+      "kind": "q",
+      "facts": {
+        "reported_assessment_level": 7
+      },
+      "demands": [
+        [
+          "policy",
+          "個保證啱唔啱我用？",
+          [
+            "guarantee_eligibility"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "ED-04": {
+    "0": {
+      "source": "個課程學費 87,000，顧問話每月唔使多過 8,700，另加 520 廣告費。",
+      "kind": "r",
+      "facts": {
+        "reported_course_fee": 87000,
+        "reported_consultant_monthly_max": 8700,
+        "reported_advertising_fee": 520
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "讀咗四個月先知每月仲要約 1,400 買工具。我已畀咗 34,800。",
+      "kind": "r",
+      "facts": {
+        "reported_monthly_tool_cost": {
+          "amount": 1400,
+          "approximate": true
+        },
+        "reported_months_studied": 4,
+        "reported_paid_total": 34800
+      },
+      "demands": [],
+      "neg": []
+    },
+    "2": {
+      "source": "幫我列返我講過嘅每項金額。",
+      "kind": "q",
+      "facts": {},
+      "demands": [
+        [
+          "general",
+          "幫我列返我講過嘅每項金額。",
+          [
+            "reported_course_fee",
+            "reported_consultant_monthly_max",
+            "reported_advertising_fee",
+            "reported_monthly_tool_cost",
+            "reported_paid_total"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "ED-05": {
+    "0": {
+      "source": "我畀咗 7,800 按金報五日課程，話完成後支票退回。",
+      "kind": "r",
+      "facts": {
+        "reported_deposit": 7800,
+        "reported_course_days": 5,
+        "reported_refund_statement": "完成後支票退回"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "我未開課就想取消同攞返按金。",
+      "kind": "q",
+      "facts": {
+        "reported_course_started": false,
+        "requested_action": "取消同攞返按金"
+      },
+      "demands": [
+        [
+          "policy",
+          "我未開課就想取消同攞返按金。",
+          [
+            "cancellation_policy",
+            "deposit_refund_policy"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "BE-01": {
+    "0": {
+      "source": "我家人試做 99 蚊療程之後，被游說簽咗大約 4 萬蚊療程，分期畀。",
+      "kind": "r",
+      "facts": {
+        "reported_trial_price": 99,
+        "reported_contract_amount": {
+          "amount": 40000,
+          "approximate": true
+        },
+        "reported_payment_method": "分期",
+        "reported_subject": "家人"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "我哋想取消合約同退款，得唔得？",
+      "kind": "q",
+      "facts": {
+        "requested_action": "取消合約同退款"
+      },
+      "demands": [
+        [
+          "policy",
+          "我哋想取消合約同退款，得唔得？",
+          [
+            "cancellation_policy",
+            "refund_eligibility"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "BE-02": {
+    "0": {
+      "source": "我做咗第一次紋唇之後發燒、嘴唇紅腫。",
+      "kind": "r",
+      "facts": {
+        "reported_service": "紋唇",
+        "reported_completed_sessions": 1,
+        "reported_symptoms": [
+          "發燒",
+          "嘴唇紅腫"
+        ]
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "餘下嗰幾次我做唔到，想退返未做嗰部分嘅錢。",
+      "kind": "q",
+      "facts": {
+        "requested_action": "退返未做嗰部分嘅錢"
+      },
+      "demands": [
+        [
+          "policy",
+          "餘下嗰幾次我做唔到，想退返未做嗰部分嘅錢。",
+          [
+            "unused_service_refund_policy"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "BE-03": {
+    "0": {
+      "source": "我有大約 30 次療程未用。",
+      "kind": "r",
+      "facts": {
+        "reported_unused_sessions": {
+          "amount": 30,
+          "approximate": true
+        }
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "新公司話要我補 3,000 兼放棄 18 次，如果唔係就終止服務。",
+      "kind": "r",
+      "facts": {
+        "reported_new_company_proposal": {
+          "additional_payment": 3000,
+          "forfeit_sessions": 18,
+          "otherwise": "終止服務"
+        }
+      },
+      "demands": [],
+      "neg": []
+    },
+    "2": {
+      "source": "即係我而家仲有幾多次？",
+      "kind": "q",
+      "facts": {},
+      "demands": [
+        [
+          "general",
+          "即係我而家仲有幾多次？",
+          [
+            "reported_unused_sessions",
+            "reported_new_company_proposal"
+          ]
+        ],
+        [
+          "transaction",
+          "即係我而家仲有幾多次？",
+          [
+            "verified_remaining_entitlement"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "BE-04": {
+    "0": {
+      "source": "我之前買咗 50 次療程，每次 100，共 5,000。",
+      "kind": "r",
+      "facts": {
+        "reported_purchased_sessions": 50,
+        "reported_unit_price": 100,
+        "reported_total": 5000
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "分店改咗名之後話每次要 588。我張套票喺其他分店用使唔使加錢？",
+      "kind": "q",
+      "facts": {
+        "reported_new_branch_price": 588,
+        "reported_branch_name_changed": true
+      },
+      "demands": [
+        [
+          "policy",
+          "我張套票喺其他分店用使唔使加錢？",
+          [
+            "cross_branch_use_policy",
+            "additional_fee_policy"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "BE-05": {
+    "0": {
+      "source": "我買咗剪髮券，每次 35。",
+      "kind": "r",
+      "facts": {
+        "reported_item": "剪髮券",
+        "reported_unit_price": 35
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "原本間分店執咗，去第二間要我加 20。",
+      "kind": "r",
+      "facts": {
+        "reported_original_branch_closed": true,
+        "reported_extra_charge": 20
+      },
+      "demands": [],
+      "neg": []
+    },
+    "2": {
+      "source": "等等，我講錯，係加 15。照你哋規定應唔應該加？",
+      "kind": "c",
+      "facts": {
+        "reported_extra_charge": 15
+      },
+      "demands": [
+        [
+          "policy",
+          "照你哋規定應唔應該加？",
+          [
+            "additional_fee_policy"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "SA-01": {
+    "0": {
+      "source": "I'm on the annual plan paid monthly, 60 a month. I've paid 4 months.",
+      "kind": "r",
+      "facts": {
+        "reported_plan": "annual plan paid monthly",
+        "reported_monthly_fee": 60,
+        "reported_paid_months": 4
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "If I cancel now, what do I owe?",
+      "kind": "q",
+      "facts": {},
+      "demands": [
+        [
+          "policy",
+          "If I cancel now, what do I owe?",
+          [
+            "cancellation_policy",
+            "early_termination_charge"
+          ]
+        ],
+        [
+          "transaction",
+          "If I cancel now, what do I owe?",
+          [
+            "verified_payable_amount"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "SA-02": {
+    "0": {
+      "source": "I paid 20 on 5 Feb and cancelled on 3 Mar. On 5 Mar I was charged 30.",
+      "kind": "r",
+      "facts": {
+        "reported_first_payment": 20,
+        "reported_first_payment_date": "5 Feb",
+        "reported_cancellation_date": "3 Mar",
+        "reported_later_charge": 30,
+        "reported_later_charge_date": "5 Mar"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "Why was I charged, and can I get it back?",
+      "kind": "q",
+      "facts": {},
+      "demands": [
+        [
+          "transaction",
+          "Why was I charged",
+          [
+            "charge_reason"
+          ]
+        ],
+        [
+          "policy",
+          "can I get it back?",
+          [
+            "refund_eligibility"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "SA-03": {
+    "0": {
+      "source": "We had two full seats on the annual plan. After the renewal reminder I downgraded both to view-only.",
+      "kind": "r",
+      "facts": {
+        "reported_plan": "annual plan",
+        "reported_previous_full_seats": 2,
+        "reported_change": "downgraded both to view-only",
+        "reported_change_timing": "After the renewal reminder"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "I was still invoiced 384. Is that right under your rules?",
+      "kind": "q",
+      "facts": {
+        "reported_invoice": 384
+      },
+      "demands": [
+        [
+          "policy",
+          "Is that right under your rules?",
+          [
+            "downgrade_billing_policy"
+          ]
+        ],
+        [
+          "transaction",
+          "Is that right under your rules?",
+          [
+            "invoice_validity"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "SA-04": {
+    "0": {
+      "source": "我哋而家有 200 個席位，想減到 101 個。",
+      "kind": "r",
+      "facts": {
+        "reported_current_seats": 200,
+        "requested_target_seats": 101
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "更正：係減到 110 個，唔係 101。",
+      "kind": "c",
+      "facts": {
+        "requested_target_seats": 110
+      },
+      "demands": [],
+      "neg": [
+        "唔係 101"
+      ]
+    },
+    "2": {
+      "source": "咁即係減幾多個？幾時生效？",
+      "kind": "q",
+      "facts": {},
+      "demands": [
+        [
+          "general",
+          "咁即係減幾多個？",
+          [
+            "reported_current_seats",
+            "requested_target_seats"
+          ]
+        ],
+        [
+          "policy",
+          "幾時生效？",
+          [
+            "seat_reduction_effective_date"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "SA-05": {
+    "0": {
+      "source": "銷售員電話同我講續約 36 個月月費 306，24 個月就 326。",
+      "kind": "r",
+      "facts": {
+        "reported_sales_offers": [
+          {
+            "term_months": 36,
+            "monthly_fee": 306
+          },
+          {
+            "term_months": 24,
+            "monthly_fee": 326
+          }
+        ]
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "但合約寫 406。我唔接受，要喺生效前取消。客服話銷售員 4 個鐘內覆我，但冇人覆。",
+      "kind": "q",
+      "facts": {
+        "reported_contract_monthly_fee": 406,
+        "requested_action": "生效前取消",
+        "reported_callback_promise_hours": 4,
+        "reported_callback_received": false
+      },
+      "demands": [
+        [
+          "policy",
+          "我唔接受，要喺生效前取消。",
+          [
+            "pre_effective_cancellation_procedure"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "WH-01": {
+    "0": {
+      "source": "We ordered paper bags worth 34,000. We paid 20% in advance and another 16,000 when the first shipment left.",
+      "kind": "r",
+      "facts": {
+        "reported_item": "paper bags",
+        "reported_order_value": 34000,
+        "reported_advance_percent": 20,
+        "reported_additional_payment": 16000,
+        "reported_payment_timing": "when the first shipment left"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "The first shipment has fewer bags than the documents say. What do we need to do, and by when?",
+      "kind": "q",
+      "facts": {
+        "reported_short_shipment": true
+      },
+      "demands": [
+        [
+          "policy",
+          "What do we need to do, and by when?",
+          [
+            "short_shipment_claim_procedure",
+            "claim_deadline"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "WH-02": {
+    "0": {
+      "source": "We paid for micro SD cards but received different goods.",
+      "kind": "r",
+      "facts": {
+        "reported_item": "micro SD cards",
+        "reported_payment": true,
+        "reported_received_different_goods": true
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "Is this a mix-up on your side? I want someone to trace the right shipment.",
+      "kind": "q",
+      "facts": {
+        "requested_action": "trace the right shipment"
+      },
+      "demands": [
+        [
+          "transaction",
+          "Is this a mix-up on your side?",
+          [
+            "shipment_discrepancy_reason"
+          ]
+        ],
+        [
+          "transaction",
+          "I want someone to trace the right shipment.",
+          [
+            "shipment_trace_status"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "WH-03": {
+    "0": {
+      "source": "我哋訂 40,000 件毛公仔，吊牌編號係 KT-2931-A。",
+      "kind": "r",
+      "facts": {
+        "reported_item": "毛公仔",
+        "reported_quantity": 40000,
+        "reported_unit": "件",
+        "reported_tag_code": "KT-2931-A"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "更正：編號應該係 KT-2981-A，數量不變。",
+      "kind": "c",
+      "facts": {
+        "reported_tag_code": "KT-2981-A"
+      },
+      "demands": [],
+      "neg": [
+        "數量不變"
+      ]
+    },
+    "2": {
+      "source": "落單前幫我覆述編號同數量。",
+      "kind": "q",
+      "facts": {},
+      "demands": [
+        [
+          "general",
+          "落單前幫我覆述編號同數量。",
+          [
+            "reported_tag_code",
+            "reported_quantity"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "WH-04": {
+    "0": {
+      "source": "We sent purchase orders for 250,000 units at 7 each, marked 'not finalized'.",
+      "kind": "r",
+      "facts": {
+        "reported_purchase_order_quantity": 250000,
+        "reported_proposed_unit_price": 7,
+        "reported_document_status": "not finalized"
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "We said we could go up to 7.50; your side said 9.50. Do we have a confirmed order at 7?",
+      "kind": "q",
+      "facts": {
+        "reported_customer_offer": 7.5,
+        "reported_other_party_offer": 9.5
+      },
+      "demands": [
+        [
+          "transaction",
+          "Do we have a confirmed order at 7?",
+          [
+            "order_confirmation_status",
+            "verified_order_unit_price"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  },
+  "WH-05": {
+    "0": {
+      "source": "我哋有兩張發票過咗期未收到款。",
+      "kind": "r",
+      "facts": {
+        "reported_overdue_invoice_count": 2,
+        "reported_payment_received": false
+      },
+      "demands": [],
+      "neg": []
+    },
+    "1": {
+      "source": "What late-payment interest do you apply, and what are your standard payment terms?",
+      "kind": "q",
+      "facts": {},
+      "demands": [
+        [
+          "policy",
+          "What late-payment interest do you apply",
+          [
+            "late_payment_interest_policy"
+          ]
+        ],
+        [
+          "policy",
+          "what are your standard payment terms?",
+          [
+            "payment_terms"
+          ]
+        ]
+      ],
+      "neg": []
+    }
+  }
+});
+function complaintReading(row,turn){
+ const item=complaintReadings[row.id]?.[turn];if(!item)return null;
+ const text=row.turns[turn];if(text!==item.source||item.demands.some(d=>!text.includes(d[1]))||item.neg.some(n=>!text.includes(n)))throw Error('observer_complaint_source_drift:'+row.id+':'+turn);
+ const language=/[\\u3400-\\u9fff]/u.test(text)?'zh-TW':'en';
+ const fields=[...new Set(item.demands.flatMap(d=>d[2]))];
+ const demands=item.demands.map(([source_type,source_quote,requested_facts])=>({question:source_quote,source_quote,source_type,requested_facts,subject_refs:[],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}));
+ const facts=Object.entries(item.facts).map(([key,value])=>({key,value}));
+ if(facts.length)facts.push({key:'customer_report_source',value:text});
+ const correction=item.kind==='c';const op=correction?'UPDATE_ITEM':demands.length?'ASK_FACT':'NO_STATE_CHANGE';
+ const intent=correction?'customer_correction':demands.length?(demands.every(d=>d.source_type==='general')?'customer_fact_recall':'customer_service_question'):'customer_reported_context';
+ return {semantic:wire({language,intent,customer_correction:correction,customer_facts:facts,explicit_negations:item.neg,requested_facts:fields,demands},op),status:'SCRIPTED_PROPOSAL',source_quote:text,coverage:correction?'SOURCE_EXPLICIT_CORRECTION':demands.length?'SOURCE_CLAUSE_QUESTIONS_AND_ATTRIBUTED_CONTEXT':'ATTRIBUTED_CUSTOMER_REPORT_NO_TRANSACTION_AUTHORITY'};
+}
+
 function proposedReading(row,turn,wrong=false){
  const text=row.turns[turn],language=row.domain==='saas'||row.domain==='b2b-wholesale'?'en':'zh-TW';
  if(row.kind==='probe')return {semantic:{operation:row.reading.operation,intent:row.reading.intent,confidence:.98,
@@ -262,6 +1407,7 @@ function proposedReading(row,turn,wrong=false){
  if(wrong)throw Error('observer_wrong_reading_outside_named_family:'+row.id);
  const mixed=mixedReading(row,turn,language);if(mixed)return mixed;
  const quoteOnly=quoteOnlyReading(row,turn,language);if(quoteOnly)return quoteOnly;
+ const complaint=complaintReading(row,turn);if(complaint)return complaint;
  if(subject&&turn===0&&['-recall','-correction','-mixed-known-unknown'].some(suffix=>row.id.endsWith(suffix))){
   // These fixed proposals are separate from the original visitor corpus. Each
   // entity name/unit is checked against the exact current source before use.
