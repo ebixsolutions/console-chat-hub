@@ -98,12 +98,30 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
     assert.equal(matches.length, 1, 'Expected one canonical source-owned subject: ' + subject + '; actual=' + JSON.stringify(state(f)?.entities));
     return matches[0];
   }
-  function noTransaction(f) {
+  function noTransaction(f, expectedHistoricalQuote) {
     const current = state(f); assert(current, 'No canonical state was persisted');
     assert.equal(current.conversion.order_status, 'none');
     assert.equal(current.conversion.payment_status, 'none');
     assert.equal(current.conversion.quotation_status, 'none');
-    assert.deepEqual(current.quotes, []);
+    // No active quotation/order/payment is allowed. Only a specifically
+    // expected, customer-attributed historical record may coexist with this.
+    if(!expectedHistoricalQuote){
+      assert.deepEqual(current.quotes, []);
+    }else{
+      assert.equal(current.quotes.length,1);
+      const q=current.quotes[0],e=expectedHistoricalQuote;
+      assert.equal(q.quote_id,'customer:'+e.source_message_id+':0');
+      assert.equal(q.entity_id,null);
+      assert.equal(q.amount,e.amount);
+      assert.equal(q.currency,e.currency);
+      assert.equal(q.quote_type,'customer_reported_historical');
+      assert.equal(q.validity_status,'unknown');
+      assert.equal(q.source_label,'customer_reported');
+      assert.deepEqual(q.conditions,{historical:true,unverified:true});
+      assert.equal(q.provenance.source_type,'customer');
+      assert.equal(q.provenance.source_message_id,e.source_message_id);
+      assert(Number.isFinite(Date.parse(q.provenance.recorded_at)));
+    }
   }
   function modelRequests(f) { return f.requests.filter(request => request.url.endsWith(':generateContent')); }
   function generated(f) {
@@ -131,7 +149,7 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
     // never copy a redacted ID or recover a hidden canonical ID in the fixture.
     return /^contextual-ref-/u.test(projected[0].entity_id) ? projected[0].entity_id : context.subject;
   }
-  function delivered(f, result, source) {
+  function delivered(f, result, source, expectedHistoricalQuote) {
     assert.equal(result.status, 200, JSON.stringify(result));
     assert.equal(f.commits.length, 1, JSON.stringify({ result, commits: f.commits, gates: gates(f) }));
     const reply = f.commits[0];
@@ -143,7 +161,7 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
     assert.equal(f.tables.messages.filter(message => message.id === reply.id).length, 1);
     assert(gates(f).some(gate => gate.source_message_id === source && gate.gate_decision === 'allow' && gate.commit_attempted),
       'The final reply did not pass the real B2 persistence gate: ' + JSON.stringify(gates(f)));
-    noTransaction(f);
+    noTransaction(f,expectedHistoricalQuote);
     return reply;
   }
   function memoryParity(f) {
@@ -189,7 +207,8 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
           memory_revision: f.tables.conversation_memory_state[0]?.revision ?? null,
           reply: f.commits[0]?.content ?? result.body.reply ?? null,
           model_requests: modelRequests(f).length, kb_requests: f.requests.filter(row => row.url.includes('context-search')).length });
-        if (spec.expected !== 'handoff' && spec.expected !== 'suppressed' && spec.expected !== 'negative') delivered(f, result, source);
+        if (spec.expected !== 'handoff' && spec.expected !== 'suppressed' && spec.expected !== 'negative') delivered(f, result, source,
+          spec.expectedHistoricalQuote ? {...spec.expectedHistoricalQuote,source_message_id:spec.expectedHistoricalQuote.source_message_id??source}:undefined);
         if (spec.expectAdvice) {
           assert.equal(f.commits[0].metadata.response_route, 'customer_guidance');
           assert.equal(f.commits[0].content, spec.answer);
@@ -828,12 +847,15 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
     assert.equal(e.quantity,count); assert.equal(e.attributes.unit,unit);
     assert.equal(e.provenance.source_message_id,first.source);
     memoryParity(first.f);
-    const second=await dialogue.ask({text:inputs[1].text,options:inputs[1].options});
+    // The original B2B fixture explicitly records USD 4.20 as historical
+    // customer speech. Preserve that fact, never grant current quote authority.
+    const historical=domain==='b2b-wholesale'?{amount:4.2,currency:'USD'}:undefined;
+    const second=await dialogue.ask({text:inputs[1].text,options:inputs[1].options,expectedHistoricalQuote:historical});
     assert.equal(item(second.f,subject).quantity,count);
     assert.equal(item(second.f,subject).attributes.unit,unit);
     assert.equal(item(second.f,subject).provenance.source_message_id,first.source);
     memoryParity(second.f);
-    return {row,inputs,first,second};
+    return {row,inputs,first,second,expectedHistoricalQuote:historical?{...historical,source_message_id:second.source}:undefined};
   }
   function s2MixedReading(spec,recall,merchant,subjectOverride) {
     const [domain,subject]=spec, ref=subjectOverride??subject;
@@ -876,7 +898,7 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
     assert(s2Norm(reply.content).includes(unit),reply.content);
     assert(!s2Norm(reply.content).includes(historical),'Unverified historical figure in partial reply: '+reply.content);
     assert.deepEqual(f.tables.conversation_commerce_state[0],entry.before,'Read-only mixed demand mutated Commerce');
-    memoryParity(f); noTransaction(f);
+    memoryParity(f); noTransaction(f,seed.expectedHistoricalQuote);
   }
   for(const spec of s2Rows)for(const style of ['original','natural']){
     const [domain,subject,,,originalRecall,merchant,naturalRecall]=spec;
@@ -887,9 +909,9 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
       assert(seed.row.turns[2].includes(originalRecall)&&seed.row.turns[2].includes(merchant));
       const text=style==='original'?last.text:recall+' '+merchant;
       const entry=style==='original'
-        ?await dialogue.ask({text,options:last.options})
+        ?await dialogue.ask({text,options:last.options,expectedHistoricalQuote:seed.expectedHistoricalQuote})
         :await dialogue.ask({text,kb:last.options.originalRagResponse,
-          reading:s2MixedReading(spec,recall,merchant),answer:'',verifierGrounded:false});
+          reading:s2MixedReading(spec,recall,merchant),answer:'',verifierGrounded:false,expectedHistoricalQuote:seed.expectedHistoricalQuote});
       s2AssertMixed(entry,seed,spec,recall,merchant);
       await replay(entry);
     });
@@ -908,7 +930,7 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
       assert(entry.f.commits.every(reply=>reply.metadata.historical_evidence_promoted!==true));
       assert.deepEqual(entry.f.tables.conversation_commerce_state[0],entry.before,
         'Invalid Reading or unrepresented action changed Commerce');
-      noTransaction(entry.f);
+      noTransaction(entry.f,seed.expectedHistoricalQuote);
     });
   }
 

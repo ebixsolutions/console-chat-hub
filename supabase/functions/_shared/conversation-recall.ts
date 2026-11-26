@@ -3572,7 +3572,14 @@ export function renderConversationRecall(
         lines.push(l===2?`You said: ${v} (not proof of completed cancellation).`
           :l===1?`你表示：${v}（不代表取消手续已完成）。`
           :`你表示：${v}（不代表取消手續已完成）。`);
-      }else lines.push(`${LABELS[e.fact_type]?.[l] ?? e.attribute_key ?? "Customer information"}: ${v}${quantityUnitSuffix}`);
+      }else {
+        // Retain the source-attested subject in the existing quantity rendering.
+        // The display label is canonical/sanitized, never a model-supplied alias.
+        const label=e.fact_type==="quantity"?safeCustomerDisplayText(e.entity_label,e.entity_id):null;
+        const subjectSuffix=label&&keyNorm(label)!==keyNorm(e.quantity_unit??"")
+          ? (l===2?" ("+label+")":"（"+label+"）"):"";
+        lines.push(`${LABELS[e.fact_type]?.[l] ?? e.attribute_key ?? "Customer information"}: ${v}${quantityUnitSuffix}${subjectSuffix}`);
+      }
       continue;
     }
     if (e.temporal_scope === "historical") v = ["歷史記錄：", "历史记录：", "Historical record: "][l] + v;
