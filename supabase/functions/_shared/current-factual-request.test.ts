@@ -1582,3 +1582,44 @@ Deno.test("Mixed customer recall and per-unit service charge bind the literal sh
  const stale=resolveCurrentFactualRequest({...input,commerce:inactive});
  assert(stale.needs_subject_clarification||!stale.kb_required,JSON.stringify(stale));
 });
+
+Deno.test("Mixed current price facets never become subjects across units and languages",()=>{
+ const cases=[
+  ["書枱","張","我要三張書枱。","我之前提過幾張書枱？","另外目前每張官方售價是多少？",3],
+  ["套餐","份","我想要三份套餐。","我之前提過幾份套餐？","今天每份官方售價是多少？",3],
+  ["美容療程","堂","我想要三堂美容療程。","我之前提過幾堂療程？","現在每堂售價是多少？",3],
+  ["licenses","licenses","We need three licenses.","How many licenses did I mention earlier","what is their current official price?",3],
+  ["paper cups","cartons","We discussed 120 cartons of paper cups.","How many cartons did I mention","what is the current official wholesale price?",120],
+ ] as const;
+ for(const [name,unit,first,recall,price,quantity] of cases){
+  const question=recall+(recall.endsWith("？")?"":", and ")+price;
+  const semantic=demanded(demand(recall,"general",["quantity"],[name]),demand(price,"product",["price"],[name]));
+  semantic.intent="mixed_customer_and_merchant_facts";
+  semantic.referents=[{ref:name,source:"prior_turn",confidence:.98}];
+  const commerce=createEmptyConversationCommerceState();
+  commerce.entities=[{entity_id:"generic:"+name,category:"service",quantity,status:"tentative",
+   attributes:{product_name:name,unit},constraints:{},provenance:{source_type:"customer",source_message_id:"first"}}];
+  const input={question,semantic,commerce,source_message_id:"current",trusted_company_id:"company",
+   history:[{id:"old-price",role:"visitor",content:"A historical price was 987654."},{id:"first",role:"visitor",content:first}]};
+  const before=JSON.stringify(commerce),result=resolveCurrentFactualRequest(input);
+  const merchant=result.demands.find(d=>d.source_type==="product");
+  equal(merchant?.subjects,[name]);
+  assert(result.kb_required&&result.query?.includes(name)&&!result.query.includes("987654"),JSON.stringify(result));
+  equal(JSON.stringify(commerce),before);
+ }
+});
+Deno.test("Mixed unit-only recall cannot select one of two compatible active entities from model refs",()=>{
+ const recall="How many cartons did I mention",price="what is the current official wholesale price?",question=recall+", and "+price;
+ const semantic=demanded(demand(recall,"general",["quantity"],["paper cups"]),demand(price,"product",["price"],["paper cups"]));
+ semantic.intent="mixed_customer_and_merchant_facts";
+ semantic.referents=[{ref:"paper cups",source:"prior_turn",confidence:.98}];
+ const commerce=createEmptyConversationCommerceState();
+ commerce.entities=[
+  {entity_id:"cups",category:"product",quantity:120,status:"tentative",attributes:{product_name:"paper cups",unit:"cartons"},constraints:{},provenance:{source_type:"customer",source_message_id:"cups"}},
+  {entity_id:"plates",category:"product",quantity:80,status:"tentative",attributes:{product_name:"paper plates",unit:"cartons"},constraints:{},provenance:{source_type:"customer",source_message_id:"plates"}}
+ ];
+ const result=resolveCurrentFactualRequest({question,semantic,commerce,source_message_id:"current",trusted_company_id:"company",history:[
+  {id:"cups",role:"visitor",content:"120 cartons of paper cups"},{id:"plates",role:"visitor",content:"80 cartons of paper plates"}
+ ]});
+ assert(result.needs_subject_clarification||!result.kb_required,JSON.stringify(result));
+});

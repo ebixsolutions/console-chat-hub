@@ -142,15 +142,31 @@ function currentFacetText(question: string): string {
  * The unit is a literal query constraint, not a guessed subject or amount. */
 function sourceUnitChargeQuestion(quote:string):string|null {
   const q=clean(quote).replace(/[?？。.!！]+$/gu,"").trim();
-  const match=/^(?:(?:目前|現在|现在|現時|现时|而家|依家|今天|今日|最新|現行|现行)\s*)?每\s*([\p{L}]{1,8}?)\s*(?:學費|学费|費用|费用|收費|收费|費率|费率|售價|售价|價錢|价钱|價格|价格)\s*(?:是|係|系)?\s*(?:多少(?:錢|钱)?|幾多(?:錢|钱)?|几多(?:錢|钱)?|幾錢|几钱)$/u.exec(q);
+  const match=/^(?:另外\s*[,，]?\s*)?(?:(?:目前|現在|现在|現時|现时|而家|依家|今天|今日|最新|現行|现行)\s*)?每\s*([\p{L}]{1,8}?)\s*(?:(?:官方|正式)\s*)?(?:學費|学费|費用|费用|收費|收费|費率|费率|售價|售价|價錢|价钱|價格|价格)\s*(?:是|係|系)?\s*(?:多少(?:錢|钱)?|幾多(?:錢|钱)?|几多(?:錢|钱)?|幾錢|几钱)$/u.exec(q);
   return match?.[1]??null;
 }
 
+/** An entire English price facet is not a merchant subject. */
+function sourceOmittedEnglishPriceQuestion(quote:string):boolean {
+  return /^(?:what\s+is|what's)\s+(?:(?:the|their|its)\s+)?(?:(?:current|official|wholesale|retail|published)\s+){0,4}(?:price|cost|fee|charge)$/iu
+    .test(clean(quote).replace(/[?？。.!！]+$/gu,"").trim());
+}
+function sourceQuantityRecallUnit(quote:string):string|null {
+  const m=/^how\s+many\s+([\p{L}-]{1,32})\s+did\s+(?:i|we)\s+mention(?:\s+earlier)?[?？]?$/iu.exec(clean(quote));
+  return m?.[1]??null;
+}
+function sourceQuantityRecallAlias(quote:string,unit:string):string|null {
+  const m=/^我(?:哋|們|们)?(?:之前|先前|早前|曾經|曾经)?(?:提過|提过|提到|講過|讲过|說過|说过)\s*(?:幾|几|多少)\s*([\p{L}\p{N}\s-]{2,88})[?？]?$/u.exec(clean(quote));
+  const tail=m?.[1]?.trim();
+  if(!tail||!tail.startsWith(unit))return null;
+  const alias=tail.slice(unit.length).trim();
+  return alias.length>=2?alias:null;
+}
 function currentFacets(question: string): string[] {
   const text = currentFacetText(question);
   const facts: string[] = [...productFactualFacets(text)];
   const catalogue = catalogueFactRequest(text);
-  if ((catalogue?.price || sourceUnitChargeQuestion(text)) && !facts.includes("price")) facts.push("price");
+  if ((catalogue?.price || sourceUnitChargeQuestion(text) || sourceOmittedEnglishPriceQuestion(text)) && !facts.includes("price")) facts.push("price");
   if (STOCK.test(text)) facts.push("stock");
   return unique(facts);
 }
@@ -1070,7 +1086,7 @@ function currentTurnSubjectAttempt(
  * read or an unscoped search. Apply before provider ambiguity is consumed.
  * Price/period is the concrete class; no SKU/industry wordlist is used. */
 function isSubjectlessPriceFacet(quote: string): boolean {
-  if (sourceUnitChargeQuestion(quote)) return true;
+  if (sourceUnitChargeQuestion(quote) || sourceOmittedEnglishPriceQuestion(quote)) return true;
   const q=clean(quote).replace(/[?？。.!！]+$/gu,"").trim();
   const prefix=/^(?:(?:請問|请问|請|请|那|咁|then|so|and|what\s+about)\s*)*/iu;
   const bare=q.replace(prefix,"").replace(/^(?:what\s+(?:is|about)\s+(?:the\s+)?)?/iu,"").trim();
@@ -1149,7 +1165,10 @@ function independentSourceQuestion(input: ResolveCurrentFactualRequestInput, dem
 function sourceBoundMixedUnitCharge(input:ResolveCurrentFactualRequestInput,demand:CommerceSemanticDemand,
   proposed:readonly CommerceSemanticDemand[]):DemandSubjectResolution|null {
   const frame=trustedFrame(input.semantic), quote=clean(demand.source_quote), full=clean(input.question);
-  const unit=sourceUnitChargeQuestion(quote), recallQuote=input.request_decision?.customer_quantity_recall_request;
+  const recallQuote=input.request_decision?.customer_quantity_recall_request;
+  const literalUnit=sourceUnitChargeQuestion(quote);
+  const omittedEnglish=sourceOmittedEnglishPriceQuestion(quote);
+  const unit=literalUnit??(omittedEnglish&&recallQuote?sourceQuantityRecallUnit(recallQuote):null);
   if(!unit||!recallQuote||input.request_decision?.kind!=="mixed"||!frame||
       !input.trusted_company_id||!input.source_message_id||input.memory&&input.memory.company_id!==input.trusted_company_id||
       proposed.length!==2||demand.source_type!=="product"||frame.operation!=="ASK_FACT"||
@@ -1162,20 +1181,27 @@ function sourceBoundMixedUnitCharge(input:ResolveCurrentFactualRequestInput,dema
   if(!sibling||sibling.source_type!=="general"||sibling.ambiguity.is_ambiguous||sibling.customer_correction||
       sibling.explicit_negations.length||sibling.requested_facts.length!==1||
       !["quantity","current_quantity"].includes(sibling.requested_facts[0]))return null;
+  const alias=literalUnit?sourceQuantityRecallAlias(sibling.source_quote,unit):null;
+  // Resolve uniqueness from customer text, stored units and original visitor
+  // sources BEFORE checking model refs. A model cannot select between two
+  // equally compatible active customer entities.
   const selected=(input.commerce?.entities??[]).flatMap(e=>{
     const name=clean(e.attributes.product_name??e.model??e.attributes.name);
     const sid=e.provenance.source_message_id;
+    const literalSubject=Boolean(literalFactualSubject(sibling.source_quote,[name]));
+    const sourceAlias=Boolean(alias&&norm(name).endsWith(norm(alias)));
     if(!validSubject(name)||INACTIVE.has(e.status)||e.provenance.source_type!=="customer"||
         !sid||sid===input.source_message_id||norm(e.attributes.unit as string)!==norm(unit)||
-        !literalFactualSubject(sibling.source_quote,[name])||
-        explicitlyNegatesSubject(sibling.source_quote,name)||
-        ![...demand.subject_refs,...sibling.subject_refs].every(ref=>entityNames(e).some(n=>norm(n)===norm(ref))))return [];
+        !(literalSubject||sourceAlias||omittedEnglish&&sourceQuantityRecallUnit(sibling.source_quote))||
+        explicitlyNegatesSubject(sibling.source_quote,name))return [];
     const prior=(input.history??[]).find(row=>row.id===sid&&CUSTOMER.has(String(row.role??"").toLowerCase()));
     if(!prior||!literalFactualSubject(clean(prior.content),[name]))return [];
-    return [{subject:name,source_message_id:input.source_message_id??null,customer_text:full,current:true}];
+    return [{entity:e,binding:{subject:name,source_message_id:input.source_message_id??null,customer_text:full,current:true}}];
   });
-  if(selected.length!==1)return {bindings:[],question:quote,unresolved:true};
-  return {bindings:selected,question:selected[0].subject+" "+quote,unresolved:false};
+  if(selected.length!==1||![...demand.subject_refs,...sibling.subject_refs].every(ref=>entityNames(selected[0].entity).some(n=>norm(n)===norm(ref))))
+    return {bindings:[],question:quote,unresolved:true};
+  const binding=selected[0].binding;
+  return {bindings:[binding],question:binding.subject+" "+quote,unresolved:false};
 }
 
 function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, proposed: CommerceSemanticDemand[]): CurrentFactualRequest {
