@@ -4846,6 +4846,13 @@ async function orchestrationGenerateReply(
         requested_facts:[...new Set([..._a3SemanticFrame.requested_facts,..._a3SemanticFrame.demands[0].requested_facts])],
         subject_refs:_a3SemanticFrame.demands[0].subject_refs}
       : undefined;
+  // Preserve the accepted full-turn quantity/status proposal before merchant
+  // ownership projection. It remains routing evidence only; the scoped
+  // partition selector and persisted Memory/Commerce/source proof own recall.
+  const _c3OriginalPartitionFrame = _c3SemanticCustomerRecall && _a3SemanticFrame &&
+    _a3SemanticFrame.requested_facts.length === 2 &&
+    _a3SemanticFrame.requested_facts.includes("quantity") &&
+    _a3SemanticFrame.requested_facts.includes("entity_status") ? _a3SemanticFrame : null;
   // A pure, source-verified quantity/unit correction owns customer state.
   // Do not manufacture a merchant lookup from its empty general demand.
   // This scoped preparation is routing evidence only: the writer revalidates
@@ -5172,8 +5179,13 @@ async function orchestrationGenerateReply(
         _semanticPrepared?.recovery.source_verified && _c3CommerceSnapshot &&
         _c3CommerceSnapshot.revision === _quantityInputRevision
         ? {conversation_id,company_id:_criticalE2ExpectedTenantId??"",source_message_id:_h1SourceMessageId,
-            commerce_revision:_c3CommerceSnapshot.revision,frame:_a3SemanticFrame} : undefined;
-      _c3PartitionRead = Boolean(!_mixedRequest && !_explicitHandoffRequested && !_customerOwnedDelta &&
+            commerce_revision:_c3CommerceSnapshot.revision,frame:_c3OriginalPartitionFrame ?? _a3SemanticFrame} : undefined;
+      // A lifecycle word in an interrogative is not itself a customer delta.
+      // Only the exact whole-turn partition selector may override that coarse
+      // keyword hint. Actual writer output, transaction and handoff stay fenced.
+      _c3PartitionRead = Boolean(_c3OriginalPartitionFrame && !_mixedRequest && !_explicitHandoffRequested &&
+        !_c3RejectedCustomerRequirement && !_c3UnverifiedDimensionContextAnswerOnly &&
+        _c3CommerceSnapshot?.source_message_id !== _h1SourceMessageId &&
         !_currentFactualRequest?.transaction_required &&
         isSourceBoundPartitionReadRequest({conversation_id,company_id:_criticalE2ExpectedTenantId??"",
           source_message_id:_h1SourceMessageId,question:_h1LastMsg,commerce:_c3CommerceSnapshot,
@@ -5182,7 +5194,7 @@ async function orchestrationGenerateReply(
         // Current state is proved by persisted Memory/Commerce and original Visitor
         // sources, not by an optional provider-proposed customer-recall label.
         (isCurrentEffectiveQuantityRecall(_h1LastMsg) || _c3PartitionRead) &&
-        !_mixedRequest && !_explicitHandoffRequested && !_customerOwnedDelta &&
+        !_mixedRequest && !_explicitHandoffRequested && (!_customerOwnedDelta || _c3PartitionRead) &&
         !(_a3SemanticFrame?.customer_facts?.length) &&
         !_currentFactualRequest?.transaction_required);
       if ((readOnlyRecap || readOnlyEffectiveRetention || _c3UnverifiedDimensionContextAnswerOnly) && persistedMemory && commerceRow &&
@@ -5230,7 +5242,7 @@ async function orchestrationGenerateReply(
         return new Response(JSON.stringify({ success: false, error: "scoped_correction_commit_unverified" }),
           { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-      const memoryOutcome = _c3RejectedCustomerRequirement || _c3UnverifiedDimensionContextAnswerOnly || !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
+      const memoryOutcome = (_c3PartitionRead && _c3TrustedPersistedMemoryReadback) || _c3RejectedCustomerRequirement || _c3UnverifiedDimensionContextAnswerOnly || !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
         ? null
         : await refreshConversationLongMemory(
           supabaseAdmin as unknown as Parameters<
@@ -5551,8 +5563,9 @@ async function orchestrationGenerateReply(
     });
   }
   const _c3VerifiedPartitionRecall = Boolean(_c3PartitionRead && _c3TrustedPersistedMemoryReadback &&
-    _c3RecallSources.status==="verified" && !_mixedRequest && !_explicitHandoffRequested && !_customerOwnedDelta &&
+    _c3RecallSources.status==="verified" && !_mixedRequest && !_explicitHandoffRequested &&
     !_currentFactualRequest?.transaction_required && _c3CommerceSnapshot &&
+    _c3CommerceSnapshot.source_message_id!==_h1SourceMessageId &&
     _c3SourceRetainedMemoryForRecall && _c3Memory &&
     _c3Recall.decision.handled && _c3Recall.decision.fact_type==="quantity+unit_partition" &&
     _c3Recall.decision.provenance.company_id===_criticalE2ExpectedTenantId &&
@@ -5565,6 +5578,12 @@ async function orchestrationGenerateReply(
     _c3Recall.decision.provenance.evidence.length===3 &&
     _c3Recall.decision.provenance.evidence.every(e=>e.authority==="CANONICAL_COMMERCE_STATE" &&
       e.source_kind==="canonical_partial_unit_partition"));
+  if (_c3OriginalPartitionFrame) console.info("[generate-reply] c3_partition_read_decision", {
+    candidate:_c3PartitionRead, projected_type:_a3SemanticFrame?.demands?.[0]?.source_type ?? null,
+    source_verified:_semanticPrepared?.recovery.source_verified===true,
+    persisted_readback:Boolean(_c3TrustedPersistedMemoryReadback),
+    source_status:_c3RecallSources.status, route_accepted:_c3VerifiedPartitionRecall,
+  });
   const _c3CustomerRecallRoute = _c3VerifiedPartitionRecall || _c3SourceAttestedCustomerRecall || _c3CurrentEffectiveRecall ||
     _c3R1Verified || Boolean(
     _c3SemanticCustomerRecall && !_mixedRequest && !_explicitHandoffRequested &&

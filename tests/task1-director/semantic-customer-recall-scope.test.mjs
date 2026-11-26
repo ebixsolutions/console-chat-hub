@@ -707,6 +707,14 @@ for(const [category,name,unit,language,total,keep,correction,question,status] of
    trusted_persisted_memory_readback:{contract:'persisted-memory-readback-v1',...scope,source_message_id:source,
     memory_revision:memory.memory_revision,commerce_state_revision:2,memory_hash:'a'.repeat(64)}};
   assert.equal(isSourceBoundPartitionReadRequest(input),true);
+  // The real handler projects a general factual demand to merchant ownership.
+  // That projection cannot replace the accepted, whole-turn recall proposal.
+  const {resolveCustomerRequestDecision,applyCustomerRequestDecision}=await import('../../supabase/functions/_shared/commerce-state-authority.ts');
+  const originalReading=structuredClone(read);
+  const projected=applyCustomerRequestDecision(read,resolveCustomerRequestDecision(question,read,[]));
+  assert.deepEqual(read,originalReading);
+  assert.equal(isSourceBoundPartitionReadRequest({...input,quantity_reading:{...input.quantity_reading,frame:projected}}),false);
+  assert.equal(isSourceBoundPartitionReadRequest(input),true);
   const sourceRead=await loadScopedRecallVisitorSources({...input,enabled:true,recent_rows:[],
    fetch_missing:async ids=>({rows:ids.map(id=>({id,conversation_id:scope.conversation_id,role:'visitor',is_recalled:false,content:correction}))})});
   assert.equal(sourceRead.status,'verified');assert(sourceRead.rows.some(row=>row.id===source));
