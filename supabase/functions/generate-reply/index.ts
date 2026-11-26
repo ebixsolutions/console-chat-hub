@@ -2000,11 +2000,11 @@ async function evaluateAndPersistRequiredRulesLive(
     decision.decision === "clarify" && decision.matched_rule === "R2" &&
     enabled.has("R2")
   ) {
-    const clarification = buildWorkflow5TopicalClarification(
+    const clarification = (buildWorkflow5TopicalClarification(
       params.latest_message_content,
       params.visitor_language,
     ) ??
-      R2_CLARIFICATION_SAFE_WORDING[params.visitor_language];
+      R2_CLARIFICATION_SAFE_WORDING[params.visitor_language]).trim();
     const b2 = await executeB2RpcPersistence(
       supabaseAdmin,
       {
@@ -2018,7 +2018,7 @@ async function evaluateAndPersistRequiredRulesLive(
           handoff_required: false,
         },
       },
-      async () =>
+      async (snapshot) =>
         await persistRequiredEscalationClarification(
           requiredEscalationRpcClient(supabaseAdmin),
           {
@@ -2026,6 +2026,7 @@ async function evaluateAndPersistRequiredRulesLive(
             source_message_id: params.source_message_id as string,
             decision,
             safe_reply_content: clarification,
+            authorized_metadata: await bindAuthorizedReply(snapshot, clarification, {}),
           },
         ),
     );
@@ -2079,6 +2080,11 @@ async function evaluateAndPersistRequiredRulesLive(
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         },
       );
+    }
+
+    if (persisted.result === "superseded_source") {
+      return new Response(JSON.stringify({ success: true, skipped: "superseded_source", escalation_rule: "R2" }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (persisted.result === "max_clarifications_reached") {

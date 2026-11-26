@@ -183,6 +183,12 @@ try:
   commands.append(dict(command='actual persisted Summary consumer '+name,exit_code=result.returncode,stdout=result.stdout,stderr=result.stderr))
   check('actual_persisted_consumer_'+name,result.returncode==0)
  print('C3_SECTION15_EARLY_R1_NATIVE|'+json.dumps(dict(status='PASS',tests=len(checks),assertions=checks,production_writes=0,isolated_native=True)))
+ # Additional affected R2 native assertions inside the same original task;
+ # prior early-R1 test assertions and accepted evidence are unchanged.
+ r2=subprocess.run(['python',str(t/'r2-clarification-native.py'),'--database',a.database,'--out',str(out)],text=True,capture_output=True,timeout=150)
+ commands.append(dict(command='native atomic R2 clarification',exit_code=r2.returncode,stdout=r2.stdout,stderr=r2.stderr))
+ assert r2.returncode==0,r2.stderr
+ print(r2.stdout)
 finally:
  save('early-r1-native-commands.json',commands);save('early-r1-native-assertions.json',checks)
  run('DROP DATABASE IF EXISTS c3_section15_r1_native;',database=maintenance)

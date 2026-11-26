@@ -291,6 +291,38 @@ function fixture(text,options={}) {
     if(['resolved','closed'].includes(conversation.status))return finish('already_resolved');
     if(conversation.status==='transferred'||conversation.assigned_agent_id!=null)return finish('already_under_human_control');
     if(!tables.messages.some(m=>m.id===body.p_source_message_id&&m.conversation_id===conversation.id&&m.role==='visitor'&&!m.is_recalled))return finish('invalid_source_message');
+    // New six-argument contract. This isolated transport is NOT native SQL evidence.
+    if(Object.hasOwn(body,'p_metadata')){
+     const m=body.p_metadata??{},sid=body.p_source_message_id;
+     const current=tables.conversation_commerce_state?.[0],rev=current?.revision??0;
+     if(body.p_clarification_content!==content||!['clarification_required_before_r2','clarification_new_intent_no_kb_match'].includes(reason))return finish('invalid_input');
+     if(Object.keys(m).length!==7||m.b2_gate_contract!=='executeB2PersistenceGate:allow_after_revalidation'||m.b2_commit_source!=='commit_ai_reply_tx'||
+       m.b2_source_message_id!==sid||!Number.isSafeInteger(m.b2_expected_revision)||m.b2_expected_revision<0||
+       !/^[0-9a-f]{64}$/.test(m.b2_response_hash??'')||!/^[0-9a-f]{64}$/.test(m.b2_idempotency_key??''))return finish('invalid_b2_revision_proof');
+     if(m.b2_expected_company_id!==conversation.company_id||current&&current.company_id!==conversation.company_id)return finish('tenant_mismatch');
+     if(['pending','human_needed','human_control','escalation_risk','unresolved'].includes(conversation.status))return finish('already_under_human_control');
+     const src=tables.messages.find(x=>x.id===sid&&x.role==='visitor'&&x.conversation_id===conversation.id&&!x.is_recalled);
+     if(!src)return finish('invalid_source_message');
+     if(tables.messages.some(x=>x.role==='visitor'&&!x.is_recalled&&x.conversation_id===conversation.id&&(x.created_at>src.created_at||x.created_at===src.created_at&&x.id>src.id)))return finish('superseded_source');
+     if(m.b2_expected_revision!==rev)return finish('stale_authorized_revision');
+     const responseHash=hash(content);if(m.b2_response_hash!==responseHash||m.b2_idempotency_key!==hash([conversation.company_id,conversation.id,sid,rev,responseHash].join(':')))return finish('response_hash_mismatch');
+     const existing=tables.messages.find(x=>x.role==='assistant'&&!x.is_recalled&&x.conversation_id===conversation.id&&x.content!=='__THINKING__'&&x.metadata?.source_message_id===sid);
+     if(existing){
+      const x=existing.metadata;
+      if(x.escalation_rule!=='R2'||!['clarification','new_intent_clarification'].includes(x.escalation_action)||x.reason_code!==reason||existing.content!==content||x.b2_response_hash!==responseHash||x.b2_idempotency_key!==m.b2_idempotency_key)return finish('response_substitution');
+      return finish('already_handled',{message_id:existing.id});
+     }
+     const prior=tables.messages.filter(x=>x.role==='assistant'&&!x.is_recalled&&x.conversation_id===conversation.id&&x.metadata?.escalation_rule==='R2'&&x.metadata?.escalation_action==='clarification');
+     if(prior.length&&reason!=='clarification_new_intent_no_kb_match')return finish('max_clarifications_reached',{clarification_attempts:prior.length});
+     const action=prior.length?'new_intent_clarification':'clarification';
+     const reply={id:uuid(Number(sid.slice(-6))+1000),conversation_id:conversation.id,role:'assistant',content,status:'delivered',is_recalled:false,
+      created_at:new Date(Date.parse(visitor.created_at)+1).toISOString(),metadata:{...m,source_message_id:sid,control_commit:'ai',escalation_rule:'R2',escalation_action:action,reason_code:reason,handoff_required:false,
+       ...(action==='new_intent_clarification'?{response_route:'kb_no_match_recovery'}:{})}};
+     tables.messages.push(reply);commits.push(reply);
+     (tables.audit_log??=[]).push({actor_id:null,actor_type:'ai',action:'required_escalation_clarification',resource_type:'message',resource_id:reply.id,
+      diff:{conversation_id:conversation.id,source_message_id:sid,escalation_rule:'R2',reason_code:reason,clarification_attempt:1,escalation_action:action}});
+     return finish('success',{message_id:reply.id,escalation_rule:'R2',clarification_attempt:1,escalation_action:action});
+    }
     const prior=tables.messages.filter(m=>m.conversation_id===conversation.id&&m.role==='assistant'&&!m.is_recalled&&m.metadata?.escalation_rule==='R2'&&m.metadata?.escalation_action==='clarification');
     const existing=prior.find(m=>m.metadata.source_message_id===body.p_source_message_id);
     if(existing)return finish('already_handled',{message_id:existing.id});
@@ -3695,4 +3727,23 @@ test('P1 R2 clarification transport persists exact source once, honors cap and r
  assert.equal((await run({p_source_message_id:next})).result,'max_clarifications_reached');
  assert.equal(f.commits.length,1);assert.equal(f.tables.audit_log.length,1);
  assert(!f.requests.some(x=>x.url.includes('aiplatform')||x.url.includes('context-search')));
+});
+
+test('P1 R2 bound clarification isolated transport uses canonical proof, exact replay and no duplicate audit',async()=>{
+ const f=fixture('What policy applies?',{fullChain:true});
+ const c=f.tables.conversations[0],content='Which date did you receive the item?',revision=f.tables.conversation_commerce_state?.[0]?.revision??0;
+ const response=hash(content),proof={b2_gate_contract:'executeB2PersistenceGate:allow_after_revalidation',b2_commit_source:'commit_ai_reply_tx',
+  b2_source_message_id:source,b2_expected_company_id:c.company_id,b2_expected_revision:revision,b2_response_hash:response,
+  b2_idempotency_key:hash([c.company_id,ticket,source,revision,response].join(':'))};
+ const args={p_conversation_id:ticket,p_source_message_id:source,p_escalation_rule:'R2',p_clarification_content:content,
+  p_reason_code:'clarification_required_before_r2',p_metadata:proof};
+ const invoke=patch=>f.isolatedRpc('required_escalation_clarification_tx',{...args,...patch});
+ for(const [patch,result] of [[{p_metadata:{}},'invalid_b2_revision_proof'],[{p_metadata:{...proof,b2_expected_company_id:uuid(999)}},'tenant_mismatch'],
+   [{p_metadata:{...proof,b2_expected_revision:revision+1}},'stale_authorized_revision'],[{p_clarification_content:'Changed question?'},'response_hash_mismatch']]){
+  assert.equal((await invoke(patch)).result,result);assert.equal(f.commits.length,0);
+ }
+ const first=await invoke({});assert.equal(first.result,'success');assert.equal(f.commits.length,1);
+ assert.equal(f.commits[0].metadata.b2_response_hash,response);assert.equal(f.commits[0].metadata.b2_commit_source,'commit_ai_reply_tx');
+ assert.equal((await invoke({})).result,'already_handled');assert.equal(f.commits.length,1);assert.equal(f.tables.audit_log.length,1);
+ c.status='human_control';assert.equal((await invoke({})).result,'already_under_human_control');assert.equal(f.commits.length,1);
 });
