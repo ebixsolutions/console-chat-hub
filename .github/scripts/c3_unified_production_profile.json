@@ -1808,7 +1808,7 @@
     "tests/task1-director/phase1-bounded-json-storage.test.ts": "11e1a7cf949d809286efff59ba8ebac6bcdf3e5b7e70c378886b3a49d6042326",
     "tests/task1-director/phase1-business-context-twins.test.ts": "7340f6ebe97d9efc2059f09c426462ceb6ba7bc7379c04c7f82e56c6054aeea8",
     "tests/task1-director/phase1-dimension-source-twins.test.ts": "073e18044148c36f82dff9bb65f0d205bf7c3bd570150d720f73367b747215ee",
-    "tests/task1-director/phase1-full-journey-handler-register.mjs": "4d604ff31dbe9ef6c011fc8dda7280242311a0248685e157c3f3b77b0e7c7895",
+    "tests/task1-director/phase1-full-journey-handler-register.mjs": "522f4275728c46cffef4756f930ea3aed48a7d86f0f7f0e2069deb882544e23c",
     "tests/task1-director/phase1-full-journey-twins.test.ts": "298374a229b0b1bf147b57c6cdf02b278f714a4bb5ef1b98d16108510d63e9d2",
     "tests/task1-director/phase1-lifecycle-storage-twins.test.ts": "db1882cd9339a96c7ecba2a2c64b6bc7786c5ca1b0c99329f99ad84718a5e7f4",
     "tests/task1-director/phase1-recap-clause-twins.test.ts": "6bb318ac6553f192b6c4547b50184a45f82b2cb546927ad9fbd16b075ea17762",

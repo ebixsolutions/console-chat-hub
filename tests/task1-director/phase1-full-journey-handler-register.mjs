@@ -796,5 +796,121 @@ export function registerFullJourneyHandlerTests({ test, assert, fixture, uuid, r
     assert.equal(rejected.f.requests.filter(row=>/\/rpc\/upsert_conversation_commerce_state_v1$/.test(row.url)).length,0);
     noTransaction(rejected.f);
   });
+
+  // S2 equivalence: use the immutable original three-turn business fixtures
+  // with their original synthetic KB responses. Natural variants change only
+  // the read-only customer clause; the current merchant-price clause is unchanged.
+  // These are separate Handler assertions, not replacement observation oracles.
+  const s2Rows = [
+    ['retail','書枱','張',3,'我之前提過幾張書枱？','另外目前每張官方售價是多少？','麻煩重述一下我為書枱所記錄的要求？','700'],
+    ['restaurant','套餐','份',3,'我之前提過幾份套餐？','今天每份官方售價是多少？','麻煩重述一下我為套餐所記錄的要求？','180'],
+    ['education','英語課','課',3,'我之前提過幾課英語課？','現在每課學費是多少？','麻煩重述一下我為英語課所記錄的要求？','200'],
+    ['beauty','美容療程','堂',3,'我之前提過幾堂療程？','現在每堂售價是多少？','麻煩重述一下我為美容療程所記錄的要求？','500'],
+    ['saas','licenses','licenses',3,'How many licenses did I mention earlier','what is their current official price?','Could you recap my recorded licenses entry?','12'],
+    ['b2b-wholesale','paper cups','cartons',120,'How many cartons did I mention','what is the current official wholesale price?','Could you recap my recorded paper cups entry?','4.20'],
+  ];
+  const s2Norm = text => String(text ?? '').normalize('NFKC').replace(/\s+/gu,' ').trim();
+  async function s2Seed(dialogue, spec) {
+    const [domain,subject,unit,count]=spec;
+    const fs=await import('node:fs');
+    const {loadObservationCases,buildTurnInput}=await import('./p1-observation-fixtures.mjs');
+    const id='SYNTHETIC-'+domain+'-mixed-known-unknown';
+    const matches=loadObservationCases(fs,root).rows.filter(row=>row.id===id);
+    assert.equal(matches.length,1,'Original observation case must be retained: '+id);
+    const row=matches[0]; assert.equal(row.turns.length,3);
+    assert.equal(row.must.answer_known_customer_count,true);
+    assert.equal(row.must.requery_merchant_price,true);
+    assert.equal(row.must.historical_price_is_not_current,true);
+    assert.equal(row.must.no_current_price_without_evidence,true);
+    const inputs=row.turns.map((text,i)=>({text,...buildTurnInput(row,i,'scripted',fs,root)}));
+    const first=await dialogue.ask({text:inputs[0].text,options:inputs[0].options});
+    const e=item(first.f,subject);
+    assert.equal(e.quantity,count); assert.equal(e.attributes.unit,unit);
+    assert.equal(e.provenance.source_message_id,first.source);
+    memoryParity(first.f);
+    const second=await dialogue.ask({text:inputs[1].text,options:inputs[1].options});
+    assert.equal(item(second.f,subject).quantity,count);
+    assert.equal(item(second.f,subject).attributes.unit,unit);
+    assert.equal(item(second.f,subject).provenance.source_message_id,first.source);
+    memoryParity(second.f);
+    return {row,inputs,first,second};
+  }
+  function s2MixedReading(spec,recall,merchant,subjectOverride) {
+    const [domain,subject]=spec, ref=subjectOverride??subject;
+    return wire({language:domain==='saas'||domain==='b2b-wholesale'?'en':'zh-TW',
+      intent:'mixed_customer_and_merchant_facts',requested_facts:['quantity','price'],
+      referents:[{ref,source:'prior_turn',confidence:.98}],
+      demands:[demand(recall,ref,['quantity'],'general'),demand(merchant,ref,['price'],'product')]},'ASK_FACT');
+  }
+  function s2AssertMixed(entry,seed,spec,recall,merchant) {
+    const [,subject,unit,count,,,,historical]=spec;
+    const f=entry.f,reply=f.commits[0],meta=reply.metadata;
+    const calls=f.requests.filter(row=>row.url.includes('context-search'));
+    assert.equal(calls.length,1,'Independent current price must be queried once');
+    const query=s2Norm(calls[0].body.query);
+    assert(query.includes(s2Norm(subject)),query);
+    assert(query.includes(s2Norm(merchant)),query);
+    assert(!query.includes(s2Norm(recall)),'Customer recall leaked into merchant query: '+query);
+    assert(!query.includes(historical),'Historical unverified amount leaked into merchant query: '+query);
+    assert.equal(meta.response_route,'mixed_customer_guidance');
+    assert.equal(meta.service_action,'partial_answer');
+    assert.equal(meta.grounding_state,'no_current_evidence');
+    assert.equal(meta.historical_evidence_promoted,false);
+    assert.equal(meta.merchant_evidence_unavailable,true);
+    assert.equal(meta.handoff_required,false);
+    const receipt=meta.mixed_customer_fact_resolution;
+    assert.equal(receipt?.contract,'source-bound-mixed-quantity-v1');
+    assert.equal(receipt.source_message_id,entry.source);
+    assert.equal(receipt.commerce_state_revision,entry.before.revision);
+    assert.equal(receipt.fact_type,'quantity');
+    assert.equal(meta.recall_fact_type,'quantity');
+    assert.equal(meta.recall_provenance?.length,1);
+    const proof=meta.recall_provenance[0];
+    assert.equal(proof.source_message_id,seed.first.source);
+    assert.equal(proof.quantity_unit_source_message_id,seed.first.source);
+    assert.equal(proof.quantity_unit_source_kind,'canonical_customer_attribute');
+    assert.equal(proof.entity_id,item(f,subject).entity_id);
+    assert.equal(proof.state_path,'entities.'+state(f).entities.findIndex(e=>e.entity_id===proof.entity_id)+'.quantity');
+    assert(s2Norm(reply.content).includes(subject),reply.content);
+    assert(s2Norm(reply.content).includes(String(count))||count===3&&s2Norm(reply.content).includes('三'),reply.content);
+    assert(s2Norm(reply.content).includes(unit),reply.content);
+    assert(!s2Norm(reply.content).includes(historical),'Unverified historical figure in partial reply: '+reply.content);
+    assert.deepEqual(f.tables.conversation_commerce_state[0],entry.before,'Read-only mixed demand mutated Commerce');
+    memoryParity(f); noTransaction(f);
+  }
+  for(const spec of s2Rows)for(const style of ['original','natural']){
+    const [domain,subject,,,originalRecall,merchant,naturalRecall]=spec;
+    register('S2 full Handler mixed quantity and price '+domain+' '+style,
+      ['SYNTHETIC-'+domain+'-mixed-known-unknown'],[domain],async dialogue=>{
+      const seed=await s2Seed(dialogue,spec),last=seed.inputs[2];
+      const recall=style==='original'?originalRecall:naturalRecall;
+      assert(seed.row.turns[2].includes(originalRecall)&&seed.row.turns[2].includes(merchant));
+      const text=style==='original'?last.text:recall+' '+merchant;
+      const entry=style==='original'
+        ?await dialogue.ask({text,options:last.options})
+        :await dialogue.ask({text,kb:last.options.originalRagResponse,
+          reading:s2MixedReading(spec,recall,merchant),answer:'',verifierGrounded:false});
+      s2AssertMixed(entry,seed,spec,recall,merchant);
+      await replay(entry);
+    });
+  }
+  for(const mode of ['foreign referent','missing Reading','unrepresented cancellation']){
+    const spec=s2Rows[5], [domain,subject,,,originalRecall,merchant,naturalRecall]=spec;
+    register('S2 full Handler mixed negative '+mode,['SYNTHETIC-'+domain+'-mixed-known-unknown'],[domain],
+      async dialogue=>{
+      const seed=await s2Seed(dialogue,spec);
+      const text=naturalRecall+' '+merchant+(mode==='unrepresented cancellation'?' Please cancel my order.':'');
+      const entry=await dialogue.ask({text,expected:'negative',kb:seed.inputs[2].options.originalRagResponse,
+        reading:s2MixedReading(spec,naturalRecall,merchant,mode==='foreign referent'?'unrelated-subject':undefined),
+        answer:'',verifierGrounded:false,...(mode==='missing Reading'?{options:{semanticRaw:''}}:{})});
+      assert(entry.f.commits.every(reply=>!reply.metadata.mixed_customer_fact_resolution),
+        'An unproved mixed demand received attested customer-fact resolution');
+      assert(entry.f.commits.every(reply=>reply.metadata.historical_evidence_promoted!==true));
+      assert.deepEqual(entry.f.tables.conversation_commerce_state[0],entry.before,
+        'Invalid Reading or unrepresented action changed Commerce');
+      noTransaction(entry.f);
+    });
+  }
+
   return labels;
 }
