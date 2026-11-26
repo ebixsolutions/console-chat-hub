@@ -686,7 +686,7 @@ test('P1 mixed quantity recall keeps merchant lookup and customer question indep
    assert.deepEqual(d.semantic_demands.map(x=>x.source_type),['general','product']);
    assert.deepEqual(frame,copy);
  }
- for(const q of ['How many licenses are in stock?','How many orders did I mention?','How many licenses are available from your store?','我之前提過幾多貨存？']){
+ for(const q of ['How many licenses are in stock?','How many orders did I mention?','How many licenses are available from your store?','我之前提過幾多貨存？','How many payments did I mention?','How many refunds did I mention?','How many bookings did I mention?','How many reservations did I mention?','How many entitlements did I mention?','How many transactions did I mention?','How many invoices did I mention?','How many quotations did I mention?','How many inventories did I mention?','我之前提過幾張發票？','我之前提過幾多宗交易？']){
    const m='what is the current official price?',d=resolveCustomerRequestDecision(q+' '+m,make(q,m));
    assert.equal(d.customer_quantity_recall_request,undefined,q);
    assert.ok(d.merchant_request);

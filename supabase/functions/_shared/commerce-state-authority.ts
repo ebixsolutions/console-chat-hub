@@ -638,7 +638,7 @@ export function resolveCustomerRequestDecision(question:string, semantic: {
             d.requested_facts.length===1 && ["quantity","current_quantity"].includes(d.requested_facts[0]) &&
             !!on && !qn.includes(on) && !on.includes(qn) &&
             !MERCHANT_FACT_REQUEST.test(q) &&
-            !/\b(?:order|payment|refund|booking|entitlement|stock|inventory|your)\b|訂單|订单|付款|退款|預約|预约|權益|权益|貨存|货存|你[哋們们]/iu.test(q) &&
+            !/\b(?:orders?|payments?|refunds?|bookings?|reservations?|entitlements?|transactions?|invoices?|quotations?|stock|inventor(?:y|ies)|your)\b|訂單|订单|付款|退款|預約|预约|預訂|预订|權益|权益|交易|發票|发票|報價單|报价单|貨存|货存|你[哋們们]/iu.test(q) &&
             /(?:我(?:哋|們|们)?[^。！？?]{0,60}(?:提過|提过|提到|講過|讲过|說過|说过|曾經|曾经)|\b(?:did\s+(?:i|we)\s+(?:mention|say|request)|(?:i|we)\s+(?:mentioned|said|requested))\b)/iu.test(q) &&
             isReadOnlyMemoryOrCurrentStateRecall(q,{operation:"ASK_FACT",requested_facts:d.requested_facts});
         }) : undefined;
