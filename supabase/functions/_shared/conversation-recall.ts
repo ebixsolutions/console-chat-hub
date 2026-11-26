@@ -3436,6 +3436,83 @@ export function recallClarification(language = "zh-TW"): string {
     : "請指明要核對的項目或時間點；我不會把舊記錄或推測當作答案。";
 }
 
+/** Read the customer's own quotation/enquiry report, never a merchant transaction.
+ * The accepted frame only selects a source. The value must match the persisted
+ * customer fact and original visitor text, and the current canonical lifecycle
+ * must not contradict it. This is not a price/transaction authority or a B2 waiver. */
+function quotationReportText(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const text=value.normalize("NFKC").trim();
+  if (!text || text.length>600 || /[?？"“”「」『』\x60]|(?:\bbut\b|\bhowever\b|但是|不過|不过|但係)/iu.test(text)) return false;
+  const exclusive= /^(?:I|we)\s+(?:(?:only|just)\s+(?:asked|requested|enquired|inquired)\b|(?:asked|requested|enquired|inquired)\b[^.!?;]{0,160}\b(?:only|just)\b)/iu.test(text) ||
+    /^(?:我|我們|我们|我哋)\s*(?:只是|只係|只系|淨係|净系|只|僅|仅)\s*(?:要求|索取|詢問|询问|查詢|查询|問|问|想了解|想問|想问)/u.test(text);
+  const enquiry= /(?:quotation|quote|\bprice\b|\bfee\b|\bfees\b|\basked\b|\benquired\b|\binquired\b|報價|报价|費用|费用|價錢|价钱|價格|价格|查詢|查询|索取)/iu.test(text);
+  const negated= /(?:尚未|還未|还未|沒有|没有|未有|未確認|未确认|冇|並未|并未).{0,90}(?:付款|訂單|订单|下單|下单|落單|報名|报名|預約|预约|訂位|订位|訂閱|订阅|續約|续约|交易)|\b(?:no|not|never)\b[^.!?;]{0,130}\b(?:order|subscription|payment|renewal|booking|reservation|transaction|paid|shipping)\b|\b(?:no|not|never)\b[^.!?;]{0,130}\b(?:confirmed|placed|paid|completed|booked)\b/iu.test(text);
+  // No affirmative second lifecycle clause may be hidden inside an enquiry.
+  const contradictory= /(?:已經|已经|已)(?:下單|下单|落單|付款|確認訂單|确认订单|完成交易)|(?:^|[.!;。；]\s*)\s*(?:I|we)\s+(?:have\s+)?(?:paid|placed|confirmed|completed|renewed|subscribed|booked)\b/iu.test(text);
+  return exclusive && enquiry && negated && !contradictory;
+}
+const quoteStatusFields = new Set(["quotation_status","quote_status","order_status","payment_status","transaction_status"]);
+export function isSourceBoundQuoteStatusQuestion(question:string, frame:CommerceSemanticFrame|null|undefined):boolean {
+  const source=question.normalize("NFKC").trim(), d=frame?.demands?.[0];
+  if (!frame || frame.operation!=="ASK_FACT" || frame.confidence<.72 || frame.ambiguity.is_ambiguous ||
+      frame.additive || frame.customer_correction || frame.explicit_negations.length || frame.entities.length ||
+      frame.customer_facts?.length || frame.demands?.length!==1 || !d ||
+      d.source_type!=="transaction" || d.ambiguity.is_ambiguous || d.customer_correction ||
+      d.subject_refs.length || d.explicit_negations.length || Object.keys(d.constraints).length ||
+      d.source_quote.normalize("NFKC").trim()!==source ||
+      d.requested_facts.length===0 || !d.requested_facts.every(f=>quoteStatusFields.has(f)) ||
+      !frame.requested_facts.length || !frame.requested_facts.every(f=>quoteStatusFields.has(f)) ||
+      ![frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state].every(v=>v==="none"||v==="unknown")) return false;
+  return /^(?:is\s+this\s+(?:(?:just|only)\s+)?(?:a\s+)?(?:quotation|quote|enquiry|inquiry)\s+or\s+(?:a\s+)?(?:completed|confirmed)\s+(?:transaction|order)|do\s+(?:i|we)\s+have\s+(?:an?\s+)?(?:accepted|confirmed)\s+(?:[\p{L}-]+\s+){0,3}(?:order|booking|subscription|transaction)\s+yet)[?]?$/iu.test(source) ||
+    /^(?:(?:目前|現在|现在|而家|依家)\s*)?(?:只[是係系]|淨係|净系)?(?:查詢|查询|索取|要求)?(?:報價|报价)[,，\s]*(?:還是|还是|定係|定系|抑或)(?:已經|已经|已)?(?:完成|確認|确认)(?:交易|訂單|订单)[?]?$/u.test(source);
+}
+export function resolveSourceBoundQuoteConversation(input:ConversationRecallInput,
+  frame:CommerceSemanticFrame|null|undefined, language:string):{reply:string;report_source_message_id:string;kind:"report"|"status"}|null {
+  const m=input.memory,c=input.commerce;
+  if (!m || !c || input.explicit_handoff || !input.company_id || !input.conversation_id || !input.source_message_id ||
+      m.company_id!==input.company_id || m.conversation_id!==input.conversation_id ||
+      c.company_id!==input.company_id || c.conversation_id!==input.conversation_id ||
+      !Number.isSafeInteger(c.revision) || c.revision<1 || m.commerce_state_revision!==c.revision ||
+      !Number.isSafeInteger(m.memory_revision) || m.memory_revision<1) return null;
+  const s=c.state, conversion=s.conversion;
+  if (!["none","draft","pending_verification"].includes(conversion.quotation_status) ||
+      !["none","draft","pending_confirmation"].includes(conversion.order_status) ||
+      !["none","pending_quote"].includes(conversion.payment_status) ||
+      s.quotes.length || s.delivery.confirmed || conversion.confirmed_entity_ids.length ||
+      s.entities.some(e=>e.status==="confirmed") || s.installation.items.some(e=>e.status==="confirmed")) return null;
+  const exact=(v:unknown)=>typeof v==="string"?v.normalize("NFKC").replace(/\s+/gu," ").trim():"";
+  const facts=m.current_customer_facts.filter(f=>f.key==="customer_reported_quote_request"&&f.authority==="customer"&&typeof f.value==="string");
+  if (facts.length!==1 || !facts[0].source_message_id || !quotationReportText(facts[0].value)) return null;
+  const fact=facts[0], source=exact(input.question);
+  let kind:"report"|"status";
+  if (fact.source_message_id===input.source_message_id) {
+    if (!frame || !["NO_STATE_CHANGE","UPDATE_ITEM"].includes(frame.operation) || frame.confidence<.72 ||
+        frame.ambiguity.is_ambiguous || frame.additive || frame.customer_correction || frame.entities.length ||
+        frame.requested_facts.length || frame.demands?.length || !frame.explicit_negations.length ||
+        !frame.explicit_negations.every(n=>!!exact(n)&&source.includes(exact(n))) ||
+        ![frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state].every(v=>v==="none"||v==="unknown") ||
+        !frame.customer_facts?.some(f=>f.key===fact.key&&exact(f.value)===source) ||
+        m.source_message_id!==input.source_message_id || c.source_message_id!==input.source_message_id ||
+        exact(fact.value)!==source) return null;
+    kind="report";
+  } else {
+    // Only the immediately preceding, unrecalled server-owned visitor report.
+    // Do not substitute an older quote report across a subsequent topic or turn.
+    const prior=input.trusted_visitor_source_rows?.[0];
+    if (!isSourceBoundQuoteStatusQuestion(input.question,frame) ||
+        !hasTrustedPersistedMemoryReadback(input) || input.trusted_visitor_source_status!=="verified" ||
+        !prior || prior.id!==fact.source_message_id || exact(prior.content)!==exact(fact.value)) return null;
+    kind="status";
+  }
+  const reply=language==="en"
+    ? "Based on what you told me, this was an enquiry only. This conversation contains no verified record of a completed transaction. I cannot verify an amount or live account activity."
+    : language==="zh-CN"
+    ? "按你提供的资料，这只是咨询。此对话没有可核实的交易完成记录。我尚未核实金额或商户的实时交易资料。"
+    : "按你提供的資料，這只是查詢。此對話未有可核實的交易完成記錄。我尚未核實金額或商戶的即時交易資料。";
+  return {reply,report_source_message_id:fact.source_message_id,kind};
+}
+
 /** Shared route preparation. Persistence stays exclusively with the caller's B2 gate. */
 export function prepareConversationRecall(
   input: ConversationRecallInput,

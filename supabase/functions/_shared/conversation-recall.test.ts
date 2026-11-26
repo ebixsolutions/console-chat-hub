@@ -2,6 +2,8 @@ import { customerDimensionPair, customerSunExposure } from "./commerce-state-aut
 import {
   type ConversationRecallInput,
   prepareConversationRecall,
+  resolveSourceBoundQuoteConversation,
+  isSourceBoundQuoteStatusQuestion,
   hasAttestedUnlabelledCustomerRecall,
   recallClarification,
   renderConversationRecall,
@@ -1265,4 +1267,50 @@ Deno.test("Task3C T50 grouped room areas require individually source-attested la
   assert(!hasAttestedUnlabelledCustomerRecall(wrong,prepareConversationRecall(wrong,"zh-TW").decision),
     "swapped or missing pair must not certify existing canonical values");
  }
+});
+
+Deno.test("Quotation enquiry context remains attributed and source-bound, never a live price or completed transaction",()=>{
+ const report="I requested a quotation only. No subscription, payment, or renewal has been confirmed.";
+ const q="Is this a quotation or a completed transaction?";
+ const x=recallFixture(report);
+ x.commerce!.state=createEmptyConversationCommerceState();
+ x.commerce!.state.conversion.quotation_status="draft";
+ x.commerce!.state.conversion.order_status="draft";
+ x.commerce!.state.conversion.payment_status="pending_quote";
+ x.commerce!.source_message_id=x.source_message_id;
+ x.memory!.source_message_id=x.source_message_id;
+ x.memory!.commerce_state_revision=x.commerce!.revision;
+ x.memory!.current_customer_facts=[{key:"customer_reported_quote_request",value:report,authority:"customer",source_message_id:x.source_message_id}];
+ const f={version:"commerce-semantic-1.0.0",language:"en",operation:"NO_STATE_CHANGE",intent:"customer_reported_quote_only",topic:null,
+  entities:[],referents:[],customer_correction:false,additive:false,explicit_negations:["No subscription, payment, or renewal has been confirmed."],
+  requested_facts:[],customer_facts:[{key:"customer_reported_quote_request",value:report}],
+  transaction_state:"none",payment_state:"none",booking_state:"none",fulfillment_state:"none",
+  ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},confidence:.98} as const;
+ const frame=structuredClone(f) as unknown as import("./commerce-semantic-frame.ts").CommerceSemanticFrame;
+ const reportReply=resolveSourceBoundQuoteConversation(x,frame,"en");
+ assert(reportReply?.kind==="report"&&reportReply.report_source_message_id===x.source_message_id);
+ assert(reportReply.reply.includes("no verified record of a completed transaction"));
+ assert(!resolveSourceBoundQuoteConversation({...x,question:report+" What is the current price?"},frame,"en"));
+ const sid=x.source_message_id;
+ const current={...x,question:q,source_message_id:"next-source",trusted_visitor_source_status:"verified" as const,
+  trusted_visitor_source_rows:[{id:sid,content:report}],
+  trusted_persisted_memory_readback:{contract:"persisted-memory-readback-v1" as const,company_id:x.company_id,
+    conversation_id:x.conversation_id,source_message_id:sid,memory_revision:x.memory!.memory_revision,
+    commerce_state_revision:x.commerce!.revision,memory_hash:"a".repeat(64)}};
+ const fields=["quote_status","order_status","payment_status"];
+ const queryFrame={...frame,operation:"ASK_FACT" as const,customer_facts:[],explicit_negations:[],requested_facts:fields,
+  demands:[{question:q,source_quote:q,subject_refs:[],source_type:"transaction" as const,requested_facts:fields,
+    constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]};
+ assert(isSourceBoundQuoteStatusQuestion(q,queryFrame));
+ assert(resolveSourceBoundQuoteConversation(current,queryFrame,"en")?.kind==="status");
+ for(const bad of [
+  {...current,company_id:"foreign"}, {...current,explicit_handoff:true},
+  {...current,trusted_persisted_memory_readback:null},
+  {...current,trusted_visitor_source_status:"failed" as const},
+  {...current,trusted_visitor_source_rows:[{id:"newer",content:"Another topic."},{id:sid,content:report}]},
+  {...current,trusted_visitor_source_rows:[{id:sid,content:"I confirmed the order."}]},
+ ]) assert(!resolveSourceBoundQuoteConversation(bad,queryFrame,"en"));
+ const paid=structuredClone(current);paid.commerce!.state.conversion.payment_status="paid";
+ assert(!resolveSourceBoundQuoteConversation(paid,queryFrame,"en"));
+ assert(!isSourceBoundQuoteStatusQuestion(q+" and how much is due?",queryFrame));
 });

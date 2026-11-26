@@ -240,3 +240,20 @@ test('B2 observer decodes only the exact scoped safe diagnostic, not raw payload
  const observed=snapshot({tables:{conversations:[{id:'ticket',company_id:'company'}],messages:[],rag_trace:[row]},requests:[],commits:[]},{status:409,body:{}},'source');
  assert.deepEqual(observed.b2_verdicts,[positive]);assert.equal(observed.reply,null);assert(!JSON.stringify(observed).includes('DO_NOT_CAPTURE'));
 });
+
+
+test('Mixed known count accepts only a source-bound scalar with the exact deterministic merchant gap',()=>{
+ const {row,turns}=quantityCase(),final=turns[1];row.must={answer_known_customer_count:true};
+ const meta=final.reply.metadata;meta.response_route='mixed_customer_guidance';
+ meta.mixed_customer_fact_resolution={contract:'source-bound-mixed-quantity-v1',fact_type:'quantity',demand_id:'demand-1',source_message_id:final.source_message_id,commerce_state_revision:1};
+ meta.unresolved_fact_fields=['demand-2'];
+ const safe='quantity: 3 units\nI could not verify the current merchant information requested; I will not substitute a historical value.';
+ updateReply(final,safe);assert.equal(statuses(row,turns)['must.answer_known_customer_count'],'PASS');
+ for(const bad of ['quantity: 3 units\nIt costs $10.',safe+'\nActually 5 units.', 'quantity: 5 units\n'+safe.split('\n')[1]]){
+  updateReply(final,bad);assert.equal(statuses(row,turns)['must.answer_known_customer_count'],'FAIL');
+ }
+ updateReply(final,safe);
+ for(const mutate of [m=>m.mixed_customer_fact_resolution.source_message_id='other',m=>m.mixed_customer_fact_resolution.commerce_state_revision=2,m=>m.unresolved_fact_fields=['demand-1'],m=>delete m.mixed_customer_fact_resolution,m=>m.b2_response_hash='wrong']){
+  const copy=structuredClone(turns);mutate(copy[1].reply.metadata);assert.equal(statuses(row,copy)['must.answer_known_customer_count'],'FAIL');
+ }
+});

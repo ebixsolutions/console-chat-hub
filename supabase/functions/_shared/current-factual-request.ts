@@ -138,11 +138,19 @@ function currentFacetText(question: string): string {
     !/^\s*(?:不要|唔要|不想知道|(?:I\s+)?(?:do not|don't) want)\s*/iu.test(clause) ||
     !(productFactualFacets(clause).length || STOCK.test(clause))).join("; ");
 }
+/** A charge amount can be named by a service fee rather than a retail price.
+ * The unit is a literal query constraint, not a guessed subject or amount. */
+function sourceUnitChargeQuestion(quote:string):string|null {
+  const q=clean(quote).replace(/[?？。.!！]+$/gu,"").trim();
+  const match=/^(?:(?:目前|現在|现在|現時|现时|而家|依家|今天|今日|最新|現行|现行)\s*)?每\s*([\p{L}]{1,8}?)\s*(?:學費|学费|費用|费用|收費|收费|費率|费率|售價|售价|價錢|价钱|價格|价格)\s*(?:是|係|系)?\s*(?:多少(?:錢|钱)?|幾多(?:錢|钱)?|几多(?:錢|钱)?|幾錢|几钱)$/u.exec(q);
+  return match?.[1]??null;
+}
+
 function currentFacets(question: string): string[] {
   const text = currentFacetText(question);
   const facts: string[] = [...productFactualFacets(text)];
   const catalogue = catalogueFactRequest(text);
-  if (catalogue?.price && !facts.includes("price")) facts.push("price");
+  if ((catalogue?.price || sourceUnitChargeQuestion(text)) && !facts.includes("price")) facts.push("price");
   if (STOCK.test(text)) facts.push("stock");
   return unique(facts);
 }
@@ -1062,6 +1070,7 @@ function currentTurnSubjectAttempt(
  * read or an unscoped search. Apply before provider ambiguity is consumed.
  * Price/period is the concrete class; no SKU/industry wordlist is used. */
 function isSubjectlessPriceFacet(quote: string): boolean {
+  if (sourceUnitChargeQuestion(quote)) return true;
   const q=clean(quote).replace(/[?？。.!！]+$/gu,"").trim();
   const prefix=/^(?:(?:請問|请问|請|请|那|咁|then|so|and|what\s+about)\s*)*/iu;
   const bare=q.replace(prefix,"").replace(/^(?:what\s+(?:is|about)\s+(?:the\s+)?)?/iu,"").trim();
@@ -1132,6 +1141,43 @@ function independentSourceQuestion(input: ResolveCurrentFactualRequestInput, dem
     ["name","model","sku","subject"].includes(key) && typeof value==="string" && demand.subject_refs.includes(value) || sourceValue(value));
 }
 
+/** The merchant clause of a two-demand recall can omit the subject while
+ * naming a price per the exact stored customer unit. Bind only a single
+ * active, customer-sourced entity literally identified in the independent
+ * current recall clause and original visitor source. No quantity, old price,
+ * cancelled subject or private locator enters the KB query. */
+function sourceBoundMixedUnitCharge(input:ResolveCurrentFactualRequestInput,demand:CommerceSemanticDemand,
+  proposed:readonly CommerceSemanticDemand[]):DemandSubjectResolution|null {
+  const frame=trustedFrame(input.semantic), quote=clean(demand.source_quote), full=clean(input.question);
+  const unit=sourceUnitChargeQuestion(quote), recallQuote=input.request_decision?.customer_quantity_recall_request;
+  if(!unit||!recallQuote||input.request_decision?.kind!=="mixed"||!frame||
+      !input.trusted_company_id||!input.source_message_id||input.memory&&input.memory.company_id!==input.trusted_company_id||
+      proposed.length!==2||demand.source_type!=="product"||frame.operation!=="ASK_FACT"||
+      frame.additive||frame.customer_correction||frame.explicit_negations.length||frame.customer_facts?.length||
+      ![frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state].every(x=>x==="none"||x==="unknown")||
+      demand.customer_correction||demand.ambiguity.is_ambiguous||demand.explicit_negations.length||
+      Object.keys(demand.constraints).length||demand.requested_facts.length!==1||demand.requested_facts[0]!=="price"||
+      !full.includes(quote)||!full.includes(clean(recallQuote))) return null;
+  const sibling=proposed.find(d=>d!==demand&&norm(d.source_quote)===norm(recallQuote));
+  if(!sibling||sibling.source_type!=="general"||sibling.ambiguity.is_ambiguous||sibling.customer_correction||
+      sibling.explicit_negations.length||sibling.requested_facts.length!==1||
+      !["quantity","current_quantity"].includes(sibling.requested_facts[0]))return null;
+  const selected=(input.commerce?.entities??[]).flatMap(e=>{
+    const name=clean(e.attributes.product_name??e.model??e.attributes.name);
+    const sid=e.provenance.source_message_id;
+    if(!validSubject(name)||INACTIVE.has(e.status)||e.provenance.source_type!=="customer"||
+        !sid||sid===input.source_message_id||norm(e.attributes.unit as string)!==norm(unit)||
+        !literalFactualSubject(sibling.source_quote,[name])||
+        explicitlyNegatesSubject(sibling.source_quote,name)||
+        ![...demand.subject_refs,...sibling.subject_refs].every(ref=>entityNames(e).some(n=>norm(n)===norm(ref))))return [];
+    const prior=(input.history??[]).find(row=>row.id===sid&&CUSTOMER.has(String(row.role??"").toLowerCase()));
+    if(!prior||!literalFactualSubject(clean(prior.content),[name]))return [];
+    return [{subject:name,source_message_id:input.source_message_id??null,customer_text:full,current:true}];
+  });
+  if(selected.length!==1)return {bindings:[],question:quote,unresolved:true};
+  return {bindings:selected,question:selected[0].subject+" "+quote,unresolved:false};
+}
+
 function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, proposed: CommerceSemanticDemand[]): CurrentFactualRequest {
   const question = clean(input.question), frame = input.semantic!;
   const missing: FactualRequestMissingEvidence[] = [];
@@ -1173,14 +1219,15 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
       ? proposedReferences(trustedFrame(frame)) : [];
     if (quoteBound && demand.source_type === "transaction") privateLocators.set(id,
       refs.filter(ref => norm(sourceQuote).includes(norm(ref))));
-    let resolved = optionDiscovery
+    const mixedUnitCharge=quoteBound&&!optionDiscovery?sourceBoundMixedUnitCharge(input,demand,proposed):null;
+    let resolved = mixedUnitCharge ?? (optionDiscovery
       ? {bindings: [], question: criteria?.question ?? sourceOwnedOptionQuestion ?? sourceQuote, unresolved: false}
       : quoteBound && subjectAttempt.kind === "unresolved"
       ? {bindings:[],question:sourceQuote,unresolved:true}
       : quoteBound
       ? resolveDemandSubjects(input, demand, refs, proof ? proof.subjects : explicitCurrentSubjects)
-      : {bindings: [], question: clean(demand.question), unresolved: false};
-    const independent = quoteBound && subjectAttempt.kind !== "unresolved" && !optionDiscovery && independentSourceQuestion(input,demand);
+      : {bindings: [], question: clean(demand.question), unresolved: false});
+    const independent = quoteBound && !mixedUnitCharge && subjectAttempt.kind !== "unresolved" && !optionDiscovery && independentSourceQuestion(input,demand);
     const sourceFallback = independent && (resolved.unresolved || !resolved.bindings.length || demand.ambiguity.is_ambiguous ||
       resolved.bindings.some(binding=>!binding.current && !literalFactualSubject(sourceQuote,[binding.subject])));
     if (sourceFallback) {
@@ -1195,7 +1242,7 @@ function resolveSemanticDemands(input: ResolveCurrentFactualRequestInput, propos
     // paths could have emitted KB searches with subjects:[] (even after a
     // prior topic). Reuse ONLY the nearest source-proven, non-cancelled unique
     // customer focus, otherwise require one clarification; never broaden KB.
-    if (quoteBound && !optionDiscovery && !demand.ambiguity.is_ambiguous && isSubjectlessPriceFacet(sourceQuote) &&
+    if (quoteBound && !mixedUnitCharge && !optionDiscovery && !demand.ambiguity.is_ambiguous && isSubjectlessPriceFacet(sourceQuote) &&
         ["product","policy","unknown"].includes(demand.source_type) &&
         !TOPIC_BOUNDARY.test(sourceQuote) && !LIFECYCLE_BOUNDARY.test(sourceQuote) &&
         !demand.customer_correction && !demand.explicit_negations.length &&

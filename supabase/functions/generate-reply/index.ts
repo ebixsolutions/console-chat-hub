@@ -6,6 +6,8 @@ import { executionFailure, failureFromError, safeB2FailureCode, type ExecutionFa
 import { phase1CoachAllowed } from "../_shared/remote-model-accounting.ts";
 import {
   prepareConversationRecall,
+  resolveSourceBoundQuoteConversation,
+  isSourceBoundQuoteStatusQuestion,
   loadScopedRecallVisitorSources,
   isCurrentEffectiveQuantityRecall,
   isSourceBoundPartitionReadRequest,
@@ -5257,7 +5259,9 @@ async function orchestrationGenerateReply(
         !_mixedRequest && !_explicitHandoffRequested && (!_customerOwnedDelta || _c3PartitionRead) &&
         !(_a3SemanticFrame?.customer_facts?.length) &&
         !_currentFactualRequest?.transaction_required);
-      if ((readOnlyRecap || readOnlyEffectiveRetention || _c3UnverifiedDimensionContextAnswerOnly) && persistedMemory && commerceRow &&
+      const readOnlyQuoteStatus = !_explicitHandoffRequested && !_mixedRequest &&
+        isSourceBoundQuoteStatusQuestion(_h1LastMsg,_a3SemanticFrame);
+      if ((readOnlyRecap || readOnlyEffectiveRetention || readOnlyQuoteStatus || _c3UnverifiedDimensionContextAnswerOnly) && persistedMemory && commerceRow &&
         isCanonicalConversationMemory(persistedMemory.memory) &&
         persistedMemory.conversation_id === conversation_id &&
         persistedMemory.company_id === _criticalE2ExpectedTenantId &&
@@ -5285,6 +5289,7 @@ async function orchestrationGenerateReply(
         // Preserve the attested pre-refresh correction lineage only when the
         // canonical source presents exactly one live and one cancelled record.
         // Actual original Visitor proof and equality are checked in the resolver.
+        if (readOnlyQuoteStatus) _c3SourceRetainedMemoryForRecall = persistedMemory.memory;
         if (readOnlyEffectiveRetention && (_c3PartitionRead || commerceState?.entities.length === 2 &&
             commerceState.entities.filter(e => e.status === "cancelled").length === 1 &&
             commerceState.entities.filter(e => e.status === "tentative" || e.status === "researching").length === 1)) {
@@ -5535,6 +5540,37 @@ async function orchestrationGenerateReply(
     trusted_visitor_source_status: _c3RecallSources.status,
   };
   const _c3Recall = prepareConversationRecall(_c3RecallInput,_visitorLang);
+  // A report about a quotation and a subsequent status comparison are not a
+  // request for a current merchant price or a private live transaction read.
+  // This exact source-bound customer projection precedes generic product and
+  // order-reference intake; all risk/handoff and B2 persistence guards remain.
+  const _quoteConversation = !_explicitHandoffRequested && !_mixedRequest &&
+      !_c3RejectedCustomerRequirement && !_c3UnverifiedDimensionContextAnswerOnly &&
+      !_factualContextLimit && !_criticalE2ThreatSignal &&
+      !resolveAuthoritativeComplianceReview(_criticalE2ExpectedTenantId) &&
+      classifyLocalTopicRisk(_h1LastMsg)?.level !== "high" &&
+      !_a3Commerce?.trusted_lifecycle_commit && !_a3Commerce?.trusted_correction_commit
+    ? resolveSourceBoundQuoteConversation({..._c3RecallInput,question:_h1LastMsg},_a3SemanticFrame,_visitorLang)
+    : null;
+  if (_quoteConversation) {
+    const committed=await commitAiReplyWithControlGate(supabaseAdmin,conversation_id,_h1SourceMessageId,
+      _quoteConversation.reply,{
+        response_route:"canonical_customer_transaction_context",
+        factual_grounding_required:false,conversation_grounded:true,handoff_required:false,
+        transaction_authority:"customer_report_only",transaction_mutation:"NONE",
+        quotation_report_source_message_id:_quoteConversation.report_source_message_id,
+        quotation_context_kind:_quoteConversation.kind,
+        commerce_state_revision:_c3CommerceSnapshot?.revision,
+      });
+    await cleanupThinking(supabaseAdmin,conversation_id,_h1SourceMessageId);
+    if(committed.ok)return new Response(JSON.stringify({success:true,reply:_quoteConversation.reply,
+      response_route:"canonical_customer_transaction_context",handoff_required:false,idempotent:committed.idempotent}),
+      {headers:{...corsHeaders,"Content-Type":"application/json"}});
+    const skipped=["human_control","resolved","superseded_source","source_already_replied"].includes(committed.result);
+    return new Response(JSON.stringify(skipped?{success:true,skipped:committed.result}:
+      {success:false,error:"quote_context_commit_"+committed.result}),
+      {status:skipped?200:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+  }
   // Independently attested customer facts survive a merchant evidence gap,
   // but mixed requests never acquire the pure-recall shortcut.
   const _mixedVerifiedQuantity = _mixedQuantityQuestion && _c3Recall.reply &&
@@ -5542,6 +5578,16 @@ async function orchestrationGenerateReply(
     _c3Recall.decision.provenance.evidence.length===1 &&
     hasAttestedUnlabelledCustomerRecall(_c3RecallInput,_c3Recall.decision)
     ? _c3Recall : null;
+  const _mixedResolvedDemandIds = _mixedVerifiedQuantity && _mixedQuantityQuestion
+    ? (_currentFactualRequest?.demands ?? []).filter(d=>d.source_type==="general" &&
+      !d.ambiguity.is_ambiguous && d.source_quote.normalize("NFKC").trim()===_mixedQuantityQuestion.normalize("NFKC").trim() &&
+      d.requested_facts.length===1 && ["quantity","current_quantity"].includes(d.requested_facts[0])).map(d=>d.id)
+    : [];
+  const _mixedResolvedDemandId = _mixedResolvedDemandIds.length===1 ? _mixedResolvedDemandIds[0] : null;
+  const _mixedResolutionMetadata = _mixedResolvedDemandId ? {
+    mixed_customer_fact_resolution:{contract:"source-bound-mixed-quantity-v1",demand_id:_mixedResolvedDemandId,
+      source_message_id:_h1SourceMessageId,fact_type:"quantity",commerce_state_revision:_c3CommerceSnapshot?.revision??null},
+  } : {};
   const _c3R1Verified = Boolean(!_mixedRequest&&!_explicitHandoffRequested&&
     !_currentFactualRequest?.transaction_required&&
     hasAttestedUnlabelledCustomerRecall(_c3RecallInput,_c3Recall.decision));
@@ -6748,7 +6794,8 @@ ${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was n
       : "另一個問題涉及的商戶現行資料暫未核實，不能用舊資料代替。";
     const committed = await commitAiReplyWithControlGate(
       supabaseAdmin,conversation_id,source_message_id,_mixedVerifiedQuantity.reply+"\n"+unknown,
-      {...trace,..._mixedVerifiedQuantity.metadata,response_route:"mixed_customer_guidance",
+      {...trace,..._mixedVerifiedQuantity.metadata,..._mixedResolutionMetadata,response_route:"mixed_customer_guidance",
+        unresolved_fact_fields:(_currentFactualRequest?.demands??[]).filter(d=>d.id!==_mixedResolvedDemandId).map(d=>d.id),
         service_action:"partial_answer",knowledge_state:"no_match",grounding_state:"no_current_evidence",
         factual_grounding_required:true,historical_evidence_promoted:false,
         merchant_evidence_unavailable:true,handoff_required:false});
@@ -8063,7 +8110,7 @@ source_error_code:llm.code,
         partial?.reply ?? (_mixedVerifiedQuantity?.reply ? _mixedVerifiedQuantity.reply+"\n"+(unverifiedReply ?? clarificationReply) : unverifiedReply ?? clarificationReply),
         {
           ...recoveryTrace,
-          ...(_mixedVerifiedQuantity ? _mixedVerifiedQuantity.metadata : {}),
+          ...(_mixedVerifiedQuantity && !partial ? {..._mixedVerifiedQuantity.metadata,..._mixedResolutionMetadata} : {}),
           ...(!partial && humanSupportOffer ? {human_support_offer:humanSupportOffer} : {}),
           ...(partial ? {...partial.citation_metadata,recorded_kb_facts:partial.recorded_facts,
             authoritative_kb_facts:[],partial_recovery:{contract:"canonical-source-field-recovery-1",
@@ -8071,7 +8118,7 @@ source_error_code:llm.code,
           response_route: responseRoute,
           handoff_required: false,
           factual_grounding_required: Boolean(partial),
-          unresolved_fact_fields: partial?.unresolved_demand_ids ?? unresolved,
+          unresolved_fact_fields: partial?.unresolved_demand_ids ?? unresolved.filter(id=>id!==_mixedResolvedDemandId),
         },
       );
       // Only a definitely uncommitted B2 rejection may fall back to the existing

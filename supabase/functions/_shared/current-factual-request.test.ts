@@ -1558,3 +1558,27 @@ Deno.test("committed current dimension statement and independent exact price dem
   equal(resolveCurrentFactualRequest({...input,commerce:extra}).demands[0].constraints,{requires_delivery:true},
     "unrelated retained customer condition was removed");
 });
+
+Deno.test("Mixed customer recall and per-unit service charge bind the literal shared subject without old amount",()=>{
+ const first="我想報三課英語課。", historical="我記得以前每課港幣200元，但不知道現在是否仍適用。";
+ const recall="我之前提過幾課英語課？", price="現在每課學費是多少？", question=recall+price;
+ const semantic=demanded(demand(recall,"general",["quantity"],["英語課"]),demand(price,"product",["price"],["英語課"]));
+ semantic.intent="mixed_customer_and_merchant_facts";semantic.referents=[{ref:"英語課",source:"prior_turn",confidence:.98}];
+ const commerce=createEmptyConversationCommerceState();
+ commerce.entities=[{entity_id:"generic:英語課",category:"service",quantity:3,status:"tentative",
+   attributes:{product_name:"英語課",unit:"課"},constraints:{},provenance:{source_type:"customer",source_message_id:"first"}}];
+ const input={question,semantic,commerce,source_message_id:"current",trusted_company_id:"company",
+  history:[{id:"historical",role:"visitor",content:historical},{id:"first",role:"visitor",content:first}]};
+ const before=JSON.stringify(commerce),result=resolveCurrentFactualRequest(input);
+ assert(result.applicable&&result.kb_required&&!result.needs_subject_clarification,JSON.stringify(result));
+ equal(result.demands.find(d=>d.source_type==="product")?.subjects,["英語課"]);
+ equal(result.requested_facts,["price"]);
+ assert(result.query?.includes("英語課")&&result.query.includes("學費")&&!result.query.includes("200"),JSON.stringify(result));
+ equal(JSON.stringify(commerce),before);
+ const bad=structuredClone(commerce);bad.entities[0].attributes.unit="堂";
+ const rejected=resolveCurrentFactualRequest({...input,commerce:bad});
+ assert(rejected.needs_subject_clarification||!rejected.kb_required,JSON.stringify(rejected));
+ const inactive=structuredClone(commerce);inactive.entities[0].status="cancelled";
+ const stale=resolveCurrentFactualRequest({...input,commerce:inactive});
+ assert(stale.needs_subject_clarification||!stale.kb_required,JSON.stringify(stale));
+});

@@ -33,6 +33,7 @@ const selectedReply=reply=>reply?{id:reply.id,source_message_id:reply.metadata?.
   grounding_verification:reply.metadata?.grounding_verification,
   factual_evidence_coverage:reply.metadata?.factual_evidence_coverage,
   reference_authority:reply.metadata?.reference_authority,kb_request_contract:reply.metadata?.kb_request_contract,
+  mixed_customer_fact_resolution:reply.metadata?.mixed_customer_fact_resolution,
   unresolved_fact_fields:reply.metadata?.unresolved_fact_fields}}:null;
 // Only a server-produced, source-bound safe receipt may supply a diagnostic
 // verdict. Callback completion is not proof of a delivered reply.
@@ -239,7 +240,31 @@ function partitionEvidence(turns){
   canonical_bound:!!bound,source_message_id:source??null,unit:unit??null};
 }
 
-function quantityEvidence(turns,expected,{historical=false}={}){
+// A mixed answer can contain one attested scalar AND one exact deterministic
+// merchant-evidence gap. This never adjudicates arbitrary natural-language claims.
+function mixedQuantityStatement(final,names){
+ const meta=final?.reply?.metadata,r=meta?.mixed_customer_fact_resolution,unresolved=meta?.unresolved_fact_fields;
+ if(r?.contract!=='source-bound-mixed-quantity-v1'||r.fact_type!=='quantity'||
+   r.source_message_id!==final.source_message_id||r.commerce_state_revision!==final.readback?.commerce_revision||
+   !['mixed_customer_guidance','grounding_recovery_clarification'].includes(meta.response_route)||
+   typeof r.demand_id!=='string'||!r.demand_id||
+   !Array.isArray(unresolved)||unresolved.length<1||unresolved.includes(r.demand_id)||
+   names.length!==1||typeof names[0]!=='string')return null;
+ const lines=String(final.reply.content??'').split('\n');
+ if(lines.length!==2)return null;
+ const name=names[0].normalize('NFKC').trim(),gap=lines[1].normalize('NFKC').trim();
+ const safeGaps=[
+  "I could not verify the current merchant information requested; I will not substitute a historical value.",
+  "另一个问题涉及的商户现行资料暂未核实，不能用旧资料代替。",
+  "另一個問題涉及的商戶現行資料暫未核實，不能用舊資料代替。",
+  'I can\'t reliably verify current selling price for "'+name+'" from the available evidence. A source-recorded figure is not a verified live offer or stock level. You can request human support to check; no transfer has been made.',
+  '目前未能可靠核实「'+name+'」的当前售价。即使资料有标示数字，也不代表已核实的当前报价或实时库存；我不会猜测。如需进一步确认，可选择「转人工客服」；目前尚未转接。',
+  '我而家未能可靠核實「'+name+'」嘅即時售價。即使資料有標示數字，都唔等於已核實嘅現價或即時可售庫存；我唔會估。如需進一步確認，你可以選擇「轉真人客服」；目前未有轉交。',
+ ];
+ if(!safeGaps.some(value=>value.normalize('NFKC')===gap))return null;
+ return quantityStatement(lines[0]);
+}
+function quantityEvidence(turns,expected,{historical=false,mixed=false}={}){
  const final=turns.at(-1),state=final?.readback?.state,sources=sourceTurns(turns.slice(0,-1));
  const proofs=Array.isArray(final?.reply?.metadata?.recall_provenance)?final.reply.metadata.recall_provenance:[];
  const selections=proofs.filter(proof=>proof.fact_type==='quantity'&&/^entities\.\d+\.quantity$/u.test(proof.state_path??''))
@@ -255,7 +280,7 @@ function quantityEvidence(turns,expected,{historical=false}={}){
  // Heterogeneous products/units must not be summed into a coincidental expected count.
  const names=[...new Set(verified.map(item=>item.entity.attributes?.product_name??item.entity.category))];
  const total=verified.reduce((sum,item)=>sum+item.value,0);
- const statement=quantityStatement(final?.reply?.content),rendered=statement?.value===expected&&
+ const statement=quantityStatement(final?.reply?.content)??(mixed&&!historical?mixedQuantityStatement(final,names):null),rendered=statement?.value===expected&&
   (statement.unit===null||units.length===1&&statement.unit===units[0]);
  const pass=replyBound(final)&&canonicalBound(final)&&verified.length>0&&units.length===1&&names.length===1&&
   total===expected&&rendered;
@@ -341,8 +366,8 @@ function structuredOriginalCheck(key,expected,row,turns){
  if(key==='answer_known_customer_count'){
   const prior=turns.slice(0,-1).find(turn=>canonicalBound(turn)&&active(turn.readback.state).length===1);
   const expectedCount=prior?active(prior.readback.state)[0].quantity:null;
-  return decide(Number.isFinite(expectedCount)&&quantityEvidence(turns,expectedCount).pass,
-   {expected_from_prior_canonical_state:expectedCount,quantity:quantityEvidence(turns,expectedCount)});
+  return decide(Number.isFinite(expectedCount)&&quantityEvidence(turns,expectedCount,{mixed:true}).pass,
+   {expected_from_prior_canonical_state:expectedCount,quantity:quantityEvidence(turns,expectedCount,{mixed:true})});
  }
  if(key==='requery_merchant_price'){
   const dispatch=kbDispatchEvidence(final),coverage=final?.reply?.metadata?.factual_evidence_coverage??[];
