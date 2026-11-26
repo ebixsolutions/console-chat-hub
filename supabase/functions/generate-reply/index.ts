@@ -5478,6 +5478,19 @@ async function orchestrationGenerateReply(
     !_currentFactualRequest?.transaction_required && classifyLocalTopicRisk(_h1LastMsg)?.level !== "high"
     ? _customerRequestDecision.customer_quantity_recall_request : undefined;
   const _c3R1Question=_mixedQuantityQuestion ?? (_mixedRequest?_productFactualRequest:_h1LastMsg);
+  // S2: keep the original server-accepted Reading (before merchant ownership
+  // projection) for this independently selected read. Both clauses remain
+  // separate; no merchant demand receives quantity authority. The reader
+  // revalidates exact source spans, subject, revision and persisted evidence.
+  const _c3StructuredQuantityReading: ConversationRecallInput["quantity_reading"] =
+    _semanticPrepared?.recovery.source_verified && _semanticPrepared.semantic.frame &&
+    _c3CommerceSnapshot && _c3CommerceSnapshot.revision===_quantityInputRevision &&
+    (_mixedQuantityQuestion || _c3SemanticCustomerRecall) && !_explicitHandoffRequested
+    ? {conversation_id,company_id:_criticalE2ExpectedTenantId??"",source_message_id:_h1SourceMessageId,
+      commerce_revision:_c3CommerceSnapshot.revision,frame:_semanticPrepared.semantic.frame,
+      ...(_mixedQuantityQuestion?{full_question:_h1LastMsg}:{})}
+    : undefined;
+  const _c3RecallQuantityReading = _c3StructuredQuantityReading ?? _c3BoundQuantityReading;
   // Task3C D3 (F1/F3/S3): one bounded, server-owned Visitor-source lookup
   // for BOTH semantic and canonical recall. A failed or empty DB read is never
   // silently treated as a verified empty source list.
@@ -5491,7 +5504,7 @@ async function orchestrationGenerateReply(
     commerce: _c3CommerceSnapshot,
     requested_facts: _c3SemanticCustomerRecall?.requested_facts,
     quote_status_frame: _a3SemanticFrame,
-    quantity_reading: _c3BoundQuantityReading,
+    quantity_reading: _c3RecallQuantityReading,
     // Source admission is independent of an external model's intent label.
     // Only missing IDs (max five) trigger a scoped DB lookup; this never
     // dispatches a KB or model request.
@@ -5532,7 +5545,7 @@ async function orchestrationGenerateReply(
     source_message_id: _h1SourceMessageId,
     question: _c3R1Question,
     customer_recall_proposal: _c3SemanticCustomerRecall,
-    quantity_reading: _c3BoundQuantityReading,
+    quantity_reading: _c3RecallQuantityReading,
     memory: _c3SourceRetainedMemoryForRecall ?? _c3Memory,
     commerce: _c3CommerceSnapshot,
     trusted_persisted_memory_readback: _c3TrustedPersistedMemoryReadback,

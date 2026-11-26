@@ -115,7 +115,10 @@ export interface ConversationRecallInput extends RecallScope {
     subject_refs: readonly string[];
   };
   /** Private accepted current-turn Reading, bound by the server to the loaded Commerce revision. */
-  quantity_reading?: RecallScope & { commerce_revision: number; frame: CommerceSemanticFrame };
+  quantity_reading?: RecallScope & { commerce_revision: number; frame: CommerceSemanticFrame;
+    /** For a separated mixed recall, the exact server-owned complete Visitor turn. */
+    full_question?: string;
+  };
   explicit_handoff?: boolean;
   /** True only after both scoped DB reads succeed and return no row. */
   empty_state_verified?: boolean;
@@ -597,6 +600,88 @@ function fail(
 type QuantityQueryScope = Pick<ConversationRecallInput,
   "company_id" | "conversation_id" | "source_message_id" | "commerce" |
   "quantity_reading" | "explicit_handoff">;
+/** S2: a Reading selects a customer-owned quantity field/subject only.
+ * Whole-turn or independently separated mixed demands use the same source
+ * binding. This is a candidate, never quantity authority or KB admission.
+ * The old unframed compatibility reads remain unchanged until equivalence
+ * is measured. Do not infer a new label, unit, industry or quantity. */
+function selectStructuredQuantitySubject(
+  input: QuantityQueryScope & { question: string },
+): CommerceEntity | null {
+  const c=input.commerce, r=input.quantity_reading, f=r?.frame;
+  if(!c||!r||!f||input.explicit_handoff||!input.company_id||!input.conversation_id||
+    !input.source_message_id||c.company_id!==input.company_id||c.conversation_id!==input.conversation_id||
+    r.company_id!==input.company_id||r.conversation_id!==input.conversation_id||
+    r.source_message_id!==input.source_message_id||r.commerce_revision!==c.revision||
+    c.state.version!=="commerce-state-1.0.0"||!Number.isSafeInteger(c.revision)||c.revision<1||
+    f.version!=="commerce-semantic-1.0.0"||f.operation!=="ASK_FACT"||f.confidence<0.72||
+    f.ambiguity.is_ambiguous||f.customer_correction||f.additive||f.explicit_negations.length||
+    f.customer_facts?.length||f.entities.length||
+    [f.transaction_state,f.payment_state,f.booking_state,f.fulfillment_state].some(s=>s!=="none"&&s!=="unknown"))
+    return null;
+  const normalized=(s:string)=>s.normalize("NFKC").trim();
+  const q=normalized(input.question), full=normalized(r.full_question??input.question);
+  if(!q||q.length>2400||full.length>2400||sourceClauses(q).length!==1||
+    customerRecallHasAction(q)||any(withoutExcludedLookups(q),EXTERNAL)||
+    !isReadOnlyMemoryOrCurrentStateRecall(q,{operation:"ASK_FACT",requested_facts:["quantity"]}))return null;
+  const demands=f.demands??[], quantity=demands.filter(d=>d.source_type==="general"&&
+    d.requested_facts.length===1&&keyNorm(d.requested_facts[0])==="quantity");
+  if(quantity.length!==1)return null;
+  const d=quantity[0];
+  if(d.ambiguity.is_ambiguous||d.customer_correction||d.explicit_negations.length||
+    Object.keys(d.constraints).length||!d.subject_refs.length||
+    normalized(d.source_quote)!==q||normalized(d.question)!==q)return null;
+  // The initial S2 family covers a single count and an independent current
+  // price demand. The latter still goes through the existing merchant route.
+  // Verify complete, disjoint literal quote coverage, not a sentence pattern.
+  const other=demands.filter(x=>x!==d);
+  if(other.length===0){
+    if(full!==q||f.intent!=="customer_fact_recall"||f.requested_facts.length!==1||
+      keyNorm(f.requested_facts[0])!=="quantity")return null;
+  }else{
+    const p=other[0];
+    if(other.length!==1||!r.full_question||full===q||p.source_type!=="product"||
+      p.ambiguity.is_ambiguous||p.customer_correction||p.explicit_negations.length||
+      Object.keys(p.constraints).length||!p.subject_refs.length||
+      p.requested_facts.length!==1||keyNorm(p.requested_facts[0])!=="price"||
+      f.requested_facts.length!==2||!f.requested_facts.includes("quantity")||
+      !f.requested_facts.includes("price"))return null;
+    const pq=normalized(p.source_quote);
+    if(!pq||normalized(p.question)!==pq||pq.includes(q)||q.includes(pq)||
+      full.split(q).length!==2||full.split(pq).length!==2)return null;
+    const a=full.indexOf(q), b=full.indexOf(pq);
+    if(a<b?a+q.length>b:b+pq.length>a)return null;
+    // Only grammatical coordination may remain outside the two exact quotes.
+    const gap=full.replace(q,"").replace(pq,"").replace(/[\s,，;；。.!！？?]+/gu," ")
+      .replace(/\b(?:and|also)\b/giu,"").replace(/(?:同埋|以及|另外|並且|并且)/gu,"").trim();
+    if(gap||customerRecallHasAction(full))return null;
+  }
+  const refs=[...d.subject_refs,...other.flatMap(x=>x.subject_refs)];
+  const matches=(e:CommerceEntity,ref:string)=>ref===e.entity_id||
+    sourceOwnedSubjectLabels(e).some(label=>keyNorm(label)===keyNorm(ref));
+  const named=c.state.entities.filter(e=>refs.every(ref=>matches(e,ref)));
+  if(named.length!==1||!f.referents.length||!f.referents.every(ref=>
+    ["prior_turn","persistent_state"].includes(ref.source)&&ref.confidence>=0.72&&matches(named[0],ref.ref)))
+    return null;
+  const entity=named[0];
+  if(["cancelled","deferred","superseded"].includes(entity.status)||
+    entity.provenance.source_type!=="customer"||!entity.provenance.source_message_id||
+    entity.provenance.source_message_id===input.source_message_id||
+    entity.attributes.quantity_basis!=="customer_explicit"||
+    !Number.isSafeInteger(entity.quantity)||entity.quantity<1||entity.quantity>1000)return null;
+  const labelMatches=c.state.entities.filter(e=>sourceOwnedSubjectLabels(e).some(label=>phrase(q,label)));
+  if(labelMatches.length>1||labelMatches.length===1&&labelMatches[0].entity_id!==entity.entity_id)return null;
+  const literal=resolveSourceOwnedSubject(c.state,q,{include_inactive:true});
+  if(literal.kind==="ambiguous"||literal.kind==="one"&&literal.entity.entity_id!==entity.entity_id)return null;
+  if(literal.kind==="none"){
+    const unit=canonicalCustomerQuantityUnit(entity)?.quantity_unit;
+    if(!unit||!phrase(q,unit)||c.state.entities.filter(e=>
+      canonicalCustomerQuantityUnit(e)?.quantity_unit&&
+      keyNorm(canonicalCustomerQuantityUnit(e)!.quantity_unit!)===keyNorm(unit)).length!==1)return null;
+  }
+  return entity;
+}
+
 function sourceBoundQuantityQuery(q: string, input?: QuantityQueryScope): boolean {
   const c = input?.commerce;
   if (!input || !c || input.explicit_handoff || !input.company_id ||
@@ -1695,6 +1780,8 @@ export async function loadScopedRecallVisitorSources(input: {
         e.provenance.source_type==="customer" &&
         e.provenance.source_message_id===retainedSource))
     add(retainedSource);
+  const structuredQuantity=selectStructuredQuantitySubject(scope);
+  if(structuredQuantity)add(structuredQuantity.provenance.source_message_id);
   const partition=selectSourceBoundPartitionRead(scope);
   if(partition)add(partition.source);
   const needed = ids.filter(id => !recent.some(row => row.id === id));
@@ -1883,16 +1970,72 @@ function attestedCanonicalQuantityUnit(input:ConversationRecallInput,value:unkno
   if(candidates.length!==1)return null;
   const unit=canonicalCustomerQuantityUnit(candidates[0]);
   if(!unit?.quantity_unit)return null;
-  const source=originals[0].content.normalize("NFKC"),literal=unit.quantity_unit.normalize("NFKC");
+  const found=literalQuantityUnitTokens(originals[0].content,unit.quantity_unit);
+  return found.length===1&&found[0].value===value?unit:null;
+}
+
+/** Reuse the exact source number/unit attestation, never an industry list. */
+function literalQuantityUnitTokens(text:string,unit:string):Array<{value:number;start:number;end:number}> {
+  const source=text.normalize("NFKC"),literal=unit.normalize("NFKC");
   const words:Record<string,number>={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
   const numbers=[...numberTokens(source),...Array.from(source.matchAll(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/giu),
     match=>({value:words[match[1].toLowerCase()],start:match.index!,end:match.index!+match[0].length}))];
-  const found=numbers.filter(number=>{
+  return numbers.filter(number=>{
     const after=source.slice(number.end).trimStart();
     return after.toLowerCase().startsWith(literal.toLowerCase()) &&
       (/[\p{Script=Han}]$/u.test(literal)||!/[\p{L}\p{N}_]/u.test(after[literal.length]??""));
   });
-  return found.length===1&&found[0].value===value?unit:null;
+}
+
+/** An accepted subject/field is only a candidate until current Memory,
+ * Commerce and one original same-ticket Visitor statement agree. Do not
+ * borrow a historical quote, merchant value or model-proposed quantity.
+ * The existing B2, read-only, source and CAS consumers remain authoritative. */
+function structuredQuantityEvidence(input:ConversationRecallInput):RecallEvidence|null {
+  const e=selectStructuredQuantitySubject(input),m=input.memory,c=input.commerce;
+  if(!e||!m||!c||input.trusted_visitor_source_status!=="verified"||
+    m.version!=="conversation-memory-1.0.0"||m.company_id!==input.company_id||
+    m.conversation_id!==input.conversation_id||!Number.isSafeInteger(m.memory_revision)||m.memory_revision<1||
+    m.commerce_state_revision!==c.revision||
+    (m.source_message_id!==input.source_message_id&&!hasTrustedPersistedMemoryReadback(input)))return null;
+  const sid=e.provenance.source_message_id;
+  if(!sid)return null;
+  const key="entity:"+e.entity_id+":quantity", facts=m.current_customer_facts.filter(f=>f.key===key);
+  const active=m.active_entities.filter(a=>a.entity_id===e.entity_id);
+  if(facts.length!==1||facts[0].authority!=="canonical_commerce"||facts[0].entity_id!==e.entity_id||
+    facts[0].source_message_id!==sid||facts[0].value!==e.quantity||
+    active.length!==1||active[0].status!=="active"||active[0].quantity!==e.quantity||
+    active[0].requested_quantity!==e.quantity||
+    active[0].current_requirements.unit!==e.attributes.unit||
+    m.cancelled_or_superseded.some(f=>f.entity_id===e.entity_id&&f.source_message_id===sid))return null;
+  const rows=input.trusted_visitor_source_rows??[];
+  if(!rows.length||rows.length>500||new Set(rows.map(row=>row.id)).size!==rows.length)return null;
+  const index=rows.findIndex(row=>row.id===sid);
+  if(index<0||!rows[index].content.trim()||rows[index].content.length>2400)return null;
+  const unit=attestedCanonicalQuantityUnit(input,e.quantity,sid,e.entity_id);
+  if(!unit?.quantity_unit)return null;
+  const label=sourceOwnedSubjectLabels(e);
+  const clauses=sourceClauses(rows[index].content);
+  const bound=clauses.filter(clause=>label.some(name=>phrase(clause,name))&&
+    literalQuantityUnitTokens(clause,unit.quantity_unit!).some(token=>token.value===e.quantity&&
+      !/(?:[$€£¥]|HKD|USD|TWD|NTD|CNY)\s*$/iu.test(clause.slice(0,token.start))));
+  if(bound.length!==1)return null;
+  // A later unaccounted correction or a different literal count/unit can
+  // invalidate this source. Money-only historical reports never supply count.
+  const later=[...clauses.slice(clauses.indexOf(bound[0])+1),...rows.slice(0,index).map(row=>row.content)];
+  if(later.some(text=>{
+    const ours=label.some(name=>phrase(text,name));
+    const other=c.state.entities.some(x=>x.entity_id!==e.entity_id&&
+      sourceOwnedSubjectLabels(x).some(name=>phrase(text,name)));
+    if(other&&!ours)return false;
+    return customerRecallHasAction(text)||
+      literalQuantityUnitTokens(text,unit.quantity_unit!).some(token=>token.value!==e.quantity);
+  }))return null;
+  return {fact_type:"quantity",state_path:"entities."+c.state.entities.indexOf(e)+".quantity",
+    value:e.quantity,authority:"CURRENT_CUSTOMER_MEMORY",entity_id:e.entity_id,
+    entity_label:customerOwnedDisplayLabel(e),region:facts[0].region??null,
+    evidence_source_message_id:sid,temporal_scope:"current",
+    source_kind:"attested_customer_utterance",attribute_key:key,...unit};
 }
 
 /** A unit in this already resolved quantity question may label the displayed
@@ -2579,6 +2722,23 @@ export function hasAttestedUnlabelledCustomerRecall(input:ConversationRecallInpu
      decision.provenance.source_message_id!==input.source_message_id||
      input.memory?.commerce_state_revision!==input.commerce?.revision||
      !decision.provenance.evidence.length)return false;
+  // S2: independently reconstruct the entire structured receipt before
+  // accepting it at the existing mixed/pure recall caller. A same numeric
+  // value and source ID alone cannot attest another entity, unit or revision.
+  const structured=structuredQuantityEvidence(input);
+  const claimsStructuredQuantity=decision.provenance.evidence.some(e=>
+    e.fact_type==="quantity"&&typeof e.attribute_key==="string"&&
+    e.attribute_key.startsWith("entity:")&&e.attribute_key.endsWith(":quantity"));
+  if(claimsStructuredQuantity||structured&&decision.fact_type==="quantity"){
+    return Boolean(structured&&decision.fact_type==="quantity"&&
+      decision.provenance.evidence.length===1&&
+      decision.authority===structured.authority&&decision.value===structured.value&&
+      decision.state_path===structured.state_path&&
+      decision.provenance.memory_revision===input.memory?.memory_revision&&
+      decision.provenance.commerce_state_revision===input.commerce?.revision&&
+      decision.provenance.commerce_source_message_id===input.commerce?.source_message_id&&
+      sameCanonicalJson(decision.provenance.evidence[0],structured));
+  }
   const quoted=attestedCustomerQuantity(input);
   const typed=sourceAttestedTypedCustomerAttribute(input);
   return decision.provenance.evidence.every(e=>e.temporal_scope==="current"&&(
@@ -2674,6 +2834,13 @@ export function resolveConversationRecall(
   if(partition)return partition;
   const canonicalActiveRetention=resolveSourceVerifiedCanonicalActiveRetention(input);
   if(canonicalActiveRetention)return canonicalActiveRetention;
+  const structuredQuantity=structuredQuantityEvidence(input);
+  if(structuredQuantity)return {handled:true,authority:"CURRENT_CUSTOMER_MEMORY",
+    fact_type:"quantity",state_path:structuredQuantity.state_path,value:structuredQuantity.value,
+    provenance:{company_id:input.company_id,conversation_id:input.conversation_id,
+      source_message_id:input.source_message_id,memory_revision:input.memory!.memory_revision,
+      commerce_state_revision:input.commerce!.revision,
+      commerce_source_message_id:input.commerce!.source_message_id,evidence:[structuredQuantity]}};
   const typedCustomer=sourceAttestedTypedCustomerAttribute(input);
   if(typedCustomer) return typedCustomer;
   // Historical customer speech must not fall back to an unverified stored

@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { reduceTurn, buildCommerceEntityHints } from '../../supabase/functions/_shared/commerce-state-runtime-base.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {prepareConversationRecall} from '../../supabase/functions/_shared/conversation-recall.ts';
+import {prepareConversationRecall,hasAttestedUnlabelledCustomerRecall,loadScopedRecallVisitorSources} from '../../supabase/functions/_shared/conversation-recall.ts';
 import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
 import {buildCanonicalConversationMemory} from '../../supabase/functions/_shared/conversation-long-memory.ts';
 import {resolveIndustryRuntime as d4ResolveIndustryRuntime,resolveIndustryCustomerJourney,resolveIndustryProfile,industryEntityLabel,industryEntityQuantityUnit} from '../../supabase/functions/_shared/industry-runtime-adapter.ts';
@@ -768,3 +768,118 @@ for(const [category,name,unit,language,total,keep,correction,question,status] of
   assert.notEqual(evaluateB2BeforeCommit(tampered).decision,'allow');
  });
 }
+
+
+// S2 first family: original six mixed-count clauses and independently authored
+// natural paraphrases. These are accepted Reading fixtures, not real-model
+// outputs; no original Handler observation case or oracle is replaced.
+const s2Counts=[
+ ['retail','書枱','張',3,'我要三張書枱。','我之前提過幾張書枱？','另外目前每張官方售價是多少？','麻煩重述一下我為書枱所記錄的要求？'],
+ ['restaurant','套餐','份',3,'我想要三份套餐。','我之前提過幾份套餐？','今天每份官方售價是多少？','麻煩重述一下我為套餐所記錄的要求？'],
+ ['education','英語課','課',3,'我想報三課英語課。','我之前提過幾課英語課？','現在每課學費是多少？','麻煩重述一下我為英語課所記錄的要求？'],
+ ['beauty','美容療程','堂',3,'我想要三堂美容療程。','我之前提過幾堂療程？','現在每堂售價是多少？','麻煩重述一下我為美容療程所記錄的要求？'],
+ ['saas','licenses','licenses',3,'We need three licenses for this team.','How many licenses did I mention earlier','what is their current official price?','Could you recap my recorded licenses entry?'],
+ ['b2b','paper cups','cartons',120,'We discussed 120 cartons of paper cups.','How many cartons did I mention','what is the current official wholesale price?','Could you recap my recorded paper cups entry?'],
+];
+function s2QuantityFixture(row,question,mixed=false){
+ const [industry,name,unit,count,source,,price]=row;
+ const e={...entity(name,count,'s2-item'),attributes:{product_name:name,unit,quantity_basis:'customer_explicit'}};
+ const input=fixture({question,key:'quantity',value:count,source,entity_id:e.entity_id,subjects:[name],entities:[e]});
+ input.customer_recall_proposal=undefined;
+ input.memory.current_customer_facts=[{key:'entity:'+e.entity_id+':quantity',value:count,authority:'canonical_commerce',entity_id:e.entity_id,source_message_id:'original-source',region:null}];
+ input.memory.active_entities=[{entity_id:e.entity_id,type:'generic_product',quantity:count,requested_quantity:count,status:'active',current_requirements:e.attributes}];
+ const ambiguity={is_ambiguous:false,reasons:[],clarification_question:null};
+ const demand=(q,type,field)=>({question:q,source_quote:q,subject_refs:[name],source_type:type,requested_facts:[field],
+   constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{...ambiguity}});
+ const frame={version:'commerce-semantic-1.0.0',language:industry==='saas'||industry==='b2b'?'en':'zh-TW',
+   operation:'ASK_FACT',intent:mixed?'mixed_customer_and_merchant_facts':'customer_fact_recall',topic:null,
+   entities:[],referents:[{ref:name,source:'prior_turn',confidence:.98}],customer_facts:[],
+   requested_facts:mixed?['quantity','price']:['quantity'],demands:[demand(question,'general','quantity'),...(mixed?[demand(price,'product','price')]:[])],
+   customer_correction:false,additive:false,explicit_negations:[],transaction_state:'none',payment_state:'none',
+   booking_state:'none',fulfillment_state:'none',ambiguity,confidence:.98};
+ input.quantity_reading={...scope,commerce_revision:2,frame,...(mixed?{full_question:question+((industry==='saas'||industry==='b2b')?', and ':'')+price}:{})};
+ return input;
+}
+for(const row of s2Counts)for(const [kind,q,mixed] of [['original',row[5],true],['natural',row[7],false]]){
+ test('S2 structured source count '+row[0]+' '+kind,async()=>{
+  const input=s2QuantityFixture(row,q,mixed),before=JSON.stringify(input);
+  const r=prepareConversationRecall(input,input.quantity_reading.frame.language);
+  assert.equal(r.decision.handled,true,JSON.stringify(r.decision));
+  assert.equal(r.decision.value,row[3]);
+  const proof=r.decision.provenance.evidence[0];
+  assert.equal(proof.attribute_key,'entity:s2-item:quantity','must use the structured canonical/source proof, not legacy wording');
+  assert.equal(proof.state_path,'entities.0.quantity');
+  assert.equal(proof.quantity_unit,row[2]);assert.equal(proof.evidence_source_message_id,'original-source');
+  assert.equal(hasAttestedUnlabelledCustomerRecall(input,r.decision),true);
+  assert.equal(JSON.stringify(input),before,'read-only');
+  const lookup=await loadScopedRecallVisitorSources({...input,enabled:true,recent_rows:[],
+   fetch_missing:async ids=>({rows:ids.map(id=>({id,content:row[4],conversation_id:scope.conversation_id,role:'visitor',is_recalled:false}))})});
+  assert.equal(lookup.status,'verified');assert.equal(lookup.targeted_count,1);
+ });
+}
+for(const [label,tamper] of [
+ ['foreign-company',x=>x.quantity_reading.company_id='foreign'],
+ ['foreign-ticket',x=>x.quantity_reading.conversation_id='foreign'],
+ ['wrong-current-source',x=>x.quantity_reading.source_message_id='foreign'],
+ ['stale-reading-revision',x=>x.quantity_reading.commerce_revision--],
+ ['foreign-subject',x=>x.quantity_reading.frame.demands[0].subject_refs=['other']],
+ ['wrong-span',x=>x.quantity_reading.frame.demands[0].source_quote='other'],
+ ['merchant-facet',x=>x.quantity_reading.frame.demands[0].source_type='product'],
+ ['mutation',x=>x.quantity_reading.frame.operation='SET_QUANTITY'],
+ ['handoff',x=>x.explicit_handoff=true],
+ ['wrong-original-unit',x=>x.trusted_visitor_source_rows[0].content='We discussed 120 boxes of paper cups.'],
+ ['wrong-original-count',x=>x.trusted_visitor_source_rows[0].content='We discussed 121 cartons of paper cups.'],
+ ['wrong-original-subject',x=>x.trusted_visitor_source_rows[0].content='We discussed 120 cartons of coffee filters.'],
+ ['missing-visitor',x=>x.trusted_visitor_source_rows=[]],
+ ['duplicate-visitor',x=>x.trusted_visitor_source_rows.push({...x.trusted_visitor_source_rows[0]})],
+ ['foreign-memory',x=>x.memory.company_id='foreign'],
+ ['memory-quantity-drift',x=>x.memory.current_customer_facts[0].value=121],
+ ['memory-revision-drift',x=>x.memory.commerce_state_revision--],
+ ['cancelled',x=>x.commerce.state.entities[0].status='cancelled'],
+ ['superseded',x=>x.commerce.state.entities[0].status='superseded'],
+ ['later-contradiction',x=>x.trusted_visitor_source_rows.unshift({id:'later',content:'Correction: 130 cartons of paper cups.'})],
+ ['ambiguous-subject',x=>x.commerce.state.entities.push({...structuredClone(x.commerce.state.entities[0]),entity_id:'other'})],
+]){
+ test('S2 structured source denies '+label,()=>{
+  const row=s2Counts[5],x=s2QuantityFixture(row,row[7]);tamper(x);
+  const r=prepareConversationRecall(x,'en');
+  assert.ok(!r.decision.handled||r.decision.provenance.evidence.every(e=>e.attribute_key!=='entity:s2-item:quantity'),JSON.stringify(r.decision));
+  assert.equal(hasAttestedUnlabelledCustomerRecall(x,r.decision),false);
+ });
+}
+test('S2 mixed proof rejects unrepresented extra request',()=>{
+ const row=s2Counts[5],x=s2QuantityFixture(row,row[5],true);
+ x.quantity_reading.full_question+=' Please cancel my order.';
+ const r=prepareConversationRecall(x,'en');
+ assert.ok(!r.decision.handled||r.decision.provenance.evidence.every(e=>e.attribute_key!=='entity:s2-item:quantity'));
+});
+
+test('S2 independently re-attests complete structured reply receipt before mixed or pure acceptance',()=>{
+ for(const mixed of [false,true]){
+  const row=s2Counts[5],input=s2QuantityFixture(row,mixed?row[5]:row[7],mixed);
+  const {decision}=prepareConversationRecall(input,'en');
+  assert.equal(decision.handled,true);
+  assert.equal(decision.provenance.evidence[0].attribute_key,'entity:s2-item:quantity');
+  assert.equal(hasAttestedUnlabelledCustomerRecall(input,decision),true);
+  for(const [name,mutate] of [
+   ['decision value',d=>d.value=121],
+   ['decision state path',d=>d.state_path='entities.1.quantity'],
+   ['decision authority',d=>d.authority='CURRENT_KB'],
+   ['memory revision',d=>d.provenance.memory_revision++],
+   ['commerce revision',d=>d.provenance.commerce_state_revision++],
+   ['commerce source',d=>d.provenance.commerce_source_message_id='foreign'],
+   ['evidence state path',d=>d.provenance.evidence[0].state_path='entities.1.quantity'],
+   ['entity',d=>d.provenance.evidence[0].entity_id='another-entity'],
+   ['unit',d=>d.provenance.evidence[0].quantity_unit='boxes'],
+   ['unit authority',d=>d.provenance.evidence[0].quantity_unit_source_kind='current_customer_question'],
+   ['unit source',d=>d.provenance.evidence[0].quantity_unit_source_message_id='foreign'],
+   ['attribute key',d=>delete d.provenance.evidence[0].attribute_key],
+   ['source kind',d=>d.provenance.evidence[0].source_kind='retained_customer_fact'],
+   ['evidence source',d=>d.provenance.evidence[0].evidence_source_message_id='foreign'],
+   ['extra evidence',d=>d.provenance.evidence.push({...d.provenance.evidence[0]})],
+  ]){
+   const forged=structuredClone(decision);mutate(forged);
+   assert.equal(hasAttestedUnlabelledCustomerRecall(input,forged),false,name);
+  }
+ }
+});
