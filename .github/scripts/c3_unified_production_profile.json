@@ -1772,7 +1772,7 @@
     "tests/task1-director/quantity-source-scope.test.mjs": "7a068be31d2ba04ac98469bd5792a84599420679a133dc317a76280f26c64d44",
     "tests/task1-director/semantic-customer-recall-scope.test.mjs": "7c86b7d71a63e804b3ae4ceb527b5e5b227d0d7651c2685bc045a6978e7c237d",
     "supabase/functions/_shared/conversation-recall.integration.test.ts": "a62f3f901555d70761892d5191800beb94aa2e7ec33d84863297a24e8434f2d1",
-    "supabase/functions/agent-assist/index.ts": "0a68ae5e149659330ce01df20b9b7a00d76943902ac02c7604df098d749ebe6d",
+    "supabase/functions/agent-assist/index.ts": "afc09693996e3ed0160cda9362349e07eab5e97eee61686c98857696c7a8c446",
     "tests/c3-widget-live-auth/original-preview.test.mjs": "52077ca7a59fabb44a789aabe1245d6fae56fae1682e7854bb94c669cc3685e1",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "ef401ad86337ac9d84285b42b4c95775f1ec0de3f22c4c4f10177e1a0da797f2",
     "supabase/functions/_shared/conversation-service-planner.ts": "6f37a60805d1a61500d4aece616458bc6ce29202bbbee0275af87fc6648443c6",

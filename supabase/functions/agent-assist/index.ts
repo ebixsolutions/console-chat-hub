@@ -6,9 +6,13 @@ import { authenticatedInboxAuthority, type InboxOperation } from "../_shared/uat
 import {
   prepareConversationRecall,
   loadScopedRecallVisitorSources,
+  isSourceBoundPartitionReadRequest,
+  type ConversationRecallInput,
+  type TrustedPersistedMemoryReadback,
   type RecallCommerceSnapshot,
 } from "../_shared/conversation-recall.ts";
 import { isConversationCommerceState } from "../_shared/commerce-state-contract.ts";
+import type { CommerceSemanticFrame } from "../_shared/commerce-semantic-frame.ts";
 import {
   fetchKBRag,
   resolveKBEndpoint,
@@ -716,6 +720,7 @@ Deno.serve(async (req) => {
     let servicePlan: ServiceDialoguePlan | null = null;
     let assistFactualRequest: CurrentFactualRequest | undefined;
     let assistSemanticPrepared: PreparedSemanticRequest | null = null;
+    let assistOriginalReading: CommerceSemanticFrame | null = null;
     let assistConversationHistory: any[] | null = null;
     if (["suggest_reply", "knowledge_helper"].includes(toolType) &&
         body.context_mode !== "manual" && conv.company_id) {
@@ -743,6 +748,10 @@ Deno.serve(async (req) => {
             failure:assistSemanticPrepared.semantic.failure},503,req);
         }
         assistConversationHistory = assistSemanticPrepared.history;
+        // Preserve the exact visitor Reading before general ownership projection.
+        if (content === boundary.content && assistSemanticPrepared.recovery.source_verified) {
+          assistOriginalReading = assistSemanticPrepared.semantic.frame;
+        }
         const assistDecision = resolveCustomerRequestDecision(content, assistSemanticPrepared.semantic.frame,
           assistConversationHistory.map(row => ({...row,role:String(row.role ?? ""),content:String(row.content ?? "")})));
         if (assistSemanticPrepared.semantic.frame) assistSemanticPrepared.semantic.frame =
@@ -818,13 +827,50 @@ Deno.serve(async (req) => {
         const sourceBoundary = String(recallSource.created_at ?? "");
         const sourceBoundaryValid = Number.isFinite(Date.parse(sourceBoundary)) &&
           /^[0-9a-f-]{36}$/i.test(String(recallSource.id ?? ""));
+        // Draft-only parity: exact visitor text and interpretation revision, not staff search.
+        const quantityReading: ConversationRecallInput["quantity_reading"] =
+          assistOriginalReading && sourceBoundaryValid && content === recallSource.content &&
+          recallSnapshot && assistSemanticPrepared?.input_state?.commerce?.revision === recallSnapshot.revision &&
+          assistSemanticPrepared?.input_state?.commerce?.source_message_id === recallSnapshot.source_message_id &&
+          !assistFactualRequest?.transaction_required
+          ? {company_id:conv.company_id,conversation_id:conversationId,
+              source_message_id:String(recallSource.id),commerce_revision:recallSnapshot.revision,frame:assistOriginalReading}
+          : undefined;
+        const partitionRead = Boolean(quantityReading && isSourceBoundPartitionReadRequest({
+          question:content,company_id:conv.company_id,conversation_id:conversationId,
+          source_message_id:String(recallSource.id),commerce:recallSnapshot,quantity_reading:quantityReading,
+        }));
+        let recallMemory = assistMemory;
+        let memoryReceipt: TrustedPersistedMemoryReadback | null = null;
+        if (partitionRead && recallSnapshot) {
+          const {data:m,error:memoryError}=await supabaseAdmin.from("conversation_memory_state")
+            .select("conversation_id,company_id,source_message_id,revision,commerce_state_revision,memory_hash,memory")
+            .eq("conversation_id",conversationId).eq("company_id",conv.company_id).maybeSingle();
+          if (memoryError || !m || !isCanonicalConversationMemory(m.memory) ||
+              m.company_id!==conv.company_id || m.conversation_id!==conversationId ||
+              m.memory.company_id!==conv.company_id || m.memory.conversation_id!==conversationId ||
+              m.source_message_id!==m.memory.source_message_id ||
+              m.source_message_id!==assistSemanticPrepared?.input_state?.memory?.source_message_id ||
+              Number(m.revision)!==assistSemanticPrepared?.input_state?.memory?.revision ||
+              Number(m.revision)!==m.memory.memory_revision ||
+              Number(m.commerce_state_revision)!==recallSnapshot.revision ||
+              m.memory.commerce_state_revision!==recallSnapshot.revision ||
+              !/^[a-f0-9]{64}$/i.test(String(m.memory_hash??""))) {
+            return jsonRes({success:false,error:"assist_partition_readback_unverified",retryable:true},409,req);
+          }
+          recallMemory=m.memory;
+          memoryReceipt={contract:"persisted-memory-readback-v1",company_id:conv.company_id,
+            conversation_id:conversationId,source_message_id:m.source_message_id,
+            memory_revision:m.memory.memory_revision,commerce_state_revision:recallSnapshot.revision,memory_hash:m.memory_hash};
+        }
         const trustedSources = await loadScopedRecallVisitorSources({
           company_id: conv.company_id,
           conversation_id: conversationId,
           source_message_id: String(recallSource.id),
           question: content,
-          memory: assistMemory,
+          memory: recallMemory,
           commerce: recallSnapshot,
+          quantity_reading: partitionRead ? quantityReading : undefined,
           enabled: true,
           recent_rows: (recallHistory ?? []).map((row: any) => ({
             id: String(row.id ?? ""),
@@ -856,14 +902,27 @@ Deno.serve(async (req) => {
           conversation_id: conversationId,
           company_id: conv.company_id,
           source_message_id: String(recallSource.id),
-          memory: assistMemory,
+          memory: recallMemory,
           commerce: recallSnapshot,
+          quantity_reading: partitionRead ? quantityReading : undefined,
+          trusted_persisted_memory_readback: memoryReceipt,
           trusted_visitor_source_rows: trustedSources.rows,
           trusted_visitor_source_status: trustedSources.status,
           recent_questions: (recallHistory ?? []).filter((row: any) =>
             row.role === "visitor"
           ).slice(0, 12).map((row: any) => String(row.content ?? "")),
         }, /[\u4e00-\u9fff]/.test(content) ? "zh-TW" : "en");
+        if (partitionRead) {
+          if (!recallRoute.decision.handled || recallRoute.decision.fact_type!=="quantity+unit_partition" || !recallRoute.reply) {
+            return jsonRes({success:false,error:"assist_partition_source_unverified",retryable:true},409,req);
+          }
+          // Verified draft only: no customer message, control or state commit and no KB lookup.
+          return jsonRes({success:true,tool_type:"suggest_reply",draft_only:true,
+            knowledge_grounded:false,scope_mode:scope.mode,selected_document_id:null,
+            response_route:recallRoute.metadata.response_route,
+            recall_authority:recallRoute.metadata.recall_authority,
+            result:{suggestions:[{content:recallRoute.reply,tone_label:"Informative"}]}},200,req);
+        }
         const serviceMessages = (recallHistory ?? []).slice().reverse().map((
           row: any,
         ) => ({
