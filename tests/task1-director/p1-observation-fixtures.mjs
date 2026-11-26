@@ -125,6 +125,73 @@ function correctionReading(row,turn,subject,language,wrong=false){
   'ASK_FACT')};
 }
 
+// R2 original mixed-known/unknown source proposals, not production rules.
+const mixedReadings=Object.freeze({
+  "SYNTHETIC-retail-mixed-known-unknown": [
+    "我只記得以前有人說每張港幣700元，這是舊資料。",
+    "我之前提過幾張書枱？另外目前每張官方售價是多少？",
+    700,
+    "HKD",
+    "書枱",
+    "我之前提過幾張書枱？",
+    "另外目前每張官方售價是多少？"
+  ],
+  "SYNTHETIC-restaurant-mixed-known-unknown": [
+    "我記得去年套餐好像港幣180元，但現在未核實。",
+    "我之前提過幾份套餐？今天每份官方售價是多少？",
+    180,
+    "HKD",
+    "套餐",
+    "我之前提過幾份套餐？",
+    "今天每份官方售價是多少？"
+  ],
+  "SYNTHETIC-education-mixed-known-unknown": [
+    "我記得以前每課港幣200元，但不知道現在是否仍適用。",
+    "我之前提過幾課英語課？現在每課學費是多少？",
+    200,
+    "HKD",
+    "英語課",
+    "我之前提過幾課英語課？",
+    "現在每課學費是多少？"
+  ],
+  "SYNTHETIC-beauty-mixed-known-unknown": [
+    "朋友以前說每堂港幣500元，但這只是舊口頭資料。",
+    "我之前提過幾堂療程？現在每堂售價是多少？",
+    500,
+    "HKD",
+    "美容療程",
+    "我之前提過幾堂療程？",
+    "現在每堂售價是多少？"
+  ],
+  "SYNTHETIC-saas-mixed-known-unknown": [
+    "I recall an old verbal price of USD 12 per license, but it was not verified.",
+    "How many licenses did I mention earlier, and what is their current official price?",
+    12,
+    "USD",
+    "licenses",
+    "How many licenses did I mention earlier",
+    "what is their current official price?"
+  ],
+  "SYNTHETIC-b2b-wholesale-mixed-known-unknown": [
+    "Someone mentioned USD 4.20 per carton last year; that was an unverified historical figure.",
+    "How many cartons did I mention, and what is the current official wholesale price?",
+    4.2,
+    "USD",
+    "paper cups",
+    "How many cartons did I mention",
+    "what is the current official wholesale price?"
+  ]
+});
+function mixedReading(row,turn,language){
+ const item=mixedReadings[row.id]; if(!item||turn!==1&&turn!==2)return null;
+ const [historical,question,amount,unit,name,quantityClause,priceClause]=item;
+ if(row.turns[1]!==historical||row.turns[2]!==question||!row.turns[0].includes(name)||!question.includes(quantityClause)||!question.includes(priceClause))throw Error('observer_mixed_source_drift:'+row.id);
+ const referents=[{ref:name,source:'prior_turn',confidence:.98}];
+ const demand=(q,type,field)=>({question:q,source_quote:q,subject_refs:[name],source_type:type,requested_facts:[field],constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}});
+ return turn===1?{semantic:wire({language,intent:'customer_context_update',customer_facts:[{key:'historical_price',value:{amount,unit}},{key:'historical_price_report',value:historical}],referents,requested_facts:[]},'UPDATE_ITEM'),status:'SCRIPTED_PROPOSAL',source_quote:historical,coverage:'ATTRIBUTED_HISTORICAL_PRICE_NOT_CURRENT'}:
+ {semantic:wire({language,intent:'mixed_customer_and_merchant_facts',referents,requested_facts:['quantity','price'],demands:[demand(quantityClause,'general','quantity'),demand(priceClause,'product','price')]},'ASK_FACT'),status:'SCRIPTED_PROPOSAL',source_quote:question,coverage:'INDEPENDENT_CUSTOMER_QUANTITY_AND_CURRENT_MERCHANT_PRICE'};
+}
+
 function proposedReading(row,turn,wrong=false){
  const text=row.turns[turn],language=row.domain==='saas'||row.domain==='b2b-wholesale'?'en':'zh-TW';
  if(row.kind==='probe')return {semantic:{operation:row.reading.operation,intent:row.reading.intent,confidence:.98,
@@ -137,6 +204,7 @@ function proposedReading(row,turn,wrong=false){
  const subject=subjects[row.domain];
  if(hasCorrectionReading(row)&&turn>0)return correctionReading(row,turn,subject,language,wrong);
  if(wrong)throw Error('observer_wrong_reading_outside_named_family:'+row.id);
+ const mixed=mixedReading(row,turn,language);if(mixed)return mixed;
  if(subject&&turn===0&&['-recall','-correction','-mixed-known-unknown'].some(suffix=>row.id.endsWith(suffix))){
   // These fixed proposals are separate from the original visitor corpus. Each
   // entity name/unit is checked against the exact current source before use.
