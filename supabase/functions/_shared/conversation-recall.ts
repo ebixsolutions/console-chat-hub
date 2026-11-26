@@ -3577,8 +3577,8 @@ export function renderConversationRecall(
         // The display label is canonical/sanitized, never a model-supplied alias.
         const label=e.fact_type==="quantity"?safeCustomerDisplayText(e.entity_label,e.entity_id):null;
         const subjectSuffix=label&&keyNorm(label)!==keyNorm(e.quantity_unit??"")
-          ? (l===2?" ("+label+")":"（"+label+"）"):"";
-        lines.push(`${LABELS[e.fact_type]?.[l] ?? e.attribute_key ?? "Customer information"}: ${v}${quantityUnitSuffix}${subjectSuffix}`);
+          ? " ("+label+")":"";
+        lines.push(`${LABELS[e.fact_type]?.[l] ?? e.attribute_key ?? "Customer information"}${subjectSuffix}: ${v}${quantityUnitSuffix}`);
       }
       continue;
     }

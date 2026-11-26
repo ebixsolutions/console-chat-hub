@@ -1740,7 +1740,7 @@
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "367d2bae82405f7936861b8d0abf740b787b1c84c7e9e5838308a517db251f5d",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "cf27814aac3b9341e14f452f8bd13d8996024b68e70a282a18b4ac33b9513536",
     "supabase/functions/_shared/commerce-subject-resolution.ts": "803c2d09d04d2b9f0c5ca7419b8dda8b2b625db911324ae51ac84828c5720836",
-    "supabase/functions/_shared/conversation-recall.ts": "811c1214e024c3ca1153b28a737a273f312e316e8b35619e6a71d3f06d27083d",
+    "supabase/functions/_shared/conversation-recall.ts": "efdc9447c6d761b0d108077e1a9dd1bac9e6eb688ae8700fdc5b14c6e964f88a",
     "supabase/functions/generate-reply/index.ts": "06978b4a023dbe2338029797704425138562a8f7b5036e1ba4e4b735e6d4f6a1",
     "supabase/functions/_shared/conversation-service-planner.ts": "01113562c4d90c0ace4b653a5906e78a351bb7acb5ab980df390176f688e612e",
     "tests/task1-director/quantity-source-scope.test.mjs": "0ef1bf250c4d84fb323e6cf9bf4761ff64164f531aba6854c60cfd3cf1d6dc9d",
