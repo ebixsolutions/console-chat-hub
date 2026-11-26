@@ -2033,26 +2033,8 @@ function deriveA3RuntimeEvents(
     });
   }
 
-  const horsepower = [...text.matchAll(/(\d+(?:\.\d+)?)\s*匹/gi)].map((match) => `${match[1]}匹`);
-  if (horsepower.length > 0 && !/[?？]/.test(text)) {
-    const categories = [...new Set(hints.map((hint) => hint.category))];
-    const active = previous.entities.filter((entity) => entity.status !== "cancelled" && entity.status !== "deferred" && (categories.length === 0 || categories.includes(entity.category)));
-    const scopedMentionIds = [...new Set(mentioned
-      .filter((hint) => !hint.entity_id.endsWith(":unscoped"))
-      .map((hint) => hint.entity_id))];
-    const scopedTarget = scopedMentionIds.length === 1
-      ? previous.entities.find((entity) =>
-        entity.entity_id === scopedMentionIds[0] &&
-        (!["cancelled", "deferred"].includes(entity.status) || reactivated)
-      )
-      : null;
-    // A multi-entity state cannot silently apply an attribute to an
-    // appliance-specific fallback. Resolve a written scoped referent, or
-    // require exactly one active candidate; otherwise keep state unchanged.
-    const target = scopedTarget ??
-      (scopedMentionIds.length === 0 && active.length === 1 ? active[0] : null);
-    if (target) events.push({ type: "SET_ENTITY_ATTRIBUTE", entity_id: target.entity_id, key: "horsepower", value: [...new Set(horsepower)].join("、"), provenance });
-  }
+  // Customer specifications are owned by the accepted semantic entity attributes.
+  // A literal measurement unit cannot itself select an attribute key or target.
 
   if (/(?:舊機|旧机|舊冷氣|旧空调)/i.test(text) && /(?:拆|移除|冇機|没机|no\s+(?:old\s+)?unit)/i.test(text) && !/[?？]/.test(text)) {
     const explicit = text.match(/([一二兩两三四五六七八九十]|\d{1,2})\s*部\s*(?:舊機|旧机)/i)?.[1];

@@ -385,3 +385,19 @@ test('source-bound specification allocation is category-independent',()=>{
   assert.equal(apply(f,'其他物品改做一部1匹，一部1.5匹。',null).entities[0].quantity,3);
  }
 });
+
+// R4 successor: the allocation path has already passed the independent
+// three-category regression. A bare unit may describe the allocation, but
+// must not create or overwrite a domain-specific attribute.
+test('generic specification allocation cannot synthesize a horsepower field',()=>{
+ for(const category of ['air_conditioner','generic_product','water_pump']){
+  for(const withReading of [false,true]){
+   const f=fixture([category,'Customer item','部']);f.state.entities[0].quantity=3;
+   const reading=withReading?frame(f,{operation:'SET_QUANTITY',quantity:2,topic:category,facts:[]}):null;
+   const next=apply(f,'改做一部1匹，一部1.5匹。',reading);
+   assert.equal(next.entities[0].quantity,2,category);
+   assert.equal(next.entities[0].provenance.source_message_id,'current-customer-turn');
+   assert.equal(Object.hasOwn(next.entities[0].attributes,'horsepower'),false,category);
+  }
+ }
+});
