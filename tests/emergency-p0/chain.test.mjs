@@ -3589,3 +3589,53 @@ registerScopedCorrectionHandlerTests({test, assert, fixture, uuid, providerWire,
 // Same Closure Contract: stateful generic final-answer, requery and human-control paths.
 import { registerFullJourneyHandlerTests } from "../task1-director/phase1-full-journey-handler-register.mjs";
 registerFullJourneyHandlerTests({test, assert, fixture, uuid, root});
+
+
+// Same Task3C P1/R3: an already-fulfilled answer-failure condition is a
+// present human request, not permission to transfer on hypothetical failure.
+function committedUnansweredHistory(route="kb_no_current_evidence", mutate=()=>{}){
+ const prior=uuid(9810),content="我而家未能確認呢個問題。";
+ const history=[
+  {id:uuid(9811),conversation_id:ticket,role:"assistant",content,created_at:"2026-10-14T00:59:01.000Z",is_recalled:false,
+   metadata:{response_route:route,b2_commit_source:"commit_ai_reply_tx",b2_source_message_id:prior,
+    b2_expected_company_id:company,b2_response_hash:hash(content),
+    ...(route==="terminal_failure_recovery"?{generation_success:false,execution_failure:{code:"LLM_INVALID_OUTPUT",source_message_id:prior}}:
+      {execution_failure:{code:"KB_NO_MATCH",stage:"kb_no_match"}})}},
+  {id:prior,conversation_id:ticket,role:"visitor",content:"我買咗活動門票，可唔可以改期？",created_at:"2026-10-14T00:59:00.000Z",is_recalled:false,metadata:{}}
+ ];
+ mutate(history);
+ return history;
+}
+const rt05CurrentRequest="你答唔到就幫我轉真人，我搵唔到真人客服。";
+for(const [label,utterance,route] of [
+ ["RT05 committed KB no-match",rt05CurrentRequest,"kb_no_current_evidence"],
+ ["RT05 committed terminal failure",rt05CurrentRequest,"terminal_failure_recovery"],
+ ["English committed no-match","If you cannot answer this, please connect me to a human.","kb_no_current_evidence"],
+ ["Simplified Chinese committed no-match","如果你无法回答这个问题，就请转人工客服。","kb_no_current_evidence"]
+])test("P1 R3 satisfied condition uses original R1 exactly once: "+label,async()=>{
+ const f=fixture(utterance,{source:uuid(9812),history:committedUnansweredHistory(route),handoffSetsHumanControl:true});
+ const r=await f.run();
+ assert.equal(r.body.escalation_rule,"R1",JSON.stringify(r));
+ assert.equal(r.body.handoff_persisted,true);
+ assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,1);
+ assert.equal(f.requests.filter(x=>x.url.endsWith(":generateContent")||x.url.includes("/rag/context-search")).length,0);
+ assert.equal((await f.run()).body.skipped,"human_handling");
+ assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,1);
+});
+for(const [label,utterance,mutate] of [
+ ["no preceding receipt",rt05CurrentRequest,h=>h.splice(0)],
+ ["foreign tenant",rt05CurrentRequest,h=>h[0].metadata.b2_expected_company_id=uuid(777)],
+ ["wrong source",rt05CurrentRequest,h=>h[0].metadata.b2_source_message_id=uuid(777)],
+ ["forged content hash",rt05CurrentRequest,h=>h[0].metadata.b2_response_hash=hash("different")],
+ ["successful intervening answer",rt05CurrentRequest,h=>h[0].metadata.response_route="direct_answer"],
+ ["intervening visitor",rt05CurrentRequest,h=>h.unshift({...h[1],id:uuid(9813),created_at:"2026-10-14T00:59:02.000Z"})],
+ ["future", "如果你下次答唔到就幫我轉真人",()=>{}],
+ ["different condition", "If the booking fails, connect me to a human",()=>{}],
+ ["negation","如果你答唔到就唔好轉真人",()=>{}],
+ ["reported quotation","佢話「你答唔到就幫我轉真人」",()=>{}]
+])test("P1 R3 unproven or excluded condition never authorizes R1: "+label,async()=>{
+ const f=fixture(utterance,{source:uuid(9812),history:committedUnansweredHistory("kb_no_current_evidence",mutate),
+   semantic:providerWire({intent:"other",requested_facts:[]},"NO_STATE_CHANGE")});
+ await f.run();
+ assert.equal(f.requests.filter(x=>x.url.endsWith("/rpc/explicit_handoff_tx")).length,0);
+});

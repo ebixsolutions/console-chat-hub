@@ -416,6 +416,56 @@ function isHandoffIntent(text: string): boolean {
   return classifyHandoffIntent(text).explicit_request;
 }
 
+
+// A conditional human request becomes present-tense only when the immediately
+// preceding source-bound server reply proves that the answer was not obtained.
+// No standalone conditional/future classifier or escalation rule is changed.
+function unansweredHandoffConsequent(text: string): string | null {
+  const normalized = text.normalize("NFKC").trim();
+  const original = classifyHandoffIntent(normalized);
+  if (original.reason !== "conditional_or_future" || original.pure_negation ||
+    /[「」『』“”"]/u.test(normalized) ||
+    /(?:之後|之后|稍後|稍后|遲啲|迟点|明天|聽日|下次|將來|将来|\b(?:later|tomorrow|next time|in the future|hypothetically)\b)/iu.test(normalized)) return null;
+  const prefix = /^(?:(?:如果|若果|若)\s*)?(?:你)?\s*(?:答唔到|答不到|查唔到|查不到|未能回答|無法回答|无法回答|未能確認|未能确认)(?:\s*(?:呢個問題|這個問題|这个问题|我嘅問題|我的問題|我的问题))?\s*(?:,\s*(?:就|便)?|就|便)\s*/u.exec(normalized) ??
+    /^if\s+you\s+(?:cannot|can['’]t|are unable to)\s+(?:answer|confirm|verify)(?:\s+(?:this|that|it|the question))?\s*(?:,\s*(?:then\s+)?|\s+then\s+)/iu.exec(normalized);
+  if (!prefix) return null;
+  const consequent = normalized.slice(prefix[0].length).trim();
+  if (!consequent || /(?:如果|若果|假如|假設|假设|除非|\b(?:if|unless|in case)\b)/iu.test(consequent)) return null;
+  const action = classifyHandoffIntent(consequent);
+  return action.explicit_request && !action.pure_negation ? consequent : null;
+}
+
+async function hasCommittedUnansweredHandoffContext(
+  text: string, sourceId: string, conversationId: string, companyId: string,
+  history: readonly {id?: unknown; conversation_id?: unknown; role?: unknown;
+    content?: unknown; is_recalled?: unknown; metadata?: unknown}[],
+): Promise<boolean> {
+  if (!unansweredHandoffConsequent(text) || !sourceId || !companyId || history.length < 3) return false;
+  const [current, reply, prior] = history;
+  // Existing server-side newest-first, source-bounded query. No scanning past
+  // an intervening visitor, agent or successful answer.
+  if ([current, reply, prior].some(row => row.conversation_id !== conversationId || row.is_recalled !== false) ||
+    current.id !== sourceId || current.role !== "visitor" || current.content !== text ||
+    reply.role !== "assistant" || prior.role !== "visitor" ||
+    typeof prior.id !== "string" || !prior.id || typeof reply.id !== "string" || !reply.id ||
+    new Set([sourceId, reply.id, prior.id]).size !== 3 ||
+    typeof reply.content !== "string" || !reply.content.trim()) return false;
+  const meta = reply.metadata as Record<string, unknown> | null;
+  if (!meta || typeof meta !== "object" ||
+    meta.b2_commit_source !== "commit_ai_reply_tx" || meta.b2_source_message_id !== prior.id ||
+    meta.b2_expected_company_id !== companyId || typeof meta.b2_response_hash !== "string") return false;
+  const failure = meta.execution_failure as Record<string, unknown> | null;
+  if (!failure || typeof failure !== "object") return false;
+  const unanswered = (meta.response_route === "kb_no_current_evidence" &&
+    failure.code === "KB_NO_MATCH" && failure.stage === "kb_no_match") ||
+    (meta.response_route === "terminal_failure_recovery" && meta.generation_success === false &&
+      typeof failure.code === "string" && failure.code.length > 0 && failure.source_message_id === prior.id);
+  if (!unanswered) return false;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(reply.content));
+  const actualHash = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
+  return actualHash === meta.b2_response_hash;
+}
+
 function detectHandoffLanguage(text: string): "zh-TW" | "zh-CN" | "en" | null {
   const classified = classifyHandoffIntent(text);
   return classified.explicit_request ? classified.language : null;
@@ -2828,7 +2878,7 @@ async function legacyGenerateReply(
   // W1: the legacy branch has no separate semantic interpreter. For a bounded
   // unrecognized human-control utterance reuse the original orchestration
   // understanding path, never a new Function or model-only transfer.
-  if(w1HumanPossible(lastVisitorMsg)) return await orchestrationGenerateReply(conversation_id,
+  if(w1HumanPossible(lastVisitorMsg) || unansweredHandoffConsequent(lastVisitorMsg) !== null) return await orchestrationGenerateReply(conversation_id,
     {ENABLE_KB:false,ENABLE_COACH:false,ENABLE_C360:false,ENABLE_TOOL_EXEC:false},source_message_id,requestSignal);
   const handoffLang = detectHandoffLanguage(lastVisitorMsg);
 
@@ -4452,7 +4502,10 @@ async function orchestrationGenerateReply(
     _h1LastMsg,
     _pr5HistoryRows ?? [],
   );
-  const _explicitHandoffRequested = isHandoffIntent(_h1LastMsg);
+  const _contextualR1 = !_pr5HistoryReadError && typeof conversation.company_id === "string" &&
+    await hasCommittedUnansweredHandoffContext(_h1LastMsg, _h1SourceMessageId, conversation_id,
+      conversation.company_id, _pr5HistoryRows ?? []);
+  const _explicitHandoffRequested = isHandoffIntent(_h1LastMsg) || _contextualR1;
   // Short merchant questions use the same semantic and evidence path as paraphrases.
   // P0 critical preflight: E2 must run before customer-context and generic clarification early returns.
   const _criticalE2ExpectedTenantId =
@@ -4541,7 +4594,8 @@ async function orchestrationGenerateReply(
       source_message_id,
       _h1LastMsg,
       {},
-      _w1PreferredLocale ? {source_message_id:_h1SourceMessageId,locale:_w1PreferredLocale}:undefined,
+      (_contextualR1 || _w1PreferredLocale) ?
+        {source_message_id:_h1SourceMessageId,locale:_w1PreferredLocale ?? w1Locale(_h1LastMsg)}:undefined,
     );
     if (earlyR1) return earlyR1;
   }
