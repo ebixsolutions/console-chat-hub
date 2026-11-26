@@ -189,3 +189,22 @@ test('R2 archived sourced stubs preserve scope and absent rescheduling rule',()=
   for(const d of i.options.originalRagResponse.selected_documents)assert(d.document_id.startsWith('synthetic-sourced-'+row.id.split('-')[0].toLowerCase()+'-'));
  }
 });
+
+test('R2 source-bound scripted generation is present only for exact selected scripted input, not empty/wrong Reading',()=>{
+ const {rows}=loadObservationCases(fs,root);let count=0;
+ for(const row of rows)for(let t=0;t<row.turns.length;t++){
+  const pos=buildTurnInput(row,t,'scripted',fs,root),neg=buildTurnInput(row,t,'no_reading',fs,root);
+  assert.equal(neg.options.answer,'');assert.equal(neg.options.verifierGrounded,false);
+  assert.equal(neg.proof.generation.status,'NOT_SUPPLIED');
+  if(pos.proof.generation.status==='SCRIPTED_DRAFT_AND_REVIEWER_NOT_REAL_MODEL'){
+   count++;assert.equal(pos.proof.generation.source_quote,row.turns[t]);
+   assert.equal(pos.proof.generation.answer_sha256,digest(pos.options.answer));
+   assert.equal(pos.proof.generation.reviewer_sha256,digest(pos.options.verifierResponses[0]));
+   assert(pos.proof.generation.required_chunk_ids.every(id=>pos.proof.kb.chunk_ids.includes(id)));
+   assert.equal(pos.options.verifierGrounded,false,'no permissive default reviewer');
+   const altered=structuredClone(row);altered.turns[t]+=' altered source';
+   assert.throws(()=>buildTurnInput(altered,t,'scripted',fs,root));
+  }
+ }
+ assert.equal(count,14);
+});

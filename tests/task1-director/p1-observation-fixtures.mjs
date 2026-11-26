@@ -1719,17 +1719,385 @@ function caseKb(row,turn,fs,root){
   response_sha256:digest(emptyKb()),document_ids:[],chunk_ids:[]}};
 }
 
+
+// R2 independently authored candidate drafts and scripted reviewer responses.
+// No generated answer is evidence of actual model understanding or Quality95.
+// Exact source quotes and source chunk IDs must match; absent input stays absent.
+const observationDrafts={
+  "SYNTHETIC-retail-merchant-topic:0": {
+    "source_quote": "你們送貨政策是甚麼？",
+    "answer": "送貨安排方面，請先選擇配送地區，再核對該區適用的送貨方式。現有說明沒有列明運費或送貨時間。",
+    "required_chunks": [
+      "synthetic-retail-instructions-v1-c1"
+    ],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "SYNTHETIC-restaurant-merchant-topic:0": {
+    "source_quote": "用餐預訂要怎樣做？",
+    "answer": "請提供預訂日期、用餐人數及飲食需要，職員核對後會另行確認。現時尚未有已確認的訂位。",
+    "required_chunks": [
+      "synthetic-restaurant-instructions-v1-c1"
+    ],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "SYNTHETIC-education-merchant-topic:0": {
+    "source_quote": "英語課程的報名方法是甚麼？",
+    "answer": "先選擇想報讀的課程，再提供偏好的上課時段；收到中心確認後才完成登記。現時未能確認名額或學費。",
+    "required_chunks": [
+      "synthetic-education-instructions-v1-c1"
+    ],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "SYNTHETIC-beauty-merchant-topic:0": {
+    "source_quote": "預約方式是甚麼？",
+    "answer": "先選擇服務類別，再提供偏好的時段，由職員回覆確認後才算預約成立。現有資料沒有提供即時空位。",
+    "required_chunks": [
+      "synthetic-beauty-instructions-v1-c1"
+    ],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "SYNTHETIC-saas-merchant-topic:0": {
+    "source_quote": "How do I set up staff scheduling?",
+    "answer": "Open Team Settings, select Schedule, then save the timezone to configure the scheduling board.",
+    "required_chunks": [
+      "synthetic-saas-instructions-v1-c1"
+    ],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "SYNTHETIC-retail-mixed-known-unknown:2": {
+    "source_quote": "我之前提過幾張書枱？另外目前每張官方售價是多少？",
+    "answer": "你之前提過三張書枱。每張港幣700元是你提過的舊資料；目前的官方售價未有可靠資料確認。",
+    "required_chunks": [],
+    "prior_quotes": [
+      "我要三張書枱。",
+      "我只記得以前有人說每張港幣700元，這是舊資料。"
+    ],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [],
+      "question_resolution": "partial",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": []
+        },
+        {
+          "demand_id": "demand-2",
+          "status": "unavailable",
+          "evidence_ids": []
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "FB-01:1": {
+    "source_quote": "餐廳接咗單未？接咗係咪就退唔到？",
+    "answer": "現有資料未能確認餐廳有冇接你呢張單。取消規則係餐廳未接單前可取消並全數退款；接單後不設取消。要先核對你呢張單嘅實際狀態。",
+    "required_chunks": [
+      "F-K1"
+    ],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "partial",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "unavailable",
+          "evidence_ids": []
+        },
+        {
+          "demand_id": "demand-2",
+          "status": "supported",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "P1:0": {
+    "source_quote": "我想換冷氣給家中兩位長者使用。預算HK$6,000，請解釋選購時應如何取捨。",
+    "answer": "可先按長者操作方便程度、房間實際需要及總預算比較，再看運行噪音、能源效益和維修保養安排。具體規格、安裝可行性及總費用須再核實。",
+    "required_chunks": [],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": []
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "P2:0": {
+    "source_quote": "我想換冷氣給家中兩位長者使用。預算HK$6,000，請解釋選購時應如何取捨。",
+    "answer": "可先按長者操作方便程度、房間實際需要及總預算比較，再看運行噪音、能源效益和維修保養安排。具體規格、安裝可行性及總費用須再核實。",
+    "required_chunks": [],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": []
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "R1:0": {
+    "source_quote": "I need 3 standing desks, date not decided. Please explain what to prepare.",
+    "answer": "Prepare the available floor space, preferred desktop dimensions and any cable-access requirements for the three desks. You can decide the date later; installation and delivery arrangements still need confirmation.",
+    "required_chunks": [],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": []
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "R2:0": {
+    "source_quote": "I need 2 shelves, date not decided. Please explain how to prepare.",
+    "answer": "Measure the intended space for the two shelves, consider what each needs to hold, and check wall or floor suitability where relevant. The date can remain undecided; confirm dimensions and any fitting requirements before ordering.",
+    "required_chunks": [],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": []
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "R3:0": {
+    "source_quote": "I need a laptop for my 2 kids. Please help compare options.",
+    "answer": "Compare the software your children need, screen and keyboard comfort, battery life, weight and durability. The right choice depends on their intended use and your budget; no specific model or price is confirmed.",
+    "required_chunks": [],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [],
+      "question_resolution": "supported",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": []
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "SYNTHETIC-b2b-wholesale-merchant-topic:0": {
+    "source_quote": "Do you have a minimum order quantity and what details do you need to prepare a wholesale quote?",
+    "answer": "For a wholesale quotation enquiry, please provide the product specification, requested carton quantity and delivery region. The available instructions do not specify a minimum order quantity or confirm price, stock or lead time.",
+    "required_chunks": [
+      "synthetic-b2b-wholesale-instructions-v1-c1"
+    ],
+    "prior_quotes": [],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [
+        "E1"
+      ],
+      "question_resolution": "partial",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "partial",
+          "evidence_ids": [
+            "E1"
+          ]
+        }
+      ],
+      "body_scope_valid": true
+    }
+  },
+  "SYNTHETIC-b2b-wholesale-mixed-known-unknown:2": {
+    "source_quote": "How many cartons did I mention, and what is the current official wholesale price?",
+    "answer": "You mentioned 120 cartons of paper cups. USD 4.20 per carton was an unverified historical figure. The current official wholesale price is not established by the available information.",
+    "required_chunks": [],
+    "prior_quotes": [
+      "We discussed 120 cartons of paper cups.",
+      "Someone mentioned USD 4.20 per carton last year; that was an unverified historical figure."
+    ],
+    "verdict": {
+      "grounded": true,
+      "unsupported_claims": [],
+      "evidence_chunk_ids": [],
+      "question_resolution": "partial",
+      "demand_resolutions": [
+        {
+          "demand_id": "demand-1",
+          "status": "supported",
+          "evidence_ids": []
+        },
+        {
+          "demand_id": "demand-2",
+          "status": "unavailable",
+          "evidence_ids": []
+        }
+      ],
+      "body_scope_valid": true
+    }
+  }
+};
+
+function caseGeneration(row,turn,mode,kb){
+ const absent={options:{answer:'',verifierGrounded:false,verifierIds:[],verifierResolution:'unsupported'},
+  proof:{status:'NOT_SUPPLIED',reason:'No model draft/reviewer fixture is supplied; empty draft and rejecting reviewer suppress hidden default answers.'}};
+ if(mode!=='scripted')return absent;
+ const item=observationDrafts[row.id+':'+turn];
+ if(!item)return absent;
+ if(row.turns[turn]!==item.source_quote||item.prior_quotes.some((q,i)=>row.turns[i]!==q))throw Error('observer_generation_source_drift:'+row.id+':'+turn);
+ if(item.required_chunks.some(id=>!kb.proof.chunk_ids.includes(id)))throw Error('observer_generation_kb_scope_drift:'+row.id+':'+turn);
+ const verdict=structuredClone(item.verdict);
+ return {options:{answer:item.answer,verifierResponses:[verdict],verifierGrounded:false,
+  verifierIds:[],verifierResolution:'unsupported'},
+  proof:{status:'SCRIPTED_DRAFT_AND_REVIEWER_NOT_REAL_MODEL',source_quote:item.source_quote,
+   source_quote_sha256:digest(item.source_quote),prior_quote_sha256:item.prior_quotes.map(digest),
+   required_chunk_ids:item.required_chunks,source_kb_response_sha256:kb.proof.response_sha256,
+   answer_sha256:digest(item.answer),reviewer_sha256:digest(verdict),
+   reason:'Independently authored candidate and reviewer fixture; original runtime and B2 still decide, never a human or real-model quality verdict.'}};
+}
+
 export function buildTurnInput(row,turn,mode,fs,root){
  const proposed=mode==='scripted'||mode==='wrong_reading'?proposedReading(row,turn,mode==='wrong_reading'):{
   status:'MISSING_READING_NEGATIVE',coverage:'EMPTY_PROVIDER_READING',source_quote:row.turns[turn]};
  const kb=caseKb(row,turn,fs,root);
+ const generation=caseGeneration(row,turn,mode,kb);
  const reading={...proposed,semantic_sha256:proposed.semantic?digest(proposed.semantic):null};
  delete reading.semantic;
  return {options:{originalPreview:true,fullChain:true,captureEvidence:true,handoffSetsHumanControl:true,
   // Passing originalRagResponse selects the EXISTING isolated preview permit.
   originalRagResponse:kb.response,
   ...(proposed.semantic?{semantic:proposed.semantic}:{semanticRaw:''}),
-  answer:'',verifierGrounded:false,verifierIds:[],verifierResolution:'unsupported'},
-  proof:{reading,kb:kb.proof,generation:{status:'NOT_SUPPLIED',
-   reason:'No model draft/reviewer fixture is supplied; empty draft and rejecting reviewer suppress hidden default answers.'}}};
+  ...generation.options},
+  proof:{reading,kb:kb.proof,generation:generation.proof}};
 }
