@@ -46,7 +46,80 @@ export function loadObservationCases(fs,root){
  return {rows,manifest_sha256:digest(raw),case_ids_sha256:digest(rows.map(row=>row.id))};
 }
 
-function proposedReading(row,turn){
+// R2 correction/cancel/defer family. Independently transcribed from the six
+// original Visitor journeys, never from must/expected. The inactive clause is
+// carried as source evidence, not as an invented second entity or committed
+// status. Only the unchanged handler can accept or reject the proposal.
+const correctionReadings=Object.freeze({
+ "SYNTHETIC-retail-correction": {
+  "change": "更正，只保留兩張書枱，第三張暫時取消。",
+  "count": "兩張",
+  "value": 2,
+  "inactive": "第三張暫時取消",
+  "question": "現在保留幾張書枱？哪一張取消了？"
+ },
+ "SYNTHETIC-restaurant-correction": {
+  "change": "更正，只保留兩份套餐，第三份取消。",
+  "count": "兩份",
+  "value": 2,
+  "inactive": "第三份取消",
+  "question": "現在保留幾份套餐？取消了哪一份？"
+ },
+ "SYNTHETIC-education-correction": {
+  "change": "更正，只保留兩課，第三課延後再談。",
+  "count": "兩課",
+  "value": 2,
+  "inactive": "第三課延後再談",
+  "question": "我現在保留幾課？哪課只是未來討論？"
+ },
+ "SYNTHETIC-beauty-correction": {
+  "change": "更正，只保留兩堂療程，第三堂暫緩。",
+  "count": "兩堂",
+  "value": 2,
+  "inactive": "第三堂暫緩",
+  "question": "目前保留幾堂？哪一堂暫緩？"
+ },
+ "SYNTHETIC-saas-correction": {
+  "change": "Correction: keep two licenses; postpone the third.",
+  "count": "two licenses",
+  "value": 2,
+  "inactive": "postpone the third",
+  "question": "How many licenses are currently retained, and what was postponed?"
+ },
+ "SYNTHETIC-b2b-wholesale-correction": {
+  "change": "Correction: keep 60 cartons under review and postpone the other 60 cartons.",
+  "count": "60 cartons under review",
+  "value": 60,
+  "inactive": "postpone the other 60 cartons",
+  "question": "How many cartons remain under review, and how many are postponed?"
+ }
+});
+export const hasCorrectionReading=row=>Object.hasOwn(correctionReadings,row.id);
+function correctionReading(row,turn,subject,language,wrong=false){
+ const fixed=correctionReadings[row.id],text=row.turns[turn];
+ if(!fixed||turn!==1&&turn!==2)return null;
+ if(!subject||row.turns[1]!==fixed.change||row.turns[2]!==fixed.question||
+    !row.turns[0].includes(subject.name)||!row.turns[0].includes(subject.unit)||
+    !fixed.change.includes(fixed.count)||!fixed.change.includes(fixed.inactive))
+  throw Error('observer_correction_reading_source_drift:'+row.id);
+ const prior={ref:subject.name,source:'prior_turn',confidence:.98};
+ const proof={status:wrong?'WRONG_READING_NEGATIVE':'SCRIPTED_PROPOSAL',
+  source_quote:text,prior_subject_quote:row.turns[0],
+  coverage:wrong?(turn===1?'INTENTIONAL_WRONG_QUANTITY':'INTENTIONAL_WRONG_REFERENT'):
+   turn===1?'SOURCE_EXPLICIT_RETAINED_COUNT_AND_INACTIVE_CLAUSE':'CURRENT_AND_INACTIVE_READ_ONLY_REQUEST'};
+ if(turn===1)return {...proof,retained_count_quote:fixed.count,inactive_clause_quote:fixed.inactive,
+  semantic:wire({language,intent:'customer_correction',customer_correction:true,
+   requested_facts:[],referents:[prior],
+   entities:[{name:subject.name,kind:subject.kind,unit:subject.unit,quantity:wrong?99999:fixed.value,confidence:.98}]},
+   'SET_QUANTITY')};
+ // Ask for both current quantity and the inactive member/status without
+ // providing either expected value or any answer/merchant evidence.
+ return {...proof,semantic:wire({language,intent:'customer_fact_recall',
+  requested_facts:['quantity','entity_status'],referents:[wrong?{...prior,ref:'__P1_WRONG_SUBJECT__'}:prior]},
+  'ASK_FACT')};
+}
+
+function proposedReading(row,turn,wrong=false){
  const text=row.turns[turn],language=row.domain==='saas'||row.domain==='b2b-wholesale'?'en':'zh-TW';
  if(row.kind==='probe')return {semantic:{operation:row.reading.operation,intent:row.reading.intent,confidence:.98,
   entities:[{name:row.reading.name,kind:row.reading.kind,quantity:row.reading.quantity,confidence:.98}],
@@ -56,6 +129,8 @@ function proposedReading(row,turn){
  if(humanTurn===turn)return {semantic:wire({language:'zh-TW',intent:'request_human_now',requested_facts:[]},'NO_STATE_CHANGE'),
   status:'SCRIPTED_PROPOSAL',source_quote:text,coverage:'CURRENT_EXPLICIT_HUMAN_REQUEST'};
  const subject=subjects[row.domain];
+ if(hasCorrectionReading(row)&&turn>0)return correctionReading(row,turn,subject,language,wrong);
+ if(wrong)throw Error('observer_wrong_reading_outside_named_family:'+row.id);
  if(subject&&turn===0&&['-recall','-correction','-mixed-known-unknown'].some(suffix=>row.id.endsWith(suffix))){
   // These fixed proposals are separate from the original visitor corpus. Each
   // entity name/unit is checked against the exact current source before use.
@@ -105,7 +180,7 @@ function caseKb(row,fs,root){
 }
 
 export function buildTurnInput(row,turn,mode,fs,root){
- const proposed=mode==='scripted'?proposedReading(row,turn):{
+ const proposed=mode==='scripted'||mode==='wrong_reading'?proposedReading(row,turn,mode==='wrong_reading'):{
   status:'MISSING_READING_NEGATIVE',coverage:'EMPTY_PROVIDER_READING',source_quote:row.turns[turn]};
  const kb=caseKb(row,fs,root);
  const reading={...proposed,semantic_sha256:proposed.semantic?digest(proposed.semantic):null};
