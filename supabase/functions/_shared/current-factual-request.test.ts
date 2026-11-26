@@ -3,6 +3,8 @@ import { renderUnverifiedFactualNextStep } from "./factual-request-context.ts";
 import { scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
 import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state-core.ts";
 import { createEmptyConversationCommerceState } from "./commerce-state-contract.ts";
+import { buildCanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { resolveStructuredMixedQuantityBinding } from "./conversation-recall.ts";
 import type { CommerceSemanticDemand, CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { decodeCommerceSemanticWire, recoverSourceQuotedReadOnlyFactualFrame, rebindSourceQuotedReadOnlyDemand, COMMERCE_SEMANTIC_SYSTEM_PROMPT } from "./commerce-semantic-frame.ts";
 import { DecisionContextLimitError } from "./bounded-decision-context.ts";
@@ -1583,6 +1585,27 @@ Deno.test("Mixed customer recall and per-unit service charge bind the literal sh
  assert(stale.needs_subject_clarification||!stale.kb_required,JSON.stringify(stale));
 });
 
+// Test-only wiring of the already present scoped Reading/Commerce/Memory/source
+// contract. Use the canonical Memory builder rather than supplying a fabricated
+// resolved subject or quantity receipt. Original cases and oracles remain intact.
+function mixedQuantityProofInput(question:string,recall:string,semantic:CommerceSemanticFrame,
+  commerce:ReturnType<typeof createEmptyConversationCommerceState>,history:Array<{id:string;role:"visitor";content:string}>) {
+ const scope={conversation_id:"mixed-test-ticket",company_id:"company",source_message_id:"current"};
+ const revision=1;
+ const newest_first=[{id:scope.source_message_id,role:"visitor" as const,content:question},...history];
+ const memory=buildCanonicalConversationMemory({...scope,commerce_state:commerce,commerce_state_revision:revision,
+   newest_first,visitor_turn_count:newest_first.length,source_created_at:"2026-11-26T00:00:00.000Z",next_memory_revision:1,
+   source_factual_turn:true});
+ const structured={...scope,question:recall,memory,
+   commerce:{...scope,source_message_id:history[history.length-1].id,revision,state:commerce},
+   quantity_reading:{...scope,commerce_revision:revision,frame:semantic,full_question:question},
+   trusted_visitor_source_status:"verified" as const,
+   trusted_visitor_source_rows:history.map(({id,content})=>({id,content}))};
+ const proof=resolveStructuredMixedQuantityBinding(structured);
+ const request_decision=resolveCustomerRequestDecision(question,semantic,history,proof?.quote);
+ return {memory,structured_mixed_quantity_recall:structured,request_decision,proof};
+}
+
 Deno.test("Mixed current price facets never become subjects across units and languages",()=>{
  const cases=[
   ["書枱","張","我要三張書枱。","我之前提過幾張書枱？","另外目前每張官方售價是多少？",3],
@@ -1598,9 +1621,11 @@ Deno.test("Mixed current price facets never become subjects across units and lan
   semantic.referents=[{ref:name,source:"prior_turn",confidence:.98}];
   const commerce=createEmptyConversationCommerceState();
   commerce.entities=[{entity_id:"generic:"+name,category:"service",quantity,status:"tentative",
-   attributes:{product_name:name,unit},constraints:{},provenance:{source_type:"customer",source_message_id:"first"}}];
-  const input={question,semantic,commerce,source_message_id:"current",trusted_company_id:"company",
-   history:[{id:"old-price",role:"visitor",content:"A historical price was 987654."},{id:"first",role:"visitor",content:first}]};
+   attributes:{product_name:name,unit,quantity_basis:"customer_explicit"},constraints:{},provenance:{source_type:"customer",source_message_id:"first"}}];
+  const history=[{id:"old-price",role:"visitor" as const,content:"A historical price was 987654."},{id:"first",role:"visitor" as const,content:first}];
+  const {proof,...scoped}=mixedQuantityProofInput(question,recall,semantic,commerce,history);
+  assert(proof?.subject===name&&proof.unit===unit,"source-bound quantity proof missing");
+  const input={question,semantic,commerce,source_message_id:"current",trusted_company_id:"company",history,...scoped};
   const before=JSON.stringify(commerce),result=resolveCurrentFactualRequest(input);
   const merchant=result.demands.find(d=>d.source_type==="product");
   equal(merchant?.subjects,[name]);
@@ -1615,12 +1640,15 @@ Deno.test("Mixed unit-only recall cannot select one of two compatible active ent
  semantic.referents=[{ref:"paper cups",source:"prior_turn",confidence:.98}];
  const commerce=createEmptyConversationCommerceState();
  commerce.entities=[
-  {entity_id:"cups",category:"product",quantity:120,status:"tentative",attributes:{product_name:"paper cups",unit:"cartons"},constraints:{},provenance:{source_type:"customer",source_message_id:"cups"}},
-  {entity_id:"plates",category:"product",quantity:80,status:"tentative",attributes:{product_name:"paper plates",unit:"cartons"},constraints:{},provenance:{source_type:"customer",source_message_id:"plates"}}
+  {entity_id:"cups",category:"product",quantity:120,status:"tentative",attributes:{product_name:"paper cups",unit:"cartons",quantity_basis:"customer_explicit"},constraints:{},provenance:{source_type:"customer",source_message_id:"cups"}},
+  {entity_id:"plates",category:"product",quantity:80,status:"tentative",attributes:{product_name:"paper plates",unit:"cartons",quantity_basis:"customer_explicit"},constraints:{},provenance:{source_type:"customer",source_message_id:"plates"}}
  ];
- const result=resolveCurrentFactualRequest({question,semantic,commerce,source_message_id:"current",trusted_company_id:"company",history:[
-  {id:"cups",role:"visitor",content:"120 cartons of paper cups"},{id:"plates",role:"visitor",content:"80 cartons of paper plates"}
- ]});
+ const history=[{id:"cups",role:"visitor" as const,content:"120 cartons of paper cups"},{id:"plates",role:"visitor" as const,content:"80 cartons of paper plates"}];
+ const bare=resolveCurrentFactualRequest({question,semantic,commerce,source_message_id:"current",trusted_company_id:"company",history});
+ assert(bare.needs_subject_clarification||!bare.kb_required,JSON.stringify(bare));
+ const {proof,...scoped}=mixedQuantityProofInput(question,recall,semantic,commerce,history);
+ equal(proof,null,"ambiguous unit must not be selected by model reference");
+ const result=resolveCurrentFactualRequest({question,semantic,commerce,source_message_id:"current",trusted_company_id:"company",history,...scoped});
  assert(result.needs_subject_clarification||!result.kb_required,JSON.stringify(result));
 });
 

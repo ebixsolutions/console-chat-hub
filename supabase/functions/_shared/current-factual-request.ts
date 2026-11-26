@@ -155,17 +155,6 @@ function sourceOmittedEnglishPriceQuestion(quote:string):boolean {
   return /^(?:what\s+is|what's)\s+(?:(?:the|their|its)\s+)?(?:(?:current|official|wholesale|retail|published)\s+){0,4}(?:price|cost|fee|charge)$/iu
     .test(clean(quote).replace(/[?？。.!！]+$/gu,"").trim());
 }
-function sourceQuantityRecallUnit(quote:string):string|null {
-  const m=/^how\s+many\s+([\p{L}-]{1,32})\s+did\s+(?:i|we)\s+mention(?:\s+earlier)?[?？]?$/iu.exec(clean(quote));
-  return m?.[1]??null;
-}
-function sourceQuantityRecallAlias(quote:string,unit:string):string|null {
-  const m=/^我(?:哋|們|们)?(?:之前|先前|早前|曾經|曾经)?(?:提過|提过|提到|講過|讲过|說過|说过)\s*(?:幾|几|多少)\s*([\p{L}\p{N}\s-]{2,88})[?？]?$/u.exec(clean(quote));
-  const tail=m?.[1]?.trim();
-  if(!tail||!tail.startsWith(unit))return null;
-  const alias=tail.slice(unit.length).trim();
-  return alias.length>=2?alias:null;
-}
 function currentFacets(question: string): string[] {
   const text = currentFacetText(question);
   const facts: string[] = [...productFactualFacets(text)];
@@ -1173,13 +1162,14 @@ function sourceBoundMixedUnitCharge(input:ResolveCurrentFactualRequestInput,dema
   const literalUnit=sourceUnitChargeQuestion(quote);
   const omittedEnglish=sourceOmittedEnglishPriceQuestion(quote);
   const structured=input.structured_mixed_quantity_recall;
-  const structuredFacet=Boolean(structured && (literalUnit||omittedEnglish) && recallQuote &&
-    input.request_decision?.kind==="mixed" && demand.source_type==="product");
-  const unit=literalUnit??(omittedEnglish&&recallQuote?
-    (structuredFacet ? resolveStructuredMixedQuantityBinding(structured!)?.unit??null : sourceQuantityRecallUnit(recallQuote)):null);
+  const structuredFacet=Boolean(structured && (literalUnit||omittedEnglish) &&
+    proposed.length===2 && demand.source_type==="product" && proposed.some(d=>d!==demand &&
+      d.source_type==="general" && d.requested_facts.length===1 && d.requested_facts[0]==="quantity" &&
+      clean(d.source_quote)===clean(structured.question)));
   if(structuredFacet){
     const proof=resolveStructuredMixedQuantityBinding(structured!);
-    if(!proof||!unit||norm(proof.unit)!==norm(unit)||!validSubject(proof.subject)||
+    if(!recallQuote||input.request_decision?.kind!=="mixed"||
+        !proof||literalUnit&&norm(proof.unit)!==norm(literalUnit)||!validSubject(proof.subject)||
         structured!.company_id!==input.trusted_company_id||structured!.source_message_id!==input.source_message_id||
         clean(structured!.quantity_reading?.full_question)!==full||clean(proof.quote)!==clean(recallQuote)||
         clean(proof.merchant_quote)!==quote||!sameCanonicalJson(structured!.commerce?.state,input.commerce)||
@@ -1200,6 +1190,15 @@ function sourceBoundMixedUnitCharge(input:ResolveCurrentFactualRequestInput,dema
     return {bindings:[{subject:proof.subject,source_message_id:input.source_message_id??null,customer_text:full,current:true}],
       question:proof.subject+" "+quote,unresolved:false};
   }
+  // A literal current subject and explicit merchant unit can still locate an
+  // existing named read target for compatibility callers. They are not a
+  // quantity receipt. Omitted subjects require the scoped proof above.
+  const unit=literalUnit;
+  // An omitted English price facet cannot select its subject from a bare
+  // remembered-unit phrase or from model references without scoped proof.
+  if(!unit&&omittedEnglish&&recallQuote&&input.request_decision?.kind==="mixed"&&
+      proposed.length===2&&demand.source_type==="product")
+    return {bindings:[],question:quote,unresolved:true};
   if(!unit||!recallQuote||input.request_decision?.kind!=="mixed"||!frame||
       !input.trusted_company_id||!input.source_message_id||input.memory&&input.memory.company_id!==input.trusted_company_id||
       proposed.length!==2||demand.source_type!=="product"||frame.operation!=="ASK_FACT"||
@@ -1212,18 +1211,16 @@ function sourceBoundMixedUnitCharge(input:ResolveCurrentFactualRequestInput,dema
   if(!sibling||sibling.source_type!=="general"||sibling.ambiguity.is_ambiguous||sibling.customer_correction||
       sibling.explicit_negations.length||sibling.requested_facts.length!==1||
       !["quantity","current_quantity"].includes(sibling.requested_facts[0]))return null;
-  const alias=literalUnit?sourceQuantityRecallAlias(sibling.source_quote,unit):null;
-  // Resolve uniqueness from customer text, stored units and original visitor
-  // sources BEFORE checking model refs. A model cannot select between two
-  // equally compatible active customer entities.
+  // Resolve uniqueness from a literal full subject, stored unit and original
+  // visitor source BEFORE checking model refs. No sentence or suffix alias
+  // selects a subject for an omitted reference.
   const selected=(input.commerce?.entities??[]).flatMap(e=>{
     const name=clean(e.attributes.product_name??e.model??e.attributes.name);
     const sid=e.provenance.source_message_id;
     const literalSubject=Boolean(literalFactualSubject(sibling.source_quote,[name]));
-    const sourceAlias=Boolean(alias&&norm(name).endsWith(norm(alias)));
     if(!validSubject(name)||INACTIVE.has(e.status)||e.provenance.source_type!=="customer"||
         !sid||sid===input.source_message_id||norm(e.attributes.unit as string)!==norm(unit)||
-        !(literalSubject||sourceAlias||omittedEnglish&&sourceQuantityRecallUnit(sibling.source_quote))||
+        !literalSubject||
         explicitlyNegatesSubject(sibling.source_quote,name))return [];
     const prior=(input.history??[]).find(row=>row.id===sid&&CUSTOMER.has(String(row.role??"").toLowerCase()));
     if(!prior||!literalFactualSubject(clean(prior.content),[name]))return [];
