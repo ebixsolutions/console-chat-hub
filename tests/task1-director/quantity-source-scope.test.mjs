@@ -370,3 +370,18 @@ for (const c of [
   assert.equal(await buildVerifiedPartialUnitStatusAnswer(db(snapshot),mixed,receipt),null);
  });
 }
+
+// R4 regression: identical customer source, unit and frame must not choose
+// a different quantity merely because the canonical category has changed.
+test('source-bound specification allocation is category-independent',()=>{
+ for(const category of ['air_conditioner','generic_product','water_pump']){
+  const f=fixture([category,'Customer item','部']);f.state.entities[0].quantity=3;
+  for(const reading of [null,frame(f,{operation:'SET_QUANTITY',quantity:2,topic:category,facts:[]})]){
+   const next=apply(f,'改做一部1匹，一部1.5匹。',reading);
+   assert.equal(next.entities[0].quantity,2,category);assert.equal(next.entities[0].provenance.source_message_id,'current-customer-turn');
+  }
+  const wrong=frame(f,{operation:'SET_QUANTITY',quantity:2,topic:'another_topic',facts:[]});
+  assert.equal(apply(f,'改做一部1匹，一部1.5匹。',wrong).entities[0].quantity,3);
+  assert.equal(apply(f,'其他物品改做一部1匹，一部1.5匹。',null).entities[0].quantity,3);
+ }
+});

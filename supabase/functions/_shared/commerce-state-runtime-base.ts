@@ -1287,12 +1287,54 @@ function parseCount(text: string): number | null {
   return countTokenValue(m[1]);
 }
 
-/** Same source parser used by the existing specification-allocation reducer.
- * The numbers before 部/台 count items; the following 匹 values are attributes. */
-const EXPLICIT_HORSEPOWER_ALLOCATION = /([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台)\s*\d+(?:\.\d+)?\s*匹/giu;
-function parseExplicitHorsepowerAllocationQuantity(text: string): number | null {
-  const units = [...clean(text).matchAll(EXPLICIT_HORSEPOWER_ALLOCATION)];
-  return units.length > 1 ? units.reduce((sum, match) => sum + (countTokenValue(match[1]) ?? 0), 0) : null;
+/** Source-owned item counters and repeated literal specification units.
+ * A category name, model or industry must never select a quantity target.
+ * The dimension numbers are attributes, not count multipliers. */
+function specificationAllocationPattern(unit: unknown): RegExp | null {
+  if (typeof unit !== "string" || unit !== unit.trim() ||
+      !/^[\p{L}\p{M}][\p{L}\p{M}\p{N} '\/-]{0,63}$/u.test(unit)) return null;
+  const escaped = unit.replace(/[.*+?^$\x7b\x7d()|[\]\\]/g, "\\$&");
+  return new RegExp("("+COUNT_TOKEN+")\\s*"+escaped+"\\s*\\d+(?:\\.\\d+)?\\s*([\\p{L}\\p{M}%°]{1,12})(?=$|[\\s,，。;；.!?！？])","giu");
+}
+function sourceBoundSpecificationAllocation(input: CommerceRuntimeInput, state: ConversationCommerceState):
+  {entity_id:string;quantity:number}|null {
+  if (!input.company_id || !input.conversation_id || !input.source_message_id ||
+      !detectQuantityCorrectionSignal(input.text) || isReadOnlyCommerceQuestion(input.text)) return null;
+  const active=state.entities.filter(e=>!["cancelled","deferred","superseded"].includes(e.status));
+  if(active.length!==1)return null;
+  const target=active[0],pattern=specificationAllocationPattern(target.attributes.unit);
+  if(!pattern||target.provenance.source_type!=="customer"||!target.provenance.source_message_id)return null;
+  const text=clean(input.text);
+  const matches=[...text.matchAll(pattern)];
+  if(matches.length<2 || new Set(matches.map(m=>m[2].normalize("NFKC").toLowerCase())).size!==1)return null;
+  const counts=matches.map(m=>countTokenValue(m[1]));
+  if(counts.some(n=>n===null||!Number.isSafeInteger(n)||n<1))return null;
+  const quantity=counts.reduce<number>((sum,n)=>sum+(n??0),0);
+  if(quantity>100000)return null;
+  const labels=sourceOwnedSubjectLabels(target);
+  const named=state.entities.filter(e=>sourceOwnedSubjectLabels(e).some(label=>matchesReferenceLabel(text,label)));
+  if(named.some(e=>e.entity_id!==target.entity_id))return null;
+  const frame=input.semantic_frame;
+  if(frame){
+    if(frame.confidence<0.72||frame.ambiguity.is_ambiguous||frame.additive||
+       !["SET_QUANTITY","UPDATE_ITEM"].includes(frame.operation)||
+       frame.explicit_negations.length||frame.requested_facts.length||
+       (frame.demands??[]).some(d=>d.explicit_negations.length||d.source_type!=="general")||
+       frame.entities.length!==1)return null;
+    const item=frame.entities[0],normalize=(v:unknown)=>clean(v).toLowerCase().replace(/[_\s-]+/g,"_");
+    if(item.confidence<0.72||item.entity_ref!==target.entity_id||
+       item.quantity!==quantity||item.unit!==target.attributes.unit||
+       (normalize(frame.topic)&&normalize(state.current_topic)&&normalize(frame.topic)!==normalize(state.current_topic))||
+       frame.referents.some(r=>r.confidence<0.72||r.ref!==target.entity_id))return null;
+  }
+  // Match the complete current source, not only the numerals; unrelated nouns,
+  // other operations and unallocated context cannot borrow a canonical count.
+  let residue=text.replace(pattern,"");
+  for(const label of labels)if(matchesReferenceLabel(residue,label))
+    residue=residue.replace(new RegExp(label.replace(/[.*+?^$\x7b\x7d()|[\]\\]/g,"\\$&"),"giu"),"");
+  residue=residue.replace(/(?:可唔可以|可不可以|可以|麻煩|麻烦|請|请|幫我|帮我|將|将|把|改(?:做|成|為|为|返)?|更正|另外|另|要|先|就好|便可|即可|嗎|吗|呢|同埋|同|及|\b(?:please|actually|change|make|it|to|and)\b)/giu,"")
+    .replace(/[\s:：,，.。;；!！?？]+/gu,"");
+  return residue ? null : {entity_id:target.entity_id,quantity};
 }
 
 function looksInterrogative(text: string): boolean {
@@ -2024,11 +2066,10 @@ function deriveA3RuntimeEvents(
 
   // Explicit machine/spec allocations provide their own total; never carry
   // forward a room-plan default or treat the first allocation as the total.
-  const specificationQuantity = parseExplicitHorsepowerAllocationQuantity(text);
-  const allocationTarget = previous.entities.filter(e=>e.category === "air_conditioner" && !["cancelled","deferred"].includes(e.status));
-  if (correction && specificationQuantity !== null && allocationTarget.length === 1) {
-    events.push({type:"SET_ENTITY_QUANTITY",entity_id:allocationTarget[0].entity_id,
-      quantity:specificationQuantity,provenance});
+  const specificationAllocation = sourceBoundSpecificationAllocation(input, previous);
+  if (specificationAllocation) {
+    events.push({type:"SET_ENTITY_QUANTITY",entity_id:specificationAllocation.entity_id,
+      quantity:specificationAllocation.quantity,provenance});
   }
 
   if (
@@ -2637,6 +2678,11 @@ function hasSourceBoundQuantityMutation(
       ["SET_QUANTITY", "UPDATE_ITEM"].includes(quantityReading.operation) &&
       (quantityReading.explicit_negations.length ||
         (quantityReading.demands ?? []).some(demand => demand.explicit_negations.length))) return false;
+  const allocationPattern=specificationAllocationPattern(target?.attributes.unit);
+  if(allocationPattern && [...clean(input.text).matchAll(allocationPattern)].length>=2){
+    const allocation=sourceBoundSpecificationAllocation(input,previous);
+    return allocation?.entity_id===event.entity_id && allocation.quantity===event.quantity;
+  }
   const sourceUnit = sourceBoundQuantityUnit(input, previous);
   if (sourceUnit?.entity_id === event.entity_id && sourceUnit.quantity === event.quantity) return true;
   const proposedUnit = input.semantic_frame?.entities.find(entity => entity.entity_ref === event.entity_id ||
@@ -2745,29 +2791,6 @@ function hasSourceBoundQuantityMutation(
   const countPattern = new RegExp(`(${COUNT_TOKEN})\\s*(${units})`, "giu");
   const clauses = splitCustomerOperationClauses(input.text);
   const fullTargets = namedTargets(input.text);
-  const specificationQuantity = parseExplicitHorsepowerAllocationQuantity(input.text);
-  if (specificationQuantity !== null && target?.category === "air_conditioner" &&
-    active.filter(entity => entity.category === target.category).length === 1 &&
-    topicalContinuation && detectQuantityCorrectionSignal(input.text) &&
-    !isReadOnlyCommerceQuestion(input.text) &&
-    (fullTargets.length === 0 || fullTargets.every(id => id === event.entity_id))) {
-    // Each allocation clause must contain only this subject and operation
-    // grammar. A foreign noun cannot borrow an echoed AC frame or a count.
-    const targetLabels = [...(identities.get(event.entity_id) ?? []),
-      ...CATEGORY_SPECS.filter(spec => spec.key === target.category).flatMap(spec => [...spec.aliases])];
-    const bound = clauses.filter(clause => [...clause.matchAll(EXPLICIT_HORSEPOWER_ALLOCATION)].length > 0)
-      .every(clause => {
-        let residue = clause.replace(EXPLICIT_HORSEPOWER_ALLOCATION, "");
-        for (const label of targetLabels) if (matchesReferenceLabel(residue, label)) {
-          residue = residue.replace(new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu"), "");
-        }
-        return !residue.replace(/(?:可唔可以|可不可以|可以|麻煩|麻烦|請|请|幫我|帮我|將|将|把|改(?:做|成|為|为|返)?|更正|另外|另|要|先|就好|便可|即可|嗎|吗|呢|同埋|同|及)/gu, "")
-          .replace(/[\s:：,，.。;；!！?？]+/gu, "");
-      });
-    // Reuse the source-computed aggregate, never the event/model number or
-    // the first allocation's count. Other subjects and dimensions stay bound.
-    return bound && event.quantity === specificationQuantity;
-  }
   const unitKind = (value: string): string => {
     const normalized = clean(value).toLowerCase();
     for (const [kind, pattern] of [
