@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { createHash, webcrypto } from 'node:crypto';
 import ts from 'typescript';
 import { classifyHumanServiceDiscussion, classifyHandoffIntent } from '../../supabase/functions/_shared/handoff-intent.ts';
 import { w1Locale, w1HistoryLocale } from '../../supabase/functions/_shared/human-control-w1.ts';
@@ -147,10 +148,17 @@ for (const question of immediate) test(`canonical immediate R1 retained: ${quest
 for (const question of ['CW-SUL70BA 最新價錢？', '總結之前要求', '它呢？', 'Can you repeat my requirements?'])
   test(`non-service turn retained: ${question}`, () => assert.equal(classifyHumanServiceDiscussion(question).kind, 'none'));
 
-const preflight = source.slice(source.indexOf('  const _criticalE2ExpectedTenantId ='), source.indexOf('  const _naturalCustomerIntent ='));
-async function runPreflight(question, { compliance = false, commitResult = { ok: true, idempotent: false } } = {}) {
+// Start before the real contextual-R1 decision. Do not inject an already-decided
+// explicit-request flag: exercise the same source-bound predicate as the handler.
+const preflightStart = source.indexOf('  const _contextualR1 =');
+const preflightEnd = source.indexOf('  const _naturalCustomerIntent =');
+assert.ok(preflightStart >= 0 && preflightEnd > preflightStart, 'actual contextual R1 preflight boundaries');
+const preflight = source.slice(preflightStart, preflightEnd);
+async function runPreflight(question, { compliance = false, commitResult = { ok: true, idempotent: false },
+  historyRows = [], historyReadError = false } = {}) {
   const calls = [];
-  const bindings = { question, sourceMessageId: 'source', classifyHumanServiceDiscussion, classifyHandoffIntent, w1Locale, w1HistoryLocale,
+  const bindings = { question, sourceMessageId: 'source', historyRows, historyReadError, crypto: webcrypto, TextEncoder,
+    classifyHumanServiceDiscussion, classifyHandoffIntent, w1Locale, w1HistoryLocale,
     isDirectViolentThreat, E2_LOCAL_THREAT_CLASSIFIER_VERSION: 'e2-local-threat-v1.0',
     planConversationService, renderServicePlanReply, corsHeaders: {}, Deno: { env: {} },
     isE2LiveActivationEnabled: () => true, isE1LiveActivationEnabled: () => true,
@@ -161,17 +169,17 @@ async function runPreflight(question, { compliance = false, commitResult = { ok:
       if (ctx.verified_local_risk_classification && ctx.topic_risk_level === 'high') return new Response(JSON.stringify({ rule: 'E1' }));
       return null;
     },
-    persistExplicitR1IfRequested: async (_, ticket, sourceId) => {
-      calls.push(['R1', ticket, sourceId]); return new Response(JSON.stringify({ rule: 'R1' }));
+    persistExplicitR1IfRequested: async (_, ticket, sourceId, latestMessage, options, proof) => {
+      calls.push(['R1', ticket, sourceId, latestMessage, options, proof]); return new Response(JSON.stringify({ rule: 'R1' }));
     },
     commitAiReplyWithControlGate: async (...args) => { calls.push(['B2', ...args]); return commitResult; },
     cleanupThinking: async () => {},
   };
-  const run = compile(`${functionSource('classifyAuthoritativeThreat')}\n${functionSource('classifyLocalTopicRisk')}\nasync ${functionSource('persistHumanServiceDiscussion')}\n(async () => {
-    const _h1LastMsg=question, _explicitHandoffRequested=classifyHandoffIntent(question).explicit_request;
+  const run = compile(`${functionSource('isHandoffIntent')}\n${functionSource('unansweredHandoffConsequent')}\nasync ${functionSource('hasCommittedUnansweredHandoffContext')}\n${functionSource('classifyAuthoritativeThreat')}\n${functionSource('classifyLocalTopicRisk')}\nasync ${functionSource('persistHumanServiceDiscussion')}\n(async () => {
+    const _h1LastMsg=question;
     const conversation={company_id:'tenant',status:'open',assigned_agent_id:null}, supabaseAdmin={};
     const conversation_id='ticket', source_message_id=sourceMessageId, _h1SourceMessageId=sourceMessageId;
-    const _visitorLang='zh-TW', _pr5HistoryRows=[], _pr5History={}, flags={ENABLE_KB:true};
+    const _visitorLang='zh-TW', _pr5HistoryRows=historyRows, _pr5HistoryReadError=historyReadError, _pr5History={}, flags={ENABLE_KB:true};
     ${preflight}
     return new Response(JSON.stringify({continuation:'semantic_KB_memory'}));
   })()`, bindings);
@@ -218,7 +226,53 @@ test('authoritative compliance E2 precedes a pure process response', async () =>
   assert.equal(result.rule, 'E2');
 });
 test('ordinary explicit R1 retains existing handoff adapter', async () => {
-  const { result } = await runPreflight(immediate[0]); assert.equal(result.rule, 'R1');
+  const { result, calls } = await runPreflight(immediate[0]); assert.equal(result.rule, 'R1');
+  const r1 = calls.filter(c => c[0] === 'R1');
+  assert.equal(r1.length, 1);
+  assert.deepEqual(r1[0].slice(1, 4), ['ticket', 'source', immediate[0]]);
+  assert.ok(calls.every(c => c[0] !== 'B2'));
+});
+
+// Synthetic committed-reply evidence, as in the original full Handler tests.
+// Persistence stays an external adapter; the source predicate and its SHA256
+// check run here, not an injected true/false replacement.
+const contextualRequest = '你答唔到就幫我轉真人，我搵唔到真人客服。';
+function contextualHistory() {
+  const content = '我而家未能確認呢個問題。';
+  return [
+    { id: 'source', conversation_id: 'ticket', role: 'visitor', content: contextualRequest, is_recalled: false },
+    { id: 'prior-reply', conversation_id: 'ticket', role: 'assistant', content, is_recalled: false,
+      metadata: { response_route: 'kb_no_current_evidence', b2_commit_source: 'commit_ai_reply_tx',
+        b2_source_message_id: 'prior-source', b2_expected_company_id: 'tenant',
+        b2_response_hash: createHash('sha256').update(content).digest('hex'),
+        execution_failure: { code: 'KB_NO_MATCH', stage: 'kb_no_match' } } },
+    { id: 'prior-source', conversation_id: 'ticket', role: 'visitor', content: '我買咗活動門票，可唔可以改期？', is_recalled: false },
+  ];
+}
+test('actual preflight contextual R1 requires committed prior answer failure and forwards same-source proof', async () => {
+  const { result, calls } = await runPreflight(contextualRequest, { historyRows: contextualHistory() });
+  assert.equal(result.rule, 'R1');
+  const r1 = calls.filter(c => c[0] === 'R1');
+  assert.equal(r1.length, 1);
+  assert.deepEqual(r1[0].slice(1, 4), ['ticket', 'source', contextualRequest]);
+  assert.equal(r1[0][5]?.source_message_id, 'source');
+  assert.ok(calls.every(c => c[0] !== 'B2'));
+});
+test('actual preflight rejects contextual R1 when committed reply proof is absent, foreign, stale or altered', async () => {
+  for (const [label, mutate, historyReadError] of [
+    ['absent', rows => rows.splice(0), false],
+    ['foreign tenant', rows => { rows[1].metadata.b2_expected_company_id = 'foreign'; }, false],
+    ['foreign ticket', rows => { rows[1].conversation_id = 'foreign'; }, false],
+    ['wrong prior source', rows => { rows[1].metadata.b2_source_message_id = 'wrong'; }, false],
+    ['changed reply', rows => { rows[1].content += ' altered'; }, false],
+    ['successful answer', rows => { rows[1].metadata.response_route = 'direct_answer'; }, false],
+    ['recalled reply', rows => { rows[1].is_recalled = true; }, false],
+    ['history read failure', () => {}, true],
+  ]) {
+    const historyRows = contextualHistory(); mutate(historyRows);
+    const { calls } = await runPreflight(contextualRequest, { historyRows, historyReadError });
+    assert.equal(calls.filter(c => c[0] === 'R1').length, 0, label);
+  }
 });
 for (const result of ['human_control', 'resolved', 'superseded_source', 'source_already_replied',
   'tenant_mismatch', 'invalid_b2_revision_proof', 'stale_authorized_revision', 'invalid_source_message', 'b2_block'])

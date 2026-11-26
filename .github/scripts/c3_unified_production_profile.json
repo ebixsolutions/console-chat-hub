@@ -1731,7 +1731,7 @@
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "0125e56f1a57dccfca9ac18367f0fe26ef2f2c126cae7be998e44e795c8be75e",
     "supabase/functions/generate-reply/index.ts": "52fa2b450b8b1fa66f5c9103327fc5928808165059839d4813ec6927274103a3",
     "tests/emergency-p0/chain.test.mjs": "541ebdc13aab0d43e6fa5c1a66e199391d9eb0cf6ee1ce4feb67d692c83e0994",
-    "tests/section15/human-service-routing.test.mjs": "2fb7ca0daa089b6848dcbfc24e6a1fd16960bfb033442328321572e87f4f14e2"
+    "tests/section15/human-service-routing.test.mjs": "214d9e3ee6fb3f43ad1eca1f545670d96f95ecc9483db04fd3c50c26ce7e4791"
   },
   "authorized_task3c_d4_no_industry_sha256": {
     "supabase/functions/_shared/commerce-state-authority.ts": "20d0f68f9a1f710bebfb5415ccc11ad31662268243fb7d9f8f50002fbeace0a9",
