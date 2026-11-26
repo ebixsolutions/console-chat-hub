@@ -4,6 +4,7 @@ import {
   prepareConversationRecall,
   resolveSourceBoundQuoteConversation,
   isSourceBoundQuoteStatusQuestion,
+  loadScopedRecallVisitorSources,
   hasAttestedUnlabelledCustomerRecall,
   recallClarification,
   renderConversationRecall,
@@ -22,6 +23,7 @@ import {
   type CanonicalConversationMemory,
 } from "./conversation-long-memory.ts";
 import { extractGenericCommerceEntity } from "./commerce-capability-runtime.ts";
+import { evaluateB2BeforeCommit } from "./pre-send-conversion-supervisor.ts";
 
 function assert(value: unknown, message = "assertion failed"): asserts value {
   if (!value) throw new Error(message);
@@ -1269,7 +1271,7 @@ Deno.test("Task3C T50 grouped room areas require individually source-attested la
  }
 });
 
-Deno.test("Quotation enquiry context remains attributed and source-bound, never a live price or completed transaction",()=>{
+Deno.test("Quotation enquiry context remains attributed and source-bound, never a live price or completed transaction",async()=>{
  const report="I requested a quotation only. No subscription, payment, or renewal has been confirmed.";
  const q="Is this a quotation or a completed transaction?";
  const x=recallFixture(report);
@@ -1289,7 +1291,15 @@ Deno.test("Quotation enquiry context remains attributed and source-bound, never 
  const frame=structuredClone(f) as unknown as import("./commerce-semantic-frame.ts").CommerceSemanticFrame;
  const reportReply=resolveSourceBoundQuoteConversation(x,frame,"en");
  assert(reportReply?.kind==="report"&&reportReply.report_source_message_id===x.source_message_id);
- assert(reportReply.reply.includes("no verified record of a completed transaction"));
+ assert(reportReply.reply.includes("no verified merchant record of an order or payment"));
+ const snapshot={conversation_id:x.conversation_id,company_id:x.company_id,
+  source_message_id:x.source_message_id,source_message_content:report,
+  commerce_state_revision:x.commerce!.revision,
+  commerce_state_source_message_id:x.commerce!.source_message_id,state:x.commerce!.state};
+ const b2=evaluateB2BeforeCommit({proposed_response:reportReply.reply,persistence_kind:"ai_reply",snapshot});
+ assert(b2.decision==="allow","source-attributed enquiry must not be blocked as a completion: "+JSON.stringify(b2));
+ const fabricated=evaluateB2BeforeCommit({proposed_response:"Your request has been completed.",persistence_kind:"ai_reply",snapshot});
+ assert(fabricated.decision==="block","actual unverified completion must remain blocked");
  assert(!resolveSourceBoundQuoteConversation({...x,question:report+" What is the current price?"},frame,"en"));
  const sid=x.source_message_id;
  const current={...x,question:q,source_message_id:"next-source",trusted_visitor_source_status:"verified" as const,
@@ -1303,6 +1313,17 @@ Deno.test("Quotation enquiry context remains attributed and source-bound, never 
     constraints:{},customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]};
  assert(isSourceBoundQuoteStatusQuestion(q,queryFrame));
  assert(resolveSourceBoundQuoteConversation(current,queryFrame,"en")?.kind==="status");
+ const sourceRow={id:sid,conversation_id:current.conversation_id,role:"visitor",is_recalled:false,content:report};
+ const readInput={company_id:current.company_id,conversation_id:current.conversation_id,
+  source_message_id:current.source_message_id,question:q,memory:current.memory,commerce:current.commerce,
+  requested_facts:["order_status"],quote_status_frame:queryFrame,enabled:true,recent_rows:[sourceRow],
+  fetch_missing:async()=>{throw new Error("recent source must not dispatch");}};
+ const read=await loadScopedRecallVisitorSources(readInput);
+ assert(read.status==="verified"&&read.rows[0]?.id===sid&&read.targeted_count===0,"prior customer report must have scoped proof");
+ const foreign=await loadScopedRecallVisitorSources({...readInput,company_id:"other"});
+ assert(foreign.status==="failed","foreign company must not read quote report");
+ const missing=await loadScopedRecallVisitorSources({...readInput,recent_rows:[],fetch_missing:async()=>({rows:[],error:null})});
+ assert(missing.status!=="verified","missing visitor proof must fail closed");
  for(const bad of [
   {...current,company_id:"foreign"}, {...current,explicit_handoff:true},
   {...current,trusted_persisted_memory_readback:null},

@@ -83,7 +83,7 @@ import {
   requiresCurrentMerchantEvidence,
 } from "../_shared/natural-customer-response.ts";
 import { productKbSemanticContract } from "../_shared/product-kb-semantic-contract.ts";
-import { isSourceBoundOperationFailureRequest, resolveCurrentFactualRequest, type CurrentFactualRequest } from "../_shared/current-factual-request.ts";
+import { isSourceBoundOperationFailureRequest, renderR2PolicyEvidenceClarification, resolveCurrentFactualRequest, type CurrentFactualRequest } from "../_shared/current-factual-request.ts";
 import { buildCurrentFactualRequestPrompt, currentFactualFollowupContext, currentFactualRequestContext, currentFactualRequestReceipt, renderUnverifiedFactualNextStep } from "../_shared/factual-request-context.ts";
 import {selectFactualEvidence, buildFactualCitationMetadata, canUseSingleDemandDirectAnswer, resolveSourceRecordedPartialRecovery, type FactualEvidenceBundle} from "../_shared/factual-evidence-selection.ts";
 import {buildGroundingEvidencePrompt, type GroundingEvidence} from "../_shared/grounding-evidence.ts";
@@ -1749,6 +1749,8 @@ async function evaluateAndPersistRequiredRulesLive(
     suppress_r2_for_bounded_no_current_evidence?: boolean;
     warm_handoff_question?: string;
     rag_match_state?: RagMatchState;
+    /** Exact current request, supplied only by the existing post-KB path. */
+    r2_policy_request?: CurrentFactualRequest;
     topic_risk_level?: TopicRiskLevel;
     verified_local_risk_classification?: boolean;
     conversation_duration_sec?: number;
@@ -2002,7 +2004,10 @@ async function evaluateAndPersistRequiredRulesLive(
     decision.decision === "clarify" && decision.matched_rule === "R2" &&
     enabled.has("R2")
   ) {
-    const clarification = (buildWorkflow5TopicalClarification(
+    const clarification = (renderR2PolicyEvidenceClarification(
+      params.r2_policy_request,params.source_message_id,params.latest_message_content,
+      params.rag_match_state,params.visitor_language,
+    ) ?? buildWorkflow5TopicalClarification(
       params.latest_message_content,
       params.visitor_language,
     ) ??
@@ -5485,6 +5490,7 @@ async function orchestrationGenerateReply(
     memory: _c3SourceRetainedMemoryForRecall ?? _c3Memory,
     commerce: _c3CommerceSnapshot,
     requested_facts: _c3SemanticCustomerRecall?.requested_facts,
+    quote_status_frame: _a3SemanticFrame,
     quantity_reading: _c3BoundQuantityReading,
     // Source admission is independent of an external model's intent label.
     // Only missing IDs (max five) trigger a scoped DB lookup; this never
@@ -6991,6 +6997,7 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
             _visitorLang,
           ) ?? undefined,
           rag_match_state: _pr5RagMatchState,
+          r2_policy_request: _currentFactualRequest,
           topic_risk_level: _pr5LocalRisk?.level,
           verified_local_risk_classification: _pr5LocalRisk?.verified,
           conversation_duration_sec: _pr5ConversationDurationSec,
@@ -7207,6 +7214,7 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
             _visitorLang,
           ) ?? undefined,
           rag_match_state: _pr5RagMatchState,
+          r2_policy_request: _currentFactualRequest,
           topic_risk_level: _pr5LocalRisk?.level,
           verified_local_risk_classification: _pr5LocalRisk?.verified,
           conversation_duration_sec: _pr5ConversationDurationSec,
@@ -7398,6 +7406,7 @@ request_dispatch_state:actual?"HTTP_RECEIVED":
             _visitorLang,
           ) ?? undefined,
           rag_match_state: _pr5RagMatchState,
+          r2_policy_request: _currentFactualRequest,
           topic_risk_level: _pr5LocalRisk?.level,
           verified_local_risk_classification: _pr5LocalRisk?.verified,
           conversation_duration_sec: _pr5ConversationDurationSec,

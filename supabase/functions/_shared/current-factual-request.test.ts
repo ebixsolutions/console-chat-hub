@@ -1,4 +1,4 @@
-import { resolveCurrentFactualRequest, assertFactualQueryBudget, customerOptionSpecifications, hasUnboundSourceOwnedOptionSpecification, type FactualRequestHistoryRow } from "./current-factual-request.ts";
+import { renderR2PolicyEvidenceClarification, resolveCurrentFactualRequest, assertFactualQueryBudget, customerOptionSpecifications, hasUnboundSourceOwnedOptionSpecification, type FactualRequestHistoryRow } from "./current-factual-request.ts";
 import { renderUnverifiedFactualNextStep } from "./factual-request-context.ts";
 import { scopedServiceKnowledgeQuery } from "./service-semantic-routing.ts";
 import { buildCanonicalRetrievalQuery } from "./conversation-runtime-state-core.ts";
@@ -1622,4 +1622,16 @@ Deno.test("Mixed unit-only recall cannot select one of two compatible active ent
   {id:"cups",role:"visitor",content:"120 cartons of paper cups"},{id:"plates",role:"visitor",content:"80 cartons of paper plates"}
  ]});
  assert(result.needs_subject_clarification||!result.kb_required,JSON.stringify(result));
+});
+
+Deno.test("R2 unresolved refund/cancellation policy states the evidence gap and a useful next step",()=>{
+ const q="可以取消合約和退款嗎？",frame=demanded(demand(q,"policy",["cancellation_policy","refund_eligibility"],[]));
+ const request=resolveCurrentFactualRequest({question:q,semantic:frame,source_message_id:"source",trusted_company_id:"company"});
+ const reply=renderR2PolicyEvidenceClarification(request,"source",q,"no_match","zh-TW");
+ assert(reply?.includes("退款及取消條款")&&reply.includes("不能確認")&&reply.includes("目前未有轉交"),String(reply));
+ assert(!renderR2PolicyEvidenceClarification(request,"other",q,"no_match","zh-TW"),"wrong source");
+ assert(!renderR2PolicyEvidenceClarification(request,"source",q+" now","no_match","zh-TW"),"substituted source");
+ assert(!renderR2PolicyEvidenceClarification(request,"source",q,"confident_match","zh-TW"),"must answer available evidence");
+ assert(!renderR2PolicyEvidenceClarification({...request,transaction_required:true},"source",q,"no_match","zh-TW"),"no transaction authority");
+ assert(!renderR2PolicyEvidenceClarification({...request,demands:request.demands.map(d=>({...d,source_type:"product"}))},"source",q,"no_match","zh-TW"),"nonpolicy demand");
 });

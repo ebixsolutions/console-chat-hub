@@ -1677,3 +1677,31 @@ export function resolveCurrentFactualRequest(input: ResolveCurrentFactualRequest
   }
   return request;
 }
+
+/** A policy-only R2 clarification after an actual unsuccessful KB lookup.
+ * Do not ask for the already stated goal or imply a refund/cancellation
+ * entitlement. This helper never authorizes a transaction or handoff. */
+export function renderR2PolicyEvidenceClarification(
+ request:CurrentFactualRequest|undefined,source:string|null,latest:string,
+ ragState:string|undefined,language:"zh-TW"|"zh-CN"|"en",
+):string|null {
+ if(!request||!source||request.source_message_id!==source||
+    norm(request.original_question)!==norm(latest)||
+    request.interpretation_source!=="semantic_demands"||!request.kb_required||request.transaction_required||
+    !["no_match","partial_match"].includes(ragState??"")||!request.demands.length||
+    !request.demands.every(d=>d.source_type==="policy"&&!d.ambiguity.is_ambiguous&&
+      Boolean(clean(d.source_quote))&&norm(latest).includes(norm(d.source_quote))&&
+      d.requested_facts.length>0&&d.requested_facts.every(f=>/^(?:refund_(?:procedure|policy|eligibility)|cancellation_(?:policy|procedure|eligibility))$/u.test(f))))return null;
+ const facts=request.demands.flatMap(d=>d.requested_facts);
+ const refund=facts.some(f=>f.startsWith("refund_")),cancel=facts.some(f=>f.startsWith("cancellation_"));
+ if(language==="en"){
+  const topic=refund&&cancel?"refund and cancellation":refund?"refund":"cancellation";
+  return "I could not verify the applicable "+topic+" terms from the available published information, so I cannot confirm eligibility. Do you have any relevant written terms you can share without personal details? You can also ask a human agent to review this. No transfer has been made.";
+ }
+ if(language==="zh-CN"){
+  const topic=refund&&cancel?"退款及取消":refund?"退款":"取消";
+  return "暂未能从现有已发布资料核实适用的"+topic+"条款，因此不能确认是否符合办理条件。你手上有相关书面条款吗？如有，可提供不含个人资料的部分供核对；亦可要求真人客服协助。目前未有转交。";
+ }
+ const topic=refund&&cancel?"退款及取消":refund?"退款":"取消";
+ return "暫未能從現有已發布資料核實適用的"+topic+"條款，因此不能確認是否符合辦理條件。你手上有相關書面條款嗎？如有，可提供不含個人資料的部分供核對；亦可要求真人客服協助。目前未有轉交。";
+}

@@ -1615,6 +1615,9 @@ export async function loadScopedRecallVisitorSources(input: {
   memory: CanonicalConversationMemory | null;
   commerce: RecallCommerceSnapshot | null;
   requested_facts?: readonly string[];
+  /** Caller supplies the accepted, exact-source status frame only for the
+   * existing attributed enquiry-status read. This is not transaction authority. */
+  quote_status_frame?: CommerceSemanticFrame | null;
   quantity_reading?: ConversationRecallInput["quantity_reading"];
   enabled: boolean;
   recent_rows: readonly TrustedRecallVisitorRow[] | null;
@@ -1660,8 +1663,11 @@ export async function loadScopedRecallVisitorSources(input: {
   const add = (id: string | null | undefined) => {
     if (id && id !== scope.source_message_id && !ids.includes(id)) ids.push(id);
   };
+  const quoteStatusRead=isSourceBoundQuoteStatusQuestion(scope.question,scope.quote_status_frame);
   for (const fact of scope.memory?.current_customer_facts ?? []) {
-    if (fact.authority === "customer" && interested(fact.key)) add(fact.source_message_id);
+    if (fact.authority === "customer" &&
+        (interested(fact.key)||quoteStatusRead&&fact.key==="customer_reported_quote_request"&&quotationReportText(fact.value)))
+      add(fact.source_message_id);
   }
   for (const entity of scope.commerce?.state.entities ?? []) {
     if (isCurrentEntity(entity) && originalFacts.some(f =>
@@ -3506,7 +3512,7 @@ export function resolveSourceBoundQuoteConversation(input:ConversationRecallInpu
     kind="status";
   }
   const reply=language==="en"
-    ? "Based on what you told me, this was an enquiry only. This conversation contains no verified record of a completed transaction. I cannot verify an amount or live account activity."
+    ? "Based on what you told me, this was an enquiry only. I have no verified merchant record of an order or payment. I cannot verify your live account activity."
     : language==="zh-CN"
     ? "按你提供的资料，这只是咨询。此对话没有可核实的交易完成记录。我尚未核实金额或商户的实时交易资料。"
     : "按你提供的資料，這只是查詢。此對話未有可核實的交易完成記錄。我尚未核實金額或商戶的即時交易資料。";
