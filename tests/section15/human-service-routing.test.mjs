@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { createHash, webcrypto } from 'node:crypto';
 import ts from 'typescript';
 import { classifyHumanServiceDiscussion, classifyHandoffIntent } from '../../supabase/functions/_shared/handoff-intent.ts';
+import { classifyHandoffIntent as classifyRuntimeHandoffIntent } from '../../supabase/functions/_shared/conversation-intelligence.ts';
 import { w1Locale, w1HistoryLocale } from '../../supabase/functions/_shared/human-control-w1.ts';
 import { planConversationService, renderServicePlanReply } from '../../supabase/functions/_shared/conversation-service-planner.ts';
 import { isDirectViolentThreat } from '../../supabase/functions/_shared/e2-direct-threat.ts';
@@ -158,7 +159,7 @@ async function runPreflight(question, { compliance = false, commitResult = { ok:
   historyRows = [], historyReadError = false } = {}) {
   const calls = [];
   const bindings = { question, sourceMessageId: 'source', historyRows, historyReadError, crypto: webcrypto, TextEncoder,
-    classifyHumanServiceDiscussion, classifyHandoffIntent, w1Locale, w1HistoryLocale,
+    classifyHumanServiceDiscussion, classifyHandoffIntent: classifyRuntimeHandoffIntent, w1Locale, w1HistoryLocale,
     isDirectViolentThreat, E2_LOCAL_THREAT_CLASSIFIER_VERSION: 'e2-local-threat-v1.0',
     planConversationService, renderServicePlanReply, corsHeaders: {}, Deno: { env: {} },
     isE2LiveActivationEnabled: () => true, isE1LiveActivationEnabled: () => true,
@@ -250,6 +251,11 @@ function contextualHistory() {
   ];
 }
 test('actual preflight contextual R1 requires committed prior answer failure and forwards same-source proof', async () => {
+  const canonical = classifyHandoffIntent(contextualRequest);
+  const runtime = classifyRuntimeHandoffIntent(contextualRequest);
+  assert.equal(canonical.category, 'conditional_or_future');
+  assert.equal(runtime.reason, canonical.category);
+  assert.equal(runtime.pure_negation, canonical.pure_handoff_negation);
   const { result, calls } = await runPreflight(contextualRequest, { historyRows: contextualHistory() });
   assert.equal(result.rule, 'R1');
   const r1 = calls.filter(c => c[0] === 'R1');
