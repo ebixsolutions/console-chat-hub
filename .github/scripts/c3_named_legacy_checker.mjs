@@ -278,6 +278,94 @@ function verifyControlMaps(contents,baseProfile,baseGate){
  for(const path of changed)invariant(current[path]===digest(contents[path]),"current-map CI byte hash mismatch: "+path);
 }
 
+
+// P1 diagnostic-only continuation. Never adjudicates a named exception on an
+// unapproved functional head. The original strict modes below are unchanged.
+const P1_POLICY_SHA256="6894280fe1eae944f330ef930d4b6465bb5c268c4ae8ec469e2e77c4ba7d23ef";
+const P1_BASE="f1e67f96d764944c6ee6c7ec097b3eeaded2ccf5";
+const P1_MISMATCH="C3_NAMED_LEGACY_FAIL: approved CI exact-path scope mismatch";
+function p1RunnerEnv(env,head,job){
+ return env.GITHUB_ACTIONS==="true"&&env.GITHUB_REPOSITORY==="ebixsolutions/console-chat-hub"&&
+ env.GITHUB_REF==="refs/heads/director/ai-abc-c3-long-memory-final-cutover"&&env.GITHUB_EVENT_NAME==="push"&&
+ env.GITHUB_SHA===head&&env.GITHUB_JOB===job&&env.C3_P1_OFFLINE_RESULT==="success"&&
+ /^\d+$/.test(env.GITHUB_RUN_ID??"")&&/^\d+$/.test(env.GITHUB_RUN_ATTEMPT??"")&&
+ !["SUPABASE_ACCESS_TOKEN","SUPABASE_SERVICE_ROLE_KEY","SUPABASE_DB_URL","DATABASE_URL","GOOGLE_APPLICATION_CREDENTIALS","OPENAI_API_KEY","ANTHROPIC_API_KEY","VERTEX_API_KEY","GEMINI_API_KEY","KB_API_KEY","KB_SERVICE_KEY"].some(k=>Boolean(env[k]));
+}
+function p1Identity(actual,expected,job){
+ return actual&&["head","tree","run","attempt","policy_sha256"].every(k=>actual[k]===expected[k])&&
+ actual.job===job&&actual.execution_class==="GITHUB_P1_DIAGNOSTIC_ONLY";
+}
+function p1StrictMismatch(c){
+ return c.receipt.exit===1&&!c.receipt.error&&!c.receipt.signal&&c.stdout.length===0&&cleanText(c.stderr).trim()===P1_MISMATCH;
+}
+function p1ReadAdmission(dir,identity){
+ const a=JSON.parse(readFileSync(join(dir,"admission.json"),"utf8"));
+ invariant(p1Identity(a.identity,identity,"c3-preproduction"),"P1 prior admission identity mismatch");
+ const p=JSON.parse(readFileSync(join(dir,"strict-aux.process.json"),"utf8"));
+ invariant(p1Identity(p.identity,identity,"c3-preproduction")&&p.id==="strict-aux"&&/(?:^|\/)node(?:\.exe)?$/.test(p.cmd),"P1 prior process identity mismatch");
+ const expected=[join(p.cwd,CI_PATHS.checker),"ci-aux",join(p.cwd,CI_PATHS.policy),p.cwd,a.strict_dir];
+ invariant(JSON.stringify(p.args)===JSON.stringify(expected)&&typeof a.strict_dir==="string"&&a.strict_dir.endsWith("/c3-named-legacy-evidence"),"P1 prior strict argv mismatch");
+ const c=readCaptured(dir,"strict-aux",expected,p.cmd,identity);
+ invariant(p1StrictMismatch(c)&&a.strict_receipt_sha256===digest(readFileSync(join(dir,"strict-aux.process.json"))),"P1 prior strict failure mismatch");
+ const aux=JSON.parse(readFileSync(join(dir,"aux-completion.json"),"utf8"));
+ invariant(p1Identity(aux.identity,identity,"c3-preproduction")&&JSON.stringify(aux.commands.map(x=>x.id))===JSON.stringify(["handler","guidance","retention"]),"P1 prior aux coverage mismatch");
+ for(const row of aux.commands){
+  invariant(row.receipt_sha256===digest(readFileSync(join(dir,row.id+".process.json"))),"P1 auxiliary receipt hash drift");
+  const q=JSON.parse(readFileSync(join(dir,row.id+".process.json"),"utf8"));
+  invariant(p1Identity(q.identity,identity,"c3-preproduction")&&q.id===row.id,"P1 auxiliary identity drift");
+  for(const k of ["stdout","stderr"]){const b=readFileSync(join(dir,row.id+"."+k+".log"));invariant(q[k].file===row.id+"."+k+".log"&&q[k].bytes===b.length&&q[k].sha256===digest(b),"P1 auxiliary stream drift")}
+ }
+ return a;
+}
+async function p1Diagnostic({mode,policyPath,policy,root,evidenceDir,identity,ppGroups,isolatedGroups}){
+ const isolated=mode==="ci-p1-isolated",aux=mode==="ci-p1-aux",job=isolated?"c3-director-generic-core-isolated-final":"c3-preproduction";
+ const strict=aux?"ci-aux":isolated?"ci-isolated":"ci-preproduction";
+ const workspace=resolve(process.env.GITHUB_WORKSPACE??root);
+ const runner=resolve(process.env.RUNNER_TEMP??"");
+ invariant(process.env.RUNNER_TEMP&&process.env.GITHUB_WORKSPACE,"P1 runner paths required");
+ const diag=join(runner,isolated?"c3-p1-diagnostic-isolated":"c3-p1-diagnostic-preproduction");
+ const prior=join(runner,"c3-p1-diagnostic-preproduction");
+ invariant(policyPath===join(workspace,CI_PATHS.policy)&&resolve(process.argv[1])===join(workspace,CI_PATHS.checker),"P1 exact checker/policy paths required");
+ invariant(root===(aux||isolated?workspace:join(runner,"c3-deno-checkout"))&&evidenceDir===join(runner,isolated?"c3-named-legacy-isolated":"c3-named-legacy-evidence"),"P1 exact checkout/evidence paths required");
+ const id={...identity,execution_class:"GITHUB_P1_DIAGNOSTIC_ONLY"};
+ // A normal strict run is still authoritative. Capture the original process
+ // without intercepting or rewriting its own output/exit or approval logic.
+ mkdirSync(diag,{recursive:true});
+ const argv=[resolve(process.argv[1]),strict,policyPath,root,evidenceDir,...(isolated?[resolve(process.argv[6]??"")]:[])];
+ const c=captureProcess("strict-"+(aux?"aux":isolated?"isolated":"preproduction"),process.execPath,argv,root,diag,id,{timeout:1100000});
+ if(c.receipt.exit===0&&!c.receipt.error&&!c.receipt.signal){invariant(!isolated,"P1 diagnostic isolated unexpectedly accepted");return}
+ invariant(p1StrictMismatch(c),"P1 strict failure is not the exact approved-scope mismatch");
+ invariant(p1RunnerEnv(process.env,identity.head,job),"P1 diagnostic runner/credential boundary rejected");
+ invariant(identity.policy_sha256===P1_POLICY_SHA256&&digest(readFileSync(join(root,CI_PATHS.policy)))===P1_POLICY_SHA256,"P1 immutable policy drift");
+ invariant(git(root,"merge-base",identity.head,P1_BASE)===P1_BASE&&git(root,"merge-base",identity.head,policy.functional_head)===policy.functional_head&&git(root,"rev-parse",policy.functional_head+"^{tree}")===policy.functional_tree,"P1 lineage rejected");
+ const diff=git(root,"diff","--name-only",policy.functional_head,identity.head).split("\n").filter(Boolean).sort();
+ invariant(JSON.stringify(diff)!==JSON.stringify([...policy.allowed_ci_paths].sort()),"P1 mismatch not independently reproduced");
+ invariant(git(root,"diff","--name-only","HEAD")===""&&git(root,"diff","--cached","--name-only","HEAD")==="","P1 tracked source dirty");
+ const {verifyProductionSource}=await import(pathToFileURL(join(root,CI_PATHS.gate)).href);
+ const source=verifyProductionSource({root,expectedIdentity:{head:identity.head,tree:identity.tree}});
+ invariant(source.status==="SOURCE_VALIDATED"&&source.uat_start_allowed===false,"P1 source identity not validated");
+ if(isolated){
+  invariant(process.env.C3_EXISTING_C3_PREPRODUCTION_RESULT==="failure"&&resolve(process.argv[6]??"")===prior,"P1 actual failed dependency required");
+  const db=new URL(process.env.C3_ISOLATED_DB_URL??"");
+  invariant(["postgres:","postgresql:"].includes(db.protocol)&&["127.0.0.1","localhost"].includes(db.hostname)&&db.port==="5432"&&db.pathname==="/c3closure","P1 nonlocal database rejected");
+  p1ReadAdmission(prior,id);
+ }else if(!aux){p1ReadAdmission(diag,id)}
+ if(aux){
+  writeFileSync(join(diag,"admission.json"),JSON.stringify({identity:id,strict_dir:evidenceDir,strict_receipt_sha256:digest(readFileSync(join(diag,"strict-aux.process.json"))),disposition:"DIAGNOSTIC_ONLY_STRICT_FAIL"},null,2)+"\n",{flag:"wx"});
+  const commands=[];
+  for(const name of ["handler","guidance","retention"]){
+   const x=captureProcess(name,process.execPath,policy.aux[name].args,root,diag,id);
+   commands.push({id:name,exit:x.receipt.exit,signal:x.receipt.signal,error:x.receipt.error,receipt_sha256:digest(readFileSync(join(diag,name+".process.json")))});
+  }
+  writeFileSync(join(diag,"aux-completion.json"),JSON.stringify({identity:id,commands,acceptance:false},null,2)+"\n",{flag:"wx"});
+ }else{
+  const groups=isolated?isolatedGroups:ppGroups;
+  const collected=collectNativeGroups(groups,root,policy,mode,diag,id);
+  writeFileSync(join(diag,isolated?"isolated-completion.json":"preproduction-completion.json"),JSON.stringify({identity:id,groups,raw:collected.reports,errors:collected.errors,acceptance:false},null,2)+"\n",{flag:"wx"});
+ }
+ console.log(JSON.stringify({disposition:"DIAGNOSTIC_ONLY_STRICT_FAIL",identity:id,mode,acceptance:false}));
+}
+
 async function main(){
  const mode=process.argv[2],policyPath=resolve(process.argv[3]||"");
  const policy=JSON.parse(readFileSync(policyPath,"utf8")),root=resolve(process.argv[4]||process.cwd());
@@ -286,6 +374,7 @@ async function main(){
  const head=git(root,"rev-parse","HEAD"),tree=git(root,"rev-parse","HEAD^{tree}");
  const identity={head,tree,run:process.env.GITHUB_RUN_ID??null,attempt:process.env.GITHUB_RUN_ATTEMPT??null,job:process.env.GITHUB_JOB??null,policy_sha256:digest(readFileSync(policyPath)),execution_class:mode==="review"?"LOCAL_CHECKED_NATIVE_REVIEW_NOT_CI":"GITHUB_NATIVE_CHECKED_COMMAND"};
  const ppGroups=["preproduction","current-factual"],isolatedGroups=["isolated-generic","isolated-compound","isolated-contextual","isolated-recall"];
+ if(["ci-p1-aux","ci-p1-preproduction","ci-p1-isolated"].includes(mode)){await p1Diagnostic({mode,policyPath,policy,root,evidenceDir,identity,ppGroups,isolatedGroups});return;}
  function checkSource(){
   invariant(policy.schema_version===3,"policy version");
   invariant(git(root,"rev-parse",policy.functional_head+"^{tree}")===policy.functional_tree,"functional base tree mismatch");

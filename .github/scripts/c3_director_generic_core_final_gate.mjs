@@ -80,11 +80,13 @@ if (!closure.includes("supabase/functions/_shared/commerce-state-runtime-base.ts
 console.log(JSON.stringify({ assertion: "candidate_identity", head: git("rev-parse", "HEAD"),
   tree: git("rev-parse", "HEAD^{tree}"), changed, sourceHashes, runtime_file_count: closure.length }));
 
+const diagnosticOnly=process.argv.length===3&&process.argv[2]==="--p1-diagnostic-only";
+if(diagnosticOnly&&!(process.env.CI&&process.env.GITHUB_ACTIONS==="true"&&process.env.C3_EXISTING_C3_PREPRODUCTION_RESULT==="failure"&&process.env.C3_P1_OFFLINE_RESULT==="success")) fail("P1 diagnostic dependency rejected");
 const commands = [
   ["git", ["diff", "--check", baseline, "HEAD"]],
-  ...(process.env.CI ? [["node", [".github/scripts/c3_named_legacy_checker.mjs", "ci-isolated",
+  ...(process.env.CI ? [["node", [".github/scripts/c3_named_legacy_checker.mjs", diagnosticOnly ? "ci-p1-isolated" : "ci-isolated",
     ".github/scripts/c3_named_legacy_policy.json", process.cwd(),
-    process.env.RUNNER_TEMP + "/c3-named-legacy-isolated", process.env.C3_NAMED_LEGACY_AUX_DIR ?? ""]]] : [
+    process.env.RUNNER_TEMP + "/c3-named-legacy-isolated", (diagnosticOnly ? process.env.C3_P1_DIAGNOSTIC_PRIOR_DIR : process.env.C3_NAMED_LEGACY_AUX_DIR) ?? ""]]] : [
   ["deno", ["test", "--no-lock", "--allow-read", "--node-modules-dir=manual", "supabase/functions/_shared/natural-dialogue-generic-core.test.ts",
     "tests/edge/verified-widget-auth.test.ts"]],
   ["deno", ["test", "--no-lock", "--allow-read", "--node-modules-dir=manual", "tests/section15/compound-dialogue-state.test.ts"]],
@@ -106,7 +108,8 @@ for (const [cmd, args] of commands) {
 // The existing C3 preproduction gate requires a separate historical live
 // readback contract. Its same-head CI job must succeed before this isolated
 // job starts; never forge the readback markers inside a credential-free job.
-if (process.env.CI) {
+if(diagnosticOnly){console.log(JSON.stringify({disposition:"DIAGNOSTIC_ONLY_STRICT_FAIL",actual_preproduction:process.env.C3_EXISTING_C3_PREPRODUCTION_RESULT,acceptance:false}));}
+else if (process.env.CI) {
   if (process.env.C3_EXISTING_C3_PREPRODUCTION_RESULT !== "success" ||
       process.env.GITHUB_SHA !== git("rev-parse", "HEAD") ||
       !process.env.GITHUB_RUN_ID) fail("existing_c3_exact_candidate_job_missing");
@@ -144,4 +147,5 @@ if (!readFileSync("src/routeTree.gen.ts").equals(committedRouteTree)) {
   writeFileSync("src/routeTree.gen.ts", committedRouteTree);
 }
 if (unapprovedWorkingTree().length) fail("post_gate_source_dirty", JSON.stringify(unapprovedWorkingTree()));
-console.log(`C3_DIRECTOR_GENERIC_CORE_FINAL_GATE|result=PASS|head=${git("rev-parse", "HEAD")}|tree=${git("rev-parse", "HEAD^{tree}")}`);
+if(diagnosticOnly){console.log("C3_DIRECTOR_GENERIC_CORE_FINAL_GATE|result=FAIL|scope=DIAGNOSTIC_ONLY");process.exitCode=42;}
+else { console.log(`C3_DIRECTOR_GENERIC_CORE_FINAL_GATE|result=PASS|head=${git("rev-parse", "HEAD")}|tree=${git("rev-parse", "HEAD^{tree}")}`); }
