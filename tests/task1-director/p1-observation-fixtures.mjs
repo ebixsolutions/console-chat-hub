@@ -1430,7 +1430,270 @@ function proposedReading(row,turn,wrong=false){
   reason:'No complete independently authored reading for this exact turn; no generic ASK_FACT substitute.'};
 }
 
-function caseKb(row,fs,root){
+
+// R2 exact archived synthetic KB only; selection is an isolated transport fixture, not a runtime rule or oracle.
+const archivedB2B={
+  "repo": "ebixsolutions/ai-commerce-project-memory",
+  "path": "archive/AI_Chatbot/P1_B2B_WHOLESALE_OBSERVATION_2026-11-22/knowledge.txt",
+  "blob": "d3550b84e723729f42f2deb099b13167e52634af",
+  "source_sha256": "80ee16b9e31c21d79c2bb480579f4bd67f017fde5e826debe43da28335e3ecd2",
+  "raw": "ORIGINAL SYNTHETIC KNOWLEDGE — NOT A REAL COMPANY FACT\nShape reference: tests/emergency-p0/chain.test.mjs :: task3cManagedCase.\nPublished/currentness values below are fixture-only, not a live source.\n{\n  \"success\": true,\n  \"context_found\": true,\n  \"selected_documents\": [\n    {\n      \"document_id\": \"synthetic-b2b-wholesale-instructions-v1\",\n      \"title\": \"Synthetic Wholesale Harbor — Wholesale quotation process\",\n      \"source_type\": \"Other\",\n      \"document_score\": 0.95,\n      \"authority\": {\n        \"tenant_id\": \"9506\",\n        \"publication_state\": \"published\",\n        \"currentness\": \"unknown\"\n      },\n      \"evidence\": [\n        {\n          \"chunk_id\": \"synthetic-b2b-wholesale-instructions-v1-c1\",\n          \"chunk_type\": \"full_content\",\n          \"content\": \"This synthetic wholesale desk accepts quotation enquiries after confirming product specification, requested carton quantity and delivery region. No minimum order quantity, current price, available stock, confirmed lead time, payment, shipment or binding quotation is supplied by this fixture.\",\n          \"score\": 0.95\n        }\n      ]\n    }\n  ],\n  \"citations\": [\n    {\n      \"document_id\": \"synthetic-b2b-wholesale-instructions-v1\",\n      \"relevance\": \"high\"\n    }\n  ]\n}\n"
+};
+const archivedSourced={
+  "repo": "ebixsolutions/ai-commerce-project-memory",
+  "path": "archive/AI_Chatbot/P1_SOURCED_CASES_2026-11-22/SOURCED_CASES_v1.md",
+  "blob": "cb23ce9ec793415bd17e454e4492ea074c0c1c7c",
+  "source_sha256": "db9def0f0289156e57f80b7810cd97b0ae8aacd6ba07273c8ae04f0b359acbf1",
+  "groups": {
+    "RT": {
+      "raw": "KB stub (synthetic): **R-K1** 貨品送達後 7 日內可申請退換，須保留原包裝。 **R-K2** 訂造及傢俬貨品尺寸容差為 ±2 厘米。 **R-K3** 門市自取須於通知後 5 個工作天內取貨。",
+      "sha256": "f0f2ed7c8ff8ed5a57a74159ca6564d0141ff61b596696a1021636fc8d24b053",
+      "entries": [
+        {
+          "id": "R-K1",
+          "text": "貨品送達後 7 日內可申請退換，須保留原包裝。"
+        },
+        {
+          "id": "R-K2",
+          "text": "訂造及傢俬貨品尺寸容差為 ±2 厘米。"
+        },
+        {
+          "id": "R-K3",
+          "text": "門市自取須於通知後 5 個工作天內取貨。"
+        }
+      ]
+    },
+    "FB": {
+      "raw": "KB stub (synthetic): **F-K1** 餐廳未接單前可取消並全數退款；接單後不設取消。 **F-K2** 外送比預計時間遲超過 30 分鐘，可獲 HK$50 優惠券。 **F-K3** 下午茶套餐優惠價須於平台預先付款。",
+      "sha256": "5336235263bf3d0cee821bfb4903c1bf16e1399e84daa1b52a718d6898c2428b",
+      "entries": [
+        {
+          "id": "F-K1",
+          "text": "餐廳未接單前可取消並全數退款；接單後不設取消。"
+        },
+        {
+          "id": "F-K2",
+          "text": "外送比預計時間遲超過 30 分鐘，可獲 HK$50 優惠券。"
+        },
+        {
+          "id": "F-K3",
+          "text": "下午茶套餐優惠價須於平台預先付款。"
+        }
+      ]
+    },
+    "ED": {
+      "raw": "KB stub (synthetic): **E-K1** 開課日 7 日或之前退學，扣除 HK$500 行政費後退回餘款。 **E-K2** 「保證達標」只適用於入學評估達第 9 級或以上的學員。 **E-K3** 上門補習與電話／WhatsApp 問功課是兩項不同服務。",
+      "sha256": "b5ad831993bd9198fcf9f1d0b3c3a94963cb705f6f3e196489f3a8b98534ca7c",
+      "entries": [
+        {
+          "id": "E-K1",
+          "text": "開課日 7 日或之前退學，扣除 HK$500 行政費後退回餘款。"
+        },
+        {
+          "id": "E-K2",
+          "text": "「保證達標」只適用於入學評估達第 9 級或以上的學員。"
+        },
+        {
+          "id": "E-K3",
+          "text": "上門補習與電話／WhatsApp 問功課是兩項不同服務。"
+        }
+      ]
+    },
+    "BE": {
+      "raw": "KB stub (synthetic): **B-K1** 療程套票自購買日起 12 個月內有效。 **B-K2** 更改預約須最少 24 小時前通知。 **B-K3** 套票可於本集團任何分店使用，不另收費。",
+      "sha256": "8040a349aed39a8fe37e109e4bc658c74a29b3f15e86f6afd58b2d1d3afd5c87",
+      "entries": [
+        {
+          "id": "B-K1",
+          "text": "療程套票自購買日起 12 個月內有效。"
+        },
+        {
+          "id": "B-K2",
+          "text": "更改預約須最少 24 小時前通知。"
+        },
+        {
+          "id": "B-K3",
+          "text": "套票可於本集團任何分店使用，不另收費。"
+        }
+      ]
+    },
+    "SA": {
+      "raw": "KB stub (synthetic): **S-K1** 年繳月付計劃於首年內取消，須支付餘下月費總額的 50%。 **S-K2** 減少用戶席位於下一個帳單周期生效；本周期已收費用不退。 **S-K3** 取消訂閱後，服務維持至本帳單周期完結。",
+      "sha256": "dd73ad682558f0d3ff290943d194b51b85ac594e5c63b906d5b10397519150a6",
+      "entries": [
+        {
+          "id": "S-K1",
+          "text": "年繳月付計劃於首年內取消，須支付餘下月費總額的 50%。"
+        },
+        {
+          "id": "S-K2",
+          "text": "減少用戶席位於下一個帳單周期生效；本周期已收費用不退。"
+        },
+        {
+          "id": "S-K3",
+          "text": "取消訂閱後，服務維持至本帳單周期完結。"
+        }
+      ]
+    },
+    "WH": {
+      "raw": "KB stub (synthetic): **W-K1** 報價單有效期 14 日；訂單以雙方確認的正式訂單為準。 **W-K2** 標準付款條款：落單付 30% 訂金，出貨前付清餘款。 **W-K3** 到貨數量如與裝箱單不符，須於收貨後 7 日內以書面提出。",
+      "sha256": "e328ac95e23ee1f394cc1c9e266f24a6a98f670954cd5cad9d72331cc6e09e9c",
+      "entries": [
+        {
+          "id": "W-K1",
+          "text": "報價單有效期 14 日；訂單以雙方確認的正式訂單為準。"
+        },
+        {
+          "id": "W-K2",
+          "text": "標準付款條款：落單付 30% 訂金，出貨前付清餘款。"
+        },
+        {
+          "id": "W-K3",
+          "text": "到貨數量如與裝箱單不符，須於收貨後 7 日內以書面提出。"
+        }
+      ]
+    }
+  }
+};
+const sourcedStubSelections={
+  "RT-02": {
+    "1": [
+      "R-K2",
+      "R-K1"
+    ]
+  },
+  "FB-01": {
+    "0": [
+      "F-K1"
+    ],
+    "1": [
+      "F-K1"
+    ]
+  },
+  "FB-02": {
+    "1": [
+      "F-K2"
+    ]
+  },
+  "FB-04": {
+    "1": [
+      "F-K3"
+    ]
+  },
+  "ED-01": {
+    "1": [
+      "E-K3"
+    ]
+  },
+  "ED-02": {
+    "1": [
+      "E-K1"
+    ]
+  },
+  "ED-03": {
+    "1": [
+      "E-K2"
+    ]
+  },
+  "ED-05": {
+    "1": [
+      "E-K1"
+    ]
+  },
+  "BE-04": {
+    "1": [
+      "B-K3"
+    ]
+  },
+  "BE-05": {
+    "2": [
+      "B-K3"
+    ]
+  },
+  "SA-01": {
+    "1": [
+      "S-K1"
+    ]
+  },
+  "SA-02": {
+    "1": [
+      "S-K2",
+      "S-K3"
+    ]
+  },
+  "SA-03": {
+    "1": [
+      "S-K2"
+    ]
+  },
+  "SA-04": {
+    "2": [
+      "S-K2"
+    ]
+  },
+  "WH-01": {
+    "1": [
+      "W-K3"
+    ]
+  },
+  "WH-04": {
+    "1": [
+      "W-K1"
+    ]
+  },
+  "WH-05": {
+    "1": [
+      "W-K2"
+    ]
+  }
+};
+
+function restoredArchiveKb(row,turn){
+ const proofFor=(source,response,status,bindings,extra={})=>({
+  response,proof:{status,source_repo:source.repo,source_path:source.path,source_blob_sha:source.blob,
+   source_sha256:source.source_sha256,response_sha256:digest(response),transport_rebinding:bindings,
+   document_ids:response.selected_documents.map(d=>d.document_id),
+   chunk_ids:response.selected_documents.flatMap(d=>d.evidence.map(c=>c.chunk_id)),...extra}});
+ if(row.kind==='synthetic_b2b'){
+  if(digest(archivedB2B.raw)!==archivedB2B.source_sha256)throw Error('observer_b2b_source_hash_drift');
+  const original=JSON.parse(archivedB2B.raw.slice(archivedB2B.raw.indexOf('{')));
+  const selected=row.id==='SYNTHETIC-b2b-wholesale-merchant-topic'&&turn===0||
+   row.id==='SYNTHETIC-b2b-wholesale-mixed-known-unknown'&&turn===2;
+  if(!selected)return proofFor(archivedB2B,emptyKb(),'ORIGINAL_SYNTHETIC_NO_MATCH',[],
+   {reason:'No related published merchant fact selected by this fixture turn.'});
+  const bindings=[];
+  for(const document of original.selected_documents){
+   if(document.authority?.tenant_id!=='9506')throw Error('observer_b2b_tenant_drift');
+   bindings.push({document_id:document.document_id,from_tenant:'9506',to_tenant:'34'});
+   document.authority.tenant_id='34';
+  }
+  return proofFor(archivedB2B,original,'ORIGINAL_SYNTHETIC_SEED',bindings,
+   {source_class:'ARCHIVED_SYNTHETIC_KB_ONLY'});
+ }
+ if(row.kind!=='sourced_synthetic_kb')return null;
+ const group=row.id.split('-')[0],record=archivedSourced.groups[group];
+ if(!record||digest(record.raw)!==record.sha256)throw Error('observer_sourced_stub_hash_drift:'+row.id);
+ const selected=sourcedStubSelections[row.id]?.[turn]??[];
+ if(!selected.length)return proofFor(archivedSourced,emptyKb(),'ORIGINAL_SYNTHETIC_NO_MATCH',[],
+  {stub_line_sha256:record.sha256,source_group:group,reason:'No applicable rule selected from the original synthetic stub; no missing rule inferred.'});
+ const documents=selected.map(id=>{
+  const entry=record.entries.find(e=>e.id===id);
+  if(!entry||!record.raw.includes('**'+id+'** '+entry.text))throw Error('observer_sourced_stub_entry_drift:'+row.id+':'+id);
+  const document_id='synthetic-sourced-'+group.toLowerCase()+'-'+id.toLowerCase();
+  return {document_id,title:'Synthetic policy '+id,source_type:'Other',document_score:0.95,
+   authority:{tenant_id:'34',publication_state:'published',currentness:'unknown'},
+   evidence:[{chunk_id:id,chunk_type:'full_content',content:entry.text,score:0.95}]};
+ });
+ const response={success:true,context_found:true,selected_documents:documents,
+  citations:documents.map(d=>({document_id:d.document_id,relevance:'high'}))};
+ return proofFor(archivedSourced,response,'ORIGINAL_SYNTHETIC_SEED',
+  documents.map(d=>({document_id:d.document_id,from_tenant:null,to_tenant:'34',fixture_only:true})),
+  {stub_line_sha256:record.sha256,source_group:group,source_class:'ARCHIVED_SYNTHETIC_KB_ONLY'});
+}
+
+function caseKb(row,turn,fs,root){
+ const restored=restoredArchiveKb(row,turn);
+ if(restored)return restored;
  if(row.seedPath){
   const path=row.seedPath.replace(/tasks\.json$/u,'knowledge.txt'),raw=fs.readFileSync(root+'/'+path,'utf8');
   const start=raw.indexOf('{');
@@ -1459,7 +1722,7 @@ function caseKb(row,fs,root){
 export function buildTurnInput(row,turn,mode,fs,root){
  const proposed=mode==='scripted'||mode==='wrong_reading'?proposedReading(row,turn,mode==='wrong_reading'):{
   status:'MISSING_READING_NEGATIVE',coverage:'EMPTY_PROVIDER_READING',source_quote:row.turns[turn]};
- const kb=caseKb(row,fs,root);
+ const kb=caseKb(row,turn,fs,root);
  const reading={...proposed,semantic_sha256:proposed.semantic?digest(proposed.semantic):null};
  delete reading.semantic;
  return {options:{originalPreview:true,fullChain:true,captureEvidence:true,handoffSetsHumanControl:true,

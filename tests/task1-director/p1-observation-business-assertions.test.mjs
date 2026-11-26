@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {businessAssertions,snapshot,summarizeObservationEvidence} from './p1-observation-diagnostics.mjs';
-import {digest,loadObservationCases} from './p1-observation-fixtures.mjs';
+import {digest,loadObservationCases,buildTurnInput} from './p1-observation-fixtures.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const updateReply=(turn,content)=>{
  turn.reply.content=content;turn.reply.content_sha256=digest(content);
@@ -165,4 +165,27 @@ test('Compound partition observer checks delivered labels and both canonical pat
   t=>t.readback.commerce_revision++,
   t=>t.kb_dispatch_count=1,t=>t.readback.state.entities[1].attributes.customer_part_of_entity_id='foreign',
  ]){const wrong=structuredClone(turns);mutate(wrong[1]);assert(Object.values(statuses(row,wrong)).every(s=>s==='FAIL'));}
+});
+
+test('R2 archived wholesale KB retains actual document/chunk and does not invent MOQ or price',()=>{
+ const {rows}=loadObservationCases(fs,root),row=rows.find(r=>r.id==='SYNTHETIC-b2b-wholesale-merchant-topic');
+ const input=buildTurnInput(row,0,'scripted',fs,root),d=input.options.originalRagResponse.selected_documents[0];
+ assert.equal(input.proof.kb.source_blob_sha,'d3550b84e723729f42f2deb099b13167e52634af');
+ assert.equal(d.document_id,'synthetic-b2b-wholesale-instructions-v1');
+ assert.equal(d.evidence[0].chunk_id,'synthetic-b2b-wholesale-instructions-v1-c1');
+ assert.equal(d.authority.tenant_id,'34');assert.equal(d.authority.currentness,'unknown');
+ assert.equal(d.evidence[0].content,'This synthetic wholesale desk accepts quotation enquiries after confirming product specification, requested carton quantity and delivery region. No minimum order quantity, current price, available stock, confirmed lead time, payment, shipment or binding quotation is supplied by this fixture.');
+ assert.equal(input.proof.kb.response_sha256,digest(input.options.originalRagResponse));
+});
+test('R2 archived sourced stubs preserve scope and absent rescheduling rule',()=>{
+ const {rows}=loadObservationCases(fs,root),get=(id,t,mode='scripted')=>buildTurnInput(rows.find(r=>r.id===id),t,mode,fs,root);
+ const r=get('RT-02',1);assert.equal(r.proof.kb.source_blob_sha,'cb23ce9ec793415bd17e454e4492ea074c0c1c7c');
+ assert.deepEqual(r.proof.kb.chunk_ids,['R-K2','R-K1']);
+ assert.equal(r.options.originalRagResponse.selected_documents[0].evidence[0].content,'訂造及傢俬貨品尺寸容差為 ±2 厘米。');
+ const rt=get('RT-05',0);assert.equal(rt.proof.kb.status,'ORIGINAL_SYNTHETIC_NO_MATCH');assert.deepEqual(rt.options.originalRagResponse.selected_documents,[]);assert.equal(rt.options.originalRagResponse.context_found,false);
+ const neg=get('RT-02',1,'no_reading');assert.equal(neg.options.semanticRaw,'');assert.equal(neg.proof.reading.status,'MISSING_READING_NEGATIVE');assert.deepEqual(neg.options.originalRagResponse,r.options.originalRagResponse);
+ for(const row of rows.filter(r=>r.kind==='sourced_synthetic_kb'))for(let t=0;t<row.turns.length;t++){
+  const i=buildTurnInput(row,t,'scripted',fs,root);assert.equal(i.proof.kb.source_group,row.id.split('-')[0]);assert.equal(i.proof.kb.source_blob_sha,'cb23ce9ec793415bd17e454e4492ea074c0c1c7c');
+  for(const d of i.options.originalRagResponse.selected_documents)assert(d.document_id.startsWith('synthetic-sourced-'+row.id.split('-')[0].toLowerCase()+'-'));
+ }
 });
