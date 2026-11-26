@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {classifyHandoffIntent} from '../../supabase/functions/_shared/handoff-intent.ts';
 import {transformSync as task1Transpile, buildSync as task3cBuildCanonical} from 'esbuild';
 import {readFileSync as task1SourceRead} from 'node:fs';
 import assert from 'node:assert/strict';
@@ -699,4 +700,13 @@ test('P1 mixed quantity recall keeps merchant lookup and customer question indep
  assert.equal(resolveCustomerRequestDecision(source,correction).customer_quantity_recall_request,undefined);
  const control=resolveCustomerRequestDecision(source+' 請轉真人客服',make(q,m));
  assert.equal(control.customer_quantity_recall_request,undefined);
+});
+
+// P1 actual control-priority failure: independent business questions must not
+// contaminate the final control speech act. No new handoff authority or RPC.
+test('P1 independent question boundary preserves canonical R1 and non-immediate control',()=>{
+ const positives=["我之前提過幾張書枱？ 另外目前每張官方售價是多少？ 請轉真人客服","How many licenses did I mention earlier? What is the current official price? Please transfer me to a human agent","我之前提过几份套餐？今天每份官方售价是多少？请转人工客服"];
+ const negatives=["我之前提過幾張書枱？ 請不要轉真人客服","How many licenses did I mention earlier? Do not transfer me to a human","我之前提過幾張書枱？ 如果查唔到，請轉真人客服","If the answer is not available? Please transfer me to a human","我之前提過幾張書枱？ 「請轉真人客服」","我之前提過幾張書枱？ 真人客服係咪24小時？","客人話「請轉真人客服？」","What is the price? The customer said: \"Please transfer me to a human\"","What is the price? If it is not available, please transfer me to a human agent"];
+ for(const q of positives)assert.equal(classifyHandoffIntent(q).explicit_request,true,q);
+ for(const q of negatives)assert.equal(classifyHandoffIntent(q).explicit_request,false,q);
 });

@@ -462,6 +462,26 @@ export function classifyHandoffIntent(text: string): HandoffIntentClassification
     const reported = classifyHandoffClause(text);
     return { ...reported, language, category: "reference_or_report", explicit_request: false };
   }
+  // An independent business question can precede a fresh control instruction.
+  // Reuse the canonical classifier on the complete final speech act (including
+  // its conditional/negated/quoted clauses), not just the imperative suffix.
+  // Earlier human-control references or conditional antecedents must not
+  // become new R1 authority merely because a question mark was present.
+  const questionParts = text.split(/(?<=[?？])\s*(?=\S)/u);
+  if (questionParts.length > 1) {
+    const preceding = questionParts.slice(0, -1);
+    const last = questionParts[questionParts.length - 1];
+    const prefixIndependent = preceding.every(part =>
+      !classifyHandoffIntent(part).mentions_human_handoff &&
+      !CONDITIONAL_ZH.test(part) && !CONDITIONAL_EN.test(part) &&
+      !HYPOTHETICAL_ZH.test(part) && !HYPOTHETICAL_EN.test(part) &&
+      !FUTURE_ZH.test(part) && !FUTURE_EN.test(part)
+    );
+    if (prefixIndependent) {
+      const scoped = classifyHandoffIntent(last);
+      if (scoped.mentions_human_handoff) return {...scoped, language};
+    }
+  }
   const clauses = splitHandoffClauses(text);
   const decisions = (clauses.length ? clauses : [text]).map(classifyHandoffClause);
   // A conditional antecedent governs the request in the same sentence, even
