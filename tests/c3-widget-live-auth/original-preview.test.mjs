@@ -1712,3 +1712,57 @@ for(const mode of ['accept','reject','empty','length'])test('V286 actual Assist 
  const usage=f.rows.upstream_call_log.filter(row=>row.request_payload?.request_id?.startsWith('agent-assist:suggest_reply:'));assert.equal(usage.length,1);
  }finally{globalThis.fetch=realFetch;}
 });
+
+// R3: real Agent Assist handler, reusing the isolated generate-reply run's
+// readback (job 139650770306; original SaaS correction). Only conversation
+// identity is rebound to the existing authenticated test ticket; the source
+// messages, values, revisions and lifecycle states are not invented.
+// No external provider/KB, production data, or Hosted acceptance.
+const p1PartitionAssistReadback = {"job":139650770306,"case_id":"SYNTHETIC-saas-correction","manifest":"b1b820e5bc8fcda0365d5738d4b973c1193c3c49953c70de93daf24ca158e3ba","turns":[{"id":"00000000-0000-4000-8000-000000900420","content":"We need three licenses for this team."},{"id":"00000000-0000-4000-8000-000000900421","content":"Correction: keep two licenses; postpone the third."},{"id":"00000000-0000-4000-8000-000000900422","content":"How many licenses are currently retained, and what was postponed?"}],"state":{"version":"commerce-state-1.0.0","language":"en","current_intent":null,"current_topic":null,"current_industry":null,"latest_corrections":[],"unresolved_items":[],"customer_constraints":{},"entities":[{"entity_id":"generic:licenses","category":"subscription","brand":null,"model":null,"quantity":2,"status":"tentative","attributes":{"semantic_frame_version":"commerce-semantic-1.0.0","semantic_operation":"ADD_ITEM","product_name":"licenses","customer_subject_aliases":["licenses"],"commerce_kind":"subscription","unit":"licenses","sku":null,"semantic_confidence":0.98,"semantic_transaction_state":"unknown","semantic_payment_state":"unknown","semantic_booking_state":"unknown","semantic_fulfillment_state":"unknown","semantic_attributes":{},"capabilities":{"requires_delivery":false,"supports_pickup":false,"requires_installation":false,"requires_booking":false,"requires_quote":false,"requires_site_check":false,"digital_fulfilment":false,"recurring_billing":false,"rental_return":false,"customization":false},"quantity_basis":"customer_explicit"},"constraints":{"customer_inactive_unit_count":1,"customer_inactive_unit_status":"deferred"},"provenance":{"source_type":"customer","source_message_id":"00000000-0000-4000-8000-000000900421","recorded_at":"2026-10-14T01:00:01.001Z"}},{"entity_id":"generic:licenses:unit-status:00000000-0000-4000-8000-000000900421","category":"subscription","brand":null,"model":null,"quantity":1,"status":"deferred","attributes":{"semantic_frame_version":"commerce-semantic-1.0.0","semantic_operation":"ADD_ITEM","product_name":"licenses","customer_subject_aliases":["licenses"],"commerce_kind":"subscription","unit":"licenses","sku":null,"semantic_confidence":0.98,"semantic_transaction_state":"unknown","semantic_payment_state":"unknown","semantic_booking_state":"unknown","semantic_fulfillment_state":"unknown","semantic_attributes":{},"capabilities":{"requires_delivery":false,"supports_pickup":false,"requires_installation":false,"requires_booking":false,"requires_quote":false,"requires_site_check":false,"digital_fulfilment":false,"recurring_billing":false,"rental_return":false,"customization":false},"quantity_basis":"customer_explicit","customer_part_of_entity_id":"generic:licenses","customer_unit_partition":"source_bound_status"},"constraints":{"source_bound_partial_unit":true},"provenance":{"source_type":"customer","source_message_id":"00000000-0000-4000-8000-000000900421","recorded_at":"2026-10-14T01:00:01.001Z"}}],"quotes":[],"delivery":{"confirmed":false},"installation":{"items":[],"site_conditions":{},"pending_checks":[]},"conversion":{"funnel_stage":"discovery","quotation_status":"none","order_status":"none","payment_status":"none","confirmed_entity_ids":[],"tentative_entity_ids":["generic:licenses"],"cancelled_entity_ids":[],"next_best_action":null},"metadata":{}},"memory":{"version":"conversation-memory-1.0.0","memory_revision":5,"conversation_id":"00000000-0000-4000-8000-000000000002","company_id":"3d6e17b5-ec79-4f75-aa7f-eaa824ff8493","source_message_id":"00000000-0000-4000-8000-000000900422","commerce_state_revision":2,"current_goal":"licenses: 2 licenses; licenses: 1 licenses (deferred)","current_goal_source_message_id":null,"question_lifecycle":[{"source_message_id":"00000000-0000-4000-8000-000000900420","text":"I've noted licenses at 3 licenses.","status":"pending","entity_id":"generic:licenses","resolution_source_message_id":"00000000-0000-4000-8000-000000901420","resolution":"customer information required"},{"source_message_id":"00000000-0000-4000-8000-000000900422","text":"How many licenses are currently retained, and what was postponed?","status":"resolved","entity_id":null,"resolution_source_message_id":"00000000-0000-4000-8000-000000901422","resolution":"canonical_memory_recall"}],"active_entities":[{"entity_id":"generic:licenses","type":"subscription","brand":null,"model":null,"quantity":2,"requested_quantity":2,"status":"active","region":null,"current_requirements":{"semantic_frame_version":"commerce-semantic-1.0.0","semantic_operation":"ADD_ITEM","product_name":"licenses","customer_subject_aliases":["licenses"],"commerce_kind":"subscription","unit":"licenses","sku":null,"semantic_confidence":0.98,"semantic_transaction_state":"unknown","semantic_payment_state":"unknown","semantic_booking_state":"unknown","semantic_fulfillment_state":"unknown","semantic_attributes":{},"capabilities":{"requires_delivery":false,"supports_pickup":false,"requires_installation":false,"requires_booking":false,"requires_quote":false,"requires_site_check":false,"digital_fulfilment":false,"recurring_billing":false,"rental_return":false,"customization":false},"quantity_basis":"customer_explicit","customer_inactive_unit_count":1,"customer_inactive_unit_status":"deferred"},"transaction_state":{"confirmed":false,"tentative":true}}],"latest_corrections":["Correction: keep two licenses; postpone the third."],"current_customer_facts":[{"key":"entity:generic:licenses:quantity","value":2,"authority":"canonical_commerce","source_message_id":"00000000-0000-4000-8000-000000900421","entity_id":"generic:licenses","region":null}],"customer_preferences":[],"active_constraints":[],"current_regions":[],"transaction_summary":{"quotation":"none","order":"none","payment":"none","delivery":"not_confirmed","installation":"unknown"},"historical_facts":[],"cancelled_or_superseded":[{"key":"entity:generic:licenses:unit-status:00000000-0000-4000-8000-000000900421","value":"deferred","authority":"canonical_commerce","source_message_id":"00000000-0000-4000-8000-000000900421","entity_id":"generic:licenses:unit-status:00000000-0000-4000-8000-000000900421","region":null}],"open_questions":["I've noted licenses at 3 licenses."],"pending_actions":[],"prior_topics":["We need three licenses for this team","Correction: keep two licenses; postpone the third"],"current_topic":"How many licenses are currently retained  and what was postponed","current_topic_source_message_id":null,"grounded_reference_lineage":[],"handoff_relevant_state":{"current_goal":"licenses: 2 licenses; licenses: 1 licenses (deferred)","active_entity_ids":["generic:licenses"],"open_questions":["I've noted licenses at 3 licenses."],"pending_actions":[]},"updated_from_turn":3,"updated_at":"2026-10-14T01:00:02.002Z"},"commerce_revision":2,"commerce_source_message_id":"00000000-0000-4000-8000-000000900421","expected":"Recorded your requirements for licenses: retained 2 licenses; deferred requirement: 1 licenses."};
+for(const mode of ['verified','invalid-memory-hash','changed-source-quantity'])test('P1 R3 actual Agent Assist partition draft '+mode,async()=>{
+ const base=structuredClone(p1PartitionAssistReadback);
+ const question=base.turns[2].content;
+ const semantic=providerWireV8({language:'en',intent:'customer_fact_recall',
+  requested_facts:['quantity','entity_status'],
+  referents:[{ref:'licenses',source:'prior_turn',confidence:.98}],
+  demands:[{question,source_quote:question,subject_refs:['licenses'],source_type:'general',
+   requested_facts:['quantity','entity_status'],constraints:{},customer_correction:false,
+   explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}]});
+ const x=await setupInbox('none',{},semantic);
+ try {
+  assert.equal(x.c.company_id,base.memory.company_id);
+  const conv=x.c.id;
+  // Keep the fixture chronology consistent with the captured source receipt.
+  f.rows.messages=base.turns.map((v,i)=>({id:v.id,conversation_id:conv,role:'visitor',
+    content:mode==='changed-source-quantity'&&i===1?'Correction: keep nine licenses; postpone the third.':v.content,
+    created_at:['2026-10-14T01:00:00.000Z','2026-10-14T01:00:01.001Z','2026-10-14T01:00:02.002Z'][i],
+    is_recalled:false,metadata:{}})).reverse();
+  const memory={...base.memory,conversation_id:conv};
+  f.rows.conversation_memory_state=[{conversation_id:conv,company_id:x.c.company_id,
+    revision:memory.memory_revision,source_message_id:memory.source_message_id,
+    commerce_state_revision:memory.commerce_state_revision,memory,
+    memory_hash:mode==='invalid-memory-hash'?'invalid':await fixtureDigest(JSON.stringify(memory))}];
+  f.rows.conversation_commerce_state=[{conversation_id:conv,company_id:x.c.company_id,
+    revision:base.commerce_revision,source_message_id:base.commerce_source_message_id,state:base.state}];
+  f.rows.rag_trace=[];
+  const snapshot=JSON.stringify([f.rows.messages,f.rows.conversation_commerce_state,f.rows.conversation_memory_state,x.c]);
+  const result=await x.send('suggest_reply',question,'conversation');
+  if(mode==='verified'){
+    assert.equal(result.status,200,JSON.stringify(result));
+    assert.equal(result.data.success,true);
+    assert.equal(result.data.draft_only,true);
+    assert.equal(result.data.knowledge_grounded,false);
+    assert.equal(result.data.recall_authority,'CANONICAL_COMMERCE_STATE');
+    assert.equal(result.data.result.suggestions[0].content,base.expected);
+  } else {
+    assert.equal(result.status,409,JSON.stringify(result));
+    assert.equal(result.data.success,false);
+    assert.equal(result.data.error,mode==='invalid-memory-hash'?'assist_partition_readback_unverified':'assist_partition_source_unverified');
+  }
+  assert.equal(x.posts(),0,'partition draft cannot dispatch KB');
+  assert.deepEqual(x.modelKinds(),{semantic:1,answer:0});
+  assert.equal(f.rpc.length,0,'no customer commit or state mutation');
+  assert.equal(JSON.stringify([f.rows.messages,f.rows.conversation_commerce_state,f.rows.conversation_memory_state,x.c]),snapshot);
+  console.log('P1_R3_ASSIST_PARTITION|'+JSON.stringify({mode,status:result.status,semantic:x.modelKinds().semantic,answer:x.modelKinds().answer,kb:x.posts(),rpc:f.rpc.length}));
+ }finally{globalThis.fetch=realFetch;}
+});
