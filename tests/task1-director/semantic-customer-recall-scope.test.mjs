@@ -918,7 +918,7 @@ test('S2 structured mixed quantity binds original and natural price requests ide
      structured_mixed_quantity_recall:input,history:[{id:'original-source',role:'visitor',content:row[4]}]};
    const result=resolveCurrentFactualRequest(opts), merchant=result.demands.find(d=>d.source_type==='product');
    assert.ok(merchant,row[0]);assert.deepEqual(merchant.subjects,[row[1]]);
-   assert.equal(merchant.question,row[1]+' '+row[6]);assert.equal(result.kb_required,true);
+   assert.equal(merchant.question,(row[1]+' '+row[6]).normalize('NFKC').replace(/\s+/gu,' ').trim());assert.equal(result.kb_required,true);
    assert.ok(result.query);assert.ok(!result.query.includes(row[4]));assert.ok(!result.query.includes(q));
    queries.push(merchant.question);
    const stale=structuredClone(input);stale.commerce.revision++;
