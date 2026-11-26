@@ -5242,7 +5242,12 @@ async function orchestrationGenerateReply(
         return new Response(JSON.stringify({ success: false, error: "scoped_correction_commit_unverified" }),
           { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
-      const memoryOutcome = (_c3PartitionRead && _c3TrustedPersistedMemoryReadback) || _c3RejectedCustomerRequirement || _c3UnverifiedDimensionContextAnswerOnly || !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)})
+      // Read-only Commerce does not mean skip the current Visitor's Memory
+      // receipt: reply finalization requires a source-bound customer commit.
+      // Preserve the pre-refresh proof above, but commit this question through
+      // the existing Memory CAS path before the B2-supervised reply.
+      const partitionReceiptRequired = _c3PartitionRead && Boolean(_c3TrustedPersistedMemoryReadback && _c3SourceRetainedMemoryForRecall);
+      const memoryOutcome = _c3RejectedCustomerRequirement || _c3UnverifiedDimensionContextAnswerOnly || (!partitionReceiptRequired && !shouldRefreshCanonicalMemory({outcome:_a3Commerce,explicit_handoff:_explicitHandoffRequested,customer_owned_delta:_customerOwnedDelta,semantic_fact_delta:Boolean(_a3SemanticFrame?.customer_facts?.length)}))
         ? null
         : await refreshConversationLongMemory(
           supabaseAdmin as unknown as Parameters<
@@ -5259,9 +5264,9 @@ async function orchestrationGenerateReply(
               ? null
               : Number(commerceRow.revision),
             commerce_state: commerceState,
-            request_decision: _customerRequestDecision,
-            source_factual_turn: _currentFactualRequest?.kb_required === true,
-            factual_read_request: _currentFactualRequest?.kb_required ? {
+            request_decision: partitionReceiptRequired ? undefined : _customerRequestDecision,
+            source_factual_turn: !partitionReceiptRequired && _currentFactualRequest?.kb_required === true,
+            factual_read_request: !partitionReceiptRequired && _currentFactualRequest?.kb_required ? {
               source_message_id: _h1SourceMessageId,
               subjects: _currentFactualRequest.subjects,
               subject_source_message_ids: _currentFactualRequest.subject_source_message_ids,
@@ -5567,6 +5572,8 @@ async function orchestrationGenerateReply(
     !_currentFactualRequest?.transaction_required && _c3CommerceSnapshot &&
     _c3CommerceSnapshot.source_message_id!==_h1SourceMessageId &&
     _c3SourceRetainedMemoryForRecall && _c3Memory &&
+    _c3Memory.source_message_id===_h1SourceMessageId &&
+    _c3Memory.company_id===_criticalE2ExpectedTenantId && _c3Memory.conversation_id===conversation_id &&
     _c3Recall.decision.handled && _c3Recall.decision.fact_type==="quantity+unit_partition" &&
     _c3Recall.decision.provenance.company_id===_criticalE2ExpectedTenantId &&
     _c3Recall.decision.provenance.conversation_id===conversation_id &&

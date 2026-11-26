@@ -967,8 +967,15 @@ function resolveSourceVerifiedUnitPartition(input:ConversationRecallInput):Conve
   const pair=selectSourceBoundPartitionRead(input),m=input.memory,c=input.commerce;
   if (!pair || !m || !c || !hasTrustedPersistedMemoryReadback(input) ||
       input.trusted_visitor_source_status!=="verified" ||
-      pair.source===input.source_message_id || m.source_message_id!==pair.source ||
+      pair.source===input.source_message_id ||
       c.source_message_id!==pair.source) return null;
+  // Memory's latest receipt may belong to a subsequent read-only question.
+  // The parent quantity and excluded child must still point at the same
+  // original correction and the exact current Commerce revision.
+  const retainedFact=m.current_customer_facts.filter(f=>f.key==="entity:"+pair.parent.entity_id+":quantity");
+  if(retainedFact.length!==1 || retainedFact[0].entity_id!==pair.parent.entity_id ||
+      retainedFact[0].authority!=="canonical_commerce" || retainedFact[0].value!==pair.parent.quantity ||
+      retainedFact[0].source_message_id!==pair.source) return null;
   const source=input.trusted_visitor_source_rows?.filter(row=>row.id===pair.source)??[];
   if (source.length!==1 || !source[0].content.trim() || source[0].content.length>2400 ||
       !phrase(source[0].content,pair.unit)) return null;

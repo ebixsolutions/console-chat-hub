@@ -725,6 +725,17 @@ for(const [category,name,unit,language,total,keep,correction,question,status] of
   assert.deepEqual(values,[['quantity',keep,'current',id],['quantity',total-keep,'excluded',child.entity_id],
    ['entity_status',status,'excluded',child.entity_id]]);
   assert.match(result.reply,language==='en'?/retained/:/保留/);
+  // A later read-only Memory receipt is not a new Commerce correction.
+  const afterRead=buildCanonicalConversationMemory({...scope,source_message_id:scope.source_message_id,
+   previous:memory,commerce_state_revision:2,commerce_state:state,next_memory_revision:4,visitor_turn_count:3,
+   source_created_at:'2026-11-26T00:03:00Z',newest_first:[{id:scope.source_message_id,role:'visitor',content:question,created_at:'2026-11-26T00:03:00Z'}]});
+  const repeated={...input,memory:afterRead,source_message_id:'partition-repeat',
+   quantity_reading:{...input.quantity_reading,source_message_id:'partition-repeat'},
+   trusted_persisted_memory_readback:{...input.trusted_persisted_memory_readback,source_message_id:scope.source_message_id,memory_revision:4}};
+  assert.equal(prepareConversationRecall(repeated,language).decision.fact_type,'quantity+unit_partition');
+  const wrongLineage=structuredClone(repeated);
+  wrongLineage.memory.current_customer_facts.find(f=>f.key==='entity:'+id+':quantity').source_message_id='foreign-source';
+  assert.notEqual(prepareConversationRecall(wrongLineage,language).decision.fact_type,'quantity+unit_partition');
   const b2={proposed_response:result.reply,persistence_kind:'ai_reply',
    snapshot:{...scope,source_message_content:question,commerce_state_revision:2,commerce_state_source_message_id:source,state},
    metadata:result.metadata};
