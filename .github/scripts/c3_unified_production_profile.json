@@ -1736,7 +1736,7 @@
   "authorized_task3c_d4_no_industry_sha256": {
     "supabase/functions/_shared/commerce-state-authority.ts": "1e51d04469921cd5c365ddbbaabaf1753f6be4a40a6cf74a9f794e2bc818f67d",
     "supabase/functions/_shared/commerce-state-runtime-base.ts": "99c26fca40a3b4b89e28e3840f1e19c68fddb1424d92f6af82c935335345f054",
-    "tests/task1-director/source-chain.test.mjs": "6b8e3d475ee23e579a64bba275964890ff07e8836aa69e74690d9717a42181c5",
+    "tests/task1-director/source-chain.test.mjs": "3563a6e764d4c7f49ce11ace75a252c3f64ec3772cd6b8b6324632afdb36cd80",
     "supabase/functions/_shared/b2-journey-progress-contract.ts": "367d2bae82405f7936861b8d0abf740b787b1c84c7e9e5838308a517db251f5d",
     "supabase/functions/_shared/commerce-semantic-adapter.ts": "cf27814aac3b9341e14f452f8bd13d8996024b68e70a282a18b4ac33b9513536",
     "supabase/functions/_shared/commerce-subject-resolution.ts": "803c2d09d04d2b9f0c5ca7419b8dda8b2b625db911324ae51ac84828c5720836",

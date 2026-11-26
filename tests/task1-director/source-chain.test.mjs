@@ -678,8 +678,17 @@ test('P1 mixed quantity recall keeps merchant lookup and customer question indep
  const make=(q,m)=>({...semantic({intent:'mixed_customer_and_merchant_facts',requested_facts:['quantity','price']}),
  demands:[{...ownershipFrame(q).demands[0],requested_facts:['quantity']},
  {...ownershipFrame(m).demands[0],source_type:'product',requested_facts:['price']}]});
- for(const [q,m] of pairs){
-   const source=q+' '+m,frame=make(q,m),copy=structuredClone(frame);
+ // Literal references identify a candidate read field only, not an entity
+ // or a count. The real Handler independently verifies stored scope/evidence.
+ const literalRefs=['書枱','套餐','英語課','療程','licenses','cartons'];
+ const withRecallRef=(q,m,ref)=>{
+   assert.ok(q.includes(ref),'fixture reference must be literal customer text');
+   const frame=make(q,m);
+   frame.demands[0].subject_refs=[ref];
+   return frame;
+ };
+ for(const [i,[q,m]] of pairs.entries()){
+   const source=q+' '+m,frame=withRecallRef(q,m,literalRefs[i]),copy=structuredClone(frame);
    const d=resolveCustomerRequestDecision(source,frame);
    assert.equal(d.kind,'mixed',JSON.stringify(d));
    assert.equal(d.customer_quantity_recall_request,q);
@@ -700,6 +709,37 @@ test('P1 mixed quantity recall keeps merchant lookup and customer question indep
  assert.equal(resolveCustomerRequestDecision(source,correction).customer_quantity_recall_request,undefined);
  const control=resolveCustomerRequestDecision(source+' 請轉真人客服',make(q,m));
  assert.equal(control.customer_quantity_recall_request,undefined);
+ // Retain every original negative unchanged. Also exercise the same guards
+ // with a present literal reference so an empty input cannot mask a defect.
+ for(const [negative,ref] of [
+   ['How many licenses are in stock?','licenses'],
+   ['How many orders did I mention?','orders'],
+   ['How many licenses are available from your store?','licenses'],
+   ['我之前提過幾多貨存？','貨存'],
+   ['How many payments did I mention?','payments'],
+   ['How many refunds did I mention?','refunds'],
+   ['How many bookings did I mention?','bookings'],
+   ['How many reservations did I mention?','reservations'],
+   ['How many entitlements did I mention?','entitlements'],
+   ['How many transactions did I mention?','transactions'],
+   ['How many invoices did I mention?','invoices'],
+   ['How many quotations did I mention?','quotations'],
+   ['How many inventories did I mention?','inventories'],
+   ['我之前提過幾張發票？','發票'],
+   ['我之前提過幾多宗交易？','交易'],
+ ]){
+   const merchant='what is the current official price?';
+   const result=resolveCustomerRequestDecision(negative+' '+merchant,withRecallRef(negative,merchant,ref));
+   assert.equal(result.customer_quantity_recall_request,undefined,negative);
+   assert.ok(result.merchant_request);
+ }
+ const supplied=()=>withRecallRef(q,m,literalRefs[0]);
+ assert.equal(resolveCustomerRequestDecision(m,supplied()).customer_quantity_recall_request,undefined);
+ const suppliedAmbiguous=supplied();suppliedAmbiguous.demands[0].ambiguity.is_ambiguous=true;
+ assert.equal(resolveCustomerRequestDecision(source,suppliedAmbiguous).customer_quantity_recall_request,undefined);
+ const suppliedCorrection=supplied();suppliedCorrection.demands[0].customer_correction=true;
+ assert.equal(resolveCustomerRequestDecision(source,suppliedCorrection).customer_quantity_recall_request,undefined);
+ assert.equal(resolveCustomerRequestDecision(source+' 請轉真人客服',supplied()).customer_quantity_recall_request,undefined);
 });
 
 // P1 actual control-priority failure: independent business questions must not
