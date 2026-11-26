@@ -11,7 +11,7 @@ export function errorCodes(result,fixture,error){
  const visit=(value,path,depth=0)=>{
   if(!value||typeof value!=='object'||depth>7)return;
   for(const [key,child] of Object.entries(value)){
-   if(['code','error_code','source_error_code','reason_code','error'].includes(key)&&typeof child==='string'&&
+   if(['code','error_code','source_error_code','reason_code','error','b2_code'].includes(key)&&typeof child==='string'&&
     /^[a-zA-Z][a-zA-Z0-9_.:-]{2,140}$/u.test(child)&&!child.includes('PRIVATE-SECRET'))found.push({code:child,path:path+'.'+key});
    else if(child&&typeof child==='object')visit(child,path+'.'+key,depth+1);
   }
@@ -34,6 +34,32 @@ const selectedReply=reply=>reply?{id:reply.id,source_message_id:reply.metadata?.
   factual_evidence_coverage:reply.metadata?.factual_evidence_coverage,
   reference_authority:reply.metadata?.reference_authority,kb_request_contract:reply.metadata?.kb_request_contract,
   unresolved_fact_fields:reply.metadata?.unresolved_fact_fields}}:null;
+// Only a server-produced, source-bound safe receipt may supply a diagnostic
+// verdict. Callback completion is not proof of a delivered reply.
+export function readBoundB2Diagnostic(row,scope){
+ const blank={decision:null,code:null,committed:null,receipt_status:'NOT_CAPTURED'};
+ const e=row?.retrieved_chunks,r=e?.decision_receipt,b=r?.source_binding;
+ if(!scope?.company_id||!scope?.conversation_id||!scope?.source_message_id||
+    row?.kb_source!=='protected_pipeline_diagnostic'||
+    row.conversation_id!==scope.conversation_id||row.message_id!==scope.source_message_id||
+    e?.contract!=='c3-protected-pipeline-evidence-v1'||e.stage!=='b2_verdict'||
+    e.company_id!==scope.company_id||e.source_message_id!==scope.source_message_id||
+    r?.contract!=='c3-gate-reason-v1'||r.gate!=='b2'||
+    b?.company_id!==scope.company_id||b.conversation_id!==scope.conversation_id||
+    b.source_message_id!==scope.source_message_id||
+    !(b.state_revision===null||(Number.isSafeInteger(b.state_revision)&&b.state_revision>=0))||
+    !['accepted','rejected','NOT_CAPTURED'].includes(r.outcome)||
+    !['CAPTURED','WITHHELD_OVERSIZED','WITHHELD_SENSITIVE'].includes(r.capture_state)||
+    r.capture_state!==e.payload?.capture_state||
+    !(r.commit_confirmed===null||typeof r.commit_confirmed==='boolean'))return blank;
+ if(r.outcome==='rejected'&&r.commit_confirmed===true)return blank;
+ const code=typeof r.fired_condition==='string'&&r.fired_condition!=='NOT_CAPTURED'&&
+    /^[A-Z0-9_]{3,80}$/u.test(r.fired_condition)?r.fired_condition:null;
+ return {decision:r.outcome==='accepted'?'allow':r.outcome==='rejected'?'block':null,
+    code,committed:r.commit_confirmed,receipt_status:'SOURCE_BOUND_GATE_DIAGNOSTIC',
+    state_revision:b.state_revision,not_persisted_reply_proof:true};
+}
+
 export function snapshot(fixture,result,source){
  const tables=fixture?.tables,commerce=tables?.conversation_commerce_state?.[0];
  const memory=tables?.conversation_memory_state?.[0];
@@ -50,8 +76,8 @@ export function snapshot(fixture,result,source){
   // Bounded diagnostic codes only. Do not assert a B2 reply receipt merely
   // because the legacy clarification RPC returned success.
   b2_verdicts:(tables?.rag_trace??[]).filter(row=>row.kb_source==='protected_pipeline_diagnostic'&&row.retrieved_chunks?.stage==='b2_verdict')
-   .map(row=>{const payload=row.retrieved_chunks?.payload??row.retrieved_chunks?.data??row.retrieved_chunks;
-     const decision=payload?.decision;return {decision:decision?.decision??null,code:decision?.code??null,committed:payload?.committed??null};}),
+   .map(row=>readBoundB2Diagnostic(row,{company_id:tables?.conversations?.[0]?.company_id,
+    conversation_id:tables?.conversations?.[0]?.id,source_message_id:source})),
   kb_dispatch_count:(fixture?.requests??[]).filter(request=>request.url.includes('/rag/context-search')).length,
   semantic_dispatch_count:(fixture?.requests??[]).filter(request=>request.url.endsWith(':generateContent')&&
    request.body?.systemInstruction?.parts?.[0]?.text?.includes('You are a multilingual commerce semantic interpreter.')).length,

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {businessAssertions,snapshot,summarizeObservationEvidence} from './p1-observation-diagnostics.mjs';
+import {businessAssertions,snapshot,summarizeObservationEvidence,readBoundB2Diagnostic} from './p1-observation-diagnostics.mjs';
 import {digest,loadObservationCases,buildTurnInput} from './p1-observation-fixtures.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const updateReply=(turn,content)=>{
@@ -208,4 +208,35 @@ test('R2 source-bound scripted generation is present only for exact selected scr
  }
  assert.equal(count,25);
  assert.deepEqual(keys.sort(),["BE-04:1","BE-05:2","ED-02:1","ED-03:1","ED-05:1","FB-01:0","FB-01:1","FB-02:1","P1:0","P2:0","R1:0","R2:0","R3:0","RT-02:1","SA-04:2","SYNTHETIC-b2b-wholesale-merchant-topic:0","SYNTHETIC-b2b-wholesale-mixed-known-unknown:2","SYNTHETIC-beauty-merchant-topic:0","SYNTHETIC-education-merchant-topic:0","SYNTHETIC-restaurant-merchant-topic:0","SYNTHETIC-retail-merchant-topic:0","SYNTHETIC-retail-mixed-known-unknown:2","SYNTHETIC-saas-merchant-topic:0","WH-01:1","WH-05:1"].sort());
+});
+
+test('B2 observer decodes only the exact scoped safe diagnostic, not raw payload or delivery proof',()=>{
+ const scope={company_id:'company',conversation_id:'ticket',source_message_id:'source'};
+ const row={kb_source:'protected_pipeline_diagnostic',conversation_id:'ticket',message_id:'source',
+  retrieved_chunks:{contract:'c3-protected-pipeline-evidence-v1',stage:'b2_verdict',company_id:'company',source_message_id:'source',
+   payload:{capture_state:'WITHHELD_SENSITIVE',decision:{decision:'allow',code:'FAKE_RAW'},raw:'DO_NOT_CAPTURE'},
+   decision_receipt:{contract:'c3-gate-reason-v1',gate:'b2',outcome:'rejected',fired_condition:'KNOWN_CONTEXT_RECONFIRMATION',
+    source_binding:{...scope,state_revision:2},capture_state:'WITHHELD_SENSITIVE',commit_confirmed:false}}};
+ const positive=readBoundB2Diagnostic(row,scope);
+ assert.deepEqual(positive,{decision:'block',code:'KNOWN_CONTEXT_RECONFIRMATION',committed:false,
+  receipt_status:'SOURCE_BOUND_GATE_DIAGNOSTIC',state_revision:2,not_persisted_reply_proof:true});
+ for(const mutate of [
+  r=>r.message_id='other',r=>r.conversation_id='other',r=>r.retrieved_chunks.company_id='other',
+  r=>r.retrieved_chunks.source_message_id='other',r=>r.retrieved_chunks.contract='legacy',
+  r=>r.retrieved_chunks.decision_receipt.source_binding.company_id='other',
+  r=>r.retrieved_chunks.decision_receipt.source_binding.source_message_id='other',
+  r=>r.retrieved_chunks.decision_receipt.source_binding.conversation_id='other',
+  r=>r.retrieved_chunks.decision_receipt.source_binding.state_revision=-1,
+  r=>r.retrieved_chunks.decision_receipt.gate='other',r=>r.retrieved_chunks.decision_receipt.commit_confirmed=true,
+  r=>delete r.retrieved_chunks.decision_receipt,r=>r.retrieved_chunks.payload.capture_state='CAPTURED',
+ ]){const copy=structuredClone(row);mutate(copy);assert.deepEqual(readBoundB2Diagnostic(copy,scope),
+  {decision:null,code:null,committed:null,receipt_status:'NOT_CAPTURED'});}
+ const allowed=structuredClone(row);allowed.retrieved_chunks.decision_receipt.outcome='accepted';
+ allowed.retrieved_chunks.decision_receipt.fired_condition='B2_ALLOW';allowed.retrieved_chunks.decision_receipt.commit_confirmed=true;
+ assert.equal(readBoundB2Diagnostic(allowed,scope).not_persisted_reply_proof,true);
+ const unknown=structuredClone(row);unknown.retrieved_chunks.decision_receipt.outcome='NOT_CAPTURED';
+ unknown.retrieved_chunks.decision_receipt.fired_condition='NOT_CAPTURED';unknown.retrieved_chunks.decision_receipt.commit_confirmed=null;
+ assert.equal(readBoundB2Diagnostic(unknown,scope).decision,null);assert.equal(readBoundB2Diagnostic(unknown,scope).code,null);
+ const observed=snapshot({tables:{conversations:[{id:'ticket',company_id:'company'}],messages:[],rag_trace:[row]},requests:[],commits:[]},{status:409,body:{}},'source');
+ assert.deepEqual(observed.b2_verdicts,[positive]);assert.equal(observed.reply,null);assert(!JSON.stringify(observed).includes('DO_NOT_CAPTURE'));
 });
