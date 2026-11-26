@@ -1979,7 +1979,7 @@ function attestedCustomerQuantity(
   const rows = input.trusted_visitor_source_rows;
   if (!memory || !rows?.length || rows.length > 500 ||
       !any(input.question, OWNER) ||
-      !/(?:剛才|刚才|頭先|头先|之前|先前|曾經|曾经|講過|讲过|說過|说过|提過|提过|記得|记得|提到|mentioned|previously|earlier|told you|did (?:i|we) say|(?:i|we) said)/iu.test(input.question)) return null;
+      !/(?:剛才|刚才|頭先|头先|之前|先前|曾經|曾经|講過|讲过|說過|说过|提過|提过|記得|记得|提到|mentioned|previously|earlier|told you|did (?:i|we) (?:say|mention|state)|(?:i|we) said)/iu.test(input.question)) return null;
   // A prior quantity may be attested without a display unit. Read a whole
   // source number and its scoped noun phrase/explicit total; a literal label
   // is not promoted into a measurement unit unless canonical proof supplies it.
@@ -2072,14 +2072,30 @@ function attestedCustomerQuantity(
       // A unit is never added as an entity alias or used to change state.
       const unitReference=active.length===1 && unit?.quantity_unit &&
         keyNorm(quantitySubject(input.question)??"")===keyNorm(unit.quantity_unit);
+      // A literal shortened Han subject after the original counter is a
+      // read-only reference, never a new alias or an inferred industry label.
+      // Require one active entity and uniqueness even against inactive items.
+      const writtenUnit=unit?.quantity_unit?.normalize("NFKC")??"";
+      const writtenSubject=quantitySubject(input.question)?.normalize("NFKC")??"";
+      const suffix=writtenUnit&&writtenSubject.startsWith(writtenUnit)
+        ? writtenSubject.slice(writtenUnit.length):"";
+      const matchesSuffix=(entity:CommerceEntity)=>
+        [entity.model,entity.attributes.product_name].some(name=>
+          typeof name==="string"&&name.normalize("NFKC").endsWith(suffix));
+      const suffixReference=active.length===1&&/^\p{Script=Han}{2,24}$/u.test(suffix)&&
+        labels.some(name=>name.normalize("NFKC").length>suffix.length&&
+          name.normalize("NFKC").endsWith(suffix))&&
+        commerce.state.entities.filter(matchesSuffix).length===1&&
+        sourceClauses(input.question).length===1&&!customerRecallHasAction(input.question)&&
+        !any(withoutExcludedLookups(input.question),EXTERNAL);
       if(e.provenance.source_type==="customer"&&id&&id!==input.source_message_id&&
         original.length===1&&labels.some(n=>phrase(original[0].content,n))&&
-        (labels.some(n=>phrase(input.question,n))||unitReference)&&Number.isInteger(e.quantity)&&
+        (labels.some(n=>phrase(input.question,n))||unitReference||suffixReference)&&Number.isInteger(e.quantity)&&
         e.quantity>=0&&e.quantity<=1000){
         const attestedUnit=attestedCanonicalQuantityUnit(input,e.quantity,id,e.entity_id);
         const sourceIndex=rows.findIndex(row=>row.id===id);
         const superseded=sourceIndex<0||rows.slice(0,sourceIndex).some(row=>
-          labels.some(n=>phrase(row.content,n))&&
+          (labels.some(n=>phrase(row.content,n))||(suffixReference&&phrase(row.content,suffix)))&&
           /更正|改為|改为|取消|暫緩|暂缓|change|correct|cancel|defer/iu.test(row.content));
         if(attestedUnit&&!superseded){
           candidates.push({fact_type:"quantity",value:e.quantity,
@@ -2665,7 +2681,7 @@ export function resolveConversationRecall(
   // is separately governed by canonical lifecycle and revision controls.
   const historicalCustomerQuantity = any(input.question, OWNER) &&
     (hasField(input.question, "quantity") || sourceBoundQuantityQuery(input.question, input)) &&
-    /(?:剛才|刚才|頭先|头先|之前|先前|曾經|曾经|說過|说过|講過|讲过|提過|提过|previously|earlier|did (?:i|we) say|told you)/iu.test(input.question);
+    /(?:剛才|刚才|頭先|头先|之前|先前|曾經|曾经|說過|说过|講過|讲过|提過|提过|previously|earlier|did (?:i|we) (?:say|mention|state)|told you)/iu.test(input.question);
   if (historicalCustomerQuantity &&
       input.trusted_visitor_source_status !== "verified") {
     return fail("AMBIGUOUS", "CUSTOMER_SOURCE_NOT_VERIFIED");

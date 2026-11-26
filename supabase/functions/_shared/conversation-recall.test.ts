@@ -1335,3 +1335,35 @@ Deno.test("Quotation enquiry context remains attributed and source-bound, never 
  assert(!resolveSourceBoundQuoteConversation(paid,queryFrame,"en"));
  assert(!isSourceBoundQuoteStatusQuestion(q+" and how much is due?",queryFrame));
 });
+
+
+// Actual isolated P1 mixed-demand failures: the customer clause is recalled
+// independently; the merchant price remains outside this resolver.
+Deno.test("source-bound prior quantities accept a unique literal shortened subject and English mention",()=>{
+  for(const [name,unit,count,source,question] of [
+    ["美容療程","堂",3,"我想要三堂美容療程。","我之前提過幾堂療程？"],
+    ["paper cups","cartons",120,"We discussed 120 cartons of paper cups.","How many cartons did I mention?"],
+    ["英語課","課",3,"我想要三課英語課。","我之前提過幾課英語課？"],
+  ] as const){
+    const i=recallFixture(question),e=i.commerce!.state.entities[0];
+    e.attributes={product_name:name,unit,quantity_basis:"customer_explicit"};
+    e.quantity=count;e.status="tentative";e.provenance={source_type:"customer",source_message_id:"ac-source"};
+    i.commerce!.state.entities=[e];i.memory!.active_entities=[{...i.memory!.active_entities[0],
+      entity_id:e.entity_id,quantity:count,requested_quantity:count,status:"active",current_requirements:e.attributes}];
+    i.memory!.current_customer_facts=[{key:"entity:"+e.entity_id+":quantity",value:count,authority:"canonical_commerce",source_message_id:"ac-source",entity_id:e.entity_id}];
+    i.trusted_visitor_source_rows=[{id:"ac-source",content:source}];
+    const result=prepareConversationRecall(i);
+    assert(result.decision.handled&&result.decision.value===count,JSON.stringify(result));
+    assert(hasAttestedUnlabelledCustomerRecall(i,result.decision),"original visitor quantity not attested");
+    for(const tamper of [(x:typeof i)=>{x.trusted_visitor_source_rows=[];},
+      (x:typeof i)=>{x.trusted_visitor_source_rows=[{id:"ac-source",content:"unrelated item 99 units"}];},
+      (x:typeof i)=>{x.commerce!.revision++;}]){
+      const bad=structuredClone(i);tamper(bad);
+      assert(!hasAttestedUnlabelledCustomerRecall(bad,prepareConversationRecall(bad).decision),"invalid source/revision certified");
+    }
+    if(name==="美容療程"){
+      const bad=structuredClone(i);bad.commerce!.state.entities.push({...structuredClone(e),entity_id:"other",status:"cancelled",attributes:{product_name:"其他療程",unit}});
+      assert(!hasAttestedUnlabelledCustomerRecall(bad,prepareConversationRecall(bad).decision),"ambiguous literal suffix certified");
+    }
+  }
+});

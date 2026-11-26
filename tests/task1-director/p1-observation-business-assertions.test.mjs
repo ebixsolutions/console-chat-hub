@@ -257,3 +257,20 @@ test('Mixed known count accepts only a source-bound scalar with the exact determ
   const copy=structuredClone(turns);mutate(copy[1].reply.metadata);assert.equal(statuses(row,copy)['must.answer_known_customer_count'],'FAIL');
  }
 });
+
+
+test('Structured price requery must bind persisted demand scope to actual tenant request and visitor',()=>{
+ const {row,turns}=quantityCase(),final=turns[1];row.must={requery_merchant_price:true};
+ final.utterance='What is the current price?';final.utterance_sha256=final.visitor_sha256=digest(final.utterance);row.turns[1]=final.utterance;
+ const scope={source_message_id:final.source_message_id,question:final.utterance,subjects:['notebook'],requested_facts:['price'],constraints:{}};
+ const query=JSON.stringify({questions:[{question:'notebook '+scope.question,customer_text:scope.question,subjects:scope.subjects,requested_facts:scope.requested_facts,source_type:'product'}]});
+ final.kb_dispatch_count=1;final.kb_requests=[{query,query_sha256:digest(query),company_id:'34'}];
+ final.reply.metadata.factual_evidence_coverage=[{id:'demand-2',source_type:'product',request_scope:JSON.stringify(scope),evidence_ids:[]}];
+ final.reply.metadata.kb_request_contract={version:'current-factual-request-1',source_message_id:final.source_message_id,planned_kb_demand_ids:['demand-2'],query_sha256:digest(query)};
+ assert.equal(statuses(row,turns)['must.requery_merchant_price'],'PASS');
+ for(const mutate of [t=>t.kb_requests[0].company_id='other',t=>t.reply.metadata.kb_request_contract.query_sha256='other',
+  t=>t.reply.metadata.kb_request_contract.source_message_id='other',t=>t.reply.metadata.b2_response_hash='forged',
+  t=>{const s=JSON.parse(t.reply.metadata.factual_evidence_coverage[0].request_scope);s.subjects=['other'];t.reply.metadata.factual_evidence_coverage[0].request_scope=JSON.stringify(s);}]){
+  const copy=structuredClone(turns);mutate(copy[1]);assert.equal(statuses(row,copy)['must.requery_merchant_price'],'FAIL');
+ }
+});

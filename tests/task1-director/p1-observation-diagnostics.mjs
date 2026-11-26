@@ -371,8 +371,24 @@ function structuredOriginalCheck(key,expected,row,turns){
  }
  if(key==='requery_merchant_price'){
   const dispatch=kbDispatchEvidence(final),coverage=final?.reply?.metadata?.factual_evidence_coverage??[];
-  const priceDemand=coverage.some(demand=>Array.isArray(demand.requested_facts)&&demand.requested_facts.some(fact=>['price','current_price','official_price'].includes(fact)));
-  return priceDemand?decide(dispatch.pass,{dispatch,coverage}):unavailable(
+  // The actual persisted coverage uses a JSON request_scope, not a
+  // top-level requested_facts field. Bind it to the exact outbound query.
+  const parse=value=>{try{return typeof value==='string'?JSON.parse(value):null;}catch{return null;}};
+  const norm=value=>typeof value==='string'?value.normalize('NFKC').trim().replace(/[?!。！？]+$/u,''):'';
+  const same=(a,b)=>Array.isArray(a)&&Array.isArray(b)&&a.length>0&&
+   a.every(x=>typeof x==='string'&&norm(x))&&b.every(x=>typeof x==='string'&&norm(x))&&
+   JSON.stringify(a.map(norm).sort())===JSON.stringify(b.map(norm).sort());
+  const contract=final?.reply?.metadata?.kb_request_contract;
+  const priceDemands=coverage.map(d=>({d,s:parse(d.request_scope)})).filter(({s})=>
+   Array.isArray(s?.requested_facts)&&s.requested_facts.some(f=>['price','current_price','official_price'].includes(f)));
+  const bound=priceDemands.some(({d,s})=>d.source_type==='product'&&
+   s.source_message_id===final?.source_message_id&&norm(s.question)&&norm(final?.utterance).includes(norm(s.question))&&
+   contract?.version==='current-factual-request-1'&&contract.source_message_id===final.source_message_id&&
+   Array.isArray(contract.planned_kb_demand_ids)&&contract.planned_kb_demand_ids.includes(d.id)&&
+   dispatch.requests.some(r=>r.query_sha256===contract.query_sha256&&
+    (parse(r.query)?.questions??[]).some(q=>q.source_type==='product'&&norm(q.question)&&
+     norm(q.customer_text)===norm(s.question)&&same(q.subjects,s.subjects)&&same(q.requested_facts,s.requested_facts))));
+  return priceDemands.length?decide(dispatch.pass&&replyBound(final)&&bound,{dispatch,coverage,bound}):unavailable(
    'A real tenant-bound query is checked separately; price intent must come from actual structured demand evidence, not a keyword guessed from the expected answer.',
    [check('current_turn_tenant_bound_kb_dispatch',dispatch.pass,dispatch,'actual_kb_dispatch')]);
  }
