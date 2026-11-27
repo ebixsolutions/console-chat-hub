@@ -229,6 +229,9 @@ import {
   type B2TrustedTargetedClarification,
   type B2TrustedReadOnlyRecap,
   type B2TrustedCustomerCalculation,
+  type B2ProtectedCustomerCountRead,
+  selectB2ProtectedCustomerCountRead,
+  deliverProtectedCustomerCountReply,
   buildB2AuthoritativeReadbackProof,
   buildB2ReadOnlyRecapProof,
   buildB2TrustedCustomerCalculation,
@@ -756,6 +759,7 @@ async function executeB2RpcPersistence<T>(
     trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
     trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
     trusted_customer_calculation?: B2TrustedCustomerCalculation | null;
+    protected_customer_count_read?: B2ProtectedCustomerCountRead | null;
     expected_commerce_state_revision?: number | null;
   },
   commit: (snapshot: B2CanonicalSnapshot) => Promise<T>,
@@ -788,6 +792,7 @@ async function commitAiReplyWithControlGate(
   trustedReadOnlyRecap: B2TrustedReadOnlyRecap | null = null,
   trustedCustomerCalculation: B2TrustedCustomerCalculation | null = null,
   trustedKbPriceClaims: B2KbPriceClaim[] | null = null,
+  protectedCustomerCountRead: B2ProtectedCustomerCountRead | null = null,
 ): Promise<
   | { ok: true; message_id: string | null; idempotent: boolean }
   | {
@@ -832,6 +837,7 @@ async function commitAiReplyWithControlGate(
     b2_source_message_id: source_message_id,
   };
   let attemptedEvidence: Record<string, unknown> | null = null;
+  const countRead = { protected_customer_count_read: protectedCustomerCountRead };
   const gateStarted=Date.now();
   const b2 = await executeB2RpcPersistence(
     supabaseAdmin,
@@ -849,6 +855,7 @@ async function commitAiReplyWithControlGate(
       trusted_lifecycle_commit: trustedLifecycleCommit,
       trusted_read_only_recap: trustedReadOnlyRecap,
       trusted_customer_calculation: trustedCustomerCalculation,
+      ...countRead,
       expected_commerce_state_revision: expectedRevision,
     },
     async (snapshot) => {
@@ -6246,7 +6253,11 @@ ${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was n
       classifyCommerceStatePersistenceResult(commercePersistResult);
     const commerceReason = _c3ResolvedAddressCorrection?.reason ??
       _a3Commerce!.reason;
-    const commerceCommit = await commitAiReplyWithControlGate(
+    const protectedCountRead=selectB2ProtectedCustomerCountRead(_c3ResolvedAddressCorrection?null:_a3Commerce,{
+      company_id:_criticalE2ExpectedTenantId??null,conversation_id,source_message_id,
+      language:_visitorLang==="en"?"en":_visitorLang==="zh-CN"?"zh-CN":"zh-TW"});
+    const protectedDelivery=await deliverProtectedCustomerCountReply(protectedCountRead,
+      ()=>commitAiReplyWithControlGate(
       supabaseAdmin,
       conversation_id,
       source_message_id,
@@ -6293,15 +6304,20 @@ ${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was n
       _a3Commerce?.trusted_journey_progress ?? null,
       _c3VerifiedCorrectionReceipt,
       _c3LifecycleReceipt,
-    );
+      null,null,null,protectedCountRead,
+    ),safeReply=>commitAiReplyWithControlGate(supabaseAdmin,conversation_id,source_message_id,safeReply,{
+      response_route:"commerce_count_safe_clarification",escalation_action:"continue_ai",
+      handoff_required:false,transaction_mutation:"NONE",
+    }));
+    const commerceCommit=protectedDelivery.result;
     await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
     if (commerceCommit.ok) {
       return new Response(
         JSON.stringify({
           success: true,
-          reply: commerceReply,
-          response_route: commerceRoute,
-          commerce_authority: commerceAuthority,
+          reply: protectedDelivery.clarification??commerceReply,
+          response_route: protectedDelivery.clarification?"commerce_count_safe_clarification":commerceRoute,
+          commerce_authority: protectedDelivery.clarification?"INSUFFICIENT_INFORMATION":commerceAuthority,
           commerce_state_revision: commerceRevision,
           handoff_required: false,
         }),

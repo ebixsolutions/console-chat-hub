@@ -750,3 +750,76 @@ test('P1 independent question boundary preserves canonical R1 and non-immediate 
  for(const q of positives)assert.equal(classifyHandoffIntent(q).explicit_request,true,q);
  for(const q of negatives)assert.equal(classifyHandoffIntent(q).explicit_request,false,q);
 });
+
+/** Scoped B2 prerequisite, separate from R4(a) writer changes. Actual
+ * persistence gate with a disposable DB adapter; not Hosted/RLS evidence. */
+import {selectB2ProtectedCustomerCountRead,deliverProtectedCustomerCountReply,executeB2PersistenceGate,buildB2AuthoritativeReadbackProof as b2CountReadback} from '../../supabase/functions/_shared/pre-send-conversion-supervisor.ts';
+const b2CountPrior="00000000-0000-4000-8000-000000000011";
+const b2CountPath="customer_constraints.customer_reported_facts.damaged_boxes.value.amount";
+function b2CountFixture(){
+ const state=createEmptyConversationCommerceState();
+ state.customer_constraints.customer_reported_facts={damaged_boxes:{
+  value:{amount:3,unit:"boxes"},source_count_order:"count_first",source_count_origin:"literal_customer_clause",
+  source_count_visibility:"exact_recall_only",source_count_expires_after_revision:39,
+  source_text:"Actually 3 boxes damaged.",source_subject_text:"damaged",source_unit_text:"boxes",
+  provenance:{source_type:"customer",source_message_id:b2CountPrior,company_id:TID,conversation_id:CID}}};
+ const question="How many boxes damaged?",reply="From what you already told me: 3 boxes.";
+ const selected=selectB2ProtectedCustomerCountRead({route:"commerce_state_answer",state_path:b2CountPath,revision:7},
+   {company_id:TID,conversation_id:CID,source_message_id:SRC,language:"en"});
+ const metadata={response_route:"commerce_state_answer",commerce_authority:"CONVERSATION_STATE",
+   commerce_state_revision:7,commerce_state_persist_result:"read_only",commerce_state_persistence_classification:"NO_SEMANTIC_CHANGE",
+   commerce_state_path:b2CountPath,commerce_state_readback_proof:b2CountReadback(state,b2CountPath)};
+ return {state,question,reply,selected,metadata};
+}
+function b2CountDb(f,{wrongOriginal=false,stale=false,changedSource=false}={}){
+ let reads=0;const client={from(table){
+ const filters={};return {select(){return this},eq(k,v){filters[k]=v;return this},async maybeSingle(){
+ if(table==="conversations")return {data:{id:CID,company_id:TID},error:null};
+ if(table==="messages"){
+ const prior=filters.id===b2CountPrior;
+ return {data:{id:filters.id,conversation_id:CID,role:prior&&wrongOriginal?"assistant":"visitor",
+ content:prior?(changedSource?"Actually 8 boxes damaged.":"Actually 3 boxes damaged."):f.question},error:null};}
+ if(table==="conversation_commerce_state")return {data:{company_id:TID,revision:stale&&++reads>1?8:7,source_message_id:b2CountPrior,state:structuredClone(f.state)},error:null};
+ return {data:null,error:{message:"unexpected table"}}}}}};return client;
+}
+test("scoped B2 prerequisite validates actual persistence path and denies proof/reply substitution",async()=>{
+ const f=b2CountFixture();assert(f.selected);
+ let committed=0;
+ const invoke=(changes={},dbOptions={})=>executeB2PersistenceGate({client:b2CountDb(f,dbOptions),
+ conversation_id:CID,source_message_id:SRC,proposed_response:f.reply,persistence_kind:"ai_reply",
+ metadata:f.metadata,protected_customer_count_read:f.selected,expected_commerce_state_revision:7,
+ commit:async()=>{committed++;return "committed"},...changes});
+ const ok=await invoke();assert.equal(ok.committed,true);assert.equal(ok.decision.code,"B2_ALLOW_PROTECTED_CUSTOMER_COUNT_READ");
+ const wrongProof={...f.metadata,commerce_state_readback_proof:{state_path:b2CountPath,value:"999999"}};
+ for(const changes of [{metadata:wrongProof},{metadata:null},{metadata:{...f.metadata,commerce_state_path:null,commerce_state_readback_proof:null}},
+  {proposed_response:f.reply.replace("3","999999")},{metadata:wrongProof,proposed_response:f.reply.replace("3","999999")},
+  {proposed_response:f.reply.replace("boxes","items")},{protected_customer_count_read:null},
+  {protected_customer_count_read:{...f.selected,company_id:"wrong"}},{protected_customer_count_read:{...f.selected,source_message_id:"wrong"}},
+  {protected_customer_count_read:{...f.selected,revision:6}}]){
+  const result=await invoke(changes);assert.equal(result.committed,false,JSON.stringify(changes));
+ }
+ for(const options of [{wrongOriginal:true},{changedSource:true},{stale:true}])assert.equal((await invoke({},options)).committed,false);
+ assert.equal(committed,1);
+});
+test("scoped B2 blocked count uses one safe clarification via existing gate without state mutation",async()=>{
+ const f=b2CountFixture(),before=JSON.stringify(f.state),sent=[];
+ const commit=async(reply,metadata,selection)=>{const r=await executeB2PersistenceGate({client:b2CountDb(f),
+ conversation_id:CID,source_message_id:SRC,proposed_response:reply,persistence_kind:"ai_reply",metadata,
+ protected_customer_count_read:selection,commit:async()=>{sent.push(reply);return "committed"}});
+ return r.committed?{ok:true}:{ok:false,result:r.decision.decision==="block"?"b2_block":"b2_indeterminate"}};
+ const delivery=await deliverProtectedCustomerCountReply(f.selected,
+ ()=>commit(f.reply.replace("3","999999"),f.metadata,f.selected),
+ reply=>commit(reply,{response_route:"commerce_count_safe_clarification",transaction_mutation:"NONE"},null));
+ assert.equal(delivery.result.ok,true);assert.equal(sent.length,1);assert.equal(sent[0],delivery.clarification);
+ assert(!sent[0].includes("999999"));assert.equal(JSON.stringify(f.state),before);
+ let attempted=0;const unknown=await deliverProtectedCustomerCountReply(f.selected,async()=>({ok:false,result:"rpc_error"}),async()=>{attempted++;return {ok:true}});
+ assert.equal(unknown.result.ok,false);assert.equal(attempted,0);
+});
+test("scoped B2 server selected outcome is wired to final commit before metadata projection",()=>{
+ const code=task1SourceRead("supabase/functions/generate-reply/index.ts","utf8");
+ assert.match(code,/selectB2ProtectedCustomerCountRead\(_c3ResolvedAddressCorrection\?null:_a3Commerce/);
+ assert.match(code,/deliverProtectedCustomerCountReply\(protectedCountRead,/);
+ assert.match(code,/null,null,null,protectedCountRead,/);
+ assert.match(code,/protected_customer_count_read: protectedCustomerCountRead/);
+ assert.match(code,/safeReply=>commitAiReplyWithControlGate/);
+});

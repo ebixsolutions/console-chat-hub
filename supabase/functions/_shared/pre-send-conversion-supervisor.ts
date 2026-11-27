@@ -33,6 +33,54 @@ import { isCanonicalConversationMemory, type CanonicalConversationMemory } from 
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
 import { canonicalJson, sameCanonicalJson } from "./canonical-json.ts";
 import { canonicalUnitPartitions,renderCanonicalUnitPartition } from "./commerce-subject-resolution.ts";
+import { countObservationClauses, countFirstObservation, countObservationQueryMatches } from "./commerce-state-authority.ts";
+
+/** The server selects this requirement before it constructs public metadata.
+ * A customer or model cannot supply the selection. Missing public proof never
+ * makes the selected numeric reply an ordinary B2 allow. */
+export interface B2ProtectedCustomerCountRead {
+  contract: "source-bound-customer-count-read-v1";
+  company_id: string | null;
+  conversation_id: string;
+  source_message_id: string | null;
+  revision: number;
+  state_path: string;
+  language: "zh-TW" | "zh-CN" | "en";
+}
+
+function protectedCustomerCountKey(path: unknown): string | null {
+  if (typeof path !== "string") return null;
+  const key = /^customer_constraints\.customer_reported_facts\.([\p{L}\p{M}\p{N}_-]{1,80})\.value\.amount$/u.exec(path)?.[1];
+  return key && !["__proto__","constructor","prototype"].includes(key) ? key : null;
+}
+
+export function selectB2ProtectedCustomerCountRead(
+  outcome: {state_path?: string | null; route: string; revision: number} | null | undefined,
+  scope: Omit<B2ProtectedCustomerCountRead,"contract"|"revision"|"state_path">,
+): B2ProtectedCustomerCountRead | null {
+  if (!outcome || outcome.route !== "commerce_state_answer" || !protectedCustomerCountKey(outcome.state_path)) return null;
+  return {contract:"source-bound-customer-count-read-v1",...scope,
+    state_path:outcome.state_path!,revision:outcome.revision};
+}
+
+/** The recovery uses the same control/commit gate. Never retry an unknown RPC
+ * outcome, or claim that a handoff occurred. A failed fallback is not success. */
+export async function deliverProtectedCustomerCountReply<T extends {ok:boolean}>(
+  selected:B2ProtectedCustomerCountRead|null,primary:()=>Promise<T>,
+  clarify:(reply:string)=>Promise<T>,
+):Promise<{result:T;clarification:string|null}> {
+  const result=await primary();
+  if (!selected || result.ok || !("result" in result) ||
+      !["b2_block","b2_indeterminate"].includes(String(result.result))) return {result,clarification:null};
+  const reply=selected.language==="en"
+    ? "I couldn't verify the earlier count. Would you like to clarify it or have a human agent check?"
+    : selected.language==="zh-CN"
+      ? "暂时未能核实之前的数量。你想补充资料，还是由人工客服核对？"
+      : "暫時未能核實之前嘅數量。你想補充資料，定係由真人客服核對？";
+  const recovered=await clarify(reply);
+  return {result:recovered,clarification:recovered.ok?reply:null};
+}
+
 
 export type B2DecisionKind = "allow" | "block" | "indeterminate";
 
@@ -97,6 +145,7 @@ export interface B2EvaluationInput {
   trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
   trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
   trusted_customer_calculation?: B2TrustedCustomerCalculation | null;
+  protected_customer_count_read?: B2ProtectedCustomerCountRead | null;
 }
 
 export interface B2TrustedCustomerCalculation {
@@ -303,6 +352,7 @@ export interface B2PersistenceInput<T> {
   trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
   trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
   trusted_customer_calculation?: B2TrustedCustomerCalculation | null;
+  protected_customer_count_read?: B2ProtectedCustomerCountRead | null;
   expected_commerce_state_revision?: number | null;
   commit: (snapshot: B2CanonicalSnapshot) => Promise<T>;
 }
@@ -1054,7 +1104,8 @@ function fieldMention(text: string, alias: string): boolean {
 function evaluateKnownContext(text: string, input: B2EvaluationInput): B2Decision | null {
   const snapshot = input.snapshot;
   const state = snapshot.state;
-  const facts = collectKnownCommerceFacts(state).filter(f => f.current && f.authority!=="DEFAULT" && !f.path.split(".").includes("provenance"));
+  const facts = collectKnownCommerceFacts(state).filter(f => f.current && f.authority!=="DEFAULT" && !f.path.split(".").includes("provenance") &&
+    !isRecallOnlyCountFactPath(state,f.path));
   for (const parsedRequest of customerInformationRequests(text)) {
     const request=parsedRequest.text;
     // Merchant price-currentness advice is not a request for the visitor to
@@ -1640,6 +1691,83 @@ function evaluateCancellation(text: string, state: ConversationCommerceState, bo
   return null;
 }
 
+
+/** Re-derive the exact protected reply from the authoritative state. The
+ * private selection and original Visitor lineage are independent of metadata. */
+function verifiedProtectedCustomerCountRead(input:B2EvaluationInput):{source_id:string;source_text:string}|null {
+  const p=input.protected_customer_count_read,s=input.snapshot,m=input.metadata;
+  if (!p || !m || input.persistence_kind!=="ai_reply" ||
+      p.contract!=="source-bound-customer-count-read-v1" ||
+      !p.company_id || p.company_id!==s.company_id || p.conversation_id!==s.conversation_id ||
+      !p.source_message_id || p.source_message_id!==s.source_message_id ||
+      !Number.isSafeInteger(p.revision) || p.revision<1 || p.revision!==s.commerce_state_revision ||
+      !["en","zh-TW","zh-CN"].includes(p.language) ||
+      m.response_route!=="commerce_state_answer" || m.commerce_authority!=="CONVERSATION_STATE" ||
+      m.commerce_state_persist_result!=="read_only" ||
+      m.commerce_state_persistence_classification!=="NO_SEMANTIC_CHANGE" ||
+      m.commerce_state_revision!==p.revision || m.commerce_state_path!==p.state_path) return null;
+  const key=protectedCustomerCountKey(p.state_path);
+  const facts=s.state.customer_constraints.customer_reported_facts;
+  if (!key || !isRecord(facts) || !Object.prototype.hasOwnProperty.call(facts,key)) return null;
+  const row=facts[key];
+  if (!isRecord(row) || row.source_count_order!=="count_first" ||
+      row.source_count_status==="unresolved" || !isRecord(row.value) || !isRecord(row.provenance) ||
+      row.provenance.source_type!=="customer" ||
+      typeof row.provenance.source_message_id!=="string" || !row.provenance.source_message_id ||
+      row.provenance.source_message_id===s.source_message_id ||
+      row.provenance.invalidated_by_source_message_id ||
+      (row.provenance.company_id!==undefined && row.provenance.company_id!==s.company_id) ||
+      (row.provenance.conversation_id!==undefined && row.provenance.conversation_id!==s.conversation_id) ||
+      (row.source_count_origin==="literal_customer_clause" &&
+        (row.provenance.company_id!==s.company_id || row.provenance.conversation_id!==s.conversation_id ||
+         row.source_count_visibility!=="exact_recall_only" ||
+         typeof row.source_count_expires_after_revision!=="number")) ||
+      (row.source_count_expires_after_revision!==undefined &&
+        (typeof row.source_count_expires_after_revision!=="number" ||
+         !Number.isSafeInteger(row.source_count_expires_after_revision) ||
+         s.commerce_state_revision>row.source_count_expires_after_revision)) ||
+      typeof row.value.amount!=="number" || typeof row.value.unit!=="string" ||
+      typeof row.source_text!=="string" || typeof row.source_subject_text!=="string" ||
+      typeof row.source_unit_text!=="string") return null;
+  const proof=countFirstObservation(row.source_text,row.value.amount,row.value.unit);
+  if (!proof || proof.rawSubject!==row.source_subject_text || proof.writtenUnit!==row.source_unit_text ||
+      !countObservationQueryMatches(s.source_message_content??"",proof.rawSubject,proof.writtenUnit)) return null;
+  const expected=buildB2AuthoritativeReadbackProof(s.state,p.state_path);
+  if (!expected || !sameCanonicalJson(m.commerce_state_readback_proof,expected)) return null;
+  const rendered=String(row.value.amount)+" "+proof.writtenUnit;
+  const reply=p.language==="en" ? "From what you already told me: "+rendered+"."
+    : p.language==="zh-CN" ? "按你之前提供的资料："+rendered+"。" : "按你之前提供嘅資料："+rendered+"。";
+  if (input.proposed_response!==reply) return null;
+  return {source_id:row.provenance.source_message_id,source_text:row.source_text};
+}
+
+function isRecallOnlyCountFactPath(state:ConversationCommerceState,path:string):boolean {
+  const parts=path.split(".");
+  if(parts[0]!=="customer_constraints"||parts[1]!=="customer_reported_facts"||!parts[2])return false;
+  const facts=state.customer_constraints.customer_reported_facts;
+  if(!isRecord(facts)||!Object.prototype.hasOwnProperty.call(facts,parts[2]))return false;
+  const row=facts[parts[2]];
+  return isRecord(row)&&row.source_count_visibility==="exact_recall_only";
+}
+
+function requiresProtectedCustomerCountRead(input:B2EvaluationInput):boolean {
+  return Boolean(input.protected_customer_count_read || protectedCustomerCountKey(input.metadata?.commerce_state_path));
+}
+
+async function verifyProtectedCountOriginal(client:B2DatabaseClient,input:B2EvaluationInput):Promise<boolean> {
+  if (!requiresProtectedCustomerCountRead(input)) return true;
+  const proof=verifiedProtectedCustomerCountRead(input);
+  if (!proof) return false;
+  try {
+    const read=await client.from("messages").select("id,conversation_id,role,content")
+      .eq("id",proof.source_id).eq("conversation_id",input.snapshot.conversation_id).eq("role","visitor").maybeSingle();
+    return !read.error && isRecord(read.data) && read.data.id===proof.source_id &&
+      read.data.conversation_id===input.snapshot.conversation_id && read.data.role==="visitor" &&
+      typeof read.data.content==="string" &&
+      countObservationClauses(read.data.content).filter(clause=>clause===proof.source_text).length===1;
+  } catch { return false; }
+}
+
 export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
   const draft = clean(input.proposed_response);
   if (!draft) {
@@ -1651,6 +1779,8 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
       code: "INVALID_CANONICAL_COMMERCE_STATE",
     };
   }
+  const protectedCountRead=requiresProtectedCustomerCountRead(input);
+  if (protectedCountRead && !verifiedProtectedCustomerCountRead(input)) return {decision:"block",code:"UNPROVEN_CUSTOMER_COUNT_READ"};
   const state = input.snapshot.state;
   const boundPartition=isBoundPartitionStatement(input,draft);
   if ((input.metadata?.commerce_reason==="source_bound_partial_unit_status_committed" ||
@@ -1719,7 +1849,7 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
       ? null
       : evaluateKnownContext(draft, input)) ?? {
       decision: "allow",
-      code: kbPriceDecision?.code ?? (trustedReadOnlyRecap
+      code: protectedCountRead ? "B2_ALLOW_PROTECTED_CUSTOMER_COUNT_READ" : kbPriceDecision?.code ?? (trustedReadOnlyRecap
         ? "B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP"
         : trustedLifecycle
         ? "B2_ALLOW_COMMITTED_SCOPED_LIFECYCLE"
@@ -2023,6 +2153,7 @@ export async function executeB2PersistenceGate<T>(
       trusted_lifecycle_commit: input.trusted_lifecycle_commit,
       trusted_read_only_recap: input.trusted_read_only_recap,
       trusted_customer_calculation: input.trusted_customer_calculation,
+      protected_customer_count_read: input.protected_customer_count_read,
     });
   } catch (error) {
     decision = {
@@ -2035,6 +2166,8 @@ export async function executeB2PersistenceGate<T>(
     return { committed: false, decision, snapshot: initial.snapshot };
   }
 
+  if (!await verifyProtectedCountOriginal(input.client,{...input,snapshot:initial.snapshot}))
+    return {committed:false,decision:{decision:"block",code:"CUSTOMER_COUNT_ORIGINAL_SOURCE_MISMATCH"},snapshot:initial.snapshot};
   const revalidated = await loadB2Snapshot(
     input.client,
     input.conversation_id,
@@ -2069,6 +2202,8 @@ export async function executeB2PersistenceGate<T>(
   }
 
   if (!await validateCalculationSources()) return {committed:false,decision:{decision:"block",code:"CUSTOMER_CALCULATION_SOURCE_HISTORY_MISMATCH"},snapshot:revalidated.snapshot};
+  if (!await verifyProtectedCountOriginal(input.client,{...input,snapshot:revalidated.snapshot}))
+    return {committed:false,decision:{decision:"block",code:"CUSTOMER_COUNT_ORIGINAL_SOURCE_MISMATCH"},snapshot:revalidated.snapshot};
   const value = await input.commit(revalidated.snapshot);
   return { committed: true, decision, snapshot: revalidated.snapshot, value };
 }

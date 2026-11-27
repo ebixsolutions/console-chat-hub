@@ -1363,3 +1363,54 @@ export function isBareCommerceSubjectMention(text: string, frame: CommerceSemant
   const name=normalize(raw);
   return name.length>=2 && frame.entities.some(e=>typeof e.name==="string" && normalize(e.name)===name);
 }
+
+
+/** Shared source-attested count grammar. Relocated unchanged from the R4(a) candidate; no product vocabulary. */
+export function countObservationClauses(text:string):string[]{
+  return text.normalize("NFKC").split(/[。；;\n]+|(?<!\d),|,(?!\d)/u)
+    .map(part=>part.trim()).filter(Boolean);
+}
+
+export function countFirstLiteralNumber(text:string):{amount:number;end:number}|null{
+  const tokens=[...text.matchAll(/(?<![\dA-Za-z_])(?:\d+|[零〇一二兩两三四五六七八九十百千萬万]+)(?![\dA-Za-z_])/gu)];
+  if(tokens.length!==1)return null;
+  const hit=tokens[0],raw=hit[0],at=hit.index??0;
+  if(/[-+−.第]$/u.test(text.slice(0,at).trimEnd())||
+    (/^[零〇]$/u.test(raw)&&!/\s/u.test(text[at+raw.length]??"")))return null;
+  let number:number|null=null;
+  if(/^\d+$/u.test(raw))number=Number(raw);
+  else{
+    const digits="零一二三四五六七八九";
+    const digit=(x:string):number|null=>x==="〇"?0:x==="兩"||x==="两"?2:digits.includes(x)&&x.length===1?digits.indexOf(x):null;
+    if(raw.length===1)number=raw==="十"?10:digit(raw);
+    else if(/^[一二兩两三四五六七八九]?十[一二兩两三四五六七八九]?$/u.test(raw)){
+      const [left,right]=raw.split("十");
+      number=(left?(digit(left)??NaN):1)*10+(right?(digit(right)??NaN):0);
+    }
+  }
+  return typeof number==="number"&&Number.isSafeInteger(number)&&number>=0&&number<=1000000000
+    ?{amount:number,end:at+raw.length}:null;
+}
+
+export function countFirstObservation(clause:string,amount:number,unit:string):{rawSubject:string;writtenUnit:string;countFirst:true}|null{
+  const s=clause.normalize("NFKC").trim();
+  if(!Number.isSafeInteger(amount)||amount<0||amount>1000000000||
+     !/^(?:[\p{Script=Han}]|[A-Za-z]{1,24})$/u.test(unit)||
+     /[?？]|(?:冇|沒有|没有|並非|并非|不是|唔|不|未|無|无|假設|假设|如果|假如|可能|以前|上次|曾經|曾经|傳聞|传闻|聽講|听说|大約|大约|大概)|\b(?:no|not|without|if|would|could|might|maybe|perhaps|previously|formerly|approximately|about|around)\b/iu.test(s))return null;
+  const token=countFirstLiteralNumber(s);
+  if(!token||token.amount!==amount)return null;
+  const after=s.slice(token.end).trimStart();
+  if(after.slice(0,unit.length).toLowerCase()!==unit.toLowerCase()||
+     /^[A-Za-z]/u.test(unit)&&/[A-Za-z]/u.test(after[unit.length]??""))return null;
+  const subject=after.slice(unit.length).trim().replace(/[。.!！]+$/u,"").trim();
+  if(subject.length<2||subject.length>100||!/[\p{L}]/u.test(subject)||
+     !/^[\p{L}\p{M}\s-]+$/u.test(subject))return null;
+  return {rawSubject:subject,writtenUnit:after.slice(0,unit.length),countFirst:true};
+}
+
+export function countObservationQueryMatches(text:string,subject:string,unit:string):boolean{
+  const q=text.normalize("NFKC").trim().replace(/[?？]$/u,"").trim().toLowerCase();
+  const s=subject.normalize("NFKC").trim().toLowerCase(),u=unit.normalize("NFKC").trim().toLowerCase();
+  const expected=["幾","几","幾多","几多","多少"].map(word=>s+word+u);
+  return expected.includes(q)||q===("how many "+u+" "+s);
+}
