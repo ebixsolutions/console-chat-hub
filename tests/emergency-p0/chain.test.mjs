@@ -3864,3 +3864,129 @@ test("R4A 4123 typed Reading uses the generic approximate pair and conversationa
  assert.match(next.commits[0]?.content,/700/);assert.match(next.commits[0]?.content,/550/);
  assert.match(next.commits[0]?.content,/約|约|approximately/);
 });
+
+
+// R4(a) independent typed area through the actual existing Handler fixture.
+test("R4A literal area correction uses existing tenant CAS and protected B2 without inventing quantity",async()=>{
+ const seedText='I need to begin exhibition planning for two zones. How should I approach the layout?';
+ const answer='Start by defining the purpose and layout of each zone.';
+ // Same legal guidance seed as the existing 4123 Handler test, with no KB grant.
+ const seed=fixture(seedText,{originalPreview:true,fullChain:true,source:uuid(4260),answer,
+  semantic:{operation:'ASK_FACT',confidence:.97,intent:'customer_guidance',requested_facts:[]}});
+ const first=await seed.run();assert.equal(first.status,200,JSON.stringify(first));
+ // This seed tests retained visitor context, not guidance quality.
+ // Never fix a provider-denied response as an expected successful behavior.
+ assert.equal(seed.commits.length,1);assert(seed.tables.conversation_commerce_state_event.length<=1);
+ assert(!seed.requests.some(x=>x.url.includes('context-search')));
+ assert(seed.tables.messages.some(x=>x.id===uuid(4260)&&x.role==='visitor'&&x.content===seedText));
+ const empty=seed.load(path.join(root,'supabase/functions/_shared/commerce-state-contract.ts')).createEmptyConversationCommerceState();
+ const initial=seed.tables.conversation_commerce_state[0]?.state??empty;
+ // An initial empty baseline event is legal; forbid business-state changes.
+ assert.equal(initial.entities.length,0);assert.deepEqual(initial.customer_constraints,empty.customer_constraints);
+ assert.deepEqual(initial.conversion,empty.conversion);
+ const area=(text,action,rows)=>providerWire({intent:'customer_context_update',customer_correction:action==='correct',
+  customer_facts:[{key:'scoped_area_observations',value:{action,source_text:text,scopes:rows.map(row=>row.scope),row_texts:rows.map(row=>row.source_text)}}],
+  referents:[{ref:'exhibition planning',source:'prior_turn',confidence:.99}]},'UPDATE_ITEM');
+ const measure='North zone about 20 sq m, South zone 30 sq m';
+ const f=fixture(measure,{originalPreview:true,fullChain:true,source:uuid(4261),previous:seed.tables,history:seed.tables.messages,
+  semantic:area(measure,'observe',[{scope:'North zone',source_text:'North zone about 20 sq m'},{scope:'South zone',source_text:'South zone 30 sq m'}])});
+ const observed=await f.run();assert.equal(observed.status,200,JSON.stringify(observed));
+ const correction='Correction: North zone changed to 25 sq m, others unchanged';
+ const g=fixture(correction,{originalPreview:true,fullChain:true,source:uuid(4262),previous:f.tables,history:f.tables.messages,
+  semantic:area(correction,'correct',[{scope:'North zone',source_text:'North zone changed to 25 sq m'}])});
+ const corrected=await g.run();assert.equal(corrected.status,200,JSON.stringify(corrected));
+ for(const [turn,source] of [[f,uuid(4261)],[g,uuid(4262)]]){
+  const state=turn.tables.conversation_commerce_state[0].state,receipt=state.customer_constraints.scoped_area_observations,meta=turn.commits[0]?.metadata;
+  assert.equal(turn.commits.length,1);assert.equal(state.entities.length,0);assert.deepEqual(state.conversion,initial.conversion);
+  assert.equal(receipt.owner_kind,'prior_turn');assert.equal(receipt.subject_ref,'exhibition planning');
+  assert.equal(receipt.owner_source_message_id,uuid(4260));assert.equal(receipt.owner_source_text,seedText);
+  assert.equal(meta?.commerce_state_path,'customer_constraints.scoped_area_observations');
+  assert.equal(meta?.commerce_reason,'source_bound_scoped_area_committed');
+  assert.equal(meta?.commerce_authority,'CONVERSATION_STATE');assert.equal(meta?.b2_source_message_id,source);
+  assert.equal(meta?.b2_expected_revision,turn.tables.conversation_commerce_state[0].revision);
+  assert.equal(meta?.b2_commit_source,'commit_ai_reply_tx');assert.deepEqual(meta?.commerce_state_readback_proof?.value,receipt);
+  assert(catalogueGateEvents(turn).some(x=>x.gate_decision==='allow'&&x.gate_code==='B2_ALLOW_PROTECTED_SCOPED_AREA'&&x.commit_attempted===true));
+  assert(!turn.requests.some(x=>x.url.includes('context-search')));assert(!meta?.degraded);
+ }
+ const original=f.tables.conversation_commerce_state[0].state.customer_constraints.scoped_area_observations;
+ assert.deepEqual(original.current.map(x=>[x.scope,x.amount,x.unit,x.approximate]),[['North zone',20,'sq_m',true],['South zone',30,'sq_m',false]]);
+ const current=g.tables.conversation_commerce_state[0].state.customer_constraints.scoped_area_observations;
+ assert.deepEqual(current.current.map(x=>[x.scope,x.amount]),[['North zone',25],['South zone',30]]);
+ assert.equal(current.superseded[0].amount,20);assert.equal(current.superseded[0].source_message_id,uuid(4261));
+ assert.match(g.commits[0]?.content,/25/);assert(!g.commits[0]?.content.includes('20 sq m'));
+ const mf=g.tables.conversation_memory_state.at(-1)?.memory.current_customer_facts.find(v=>v.key==='scoped_area_observations');
+ assert.equal(mf?.authority,'canonical_commerce');assert.equal(mf?.source_message_id,uuid(4262));
+ assert.match(String(mf?.value),/25/);assert.match(String(mf?.value),/30/);assert.doesNotMatch(String(mf?.value),/(?:^|\D)20(?:\D|$)/);
+ const recap=fixture('Please summarize my latest requirements without looking up products.',{originalPreview:true,fullChain:true,source:uuid(4263),previous:g.tables,history:g.tables.messages,
+  semantic:providerWire({intent:'requirements_recap',requested_facts:[]},'ASK_FACT')});
+ const before=JSON.stringify(recap.tables.conversation_commerce_state);
+ const summary=await recap.run();assert.equal(summary.status,200,JSON.stringify(summary));
+ assert.equal(recap.commits.length,1);assert.match(recap.commits[0].content,/25/);assert.match(recap.commits[0].content,/30/);
+ assert.doesNotMatch(recap.commits[0].content,/(?:^|\D)20(?:\D|$)/);assert.equal(JSON.stringify(recap.tables.conversation_commerce_state),before);
+ assert(!recap.requests.some(x=>x.url.includes('context-search')));
+ const recapMeta=recap.commits[0].metadata;
+ assert.equal(recapMeta.customer_observation_recap,'source-bound-customer-observation-recap-v1');
+ assert.equal(recapMeta.commerce_state_persist_result,'read_only');assert.equal(recapMeta.commerce_state_persistence_classification,'NO_SEMANTIC_CHANGE');
+ assert.equal(recapMeta.b2_commit_source,'commit_ai_reply_tx');assert.equal(recapMeta.b2_source_message_id,uuid(4263));
+ assert.equal(recapMeta.b2_expected_revision,recap.tables.conversation_commerce_state[0].revision);
+ assert(catalogueGateEvents(recap).some(x=>x.gate_decision==='allow'&&x.gate_code==='B2_ALLOW_AUTHORITATIVE_CUSTOMER_OBSERVATION_RECAP'&&x.commit_attempted===true));
+ const b2=recap.load(path.join(root,'supabase/functions/_shared/pre-send-conversion-supervisor.ts'));
+ const row=recap.tables.conversation_commerce_state[0],snapshot={company_id:row.company_id,conversation_id:row.conversation_id,
+  source_message_id:uuid(4263),source_message_content:'Please summarize my latest requirements without looking up products.',
+  commerce_state_revision:row.revision,commerce_state_source_message_id:row.source_message_id,state:row.state};
+ const proof={contract:'source-bound-customer-observation-recap-v1',company_id:row.company_id,conversation_id:row.conversation_id,
+  source_message_id:uuid(4263),state_revision:row.revision,state_source_message_id:row.source_message_id,language:'en',
+  history:recap.tables.messages.filter(x=>x.role==='visitor'&&x.id!==uuid(4263)).map(({id,role,content})=>({id,role,content}))};
+ const check={proposed_response:recap.commits[0].content,persistence_kind:'ai_reply',snapshot,metadata:recapMeta,trusted_customer_observation_recap:proof};
+ assert.equal(b2.evaluateB2BeforeCommit(check).code,'B2_ALLOW_AUTHORITATIVE_CUSTOMER_OBSERVATION_RECAP');
+ for(const bad of [{...check,trusted_customer_observation_recap:null},
+  {...check,proposed_response:check.proposed_response+' North zone: 20 sq m.'},
+  {...check,trusted_customer_observation_recap:{...proof,company_id:uuid(999)}},
+  {...check,trusted_customer_observation_recap:{...proof,state_revision:row.revision-1}},
+  {...check,trusted_customer_observation_recap:{...proof,history:proof.history.filter(x=>x.id!==uuid(4261))}},
+  {...check,metadata:{...recapMeta,commerce_state_readback_proof:{}}}]){
+   assert.equal(b2.evaluateB2BeforeCommit(bad).decision,'block');
+ }
+ const replay=await recap.run();assert.equal(replay.body.idempotent,true);assert.equal(recap.commits.length,1);
+});
+
+// Same-class read-only recap coverage. Preserve the accepted 4123 test unchanged.
+test("R4A zero-entity paired-site current observation recap is source-bound and read-only",async()=>{
+ const seedText='想換冷氣，兩間睡房加個客廳，應該點揀好？';
+ const seed=fixture(seedText,{originalPreview:true,fullChain:true,source:uuid(4270),
+  answer:'可先比較舒適度、使用時段與安裝條件；產品適用性仍須核實。',
+  semantic:{operation:'ASK_FACT',confidence:.97,intent:'customer_guidance',requested_facts:[]}});
+ const first=await seed.run();assert.equal(first.status,200,JSON.stringify(first));assert.equal(seed.commits.length,1);
+ assert(seed.tables.messages.some(x=>x.id===uuid(4270)&&x.role==='visitor'&&x.content===seedText));
+ assert(!seed.requests.some(x=>x.url.includes('context-search')));
+ const retained=seed.tables.conversation_commerce_state[0]?.state;
+ assert.equal(retained?.entities.length??0,0);assert(retained?.customer_constraints?.contextual_goal==null);
+ const size='大約 70 (W) x 55 (H) cm';
+ const reading=(action,text,scope=null)=>providerWire({intent:'customer_context_update',
+  customer_facts:[{key:'paired_site_observation',value:{action,source_text:text,scope}}],
+  referents:[{ref:'冷氣',source:'prior_turn',confidence:.99}]},'UPDATE_ITEM');
+ const measured=fixture(size,{originalPreview:true,fullChain:true,source:uuid(4271),previous:seed.tables,history:seed.tables.messages,semantic:reading('observe',size)});
+ const observed=await measured.run();assert.equal(observed.status,200,JSON.stringify(observed));
+ const pair=measured.tables.conversation_commerce_state[0].state.customer_constraints.paired_site_observation;
+ assert.equal(pair.width_mm,700);assert.equal(pair.height_mm,550);assert.equal(pair.approximate,true);assert.equal(pair.scope,null);
+ async function recapOf(prior,id,scope){
+  const f=fixture('請總結我目前的需求，不用查產品。',{originalPreview:true,fullChain:true,source:uuid(id),previous:prior.tables,history:prior.tables.messages,
+   semantic:providerWire({intent:'requirements_recap',requested_facts:[]},'ASK_FACT')});
+  const before=JSON.stringify(f.tables.conversation_commerce_state);
+  const result=await f.run();assert.equal(result.status,200,JSON.stringify(result));assert.equal(f.commits.length,1);
+  assert.match(f.commits[0].content,/700/);assert.match(f.commits[0].content,/550/);assert.match(f.commits[0].content,/約|约|approximately/);
+  assert.match(f.commits[0].content,scope===null?/位置未確認|位置未确认|location unconfirmed/:/細房/);
+  assert.equal(f.commits[0].metadata.customer_observation_recap,'source-bound-customer-observation-recap-v1');
+  assert.equal(f.commits[0].metadata.commerce_state_persist_result,'read_only');
+  assert(catalogueGateEvents(f).some(x=>x.gate_decision==='allow'&&x.gate_code==='B2_ALLOW_AUTHORITATIVE_CUSTOMER_OBSERVATION_RECAP'&&x.commit_attempted===true));
+  assert.equal(JSON.stringify(f.tables.conversation_commerce_state),before);
+  assert(!f.requests.some(x=>x.url.includes('context-search')));const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+ }
+ await recapOf(measured,4272,null);
+ const bound=fixture('細房',{originalPreview:true,fullChain:true,source:uuid(4273),previous:measured.tables,history:measured.tables.messages,
+  semantic:reading('bind_scope','細房','細房')});
+ const second=await bound.run();assert.equal(second.status,200,JSON.stringify(second));
+ assert.equal(bound.tables.conversation_commerce_state[0].state.customer_constraints.paired_site_observation.scope,'細房');
+ assert.equal(bound.tables.conversation_commerce_state[0].state.entities.length,0);
+ await recapOf(bound,4274,'細房');
+});

@@ -1,4 +1,7 @@
 import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
+import { PAIRED_SITE_KEY, SCOPED_AREA_KEY, readPairedSiteReceipt, pairedSiteMemoryValue,
+  readScopedAreaReceipt, scopedAreaMemoryValue, scopedAreaSources, pairedSiteSourceMatches,
+  type ContextualSourceContext } from "./contextual-customer-update.ts";
 import { resolveSourceOwnedSubject,sourceOwnedSubjectLabels,customerOwnedDisplayLabel,safeCustomerDisplayText,canonicalUnitPartitions,renderUnitPartition,type CanonicalUnitPartition } from "./commerce-subject-resolution.ts";
 /** C3: deterministic, read-only fact ownership routing. No KB, model or state writes. */
 import type {
@@ -3775,14 +3778,83 @@ export function prepareConversationRecall(
  * It renders current values and lifecycle, never an internal Markdown/JSON
  * projection, historical corrections, or the wording that requested recall.
  */
-export function renderCanonicalCustomerFactRecap(state:ConversationCommerceState,language:string):string|null {
+export const CUSTOMER_OBSERVATION_RECAP_CONTRACT="source-bound-customer-observation-recap-v1";
+export interface CustomerObservationRecapContext extends ContextualSourceContext {
+  state_source_message_id:string|null;
+  history:readonly {id?:string|null;role:string;content:string}[];
+}
+export function hasCustomerObservationRecap(state:ConversationCommerceState):boolean {
+  return state.entities.length===0&&(state.customer_constraints[SCOPED_AREA_KEY]!=null||
+    state.customer_constraints[PAIRED_SITE_KEY]!=null);
+}
+/** Reconstruct only current canonical observations, not a mutation receipt. */
+export function customerObservationRecapEvidence(state:ConversationCommerceState,language:string,c:CustomerObservationRecapContext) {
+  if(!hasCustomerObservationRecap(state)||!c.company_id||!c.conversation_id||!c.source_message_id||
+    !Number.isSafeInteger(c.state_revision)||c.state_revision<1||!c.state_source_message_id||
+    c.history.length>50)return null;
+  const l=language==="en"?"en":language==="zh-CN"?"zh-CN":"zh-TW";
+  const facts:{key:string;value:string;authority:string;source_message_id:string}[]=[];
+  const sources:{id:string;text:string}[]=[];
+  const measurementSources=new Set<string>();
+  if(state.customer_constraints[SCOPED_AREA_KEY]!=null){
+    const r=readScopedAreaReceipt(state,c);
+    const value=r?scopedAreaMemoryValue(r,c.history,l):null;
+    if(!r||!value)return null;
+    facts.push({key:SCOPED_AREA_KEY,value,authority:"canonical_commerce",source_message_id:r.source_message_id});
+    for(const source of scopedAreaSources(r)){
+      sources.push(source);
+      if(source.id!==r.owner_source_message_id)measurementSources.add(source.id);
+    }
+  }
+  if(state.customer_constraints[PAIRED_SITE_KEY]!=null){
+    const r=readPairedSiteReceipt(state,c);
+    if(!r)return null;
+    // Preserve the existing paired-site Memory freshness boundary.
+    const latest=r.scope_source_message_id??r.source_message_id;
+    if(r.recorded_revision===c.state_revision&&latest===c.state_source_message_id){
+      const value=pairedSiteMemoryValue(r,c.history,l);
+      if(!value)return null;
+      facts.push({key:PAIRED_SITE_KEY,value:value+(r.scope_site_label?" — "+r.scope_site_label:""),
+        authority:"canonical_commerce",source_message_id:latest});
+      sources.push({id:r.owner_source_message_id,text:r.owner_source_text},{id:r.source_message_id,text:r.source_text});
+      measurementSources.add(r.source_message_id);
+      if(r.scope_source_message_id&&r.scope_source_text){
+        sources.push({id:r.scope_source_message_id,text:r.scope_source_text});
+        measurementSources.add(r.scope_source_message_id);
+      }
+      if(r.scope_site_source_message_id&&r.scope_site_source_text)
+        sources.push({id:r.scope_site_source_message_id,text:r.scope_site_source_text});
+    }
+  }
+  const byId=new Map<string,string>();
+  for(const source of sources){
+    if(!source.id||source.id===c.source_message_id||
+      (byId.has(source.id)&&byId.get(source.id)!==source.text))return null;
+    byId.set(source.id,source.text);
+  }
+  if(byId.size>40)return null;
+  for(const [id,text] of byId){
+    const rows=c.history.filter(h=>h.role==="visitor"&&h.id===id);
+    if(rows.length!==1||!pairedSiteSourceMatches(rows[0].content,text))return null;
+  }
+  return {facts,sources:[...byId].map(([id,text])=>({id,text})),measurementSources};
+}
+export function renderCanonicalCustomerFactRecap(state:ConversationCommerceState,language:string,
+  context?:CustomerObservationRecapContext):string|null {
+  const observation=context&&hasCustomerObservationRecap(state)
+    ? customerObservationRecapEvidence(state,language,context):null;
+  if(context&&hasCustomerObservationRecap(state)&&!observation)return null;
   const values=object(state.customer_constraints.customer_reported_facts);
   const facts=Object.entries(values??{}).flatMap(([key,value])=>{
     const row=object(value),p=object(row?.provenance);
+    if(observation&&([SCOPED_AREA_KEY,PAIRED_SITE_KEY].includes(key)||
+      (["room_size","room_area","site_observation"].includes(key)&&typeof p?.source_message_id==="string"&&
+        observation.measurementSources.has(p.source_message_id))))return [];
     return row && row.source_count_visibility!=="exact_recall_only" && Object.prototype.hasOwnProperty.call(row,"value") && p?.source_type==="customer" && typeof p.source_message_id==="string"
       ? [{key,value:row.value,authority:"customer",source_message_id:p.source_message_id}] : [];
   });
-  return facts.length ? renderCustomerRecap({customer_facts:facts},language) : null;
+  const current=[...facts,...(observation?.facts??[])];
+  return current.length ? renderCustomerRecap({customer_facts:current},language) : null;
 }
 
 function renderCustomerRecap(value: unknown, language: string): string {
@@ -3837,7 +3909,7 @@ function renderCustomerRecap(value: unknown, language: string): string {
     if(f.key==="horsepower" && Array.isArray(f.value) && f.value.every(x=>typeof x==="string"))return [prefix+f.value.map(x=>l===2?String(x).replace(/匹/g," hp"):String(x)).join(l===2?", ":"、")];
     if(f.key==="room_size" && Array.isArray(f.value))return f.value.flatMap(x=>{const row=object(x);return row && typeof row.label==="string" && typeof row.value==="string" ? [prefix+display(row.label)+" "+display(row.value)] : [];});
     if(f.key==="brand_required" && typeof f.value==="boolean")return [prefix+(f.value?["你要求指定品牌","你要求指定品牌","you require a specific brand"]:["你冇限定品牌","你没有限定品牌","you do not require a specific brand"])[l]];
-    const names: Record<string, [string,string,string]> = {paired_site_observation:["現場尺寸","现场尺寸","Site dimensions"],site_observation:["客人提供的現場資料","客户提供的现场资料","Customer-provided observation"],team_size:["團隊人數","团队人数","team size"],monthly_budget:["每月預算","每月预算","monthly budget"],automatic_renewal:["自動續訂","自动续订","automatic renewal"],preferred_interface_language:["介面語言","界面语言","interface language"],business_type:["業務類型","业务类型","business type"],priority:["優先需求","优先需求","priority"],budget:["預算","预算","budget"],room_area:["面積","面积","room area"],product_count:["商品數量","商品数量","product count"],staff_count:["人手","人手","staff count"],app_interest:["App 需要","App 需要","app needed"],preferred_interface:["使用介面","使用界面","preferred interface"],current_market:["目前市場","目前市场","current market"],desired_features:["需要功能","需要功能","required features"],future_markets:["未來市場","未来市场","future markets"]};
+    const names: Record<string, [string,string,string]> = {scoped_area_observations:["各範圍面積","各范围面积","Area by scope"],paired_site_observation:["現場尺寸","现场尺寸","Site dimensions"],site_observation:["客人提供的現場資料","客户提供的现场资料","Customer-provided observation"],team_size:["團隊人數","团队人数","team size"],monthly_budget:["每月預算","每月预算","monthly budget"],automatic_renewal:["自動續訂","自动续订","automatic renewal"],preferred_interface_language:["介面語言","界面语言","interface language"],business_type:["業務類型","业务类型","business type"],priority:["優先需求","优先需求","priority"],budget:["預算","预算","budget"],room_area:["面積","面积","room area"],product_count:["商品數量","商品数量","product count"],staff_count:["人手","人手","staff count"],app_interest:["App 需要","App 需要","app needed"],preferred_interface:["使用介面","使用界面","preferred interface"],current_market:["目前市場","目前市场","current market"],desired_features:["需要功能","需要功能","required features"],future_markets:["未來市場","未来市场","future markets"]};
     const renderValue = (raw:unknown):string|undefined => {
       if(raw===null)return ["未確認","未确认","unknown"][l];
       if(typeof raw==="boolean")return (raw?["需要","需要","yes"]:["不需要","不需要","no"])[l];

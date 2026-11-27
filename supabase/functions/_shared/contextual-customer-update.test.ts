@@ -11,6 +11,7 @@ import {
   type SourceBoundScopeFact,
   readSourceBoundContextualGoal,
   verifiedCurrentScopeFacts,
+  SCOPED_AREA_KEY,verifiedScopedAreaProposal,readScopedAreaReceipt,parseScopedAreaClause,scopedAreaMemoryValue,
 } from "./contextual-customer-update.ts";
 import type { DecisionValue } from "./bounded-decision-context.ts";
 import {
@@ -3111,3 +3112,88 @@ import "../../../tests/task1-director/phase1-lifecycle-storage-twins.test.ts";
 
 import "../../../tests/task1-director/phase1-bounded-json-storage.test.ts";
 import "../../../tests/task1-director/phase1-recap-clause-twins.test.ts";
+
+
+// Independent scoped-area evidence. Existing quantity and legacy oracles above are unchanged.
+Deno.test("R4A generic area preserves separate literal scopes and correction lineage without item quantity",()=>{
+ const state=createEmptyConversationCommerceState();
+ const c={company_id:"tenant-area",conversation_id:"ticket-area",source_message_id:"area-observe",state_revision:1};
+ const ownerText="I need exhibition planning for two zones";
+ const goal={version:"contextual-scope-1",goal_id:"contextual-goal:area-goal",subject_label:"exhibition planning",source_text:ownerText,
+  company_id:c.company_id,conversation_id:c.conversation_id,source_message_id:"area-goal",recorded_revision:1,status:"active"};
+ state.current_topic=goal.subject_label;state.customer_constraints.contextual_goal=goal;
+ const history=[{id:"area-goal",role:"visitor",content:ownerText}];
+ const flatFrame=(action:"observe"|"correct",text:string,scopes:string[],row_texts:string[])=>normalizeCommerceSemanticFrame({
+  operation:"UPDATE_ITEM",intent:"customer_context_update",confidence:.99,customer_correction:action==="correct",
+  customer_facts:[{key:SCOPED_AREA_KEY,value:{action,source_text:text,scopes,row_texts}}],
+  referents:[{ref:goal.goal_id,source:"persistent_state",confidence:.99}]
+ });
+ const frame=(action:"observe"|"correct",text:string,rows:{scope:string;source_text:string}[])=>flatFrame(action,text,rows.map(row=>row.scope),rows.map(row=>row.source_text));
+ const text="North zone about 20 sq m, South zone 30 sq m";
+ const rows=[{scope:"North zone",source_text:"North zone about 20 sq m"},{scope:"South zone",source_text:"South zone 30 sq m"}];
+ const f=frame("observe",text,rows);assert(f,"valid flat area envelope rejected");
+ const mismatch=flatFrame("observe",text,["North zone"],rows.map(row=>row.source_text));
+ assert(mismatch&&verifiedScopedAreaProposal({state,context:c,text,frame:mismatch,history})===null,"unequal flat arrays accepted");
+ const reordered=flatFrame("observe",text,rows.map(row=>row.scope),rows.map(row=>row.source_text).reverse());
+ assert(reordered&&verifiedScopedAreaProposal({state,context:c,text,frame:reordered,history})===null,"reordered flat source clauses accepted");
+ const forgedText=flatFrame("observe",text,rows.map(row=>row.scope),["North zone about 21 sq m",rows[1].source_text]);
+ assert(forgedText&&verifiedScopedAreaProposal({state,context:c,text,frame:forgedText,history})===null,"nonliteral flat source clause accepted");
+ const first=verifiedScopedAreaProposal({state,context:c,text,frame:f,history});
+ assert(first&&first.current.length===2&&first.current[0].approximate&&first.current[0].amount===20&&first.current[1].amount===30,"observe evidence invalid");
+ const committed=reduceCommerceState(state,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:first}]);
+ assert(committed.entities.length===0,"area created item quantity");
+ const correction="Correction: North zone changed to 25 sq m, others unchanged";
+ const cf=frame("correct",correction,[{scope:"North zone",source_text:"North zone changed to 25 sq m"}]);assert(cf,"correction envelope rejected");
+ const h=[...history,{id:c.source_message_id,role:"visitor",content:text}],cc={...c,source_message_id:"area-correct",state_revision:2};
+ const next=verifiedScopedAreaProposal({state:committed,context:cc,text:correction,frame:cf,history:h});
+ assert(next&&next.current[0].amount===25&&next.current[1].amount===30&&next.superseded.length===1&&next.superseded[0].amount===20,"correction did not preserve independent scope and old lineage");
+ const after=reduceCommerceState(committed,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:next}]);
+ const final={...cc,state_revision:3};
+ assert(readScopedAreaReceipt(after,final)?.recorded_revision===3,"canonical readback failed");
+ const rejected=(receipt:typeof next)=>readScopedAreaReceipt(reduceCommerceState(after,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:receipt}]),final)===null;
+ assert(rejected({...next,current:next.current.filter(v=>v.scope!=="South zone")}),"unaffected scope loss passed canonical readback");
+ assert(rejected({...next,superseded:[]}),"missing correction predecessor passed canonical readback");
+ assert(rejected({...next,superseded:[...next.superseded,next.superseded[0]]}),"duplicate historical row passed canonical readback");
+ assert(rejected({...next,superseded:[{...next.superseded[0],recorded_revision:1}]}),"one source split across revisions passed canonical readback");
+ assert(parseScopedAreaClause("North zone 120 sq m","North zone 1","observe")===null,"leading digit consumed as scope");
+ assert(parseScopedAreaClause("北區250平方米","北區2","observe")===null,"leading digit consumed as CJK scope");
+ assert(parseScopedAreaClause("Zone 1 120 sq m","Zone 1","observe")?.amount===120,"genuine numbered scope rejected");
+ assert(readScopedAreaReceipt(after,{...final,company_id:"other-tenant"})===null,"cross tenant receipt accepted");
+ assert(verifiedScopedAreaProposal({state:committed,context:cc,text:correction,frame:cf,history})===null,"missing original source accepted");
+ assert(verifiedScopedAreaProposal({state:committed,context:{...cc,company_id:"other-tenant"},text:correction,frame:cf,history:h})===null,"foreign correction accepted");
+ const forged=frame("correct",correction,[{scope:"South zone",source_text:"North zone changed to 25 sq m"}]);
+ assert(verifiedScopedAreaProposal({state:committed,context:cc,text:correction,frame:forged,history:h})===null,"wrong literal scope accepted");
+ assert(parseScopedAreaClause("North zone 25 ft","North zone","observe")===null,"ambiguous length became area");
+ assert(parseScopedAreaClause("北區約80平方呎","北區","observe")?.approximate===true,"approximate literal Chinese area lost");
+ const recalled=scopedAreaMemoryValue(next,[...h,{id:cc.source_message_id,role:"visitor",content:correction}],"en");
+ assert(recalled==="North zone: 25 sq m; South zone: 30 sq m","superseded area leaked to current memory");
+ // Same prior-turn boundary as paired-site, without a fabricated goal.
+ const priorState=createEmptyConversationCommerceState(),priorText="I need to begin exhibition planning for two zones. How should I approach the layout?";
+ const priorHistory=[{id:"prior-owner",role:"visitor",content:priorText}];
+ const priorFrame=(action:"observe"|"correct",sourceText:string,scopes:string[],row_texts:string[],label="exhibition planning")=>normalizeCommerceSemanticFrame({
+  operation:"UPDATE_ITEM",intent:"customer_context_update",confidence:.99,customer_correction:action==="correct",
+  customer_facts:[{key:SCOPED_AREA_KEY,value:{action,source_text:sourceText,scopes,row_texts}}],
+  referents:[{ref:label,source:"prior_turn",confidence:.99}]
+ });
+ const pf=priorFrame("observe",text,rows.map(x=>x.scope),rows.map(x=>x.source_text));assert(pf,"valid prior area proposal rejected by normalizer");
+ const p=verifiedScopedAreaProposal({state:priorState,context:c,text,frame:pf,history:priorHistory});
+ assert(p&&p.owner_kind==="prior_turn"&&p.subject_ref==="exhibition planning"&&p.owner_source_message_id==="prior-owner"&&p.current[0].amount===20,"literal prior owner not bound");
+ const badPrior=(history:typeof priorHistory)=>verifiedScopedAreaProposal({state:priorState,context:c,text,frame:pf,history})===null;
+ assert(badPrior([])&&badPrior([{...priorHistory[0],role:"assistant"}]),"missing or assistant-authored owner accepted");
+ assert(badPrior([{...priorHistory[0],content:"Previously I needed to begin exhibition planning"}]),"historical owner accepted");
+ assert(badPrior([...priorHistory,{id:"other-owner",role:"visitor",content:"I need to plan a different event"}]),"competing current owner accepted");
+ assert(badPrior([...priorHistory,priorHistory[0]]),"duplicate owner source accepted");
+ assert(verifiedScopedAreaProposal({state,context:c,text,frame:pf,history:priorHistory})===null,"prior owner bypassed retained goal");
+ assert(verifiedScopedAreaProposal({state:{...priorState,current_topic:"different subject"},context:c,text,frame:pf,history:priorHistory})===null,"prior owner crossed current topic");
+ const pc=reduceCommerceState(priorState,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:p}]);
+ const ph=[...priorHistory,{id:c.source_message_id,role:"visitor",content:text}];
+ const pcf=priorFrame("correct",correction,["North zone"],["North zone changed to 25 sq m"]);assert(pcf,"valid prior correction rejected");
+ const pn=verifiedScopedAreaProposal({state:pc,context:cc,text:correction,frame:pcf,history:ph});
+ assert(pn&&pn.owner_kind==="prior_turn"&&pn.owner_source_message_id==="prior-owner"&&pn.current[0].amount===25&&pn.current[1].amount===30&&pn.superseded[0].amount===20,"prior owner correction lineage lost");
+ assert(verifiedScopedAreaProposal({state:pc,context:cc,text:correction,frame:pcf,history:[{...priorHistory[0],id:"forged-owner"},ph[1]]})===null,"prior owner identity changed");
+ const pa=reduceCommerceState(pc,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:pn}]);
+ assert(readScopedAreaReceipt(pa,final)?.owner_kind==="prior_turn","prior owner readback failed");
+ assert(readScopedAreaReceipt(pa,{...final,company_id:"other-tenant"})===null,"prior receipt crossed tenant");
+ assert(readScopedAreaReceipt({...pa,current_topic:"different subject"},final)===null,"prior receipt crossed topic");
+ assert(scopedAreaMemoryValue(pn,[...ph,{id:cc.source_message_id,role:"visitor",content:correction}],"en")==="North zone: 25 sq m; South zone: 30 sq m","prior correction current memory mismatch");
+});

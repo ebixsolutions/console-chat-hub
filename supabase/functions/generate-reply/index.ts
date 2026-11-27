@@ -17,6 +17,7 @@ import {
   hasProvenCurrentRequirementsRecap,
   hasAttestedUnlabelledCustomerRecall,
   renderCanonicalCustomerFactRecap,
+  hasCustomerObservationRecap, CUSTOMER_OBSERVATION_RECAP_CONTRACT,
   type RecallCommerceSnapshot,
   type TrustedPersistedMemoryReadback,
 } from "../_shared/conversation-recall.ts";
@@ -228,6 +229,7 @@ import {
   type B2PersistenceKind,
   type B2TrustedTargetedClarification,
   type B2TrustedReadOnlyRecap,
+  type B2TrustedCustomerObservationRecap,
   type B2TrustedCustomerCalculation,
   type B2ProtectedCustomerCountRead,
   selectB2ProtectedCustomerCountRead,
@@ -243,7 +245,7 @@ import {
 } from "../_shared/pre-send-conversion-supervisor.ts";
 import type { B2TrustedCorrectionCommit, B2TrustedJourneyProgress, B2TrustedLifecycleCommit } from "../_shared/b2-journey-progress-contract.ts";
 import { resolveCanonicalCommerceResolution, shouldRefreshCanonicalMemory } from "../_shared/conversation-resolution-contract.ts";
-import { PAIRED_SITE_PATH, PAIRED_SITE_REASON, readPairedSiteReceipt, pairedSiteReply } from "../_shared/contextual-customer-update.ts";
+import { PAIRED_SITE_PATH, PAIRED_SITE_REASON, readPairedSiteReceipt, pairedSiteReply, SCOPED_AREA_PATH,SCOPED_AREA_REASON,readScopedAreaReceipt,scopedAreaReply } from "../_shared/contextual-customer-update.ts";
 import { readExactAiReplyCommit } from "../_shared/authoritative-commit-readback.ts";
 import {
   createClient,
@@ -759,6 +761,7 @@ async function executeB2RpcPersistence<T>(
     trusted_correction_commit?: B2TrustedCorrectionCommit | null;
     trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
     trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
+    trusted_customer_observation_recap?: B2TrustedCustomerObservationRecap | null;
     trusted_customer_calculation?: B2TrustedCustomerCalculation | null;
     protected_customer_count_read?: B2ProtectedCustomerCountRead | null;
     expected_commerce_state_revision?: number | null;
@@ -794,6 +797,7 @@ async function commitAiReplyWithControlGate(
   trustedCustomerCalculation: B2TrustedCustomerCalculation | null = null,
   trustedKbPriceClaims: B2KbPriceClaim[] | null = null,
   protectedCustomerCountRead: B2ProtectedCustomerCountRead | null = null,
+  trustedCustomerObservationRecap: B2TrustedCustomerObservationRecap | null = null,
 ): Promise<
   | { ok: true; message_id: string | null; idempotent: boolean }
   | {
@@ -838,7 +842,10 @@ async function commitAiReplyWithControlGate(
     b2_source_message_id: source_message_id,
   };
   let attemptedEvidence: Record<string, unknown> | null = null;
-  const countRead = { protected_customer_count_read: protectedCustomerCountRead };
+  const countRead = {
+    protected_customer_count_read: protectedCustomerCountRead,
+    trusted_customer_observation_recap: trustedCustomerObservationRecap,
+  };
   const gateStarted=Date.now();
   const b2 = await executeB2RpcPersistence(
     supabaseAdmin,
@@ -5964,13 +5971,37 @@ async function orchestrationGenerateReply(
     return new Response(JSON.stringify({success:false,error:"paired_site_confirmation_readback_changed",retryable:true}),
       {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
+  const _c3ScopedAreaOutcome = _a3Commerce?.reason === SCOPED_AREA_REASON;
+  const _c3ScopedAreaReceipt = _c3ScopedAreaOutcome && _c3CommerceSnapshot && _criticalE2ExpectedTenantId
+    ? readScopedAreaReceipt(_c3CommerceSnapshot.state, {
+        company_id: _criticalE2ExpectedTenantId, conversation_id,
+        source_message_id: _h1SourceMessageId, state_revision: _c3CommerceSnapshot.revision,
+      }) : null;
+  const _c3VerifiedScopedAreaConfirmation = Boolean(
+    _c3ScopedAreaReceipt && _a3Commerce?.route === "commerce_state_answer" &&
+    _a3Commerce.authority === "CONVERSATION_STATE" && _a3Commerce.persist_result === "success" &&
+    _a3Commerce.state_path === SCOPED_AREA_PATH &&
+    _c3CommerceSnapshot?.company_id === _criticalE2ExpectedTenantId &&
+    _c3CommerceSnapshot?.conversation_id === conversation_id &&
+    _c3CommerceSnapshot?.source_message_id === _h1SourceMessageId &&
+    source_message_id === _h1SourceMessageId &&
+    _c3CommerceSnapshot?.revision === _a3Commerce.revision &&
+    _c3ScopedAreaReceipt.recorded_revision === _a3Commerce.revision &&
+    _c3ScopedAreaReceipt.source_message_id === _h1SourceMessageId &&
+    _a3Commerce.reply === scopedAreaReply(_c3ScopedAreaReceipt,
+      _visitorLang === "en" ? "en" : _visitorLang === "zh-CN" ? "zh-CN" : "zh-TW"));
+  if (_c3ScopedAreaOutcome && !_c3VerifiedScopedAreaConfirmation && !_explicitHandoffRequested) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(JSON.stringify({success:false,error:"scoped_area_confirmation_readback_changed",retryable:true}),
+      {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+  }
   // The paired confirmation and its existing Commerce commit share one local-reply
   // admission policy. Evaluate it at each use; never swallow a lookup or overflow.
   const _c3CanUseLocalCommerceReply = () =>
     _c3ServicePlan.knowledge_state !== "lookup_required" &&
     !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent);
-  const _c3PairedSiteConfirmation = _c3VerifiedPairedSiteConfirmation &&
+  const _c3PairedSiteConfirmation = (_c3VerifiedPairedSiteConfirmation||_c3VerifiedScopedAreaConfirmation) &&
     !_explicitHandoffRequested && !_mixedRequest && !_c3ResolvedAddressCorrection &&
     _customerRequestDecision.kind !== "merchant_facts" && !_customerRequestDecision.merchant_request &&
     _currentFactualRequest?.kb_required !== true &&
@@ -6101,12 +6132,26 @@ ${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was n
     _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     _c3Recall.decision.handled && _c3Recall.decision.fact_type === "summary" &&
     Boolean(_c3Memory && _c3CommerceSnapshot && _c3ReadOnlyMemoryHash);
+  const _c3ObservationRecapSelected=Boolean(_c3IsGroundedReadOnlyRecap&&_c3CommerceSnapshot&&
+    hasCustomerObservationRecap(_c3CommerceSnapshot.state));
+  const _c3ObservationRecapProof:B2TrustedCustomerObservationRecap|null=
+    _c3ObservationRecapSelected&&_c3CommerceSnapshot&&_criticalE2ExpectedTenantId&&
+    _c3CommerceSnapshot.company_id===_criticalE2ExpectedTenantId&&
+    _c3CommerceSnapshot.conversation_id===conversation_id&&!_pr5HistoryReadError?
+      {contract:CUSTOMER_OBSERVATION_RECAP_CONTRACT,company_id:_criticalE2ExpectedTenantId,conversation_id,
+       source_message_id:_h1SourceMessageId,state_revision:_c3CommerceSnapshot.revision,
+       state_source_message_id:_c3CommerceSnapshot.source_message_id,
+       language:_visitorLang==="en"?"en":_visitorLang==="zh-CN"?"zh-CN":"zh-TW",
+       history:_c3RecentServiceMessages.map(({id,role,content})=>({id,role,content}))}:null;
   const _c3CustomerOnlyReply = _c3IsGroundedReadOnlyRecap && _c3CommerceSnapshot?.state.entities.length === 0
-    ? renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang) : null;
+    ? _c3ObservationRecapSelected
+      ? _c3ObservationRecapProof
+        ? renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang,_c3ObservationRecapProof):null
+      : renderCanonicalCustomerFactRecap(_c3CommerceSnapshot.state,_visitorLang) : null;
   // An unproved customer quotation must not be embellished with the very
   // canonical value whose source is in conflict. Keep the attested reply or
   // its single neutral clarification; original B2 still governs persistence.
-  const _c3PlannedReply = _c3PairedSiteConfirmation ? null : _c3CustomerRecallRoute ? _c3Recall.reply : (_customerGuidance || _mixedRequest || _purePriorGroundedTransform) &&
+  const _c3PlannedReply = _c3PairedSiteConfirmation ? null : _c3ObservationRecapSelected ? _c3CustomerOnlyReply ?? _c3Recall.reply : _c3CustomerRecallRoute ? _c3Recall.reply : (_customerGuidance || _mixedRequest || _purePriorGroundedTransform) &&
     !_c3ServicePlan.safe_assumptions.includes("query_context_limit") ? null : _c3IsGroundedReadOnlyRecap
     ? _c3CustomerOnlyReply ?? _c3Recall.reply
     : _c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")
@@ -6177,6 +6222,7 @@ ${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was n
         : _c3Recall.metadata.response_route,
       service_plan_version: _c3ServicePlan.version,
       ...(customerOnlyRecap && _c3CommerceSnapshot ? {
+        ...(_c3ObservationRecapSelected?{customer_observation_recap:CUSTOMER_OBSERVATION_RECAP_CONTRACT}:{}),
         customer_fact_recall:true,commerce_authority:"CONVERSATION_STATE",transaction_mutation:"NONE",
         commerce_state_revision:_c3CommerceSnapshot.revision,commerce_state_persist_result:"read_only",
         commerce_state_persistence_classification:"NO_SEMANTIC_CHANGE",commerce_state_path:"commerce.authoritative_projection",
@@ -6226,6 +6272,7 @@ ${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was n
       null, null, null, null, null,
       readOnlyRecapProof,
       customerCalculationProof,
+      null, null, customerOnlyRecap?_c3ObservationRecapProof:null,
     );
     await cleanupThinking(supabaseAdmin, conversation_id, _h1SourceMessageId);
     if (recallCommit.ok) {

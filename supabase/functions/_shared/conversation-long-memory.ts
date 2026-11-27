@@ -1,4 +1,4 @@
-import { PAIRED_SITE_KEY,readPairedSiteReceipt,pairedSiteMemoryValue } from "./contextual-customer-update.ts";
+import { PAIRED_SITE_KEY,readPairedSiteReceipt,pairedSiteMemoryValue, SCOPED_AREA_KEY,readScopedAreaReceipt,scopedAreaMemoryValue,scopedAreaSources } from "./contextual-customer-update.ts";
 import type { CustomerRequestDecision } from "./commerce-state-authority.ts";
 import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import { resolveConversationRecall, renderConversationRecall } from "./conversation-recall.ts";
@@ -785,6 +785,8 @@ export function buildCanonicalConversationMemory(args: {
   next_memory_revision: number;
 }): CanonicalConversationMemory {
   // A paired-site Reading is a proposal, never an independent Memory fact.
+  const areaProposal=Boolean(args.customer_fact_delta?.some(f=>f.key===SCOPED_AREA_KEY));
+  if(areaProposal)args={...args,customer_fact_delta:args.customer_fact_delta?.filter(f=>f.key!==SCOPED_AREA_KEY)};
   const pairedProposal=Boolean(args.customer_fact_delta?.some(f=>f.key===PAIRED_SITE_KEY));
   if(pairedProposal)args={...args,customer_fact_delta:args.customer_fact_delta?.filter(f=>f.key!==PAIRED_SITE_KEY)};
   const scopedCorrection=args.committed_scoped_correction ? scopedCorrectionReceipt({
@@ -825,6 +827,11 @@ export function buildCanonicalConversationMemory(args: {
       [{id:row.id,role:row.role,content:row.content}]:[]),pairLanguage):null;
   const pairFact:ConversationMemoryFact|null=pairValue&&pairSource?{key:PAIRED_SITE_KEY,value:pairValue,
     authority:"canonical_commerce",source_message_id:pairSource}:null;
+  const area=args.commerce_state&&args.commerce_state_revision!==null?readScopedAreaReceipt(args.commerce_state,{company_id:args.company_id,conversation_id:args.conversation_id,source_message_id:args.source_message_id,state_revision:args.commerce_state_revision}):null;
+  const areaValue=area?scopedAreaMemoryValue(area,args.newest_first.flatMap(row=>typeof row.role==="string"&&typeof row.content==="string"?[{id:row.id,role:row.role,content:row.content}]:[]),pairLanguage):null;
+  const areaFact:ConversationMemoryFact|null=area&&areaValue?{key:SCOPED_AREA_KEY,value:areaValue,authority:"canonical_commerce",source_message_id:area.source_message_id}:null;
+  const areaSourceIds=new Set(area?scopedAreaSources(area).filter(x=>x.id!==area.owner_source_message_id).map(x=>x.id):[]);
+  const competingLegacyArea=(f:ConversationMemoryFact)=>f.key==="room_size"&&!!f.source_message_id&&areaSourceIds.has(f.source_message_id);
   const currentReadAnchor = args.source_factual_turn || args.factual_read_request
     ? buildFactualReadAnchor({source_message_id: args.source_message_id,
       source_created_at: args.source_created_at, rows: args.newest_first,
@@ -847,7 +854,7 @@ export function buildCanonicalConversationMemory(args: {
     return `${entity.model?entity.model+" ":""}${label}: ${customerRequestedQuantity(entity) === null ? "quantity not yet confirmed" : `${entity.quantity} units`}${requirements?", "+requirements:""}${width}${record(entity.attributes.room_sunlight) ? ", afternoon sun: " + Object.entries(record(entity.attributes.room_sunlight)!).map(([room,value])=>room.replace(/_/g," ")+": "+(value==="none"?"no afternoon sun":value==="strong_afternoon_sun"?"strong afternoon sun":"not confirmed")).join(", ") : entity.attributes.sunlight === "strong_afternoon_sun" ? ", afternoon sun (scope unspecified)" : entity.attributes.sunlight === "none" ? ", no afternoon sun (customer reported)" : ""}${entity.attributes.installation_type === "window_unit" ? ", window units" : ""}${["deferred","cancelled"].includes(entity.status)?` (${entity.status})`:""}`;
   }).join("; "):null;
   const fallbackGoal=businessMessageText(prior?.current_goal) || businessMessageText(args.commerce_state?.current_intent) || runtime.first_customer_turn || null;
-  const goalFacts = stableFacts([...(prior?.current_customer_facts ?? []).filter(f=>f.key!==PAIRED_SITE_KEY), ...(args.customer_fact_delta ?? []), ...requirements.current.map(f => ({...f,authority:"customer" as const}))],MAX_FACTS);
+  const goalFacts = stableFacts([...(prior?.current_customer_facts ?? []).filter(f=>f.key!==PAIRED_SITE_KEY&&f.key!==SCOPED_AREA_KEY&&!competingLegacyArea(f)), ...(args.customer_fact_delta ?? []), ...requirements.current.map(f => ({...f,authority:"customer" as const}))],MAX_FACTS);
   const factLabels: Record<string,string> = {product_count:"商品數量",staff_count:"人手",app_interest:"需要 App",current_market:"目前市場",preferred_interface:"使用介面",desired_features:"需要功能",future_markets:"未來市場"};
   const factValue = (value:unknown):string => value===false?"否":value===true?"是":value===null?"未確認":Array.isArray(value)?value.map(factValue).join("、"):typeof value==="object"?JSON.stringify(value):String(value)==="hong_kong"?"香港":String(value)==="web"?"網頁版":String(value);
   const requirementGoal = goalFacts.length ? goalFacts.map(fact => `${factLabels[fact.key] ?? fact.key.replaceAll("_"," ")}: ${factValue(fact.value)}`).join("; ") : null;
@@ -999,16 +1006,17 @@ export function buildCanonicalConversationMemory(args: {
     ].map(businessMessageText).filter(Boolean), MAX_CORRECTIONS, scopedCorrection ? 1200 : 500),
     current_customer_facts: stableFacts([
       ...(prior?.current_customer_facts ?? []).filter((fact) =>
-        fact.key!==PAIRED_SITE_KEY && !fact.key.startsWith("entity:") && !addressKeys.has(clean(fact.key, 120)) &&
+        fact.key!==PAIRED_SITE_KEY && fact.key!==SCOPED_AREA_KEY && !competingLegacyArea(fact) && !fact.key.startsWith("entity:") && !addressKeys.has(clean(fact.key, 120)) &&
         !(currentDeliveryPreferenceFact &&
           deliveryPreferenceKeys.has(clean(fact.key, 120)))
       ),
       ...(args.customer_fact_delta ?? []).map(f=>({...f,authority:"customer" as const,source_message_id:args.source_message_id})),
       ...(pairFact?[pairFact]:[]),
+      ...(areaFact?[areaFact]:[]),
       ...requirementFacts,
       ...canonicalEntityFacts,
       ...retained.current.filter((fact) =>
-        !addressKeys.has(clean(fact.key, 120)) &&
+        !competingLegacyArea(fact) && !addressKeys.has(clean(fact.key, 120)) &&
         !(currentDeliveryPreferenceFact &&
           deliveryPreferenceKeys.has(clean(fact.key, 120)))
       ),

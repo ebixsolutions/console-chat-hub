@@ -1,4 +1,4 @@
-import { PAIRED_SITE_KEY,PAIRED_SITE_PATH,PAIRED_SITE_REASON,readPairedSiteReceipt,pairedSiteReply,pairedSiteSourceMatches,pairedSiteOwnerSourceMatches } from "./contextual-customer-update.ts";
+import { PAIRED_SITE_KEY,PAIRED_SITE_PATH,PAIRED_SITE_REASON,readPairedSiteReceipt,pairedSiteReply,pairedSiteSourceMatches,pairedSiteOwnerSourceMatches, SCOPED_AREA_KEY,SCOPED_AREA_PATH,SCOPED_AREA_REASON,readScopedAreaReceipt,scopedAreaReply,scopedAreaSources } from "./contextual-customer-update.ts";
 /**
  * B2 — fail-closed pre-send conversion supervisor.
  *
@@ -34,13 +34,21 @@ import { isCanonicalConversationMemory, type CanonicalConversationMemory } from 
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
 import { canonicalJson, sameCanonicalJson } from "./canonical-json.ts";
 import { canonicalUnitPartitions,renderCanonicalUnitPartition } from "./commerce-subject-resolution.ts";
-import { countObservationClauses, countFirstObservation, countObservationQueryMatches } from "./commerce-state-authority.ts";
+import { countObservationClauses, countFirstObservation, countObservationQueryMatches, isCurrentRequirementsRecap } from "./commerce-state-authority.ts";
+import { CUSTOMER_OBSERVATION_RECAP_CONTRACT, hasCustomerObservationRecap, customerObservationRecapEvidence,
+  renderCanonicalCustomerFactRecap, type CustomerObservationRecapContext } from "./conversation-recall.ts";
+
+/** Private server-side read-only proof, never a mutation receipt or request field. */
+export interface B2TrustedCustomerObservationRecap extends CustomerObservationRecapContext {
+  contract:typeof CUSTOMER_OBSERVATION_RECAP_CONTRACT;
+  language:"en"|"zh-CN"|"zh-TW";
+}
 
 /** The server selects this requirement before it constructs public metadata.
  * A customer or model cannot supply the selection. Missing public proof never
  * makes the selected numeric reply an ordinary B2 allow. */
 export interface B2ProtectedCustomerCountRead {
-  contract: "source-bound-customer-count-read-v1" | "source-bound-paired-site-observation-v1";
+  contract: "source-bound-customer-count-read-v1" | "source-bound-paired-site-observation-v1" | "source-bound-scoped-area-v1";
   company_id: string | null;
   conversation_id: string;
   source_message_id: string | null;
@@ -59,8 +67,8 @@ export function selectB2ProtectedCustomerCountRead(
   outcome: {state_path?: string | null; route: string; revision: number} | null | undefined,
   scope: Omit<B2ProtectedCustomerCountRead,"contract"|"revision"|"state_path">,
 ): B2ProtectedCustomerCountRead | null {
-  if (!outcome || outcome.route !== "commerce_state_answer" || (!protectedCustomerCountKey(outcome.state_path)&&outcome.state_path!==PAIRED_SITE_PATH)) return null;
-  return {contract:outcome.state_path===PAIRED_SITE_PATH?"source-bound-paired-site-observation-v1":"source-bound-customer-count-read-v1",...scope,
+  if (!outcome || outcome.route !== "commerce_state_answer" || (!protectedCustomerCountKey(outcome.state_path)&&outcome.state_path!==PAIRED_SITE_PATH&&outcome.state_path!==SCOPED_AREA_PATH)) return null;
+  return {contract:outcome.state_path===SCOPED_AREA_PATH?"source-bound-scoped-area-v1":outcome.state_path===PAIRED_SITE_PATH?"source-bound-paired-site-observation-v1":"source-bound-customer-count-read-v1",...scope,
     state_path:outcome.state_path!,revision:outcome.revision};
 }
 
@@ -73,7 +81,7 @@ export async function deliverProtectedCustomerCountReply<T extends {ok:boolean}>
   const result=await primary();
   if (!selected || result.ok || !("result" in result) ||
       !["b2_block","b2_indeterminate"].includes(String(result.result))) return {result,clarification:null};
-  const reply=selected.contract==="source-bound-paired-site-observation-v1"?
+  const reply=selected.contract==="source-bound-scoped-area-v1"?(selected.language==="en"?"I couldn’t verify the area or its scope. Could you confirm it?":selected.language==="zh-CN"?"暂时未能核实面积或所属范围，可以确认一下吗？":"暫時未能核實面積或所屬範圍，可以確認一下嗎？"):selected.contract==="source-bound-paired-site-observation-v1"?
     (selected.language==="en"?"I couldn't verify the measurement or its location. Could you confirm it?":selected.language==="zh-CN"?"暂时未能核实尺寸或所属位置，可以确认一下吗？":"暫時未能核實尺寸或所屬位置，可以確認一下嗎？"):
     selected.language==="en"
     ? "I couldn't verify the earlier count. Would you like to clarify it or have a human agent check?"
@@ -147,6 +155,7 @@ export interface B2EvaluationInput {
   trusted_correction_commit?: B2TrustedCorrectionCommit | null;
   trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
   trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
+  trusted_customer_observation_recap?: B2TrustedCustomerObservationRecap | null;
   trusted_customer_calculation?: B2TrustedCustomerCalculation | null;
   protected_customer_count_read?: B2ProtectedCustomerCountRead | null;
 }
@@ -233,6 +242,50 @@ export async function buildB2ReadOnlyRecapProof(input: Omit<B2TrustedReadOnlyRec
     commerce_hash: await hashRecapValue(canonicalJson(input.commerce_state)),
     response_hash: await hashRecapValue(input.reply),
   };
+}
+
+function customerObservationRecapSelected(input:B2EvaluationInput):boolean {
+  return Boolean(input.trusted_customer_observation_recap||
+    input.metadata?.customer_observation_recap!=null||
+    (hasCustomerObservationRecap(input.snapshot.state)&&input.metadata?.customer_fact_recall===true&&
+      input.metadata?.recall_fact_type==="summary"));
+}
+function isTrustedCustomerObservationRecap(input:B2EvaluationInput):boolean {
+  const p=input.trusted_customer_observation_recap,m=input.metadata,s=input.snapshot;
+  if(!p||!m||p.contract!==CUSTOMER_OBSERVATION_RECAP_CONTRACT||
+    m.customer_observation_recap!==p.contract||input.persistence_kind!=="ai_reply"||
+    m.response_route!=="commerce_state_answer"||m.recall_fact_type!=="summary"||
+    m.customer_fact_recall!==true||m.transaction_mutation!=="NONE"||
+    m.commerce_authority!=="CONVERSATION_STATE"||m.commerce_state_persist_result!=="read_only"||
+    m.commerce_state_persistence_classification!=="NO_SEMANTIC_CHANGE"||
+    m.commerce_state_path!=="commerce.authoritative_projection"||
+    m.commerce_state_revision!==s.commerce_state_revision||
+    p.company_id!==s.company_id||p.conversation_id!==s.conversation_id||
+    p.source_message_id!==s.source_message_id||p.state_revision!==s.commerce_state_revision||
+    p.state_source_message_id!==s.commerce_state_source_message_id||
+    !["en","zh-CN","zh-TW"].includes(p.language)||
+    !hasCustomerObservationRecap(s.state)||!isCurrentRequirementsRecap(s.source_message_content??"")||
+    !sameCanonicalJson(m.commerce_state_readback_proof,buildB2AuthoritativeReadbackProof(s.state,"commerce.authoritative_projection")))return false;
+  const expected=renderCanonicalCustomerFactRecap(s.state,p.language,p);
+  return expected!==null&&input.proposed_response===expected;
+}
+async function verifyCustomerObservationRecapOriginal(client:B2DatabaseClient,input:B2EvaluationInput):Promise<boolean> {
+  if(!customerObservationRecapSelected(input))return true;
+  if(!isTrustedCustomerObservationRecap(input))return false;
+  const p=input.trusted_customer_observation_recap!;
+  const evidence=customerObservationRecapEvidence(input.snapshot.state,p.language,p);
+  if(!evidence)return false;
+  try {
+    for(const source of evidence.sources){
+      const row=await client.from("messages").select("id,conversation_id,role,content,is_recalled")
+        .eq("id",source.id).eq("conversation_id",input.snapshot.conversation_id).eq("role","visitor").maybeSingle();
+      if(row.error||!isRecord(row.data)||row.data.id!==source.id||
+        row.data.conversation_id!==input.snapshot.conversation_id||row.data.role!=="visitor"||
+        row.data.is_recalled!==false||typeof row.data.content!=="string"||
+        !pairedSiteSourceMatches(row.data.content,source.text))return false;
+    }
+    return true;
+  }catch{return false;}
 }
 
 function isTrustedReadOnlyRecap(input: B2EvaluationInput, draft: string): boolean {
@@ -354,6 +407,7 @@ export interface B2PersistenceInput<T> {
   trusted_correction_commit?: B2TrustedCorrectionCommit | null;
   trusted_lifecycle_commit?: B2TrustedLifecycleCommit | null;
   trusted_read_only_recap?: B2TrustedReadOnlyRecap | null;
+  trusted_customer_observation_recap?: B2TrustedCustomerObservationRecap | null;
   trusted_customer_calculation?: B2TrustedCustomerCalculation | null;
   protected_customer_count_read?: B2ProtectedCustomerCountRead | null;
   expected_commerce_state_revision?: number | null;
@@ -550,7 +604,8 @@ export function collectKnownCommerceFacts(state: ConversationCommerceState): Kno
   state.unresolved_items.forEach((item, index) =>
     addFact(facts, `unresolved_items.${index}`, item),
   );
-  addRecordFacts(facts, "customer_constraints", state.customer_constraints);
+  const { [SCOPED_AREA_KEY]: _scopedAreaReceipt, ...ordinaryConstraints }=state.customer_constraints;
+  addRecordFacts(facts, "customer_constraints", ordinaryConstraints);
   state.entities.forEach((entity, index) => {
     addFact(facts, `entities.${index}.category`, entity.category);
     addFact(facts, `entities.${index}.brand`, entity.brand);
@@ -643,6 +698,7 @@ export function buildB2AuthoritativeReadbackProof(
   statePath: string,
 ): Record<string, unknown> | null {
   const path = clean(statePath, 240);
+  if(path===SCOPED_AREA_PATH){const value=state.customer_constraints[SCOPED_AREA_KEY];return isRecord(value)?{state_path:path,value}:null;}
   if(path===PAIRED_SITE_PATH){const value=state.customer_constraints[PAIRED_SITE_KEY];return isRecord(value)?{state_path:path,value}:null;}
   if (path === "commerce.authoritative_projection") {
     return {
@@ -1755,6 +1811,27 @@ function isRecallOnlyCountFactPath(state:ConversationCommerceState,path:string):
 }
 
 
+function verifiedProtectedScopedArea(input:B2EvaluationInput){
+ const p=input.protected_customer_count_read,s=input.snapshot,m=input.metadata;
+ if(!p||!m||input.persistence_kind!=="ai_reply"||p.contract!=="source-bound-scoped-area-v1"||
+  p.state_path!==SCOPED_AREA_PATH||!p.company_id||p.company_id!==s.company_id||p.conversation_id!==s.conversation_id||
+  p.source_message_id!==s.source_message_id||s.commerce_state_source_message_id!==s.source_message_id||
+  !Number.isSafeInteger(p.revision)||p.revision!==s.commerce_state_revision||
+  !["en","zh-CN","zh-TW"].includes(p.language)||m.response_route!=="commerce_state_answer"||
+  m.commerce_authority!=="CONVERSATION_STATE"||m.commerce_reason!==SCOPED_AREA_REASON||
+  m.commerce_state_persist_result!=="success"||m.commerce_state_persistence_classification!=="COMMITTED"||
+  m.commerce_state_revision!==p.revision||m.commerce_state_path!==SCOPED_AREA_PATH)return null;
+ const r=readScopedAreaReceipt(s.state,{company_id:s.company_id,conversation_id:s.conversation_id,
+  source_message_id:s.source_message_id,state_revision:s.commerce_state_revision});
+ if(!r||r.recorded_revision!==p.revision||r.source_message_id!==s.source_message_id||
+  typeof s.source_message_content!=="string"||!pairedSiteSourceMatches(s.source_message_content,r.source_text)||
+  !sameCanonicalJson(m.commerce_state_readback_proof,buildB2AuthoritativeReadbackProof(s.state,SCOPED_AREA_PATH))||
+  input.proposed_response!==scopedAreaReply(r,p.language))return null;
+ return r;
+}
+function scopedAreaB2Selected(input:B2EvaluationInput):boolean {
+ return input.protected_customer_count_read?.contract==="source-bound-scoped-area-v1"||input.metadata?.commerce_state_path===SCOPED_AREA_PATH||input.metadata?.commerce_reason===SCOPED_AREA_REASON;
+}
 function verifiedProtectedPairedSite(input:B2EvaluationInput){
  const p=input.protected_customer_count_read,s=input.snapshot,m=input.metadata;
  if(!p||!m||input.persistence_kind!=="ai_reply"||p.contract!=="source-bound-paired-site-observation-v1"||
@@ -1778,11 +1855,23 @@ function pairedSiteB2Selected(input:B2EvaluationInput):boolean{
   input.metadata?.commerce_state_path===PAIRED_SITE_PATH||input.metadata?.commerce_reason===PAIRED_SITE_REASON;
 }
 function requiresProtectedCustomerCountRead(input:B2EvaluationInput):boolean {
-  return Boolean(input.protected_customer_count_read || protectedCustomerCountKey(input.metadata?.commerce_state_path) || pairedSiteB2Selected(input));
+  return Boolean(input.protected_customer_count_read || protectedCustomerCountKey(input.metadata?.commerce_state_path) || pairedSiteB2Selected(input) || scopedAreaB2Selected(input));
 }
 
 async function verifyProtectedCountOriginal(client:B2DatabaseClient,input:B2EvaluationInput):Promise<boolean> {
   if (!requiresProtectedCustomerCountRead(input)) return true;
+  if(scopedAreaB2Selected(input)){
+    const r=verifiedProtectedScopedArea(input);if(!r)return false;
+    try {
+      const sources=scopedAreaSources(r);
+      if(new Set(sources.map(x=>x.id)).size!==sources.length)return false;
+      for(const source of sources){
+        const row=await client.from("messages").select("id,conversation_id,role,content").eq("id",source.id).eq("conversation_id",input.snapshot.conversation_id).eq("role","visitor").maybeSingle();
+        if(row.error||!isRecord(row.data)||row.data.id!==source.id||row.data.conversation_id!==input.snapshot.conversation_id||row.data.role!=="visitor"||typeof row.data.content!=="string"||!pairedSiteSourceMatches(row.data.content,source.text))return false;
+      }
+      return true;
+    }catch{return false;}
+  }
   if(pairedSiteB2Selected(input)){
     const r=verifiedProtectedPairedSite(input);
     if(!r)return false;
@@ -1825,8 +1914,8 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     };
   }
   const protectedCountRead=requiresProtectedCustomerCountRead(input);
-  if (protectedCountRead && !(pairedSiteB2Selected(input)?verifiedProtectedPairedSite(input):verifiedProtectedCustomerCountRead(input)))
-    return {decision:"block",code:pairedSiteB2Selected(input)?"UNPROVEN_PAIRED_SITE_OBSERVATION":"UNPROVEN_CUSTOMER_COUNT_READ"};
+  if (protectedCountRead && !(scopedAreaB2Selected(input)?verifiedProtectedScopedArea(input):pairedSiteB2Selected(input)?verifiedProtectedPairedSite(input):verifiedProtectedCustomerCountRead(input)))
+    return {decision:"block",code:scopedAreaB2Selected(input)?"UNPROVEN_SCOPED_AREA":pairedSiteB2Selected(input)?"UNPROVEN_PAIRED_SITE_OBSERVATION":"UNPROVEN_CUSTOMER_COUNT_READ"};
   const state = input.snapshot.state;
   const boundPartition=isBoundPartitionStatement(input,draft);
   if ((input.metadata?.commerce_reason==="source_bound_partial_unit_status_committed" ||
@@ -1839,6 +1928,9 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
   if (kbPriceDecision?.decision === "block") return kbPriceDecision;
   const correctionDecision = evaluateCorrections(draft, input.snapshot);
   const trustedReadOnlyRecap = isTrustedReadOnlyRecap(input, draft);
+  const trustedCustomerObservationRecap=isTrustedCustomerObservationRecap(input);
+  if(customerObservationRecapSelected(input)&&!trustedCustomerObservationRecap)
+    return {decision:"block",code:"UNPROVEN_CUSTOMER_OBSERVATION_RECAP"};
   const trustedCustomerCalculation = isTrustedCustomerCalculation(input, draft);
   if ((input.trusted_customer_calculation || input.metadata?.calculation_type === "historical_or_conditional") &&
     !trustedCustomerCalculation) return { decision: "block", code: "UNPROVEN_CUSTOMER_CALCULATION" };
@@ -1874,7 +1966,7 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     !trustedCorrection
   ) return { decision: "block", code: "UNPROVEN_CORRECTION_COMMIT" };
   return (
-    (authoritativeNoSemanticChange || trustedLifecycle || trustedReadOnlyRecap || trustedCustomerCalculation ? null : correctionDecision) ??
+    (authoritativeNoSemanticChange || trustedLifecycle || trustedReadOnlyRecap || trustedCustomerObservationRecap || trustedCustomerCalculation ? null : correctionDecision) ??
     evaluateCancellation(draft, state, boundPartition) ??
     (kbPriceDecision || trustedCustomerCalculation ? null : evaluateQuoteReality(draft, state, input)) ??
     evaluateTransactionReality(draft, input.persistence_kind, state) ??
@@ -1891,12 +1983,14 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     (input.trusted_targeted_clarification && !trustedTargetedClarification ? {decision:"block" as const,code:"UNPROVEN_TARGETED_CLARIFICATION"} : null) ??
     (input.metadata?.commerce_reason === "contextual_targeted_clarification" && !input.trusted_targeted_clarification
       ? {decision:"block" as const,code:"KNOWN_CONTEXT_RECONFIRMATION"} : null) ??
-    (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection || trustedLifecycle || trustedReadOnlyRecap || trustedCustomerCalculation
+    (trustedTargetedClarification || trustedJourneyProgress || trustedCorrection || trustedLifecycle || trustedReadOnlyRecap || trustedCustomerObservationRecap || trustedCustomerCalculation
       ? null
       : evaluateKnownContext(draft, input)) ?? {
       decision: "allow",
-      code: protectedCountRead ? (pairedSiteB2Selected(input)?"B2_ALLOW_PROTECTED_PAIRED_SITE_OBSERVATION":"B2_ALLOW_PROTECTED_CUSTOMER_COUNT_READ") : kbPriceDecision?.code ?? (trustedReadOnlyRecap
+      code: protectedCountRead ? (scopedAreaB2Selected(input)?"B2_ALLOW_PROTECTED_SCOPED_AREA":pairedSiteB2Selected(input)?"B2_ALLOW_PROTECTED_PAIRED_SITE_OBSERVATION":"B2_ALLOW_PROTECTED_CUSTOMER_COUNT_READ") : kbPriceDecision?.code ?? (trustedReadOnlyRecap
         ? "B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP"
+        : trustedCustomerObservationRecap
+        ? "B2_ALLOW_AUTHORITATIVE_CUSTOMER_OBSERVATION_RECAP"
         : trustedLifecycle
         ? "B2_ALLOW_COMMITTED_SCOPED_LIFECYCLE"
         : trustedCorrection
@@ -2198,6 +2292,7 @@ export async function executeB2PersistenceGate<T>(
       trusted_correction_commit: input.trusted_correction_commit,
       trusted_lifecycle_commit: input.trusted_lifecycle_commit,
       trusted_read_only_recap: input.trusted_read_only_recap,
+      trusted_customer_observation_recap: input.trusted_customer_observation_recap,
       trusted_customer_calculation: input.trusted_customer_calculation,
       protected_customer_count_read: input.protected_customer_count_read,
     });
@@ -2214,6 +2309,8 @@ export async function executeB2PersistenceGate<T>(
 
   if (!await verifyProtectedCountOriginal(input.client,{...input,snapshot:initial.snapshot}))
     return {committed:false,decision:{decision:"block",code:"CUSTOMER_COUNT_ORIGINAL_SOURCE_MISMATCH"},snapshot:initial.snapshot};
+  if (!await verifyCustomerObservationRecapOriginal(input.client,{...input,snapshot:initial.snapshot}))
+    return {committed:false,decision:{decision:"block",code:"CUSTOMER_OBSERVATION_RECAP_SOURCE_MISMATCH"},snapshot:initial.snapshot};
   const revalidated = await loadB2Snapshot(
     input.client,
     input.conversation_id,
@@ -2250,6 +2347,8 @@ export async function executeB2PersistenceGate<T>(
   if (!await validateCalculationSources()) return {committed:false,decision:{decision:"block",code:"CUSTOMER_CALCULATION_SOURCE_HISTORY_MISMATCH"},snapshot:revalidated.snapshot};
   if (!await verifyProtectedCountOriginal(input.client,{...input,snapshot:revalidated.snapshot}))
     return {committed:false,decision:{decision:"block",code:"CUSTOMER_COUNT_ORIGINAL_SOURCE_MISMATCH"},snapshot:revalidated.snapshot};
+  if (!await verifyCustomerObservationRecapOriginal(input.client,{...input,snapshot:revalidated.snapshot}))
+    return {committed:false,decision:{decision:"block",code:"CUSTOMER_OBSERVATION_RECAP_SOURCE_MISMATCH"},snapshot:revalidated.snapshot};
   const value = await input.commit(revalidated.snapshot);
   return { committed: true, decision, snapshot: revalidated.snapshot, value };
 }

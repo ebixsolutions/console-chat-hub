@@ -1,4 +1,4 @@
-import { PAIRED_SITE_KEY,readPairedSiteReceipt } from "./contextual-customer-update.ts";
+import { PAIRED_SITE_KEY,readPairedSiteReceipt,SCOPED_AREA_KEY,readScopedAreaReceipt } from "./contextual-customer-update.ts";
 import { isConversationCommerceState } from "./commerce-state-contract.ts";
 import {captureProtectedDiagnosticText} from "./protected-pipeline-evidence.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
@@ -216,6 +216,14 @@ export function buildPersistentCommerceStateSummary(
       if(r&&r.recorded_revision===revision&&(r.scope_source_message_id??r.source_message_id)===row.source_message_id)
         constraints[PAIRED_SITE_KEY]={version:r.version,owner_kind:r.owner_kind,subject_ref:r.subject_ref,subject_label:r.subject_label,
           width_mm:r.width_mm,height_mm:r.height_mm,approximate:r.approximate,scope:r.scope};
+    }
+    projectedConstraints=constraints;
+  }
+  if(isRecord(projectedConstraints)&&Object.prototype.hasOwnProperty.call(projectedConstraints,SCOPED_AREA_KEY)){
+    const constraints={...projectedConstraints};delete constraints[SCOPED_AREA_KEY];
+    if(isConversationCommerceState(row.state)&&typeof row.company_id==="string"&&typeof row.conversation_id==="string"&&typeof row.source_message_id==="string"){
+      const r=readScopedAreaReceipt(row.state,{company_id:row.company_id,conversation_id:row.conversation_id,source_message_id:row.source_message_id,state_revision:revision});
+      if(r)constraints[SCOPED_AREA_KEY]={owner_kind:r.owner_kind,subject_ref:r.subject_ref,subject_label:r.subject_label,current:r.current.map(x=>({scope:x.scope,amount:x.amount,unit:x.unit,approximate:x.approximate}))};
     }
     projectedConstraints=constraints;
   }
