@@ -1033,3 +1033,128 @@ test("R4(a) raw count without authoritative CAS context cannot become durable fa
  const state=reduceTurn(createEmptyConversationCommerceState(),{...r4aBase,source_message_id:SRC,text:"我有 2 個問題想問。",semantic_frame:null},[]);
  assert(!Object.values(state.customer_constraints.customer_reported_facts??{}).some(r=>r?.source_count_origin==="literal_customer_clause"));
 });
+
+
+/** R4(a) paired-site first-equivalence tests; prior 150 untouched. */
+const psPath="customer_constraints.paired_site_observation",psOwner="00000000-0000-4000-8000-000000000091",
+ psMeasure="00000000-0000-4000-8000-000000000092",psScope="00000000-0000-4000-8000-000000000093",psRef="entity:paired-site-owner";
+function psFrame(action,text,scope=null,ref=psRef){
+ return {...semantic({operation:"UPDATE_ITEM",intent:"customer_context_update",requested_facts:[],
+  customer_facts:[{key:"paired_site_observation",value:{action,subject_ref:ref,source_text:text,scope}}]}),
+  referents:[{ref,source:"persistent_state",confidence:.99}]};
+}
+function psDb(category,label){
+ let live=createEmptyConversationCommerceState(),revision=1,source=psOwner,writes=0;
+ live.entities=[{entity_id:psRef,category,quantity:0,status:"researching",attributes:{product_name:label},
+  constraints:{},provenance:{source_type:"customer",source_message_id:psOwner,recorded_at:null}}];
+ return {db:{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{company_id:TID,conversation_id:CID,
+  revision,state:structuredClone(live),source_message_id:source},error:null})})})}),
+  rpc:async(_n,p)=>{assert.equal(p.p_company_id,TID);assert.equal(p.p_conversation_id,CID);
+   assert.equal(p.p_expected_revision,revision);live=structuredClone(p.p_state);source=p.p_source_message_id;
+   writes++;revision++;return {data:{result:"success",applied_revision:revision},error:null}}},
+  snapshot:()=>({state:structuredClone(live),revision,source,writes})};
+}
+for(const [category,label,scope] of [["air_conditioner","冷氣","細房"],["custom_furniture","訂製櫃","玄關"],["warehouse_fixture","展示架","Bay A"]]){
+ test("R4A source-owned pair and scope: "+category,async()=>{
+  const store=psDb(category,label),text="70 (W) x 55 (H) cm",owner={id:psOwner,role:"visitor",content:label};
+  const a=await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psMeasure,text,
+   history:[owner],semantic_frame:psFrame("observe",text)});
+  assert.equal(a?.state_path,psPath);assert.equal(a.persist_result,"success");assert.match(a.reply,/700 × 550 mm/);
+  const before=store.snapshot();assert.equal(before.writes,1);assert.equal(before.state.customer_constraints.paired_site_observation.scope,null);
+  assert.equal(before.state.entities[0].quantity,0);assert.equal(before.state.entities[0].attributes.window_opening_observation,undefined);
+  const b=await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psScope,text:scope,
+   history:[owner,{id:psMeasure,role:"visitor",content:text}],semantic_frame:psFrame("bind_scope",scope,scope)});
+  const after=store.snapshot(),r=after.state.customer_constraints.paired_site_observation;
+  assert.equal(b?.state_path,psPath);assert.equal(b.persist_result,"success");assert.ok(b.reply.includes(scope));
+  assert.equal(r.scope,scope);assert.equal(r.source_message_id,psMeasure);assert.equal(r.scope_source_message_id,psScope);
+  assert.equal(after.writes,2);assert.deepEqual(after.state.entities,before.state.entities);assert.deepEqual(after.state.conversion,before.state.conversion);
+  const proof=buildB2AuthoritativeReadbackProof(after.state,b.state_path),selected=selectB2ProtectedCustomerCountRead(b,
+   {company_id:TID,conversation_id:CID,source_message_id:psScope,language:r4aBase.language});
+  const gate={proposed_response:b.reply,persistence_kind:"ai_reply",protected_customer_count_read:selected,
+   snapshot:{conversation_id:CID,company_id:TID,source_message_id:psScope,source_message_content:scope,
+    commerce_state_revision:after.revision,commerce_state_source_message_id:after.source,state:after.state},
+   metadata:{response_route:b.route,commerce_authority:b.authority,commerce_reason:b.reason,commerce_state_revision:b.revision,
+    commerce_state_persist_result:b.persist_result,commerce_state_persistence_classification:"COMMITTED",
+    commerce_state_path:b.state_path,commerce_state_readback_proof:proof}};
+  assert.equal(evaluateB2BeforeCommit(gate).decision,"allow");
+  for(const bad of [{...gate,proposed_response:b.reply.replace("700","999")},{...gate,metadata:{...gate.metadata,commerce_state_path:undefined}},
+   {...gate,protected_customer_count_read:null},{...gate,snapshot:{...gate.snapshot,company_id:"wrong"}},
+   {...gate,metadata:{...gate.metadata,commerce_state_readback_proof:{state_path:psPath,value:{}}}}])
+   assert.notEqual(evaluateB2BeforeCommit(bad).decision,"allow");
+ });
+}
+test("R4A paired observation refuses missing prior, wrong subject, conditional, ambiguous Reading and invented scope",async()=>{
+ const store=psDb("custom_furniture","訂製櫃"),text="70 (W) x 55 (H) cm",owner={id:psOwner,role:"visitor",content:"訂製櫃"};
+ for(const bad of [{history:[]},{text:"如果 "+text},{semantic_frame:psFrame("observe",text,null,"wrong")},
+  {semantic_frame:{...psFrame("observe",text),ambiguity:{is_ambiguous:true,reasons:["owner"],clarification_question:null}}}]){
+  await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psMeasure,text,history:[owner],semantic_frame:psFrame("observe",text),...bad});
+  assert.equal(store.snapshot().writes,0);
+ }
+ await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psMeasure,text,history:[owner],semantic_frame:psFrame("observe",text)});
+ assert.equal(store.snapshot().writes,1);
+ const h=[owner,{id:psMeasure,role:"visitor",content:text}];
+ for(const bad of [{history:[owner]},{semantic_frame:psFrame("bind_scope","玄關","客廳")},{history:[...h,{id:"other",role:"visitor",content:"other subject"}]}]){
+  await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psScope,text:"玄關",history:h,semantic_frame:psFrame("bind_scope","玄關","玄關"),...bad});
+  assert.equal(store.snapshot().writes,1);
+ }
+});
+
+
+/** Window continuation: literal original 4123, no legacy category producer. */
+test("R4A paired 4123 approximation and conversational scope, prior customer goal only",async()=>{
+ // Test the separate no-entity goal path with a real reducer/CAS adapter.
+ const empty=r4aFixtureDb(),owner={id:psOwner,role:"visitor",content:"想換冷氣，兩間睡房加個客廳，應該點揀好？"};
+ const site={id:"00000000-0000-4000-8000-000000000094",role:"visitor",content:"三個位都係窗口位，而家原本用緊嘅都係窗口機。"};
+ const size="大約 70 (W) x 55 (H) cm",scope="係細房嗰個窗口。";
+ const proposal=(action,text,loc=null,siteLabel=undefined)=>({...semantic({operation:"UPDATE_ITEM",intent:"customer_context_update",requested_facts:[],
+  customer_facts:[{key:"paired_site_observation",value:{action,source_text:text,scope:loc,...(siteLabel===undefined?{}:{site_label:siteLabel})}}]}),
+  referents:[{ref:"冷氣",source:"prior_turn",confidence:.99}]});
+ const a=await runCommerceStateRuntime(empty.db,{...r4aBase,source_message_id:psMeasure,text:size,
+  history:[owner,site],semantic_frame:proposal("observe",size)});
+ assert.equal(a?.state_path,psPath);assert.equal(a.persist_result,"success");assert.match(a.reply,/約.*700 × 550 mm/);
+ assert.equal(empty.snapshot().state.entities.length,0);
+ const b=await runCommerceStateRuntime(empty.db,{...r4aBase,source_message_id:psScope,text:scope,
+  history:[owner,site,{id:psMeasure,role:"visitor",content:size}],semantic_frame:proposal("bind_scope",scope,"細房","窗口")});
+ assert.equal(b?.state_path,psPath);assert.equal(b.persist_result,"success");assert.match(b.reply,/細房.*約.*700 × 550 mm/);
+ const final=empty.snapshot();assert.equal(final.state.entities.length,0);assert.equal(final.writes,2);
+ const r=final.state.customer_constraints.paired_site_observation;
+ assert.equal(r.approximate,true);assert.equal(r.scope,"細房");assert.equal(r.scope_site_label,"窗口");
+ assert.equal(r.scope_site_source_message_id,site.id);assert.equal(r.source_message_id,psMeasure);
+ assert.equal(r.scope_source_message_id,psScope);assert.equal(final.state.conversion.order_status,"none");
+ const again=await runCommerceStateRuntime(empty.db,{...r4aBase,source_message_id:psScope,text:scope,
+  history:[owner,site,{id:psMeasure,role:"visitor",content:size}],semantic_frame:proposal("bind_scope",scope,"細房","窗口")});
+ assert.equal(empty.snapshot().writes,2);assert.notEqual(again?.persist_result,"success");
+});
+
+test("R4A paired stale prior subject and malformed scope fail closed",async()=>{
+ const empty=r4aFixtureDb(),text="大約 70 (W) x 55 (H) cm";
+ const owner={id:psOwner,role:"visitor",content:"想換冷氣，應該點揀好？"};
+ const other={id:"other",role:"visitor",content:"我想買書架"};
+ const reading={...semantic({operation:"UPDATE_ITEM",intent:"customer_context_update",requested_facts:[],
+  customer_facts:[{key:"paired_site_observation",value:{action:"observe",source_text:text,scope:null}}]}),
+  referents:[{ref:"冷氣",source:"prior_turn",confidence:.99}]};
+ await runCommerceStateRuntime(empty.db,{...r4aBase,source_message_id:psMeasure,text,history:[owner,other],semantic_frame:reading});
+ assert.equal(empty.snapshot().writes,0);
+ const store=psDb("custom_furniture","訂製櫃"),original={id:psOwner,role:"visitor",content:"訂製櫃"};
+ const a=await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psMeasure,text,history:[original],semantic_frame:psFrame("observe",text)});
+ assert.equal(a?.persist_result,"success");
+ const bad={...psFrame("bind_scope","玄關","玄關"),customer_facts:[{key:"paired_site_observation",value:{action:"bind_scope",subject_ref:psRef,source_text:"玄關",scope:"玄關",site_label:{bad:true}}}]};
+ await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psScope,text:"玄關",history:[original,{id:psMeasure,role:"visitor",content:text}],semantic_frame:bad});
+ assert.equal(store.snapshot().writes,1);
+});
+test("R4A raw paired Reading cannot become Memory authority; exact committed sources can",async()=>{
+ const text="70 (W) x 55 (H) cm",owner={id:psOwner,role:"visitor",content:"訂製櫃"};
+ const store=psDb("custom_furniture","訂製櫃"),proposal=psFrame("observe",text);
+ const a=await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psMeasure,text,history:[owner],semantic_frame:proposal});
+ assert.equal(a?.persist_result,"success");
+ const saved=store.snapshot(),current={id:psMeasure,role:"visitor",content:text};
+ const args={company_id:TID,conversation_id:CID,source_message_id:psMeasure,commerce_state_revision:saved.revision,
+  commerce_state:saved.state,newest_first:[current,owner],visitor_turn_count:2,source_created_at:"2026-10-14T01:00:00Z",
+  next_memory_revision:1,customer_fact_delta:proposal.customer_facts.map(f=>({...f,authority:"customer",source_message_id:psMeasure}))};
+ const m=buildCanonicalConversationMemory(args),fact=m.current_customer_facts.find(f=>f.key==="paired_site_observation");
+ assert.equal(fact?.authority,"canonical_commerce");assert.match(fact.value,/700 × 550 mm/);assert.equal(fact.source_message_id,psMeasure);
+ for(const invalid of [{...args,commerce_state:createEmptyConversationCommerceState()},{...args,newest_first:[current]}]){
+  const rejected=buildCanonicalConversationMemory(invalid);
+  assert(!rejected.current_customer_facts.some(f=>f.key==="paired_site_observation"));
+ }
+});

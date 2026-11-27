@@ -1,3 +1,4 @@
+import { PAIRED_SITE_KEY,PAIRED_SITE_PATH,PAIRED_SITE_REASON,readPairedSiteReceipt,pairedSiteReply,pairedSiteSourceMatches,pairedSiteOwnerSourceMatches } from "./contextual-customer-update.ts";
 /**
  * B2 — fail-closed pre-send conversion supervisor.
  *
@@ -39,7 +40,7 @@ import { countObservationClauses, countFirstObservation, countObservationQueryMa
  * A customer or model cannot supply the selection. Missing public proof never
  * makes the selected numeric reply an ordinary B2 allow. */
 export interface B2ProtectedCustomerCountRead {
-  contract: "source-bound-customer-count-read-v1";
+  contract: "source-bound-customer-count-read-v1" | "source-bound-paired-site-observation-v1";
   company_id: string | null;
   conversation_id: string;
   source_message_id: string | null;
@@ -58,8 +59,8 @@ export function selectB2ProtectedCustomerCountRead(
   outcome: {state_path?: string | null; route: string; revision: number} | null | undefined,
   scope: Omit<B2ProtectedCustomerCountRead,"contract"|"revision"|"state_path">,
 ): B2ProtectedCustomerCountRead | null {
-  if (!outcome || outcome.route !== "commerce_state_answer" || !protectedCustomerCountKey(outcome.state_path)) return null;
-  return {contract:"source-bound-customer-count-read-v1",...scope,
+  if (!outcome || outcome.route !== "commerce_state_answer" || (!protectedCustomerCountKey(outcome.state_path)&&outcome.state_path!==PAIRED_SITE_PATH)) return null;
+  return {contract:outcome.state_path===PAIRED_SITE_PATH?"source-bound-paired-site-observation-v1":"source-bound-customer-count-read-v1",...scope,
     state_path:outcome.state_path!,revision:outcome.revision};
 }
 
@@ -72,7 +73,9 @@ export async function deliverProtectedCustomerCountReply<T extends {ok:boolean}>
   const result=await primary();
   if (!selected || result.ok || !("result" in result) ||
       !["b2_block","b2_indeterminate"].includes(String(result.result))) return {result,clarification:null};
-  const reply=selected.language==="en"
+  const reply=selected.contract==="source-bound-paired-site-observation-v1"?
+    (selected.language==="en"?"I couldn't verify the measurement or its location. Could you confirm it?":selected.language==="zh-CN"?"暂时未能核实尺寸或所属位置，可以确认一下吗？":"暫時未能核實尺寸或所屬位置，可以確認一下嗎？"):
+    selected.language==="en"
     ? "I couldn't verify the earlier count. Would you like to clarify it or have a human agent check?"
     : selected.language==="zh-CN"
       ? "暂时未能核实之前的数量。你想补充资料，还是由人工客服核对？"
@@ -640,6 +643,7 @@ export function buildB2AuthoritativeReadbackProof(
   statePath: string,
 ): Record<string, unknown> | null {
   const path = clean(statePath, 240);
+  if(path===PAIRED_SITE_PATH){const value=state.customer_constraints[PAIRED_SITE_KEY];return isRecord(value)?{state_path:path,value}:null;}
   if (path === "commerce.authoritative_projection") {
     return {
       state_path: path,
@@ -1750,12 +1754,53 @@ function isRecallOnlyCountFactPath(state:ConversationCommerceState,path:string):
   return isRecord(row)&&row.source_count_visibility==="exact_recall_only";
 }
 
+
+function verifiedProtectedPairedSite(input:B2EvaluationInput){
+ const p=input.protected_customer_count_read,s=input.snapshot,m=input.metadata;
+ if(!p||!m||input.persistence_kind!=="ai_reply"||p.contract!=="source-bound-paired-site-observation-v1"||
+  p.state_path!==PAIRED_SITE_PATH||!p.company_id||p.company_id!==s.company_id||p.conversation_id!==s.conversation_id||
+  p.source_message_id!==s.source_message_id||s.commerce_state_source_message_id!==s.source_message_id||
+  !Number.isSafeInteger(p.revision)||p.revision!==s.commerce_state_revision||
+  !["en","zh-CN","zh-TW"].includes(p.language)||m.response_route!=="commerce_state_answer"||
+  m.commerce_authority!=="CONVERSATION_STATE"||m.commerce_reason!==PAIRED_SITE_REASON||
+  m.commerce_state_persist_result!=="success"||m.commerce_state_persistence_classification!=="COMMITTED"||
+  m.commerce_state_revision!==p.revision||m.commerce_state_path!==PAIRED_SITE_PATH)return null;
+ const r=readPairedSiteReceipt(s.state,{company_id:s.company_id,conversation_id:s.conversation_id,
+  source_message_id:s.source_message_id,state_revision:s.commerce_state_revision});
+ if(!r||r.recorded_revision!==p.revision||(r.scope_source_message_id??r.source_message_id)!==s.source_message_id||
+  typeof s.source_message_content!=="string"||!pairedSiteSourceMatches(s.source_message_content,r.scope_source_text??r.source_text)||
+  !sameCanonicalJson(m.commerce_state_readback_proof,buildB2AuthoritativeReadbackProof(s.state,PAIRED_SITE_PATH))||
+  input.proposed_response!==pairedSiteReply(r,p.language))return null;
+ return r;
+}
+function pairedSiteB2Selected(input:B2EvaluationInput):boolean{
+ return input.protected_customer_count_read?.contract==="source-bound-paired-site-observation-v1"||
+  input.metadata?.commerce_state_path===PAIRED_SITE_PATH||input.metadata?.commerce_reason===PAIRED_SITE_REASON;
+}
 function requiresProtectedCustomerCountRead(input:B2EvaluationInput):boolean {
-  return Boolean(input.protected_customer_count_read || protectedCustomerCountKey(input.metadata?.commerce_state_path));
+  return Boolean(input.protected_customer_count_read || protectedCustomerCountKey(input.metadata?.commerce_state_path) || pairedSiteB2Selected(input));
 }
 
 async function verifyProtectedCountOriginal(client:B2DatabaseClient,input:B2EvaluationInput):Promise<boolean> {
   if (!requiresProtectedCustomerCountRead(input)) return true;
+  if(pairedSiteB2Selected(input)){
+    const r=verifiedProtectedPairedSite(input);
+    if(!r)return false;
+    try{
+      const sources=[{id:r.source_message_id,expected:r.source_text,owner:false},
+        {id:r.owner_source_message_id,expected:r.owner_source_text,owner:true}];
+      if(r.scope_site_source_message_id&&r.scope_site_source_text)
+        sources.push({id:r.scope_site_source_message_id,expected:r.scope_site_source_text,owner:false});
+      for(const {id,expected,owner} of sources){
+        const row=await client.from("messages").select("id,conversation_id,role,content")
+          .eq("id",id).eq("conversation_id",input.snapshot.conversation_id).eq("role","visitor").maybeSingle();
+        if(row.error||!isRecord(row.data)||row.data.id!==id||row.data.conversation_id!==input.snapshot.conversation_id||
+          row.data.role!=="visitor"||typeof row.data.content!=="string"||
+          (owner?!pairedSiteOwnerSourceMatches(r,row.data.content):!pairedSiteSourceMatches(row.data.content,expected)))return false;
+      }
+      return true;
+    }catch{return false;}
+  }
   const proof=verifiedProtectedCustomerCountRead(input);
   if (!proof) return false;
   try {
@@ -1780,7 +1825,8 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
     };
   }
   const protectedCountRead=requiresProtectedCustomerCountRead(input);
-  if (protectedCountRead && !verifiedProtectedCustomerCountRead(input)) return {decision:"block",code:"UNPROVEN_CUSTOMER_COUNT_READ"};
+  if (protectedCountRead && !(pairedSiteB2Selected(input)?verifiedProtectedPairedSite(input):verifiedProtectedCustomerCountRead(input)))
+    return {decision:"block",code:pairedSiteB2Selected(input)?"UNPROVEN_PAIRED_SITE_OBSERVATION":"UNPROVEN_CUSTOMER_COUNT_READ"};
   const state = input.snapshot.state;
   const boundPartition=isBoundPartitionStatement(input,draft);
   if ((input.metadata?.commerce_reason==="source_bound_partial_unit_status_committed" ||
@@ -1849,7 +1895,7 @@ export function evaluateB2BeforeCommit(input: B2EvaluationInput): B2Decision {
       ? null
       : evaluateKnownContext(draft, input)) ?? {
       decision: "allow",
-      code: protectedCountRead ? "B2_ALLOW_PROTECTED_CUSTOMER_COUNT_READ" : kbPriceDecision?.code ?? (trustedReadOnlyRecap
+      code: protectedCountRead ? (pairedSiteB2Selected(input)?"B2_ALLOW_PROTECTED_PAIRED_SITE_OBSERVATION":"B2_ALLOW_PROTECTED_CUSTOMER_COUNT_READ") : kbPriceDecision?.code ?? (trustedReadOnlyRecap
         ? "B2_ALLOW_AUTHORITATIVE_READ_ONLY_RECAP"
         : trustedLifecycle
         ? "B2_ALLOW_COMMITTED_SCOPED_LIFECYCLE"

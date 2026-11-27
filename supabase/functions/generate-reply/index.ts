@@ -243,6 +243,7 @@ import {
 } from "../_shared/pre-send-conversion-supervisor.ts";
 import type { B2TrustedCorrectionCommit, B2TrustedJourneyProgress, B2TrustedLifecycleCommit } from "../_shared/b2-journey-progress-contract.ts";
 import { resolveCanonicalCommerceResolution, shouldRefreshCanonicalMemory } from "../_shared/conversation-resolution-contract.ts";
+import { PAIRED_SITE_PATH, PAIRED_SITE_REASON, readPairedSiteReceipt, pairedSiteReply } from "../_shared/contextual-customer-update.ts";
 import { readExactAiReplyCommit } from "../_shared/authoritative-commit-readback.ts";
 import {
   createClient,
@@ -5935,6 +5936,42 @@ async function orchestrationGenerateReply(
     return new Response(JSON.stringify({success:false,error:"dimension_comparison_state_changed",retryable:true}),
       {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
+  // A completed source-bound observation/binding is a customer-owned update,
+  // not a continuation of an earlier advice question. The exact canonical
+  // readback selects the existing protected B2 route; it does not grant authority
+  // to a semantic proposal or bypass B2, R1, or a current merchant demand.
+  const _c3PairedSiteOutcome = _a3Commerce?.reason === PAIRED_SITE_REASON;
+  const _c3PairedSiteReceipt = _c3PairedSiteOutcome && _c3CommerceSnapshot && _criticalE2ExpectedTenantId
+    ? readPairedSiteReceipt(_c3CommerceSnapshot.state, {
+        company_id: _criticalE2ExpectedTenantId, conversation_id,
+        source_message_id: _h1SourceMessageId, state_revision: _c3CommerceSnapshot.revision,
+      }) : null;
+  const _c3VerifiedPairedSiteConfirmation = Boolean(
+    _c3PairedSiteReceipt && _a3Commerce?.route === "commerce_state_answer" &&
+    _a3Commerce.authority === "CONVERSATION_STATE" && _a3Commerce.persist_result === "success" &&
+    _a3Commerce.state_path === PAIRED_SITE_PATH &&
+    _c3CommerceSnapshot?.company_id === _criticalE2ExpectedTenantId &&
+    _c3CommerceSnapshot?.conversation_id === conversation_id &&
+    _c3CommerceSnapshot?.source_message_id === _h1SourceMessageId &&
+    source_message_id === _h1SourceMessageId &&
+    _c3CommerceSnapshot?.revision === _a3Commerce.revision &&
+    _c3PairedSiteReceipt.recorded_revision === _a3Commerce.revision &&
+    (_c3PairedSiteReceipt.scope_source_message_id ?? _c3PairedSiteReceipt.source_message_id) === _h1SourceMessageId &&
+    _a3Commerce.reply === pairedSiteReply(_c3PairedSiteReceipt,
+      _visitorLang === "en" ? "en" : _visitorLang === "zh-CN" ? "zh-CN" : "zh-TW"));
+  if (_c3PairedSiteOutcome && !_c3VerifiedPairedSiteConfirmation && !_explicitHandoffRequested) {
+    await cleanupThinking(supabaseAdmin, conversation_id, source_message_id);
+    return new Response(JSON.stringify({success:false,error:"paired_site_confirmation_readback_changed",retryable:true}),
+      {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
+  }
+  const _c3PairedSiteConfirmation = _c3VerifiedPairedSiteConfirmation &&
+    !_explicitHandoffRequested && !_mixedRequest && !_c3ResolvedAddressCorrection &&
+    _customerRequestDecision.kind !== "merchant_facts" && !_customerRequestDecision.merchant_request &&
+    _currentFactualRequest?.kb_required !== true &&
+    classifyLocalTopicRisk(_h1LastMsg)?.level !== "high" &&
+    _c3ServicePlan.knowledge_state !== "lookup_required" &&
+    !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
+    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent);
   const _customerGuidance = _customerRequestDecision.kind === "guidance" &&
     classifyLocalTopicRisk(_h1LastMsg)?.level !== "high";
   // A source-derived read-only calculation is already resolved. A legacy
@@ -5949,7 +5986,7 @@ async function orchestrationGenerateReply(
   // A product clarification may coexist with customer-owned changes. Commit
   // those changes and refresh bounded context before emitting an AI reply.
   // Explicit R1 is handled by its control transaction farther below.
-  if (!_explicitHandoffRequested && !_c3CustomerRecallRoute && !_customerGuidance && !_c3ReadyCustomerCalculation && !_c3VerifiedDimensionComparison && !_c3RejectedCustomerRequirement && _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")) {
+  if (!_explicitHandoffRequested && !_c3PairedSiteConfirmation && !_c3CustomerRecallRoute && !_customerGuidance && !_c3ReadyCustomerCalculation && !_c3VerifiedDimensionComparison && !_c3RejectedCustomerRequirement && _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")) {
     const immediate = await persistNaturalImmediateResponse(
       supabaseAdmin, conversation_id, _h1SourceMessageId,
       _effectiveNaturalCustomerIntent, _w2FixedLanguage, undefined, undefined, _w2PresentationLocale,
@@ -5966,7 +6003,7 @@ async function orchestrationGenerateReply(
     { explicit_handoff: isHandoffIntent(_h1LastMsg) },
   );
   if (
-    !_explicitHandoffRequested && !_customerGuidance && !_c3ReadyCustomerCalculation && !_c3VerifiedDimensionComparison && !_c3RejectedCustomerRequirement && _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
+    !_explicitHandoffRequested && !_c3PairedSiteConfirmation && !_customerGuidance && !_c3ReadyCustomerCalculation && !_c3VerifiedDimensionComparison && !_c3RejectedCustomerRequirement && _canonicalTurn.operation === "CUSTOMER_CONTEXT_UPDATE" &&
     _c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)
   ) {
@@ -6065,7 +6102,7 @@ ${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was n
   // An unproved customer quotation must not be embellished with the very
   // canonical value whose source is in conflict. Keep the attested reply or
   // its single neutral clarification; original B2 still governs persistence.
-  const _c3PlannedReply = _c3CustomerRecallRoute ? _c3Recall.reply : (_customerGuidance || _mixedRequest || _purePriorGroundedTransform) &&
+  const _c3PlannedReply = _c3PairedSiteConfirmation ? null : _c3CustomerRecallRoute ? _c3Recall.reply : (_customerGuidance || _mixedRequest || _purePriorGroundedTransform) &&
     !_c3ServicePlan.safe_assumptions.includes("query_context_limit") ? null : _c3IsGroundedReadOnlyRecap
     ? _c3CustomerOnlyReply ?? _c3Recall.reply
     : _c3Resolution.bypass_service_plan && !_c3ServicePlan.safe_assumptions.includes("query_context_limit")
@@ -6230,7 +6267,7 @@ ${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was n
     (_a3Commerce?.reason === "explicit_address_correction_applied"
       ? null
       : _a3Commerce?.reply ?? null);
-  if (_c3CommerceReply && !_explicitHandoffRequested && (_c3RejectedCustomerRequirement || !_customerGuidance && !_mixedRequest || Boolean(_c3VerifiedCorrectionReceipt || _c3LifecycleReceipt)) &&
+  if (_c3CommerceReply && !_explicitHandoffRequested && (_c3PairedSiteConfirmation || _c3RejectedCustomerRequirement || !_customerGuidance && !_mixedRequest || Boolean(_c3VerifiedCorrectionReceipt || _c3LifecycleReceipt)) &&
     (_c3RejectedCustomerRequirement || _c3VerifiedDimensionComparison || (_c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
     !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)))) {
     const commerceReply = _a3Commerce?.reason ===

@@ -1334,10 +1334,10 @@ export function customerSunExposure(text: string): "none" | "strong_afternoon_su
 
 /** Explicit paired axes and a declared metric unit only. An unlabelled pair
  * never invents width/height, and this parser never assigns it to a room. */
-export function customerDimensionPair(text: string): {width_mm:number;height_mm:number;reported_width:number;reported_height:number;reported_unit:string}|null {
+export function customerDimensionPair(text: string, standalone=false): {width_mm:number;height_mm:number;reported_width:number;reported_height:number;reported_unit:string}|null {
   const t=clean(text,1600);let m=t.match(/(?<![-\d.])(\d+(?:\.\d+)?)\s*(?:\(\s*(?:W|width|闊|寬|宽)\s*\)|(?:W|width|闊|寬|宽))\s*(mm|cm|毫米|厘米|公分)?\s*[x×*]\s*(\d+(?:\.\d+)?)\s*(?:\(\s*(?:H|height|高)\s*\)|(?:H|height|高))\s*(mm|cm|毫米|厘米|公分)/iu);
   m ??= t.match(/(?:W|width|闊(?:度)?|寬(?:度)?|宽(?:度)?)\s*[:：=]?\s*(\d+(?:\.\d+)?)\s*(mm|cm|毫米|厘米|公分)?\s*(?:[x×*,，]|by)?\s*(?:H|height|高(?:度)?)\s*[:：=]?\s*(\d+(?:\.\d+)?)\s*(mm|cm|毫米|厘米|公分)/iu);
-  if(!m)return null;
+  if(!m || (standalone && (m.index!==0 || m[0]!==t)))return null;
   const unit=m[4].toLowerCase(),first=(m[2]??m[4]).toLowerCase();
   const w=Number(m[1]),h=Number(m[3]),ws=/cm|厘米|公分/.test(first)?10:1,hs=/cm|厘米|公分/.test(unit)?10:1;
   return w>0&&h>0&&w*ws<=100000&&h*hs<=100000?{width_mm:w*ws,height_mm:h*hs,reported_width:w,reported_height:h,reported_unit:first===unit?unit:first+"/"+unit}:null;

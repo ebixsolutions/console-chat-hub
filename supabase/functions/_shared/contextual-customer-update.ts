@@ -5,7 +5,8 @@
 import type { CommerceEntity, ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { matchesReferenceLabel } from "./industry-agent-registry.ts";
-import { sourceOwnedSubjectLabels } from "./commerce-subject-resolution.ts";
+import { sourceOwnedSubjectLabels,customerOwnedDisplayLabel,safeCustomerDisplayText } from "./commerce-subject-resolution.ts";
+import { customerDimensionPair,isSourceOwnedActiveAdviceGoal } from "./commerce-state-authority.ts";
 import type { CommerceStateEvent } from "./commerce-state-reducer.ts";
 import { isExplicitScopedQuantityCorrectionSource, readVerifiedScopedQuantityCorrection,
   scopedQuantityCorrectionSummary, scopedQuantityCorrectionSourceMarker, verifyScopedQuantityCorrectionQuote,
@@ -807,4 +808,187 @@ export function contextualUpdateEvents(
     });
   }
   return events;
+}
+
+
+/** R4(a) paired site measurement: source proof, not an industry classifier.
+ * Customer-owned observations never create an item, quantity, merchant fact,
+ * transaction or historical value promotion. Keep legacy until equivalence. */
+export const PAIRED_SITE_KEY="paired_site_observation";
+export const PAIRED_SITE_PATH="customer_constraints."+PAIRED_SITE_KEY;
+export const PAIRED_SITE_REASON="source_bound_paired_site_observation_committed";
+export interface PairedSiteReceipt {
+ version:"paired-site-1"; company_id:string; conversation_id:string;
+ subject_ref:string; subject_label:string; owner_kind:"persistent_state"|"prior_turn";
+ owner_source_message_id:string; owner_source_text:string;
+ width_mm:number; height_mm:number; approximate:boolean;
+ source_message_id:string; source_text:string; measurement_revision:number;
+ scope:string|null; scope_source_message_id:string|null; scope_source_text:string|null;
+ scope_site_label:string|null; scope_site_source_message_id:string|null; scope_site_source_text:string|null;
+ recorded_revision:number;
+}
+type PairedHistory=readonly {id?:string|null;role:string;content:string}[];
+const pairedObject=(v:unknown):Record<string,unknown>|null=>v!==null&&typeof v==="object"&&!Array.isArray(v)?v as Record<string,unknown>:null;
+const pairedText=(v:string)=>v.normalize("NFKC").trim().replace(/\s+/gu," ");
+const pairedLiteral=(v:string)=>pairedText(v).replace(/[。.]$/u,"").trim();
+const pairedNonAssertion=/[?？]|(?:如果|假設|假设|假如|hypothetical|what if|不是|唔係|not\b|不要|唔要)/iu;
+export function parsePairedSiteMeasurement(text:string) {
+ const literal=pairedLiteral(text);
+ // Approximation is a qualifier, not authority to invent an exact dimension.
+ // Reuses the existing generic approximation vocabulary used by count proof.
+ const prefix=literal.match(/^(?:大約|大约|大概|approximately\b|about\b|around\b)\s*/iu);
+ const exact=prefix?literal.slice(prefix[0].length):literal;
+ const pair=customerDimensionPair(exact,true);
+ return pair?{width_mm:pair.width_mm,height_mm:pair.height_mm,approximate:!!prefix}:null;
+}
+function pairedScope(text:string):string|null {
+ const v=pairedLiteral(text);
+ if(!v||v.length>80||!/\p{L}/u.test(v)||! /^[\p{L}\p{N}\p{M} -]+$/u.test(v)||pairedNonAssertion.test(v))return null;
+ return safeCustomerDisplayText(v);
+}
+/** Literal scope/site spans must reconstruct one association. The only
+ * extra text allowed is generic grammatical glue from the prior association
+ * rule; no product or location dictionary, no scope inferred from category. */
+export function pairedScopeBinding(text:string,scope:string,site:string|null):boolean {
+ if(typeof text!=="string"||typeof scope!=="string"||(site!==null&&typeof site!=="string"))return false;
+ const t=pairedLiteral(text);
+ if(pairedNonAssertion.test(t)||pairedScope(scope)!==scope)return false;
+ if(site===null)return pairedScope(t)===scope;
+ if(pairedScope(site)!==site||scope===site)return false;
+ const a=t.indexOf(scope),b=t.indexOf(site);
+ if(a<0||b<a+scope.length||t.indexOf(scope,a+scope.length)>=0||t.indexOf(site,b+site.length)>=0||b+site.length!==t.length)return false;
+ return /^(?:係|是|属于|屬於|belongs to|for the|it's for)\s*$/iu.test(t.slice(0,a))&&
+  /^(?:\s+|\s*(?:嗰個|那個|那个|個|个|的)\s*)$/u.test(t.slice(a+scope.length,b));
+}
+export function pairedSiteSourceMatches(actual:string,expected:string):boolean{return pairedText(actual)===pairedText(expected)}
+function pairedHistory(input:PairedHistory|undefined){
+ return (input??[]).filter(h=>["visitor","user","customer"].includes(h.role)&&typeof h.id==="string"&&!!h.id&&typeof h.content==="string");
+}
+function pairedPersistentOwner(state:ConversationCommerceState,context:ContextualSourceContext,ref:string) {
+ const active=state.entities.filter(e=>!["cancelled","deferred","superseded"].includes(e.status));
+ if(active.length===1&&active[0].entity_id===ref){
+  const e=active[0],label=customerOwnedDisplayLabel(e),id=e.provenance.source_message_id;
+  if(!label||!id||e.attributes.window_opening_observation!=null||e.attributes.room_window_openings!=null)return null;
+  return {ref,label,source_id:id};
+ }
+ if(active.length!==0)return null;
+ const g=readSourceBoundContextualGoal(state,context);
+ return g&&g.goal_id===ref?{ref,label:g.subject_label,source_id:g.source_message_id}:null;
+}
+function pairedPriorOwnerAllowed(state:ConversationCommerceState,label:string):boolean {
+ return state.entities.length===0&&state.customer_constraints.contextual_goal==null&&
+  (!state.current_topic||matchesReferenceLabel(state.current_topic,label));
+}
+export function pairedSiteOwnerSourceMatches(r:PairedSiteReceipt,actual:string):boolean {
+ return pairedSiteSourceMatches(actual,r.owner_source_text)&&matchesReferenceLabel(actual,r.subject_label)&&
+  (r.owner_kind==="persistent_state"||isSourceOwnedActiveAdviceGoal(actual));
+}
+export function hasPairedSiteProposal(frame:CommerceSemanticFrame|null|undefined):boolean {
+ return !!frame?.customer_facts?.some(f=>f.key===PAIRED_SITE_KEY);
+}
+export function readPairedSiteReceipt(state:ConversationCommerceState,context:ContextualSourceContext):PairedSiteReceipt|null {
+ const v=pairedObject(state.customer_constraints[PAIRED_SITE_KEY]);
+ if(!v||v.version!=="paired-site-1"||v.company_id!==context.company_id||v.conversation_id!==context.conversation_id||
+  typeof v.subject_ref!=="string"||typeof v.subject_label!=="string"||typeof v.owner_source_message_id!=="string"||
+  !v.owner_source_message_id||typeof v.owner_source_text!=="string"||!v.owner_source_text||v.owner_source_text.length>2400||
+  typeof v.source_message_id!=="string"||!v.source_message_id||v.source_message_id===v.owner_source_message_id||
+  typeof v.source_text!=="string"||v.source_text.length>240||
+  typeof v.measurement_revision!=="number"||!Number.isSafeInteger(v.measurement_revision)||v.measurement_revision<1||
+  typeof v.recorded_revision!=="number"||!Number.isSafeInteger(v.recorded_revision)||
+  v.recorded_revision<v.measurement_revision||v.recorded_revision>context.state_revision)return null;
+ const r=v as unknown as PairedSiteReceipt;
+ if(r.owner_kind==="persistent_state"){
+  const o=pairedPersistentOwner(state,context,r.subject_ref);
+  if(!o||o.label!==r.subject_label||o.source_id!==r.owner_source_message_id)return null;
+ }else if(r.owner_kind!=="prior_turn"||r.subject_ref!==r.subject_label||
+  !pairedPriorOwnerAllowed(state,r.subject_label))return null;
+ if(!pairedSiteOwnerSourceMatches(r,r.owner_source_text))return null;
+ const pair=parsePairedSiteMeasurement(r.source_text);
+ if(!pair||r.width_mm!==pair.width_mm||r.height_mm!==pair.height_mm||r.approximate!==pair.approximate)return null;
+ if(r.scope===null){
+  if(r.scope_source_message_id!==null||r.scope_source_text!==null||r.scope_site_label!==null||
+   r.scope_site_source_message_id!==null||r.scope_site_source_text!==null||r.recorded_revision!==r.measurement_revision)return null;
+ }else if(typeof r.scope!=="string"||typeof r.scope_source_text!=="string"||
+  typeof r.scope_source_message_id!=="string"||!r.scope_source_message_id||
+  r.scope_source_message_id===r.source_message_id||r.scope_source_message_id===r.owner_source_message_id||
+  r.recorded_revision!==r.measurement_revision+1||!pairedScopeBinding(r.scope_source_text,r.scope,r.scope_site_label))return null;
+ else if(r.scope_site_label===null){
+  if(r.scope_site_source_message_id!==null||r.scope_site_source_text!==null)return null;
+ }else if(typeof r.scope_site_label!=="string"||typeof r.scope_site_source_message_id!=="string"||
+  !r.scope_site_source_message_id||r.scope_site_source_message_id===r.scope_source_message_id||
+  typeof r.scope_site_source_text!=="string"||!matchesReferenceLabel(r.scope_site_source_text,r.scope_site_label))return null;
+ return r;
+}
+export function verifiedPairedSiteProposal(input:{
+ state:ConversationCommerceState;context?:ContextualSourceContext;text:string;
+ frame?:CommerceSemanticFrame|null;history?:PairedHistory;
+}):PairedSiteReceipt|null {
+ const {state,context,frame}=input;
+ if(!validSourceContext(context)||!frame||frame.operation!=="UPDATE_ITEM"||frame.confidence<.90||
+  frame.ambiguity.is_ambiguous||frame.additive||frame.customer_correction||frame.entities.length||
+  frame.explicit_negations.length||frame.requested_facts.length||frame.demands?.length||
+  [frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state].some(x=>x!=="none"&&x!=="unknown")||
+  frame.customer_facts?.length!==1||frame.customer_facts[0].key!==PAIRED_SITE_KEY||frame.referents.length!==1)return null;
+ const f=pairedObject(frame.customer_facts[0].value),ref=frame.referents[0],text=pairedText(input.text);
+ if(!f||Object.keys(f).some(k=>!["action","subject_ref","source_text","scope","site_label"].includes(k))||
+  (f.subject_ref!==undefined&&f.subject_ref!==ref.ref)||ref.confidence<.90||
+  !["prior_turn","persistent_state"].includes(ref.source)||typeof f.source_text!=="string"||
+  f.source_text!==text||!text||text.length>240)return null;
+ const history=pairedHistory(input.history).filter(h=>h.id!==context.source_message_id);
+ // Repeated IDs or inconsistent originals must never choose a scope by order.
+ if(new Set(history.map(h=>h.id)).size!==history.length)return null;
+ if(f.action==="observe"){
+  if(f.scope!==null||(f.site_label!==undefined&&f.site_label!==null)||state.customer_constraints[PAIRED_SITE_KEY]!=null)return null;
+  const pair=parsePairedSiteMeasurement(text);if(!pair)return null;
+  const persisted=ref.source==="persistent_state"?pairedPersistentOwner(state,context,ref.ref):null;
+  const prior=ref.source==="prior_turn"&&pairedScope(ref.ref)===ref.ref&&pairedPriorOwnerAllowed(state,ref.ref)?
+   history.filter(h=>isSourceOwnedActiveAdviceGoal(h.content)):[];
+  const owners=persisted?history.filter(h=>h.id===persisted.source_id&&matchesReferenceLabel(h.content,persisted.label)):prior;
+  if(owners.length!==1||(!persisted&&(prior.length!==1||!matchesReferenceLabel(owners[0].content,ref.ref))))return null;
+  const source=owners[0],label=persisted?.label??ref.ref;
+  if(!source.id||source.content.length>2400)return null;
+  return {version:"paired-site-1",company_id:context.company_id,conversation_id:context.conversation_id,
+   subject_ref:ref.ref,subject_label:label,owner_kind:ref.source as "persistent_state"|"prior_turn",
+   owner_source_message_id:source.id,owner_source_text:pairedText(source.content),
+   ...pair,source_message_id:context.source_message_id,source_text:text,measurement_revision:context.state_revision+1,
+   scope:null,scope_source_message_id:null,scope_source_text:null,scope_site_label:null,
+   scope_site_source_message_id:null,scope_site_source_text:null,recorded_revision:context.state_revision+1};
+ }
+ if(f.site_label!==undefined&&f.site_label!==null&&typeof f.site_label!=="string")return null;
+ const site=typeof f.site_label==="string"?f.site_label:null;
+ if(f.action!=="bind_scope"||typeof f.scope!=="string"||!pairedScopeBinding(text,f.scope,site))return null;
+ const old=readPairedSiteReceipt(state,context);
+ if(!old||old.subject_ref!==ref.ref||old.owner_kind!==ref.source||old.scope!==null||
+  old.recorded_revision!==context.state_revision||old.source_message_id===context.source_message_id)return null;
+ if(history.filter(h=>h.id===old.owner_source_message_id&&pairedSiteOwnerSourceMatches(old,h.content)).length!==1||
+  history.filter(h=>h.id===old.source_message_id&&pairedSiteSourceMatches(h.content,old.source_text)).length!==1)return null;
+ const a=history.findIndex(h=>h.id===old.source_message_id),b=history.findIndex(h=>h.id===old.owner_source_message_id);
+ // History from the server is chronological or reverse chronological;
+ // the measurement must be the immediately preceding visitor source.
+ if(a<0||b<0||!((a===history.length-1&&b<a)||(a===0&&b>a)))return null;
+ const sites=site===null?[]:history.filter(h=>h.id!==old.source_message_id&&matchesReferenceLabel(h.content,site));
+ if(site!==null&&sites.length!==1)return null;
+ return {...old,scope:f.scope,scope_source_message_id:context.source_message_id,scope_source_text:text,
+  scope_site_label:site,scope_site_source_message_id:sites[0]?.id??null,
+  scope_site_source_text:sites[0]?pairedText(sites[0].content):null,recorded_revision:context.state_revision+1};
+}
+export function pairedSiteReply(r:PairedSiteReceipt,l:"en"|"zh-CN"|"zh-TW"):string{
+ const size=r.width_mm+" × "+r.height_mm+" mm",prefix=r.approximate?(l==="en"?"approximately ":l==="zh-CN"?"约 ":"約 "):"";
+ if(l==="en")return r.scope===null?"I've recorded "+prefix+size+" (width × height). Which location is this for?":"I've recorded "+prefix+size+" (width × height) for "+r.scope+".";
+ if(l==="zh-CN")return r.scope===null?"已记录宽×高 "+prefix+size+"。请问是哪个位置？":"已记录"+r.scope+"的宽×高为 "+prefix+size+"。";
+ return r.scope===null?"已記錄闊×高 "+prefix+size+"。請問係邊個位置？":"已記錄"+r.scope+"嘅闊×高為 "+prefix+size+"。";
+}
+/** Derived Memory value, not a second source of authority. Require the original
+ * visitor rows for every component; do not copy model proposal envelopes. */
+export function pairedSiteMemoryValue(r:PairedSiteReceipt,history:PairedHistory,l:"en"|"zh-CN"|"zh-TW"):string|null {
+ const rows=pairedHistory(history);
+ const source=(id:string,text:string,owner=false)=>{
+  const found=rows.filter(h=>h.id===id);
+  return found.length===1&&(owner?pairedSiteOwnerSourceMatches(r,found[0].content):pairedSiteSourceMatches(found[0].content,text));
+ };
+ if(!source(r.owner_source_message_id,r.owner_source_text,true)||!source(r.source_message_id,r.source_text))return null;
+ if(r.scope!==null&&(!r.scope_source_message_id||!r.scope_source_text||!source(r.scope_source_message_id,r.scope_source_text)))return null;
+ if(r.scope_site_label!==null&&(!r.scope_site_source_message_id||!r.scope_site_source_text||!source(r.scope_site_source_message_id,r.scope_site_source_text)))return null;
+ const size=(r.approximate?(l==="en"?"approximately ":l==="zh-CN"?"约 ":"約 "):"")+r.width_mm+" × "+r.height_mm+" mm";
+ return r.subject_label+": "+size+" ("+(r.scope??(l==="en"?"location unconfirmed":l==="zh-CN"?"位置未确认":"位置未確認"))+")";
 }

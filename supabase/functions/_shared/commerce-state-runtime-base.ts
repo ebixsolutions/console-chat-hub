@@ -1,3 +1,4 @@
+import { hasPairedSiteProposal,verifiedPairedSiteProposal,readPairedSiteReceipt,pairedSiteReply,PAIRED_SITE_KEY,PAIRED_SITE_PATH,PAIRED_SITE_REASON } from "./contextual-customer-update.ts";
 import { retainedRecapTargets } from "./conversation-recall.ts";
 /**
  * TASK A3 — Commerce state runtime adapter.
@@ -4018,6 +4019,8 @@ function sourceBoundWindowOpeningEvents(
   state:ConversationCommerceState,input:CommerceRuntimeInput,
 ):CommerceStateEvent[] {
   const frame=input.semantic_frame,text=clean(input.text);
+  // Never create a second legacy writer alongside a canonical receipt.
+  if(state.customer_constraints[PAIRED_SITE_KEY]!=null)return [];
   if(!frame||frame.operation!=="NO_STATE_CHANGE"||frame.confidence<0.90||
     frame.ambiguity.is_ambiguous||frame.customer_correction||frame.additive||
     frame.entities.length!==0||
@@ -4613,6 +4616,10 @@ function mixedDimensionCandidate(previous: ConversationCommerceState,
 function sourceBoundTurnReduction(previous: ConversationCommerceState, input: CommerceRuntimeInput,
   hints: CommerceTurnEntityHint[], sourceContext?: ContextualSourceContext): { state: ConversationCommerceState; rejected: boolean; dimension_rejected?: boolean } {
   const frame = input.semantic_frame;
+  if(hasPairedSiteProposal(frame)){
+    const receipt=verifiedPairedSiteProposal({state:previous,context:sourceContext,text:input.text,frame,history:input.history});
+    return receipt?{state:reduceCommerceState(previous,[{type:"SET_CUSTOMER_CONSTRAINT",key:PAIRED_SITE_KEY,value:receipt}]),rejected:false}:{state:previous,rejected:true};
+  }
   const guidance = frame?.operation === "ASK_FACT" && frame.entities.some(item =>
     Object.keys(item.constraints).some(key => dimensionKeyAxis(key)))
     ? resolveContextualTurn(input, previous, sourceContext) : null;
@@ -4945,7 +4952,7 @@ export async function persistCommerceTurn(
     const parsed = rpcResult(data);
     if (parsed.result === "success") {
       if ((input.semantic_frame?.entities.some(item => Object.keys(item.constraints).some(key => dimensionKeyAxis(key))) ||
-          hasContextualScopeFactProposal(input) || hasContextualScopeAllocation(input) ||
+          hasContextualScopeFactProposal(input) || hasContextualScopeAllocation(input) || hasPairedSiteProposal(input.semantic_frame) ||
           contextualGoalLifecycle(input, previous, contextualSourceContext(input, expected))) &&
         parsed.applied_revision !== expected + 1) {
         return { previous_state: previous, state: previous, previous_revision: expected,
@@ -4960,7 +4967,7 @@ export async function persistCommerceTurn(
       };
     }
     if (parsed.result === "source_message_already_applied" &&
-      (hasContextualScopeFactProposal(input) || hasContextualScopeAllocation(input))) {
+      (hasContextualScopeFactProposal(input) || hasContextualScopeAllocation(input) || hasPairedSiteProposal(input.semantic_frame))) {
       // A dedup receipt does not commit the candidate built in this attempt.
       // Read the canonical state before any source-bound acknowledgement.
       const reloaded = await loadCommerceState(db, input.conversation_id, input.company_id);
@@ -4970,6 +4977,7 @@ export async function persistCommerceTurn(
     }
     if (parsed.result === "revision_conflict" && attempt === 0) {
       const reloaded = await loadCommerceState(db, input.conversation_id, input.company_id);
+      if(hasPairedSiteProposal(input.semantic_frame))return {previous_state:reloaded.state,state:reloaded.state,previous_revision:reloaded.revision,revision:reloaded.revision,result:"revision_conflict"};
       // A withdrawal is bound to the initial server-read field/revision, not
       // an invented old value from the model. On conflict never delete a newer
       // requirement (including a same-value replacement with new provenance).
@@ -5683,6 +5691,22 @@ export async function runCommerceStateRuntime(
     return { authority: "CONVERSATION_STATE", reply: null,
       revision: contextualBefore.revision, persist_result: "read_only",
       reason: "read_only_current_requirements_recap", route: "commerce_state_answer" };
+  }
+  if(hasPairedSiteProposal(input.semantic_frame)){
+    const preview=verifiedPairedSiteProposal({state:contextualBefore.state,context:contextualSourceContext(input,contextualBefore.revision),
+      text:recapOriginalText,frame:input.semantic_frame,history:input.history});
+    if(!preview||text!==originalText)return {authority:"INSUFFICIENT_INFORMATION",reply:null,revision:contextualBefore.revision,
+      persist_result:"read_only",reason:"unverified_paired_site_observation",route:"commerce_state_answer"};
+    const applied=await persistCommerceTurn(db,{...input,text:recapOriginalText},[]);
+    const readback=await loadCommerceState(db,input.conversation_id,input.company_id);
+    const receipt=readPairedSiteReceipt(readback.state,contextualSourceContext(input,readback.revision));
+    if(applied.result==="success"&&receipt&&readback.revision===applied.revision&&applied.revision===applied.previous_revision+1&&
+      JSON.stringify(readback.state)===JSON.stringify(applied.state)&&receipt.recorded_revision===readback.revision&&
+      (receipt.scope_source_message_id??receipt.source_message_id)===input.source_message_id)
+      return {authority:"CONVERSATION_STATE",reply:pairedSiteReply(receipt,language),revision:readback.revision,
+        persist_result:"success",reason:PAIRED_SITE_REASON,state_path:PAIRED_SITE_PATH,route:"commerce_state_answer"};
+    return {authority:"INSUFFICIENT_INFORMATION",reply:null,revision:readback.revision,persist_result:applied.result,
+      reason:"unverified_paired_site_readback",route:"commerce_state_answer"};
   }
   // A historical/conditional calculation over values supplied in this turn
   // is read-only: derive a bounded answer from the source message and return

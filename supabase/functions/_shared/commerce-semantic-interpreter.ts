@@ -1,3 +1,5 @@
+import { PAIRED_SITE_KEY,readPairedSiteReceipt } from "./contextual-customer-update.ts";
+import { isConversationCommerceState } from "./commerce-state-contract.ts";
 import {captureProtectedDiagnosticText} from "./protected-pipeline-evidence.ts";
 import { executionFailure, failureFromError, type ExecutionFailure } from "./execution-failure.ts";
 import { callModel, type ModelTurnBudget } from "./llm-router.ts";
@@ -203,6 +205,20 @@ export function buildPersistentCommerceStateSummary(
     ? row.revision
     : Number(row.revision ?? 0);
   const memory = isRecord(memoryRow) && isRecord(memoryRow.memory) ? memoryRow.memory : null;
+  let projectedConstraints=isRecord(row.state)?row.state.customer_constraints:undefined;
+  if(isRecord(projectedConstraints)&&Object.prototype.hasOwnProperty.call(projectedConstraints,PAIRED_SITE_KEY)){
+    const constraints={...projectedConstraints};delete constraints[PAIRED_SITE_KEY];
+    // Provider sees only the validated bounded observation, not duplicated
+    // source text, owner IDs, company/ticket IDs or receipt internals.
+    if(isConversationCommerceState(row.state)&&typeof row.company_id==="string"&&typeof row.conversation_id==="string"&&typeof row.source_message_id==="string"){
+      const r=readPairedSiteReceipt(row.state,{company_id:row.company_id,conversation_id:row.conversation_id,
+        source_message_id:row.source_message_id,state_revision:revision});
+      if(r&&r.recorded_revision===revision&&(r.scope_source_message_id??r.source_message_id)===row.source_message_id)
+        constraints[PAIRED_SITE_KEY]={version:r.version,owner_kind:r.owner_kind,subject_ref:r.subject_ref,subject_label:r.subject_label,
+          width_mm:r.width_mm,height_mm:r.height_mm,approximate:r.approximate,scope:r.scope};
+    }
+    projectedConstraints=constraints;
+  }
   const bounded = {
     revision: Number.isFinite(revision) && revision >= 0 ? revision : 0,
     // Exclude server receipts and duplicated provenance, retaining every
@@ -227,7 +243,7 @@ export function buildPersistentCommerceStateSummary(
               : entity
           )
           : [],
-        customer_constraints: row.state.customer_constraints,
+        customer_constraints: projectedConstraints,
         delivery: row.state.delivery,
         installation: row.state.installation,
       }

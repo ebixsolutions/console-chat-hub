@@ -285,6 +285,7 @@ export function sourceBoundMixedCustomerFactEvents(
     ? previous.customer_constraints.customer_reported_facts : {};
   const safeFacts: CommerceSemanticFrame["customer_facts"] = [];
   for (const fact of frame.customer_facts.slice(0, 12)) {
+    if(fact.key==="paired_site_observation")continue;
     if (!/^[a-z][a-z0-9_]{0,79}$/i.test(fact.key) ||
       ["__proto__", "prototype", "constructor"].includes(fact.key)) continue;
     const old = (oldFacts as Record<string, unknown>)[fact.key];
@@ -318,7 +319,7 @@ export function semanticFrameToStateEvents(
   // Generic customer background/requirements have a canonical owner even when
   // there is no purchasable entity. Use the existing constraint event/CAS path,
   // keeping typed values and server provenance, never merchant authority.
-  const customerFacts=frame.customer_facts ?? [];
+  const customerFacts=(frame.customer_facts ?? []).filter(f=>f.key!=="paired_site_observation");
   if(frame.operation!=="NO_STATE_CHANGE" && customerFacts.length) {
     const old=previous.customer_constraints.customer_reported_facts;
     const facts:Record<string,unknown>=old && typeof old==="object" && !Array.isArray(old) ? {...old as Record<string,unknown>} : {};

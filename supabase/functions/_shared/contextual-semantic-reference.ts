@@ -104,6 +104,12 @@ export async function projectContextualSemanticReferences(input: {
         row.scope_count_source.goal_id = goalAlias;
     }
   }
+  // Only rewrite the known server-owned identity slot, not customer text.
+  const pair=parsed.state.customer_constraints.paired_site_observation;
+  if(record(pair)&&pair.version==="paired-site-1"&&pair.owner_kind==="persistent_state"){
+    const projected=typeof pair.subject_ref==="string"?[...bindings].find(([,identity])=>identity===pair.subject_ref)?.[0]:undefined;
+    if(projected)pair.subject_ref=projected;
+  }
   parsed.contextual_reference_contract = {
     meaning:"Opaque object references valid only for this request; they do not supply customer facts.",
     slots:["entities[].entity_ref","referents[].ref"],referent_source:"persistent_state",
