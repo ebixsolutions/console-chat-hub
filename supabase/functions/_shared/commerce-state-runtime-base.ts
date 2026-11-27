@@ -1080,11 +1080,14 @@ function canonicalQuantityReferent(input: CommerceRuntimeInput,
   return { kind: "resolved", entity };
 }
 
+// The retired scalar must not become an unrelated entity quantity through the generic fallback.
+const RETIRED_LEGACY_COUNT_RECALL = Symbol("retired_legacy_count_recall");
+
 function compatibleQuantityStatePath(
   input: CommerceRuntimeInput,
   state: ConversationCommerceState,
   canonicalQuantity: ConversationCommerceState["entities"][number] | null = null,
-): string | null {
+): string | null | typeof RETIRED_LEGACY_COUNT_RECALL {
   const requested = (input.semantic_frame?.requested_facts ?? []).join(" ");
   const text = clean(input.text);
   const deliveryFields: Array<[RegExp, keyof ConversationCommerceState["delivery"]]> = [
@@ -1097,8 +1100,7 @@ function compatibleQuantityStatePath(
     if ((pattern.test(text) || new RegExp(String(field), "i").test(requested)) && state.delivery[field] != null) return `delivery.${field}`;
   }
   if (/(?:舊機|旧机|舊冷氣|旧空调).{0,12}(?:拆|移除)|(?:拆|移除).{0,12}(?:舊機|旧机)/i.test(text)) {
-    const count = state.installation.site_conditions["old_machine_removal_count"];
-    if (typeof count === "number" && Number.isFinite(count)) return "installation.site_conditions.old_machine_removal_count";
+    return RETIRED_LEGACY_COUNT_RECALL;
   }
   if (/(?:匹數|匹数|幾匹|几匹|horsepower|\bhp\b)/i.test(text + " " + requested)) {
     const resolved = resolveAttributeQueryCategory(input);
@@ -2025,12 +2027,6 @@ function deriveA3RuntimeEvents(
 
   // Customer specifications are owned by the accepted semantic entity attributes.
   // A literal measurement unit cannot itself select an attribute key or target.
-
-  if (/(?:舊機|旧机|舊冷氣|旧空调)/i.test(text) && /(?:拆|移除|冇機|没机|no\s+(?:old\s+)?unit)/i.test(text) && !/[?？]/.test(text)) {
-    const explicit = text.match(/([一二兩两三四五六七八九十]|\d{1,2})\s*部\s*(?:舊機|旧机)/i)?.[1];
-    const removalCount = explicit ? countTokenValue(explicit) : /(?:一部|one\s+(?:old\s+)?unit)/i.test(text) ? 1 : null;
-    if (removalCount !== null) events.push({ type: "SET_SITE_CONDITION", key: "old_machine_removal_count", value: removalCount });
-  }
 
   if (/(?:[\p{L}\p{N}-]+[、,，]){1,}[\p{L}\p{N}-]+(?:都得|均可|皆可|any\s+(?:is|are)\s+fine)/iu.test(text)) {
     events.push({ type: "SET_CUSTOMER_CONSTRAINT", key: "brand_required", value: false });
@@ -5952,6 +5948,11 @@ export async function runCommerceStateRuntime(
     };
     const requestedStatePath = compatibleQuantityStatePath(input, loaded.state,
       quantityRead.kind === "resolved" ? quantityRead.entity : null);
+    if (requestedStatePath === RETIRED_LEGACY_COUNT_RECALL) return {
+      authority: "INSUFFICIENT_INFORMATION", state_path: null, reply: null,
+      revision: loaded.revision, persist_result: "read_only",
+      reason: "read_only_memory_or_current_state_recall_unresolved", route: "commerce_state_answer",
+    };
     const decision = resolveCommerceAnswerAuthority({
       question: text,
       state: loaded.state,
