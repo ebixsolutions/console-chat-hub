@@ -53,6 +53,7 @@ import {
   parseCommerceDimensionMeasurement,
   resolveCommerceAnswerAuthority,
   resolveCustomerRequestDecision,
+  countObservationClauses,countFirstLiteralNumber,countFirstObservation,countObservationQueryMatches,
 } from "./commerce-state-authority.ts";
 import {
   buildCapabilityAwarePreorderNextStep,
@@ -66,6 +67,7 @@ import {
   semanticFrameToEntityHints,
   semanticFrameToStateEvents,
   sourceBoundMixedCustomerFactEvents,
+  sourceBoundCustomerDeclarationClauses,
 } from "./commerce-semantic-adapter.ts";
 import { industryEntityQuantityUnit, resolveIndustryContextualCandidate, resolveIndustryCustomerJourney, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
 import { contextualUpdateEvents, readSourceBoundContextualGoal, resolveContextualCustomerUpdate, resolveSemanticContextualCandidate, verifiedCurrentScopeFacts } from "./contextual-customer-update.ts";
@@ -3753,6 +3755,133 @@ function sourceAttestedNoStateAreaFacts(
   return [{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:incoming}];
 }
 
+/** Literal count-first source proof. No domain name, product classifier or
+ * customer phrase table selects the subject. The proposed unit is verified
+ * against the original clause; ambiguous or negated counts fail closed. */
+function countObservationConflict(text:string,subject:string,unit:string,amount:number):boolean{
+  const norm=subject.normalize("NFKC").trim().toLowerCase();
+  const u=unit.normalize("NFKC").trim().toLowerCase();
+  const fragments=new Set<string>();
+  for(const part of norm.split(/[\s-]+/u)){
+    if(/^[\p{Script=Han}]+$/u.test(part)){
+      const chars=[...part];
+      for(let i=0;i+1<chars.length;i++)fragments.add(chars[i]+chars[i+1]);
+    }else if(part.length>=3)fragments.add(part);
+  }
+  return splitCustomerOperationClauses(text.normalize("NFKC")).some(clause=>{
+    if(looksInterrogative(clause))return false;
+    const c=clause.normalize("NFKC").toLowerCase();
+    const proof=countFirstObservation(clause,amount,unit);
+    if(proof&&proof.rawSubject.toLowerCase()===norm&&proof.writtenUnit.toLowerCase()===u)return false;
+    const direct=c.includes(norm);
+    const correction=detectQuantityCorrectionSignal(clause)||
+      /(?:取消|暫緩|暂缓|刪除|删除|唔|不|冇|沒有|没有|未|無|无)|\b(?:cancel|defer|pause|remove|not|no|without)\b/iu.test(clause);
+    // A partial literal reference plus a contradiction can only VETO an
+    // older fact. It cannot supply a new amount or select another entity.
+    const overlaps=[...fragments].some(part=>c.includes(part));
+    return direct||correction&&(overlaps||c.includes(u));
+  });
+}
+
+function sourceLiteralCountInvalidations(state:ConversationCommerceState,input:CommerceRuntimeInput):CommerceStateEvent[]{
+  if(!input.company_id||!input.conversation_id||!input.source_message_id)return [];
+  const prior=state.customer_constraints.customer_reported_facts;
+  if(!isRecord(prior))return [];
+  const next={...prior};
+  let changed=false;
+  for(const [key,row] of Object.entries(prior)){
+    if(!isRecord(row)||row.source_count_origin!=="literal_customer_clause"||
+      !isRecord(row.value)||typeof row.value.amount!=="number"||
+      typeof row.source_subject_text!=="string"||typeof row.source_unit_text!=="string"||
+      !isRecord(row.provenance)||row.provenance.source_type!=="customer"||
+      row.provenance.company_id!==input.company_id||row.provenance.conversation_id!==input.conversation_id||
+      row.provenance.source_message_id===input.source_message_id)continue;
+    if(!countObservationConflict(input.text,row.source_subject_text,row.source_unit_text,row.value.amount))continue;
+    // Retain source provenance as an unresolved observation, not a current
+    // number. This blocks the stale count from both recap and B2 readback.
+    next[key]={...row,value:null,source_count_status:"unresolved",
+      provenance:{...row.provenance,invalidated_by_source_message_id:input.source_message_id}};
+    changed=true;
+  }
+  return changed?[{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:next}]:[];
+}
+
+function sourceLiteralCountKey(subject:string,unit:string):string|null{
+  const key=subject.normalize("NFKC").trim().toLowerCase().replace(/\s+/gu,"_")+"_"+unit.toLowerCase();
+  return key.length<=80&&/^[\p{L}\p{M}_-]+$/u.test(key)&&
+    !["__proto__","prototype","constructor"].includes(key)?key:null;
+}
+
+const LITERAL_COUNT_MAX_RECORDS=8;
+const LITERAL_COUNT_REVISION_TTL=32;
+
+function sourceAttestedUninterpretedCountFacts(previous:ConversationCommerceState,input:CommerceRuntimeInput,
+  context?:ContextualSourceContext):CommerceStateEvent[]{
+  if(!context||context.company_id!==input.company_id||context.conversation_id!==input.conversation_id||
+    context.source_message_id!==input.source_message_id||!Number.isSafeInteger(context.state_revision)||context.state_revision<0)return [];
+  if(input.semantic_frame||!input.company_id||!input.conversation_id||!input.source_message_id||
+    input.text.length>1600||looksInterrogative(input.text)||
+    isHistoricalOrConditionalCustomerCalculationRequest(input.text))return [];
+  const clauses=countObservationClauses(input.text);
+  if(!clauses.length||clauses.length>8)return [];
+  const declarations=new Set(sourceBoundCustomerDeclarationClauses(input.text));
+  const candidates=clauses.flatMap((clause,idx)=>{
+    if(!declarations.has(clause)||
+      /(?:價錢|价钱|價格|价格|售價|售价|庫存|库存|付款|已付|訂單|订单|退款|保養|保修|政策|權益|权益)|\b(?:price|cost|stock|inventory|order|paid|payment|refund|warranty|policy|entitlement|sla)\b/iu.test(clause))return [];
+    const token=countFirstLiteralNumber(clause);
+    if(!token)return [];
+    const unit=clause.slice(token.end).trimStart().match(new RegExp("^("+COUNT_UNIT+")","iu"))?.[0];
+    if(!unit)return [];
+    const proof=countFirstObservation(clause,token.amount,unit);
+    if(!proof)return [];
+    const key=sourceLiteralCountKey(proof.rawSubject,proof.writtenUnit);
+    return key?[{idx,clause,key,amount:token.amount,...proof}]:[];
+  });
+  if(candidates.length!==1)return [];
+  const m=candidates[0],sub=m.rawSubject.toLowerCase(),unit=m.writtenUnit.toLowerCase();
+  if(clauses.some((c,i)=>i!==m.idx&&(c.toLowerCase().includes(sub)||c.toLowerCase().includes(unit))))return [];
+  const prior=previous.customer_constraints.customer_reported_facts;
+  const facts=isRecord(prior)?prior:{};
+  // Never create a parallel fact when the typed writer already owns the
+  // same source subject/unit; a colliding or ambiguous key stays unbound.
+  const existing=Object.entries(facts).filter(([key,row])=>isRecord(row)&&
+    typeof row.source_subject_text==="string"&&row.source_subject_text.toLowerCase()===sub&&
+    typeof row.source_unit_text==="string"&&row.source_unit_text.toLowerCase()===unit);
+  if(existing.length>1||existing.length===1&&existing[0][0]!==m.key)return [];
+  if(Object.prototype.hasOwnProperty.call(facts,m.key)){
+    const row=facts[m.key];
+    if(!isRecord(row)||row.source_count_origin!=="literal_customer_clause"||
+      !(isRecord(row.value)||row.value===null&&row.source_count_status==="unresolved")||
+      !isRecord(row.provenance)||row.provenance.source_type!=="customer"||
+      row.provenance.company_id!==input.company_id||row.provenance.conversation_id!==input.conversation_id||
+      row.provenance.source_message_id===input.source_message_id||
+      row.provenance.invalidated_by_source_message_id===input.source_message_id||
+      isRecord(row.value)&&row.value.amount===m.amount||!detectQuantityCorrectionSignal(input.text))return [];
+  }
+  // Retain at most eight raw observations (including invalidated entries).
+  // Expired raw records are not general Memory facts. A new valid observation
+  // can reclaim an expired slot; do not evict active facts or invent relevance.
+  const bounded={...facts};
+  for(const [key,row] of Object.entries(bounded)){
+    if(key!==m.key&&isRecord(row)&&row.source_count_origin==="literal_customer_clause"&&
+      typeof row.source_count_expires_after_revision==="number"&&
+      row.source_count_expires_after_revision<context.state_revision+1)delete bounded[key];
+  }
+  const count=Object.entries(bounded).filter(([key,row])=>key!==m.key&&isRecord(row)&&
+    row.source_count_origin==="literal_customer_clause").length;
+  if(count>=LITERAL_COUNT_MAX_RECORDS)return [];
+  return [{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:{...bounded,[m.key]:{
+    value:{amount:m.amount,unit:m.writtenUnit},source_text:m.clause,
+    source_subject_text:m.rawSubject,source_unit_text:m.writtenUnit,
+    source_count_order:"count_first",source_count_origin:"literal_customer_clause",
+    source_count_visibility:"exact_recall_only",
+    source_count_recorded_revision:context.state_revision+1,
+    source_count_expires_after_revision:context.state_revision+1+LITERAL_COUNT_REVISION_TTL,
+    provenance:{source_type:"customer",source_message_id:input.source_message_id,
+      company_id:input.company_id,conversation_id:input.conversation_id,recorded_at:input.occurred_at??null}
+  }}}];
+}
+
 /** A NO_STATE_CHANGE customer fact remains a customer observation only.
  * A semantic reading proposes its key/value, but a single original Visitor
  * clause must independently contain its number, subject and written unit.
@@ -3771,14 +3900,14 @@ function sourceAttestedGenericNoStateFacts(
      looksInterrogative(input.text) ||
      /\b(?:could|would|should|might|maybe|perhaps|suppose|hypothetical|whether|if)\b|(?:可能|假設|假设|假如|如果|會否|会否)/iu.test(input.text) ||
      isHistoricalOrConditionalCustomerCalculationRequest(input.text))return [];
-  const clauses=input.text.normalize("NFKC").split(/[，。；;\n]+|,(?=\s)/u)
-    .map(part=>part.trim()).filter(Boolean);
+  const clauses=countObservationClauses(input.text);
   if(!clauses.length || clauses.length>8)return [];
   const existing=previous.customer_constraints.customer_reported_facts;
   const prior=existing && typeof existing==="object" && !Array.isArray(existing)
     ? existing as Record<string,unknown> : {};
   const incoming:Record<string,unknown>={...prior};
   const used=new Set<number>();
+  const countFirstProofs:Array<{rawSubject:string;writtenUnit:string}>=[];
   let changed=false;
   for(const fact of frame.customer_facts){
     if(!/^[a-z][a-z0-9_]{0,79}$/i.test(fact.key) ||
@@ -3795,6 +3924,8 @@ function sourceAttestedGenericNoStateFacts(
        !customerUnit || customerUnit.length>40)return [];
     const matches=clauses.flatMap((clause,idx)=>{
       if(used.has(idx))return [];
+      const countFirst=countFirstObservation(clause,amount,customerUnit);
+      if(countFirst)return [{idx,clause,...countFirst}];
       const numbers=[...clause.matchAll(/(?<!\d)\d+(?:\.\d+)?(?!\d)/gu)];
       if(numbers.length!==1 || Number(numbers[0][0])!==amount)return [];
       const hit=numbers[0],at=hit.index??0;
@@ -3803,22 +3934,32 @@ function sourceAttestedGenericNoStateFacts(
       const writtenUnit=after.match(/^([\p{L}\p{N}%°²]{1,36})/u)?.[1]??null;
       if(rawSubject.length<2 || !/[\p{L}]/u.test(rawSubject) || !writtenUnit ||
        writtenUnit.toLowerCase()!==customerUnit.toLowerCase())return [];
-      return [{idx,clause,rawSubject,writtenUnit}];
+      return [{idx,clause,rawSubject,writtenUnit,countFirst:false}];
     });
     // Equal numeric values in multiple clauses are NOT proof of which
     // arbitrary customer field owns either amount. Fail closed.
     if(matches.length!==1)return [];
     const m=matches[0];used.add(m.idx);
+    if(m.countFirst)countFirstProofs.push(m);
     // Existing effective facts must only change through the original
     // correction + source/revision/CAS contract, never NO_STATE_CHANGE.
     if(Object.prototype.hasOwnProperty.call(prior,fact.key))continue;
     incoming[fact.key]={value:val,source_text:m.clause,
       source_subject_text:m.rawSubject,source_unit_text:m.writtenUnit,
+      ...(m.countFirst?{source_count_order:"count_first"}:{}),
       provenance:{source_type:"customer",source_message_id:input.source_message_id,
         recorded_at:input.occurred_at??null}};
     changed=true;
   }
-  if(!changed || used.size!==clauses.length)return [];
+  if(!changed)return [];
+  // Partial clause acceptance is limited to count-first proofs. Unclaimed
+  // clauses must not mention a claimed subject OR unit, so another count,
+  // correction or contradictory observation cannot be silently discarded.
+  if(used.size!==clauses.length &&
+    (countFirstProofs.length!==frame.customer_facts.length ||
+     clauses.some((clause,idx)=>!used.has(idx)&&countFirstProofs.some(proof=>
+       clause.toLowerCase().includes(proof.rawSubject.toLowerCase())||
+       clause.toLowerCase().includes(proof.writtenUnit.toLowerCase())))))return [];
   return [{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:incoming}];
 }
 
@@ -4510,7 +4651,9 @@ function sourceBoundTurnReduction(previous: ConversationCommerceState, input: Co
   const state = removals.length ? reduceCommerceState(candidate, removals) : candidate;
   // Apply the same authority postcondition to every candidate path, including
   // compound turns and source-attested early-return operations.
-  return { state: preserveCustomerTurnTransactionAuthority(previous, state), rejected: false };
+  const invalidations=sourceLiteralCountInvalidations(state,input);
+  const checked=invalidations.length?reduceCommerceState(state,invalidations):state;
+  return { state: preserveCustomerTurnTransactionAuthority(previous, checked), rejected: false };
 }
 
 export function reduceTurn(previous: ConversationCommerceState, input: CommerceRuntimeInput, hints: CommerceTurnEntityHint[],
@@ -4638,6 +4781,8 @@ function reduceTurnCandidate(previous: ConversationCommerceState,input: Commerce
     const area=sourceAttestedNoStateAreaFacts(state,input);
     const attested=area.length ? area : sourceAttestedGenericNoStateFacts(state,input);
     if(attested.length)state=reduceCommerceState(state,attested);
+    const literalCounts=sourceAttestedUninterpretedCountFacts(state,input,sourceContext);
+    if(literalCounts.length)state=reduceCommerceState(state,literalCounts);
   }
   // Generic current customer fact with exact Visitor provenance; never
   // propagate the old air-conditioning sunlight/room_sunlight schema.
@@ -5446,6 +5591,78 @@ export function buildPreorderUnpaidAnswer(language: CommerceLanguage, state: Con
   return `${known ? `好，我知道你想預訂${known}。` : "好，我知道你想繼續預訂。"}因為你仲未付款，所以而家未算完成或已確認訂單。${nextStep}`;
 }
 
+/** Read only the committed, source-attested count observation. The reading
+ * selects a named fact; it never contributes a value or grants a write.
+ * The original visitor clause and exact customer-owned subject/unit must
+ * still be available. A stale/invalid typed fact cannot fall through to a
+ * different entity's quantity. Legacy no-reading compatibility is unchanged. */
+function unsafeCountFactKey(key:unknown):boolean{
+  return typeof key!=="string"||!/^[a-z][a-z0-9_]{0,79}$/i.test(key)||
+    ["__proto__","prototype","constructor"].includes(key)||
+    /(?:^|_)(?:price|stock|inventory|verified|quote|order|payment|paid|refund|entitlement|warranty|policy|sla)(?:_|$)/i.test(key);
+}
+
+function readSourceBoundCountFirst(input:CommerceRuntimeInput,state:ConversationCommerceState,revision:number):{kind:"not_applicable"}|{kind:"unresolved"}|{kind:"resolved";path:string;amount:number;unit:string}{
+  const frame=input.semantic_frame;
+  const facts=state.customer_constraints.customer_reported_facts;
+  if(!isRecord(facts))return {kind:"not_applicable"};
+  const fail={kind:"unresolved"} as const;
+  const typedKey=frame?.operation==="ASK_FACT"&&frame.intent==="customer_fact_recall"&&frame.requested_facts.length===1
+    ?frame.requested_facts[0]:null;
+  const typed=typedKey&&!unsafeCountFactKey(typedKey)&&Object.prototype.hasOwnProperty.call(facts,typedKey)&&
+    isRecord(facts[typedKey])&&facts[typedKey].source_count_order==="count_first"&&
+    facts[typedKey].source_count_origin!=="literal_customer_clause"?[typedKey,facts[typedKey]] as const:null;
+  const literal=Object.entries(facts).filter(([key,row])=>isRecord(row)&&
+    row.source_count_origin==="literal_customer_clause"&&typeof row.source_subject_text==="string"&&
+    typeof row.source_unit_text==="string"&&countObservationQueryMatches(input.text,row.source_subject_text,row.source_unit_text));
+  if(literal.length>1||typed&&literal.length)return fail;
+  const entry=typed??literal[0];
+  if(!entry)return {kind:"not_applicable"};
+  const [key,row]=entry,raw=!typed;
+  if(!isRecord(row)||row.source_count_order!=="count_first"||
+    !Number.isSafeInteger(revision)||revision<1||!input.company_id||!input.conversation_id||!input.source_message_id)return fail;
+  if(frame&&(frame.operation!=="ASK_FACT"||frame.confidence<0.90||frame.ambiguity.is_ambiguous||
+    frame.customer_correction||frame.additive||frame.explicit_negations.length||frame.entities.length||
+    frame.customer_facts?.length||frame.requested_facts.length!==1||unsafeCountFactKey(frame.requested_facts[0])||
+    (frame.demands??[]).some(d=>d.source_type!=="general"||d.requested_facts.length!==1||
+      d.requested_facts[0]!==frame.requested_facts[0]||d.ambiguity.is_ambiguous||d.customer_correction||d.explicit_negations.length)))return fail;
+  if(!raw&&!frame)return fail;
+  const val=row.value,provenance=row.provenance;
+  if(!isRecord(val)||typeof val.amount!=="number"||typeof val.unit!=="string"||
+     !isRecord(provenance)||provenance.source_type!=="customer"||
+     typeof provenance.source_message_id!=="string"||!provenance.source_message_id||
+     provenance.source_message_id===input.source_message_id||typeof row.source_text!=="string")return fail;
+  const proof=countFirstObservation(row.source_text,val.amount,val.unit);
+  if(!proof||proof.rawSubject!==row.source_subject_text||proof.writtenUnit!==row.source_unit_text||
+     !countObservationQueryMatches(input.text,proof.rawSubject,proof.writtenUnit))return fail;
+  if(raw&&(key!==sourceLiteralCountKey(proof.rawSubject,proof.writtenUnit)||
+    provenance.company_id!==input.company_id||provenance.conversation_id!==input.conversation_id||
+    row.source_count_visibility!=="exact_recall_only"||
+    typeof row.source_count_recorded_revision!=="number"||!Number.isSafeInteger(row.source_count_recorded_revision)||
+    typeof row.source_count_expires_after_revision!=="number"||!Number.isSafeInteger(row.source_count_expires_after_revision)||
+    row.source_count_expires_after_revision!==row.source_count_recorded_revision+LITERAL_COUNT_REVISION_TTL||
+    revision<row.source_count_recorded_revision||revision>row.source_count_expires_after_revision||
+    !sourceBoundCustomerDeclarationClauses(row.source_text).includes(row.source_text)))return fail;
+  const subject=proof.rawSubject.toLowerCase(),unit=proof.writtenUnit.toLowerCase();
+  if(!(frame?.demands??[]).every(d=>d.source_quote.normalize("NFKC").trim()===input.text.normalize("NFKC").trim()&&
+     d.subject_refs.every(ref=>ref.normalize("NFKC").toLowerCase()===subject)))return fail;
+  const history=(input.history??[]).filter(h=>["visitor","user","customer"].includes(h.role));
+  // Typed speech-owned facts always require the actual original ID. A raw
+  // CURRENT canonical observation already owns a committed source ID and
+  // tenant/ticket provenance. Only the legacy all-ID-less projection can
+  // corroborate its unique literal source clause without claiming an ID
+  // readback; any supplied IDs keep the exact ID requirement.
+  const allIdless=raw&&history.length>0&&history.every(h=>!h.id);
+  const origins=history.filter(h=>allIdless
+    ?countObservationClauses(h.content).filter(clause=>clause===row.source_text).length===1
+    :h.id===provenance.source_message_id);
+  if(origins.length!==1||countObservationClauses(origins[0].content).filter(clause=>clause===row.source_text).length!==1||
+    (raw&&history.indexOf(origins[0])>LITERAL_COUNT_REVISION_TTL))return fail;
+  const later=history.slice(0,history.indexOf(origins[0])).filter(h=>h.id!==input.source_message_id);
+  if(later.some(h=>countObservationConflict(h.content,proof.rawSubject,proof.writtenUnit,val.amount as number)))return fail;
+  return {kind:"resolved",path:"customer_constraints.customer_reported_facts."+key+".value.amount",amount:val.amount,unit:proof.writtenUnit};
+}
+
 export async function runCommerceStateRuntime(
   db: CommerceStateDbClient,
   input: CommerceRuntimeInput,
@@ -5689,6 +5906,24 @@ export async function runCommerceStateRuntime(
         route: "commerce_state_answer",
       };
     }
+  }
+
+  const sourceCountRead=readSourceBoundCountFirst(input,contextualBefore.state,contextualBefore.revision);
+  if(sourceCountRead.kind!=="not_applicable"){
+    if(sourceCountRead.kind==="unresolved")return {authority:"INSUFFICIENT_INFORMATION",reply:null,
+      state_path:null,revision:contextualBefore.revision,persist_result:"read_only",
+      reason:"read_only_memory_or_current_state_recall_unresolved",route:"commerce_state_answer"};
+    const decision=resolveCommerceAnswerAuthority({question:text,state:contextualBefore.state,
+      requested_state_path:sourceCountRead.path,calculation_terms:[],calculation_currency:null,
+      requires_professional_site_check:false});
+    if(decision.authority!=="CONVERSATION_STATE"||decision.state_path!==sourceCountRead.path||
+       decision.known_value!==sourceCountRead.amount)return {authority:"INSUFFICIENT_INFORMATION",reply:null,
+      state_path:null,revision:contextualBefore.revision,persist_result:"read_only",
+      reason:"read_only_memory_or_current_state_recall_unresolved",route:"commerce_state_answer"};
+    return {authority:"CONVERSATION_STATE",reply:buildKnownStateAnswer(language,sourceCountRead.path,
+      String(sourceCountRead.amount)+" "+sourceCountRead.unit,contextualBefore.state),
+      state_path:sourceCountRead.path,revision:contextualBefore.revision,persist_result:"read_only",
+      reason:"read_only_memory_or_current_state_recall_resolved",route:"commerce_state_answer"};
   }
 
   // READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL is resolved from the already

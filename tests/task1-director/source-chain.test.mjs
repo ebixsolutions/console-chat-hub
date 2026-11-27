@@ -5,7 +5,8 @@ import {readFileSync as task1SourceRead} from 'node:fs';
 import assert from 'node:assert/strict';
 import {resolveCustomerRequestDecision,isBareCommerceSubjectMention,isSourceOwnedActiveAdviceGoal,hasSourceBoundCurrentAdviceGoal,acceptsInitialAdviceGoalReading,isReadOnlyMemoryOrCurrentStateRecall} from '../../supabase/functions/_shared/commerce-state-authority.ts';
 import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
-import {reduceTurn, isReadOnlyCommerceQuestion} from '../../supabase/functions/_shared/commerce-state-runtime-base.ts';
+import {reduceTurn, isReadOnlyCommerceQuestion, runCommerceStateRuntime, persistCommerceTurn} from '../../supabase/functions/_shared/commerce-state-runtime-base.ts';
+import {buildB2AuthoritativeReadbackProof, classifyCommerceStatePersistenceResult, evaluateB2BeforeCommit} from '../../supabase/functions/_shared/pre-send-conversion-supervisor.ts';
 import {sourceBoundMixedCustomerFactEvents, semanticFrameToStateEvents} from '../../supabase/functions/_shared/commerce-semantic-adapter.ts';
 import {buildCanonicalConversationMemory,buildBoundedConversationContext} from '../../supabase/functions/_shared/conversation-long-memory.ts';
 
@@ -751,6 +752,188 @@ test('P1 independent question boundary preserves canonical R1 and non-immediate 
  for(const q of negatives)assert.equal(classifyHandoffIntent(q).explicit_request,false,q);
 });
 
+// R4(a) staged generic count-first observation equivalence; original 103-turn
+// fixture and its no-reading compatibility are NOT altered by these tests.
+for(const scenario of [
+ {name:"original source shape",text:"其實一部舊機拆，另一間房本身冇機。",key:"removal_observation_count",amount:1,unit:"部",subject:"舊機拆",question:"舊機拆幾部？"},
+ {name:"cross-industry Chinese compound count",text:"十二箱貨品破損，另一間房沒有貨。",key:"damaged_cartons",amount:12,unit:"箱",subject:"貨品破損",question:"貨品破損幾箱？"},
+ {name:"cross-industry fullwidth",text:"２張門票作廢。",key:"void_tickets",amount:2,unit:"張",subject:"門票作廢",question:"門票作廢幾張？"},
+])test("R4(a) source-bound count-first write/read: "+scenario.name,async()=>{
+ const base={conversation_id:CID,company_id:TID,language:"zh-TW"};
+ const next=reduceTurn(createEmptyConversationCommerceState(),{...base,text:scenario.text,
+  source_message_id:SRC,semantic_frame:semantic({operation:"NO_STATE_CHANGE",
+  intent:"customer_context_update",requested_facts:[],customer_facts:[
+    {key:scenario.key,value:{amount:scenario.amount,unit:scenario.unit}}]})},[]);
+ const record=next.customer_constraints.customer_reported_facts?.[scenario.key];
+ assert.equal(record?.source_count_order,"count_first");
+ assert.equal(record.source_subject_text,scenario.subject);
+ assert.equal(record.source_unit_text,scenario.unit);
+ assert.equal(record.provenance.source_message_id,SRC);
+ assert.equal(record.value.amount,scenario.amount);
+ assert.equal(next.conversion.order_status,"none");
+ assert.equal(next.conversion.payment_status,"none");
+ assert.equal(next.quotes.length,0);
+ // Remove the old compatibility scalar in this NEW isolated test only:
+ // success must come from the new canonical record, not the legacy reader.
+ const independent=structuredClone(next);
+ delete independent.installation.site_conditions.old_machine_removal_count;
+ let writes=0;
+ const db={from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{
+  company_id:TID,conversation_id:CID,revision:1,state:independent},error:null})})})}),
+  rpc:async()=>{writes++;throw new Error("read must not write")}};
+ const query={...base,source_message_id:"00000000-0000-4000-8000-000000000004",
+  text:scenario.question,history:[{id:SRC,role:"visitor",content:scenario.text}],
+  semantic_frame:semantic({operation:"ASK_FACT",intent:"customer_fact_recall",requested_facts:[scenario.key]})};
+ const result=await runCommerceStateRuntime(db,query);
+ assert.equal(result?.authority,"CONVERSATION_STATE");
+ assert.equal(result?.state_path,"customer_constraints.customer_reported_facts."+scenario.key+".value.amount");
+ assert.equal(result?.persist_result,"read_only");
+ assert(result?.reply?.includes(String(scenario.amount)+" "+scenario.unit));
+ assert.equal(writes,0);
+ const stale=await runCommerceStateRuntime(db,{...query,history:[
+  {id:"00000000-0000-4000-8000-000000000005",role:"visitor",content:"更正："+scenario.subject+"，兩"+scenario.unit+"。"},
+  ...query.history]});
+ assert.notEqual(stale?.authority,"CONVERSATION_STATE","later correction cannot revive the old count");
+ assert.equal(writes,0);
+ const absent=await runCommerceStateRuntime(db,{...query,history:[]});
+ assert.notEqual(absent?.authority,"CONVERSATION_STATE","original visitor source required");
+ assert.equal(writes,0);
+});
+for(const scenario of [
+ {text:"一部舊機不拆。",amount:1,unit:"部"},
+ {text:"一部舊機拆，兩部舊機暫緩。",amount:1,unit:"部"},
+ {text:"如果一部舊機拆。",amount:1,unit:"部"},
+ {text:"十二箱貨品破損。",amount:2,unit:"箱"},
+ {text:"一部舊機拆。",amount:1,unit:"間"},
+])test("R4(a) count-first proof rejects "+scenario.text,()=>{
+ const next=reduceTurn(createEmptyConversationCommerceState(),{conversation_id:CID,company_id:TID,
+  source_message_id:SRC,language:"zh-TW",text:scenario.text,
+  semantic_frame:semantic({operation:"NO_STATE_CHANGE",intent:"customer_context_update",
+  requested_facts:[],customer_facts:[{key:"observed_count",value:{amount:scenario.amount,unit:scenario.unit}}]})},[]);
+ assert.notEqual(next.customer_constraints.customer_reported_facts?.observed_count?.source_count_order,"count_first");
+ assert.equal(next.quotes.length,0);assert.equal(next.conversion.order_status,"none");
+});
+
+/** R4(a) native independent no-reading equivalence. Original fixture bytes,
+ * inputs, oracle and old compatibility source remain untouched until the
+ * agreed pre-push Supervisor evidence establishes independent equivalence. */
+const r4aOriginal=JSON.parse(task1SourceRead(new URL('../../.github/scripts/c3_canonical_103_turns.json',import.meta.url),'utf8'));
+const r4aBase={conversation_id:CID,company_id:TID,language:"zh-TW"};
+const r4aReadId="00000000-0000-4000-8000-000000000004";
+const r4aCorrectionId="00000000-0000-4000-8000-000000000005";
+function r4aFixtureDb(){
+ let live=createEmptyConversationCommerceState(),revision=0,writes=0,source=null;
+ return {db:{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:revision?{
+  company_id:TID,conversation_id:CID,revision,state:live,source_message_id:source}:null,error:null})})})}),
+  rpc:async(_name,p)=>{writes++;assert.equal(p.p_company_id,TID);assert.equal(p.p_conversation_id,CID);
+   assert.equal(p.p_expected_revision,revision);live=structuredClone(p.p_state);source=p.p_source_message_id;revision++;
+   return {data:{result:"success",applied_revision:revision},error:null};}},
+  snapshot:()=>({state:live,revision,writes,source}),withoutLegacy:()=>{delete live.installation.site_conditions.old_machine_removal_count;}};
+}
+const r4aOriginalFrame={...semantic({operation:"ASK_FACT",intent:"read authoritative current conversation state",requested_facts:["old_machine_removal_count"],confidence:.94}),topic:"installation"};
+const r4aScenarios=[
+ {name:"frozen T44 to T59 without history IDs",source:r4aOriginal.turns[43],question:r4aOriginal.turns[58],amount:1,unit:"部",subject:"舊機拆",frame:r4aOriginalFrame,
+  history:r4aOriginal.turns.slice(43,58).reverse().map(content=>({role:"visitor",content}))},
+ {name:"wholesale count-first Chinese tens",source:"其實十二箱貨品破損，另一間房沒有貨。",question:"貨品破損幾箱？",amount:12,unit:"箱",subject:"貨品破損",frame:null},
+ {name:"ticketing NFKC fullwidth count",source:"其實２張門票作廢，另一間房沒有票。",question:"門票作廢幾張？",amount:2,unit:"張",subject:"門票作廢",frame:null},
+ {name:"zero is a literal observation",source:"其實0件貨品退回。",question:"貨品退回幾件？",amount:0,unit:"件",subject:"貨品退回",frame:null},
+ {name:"English source unit",source:"Actually 3 boxes damaged.",question:"How many boxes damaged?",amount:3,unit:"boxes",subject:"damaged",frame:null,language:"en"},
+];
+for(const s of r4aScenarios)test("R4(a) independent native CAS and read-only B2: "+s.name,async()=>{
+ const store=r4aFixtureDb();
+ const scenarioBase={...r4aBase,language:s.language??r4aBase.language};
+ const p=await persistCommerceTurn(store.db,{...scenarioBase,source_message_id:SRC,text:s.source,semantic_frame:null},[]);
+ assert.equal(p.result,"success");assert.equal(p.revision,1);assert.equal(store.snapshot().writes,1);
+ const entries=Object.entries(store.snapshot().state.customer_constraints.customer_reported_facts??{}).filter(([,row])=>row.source_count_origin==="literal_customer_clause");
+ assert.equal(entries.length,1);
+ const [key,row]=entries[0];assert.equal(row.value.amount,s.amount);assert.equal(row.value.unit,s.unit);
+ assert.equal(row.source_subject_text,s.subject);assert.equal(row.provenance.source_message_id,SRC);
+ assert.equal(row.provenance.company_id,TID);assert.equal(row.provenance.conversation_id,CID);
+ assert.equal(store.snapshot().state.conversion.order_status,"none");
+ assert.equal(store.snapshot().state.conversion.payment_status,"none");assert.equal(store.snapshot().state.quotes.length,0);
+ // Deliberately remove ONLY the old scalar from this new isolated fixture
+ // after the actual writer and CAS. The canonical proof must stand alone.
+ store.withoutLegacy();
+ const before=JSON.stringify(store.snapshot());
+ const history=s.history??[{id:SRC,role:"visitor",content:s.source}];
+ const input={...scenarioBase,source_message_id:r4aReadId,text:s.question,semantic_frame:s.frame,history};
+ const r=await runCommerceStateRuntime(store.db,input);
+ assert.equal(r?.authority,"CONVERSATION_STATE");assert.equal(r.persist_result,"read_only");
+ assert.equal(r.state_path,"customer_constraints.customer_reported_facts."+key+".value.amount");
+ assert(r.reply.includes(String(s.amount)+" "+s.unit));
+ if(s.language==="en")assert.equal(r.reply,"From what you already told me: 3 boxes.");
+ assert.equal(row.source_count_visibility,"exact_recall_only");
+ assert.equal(row.source_count_expires_after_revision,33);
+ assert.equal(JSON.stringify(store.snapshot()),before,"read cannot mutate state, revision or RPC count");
+ const proof=buildB2AuthoritativeReadbackProof(store.snapshot().state,r.state_path);
+ assert.deepEqual(proof,{state_path:r.state_path,value:String(s.amount)});
+ const selected=selectB2ProtectedCustomerCountRead(r,{company_id:TID,conversation_id:CID,source_message_id:r4aReadId,language:scenarioBase.language});
+ assert(selected);
+ const b2Input={proposed_response:r.reply,persistence_kind:"ai_reply",protected_customer_count_read:selected,snapshot:{
+   conversation_id:CID,company_id:TID,source_message_id:r4aReadId,source_message_content:s.question,
+   commerce_state_revision:store.snapshot().revision,commerce_state_source_message_id:store.snapshot().source,
+   state:store.snapshot().state},metadata:{response_route:r.route,commerce_authority:r.authority,
+   commerce_state_revision:r.revision,commerce_state_persist_result:r.persist_result,
+   commerce_state_persistence_classification:classifyCommerceStatePersistenceResult(r.persist_result),
+   commerce_reason:r.reason,commerce_state_path:r.state_path,commerce_state_readback_proof:proof}};
+ const b2=evaluateB2BeforeCommit(b2Input);assert.equal(b2.decision,"allow",JSON.stringify(b2));
+ assert.equal(b2.code,"B2_ALLOW_PROTECTED_CUSTOMER_COUNT_READ");
+ assert.notEqual(evaluateB2BeforeCommit({...b2Input,metadata:{...b2Input.metadata,
+  commerce_state_readback_proof:{...proof,value:"999999"}}}).decision,"allow","substituted proof cannot authorize readback");
+ assert.equal(JSON.stringify(store.snapshot()),before);
+ for(const bad of [
+  {history:[]},{history:[{id:"wrong",role:"visitor",content:s.source}]},
+  {history:[{role:"assistant",content:s.source}]},
+  {history:[{role:"visitor",content:s.source},{role:"visitor",content:s.source}]},
+  {history:[{id:r4aCorrectionId,role:"visitor",content:"更正："+s.subject+"，兩"+s.unit+"。"},...history]},
+ ]){
+  const denied=await runCommerceStateRuntime(store.db,{...input,...bad});
+  assert.notEqual(denied?.authority,"CONVERSATION_STATE","missing/stale/ambiguous source cannot supply count");
+  assert.equal(JSON.stringify(store.snapshot()),before);
+ }
+});
+for(const [name,text] of [
+ ["negation","其實一部舊機不拆。"],["conditional","如果其實一部舊機拆。"],["question","其實一部舊機拆？"],
+ ["conflicting counts","其實一部舊機拆，兩部舊機暫緩。"],["historical","其實上次一部舊機拆。"],
+ ["merchant","其實一部舊機價錢。"],["signed","其實-3 boxes damaged."],["decimal","其實3.5 boxes damaged."],
+ ["ambiguous written zero","其實零件貨品退回。"],["spaced negative","其實- 3 boxes damaged."],
+])test("R4(a) no-reading source guard: "+name,()=>{
+ const next=reduceTurn(createEmptyConversationCommerceState(),{...r4aBase,source_message_id:SRC,text,semantic_frame:null},[]);
+ assert(!Object.values(next.customer_constraints.customer_reported_facts??{}).some(row=>row?.source_count_origin==="literal_customer_clause"));
+ assert.equal(next.conversion.order_status,"none");assert.equal(next.conversion.payment_status,"none");assert.equal(next.quotes.length,0);
+});
+test("R4(a) no-reading exact correction and same-source idempotency",async()=>{
+ const store=r4aFixtureDb();
+ await persistCommerceTurn(store.db,{...r4aBase,source_message_id:SRC,text:r4aOriginal.turns[43],semantic_frame:null},[]);
+ store.withoutLegacy();
+ const before=store.snapshot();
+ const p=await persistCommerceTurn(store.db,{...r4aBase,source_message_id:r4aCorrectionId,text:"更正兩部舊機拆。",semantic_frame:null},[]);
+ assert.equal(p.result,"success");assert.equal(p.revision,before.revision+1);
+ const fact=Object.values(store.snapshot().state.customer_constraints.customer_reported_facts??{}).find(row=>row.source_count_origin==="literal_customer_clause");
+ assert.equal(fact.value.amount,2);assert.equal(fact.provenance.source_message_id,r4aCorrectionId);
+ const r=await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:r4aReadId,text:r4aOriginal.turns[58],semantic_frame:r4aOriginalFrame,history:[{id:r4aCorrectionId,role:"visitor",content:"更正兩部舊機拆。"}]});
+ assert(r?.reply?.includes("2 部"));
+ assert.equal(r.persist_result,"read_only");
+});
+
+test("R4(a) a later partial literal negation invalidates only the older scoped count",async()=>{
+ const store=r4aFixtureDb();
+ await persistCommerceTurn(store.db,{...r4aBase,source_message_id:SRC,text:r4aOriginal.turns[43],semantic_frame:null},[]);
+ store.withoutLegacy();
+ const old=store.snapshot().state.customer_constraints.customer_reported_facts;
+ const key=Object.keys(old).find(k=>old[k].source_count_origin==="literal_customer_clause");
+ const changed=reduceTurn(store.snapshot().state,{...r4aBase,source_message_id:r4aCorrectionId,text:"更正，舊機唔拆。幾多錢？",semantic_frame:null},[]);
+ const row=changed.customer_constraints.customer_reported_facts[key];
+ assert.equal(row.value,null);assert.equal(row.source_count_status,"unresolved");
+ assert.equal(row.provenance.source_message_id,SRC);assert.equal(row.provenance.invalidated_by_source_message_id,r4aCorrectionId);
+ assert.equal(buildB2AuthoritativeReadbackProof(changed,"customer_constraints.customer_reported_facts."+key+".value.amount"),null);
+ assert.equal(changed.conversion.order_status,"none");assert.equal(changed.conversion.payment_status,"none");
+ const input={...r4aBase,source_message_id:r4aReadId,text:r4aOriginal.turns[58],semantic_frame:r4aOriginalFrame,
+ history:[{id:r4aCorrectionId,role:"visitor",content:"更正，舊機唔拆。幾多錢？"},{id:SRC,role:"visitor",content:r4aOriginal.turns[43]}]};
+ const result=await runCommerceStateRuntime(store.db,input);
+ assert.notEqual(result?.authority,"CONVERSATION_STATE");
+});
+
 /** Scoped B2 prerequisite, separate from R4(a) writer changes. Actual
  * persistence gate with a disposable DB adapter; not Hosted/RLS evidence. */
 import {selectB2ProtectedCustomerCountRead,deliverProtectedCustomerCountReply,executeB2PersistenceGate,buildB2AuthoritativeReadbackProof as b2CountReadback} from '../../supabase/functions/_shared/pre-send-conversion-supervisor.ts';
@@ -822,4 +1005,31 @@ test("scoped B2 server selected outcome is wired to final commit before metadata
  assert.match(code,/null,null,null,protectedCountRead,/);
  assert.match(code,/protected_customer_count_read: protectedCustomerCountRead/);
  assert.match(code,/safeReply=>commitAiReplyWithControlGate/);
+});
+
+import {renderCanonicalCustomerFactRecap as r4aGeneralRecap} from '../../supabase/functions/_shared/conversation-recall.ts';
+test("R4(a) literal observations are bounded, expire and stay out of general recap",async()=>{
+ const base={...r4aBase,language:"en"};
+ let state=createEmptyConversationCommerceState();
+ const names=["damaged","missing","returned","marked","packed","sealed","sorted","opened","printed"];
+ for(const [i,name] of names.entries()){
+  const id="count-bounded-"+i,ctx={company_id:TID,conversation_id:CID,source_message_id:id,state_revision:i};
+  state=reduceTurn(state,{...base,source_message_id:id,text:"Actually 3 boxes "+name+".",semantic_frame:null},[],ctx);
+ }
+ const literalRows=s=>Object.entries(s.customer_constraints.customer_reported_facts??{}).filter(([,r])=>r.source_count_origin==="literal_customer_clause");
+ assert.equal(literalRows(state).length,8);assert.equal(r4aGeneralRecap(state,"en"),null);
+ const nextId="count-bounded-overflow";
+ const overflow=reduceTurn(state,{...base,source_message_id:nextId,text:"Actually 3 boxes labelled.",semantic_frame:null},[],
+ {company_id:TID,conversation_id:CID,source_message_id:nextId,state_revision:8});
+ assert.equal(literalRows(overflow).length,8);
+ const row=literalRows(state).find(([,r])=>r.source_subject_text==="damaged")[1];
+ const db={from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{company_id:TID,conversation_id:CID,revision:34,state},error:null})})})}),
+ rpc:async()=>{throw new Error("expired read cannot write")}};
+ const r=await runCommerceStateRuntime(db,{...base,source_message_id:r4aReadId,text:"How many boxes damaged?",semantic_frame:null,
+ history:[{id:row.provenance.source_message_id,role:"visitor",content:"Actually 3 boxes damaged."}]});
+ assert.notEqual(r?.authority,"CONVERSATION_STATE");
+});
+test("R4(a) raw count without authoritative CAS context cannot become durable fact",()=>{
+ const state=reduceTurn(createEmptyConversationCommerceState(),{...r4aBase,source_message_id:SRC,text:"我有 2 個問題想問。",semantic_frame:null},[]);
+ assert(!Object.values(state.customer_constraints.customer_reported_facts??{}).some(r=>r?.source_count_origin==="literal_customer_clause"));
 });

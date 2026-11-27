@@ -851,7 +851,7 @@ export function buildCanonicalConversationMemory(args: {
     row.id === args.source_message_id && CUSTOMER_ROLES.has(String(row.role ?? "")))?.content).slice(0,1600);
   const sourceHasCommittedCustomerFact=Object.values(
     record(args.commerce_state?.customer_constraints?.customer_reported_facts) ?? {},
-  ).some(value => record(record(value)?.provenance)?.source_message_id === args.source_message_id);
+  ).some(value => record(value)?.source_count_visibility !== "exact_recall_only" && record(record(value)?.provenance)?.source_message_id === args.source_message_id);
   const sourceBoundCustomerFactGoal =
     currentSourceText && sourceHasCommittedCustomerFact && !args.request_decision?.merchant_request
       ? currentSourceText : null;

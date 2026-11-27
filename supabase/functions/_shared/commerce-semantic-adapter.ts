@@ -220,6 +220,13 @@ function plainDecisionObject(value: unknown): value is Record<string, DecisionVa
  * A model's ASK_FACT proposal cannot by itself mutate canonical Commerce.
  * The user's literal assertion, the typed frame, and the existing CAS writer
  * must all agree. Unobserved or ambiguous leaves are deliberately omitted. */
+export function sourceBoundCustomerDeclarationClauses(sourceText:string):string[] {
+  return sourceText.normalize("NFKC").split(/[，,。;；!?！？\n]/u)
+    .map(part => part.trim()).filter(part => part &&
+      !/(?:嗎|吗|係咪|系咪|是否|有冇|有没有|有沒有|幾多|几多|多少|是不是|what|how many|do i|do we|is it|are there)\s*$/iu.test(part) &&
+      /(?:仍然|依然|仲係|而家|目前|現在|现在|只(?:係|是|會|会|要|有)|其實|其实|更正|改(?:成|為|为)|預算|预算|想|需要|唔|不(?:需要|會|玩)|\b(?:i|we)\s+(?:have|need|want|prefer)|\b(?:still|currently|now|actually|only|budget|instead)\b)/iu.test(part));
+}
+
 export function sourceBoundMixedCustomerFactEvents(
   frame: CommerceSemanticFrame | null | undefined,
   previous: ConversationCommerceState,
@@ -231,10 +238,7 @@ export function sourceBoundMixedCustomerFactEvents(
     frame.ambiguity.is_ambiguous || !frame.customer_facts?.length || frame.additive) return [];
   // Restrict extraction to declarations, never merchant factual questions,
   // hypotheticals, order/payment claims, or a model-only inferred preference.
-  const statements = sourceText.normalize("NFKC").split(/[，,。;；!?！？\n]/u)
-    .map(part => part.trim()).filter(part => part &&
-      !/(?:嗎|吗|係咪|系咪|是否|有冇|有没有|有沒有|幾多|几多|多少|是不是|what|how many|do i|do we|is it|are there)\s*$/iu.test(part) &&
-      /(?:仍然|依然|仲係|而家|目前|現在|现在|只(?:係|是|會|会|要|有)|其實|其实|更正|改(?:成|為|为)|預算|预算|想|需要|唔|不(?:需要|會|玩)|\b(?:i|we)\s+(?:have|need|want|prefer)|\b(?:still|currently|now|actually|only|budget|instead)\b)/iu.test(part));
+  const statements = sourceBoundCustomerDeclarationClauses(sourceText);
   if (!statements.length) return [];
   const assertion = statements.join(" ").toLowerCase();
   const chineseDigits: Record<string, number> = {

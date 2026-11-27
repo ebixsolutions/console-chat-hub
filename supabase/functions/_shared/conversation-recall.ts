@@ -3779,7 +3779,7 @@ export function renderCanonicalCustomerFactRecap(state:ConversationCommerceState
   const values=object(state.customer_constraints.customer_reported_facts);
   const facts=Object.entries(values??{}).flatMap(([key,value])=>{
     const row=object(value),p=object(row?.provenance);
-    return row && Object.prototype.hasOwnProperty.call(row,"value") && p?.source_type==="customer" && typeof p.source_message_id==="string"
+    return row && row.source_count_visibility!=="exact_recall_only" && Object.prototype.hasOwnProperty.call(row,"value") && p?.source_type==="customer" && typeof p.source_message_id==="string"
       ? [{key,value:row.value,authority:"customer",source_message_id:p.source_message_id}] : [];
   });
   return facts.length ? renderCustomerRecap({customer_facts:facts},language) : null;
