@@ -3748,7 +3748,7 @@ test('P1 R2 bound clarification isolated transport uses canonical proof, exact r
  c.status='human_control';assert.equal((await invoke({})).result,'already_under_human_control');assert.equal(f.commits.length,1);
 });
 
- 
+
 // R4(a) independent equivalent Reading for the original 4123 dialogue.
 // The original untyped fixture above is unchanged and still part of Handler652.
 test("R4A 4123 typed Reading uses the generic approximate pair and conversational location via actual handler",async()=>{

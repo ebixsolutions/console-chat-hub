@@ -1752,7 +1752,7 @@
     "tests/task1-director/semantic-customer-recall-scope.test.mjs": "463d0219409324683f6192ff888ff04a69111bc8d7462753843f6f0189263413",
     "supabase/functions/_shared/natural-customer-response.test.ts": "a3d79abf34b45d8eeacbd07c03d713020c76cad882211a32dae31262bc010917",
     "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "5dbd3b30e398625527d2cbc2b8ed1783849389a60308518c7a5652b31421ceab",
-    "tests/emergency-p0/chain.test.mjs": "7071954a8b0b2966495311f4eec4f0293bbb87251151b528f5ef26609a57bc07",
+    "tests/emergency-p0/chain.test.mjs": "e8971aeae6d7a2586b3c3eec837c3b73ca9197863f082e8facb0252c55c2b61c",
     "tests/task1-director/p1-observation-runner.mjs": "a71c67e34767bd63074926543ac73818fab999e3a7e35edb3dbc38632e0ff5c9",
     "tests/task1-director/p1-observation-register.mjs": "cf30f29d4f6ab7eb380b9308bb797790db763129020d62f0cd9c67e226ab8d7f",
     "tests/task1-director/fixtures/task3c-replay/observations-60-plus-7.json": "b1b820e5bc8fcda0365d5738d4b973c1193c3c49953c70de93daf24ca158e3ba",
