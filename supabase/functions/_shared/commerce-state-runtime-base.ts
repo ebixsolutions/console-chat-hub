@@ -43,7 +43,6 @@ import {
   isCurrentRequirementsRecap,
   isBareCommerceSubjectMention,
   customerSunExposure,
-  customerDimensionPair,
   withoutExcludedLookups,
   customerBusinessText,
   acceptsInitialAdviceGoalReading,
@@ -3358,8 +3357,7 @@ function reduceSingleTurn(
     ? [{ type: "UPDATE_ENTITY", entity_id: chosenGoal.entity_id,
         patch: { quantity: explicitGoalNumber, ...(staleProductName ? { model: null,
           attributes: { quantity_basis: "customer_explicit", product_name: null,
-            sku: null, semantic_attributes: {}, installation_type: null, room_sizes: {},
-            room_window_openings: {}, window_opening_observation: null }, } : {
+            sku: null, semantic_attributes: {}, installation_type: null, room_sizes: {} }, } : {
           attributes: { quantity_basis: "customer_explicit" } }) },
         provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } }]
     : [];
@@ -4011,111 +4009,6 @@ function sourceBoundLegacyCollapsedCancellation(
   ];
 }
 
-/** Only a source-referred product, source-attested metric W/H and previous
- * window-site turn can create a pending opening observation. This is explicit
- * per-conversation customer context, never an industry default or invented
- * item quantity/merchant fact. The follow-up must bind one named room. */
-function sourceBoundWindowOpeningEvents(
-  state:ConversationCommerceState,input:CommerceRuntimeInput,
-):CommerceStateEvent[] {
-  const frame=input.semantic_frame,text=clean(input.text);
-  // Never create a second legacy writer alongside a canonical receipt.
-  if(state.customer_constraints[PAIRED_SITE_KEY]!=null)return [];
-  if(!frame||frame.operation!=="NO_STATE_CHANGE"||frame.confidence<0.90||
-    frame.ambiguity.is_ambiguous||frame.customer_correction||frame.additive||
-    frame.entities.length!==0||
-    /[?？]|(?:如果|假設|假设|假如|hypothetical|what if)/iu.test(text))return [];
-  const history=(input.history??[]).filter(row=>["visitor","user","customer"].includes(row.role));
-  const pair=customerDimensionPair(text);
-  const provenance={source_type:"customer" as const,source_message_id:input.source_message_id,
-    recorded_at:input.occurred_at??null};
-  const active=state.entities.filter(e=>e.category==="air_conditioner"&&
-    !["cancelled","deferred","superseded"].includes(e.status));
-  if(pair){
-    if(active.length>1||(state.entities.length>0&&active.length!==1)||
-      !history.some(row=>/(?:窗口|窗台|window opening)/iu.test(row.content)))return [];
-    const subjects=history.filter(row=>row.id&&
-      /(?:想換|想买|想買|選購|选购|需要|want to (?:replace|buy)|looking for)/iu.test(row.content)&&
-      /(?:冷氣|空調|空调|air\s*condition(?:er|ing))/iu.test(row.content));
-    if(subjects.length!==1)return [];
-    const label=subjects[0].content.match(/冷氣|空調|空调|air\s*condition(?:er|ing)/iu)?.[0];
-    if(!label)return [];
-    const id=active[0]?.entity_id??"air_conditioner:unscoped";
-    if(active[0]&&isRecord(active[0].attributes.window_opening_observation))return [];
-    const events:CommerceStateEvent[]=[];
-    if(!active.length)events.push({type:"ENSURE_ENTITY",entity:{
-      entity_id:id,category:"air_conditioner",brand:null,model:null,quantity:0,
-      status:"researching",attributes:{product_name:label,customer_subject_aliases:[label],
-        unit:null,quantity_basis:"system_default"},constraints:{},
-      provenance:{source_type:"customer",source_message_id:subjects[0].id!,recorded_at:null},
-    }});
-    events.push({type:"SET_ENTITY_ATTRIBUTE",entity_id:id,
-      key:"window_opening_observation",value:{width_mm:pair.width_mm,
-        height_mm:pair.height_mm,source_message_id:input.source_message_id,scope:null},
-      provenance});
-    return events;
-  }
-  if(active.length!==1||!/(?:窗口|窗台|window)/iu.test(text)||
-    !/(?:係|是|属于|屬於|belongs to|for the|it's for)/iu.test(text))return [];
-  const scope=roomScope(text);
-  const scopes=[/(?:細房|细房|小房|small\s*bedroom)/iu,
-    /(?:大房|large\s*bedroom)/iu,/(?:客廳|客厅|個廳|个厅|living\s*room)/iu,
-    /(?:書房|书房|study)/iu].filter(pattern=>pattern.test(text));
-  if(!scope||scopes.length!==1)return [];
-  const entity=active[0],obs=entity.attributes.window_opening_observation;
-  if(!isRecord(obs)||obs.scope!==null||typeof obs.source_message_id!=="string"||
-    typeof obs.width_mm!=="number"||!Number.isFinite(obs.width_mm)||
-    typeof obs.height_mm!=="number"||!Number.isFinite(obs.height_mm))return [];
-  const existing=entity.attributes.room_window_openings;
-  if((isRecord(existing)&&Object.keys(existing).length>0)||
-    !history.some(row=>row.id===obs.source_message_id&&
-      customerDimensionPair(row.content)?.width_mm===obs.width_mm&&
-      customerDimensionPair(row.content)?.height_mm===obs.height_mm))return [];
-  return [
-    {type:"SET_ENTITY_ATTRIBUTE",entity_id:entity.entity_id,key:"room_window_openings",
-      value:{[scope]:{width_mm:obs.width_mm,height_mm:obs.height_mm,
-        source_message_id:obs.source_message_id}},provenance},
-    {type:"SET_ENTITY_ATTRIBUTE",entity_id:entity.entity_id,key:"window_opening_observation",
-      value:{...obs,scope},provenance},
-  ];
-}
-
-/** The reply must follow exact successful CAS readback, not a model echo. */
-function sourceBoundWindowOpeningReply(
-  input:CommerceRuntimeInput,
-  persisted:Awaited<ReturnType<typeof persistCommerceTurn>>,
-):string|null {
-  if(persisted.result!=="success")return null;
-  const active=persisted.state.entities.filter(e=>e.category==="air_conditioner"&&
-    !["cancelled","deferred","superseded"].includes(e.status));
-  if(active.length!==1)return null;
-  const obs=active[0].attributes.window_opening_observation;
-  if(!isRecord(obs)||typeof obs.width_mm!=="number"||!Number.isFinite(obs.width_mm)||
-    typeof obs.height_mm!=="number"||!Number.isFinite(obs.height_mm))return null;
-  const width=obs.width_mm,height=obs.height_mm;
-  if(obs.scope===null&&obs.source_message_id===input.source_message_id&&
-    customerDimensionPair(input.text)?.width_mm===width&&
-    customerDimensionPair(input.text)?.height_mm===height&&
-    !persisted.previous_state.entities.some(e=>isRecord(e.attributes.window_opening_observation)))
-    return input.language==="en"
-      ? "Window opening recorded: "+width+"mm wide and "+height+"mm high. Which room is this for?"
-      : input.language==="zh-CN"
-      ? "已记录窗口宽"+width+"毫米、高"+height+"毫米。请问是哪个房间的窗口？"
-      : "已記錄窗口闊"+width+"毫米、高"+height+"毫米。請問係邊間房嘅窗口？";
-  const old=persisted.previous_state.entities.find(e=>e.entity_id===active[0].entity_id);
-  const older=old?.attributes.window_opening_observation;
-  if(typeof obs.scope==="string"&&isRecord(older)&&older.scope===null&&
-    older.source_message_id===obs.source_message_id&&roomScope(input.text)===obs.scope&&
-    /(窗口|窗台|window)/iu.test(input.text)){
-    const label=obs.scope==="small_bedroom"?"細房":
-      obs.scope==="large_bedroom"?"大房":obs.scope==="living_room"?"客廳":"書房";
-    return input.language==="en"
-      ? "Recorded "+width+"mm by "+height+"mm for the "+obs.scope.replaceAll("_"," ")+" window only."
-      : "已將"+label+"窗口尺寸記為闊"+width+"毫米、高"+height+"毫米；其他房間未套用呢組尺寸。";
-  }
-  return null;
-}
-
 function contextualSourceContext(input: CommerceRuntimeInput, revision: number): ContextualSourceContext {
   return { company_id: input.company_id, conversation_id: input.conversation_id,
     source_message_id: input.source_message_id, state_revision: revision };
@@ -4713,8 +4606,6 @@ function reduceTurnCandidate(previous: ConversationCommerceState,input: Commerce
     return state;
   }
   let state = reduceTurnOperations(previous,input,hints,sourceContext);
-  const windowEvents=sourceBoundWindowOpeningEvents(state,input);
-  if(windowEvents.length)state=reduceCommerceState(state,windowEvents);
   // A counted room/person in a first service-advice question is not a
   // customer assertion of an additional product or unit. Persist intent only
   // through the existing source/revision-bound Commerce RPC.
@@ -6319,10 +6210,6 @@ export async function runCommerceStateRuntime(
     return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
       persist_result: persisted.result, reason: "unverified_lifecycle_commit", route: "commerce_state_answer" };
   }
-  const windowReply=sourceBoundWindowOpeningReply(runtimeInput,persisted);
-  if(windowReply)return {authority:"CONVERSATION_STATE",reply:windowReply,
-    revision:persisted.revision,persist_result:persisted.result,
-    reason:"source_bound_window_opening_committed",route:"commerce_state_answer"};
   const committedRoomCorrection = buildTrustedRoomCorrection(runtimeInput, persisted);
   if (committedRoomCorrection) {
     return {

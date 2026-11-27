@@ -3811,8 +3811,6 @@ function renderCustomerRecap(value: unknown, language: string): string {
     if (typeof e.constraints.max_width_mm === "number") facts.push(l === 2 ? `maximum width ${e.constraints.max_width_mm} mm` : `最闊${e.constraints.max_width_mm} mm`);
     if (e.model && !label(e).includes(e.model)) facts.push(display(e.model));
     // Phase1 legacy site-specific attributes are inert. Use customer facts only.
-    const opening=object(e.attributes.window_opening_observation);
-    if(opening&&typeof opening.width_mm==="number"&&typeof opening.height_mm==="number")facts.push(`${opening.width_mm} mm × ${opening.height_mm} mm${opening.scope?` (${rooms[String(opening.scope)]?.[l]??String(opening.scope)})`:["（所屬窗口未確認）","（所属窗口未确认）"," (opening scope not confirmed)"][l]}`);
     if (e.attributes.installation_type === "window_unit") facts.push(["窗口機", "窗口机", "window unit"][l]);
     if (Number.isInteger(e.attributes.door_count)) facts.push(l === 2 ? `${e.attributes.door_count} doors` : `${e.attributes.door_count}門`);
     if (l === 2) return renderEnglishRequirement(e,label(e)) + (facts.length ? ", "+facts.join(", ") : "");

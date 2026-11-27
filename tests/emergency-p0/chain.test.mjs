@@ -958,9 +958,70 @@ for(const text of ['我想问订单状况','我想查吓張訂單而家去到邊
 });
 
 test('Frankie 4123 paired window dimensions persist as one source-bound observation and ask only missing room scope',async()=>{
- let previous;let history=[];let n=210;for(const text of ['想換冷氣，兩間睡房加個客廳，應該點揀好？','細房約80呎，大房100呎，客廳就180呎。','三個位都係窗口位，而家原本用緊嘅都係窗口機。','全屋都沒有西斜']){const f=fixture(text,{originalPreview:true,fullChain:true,source:uuid(n++),previous,history,answer:'可先比較舒適度、使用時段與安裝條件；產品適用性仍須核實。',semantic:{operation:'ASK_FACT',confidence:0.97,intent:'customer_guidance',requested_facts:[]}});await f.run();previous=f.tables;history=f.tables.messages;}
- const f=fixture('大約 70 (W) x 55 (H) cm',{originalPreview:true,fullChain:true,source:uuid(220),previous,history,semantic:{operation:'NO_STATE_CHANGE',confidence:0.97,intent:'customer_context_update',requested_facts:[]}});const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));const ac=f.tables.conversation_commerce_state[0].state.entities.find(e=>e.category==='air_conditioner');assert.equal(ac.attributes.window_opening_observation.width_mm,700);assert.equal(ac.attributes.window_opening_observation.height_mm,550);assert.equal(ac.attributes.window_opening_observation.source_message_id,uuid(220));assert.equal(ac.attributes.window_opening_observation.scope,null);assert.equal(ac.attributes.room_window_openings,undefined);assert.match(f.commits[0]?.content,/700/);assert.match(f.commits[0]?.content,/550/);assert.match(f.commits[0]?.content,/邊間房|哪个房间|Which room/);assert(!f.requests.some(x=>x.url.includes('context-search')));assert(!f.commits[0]?.metadata.degraded);
- const scoped=fixture('係細房嗰個窗口。',{originalPreview:true,fullChain:true,source:uuid(221),previous:f.tables,history:f.tables.messages,semantic:{operation:'NO_STATE_CHANGE',confidence:0.97,intent:'customer_context_update',requested_facts:[]}});await scoped.run();const after=scoped.tables.conversation_commerce_state[0].state.entities.find(e=>e.category==='air_conditioner');assert.equal(after.attributes.room_window_openings.small_bedroom.width_mm,700);assert.equal(after.attributes.room_window_openings.small_bedroom.source_message_id,uuid(220));assert.equal(after.attributes.room_window_openings.living_room,undefined);assert.match(scoped.commits[0]?.content,/細房/);assert(!scoped.commits[0]?.metadata.degraded);
+ let previous,history=[],n=210;
+ for(const text of ['想換冷氣，兩間睡房加個客廳，應該點揀好？','細房約80呎，大房100呎，客廳就180呎。','三個位都係窗口位，而家原本用緊嘅都係窗口機。','全屋都沒有西斜']){
+  const f=fixture(text,{originalPreview:true,fullChain:true,source:uuid(n++),previous,history,
+   answer:'可先比較舒適度、使用時段與安裝條件；產品適用性仍須核實。',
+   semantic:{operation:'ASK_FACT',confidence:.97,intent:'customer_guidance',requested_facts:[]}});
+  const result=await f.run();assert.equal(result.status,200,JSON.stringify(result));previous=f.tables;history=f.tables.messages;
+ }
+ const size='大約 70 (W) x 55 (H) cm',scope='係細房嗰個窗口。';
+ // Original NO_STATE_CHANGE inputs retained as negative control: no Reading, no paired-site write or committed authority.
+ const noReading={operation:'NO_STATE_CHANGE',confidence:0.97,intent:'customer_context_update',requested_facts:[]};
+ const negative=fixture(size,{originalPreview:true,fullChain:true,source:uuid(220),previous:structuredClone(previous),history:structuredClone(history),semantic:noReading});
+ const negativeResult=await negative.run();assert.equal(negativeResult.status,200,JSON.stringify(negativeResult));
+ const negativeNext=fixture(scope,{originalPreview:true,fullChain:true,source:uuid(221),previous:negative.tables,history:negative.tables.messages,semantic:noReading});
+ const negativeSecond=await negativeNext.run();assert.equal(negativeSecond.status,200,JSON.stringify(negativeSecond));
+ for(const turn of [negative,negativeNext]){
+  const state=turn.tables.conversation_commerce_state[0]?.state;
+  assert.equal(state?.customer_constraints?.paired_site_observation,undefined);
+  assert(!(state?.entities??[]).some(e=>e.attributes.window_opening_observation!=null||e.attributes.room_window_openings!=null));
+  assert(!turn.commits.some(c=>['source_bound_paired_site_observation_committed','source_bound_window_opening_committed'].includes(c.metadata?.commerce_reason)));
+ }
+ const retained=previous.conversation_commerce_state[0]?.state;
+ const active=(retained?.entities??[]).filter(e=>!['cancelled','deferred','superseded'].includes(e.status));
+ const goal=retained?.customer_constraints?.contextual_goal;
+ // Use only a real prior object or the literal prior customer goal.
+ const ref=active.length===1?active[0].entity_id:goal?.status==='active'?goal.goal_id:'冷氣';
+ const source=active.length===1||goal?.status==='active'?'persistent_state':'prior_turn';
+ const reading=(action,text,loc=null,site=undefined)=>providerWire({intent:'customer_context_update',
+  customer_facts:[{key:'paired_site_observation',value:{action,source_text:text,scope:loc,...(site===undefined?{}:{site_label:site})}}],
+  referents:[{ref,source,confidence:.99}]},'UPDATE_ITEM');
+ const f=fixture(size,{originalPreview:true,fullChain:true,source:uuid(220),previous,history,semantic:reading('observe',size)});
+ const first=await f.run();assert.equal(first.status,200,JSON.stringify(first));
+ const before=f.tables.conversation_commerce_state[0].state;
+ const r=before.customer_constraints.paired_site_observation;
+ assert.equal(r.width_mm,700);assert.equal(r.height_mm,550);assert.equal(r.approximate,true);assert.equal(r.scope,null);
+ assert.equal(r.source_message_id,uuid(220));assert.match(f.commits[0]?.content,/700/);assert.match(f.commits[0]?.content,/550/);
+ assert.match(f.commits[0]?.content,/約|约|approximately/);assert.equal(f.commits.length,1);
+ assert.match(f.commits[0]?.content,/邊個位置|哪个位置|Which location/);assert.equal((f.commits[0]?.content.match(/[?？]/g)??[]).length,1);
+ assert(!f.commits[0]?.metadata.degraded);
+ assert(!before.entities.some(e=>e.attributes.window_opening_observation!=null||e.attributes.room_window_openings!=null));
+ assert(!f.requests.some(x=>x.url.includes('context-search')));
+ const next=fixture(scope,{originalPreview:true,fullChain:true,source:uuid(221),previous:f.tables,history:f.tables.messages,
+  semantic:reading('bind_scope',scope,'細房','窗口')});
+ const second=await next.run();assert.equal(second.status,200,JSON.stringify(second));
+ const after=next.tables.conversation_commerce_state[0].state,receipt=after.customer_constraints.paired_site_observation;
+ assert.equal(receipt.scope,'細房');assert.equal(receipt.scope_site_label,'窗口');assert.equal(receipt.source_message_id,uuid(220));
+ assert.equal(receipt.scope_source_message_id,uuid(221));assert.deepEqual(after.entities,before.entities);
+ assert.deepEqual(after.conversion,before.conversion);assert.match(next.commits[0]?.content,/細房/);
+ assert.equal(next.commits.length,1);assert(!next.requests.some(x=>x.url.includes('context-search')));
+ assert(!next.commits[0]?.metadata.degraded);
+ // Proposed pre-existing case transition; explicit Owner approval required before application push.
+ for(const [turn,source] of [[f,uuid(220)],[next,uuid(221)]]){
+  const committed=turn.commits[0], meta=committed.metadata;
+  assert.equal(meta.response_route,'commerce_state_answer');
+  assert.equal(meta.commerce_authority,'CONVERSATION_STATE');
+  assert.equal(meta.commerce_reason,'source_bound_paired_site_observation_committed');
+  assert.equal(meta.commerce_state_path,'customer_constraints.paired_site_observation');
+  assert.equal(meta.b2_source_message_id,source);
+  assert.equal(meta.b2_expected_revision,turn.tables.conversation_commerce_state[0].revision);
+  assert.equal(meta.b2_commit_source,'commit_ai_reply_tx');
+  assert.deepEqual(meta.commerce_state_readback_proof?.value,turn.tables.conversation_commerce_state[0].state.customer_constraints.paired_site_observation);
+  assert(catalogueGateEvents(turn).some(x=>x.gate_decision==='allow'&&x.gate_code==='B2_ALLOW_PROTECTED_PAIRED_SITE_OBSERVATION'&&x.commit_attempted===true));
+ }
+ assert.match(next.commits[0]?.content,/700/);assert.match(next.commits[0]?.content,/550/);
+ assert.match(next.commits[0]?.content,/約|约|approximately/);
 });
 
 for(const op of ['ASK_FACT','NO_STATE_CHANGE'])for(const ambiguous of [false,true])test('Frankie general guidance keeps existing history and same-ticket state with alternate semantic operation '+op+' ambiguity '+ambiguous,async()=>{
@@ -3750,7 +3811,7 @@ test('P1 R2 bound clarification isolated transport uses canonical proof, exact r
 
 
 // R4(a) independent equivalent Reading for the original 4123 dialogue.
-// The original untyped fixture above is unchanged and still part of Handler652.
+// The original 4123 fixture is proposed for migration above; this independent typed case remains unchanged.
 test("R4A 4123 typed Reading uses the generic approximate pair and conversational location via actual handler",async()=>{
  let previous,history=[],n=4210;
  for(const text of ['想換冷氣，兩間睡房加個客廳，應該點揀好？','細房約80呎，大房100呎，客廳就180呎。','三個位都係窗口位，而家原本用緊嘅都係窗口機。','全屋都沒有西斜']){
