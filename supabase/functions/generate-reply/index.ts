@@ -5964,14 +5964,18 @@ async function orchestrationGenerateReply(
     return new Response(JSON.stringify({success:false,error:"paired_site_confirmation_readback_changed",retryable:true}),
       {status:409,headers:{...corsHeaders,"Content-Type":"application/json"}});
   }
+  // The paired confirmation and its existing Commerce commit share one local-reply
+  // admission policy. Evaluate it at each use; never swallow a lookup or overflow.
+  const _c3CanUseLocalCommerceReply = () =>
+    _c3ServicePlan.knowledge_state !== "lookup_required" &&
+    !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
+    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent);
   const _c3PairedSiteConfirmation = _c3VerifiedPairedSiteConfirmation &&
     !_explicitHandoffRequested && !_mixedRequest && !_c3ResolvedAddressCorrection &&
     _customerRequestDecision.kind !== "merchant_facts" && !_customerRequestDecision.merchant_request &&
     _currentFactualRequest?.kb_required !== true &&
     classifyLocalTopicRisk(_h1LastMsg)?.level !== "high" &&
-    _c3ServicePlan.knowledge_state !== "lookup_required" &&
-    !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
-    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent);
+    _c3CanUseLocalCommerceReply();
   const _customerGuidance = _customerRequestDecision.kind === "guidance" &&
     classifyLocalTopicRisk(_h1LastMsg)?.level !== "high";
   // A source-derived read-only calculation is already resolved. A legacy
@@ -6268,8 +6272,7 @@ ${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was n
       ? null
       : _a3Commerce?.reply ?? null);
   if (_c3CommerceReply && !_explicitHandoffRequested && (_c3PairedSiteConfirmation || _c3RejectedCustomerRequirement || !_customerGuidance && !_mixedRequest || Boolean(_c3VerifiedCorrectionReceipt || _c3LifecycleReceipt)) &&
-    (_c3RejectedCustomerRequirement || _c3VerifiedDimensionComparison || (_c3ServicePlan.knowledge_state !== "lookup_required" && !_c3ServicePlan.safe_assumptions.includes("query_context_limit") &&
-    !requiresCurrentMerchantEvidence(_effectiveNaturalCustomerIntent)))) {
+    (_c3RejectedCustomerRequirement || _c3VerifiedDimensionComparison || _c3CanUseLocalCommerceReply())) {
     const commerceReply = _a3Commerce?.reason ===
         "previous_quote_not_authoritative_for_current_price"
       ? historicalQuoteValidityReply(_visitorLang)
