@@ -204,7 +204,6 @@ import {
   type LongMemoryDbClient,
   refreshConversationLongMemory,
   reconcileDeliveredMemoryReply,
-  verifyCommittedRoomCorrectionMemory,
   verifyCommittedLifecycleMemory,
   verifyCommittedScopedCorrectionMemory,
 } from "../_shared/conversation-long-memory.ts";
@@ -5067,6 +5066,7 @@ async function orchestrationGenerateReply(
   // generic clarification, conversation-memory shortcut and KB retrieval.
   let _a3Commerce: CommerceRuntimeOutcome | null = null;
   let _c3Memory: CanonicalConversationMemory | null = null;
+  let _c3ScopedAreaMemoryVerified = false;
   let _c3MemoryContext = "";
   let _c3MemoryFailure: string | null = null;
   let _c3EmptyStateVerified = false;
@@ -5405,12 +5405,16 @@ async function orchestrationGenerateReply(
             committed_scoped_correction: _a3Commerce?.trusted_journey_progress?.update_kind === "contextual_scoped_update" &&
                 _a3Commerce.trusted_journey_progress.scoped_correction
               ? _a3Commerce.trusted_journey_progress : null,
+            committed_scoped_area: _a3Commerce?.reason === SCOPED_AREA_REASON &&
+              _a3Commerce.persist_result === "success",
             newest_first: memoryHistory,
             visitor_turn_count: _pr5VisitorTurnCount ?? 0,
           },
         );
       if (memoryOutcome?.ok) {
         _c3Memory = memoryOutcome.memory;
+        _c3ScopedAreaMemoryVerified = _a3Commerce?.reason === SCOPED_AREA_REASON &&
+          _a3Commerce.persist_result === "success";
         _c3MemoryContext = buildBoundedConversationContext(
           _c3Memory,
           (_pr5HistoryRows ?? []) as MemoryHistoryRow[],
@@ -5853,6 +5857,7 @@ async function orchestrationGenerateReply(
           : _c3Recall.decision,
       memory: _c3Memory,
       commerce: _c3CommerceSnapshot?.state ?? null,
+      commerce_snapshot: _c3CommerceSnapshot,
       recent_messages: _c3RecentServiceMessages,
       clarification_attempts: _pr5History.clarification_attempts,
       exact_same_intent_repeated: _pr5History.exact_same_intent_repeated,
@@ -5907,14 +5912,7 @@ async function orchestrationGenerateReply(
       { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
   const _c3CorrectionReceipt = _a3Commerce?.trusted_correction_commit ?? null;
-  const _c3VerifiedCorrectionReceipt = _c3CorrectionReceipt &&
-      verifyCommittedRoomCorrectionMemory({
-        memory: _c3Memory,
-        receipt: _c3CorrectionReceipt,
-        commerce: _c3CommerceSnapshot,
-      })
-    ? _c3CorrectionReceipt : null;
-  if (_c3CorrectionReceipt && !_c3VerifiedCorrectionReceipt) {
+  if (_c3CorrectionReceipt) {
     return new Response(
       JSON.stringify({ success: false, error: "correction_memory_commerce_mismatch" }),
       { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -5978,7 +5976,7 @@ async function orchestrationGenerateReply(
         source_message_id: _h1SourceMessageId, state_revision: _c3CommerceSnapshot.revision,
       }) : null;
   const _c3VerifiedScopedAreaConfirmation = Boolean(
-    _c3ScopedAreaReceipt && _a3Commerce?.route === "commerce_state_answer" &&
+    _c3ScopedAreaMemoryVerified && _c3ScopedAreaReceipt && _a3Commerce?.route === "commerce_state_answer" &&
     _a3Commerce.authority === "CONVERSATION_STATE" && _a3Commerce.persist_result === "success" &&
     _a3Commerce.state_path === SCOPED_AREA_PATH &&
     _c3CommerceSnapshot?.company_id === _criticalE2ExpectedTenantId &&
@@ -6318,7 +6316,7 @@ ${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was n
     (_a3Commerce?.reason === "explicit_address_correction_applied"
       ? null
       : _a3Commerce?.reply ?? null);
-  if (_c3CommerceReply && !_explicitHandoffRequested && (_c3PairedSiteConfirmation || _c3RejectedCustomerRequirement || !_customerGuidance && !_mixedRequest || Boolean(_c3VerifiedCorrectionReceipt || _c3LifecycleReceipt)) &&
+  if (_c3CommerceReply && !_explicitHandoffRequested && (_c3PairedSiteConfirmation || _c3RejectedCustomerRequirement || !_customerGuidance && !_mixedRequest || Boolean(_c3LifecycleReceipt)) &&
     (_c3RejectedCustomerRequirement || _c3VerifiedDimensionComparison || _c3CanUseLocalCommerceReply())) {
     const commerceReply = _a3Commerce?.reason ===
         "previous_quote_not_authoritative_for_current_price"
@@ -6389,7 +6387,7 @@ ${_c3UnverifiedDimensionContextAnswerOnly ? "The proposed dimension update was n
         }
         : null,
       _a3Commerce?.trusted_journey_progress ?? null,
-      _c3VerifiedCorrectionReceipt,
+      null,
       _c3LifecycleReceipt,
       null,null,null,protectedCountRead,
     ),safeReply=>commitAiReplyWithControlGate(supabaseAdmin,conversation_id,source_message_id,safeReply,{

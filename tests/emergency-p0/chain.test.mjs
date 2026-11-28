@@ -735,6 +735,16 @@ for(const [options,stage] of [[{remoteDenied:true},'admission'],[{kbHttp:true},'
 
 // Real Hosted P0 texts; provider outputs below are deterministic contract
 // reproductions, not recovered model output or Hosted PASS.
+function assertCurrentScopedArea(turn,memory,amount){
+ const persisted=turn.tables.conversation_commerce_state.at(-1);
+ const area=persisted.state.customer_constraints.scoped_area_observations;
+ const row=area?.current.find(row=>row.scope==="客廳");
+ assert.equal(row?.unit,"sq_ft");assert.equal(row.amount,amount);
+ assert(area.recorded_revision<=persisted.revision);
+ const projection=memory.current_customer_facts.find(f=>f.key==="scoped_area_observations");
+ assert.equal(projection?.source_message_id,area.source_message_id);
+ assert.match(projection.value,new RegExp(amount+"\\s*平方呎"));
+}
 const hostedP0 = [
  {id:'34c6be92-c1aa-468d-b0bc-10cad66508ad',text:'你好，我想換一部冷氣俾屋企兩位長者用。客廳180平方呎，預算HK$6,000，最重視夜晚安靜同慳電。未揀型號亦未落單；可否先幫我梳理選購取捨，同講應準備咩現場尺寸？暫時唔使查外部產品、報價或存貨。',product:'冷氣',facts:{room_area:{amount:180,unit:'平方呎'},budget:{amount:6000,unit:'HKD'}}},
  {id:'cefb3207-3fa2-4eed-bdbc-a090ee280493',text:'你好，我想買一部洗衣機俾三人家庭用，擺機位置闊600毫米、深560毫米，平時最在意洗衣時嘈音。你可以先幫我整理選機時應該考慮嘅取捨，同講下一步應補充咩資料嗎？',product:'洗衣機',facts:{household:3,width:{amount:600,unit:'mm'},depth:{amount:560,unit:'mm'}}},
@@ -769,7 +779,7 @@ test('Hosted Frankie correction then same-ticket Summary retains latest canonica
  const f=fixture(text,{source:uuid(101),fullChain:true,previous:initial.tables,history:initial.tables.messages,semantic:wireDelta({customer_correction:true,customer_facts:[{key:'room_area',value_json:'{"amount":150,"unit":"平方呎"}'},{key:'budget',value_json:'{"amount":5000,"unit":"HKD"}'}],requested_facts:[]},'UPDATE_ITEM')});
  const r=await f.run();assert.notEqual(r.body.generation_success,false,JSON.stringify({r,events:f.events.slice(-5)}));assert.equal(f.commits.length,1);
  const memory=f.tables.conversation_memory_state[0].memory;
- assert.equal(memory.current_customer_facts.find(x=>x.key==='room_area').value.amount,150);assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);
+ assertCurrentScopedArea(f,memory,150);assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);
  assert(memory.latest_corrections.length>0);assert(memory.cancelled_or_superseded.length>0);
  const summary=fixture('請總結呢張對話嘅需求，同我最新更正嘅客廳面積及預算；唔好查外部資料。',{source:uuid(102),fullChain:true,previous:f.tables,history:f.tables.messages});
  const beforeSummary=JSON.stringify(summary.tables.conversation_memory_state);const sr=await summary.run();assert.equal(JSON.stringify(summary.tables.conversation_memory_state),beforeSummary);assert.equal(sr.status,200,JSON.stringify({sr,events:summary.events.slice(-5)}));assert.equal(typeof sr.body.reply,'string',JSON.stringify({sr,events:summary.events.slice(-5)}));assert.equal(summary.commits.length,1);assert.match(sr.body.reply,/150/);assert.match(sr.body.reply,/5[,.]?000/);assert(!summary.requests.some(x=>/aiplatform|context-search/.test(x.url)));
@@ -803,7 +813,7 @@ for(const requested_facts of [['installation_dimensions','selection_steps'],['mo
  const answer='按最新客廳150平方呎及HK$5,000預算，先量度安裝位置和出入通道，記下兩位長者夜間使用的需要；實際型號的噪音和耗電資料仍需核實。';
  const f=fixture(text,{source:uuid(111),fullChain:true,answer,previous:initial.tables,history:initial.tables.messages,semantic:wireDelta({intent:'customer_context_update',customer_correction:true,customer_facts:[{key:'room_area',value_json:'{"amount":150,"unit":"平方呎"}'},{key:'budget',value_json:'{"amount":5000,"unit":"HKD"}'}],requested_facts},'UPDATE_ITEM')});
  const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits[0]?.content,answer,JSON.stringify({r,metadata:f.commits[0]?.metadata,state:f.tables.conversation_commerce_state,memory:f.tables.conversation_memory_state,events:f.events}));assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));assert(f.requests.filter(x=>x.url.endsWith(':generateContent')).length>=2);assert.equal(f.commits.length,1);
- const memory=f.tables.conversation_memory_state[0].memory;assert.equal(memory.current_customer_facts.find(x=>x.key==='room_area').value.amount,150);assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);assert(memory.latest_corrections.length>0);assert(memory.cancelled_or_superseded.length>0);assert(!memory.current_customer_facts.some(x=>x.key==='corrected_delivery_address'));
+ const memory=f.tables.conversation_memory_state[0].memory;assertCurrentScopedArea(f,memory,150);assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);assert(memory.latest_corrections.length>0);assert(memory.cancelled_or_superseded.length>0);assert(!memory.current_customer_facts.some(x=>x.key==='corrected_delivery_address'));
  const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
 });
 
@@ -824,7 +834,20 @@ test('Hosted 4df129e5 third-turn onsite observations generate through B2 without
  const answer='沿用最新150平方呎及HK$5,000預算，先記下夜間使用時段、休息位置與風口方向，再記下門窗和室外機位置。具體型號噪音及安裝可行性仍須核實。';
  const f=fixture(text,{source:uuid(122),fullChain:true,previous:corrected.tables,history:corrected.tables.messages,answer,semantic:wireDelta({intent:'ask_fact',requested_facts:['onsite_conditions']})});
  const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits[0]?.content,answer);assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));assert(f.requests.some(x=>x.url.endsWith(':generateContent')));assert.equal(f.commits.length,1);
- const memory=f.tables.conversation_memory_state[0].memory;assert.equal(memory.current_customer_facts.find(x=>x.key==='room_area').value.amount,150);assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);await f.run();assert.equal(f.commits.length,1);
+ const memory=f.tables.conversation_memory_state[0].memory;assert.equal(f.tables.conversation_commerce_state.at(-1).state.customer_constraints.scoped_area_observations,undefined,'owner-free input does not establish typed area authority');assert(!memory.current_customer_facts.some(x=>x.key==='room_area'||x.key==='scoped_area_observations'),'no legacy or typed area authority in owner-free Memory');assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+});
+
+test('Hosted 4df129e5 explicit-owner B retains source-bound typed onsite observations through B2',async()=>{
+ // Proposed owner-source setup. The three original Visitor messages remain verbatim.
+ const owner=fixture('我想了解冷氣。',{source:uuid(119),fullChain:true,semantic:wireDelta({intent:'customer_guidance',entities:[{name:'冷氣',kind:'physical_product',confidence:.97}],requested_facts:[]})});
+ await owner.run();
+ const initial=fixture('客廳180平方呎，預算HK$6,000，兩位長者重視安靜及省電。',{fullChain:true,previous:owner.tables,history:owner.tables.messages,semantic:wireDelta({intent:'customer_guidance',customer_facts:[{key:'room_area',value:{amount:180,unit:'平方呎'}},{key:'budget',value:{amount:6000,unit:'HKD'}}]})});await initial.run();
+ const corrected=fixture('更正客廳150平方呎，預算HK$5,000；請說明選購取捨，不需要查型號或報價。',{source:uuid(121),fullChain:true,previous:initial.tables,history:initial.tables.messages,answer:'按最新150平方呎及HK$5,000預算，先量度現場位置。',semantic:wireDelta({intent:'customer_context_update',customer_correction:true,customer_facts:[{key:'room_area',value:{amount:150,unit:'平方呎'}},{key:'budget',value:{amount:5000,unit:'HKD'}}]},'UPDATE_ITEM')});await corrected.run();
+ const text='如果長者對晚上風聲特別敏感，我去現場量度時應先記低哪幾項環境情況，才方便之後跟安裝師傅討論？請沿用最新面積及預算，暫時不用查商戶產品。';
+ const answer='沿用最新150平方呎及HK$5,000預算，先記下夜間使用時段、休息位置與風口方向，再記下門窗和室外機位置。具體型號噪音及安裝可行性仍須核實。';
+ const f=fixture(text,{source:uuid(122),fullChain:true,previous:corrected.tables,history:corrected.tables.messages,answer,semantic:wireDelta({intent:'ask_fact',requested_facts:['onsite_conditions']})});
+ const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));assert.equal(f.commits[0]?.content,answer);assert.equal(f.commits[0]?.metadata.response_route,'customer_guidance');assert(!f.requests.some(x=>x.url.includes('context-search')));assert(f.requests.some(x=>x.url.endsWith(':generateContent')));assert.equal(f.commits.length,1);
+ const memory=f.tables.conversation_memory_state[0].memory;assertCurrentScopedArea(f,memory,150);assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);await f.run();assert.equal(f.commits.length,1);
 });
 
 for(const variant of ['valid-repair','still-invalid','merchant-claim','human-control','superseded-source','ordinary'])test('B2 known-context draft repair is bounded, revalidated and Preview-scoped: '+variant,async()=>{
@@ -913,7 +936,7 @@ for(const actorCompany of ['3d6e17b5-ec79-4f75-aa7f-eaa824ff8493','4e0ea9f6-11d5
  assert.notEqual(initialState.conversion.funnel_stage,'quotation','advice cannot advance quotation funnel');
  const correction=fixture('更正：客廳實際150平方呎，總預算改為HK$5,000；夜間安靜比初期價錢更重要。仍不查型號、價格或庫存。請按最新資料解釋省電與安靜如何取捨，並提醒我尚欠哪些現場條件。',{company:actorCompany,source:uuid(141),originalPreview:true,fullChain:true,previous:initial.tables,history:initial.tables.messages,answer:'以你最新150平方呎及HK$5,000要求，先比較夜間低速聲量，再看同等用途的能源效益；現場仍要確認安裝位置、日照、通風和去水，不能只按面積保證匹數。',semantic:{operation:'UPDATE_ITEM',confidence:0.97,intent:'customer_guidance',customer_correction:true,customer_facts:[{key:'room_area',value:{amount:150,unit:'平方呎'}},{key:'budget',value:{amount:5000,unit:'HKD'}},{key:'priority',value:'夜間安靜'}],requested_facts:[]}});
  const second=await correction.run();assert.equal(second.status,200);assert.notEqual(second.body.generation_success,false,JSON.stringify({second,commerce:correction.tables.conversation_commerce_state,memory:correction.tables.conversation_memory_state,events:correction.events.slice(-15)}));assert.equal(correction.commits.length,1);assert.match(correction.commits[0].content,/150/);assert.match(correction.commits[0].content,/5[,.]?000/);assert.equal(correction.commits[0].metadata.response_route,'customer_guidance');
- const memory=correction.tables.conversation_memory_state[0].memory;assert.equal(memory.current_customer_facts.find(x=>x.key==='room_area').value.amount,150);assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);assert(memory.latest_corrections.length>0);assert(memory.cancelled_or_superseded.length>0);
+ const memory=correction.tables.conversation_memory_state[0].memory;assertCurrentScopedArea(correction,memory,150);assert.equal(memory.current_customer_facts.find(x=>x.key==='budget').value.amount,5000);assert(memory.latest_corrections.length>0);assert(memory.cancelled_or_superseded.length>0);
  const before=correction.requests.length;const replay=await correction.run();assert.equal(replay.body.idempotent,true);assert.equal(correction.commits.length,1);assert.equal(correction.requests.slice(before).filter(x=>x.url.endsWith(':generateContent')).length,0);
  const summary=fixture('請總結同一張票的最新面積及預算，唔好查外部資料。',{company:actorCompany,source:uuid(142),originalPreview:true,fullChain:true,previous:correction.tables,history:correction.tables.messages});const sr=await summary.run();assert.equal(sr.status,200);assert.match(sr.body.reply,/150/);assert.match(sr.body.reply,/5[,.]?000/);assert(!summary.requests.some(x=>/aiplatform|context-search/.test(x.url)));
  assert(!initial.requests.concat(correction.requests).some(x=>x.url.includes('context-search')));
@@ -1051,12 +1074,55 @@ test('actual complete handler retains original depth4 failure as rejection; sche
  await f.run();assert(JSON.stringify(f.events).includes('canonical_entity_bounds'));assert.equal(f.requests.filter(x=>x.url.endsWith(':generateContent')).length,1);assert.equal(f.commits.length,1);assert.equal(f.commits[0].metadata.generation_success,false);assert.equal(f.commits[0].metadata.degraded,true);assert.equal(f.tables.conversation_memory_state.length,0);
 });
 
-test('typed semantic same-ticket area/correction/Summary uses latest Memory without erasing prior facts or repeated goal intake',async()=>{
+async function runScopedAreaJourney(explicitUnits){
  const seed=fixture('想換冷氣，兩間睡房加個客廳，應該點揀好？',{originalPreview:true,fullChain:true,answer:'先比較每個房間的使用時間、面積及安裝限制。',semantic:{context_encoding:'typed_paths_v1',operation:'ASK_FACT',confidence:0.98,intent:'customer_guidance',requested_facts:[]}});await seed.run();
- const first=fixture('細房約80呎，大房100呎，客廳就180呎。',{originalPreview:true,fullChain:true,source:uuid(410),previous:seed.tables,history:seed.tables.messages,semantic:{context_encoding:'typed_paths_v1',operation:'NO_STATE_CHANGE',confidence:0.98,intent:'customer_context_update',customer_facts:[['small_room_area',80],['large_room_area',100],['living_room_area',180]].map(([key,amount])=>({key,value_nodes:typedContextNodes({amount,unit:'sq_ft'})}))}});const area=await first.run();assert.equal(area.status,200);assert.equal(first.commits[0].metadata.degraded,undefined,JSON.stringify(area));assert.doesNotMatch(area.body.reply,/你今次最想完成哪一件事|你这次最想完成哪一件事|What would you most like to complete now/);
- const corrected=fixture('更正：細房改為90平方呎，其餘不變。',{originalPreview:true,fullChain:true,source:uuid(411),previous:first.tables,history:first.tables.messages,semantic:{context_encoding:'typed_paths_v1',operation:'UPDATE_ITEM',confidence:0.98,intent:'customer_context_update',customer_correction:true,customer_facts:[{key:'small_room_area',value_nodes:typedContextNodes({amount:90,unit:'sq_ft'})}]}});await corrected.run();
- const facts=corrected.tables.conversation_memory_state.at(-1).memory.current_customer_facts;assert.equal(facts.find(x=>x.key==='small_room_area').value.amount,90);assert.equal(facts.find(x=>x.key==='large_room_area').value.amount,100);assert.equal(facts.find(x=>x.key==='living_room_area').value.amount,180);assert.equal(facts.find(x=>x.key==='small_room_area').source_message_id,uuid(411));
- const summary=fixture('請總結我最新需要，先唔使查產品。',{originalPreview:true,fullChain:true,source:uuid(412),previous:corrected.tables,history:corrected.tables.messages,semantic:{context_encoding:'typed_paths_v1',operation:'ASK_FACT',confidence:0.98,intent:'requirements_recap',requested_facts:[]}});const r=await summary.run();assert.equal(r.status,200,JSON.stringify(r));assert.match(r.body.reply,/90/);assert.match(r.body.reply,/100/);assert.match(r.body.reply,/180/);assert.doesNotMatch(r.body.reply,/(^|\D)80(?:\D|$)/);assert(!summary.requests.some(x=>x.url.includes('context-search')));assert.equal(summary.commits.length,1);const replay=await summary.run();assert.equal(replay.body.idempotent,true);assert.equal(summary.commits.length,1);assert.equal(summary.requests.filter(x=>x.url.includes('aiplatform')).length,0);
+ const firstText=explicitUnits?'細房約80平方呎，大房100平方呎，客廳就180平方呎。':'細房約80呎，大房100呎，客廳就180呎。';
+ const first=fixture(firstText,{originalPreview:true,fullChain:true,source:uuid(410),previous:seed.tables,history:seed.tables.messages,semantic:{context_encoding:'typed_paths_v1',operation:'NO_STATE_CHANGE',confidence:0.98,intent:'customer_context_update',customer_facts:[['small_room_area',80],['large_room_area',100],['living_room_area',180]].map(([key,amount])=>({key,value_nodes:typedContextNodes({amount,unit:'sq_ft'})}))}});const area=await first.run();assert.equal(area.status,200);assert.equal(first.commits[0].metadata.degraded,undefined,JSON.stringify(area));assert.doesNotMatch(area.body.reply,/你今次最想完成哪一件事|你这次最想完成哪一件事|What would you most like to complete now/);
+ const initial=first.tables.conversation_commerce_state.at(-1)?.state.customer_constraints.scoped_area_observations;
+ if(!explicitUnits){
+   assert.equal(initial,undefined);
+   const raw=first.tables.conversation_commerce_state.at(-1)?.state.customer_constraints.customer_reported_facts??{};
+   assert(!Object.values(raw).some(f=>f.value?.unit==="sq_ft"));
+ }
+ assert.equal(first.tables.messages.filter(row=>row.id===uuid(410)&&row.content===firstText).length,1);
+ const corrected=fixture('更正：細房改為90平方呎，其餘不變。',{originalPreview:true,fullChain:true,source:uuid(411),previous:first.tables,history:first.tables.messages,semantic:{context_encoding:'typed_paths_v1',operation:'UPDATE_ITEM',confidence:0.98,intent:'customer_context_update',customer_correction:true,customer_facts:[{key:'small_room_area',value_nodes:typedContextNodes({amount:90,unit:'sq_ft'})}]}});const correctedResult=await corrected.run();
+ assert.equal(correctedResult.status,200);
+ if(!explicitUnits)assert.match(correctedResult.body.reply,/首次確認/,correctedResult.body.reply);
+ const committedArea=corrected.tables.conversation_commerce_state.at(-1).state.customer_constraints.scoped_area_observations;
+ assert.equal(committedArea.recorded_revision,corrected.tables.conversation_commerce_state.at(-1).revision);
+ if(!explicitUnits)assert.equal(committedArea.current[0].prior_literal_source_id,uuid(410));
+ assert.equal(committedArea.action,'correct');assert.equal(committedArea.source_message_id,uuid(411));
+ assert.deepEqual(committedArea.current.map(({scope,amount,source_message_id})=>[scope,amount,source_message_id]),
+   explicitUnits?[['細房',90,uuid(411)],['大房',100,uuid(410)],['客廳',180,uuid(410)]]:[['細房',90,uuid(411)]]);
+ assert.deepEqual(committedArea.superseded.map(({scope,amount,source_message_id})=>[scope,amount,source_message_id]),explicitUnits?[['細房',80,uuid(410)]]:[]);
+ assert.equal(committedArea.current[0].first_verified,!explicitUnits||undefined);
+ assert.equal(committedArea.owner_source_message_id,seed.tables.messages.find(m=>m.role==='visitor').id);
+ for(const turn of [first,corrected]){assert.equal(turn.commits.length,1);assert(!turn.requests.some(req=>req.url.includes('context-search')));}
+ const facts=corrected.tables.conversation_memory_state.at(-1).memory.current_customer_facts;
+ const projected=facts.find(f=>f.key==='scoped_area_observations');
+ assert.equal(projected.source_message_id,uuid(411));assert.match(JSON.stringify(projected.value),/90/);
+ assert(!facts.some(f=>['room_size','small_room_area','large_room_area','living_room_area'].includes(f.key)));
+ const summary=fixture('請總結我最新需要，先唔使查產品。',{originalPreview:true,fullChain:true,source:uuid(412),previous:corrected.tables,history:corrected.tables.messages,semantic:{context_encoding:'typed_paths_v1',operation:'ASK_FACT',confidence:0.98,intent:'requirements_recap',requested_facts:[]}});const r=await summary.run();assert.equal(r.status,200,JSON.stringify(r));assert.match(r.body.reply,/90/);if(explicitUnits){assert.match(r.body.reply,/100/);assert.match(r.body.reply,/180/);}else assert.doesNotMatch(r.body.reply,/100|180/);assert.doesNotMatch(r.body.reply,/(^|\D)80(?:\D|$)/);assert(!summary.requests.some(x=>x.url.includes('context-search')));assert.equal(summary.commits.length,1);const replay=await summary.run();assert.equal(replay.body.idempotent,true);assert.equal(summary.commits.length,1);assert.equal(summary.requests.filter(x=>x.url.includes('aiplatform')).length,0);
+  return summary;
+ }
+test('typed semantic same-ticket area/correction/Summary uses latest Memory without erasing prior facts or repeated goal intake',()=>runScopedAreaJourney(false));
+test('Handler178 explicit area units retain current and superseded same-ticket sources through correction and Summary',()=>runScopedAreaJourney(true));
+test('Handler178 A continuation binds confirmed area to the requested scope, not other rooms',async()=>{
+ const prior=await runScopedAreaJourney(false);
+ for(const [offset,label,known] of [[413,'細房',true],[414,'大房',false],[415,'客廳',false],[416,'新範圍',false]]){
+  const question=label+'之前提供的房間面積是多少？';
+  const previous=structuredClone(prior.tables);
+  const expectedReceipt=JSON.stringify(previous.conversation_commerce_state.at(-1).state.customer_constraints.scoped_area_observations);
+  const f=fixture(question,{originalPreview:true,fullChain:true,source:uuid(offset),previous,history:previous.messages,
+    semantic:task1SemanticContextWire([task1SemanticContextDemand(question,{source_type:'general',requested_facts:['room_size'],subject_refs:[label]})],{intent:'customer_fact_recall',requested_facts:['room_size'],language:'zh-HK'}),
+    answer:'尚未確認該範圍的面積。'});
+  const r=await f.run();assert.equal(r.status,200,JSON.stringify(r));
+  assert.equal(f.commits.length,1);assert(!f.requests.some(req=>req.url.includes('context-search')));
+  if(known){assert.match(r.body.reply,/90\s*平方呎/);}
+  else {assert.doesNotMatch(r.body.reply,/90\s*平方呎|90\s*sqft/i);assert.notEqual(f.commits[0].metadata.response_route,'canonical_memory_recall');}
+  assert.equal(JSON.stringify(f.tables.conversation_commerce_state.at(-1).state.customer_constraints.scoped_area_observations),expectedReceipt);
+  const replay=await f.run();assert.equal(replay.body.idempotent,true);assert.equal(f.commits.length,1);
+ }
 });
 test('Director raw original RAG JSON runs complete Preview generation and guarded persistence without fabricated version',async()=>{
  const sample=JSON.parse(fs.readFileSync(path.join(root,'tests/c3-widget-live-auth/fixtures/director-original-rag-response.json'),'utf8'));
@@ -3393,6 +3459,15 @@ async function supervisorRecallFixture(row, variant='valid') {
     memory.memory.active_entities[0].current_requirements.brand_required=value;}
   else {entity.attributes={...entity.attributes,[key]:value};
     memory.memory.active_entities[0].current_requirements[key]=value;}
+ }
+ if(key==="room_size" && variant==="unlabelled"){
+   const ownerId=uuid(8788),ownerText="我想了解冷氣。";
+   prior.messages.push({...original,id:ownerId,content:ownerText,created_at:new Date(Date.parse(original.created_at)-1000).toISOString()});
+   entity.provenance={...entity.provenance,source_message_id:ownerId};
+   entity.attributes.product_name="冷氣";
+   const {roomSourceFixture}=first.load(path.join(root,"tests/fixtures/room-source-fixture.ts"));
+   roomSourceFixture(commerce.state,{...commerce,revision:commerce.revision},ownerText,ownerId,
+     [["我之前提供的房間面積",180]],oldSource,undefined," sqft",{text:priorText,rows:[priorText.replace(/。$/u,"")]});
  }
  memory.memory.commerce_state_revision=commerce.revision;
  if(variant==='wrong-value')original.content=priorText.replace(String(value),'999').replace(/三/g,'九').replace('Morgan','Taylor').replace('安靜的環境','熱鬧的環境');

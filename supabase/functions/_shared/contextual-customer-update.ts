@@ -6,7 +6,7 @@ import type { CommerceEntity, ConversationCommerceState } from "./commerce-state
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { matchesReferenceLabel } from "./industry-agent-registry.ts";
 import { sourceOwnedSubjectLabels,customerOwnedDisplayLabel,safeCustomerDisplayText } from "./commerce-subject-resolution.ts";
-import { customerDimensionPair,isSourceOwnedActiveAdviceGoal } from "./commerce-state-authority.ts";
+import { customerDimensionPair,isCurrentRequirementsRecap,isSourceOwnedActiveAdviceGoal } from "./commerce-state-authority.ts";
 import type { CommerceStateEvent } from "./commerce-state-reducer.ts";
 import { isExplicitScopedQuantityCorrectionSource, readVerifiedScopedQuantityCorrection,
   scopedQuantityCorrectionSummary, scopedQuantityCorrectionSourceMarker, verifyScopedQuantityCorrectionQuote,
@@ -1002,7 +1002,7 @@ export const SCOPED_AREA_REASON="source_bound_scoped_area_committed";
 type ScopedAreaUnit="sq_ft"|"sq_m";
 export interface ScopedAreaRow {
  scope:string; amount:number; unit:ScopedAreaUnit; approximate:boolean;
- source_message_id:string; source_text:string; clause:string; recorded_revision:number;
+ source_message_id:string; source_text:string; clause:string; recorded_revision:number; mixed_source?:true; first_verified?:true; prior_literal_source_id?:string;
 }
 export interface ScopedAreaReceipt {
  version:"scoped-area-1"; company_id:string; conversation_id:string;
@@ -1010,8 +1010,9 @@ export interface ScopedAreaReceipt {
  owner_source_message_id:string; owner_source_text:string;
  source_message_id:string; source_text:string; recorded_revision:number;
  action:"observe"|"correct"; current:ScopedAreaRow[]; superseded:ScopedAreaRow[];
+
 }
-const areaCorrectionCue=/^(?:更正|修正|correction)\s*[:：]\s*/iu;
+const areaCorrectionCue=/^(?:(?:更正|修正)(?:一下)?|correction)\s*[:：]\s*/iu;
 const areaUnchangedCue=/^(?:其餘不變|其余不变|others unchanged|everything else unchanged)$/iu;
 function areaScopeKey(v:string):string{return pairedText(v).toLocaleLowerCase("en-US")}
 function areaClauses(v:string,action:"observe"|"correct"):string[]|null {
@@ -1020,6 +1021,18 @@ function areaClauses(v:string,action:"observe"|"correct"):string[]|null {
  const clauses=text.replace(areaCorrectionCue,"").split(/[,，;；。]/u).map(s=>s.trim()).filter(Boolean);
  if(action==="correct"&&clauses.length>1&&areaUnchangedCue.test(clauses[clauses.length-1]))clauses.pop();
  return clauses.length>=1&&clauses.length<=8?clauses:null;
+}
+// A mixed turn can carry other requirements. Every clause containing an
+// explicit area unit must be accounted for; questions or negative area
+// assertions cannot become evidence by dropping their punctuation.
+const explicitAreaUnit=/平方[呎尺米]|平方公尺|\bsq\.?\s*(?:ft|m)\b|\bsquare (?:feet|met(?:er|re)s?)\b|\b(?:ft2|m2)\b/iu;
+const mixedCorrectionCue=/^(?:(?:更正|修正)(?:一下)?\s*[:：]?\s*|correction\s*[:：]\s*)/iu;
+function mixedAreaClauses(text:string,action:"observe"|"correct"):string[]|null{
+ if(!text || text.length>600 || mixedCorrectionCue.test(text)!==(action==="correct"))return null;
+ if(/(?:如果|假設|假设|假如|hypothetical|\bif\b|\bunless\b|do not (?:record|save)|不要記錄|不要记录)/iu.test(text))return null;
+ const clauses=text.replace(mixedCorrectionCue,"").replace(/\.(?=\s|$)/gu,"。").match(/[^,，;；。?!！？]+[?!！？]?/gu)??[];
+ const areas=clauses.map(clause=>clause.trim()).filter(clause=>explicitAreaUnit.test(clause));
+ return areas.length && areas.length<=8 && areas.every(clause=>!pairedNonAssertion.test(clause))?areas:null;
 }
 export function parseScopedAreaClause(clause:string,scope:string,action:"observe"|"correct"):
  Pick<ScopedAreaRow,"scope"|"amount"|"unit"|"approximate">|null {
@@ -1031,9 +1044,9 @@ export function parseScopedAreaClause(clause:string,scope:string,action:"observe
  if(/\p{N}$/u.test(scope)&&/^[\p{N}.]/u.test(suffix))return null;
  let tail=suffix.trim();
  if(action==="correct"){
-  const cue=/^(?:改為|改为|更正為|更正为|corrected to|changed to|is now)\s*/iu;
+  const cue=/^(?:改為|改为|改咗|更正為|更正为|其實[係是]|其实[系是]|實際(?:係|是)?|实际(?:系|是)?|corrected to|changed to|is now)\s*/iu;
   if(!cue.test(tail))return null;tail=tail.replace(cue,"");
- }else tail=tail.replace(/^(?:面積|面积|area)?\s*[:：]?\s*(?:是|係|is|=)?\s*/iu,"");
+ }else tail=tail.replace(/^(?:就)?(?:面積|面积|area)?\s*[:：]?\s*(?:是|係|is|=)?\s*/iu,"");
  const approx=/^(?:約|约|approximately|about|around)\s*/iu;
  const approximate=approx.test(tail);tail=tail.replace(approx,"");
  const m=tail.match(/^([0-9]+(?:\.[0-9]{1,3})?)\s*(平方[呎尺]|sq\.?\s*ft|square feet|ft2|平方米|平方公尺|sq\.?\s*m|square met(?:er|re)s?|m2)\.?$/iu);
@@ -1041,6 +1054,53 @@ export function parseScopedAreaClause(clause:string,scope:string,action:"observe
  if(!Number.isFinite(amount)||amount<=0||amount>1000000)return null;
  const unit:ScopedAreaUnit=/^(?:平方[呎尺]|sq\.?\s*ft|square feet|ft2)$/iu.test(m[2])?"sq_ft":"sq_m";
  return {scope,amount,unit,approximate};
+}
+// Decode the retained measurement-frame shape only from a complete original
+// exchange. Fact keys do not select a scope, unit, owner or quantity.
+export function sourceAreaFrame(state:ConversationCommerceState,c:ContextualSourceContext,text:string,
+ f:CommerceSemanticFrame|null|undefined,history:PairedHistory):CommerceSemanticFrame|null {
+ if(!f || !f.customer_facts?.length || f.customer_facts.length>8 || f.referents.length || f.entities.length ||
+   f.demands?.length || !(f.intent==="customer_context_update" || (f.customer_correction && f.intent==="customer_guidance")) || f.additive || f.ambiguity.is_ambiguous ||
+   f.explicit_negations.length || f.requested_facts.length || f.confidence<.9 ||
+   [f.transaction_state,f.payment_state,f.booking_state,f.fulfillment_state].some(x=>x!=="none"&&x!=="unknown"))return null;
+ if(new Set(f.customer_facts.map(fact=>fact.key)).size!==f.customer_facts.length)return null;
+ const correct=f.customer_correction, action=correct?"correct":"observe";
+ if(f.operation!==(correct?"UPDATE_ITEM":"NO_STATE_CHANGE"))return null;
+ const original=pairedText(text), clauses=areaClauses(original,action);
+ if(!clauses||clauses.length!==f.customer_facts.length)return null;
+ const old=readScopedAreaReceipt(state,c);
+ const prior=history.filter(x=>x.id!==c.source_message_id);
+ const owner=prior.filter(x=>x.role==="visitor" && isSourceOwnedActiveAdviceGoal(x.content));
+ if(owner.length!==1||!owner[0].id)return null;
+ const subject=old?.subject_ref??pairedText(owner[0].content.split(/[,，;；。?!？]/u)[0]);
+ if(!subject||!pairedPriorOwnerAllowed(state,subject))return null;
+ const scopes:string[]=[],matched=new Set<number>();
+ for(const clause of clauses) {
+   const m=clause.match(/^(.+?)(?:就|約|约|其實是|其實係|改為|改为|改咗|[0-9])/u);
+   if(!m)return null;
+   const scope=m[1].trim(),row=parseScopedAreaClause(clause,scope,action);
+   if(!row)return null;
+   const possible=f.customer_facts.map((fact,i)=>({v:pairedObject(fact.value),i}))
+     .filter(({v})=>v && Object.keys(v).length===2 && v.amount===row.amount && v.unit===row.unit);
+   if(possible.length!==1 || matched.has(possible[0].i))return null;
+   matched.add(possible[0].i);scopes.push(scope);
+ }
+ return {...f,operation:"UPDATE_ITEM",intent:"customer_context_update",referents:[{source:"prior_turn",ref:subject,confidence:f.confidence}],
+   customer_facts:[{key:SCOPED_AREA_KEY,value:{action,source_text:original,scopes,row_texts:clauses}}]};
+}
+// A correction may establish the first verified area for a previously
+// mentioned scope. The old literal identifies only the scope, not its area.
+function isScopedAreaAdviceOwner(text:string){
+ return !isCurrentRequirementsRecap(text) && isSourceOwnedActiveAdviceGoal(text);
+}
+function unresolvedScopeSource(history:PairedHistory,scope:string,currentId:string){
+ const candidates=pairedHistory(history).filter(row=>row.id!==currentId && !pairedNonAssertion.test(row.content) &&
+   pairedText(row.content).split(/[,，;；。]/u).some(part=>{
+     const clause=part.trim();
+     if(!clause.startsWith(scope))return false;
+     return /^(?:就)?(?:約|约|about\s+)?[0-9]+(?:\.[0-9]+)?\s*(?:呎|尺|ft|feet|foot)$/iu.test(clause.slice(scope.length).trim());
+   }));
+ return candidates.length===1?candidates[0].id:null;
 }
 function areaOwner(state:ConversationCommerceState,c:ContextualSourceContext,ref:string) {
  const active=state.entities.filter(e=>!["cancelled","deferred","superseded"].includes(e.status));
@@ -1055,14 +1115,69 @@ function areaOwner(state:ConversationCommerceState,c:ContextualSourceContext,ref
  const g=readSourceBoundContextualGoal(state,c);
  return g&&g.goal_id===ref?{label:g.subject_label,id:g.source_message_id}:null;
 }
+function parseMixedAreaRow(clause:string,scope:string,action:"observe"|"correct"){
+ const row=parseScopedAreaClause(clause,scope,action);
+ // A leading explicit correction can supply the correction operator for a plain assignment.
+ return row ?? (action==="correct"?parseScopedAreaClause(clause,scope,"observe"):null);
+}
+/** Merge only source-proved measurements into the existing CAS reduction.
+ * Other business facts and transaction decisions retain their original path. */
+export function mixedScopedAreaReceipt(previous:ConversationCommerceState,state:ConversationCommerceState,
+ context:ContextualSourceContext|undefined,source:string,frame:CommerceSemanticFrame|null|undefined,history:PairedHistory):ScopedAreaReceipt|null{
+ if(!validSourceContext(context)||!frame || frame.confidence<.9 || frame.ambiguity.is_ambiguous || frame.additive ||
+    frame.explicit_negations.length || !frame.customer_facts?.length ||
+    !["customer_context_update","customer_guidance"].includes(frame.intent) ||
+    [frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state].some(v=>v!=="none"&&v!=="unknown"))return null;
+ const text=pairedText(source),action=frame.customer_correction?"correct":"observe";
+ const clauses=mixedAreaClauses(text,action);
+ if(!clauses)return null;
+ const owners=state.entities.filter(e=>!["deferred","cancelled","superseded"].includes(e.status));
+ if(owners.length!==1)return null;
+ if(!["ASK_FACT","UPDATE_ITEM","NO_STATE_CHANGE"].includes(frame.operation) ||
+   (frame.customer_correction && frame.operation!=="UPDATE_ITEM") ||
+   (frame.demands??[]).some(d=>d.customer_correction!==frame.customer_correction || d.ambiguity.is_ambiguous || d.explicit_negations.length))return null;
+ const subject=owners[0].entity_id,owner=areaOwner(state,context,subject);
+ if(!owner || frame.entities.length>1 ||
+   frame.entities.some(e=>!matchesReferenceLabel(e.name,owner.label)) ||
+   frame.referents.some(ref=>ref.ref!==subject && !matchesReferenceLabel(ref.ref,owner.label)))return null;
+ const old=readScopedAreaReceipt(previous,context);
+ if(previous.customer_constraints[SCOPED_AREA_KEY]!=null && (!old || old.subject_ref!==subject ||
+   old.owner_source_message_id!==owner.id || !scopedAreaSourcesMatch(old,history)))return null;
+ if(action==="correct"&&!old)return null;
+ const originals=owner.id===context.source_message_id?[{id:owner.id,content:text}]:pairedHistory(history).filter(r=>r.id===owner.id);
+ if(originals.length!==1 || !matchesReferenceLabel(originals[0].content,owner.label))return null;
+ const current=[...(old?.current??[])],superseded=[...(old?.superseded??[])],used=new Set<number>();
+ for(const clause of clauses){
+   const match=clause.match(/^(.+?)(?:就|約|约|其實[係是]|其实[系是]|實際|实际|改為|改为|改咗|[0-9])/u);
+   if(!match)return null;
+   const row=parseMixedAreaRow(clause,match[1].trim(),action);
+   if(!row)return null;
+   const facts=frame.customer_facts.flatMap((fact,i)=>{
+     const value=pairedObject(fact.value);
+     if(!value || Object.keys(value).length!==2 || value.amount!==row.amount || typeof value.unit!=="string")return [];
+     const literal=clause.match(/[0-9]+(?:\.[0-9]+)?\s*([^0-9]*[a-z²尺呎米]2?)\.?$/iu)?.[1]?.trim().toLowerCase();
+     return value.unit===row.unit || value.unit.trim().toLowerCase()===literal?[i]:[];
+   });
+   if(facts.length!==1 || used.has(facts[0]))return null;
+   used.add(facts[0]);
+   const index=current.findIndex(v=>areaScopeKey(v.scope)===areaScopeKey(row.scope));
+   if((action==="correct")!==(index>=0))return null;
+   const next={...row,source_message_id:context.source_message_id,source_text:text,clause,recorded_revision:context.state_revision+1,mixed_source:true as const};
+   if(index<0)current.push(next);
+   else {const prior=current[index];if(prior.unit!==row.unit || prior.amount===row.amount && prior.approximate===row.approximate)return null;
+     superseded.push(prior);current[index]=next;}
+ }
+ const receipt:ScopedAreaReceipt={version:"scoped-area-1",company_id:context.company_id,conversation_id:context.conversation_id,subject_ref:subject,subject_label:owner.label,owner_kind:"persistent_state",owner_source_message_id:owner.id,owner_source_text:pairedText(originals[0].content),source_message_id:context.source_message_id,source_text:text,recorded_revision:context.state_revision+1,action,current,superseded};
+ return readScopedAreaReceipt({...state,customer_constraints:{...state.customer_constraints,[SCOPED_AREA_KEY]:receipt}},{...context,state_revision:context.state_revision+1});
+}
 function areaRow(v:unknown,r:ScopedAreaReceipt,c:ContextualSourceContext):v is ScopedAreaRow {
  const p=pairedObject(v);
  if(!p||typeof p.scope!=="string"||typeof p.source_message_id!=="string"||!p.source_message_id||
-  p.source_message_id===r.owner_source_message_id||typeof p.source_text!=="string"||typeof p.clause!=="string"||
+  (p.source_message_id===r.owner_source_message_id && !(p.mixed_source===true && r.owner_kind==="persistent_state" && p.source_text===r.owner_source_text))||typeof p.source_text!=="string"||typeof p.clause!=="string"||
   typeof p.recorded_revision!=="number"||!Number.isSafeInteger(p.recorded_revision)||
   p.recorded_revision<1||p.recorded_revision>c.state_revision||p.recorded_revision>r.recorded_revision)return false;
- const action=areaCorrectionCue.test(p.source_text)?"correct":"observe";
- const clauses=areaClauses(p.source_text,action),parsed=parseScopedAreaClause(p.clause,p.scope,action);
+ const action=(p.mixed_source===true?mixedCorrectionCue:areaCorrectionCue).test(p.source_text)?"correct":"observe";
+ const clauses=p.mixed_source===true?mixedAreaClauses(p.source_text,action):areaClauses(p.source_text,action),parsed=(p.mixed_source===true?parseMixedAreaRow:parseScopedAreaClause)(p.clause,p.scope,action);
  return !!clauses&&clauses.filter(x=>x===p.clause).length===1&&!!parsed&&parsed.amount===p.amount&&parsed.unit===p.unit&&parsed.approximate===p.approximate;
 }
 export function hasScopedAreaProposal(frame:CommerceSemanticFrame|null|undefined):boolean{
@@ -1079,12 +1194,13 @@ export function readScopedAreaReceipt(state:ConversationCommerceState,c:Contextu
   !["observe","correct"].includes(String(p.action))||!Array.isArray(p.current)||!p.current.length||p.current.length>8||
   !Array.isArray(p.superseded)||p.superseded.length>24)return null;
  const r=p as unknown as ScopedAreaReceipt;
+ if("unit_context" in p)return null;
  if(!matchesReferenceLabel(r.owner_source_text,r.subject_label))return null;
  if(r.owner_kind==="persistent_state"){
   const owner=areaOwner(state,c,r.subject_ref);
   if(!owner||owner.id!==r.owner_source_message_id||owner.label!==r.subject_label)return null;
  }else if(r.owner_kind!=="prior_turn"||r.subject_ref!==r.subject_label||pairedScope(r.subject_ref)!==r.subject_ref||
-  !pairedPriorOwnerAllowed(state,r.subject_label)||!isSourceOwnedActiveAdviceGoal(r.owner_source_text))return null;
+  !pairedPriorOwnerAllowed(state,r.subject_label)||!isScopedAreaAdviceOwner(r.owner_source_text))return null;
  if(![...r.current,...r.superseded].every(v=>areaRow(v,r,c)))return null;
  // Replay each complete original source, not merely the latest correction.
  // Dropping an unaffected scope, a predecessor, or part of an older source
@@ -1104,12 +1220,12 @@ export function readScopedAreaReceipt(state:ConversationCommerceState,c:Contextu
  const ordered=[...byRevision.entries()].sort(([a],[b])=>a-b);
  const last=ordered.at(-1);
  if(!last||last[0]!==r.recorded_revision||last[1].id!==r.source_message_id||last[1].text!==r.source_text||
-  (areaCorrectionCue.test(last[1].text)?"correct":"observe")!==r.action)return null;
+  ((last[1].rows.every(row=>row.mixed_source)?mixedCorrectionCue:areaCorrectionCue).test(last[1].text)?"correct":"observe")!==r.action)return null;
  const effective=new Map<string,ScopedAreaRow>();
  const historical=new Set(r.superseded);
  for(const [,batch] of ordered){
-  const action=areaCorrectionCue.test(batch.text)?"correct":"observe";
-  const clauses=areaClauses(batch.text,action);
+  const action=(batch.rows.every(row=>row.mixed_source)?mixedCorrectionCue:areaCorrectionCue).test(batch.text)?"correct":"observe";
+  const clauses=batch.rows.every(row=>row.mixed_source===true)?mixedAreaClauses(batch.text,action):areaClauses(batch.text,action);
   if(!clauses||clauses.length!==batch.rows.length||
    new Set(batch.rows.map(v=>v.clause)).size!==clauses.length||
    !batch.rows.every(v=>clauses.includes(v.clause))||
@@ -1118,6 +1234,8 @@ export function readScopedAreaReceipt(state:ConversationCommerceState,c:Contextu
    const key=areaScopeKey(row.scope),prior=effective.get(key);
    if(action==="observe"){
     if(prior)return null;
+   }else if(row.first_verified){
+    if(!row.prior_literal_source_id || row.prior_literal_source_id===row.source_message_id || prior || batch!==ordered[0][1] || batch.rows.length!==1 || r.owner_kind!=="prior_turn")return null;
    }else if(!prior||!historical.has(prior)||prior.unit!==row.unit||
     (prior.amount===row.amount&&prior.approximate===row.approximate))return null;
    effective.set(key,row);
@@ -1127,19 +1245,22 @@ export function readScopedAreaReceipt(state:ConversationCommerceState,c:Contextu
   r.superseded.some(v=>effective.get(areaScopeKey(v.scope))===v))return null;
  return r;
 }
-export function scopedAreaSources(r:ScopedAreaReceipt):{id:string;text:string}[] {
+export function scopedAreaSources(r:ScopedAreaReceipt):{id:string;text:string;role?:"assistant"}[] {
  const entries=[{id:r.owner_source_message_id,text:r.owner_source_text},...[...r.current,...r.superseded].map(v=>({id:v.source_message_id,text:v.source_text}))];
  return entries.filter((v,i)=>entries.findIndex(x=>x.id===v.id&&x.text===v.text)===i);
 }
 export function scopedAreaSourcesMatch(r:ScopedAreaReceipt,history:PairedHistory):boolean {
  const rows=pairedHistory(history),sources=scopedAreaSources(r);
+ for(const row of [...r.current,...r.superseded]){
+   if(row.first_verified && unresolvedScopeSource(history,row.scope,row.source_message_id)!==row.prior_literal_source_id)return false;
+ }
  if(r.owner_kind==="prior_turn"){
-  const owners=rows.filter(h=>isSourceOwnedActiveAdviceGoal(h.content));
+  const owners=rows.filter(h=>isScopedAreaAdviceOwner(h.content));
   if(owners.length!==1||owners[0].id!==r.owner_source_message_id||
    !matchesReferenceLabel(owners[0].content,r.subject_label))return false;
  }
  return new Set(sources.map(v=>v.id)).size===sources.length&&sources.every(v=>{
-  const originals=rows.filter(x=>x.id===v.id);
+  const originals=v.role==="assistant"?history.filter(x=>x.role==="assistant"&&x.id===v.id):rows.filter(x=>x.id===v.id);
   return originals.length===1&&pairedText(originals[0].content)===v.text;
  });
 }
@@ -1164,14 +1285,15 @@ export function verifiedScopedAreaProposal(input:{
  // otherwise a single literal visitor goal. Never synthesize a goal or entity.
  const persisted=ref.source==="persistent_state"?areaOwner(state,c,ref.ref):null;
  const prior=ref.source==="prior_turn"&&pairedScope(ref.ref)===ref.ref&&pairedPriorOwnerAllowed(state,ref.ref)?
-  history.filter(h=>isSourceOwnedActiveAdviceGoal(h.content)):[];
+  history.filter(h=>isScopedAreaAdviceOwner(h.content)):[];
  const owners=persisted?history.filter(h=>h.id===persisted.id&&matchesReferenceLabel(h.content,persisted.label)):prior;
  if(owners.length!==1||(!persisted&&!matchesReferenceLabel(owners[0].content,ref.ref))||owners[0].content.length>2400)return null;
  const owner=persisted??{label:ref.ref,id:owners[0].id};
  if(!owner.id||owner.id===c.source_message_id)return null;
  const existing=state.customer_constraints[SCOPED_AREA_KEY],old=readScopedAreaReceipt(state,c);
- if(existing!=null&&(!old||old.subject_ref!==ref.ref||old.owner_kind!==ref.source||old.owner_source_message_id!==owner.id||old.subject_label!==owner.label||scopedAreaSources(old).some(x=>x.id===c.source_message_id)||!scopedAreaSourcesMatch(old,history)))return null;
- if(action==="correct"&&!old)return null;
+ if(existing!=null&&(!old||old.subject_ref!==ref.ref||old.owner_kind!==ref.source||old.owner_source_message_id!==owner.id||old.subject_label!==owner.label||scopedAreaSources(old).some(x=>x.id===c.source_message_id)||!scopedAreaSourcesMatch(old,input.history??[])))return null;
+ const firstVerified=action==="correct" && !old;
+ if(firstVerified && (ref.source!=="prior_turn" || clauses.length!==1))return null;
  const current=[...(old?.current??[])],superseded=[...(old?.superseded??[])],incoming:ScopedAreaRow[]=[];
  for(let i=0;i<clauses.length;i++){
   const scope=proposal.scopes[i],rowText=proposal.row_texts[i];
@@ -1179,8 +1301,10 @@ export function verifiedScopedAreaProposal(input:{
   const parsed=parseScopedAreaClause(clauses[i],scope,action);
   if(!parsed||incoming.some(x=>areaScopeKey(x.scope)===areaScopeKey(parsed.scope)))return null;
   const at=current.findIndex(x=>areaScopeKey(x.scope)===areaScopeKey(parsed.scope));
-  if((action==="correct")!==(at>=0))return null;
-  const next={...parsed,source_message_id:c.source_message_id,source_text:text,clause:clauses[i],recorded_revision:c.state_revision+1};
+  if((action==="correct" && !firstVerified)!==(at>=0))return null;
+  const priorLiteral=firstVerified?unresolvedScopeSource(input.history??[],scope,c.source_message_id):null;
+  if(firstVerified && !priorLiteral)return null;
+  const next={...parsed,...(firstVerified?{first_verified:true as const,prior_literal_source_id:priorLiteral!}:{}),source_message_id:c.source_message_id,source_text:text,clause:clauses[i],recorded_revision:c.state_revision+1};
   if(at>=0){const prior=current[at];if(prior.unit!==next.unit||prior.amount===next.amount&&prior.approximate===next.approximate)return null;
    superseded.push(prior);current[at]=next;}else current.push(next);
   incoming.push(next);
@@ -1201,5 +1325,6 @@ export function scopedAreaMemoryValue(r:ScopedAreaReceipt,history:PairedHistory,
 }
 export function scopedAreaReply(r:ScopedAreaReceipt,l:"en"|"zh-CN"|"zh-TW"):string {
  const details=scopedAreaDisplay(r.current.filter(v=>v.source_message_id===r.source_message_id),l);
+ if(r.current.some(row=>row.first_verified && row.source_message_id===r.source_message_id))return (l==="en"?"First confirmed area from your correction: ":l==="zh-CN"?"按这次更正首次确认的面积：":"按今次更正首次確認的面積：")+details+"。";
  return l==="en"?(r.action==="correct"?"Corrected: ":"Recorded: ")+details+".":(r.action==="correct"?"已更正：":l==="zh-CN"?"已记录：":"已記錄：")+details+"。";
 }

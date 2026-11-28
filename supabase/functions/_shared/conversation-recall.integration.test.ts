@@ -1,3 +1,5 @@
+import {roomGoalFixture,roomSourceFixture} from "../../../tests/fixtures/room-source-fixture.ts";
+import { seedExplicitRecallArea } from "./conversation-recall.test.ts";
 /** Offline integration against frozen B2 and the real runtime source. No live API calls. */
 import {
   buildB2AuthoritativeReadbackProof,
@@ -492,12 +494,26 @@ Deno.test("C3 exact T050 recalls all retained room sizes written with shared col
     source_created_at: "2026-09-18T00:00:00Z",
     next_memory_revision: 1,
   });
-  const result = prepareConversationRecall({
+  const rawOnly = prepareConversationRecall({
     ...seed,
     question: "幾大？",
     memory,
     recent_questions: ["唔洗再問我房幾大，我頭先講過。"],
   }, "zh-TW");
+  // Original bare-only setup stays executable. Its numeric oracle is a named
+  // transition: exact-only raw history cannot authorize a general size reply.
+  assert(!rawOnly.decision.handled && rawOnly.decision.detail==="MISSING_ROOM_SIZE",JSON.stringify(rawOnly));
+  assert(!/80|100|180/.test(rawOnly.reply??""),"raw figures entered an ordinary reply");
+  // Preserve every positive assertion below on a separately sourced, explicitly
+  // confirmed measurement. The original Visitor messages keep their wording and IDs.
+  const c=seed.commerce!,owner=c.state.entities[0],ownerId=owner.provenance.source_message_id!;
+  owner.attributes.product_name="aircon";
+  const ownerText=seed.trusted_visitor_source_rows!.find(row=>row.id===ownerId)!.content;
+  const verified=roomSourceFixture(c.state,c,ownerText,ownerId,[["房一",80],["房二",100],["廳",180]],"t050-explicit-measurements");
+  const selection="我想確認房一及房二的面積。";
+  const result=prepareConversationRecall({...seed,question:"幾大？",memory,
+    recent_questions:[selection,"唔洗再問我房幾大，我頭先講過。"],
+    trusted_visitor_source_rows:[...verified,{id:"t050-scope-question",content:selection}]}, "zh-TW");
   assert(result.decision.handled, JSON.stringify(result.decision));
   assert(result.reply?.includes("80") && result.reply.includes("100"), result.reply ?? "missing reply");
   assert(!result.reply?.includes("180"), result.reply ?? "missing reply");
@@ -552,7 +568,12 @@ Deno.test("C3 context-resolved English compact size paraphrase uses the canonica
     entity_id: null,
     region: null,
   }];
+  const c=input.commerce!,rows=["bedroom A 120 square feet","bedroom B 140 square feet","living room 220 square feet"];
+  const history=roomGoalFixture(c.state,c,"I need space planning advice.","space planning","english-space-goal",
+    [["bedroom A",120],["bedroom B",140],["living room",220]],"51000000-0000-4000-8000-000000000002",{text:rows.join("; "),rows});
+  input.trusted_visitor_source_rows=history;
   input.recent_questions = ["What was the bedroom size I gave you?"];
+  input.trusted_visitor_source_rows=[...history,{id:"english-scope-question",content:input.recent_questions[0]}];
   const result = prepareConversationRecall(input, "en");
   assert(result.decision.handled, JSON.stringify(result.decision));
   assert(result.decision.fact_type === "room_size", JSON.stringify(result.decision));
@@ -762,6 +783,7 @@ for (const q of questions) {
   for (const lang of ["zh-TW", "zh-CN", "en"]) {
     Deno.test(`C3 real frozen B2 semantic reply ${lang}: ${q}`, () => {
       const input = recallFixture(q);
+      if(q==="之前提供的房間面積是多少？")seedExplicitRecallArea(input);
       const route = prepareConversationRecall(input, lang);
       assert(
         route.decision.handled && route.reply,
@@ -1713,6 +1735,12 @@ Deno.test("C3 reconstructed acceptance failures use customer-owned history (non-
       role: "visitor",
       content,
     }));
+    if(row.id==="T50"){
+      const original=setup[0];
+      const rows=roomGoalFixture(commerceState,seed.commerce!,"我想了解空間規劃。","空間規劃","recall-goal",
+        [["細房",80],["大房",100]],original.id,{text:original.content,rows:["細房80平方呎","大房100平方呎"]});
+      setup.unshift(rows[0]);
+    }
     const memory = buildCanonicalConversationMemory({
       previous: null,
       conversation_id: seed.conversation_id,

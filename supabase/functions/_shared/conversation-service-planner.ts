@@ -9,6 +9,7 @@
 import { renderCanonicalRequirement, renderRequirementQualification } from "./commerce-capability-runtime.ts";
 import type { CommerceEntity, ConversationCommerceState } from "./commerce-state-contract.ts";
 import type { CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { SCOPED_AREA_KEY, readScopedAreaReceipt, scopedAreaMemoryValue } from "./contextual-customer-update.ts";
 import { exactProductIdentifiers, isProductOperationFailure, isProductSupportProblem } from "./natural-customer-response.ts";
 import { deriveTypedCustomerMoneyFacts } from "./customer-money-facts.ts";
 import { activeCustomerGoal, customerRequestedQuantity } from "./customer-journey-orchestration.ts";
@@ -140,7 +141,9 @@ export interface ServicePlanInput {
   recall: ServiceRecallDecision;
   memory: CanonicalConversationMemory | null;
   commerce: ConversationCommerceState | null;
-  recent_messages?: Array<{ role: string; content: string }>;
+  recent_messages?: Array<{ id?: string | null; role: string; content: string }>;
+  /** Server-read ticket identity; never populated from model or client fields. */
+  commerce_snapshot?: { company_id: string; conversation_id: string; source_message_id: string | null; revision: number } | null;
   clarification_attempts?: number;
   exact_same_intent_repeated?: boolean;
   explicit_handoff?: boolean;
@@ -173,7 +176,6 @@ const has = (text: string, values: string[]) =>
   );
 
 // No predefined room labels in Phase 1; present customer-provided labels only.
-const SERVICE_ROOM_LABELS: Record<string, [string, string, string]> = {};
 
 function knownFacts(input: ServicePlanInput) {
   const facts: ServiceDialoguePlan["known_facts"] = [];
@@ -195,6 +197,36 @@ function knownFacts(input: ServicePlanInput) {
   };
   const state = input.commerce;
   if (state) {
+    // No legacy room field or unverified Memory string grants fact authority.
+    // Revalidate the exact server-read receipt and every original Visitor row.
+    const snapshot = input.commerce_snapshot;
+    if (snapshot?.source_message_id) {
+      const receipt = readScopedAreaReceipt(state, {
+        company_id: snapshot.company_id,
+        conversation_id: snapshot.conversation_id,
+        source_message_id: snapshot.source_message_id,
+        state_revision: snapshot.revision,
+      });
+      const area = receipt && input.recent_messages
+        ? scopedAreaMemoryValue(receipt, input.recent_messages, input.language)
+        : null;
+      if (area && receipt) {
+        const entity = receipt.owner_kind === "persistent_state" &&
+          state.entities.find(item => item.entity_id === receipt.subject_ref);
+        if (entity) {
+          for (const [index, row] of receipt.current.entries()) {
+            // The receipt has already replayed this literal clause against its Visitor row.
+            // Preserve the customer's measurement in every locale.
+            const measurement = row.clause.slice(row.scope.length).match(
+              /([0-9]+(?:\.[0-9]+)?\s*(?:平方[呎尺]|平方米|平方公尺|sq\.?\s*(?:ft|m)|square (?:feet|met(?:er|re)s?)|ft2|m2))\.?$/iu,
+            );
+            if (measurement) add(`entity:${entity.entity_id}:${SCOPED_AREA_KEY}:${index + 1}`,
+              row.scope, (row.approximate ? (input.language === "en" ? "about " : input.language === "zh-CN" ? "约" : "約") : "") +
+                measurement[1], "CANONICAL_COMMERCE_STATE");
+          }
+        } else add(SCOPED_AREA_KEY, "Area by scope", area, "CANONICAL_COMMERCE_STATE");
+      }
+    }
     add(
       "current_intent",
       "目前目標",
@@ -245,11 +277,6 @@ function knownFacts(input: ServicePlanInput) {
         !["cancelled", "deferred"].includes(item.status)
       )
     ) {
-      const l = input.language === "en" ? 2 : input.language === "zh-CN" ? 1 : 0;
-      if (entity.attributes.room_sizes && typeof entity.attributes.room_sizes === "object") {
-        for (const [room, size] of Object.entries(entity.attributes.room_sizes))
-          add(`entity:${entity.entity_id}:room_size:${room}`, `${SERVICE_ROOM_LABELS[room]?.[l] ?? ["空間", "空间", "Space"][l]}${["面積", "面积", " area"][l]}`, size, "CUSTOMER_PROVIDED");
-      }
       add(`entity:${entity.entity_id}:requested_date`, "Requested date", entity.attributes.requested_date,"CUSTOMER_PROVIDED");
       add(`entity:${entity.entity_id}:product_name`, "Item", entity.attributes.product_name, "CUSTOMER_PROVIDED");
       add(`entity:${entity.entity_id}:sku`, "SKU", entity.attributes.sku, "CUSTOMER_PROVIDED");
@@ -270,12 +297,7 @@ function knownFacts(input: ServicePlanInput) {
         entity.model ?? entity.attributes.model,
         "CUSTOMER_PROVIDED",
       );
-      add(
-        `entity:${entity.entity_id}:room_size`,
-        "使用面積",
-        entity.attributes.room_size,
-        "CUSTOMER_PROVIDED",
-      );
+
       add(
         `entity:${entity.entity_id}:horsepower`,
         "所需匹數",
@@ -665,7 +687,9 @@ export function planConversationService(
     try { query = input.factual_request?.applicable && input.factual_request.query
       ? input.factual_request.query
       : canonicalFactualRead && !semanticMerchantRead
-      ? buildCanonicalRetrievalQuery(question, input.recent_messages ?? []).query
+      ? buildCanonicalRetrievalQuery(question, (input.recent_messages ?? []).map(message => ({
+          ...message, id: message.id ?? undefined,
+        }))).query
       : buildKbQuery(question, input); }
     catch (error) {
       if (!(error instanceof DecisionContextLimitError)) throw error;
@@ -825,6 +849,7 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
     customer_constraint: ["重要限制", "重要限制", "Constraint"],
     model: ["型號", "型号", "Model"], quantity: ["數量", "数量", "Quantity"],
     room_size: ["使用面積", "使用面积", "Area"],
+    [SCOPED_AREA_KEY]: ["各範圍面積", "各范围面积", "Area by scope"],
     horsepower: ["所需匹數", "所需匹数", "Required horsepower"],
     requested_date: ["希望日期", "希望日期", "Requested date"],
     product_name: ["項目", "项目", "Item"], sku: ["SKU", "SKU", "SKU"],
@@ -852,16 +877,9 @@ function contextualFacts(plan: ServiceDialoguePlan, language: ServiceLanguage): 
     }
     if (entity) {
       const field = fact.name.slice(`entity:${entity.entity_id}:`.length);
-      if (field.startsWith("room_size:")) {
-        const roomKey = field.slice("room_size:".length);
-        const roomName = SERVICE_ROOM_LABELS[roomKey]?.[l];
-        const sourceSlots=plan.known_facts.filter(row=>
-          row.name.startsWith(`entity:${entity.entity_id}:room_size:`));
-        // Preserve distinct recorded values; an internal schema key does not
-        // prove the customer named that room. Use a stable neutral slot number.
-        const neutralIndex=sourceSlots.findIndex(row=>row.name===fact.name)+1;
-        label=roomName ? roomName+["面積","面积"," area"][l]
-          : ["空間面積","空间面积","Space area"][l]+" "+neutralIndex;
+      if (field.startsWith(SCOPED_AREA_KEY + ":")) {
+        const slot = field.slice(SCOPED_AREA_KEY.length + 1);
+        label = ["空間面積", "空间面积", "Space area"][l] + " " + slot;
       } else label = labels[field]?.[l];
     }
     // Unknown schema fields receive a neutral label, never a raw internal key.

@@ -1,3 +1,4 @@
+import { isLegacyRoomAreaKey } from "./conversation-long-memory.ts";
 import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import { PAIRED_SITE_KEY, SCOPED_AREA_KEY, readPairedSiteReceipt, pairedSiteMemoryValue,
   readScopedAreaReceipt, scopedAreaMemoryValue, scopedAreaSources, pairedSiteSourceMatches,
@@ -856,8 +857,7 @@ function parseQuery(
     facts = facts.filter((f) => f !== "constraints" && f !== "preferences");
   }
   if (facts.length > 1) facts = facts.filter((f) => f !== "correction");
-  const compactSizeQuestion = /^(?:幾大|几大|多大|大小)(?:呢)?[?？]?$|^(?:what\s+size|how\s+big)(?:\s+(?:is|are)\s+(?:it|that|they|those))?[?？]?$/i
-    .test(q.trim());
+  const compactSizeQuestion = compactDimensionQuestion(q);
   const contextualSizeReferent = recentQuestions.slice(0, 12).some((text) =>
     hasField(text, "room_size") ||
     /(?:房|房間|房间|客廳|客厅|廳|厅|room|bedroom|living\s+room|space|area|dimensions?).{0,24}(?:幾大|几大|多大|大小|size|big|dimensions?)/i
@@ -1740,7 +1740,10 @@ export async function loadScopedRecallVisitorSources(input: {
   const recent = scope.recent_rows.filter(validRow).map(row =>
     ({ id: row.id, content: row.content }));
   if (new Set(recent.map(row => row.id)).size !== recent.length) return denied("failed");
-  if (!scope.enabled) return { status: "not_requested", rows: recent, targeted_count: 0 };
+  const area=scope.commerce && scope.commerce.state.customer_constraints[SCOPED_AREA_KEY]!=null && (scope.requested_facts?.some(key=>keyNorm(key)==="roomsize") || isCurrentRequirementsRecap(scope.question) ||
+    parseQuery(scope.question,[],[],false,scope).facts.some(f=>f==="summary" || f==="room_size"))
+    ? readScopedAreaReceipt(scope.commerce.state,{...scope,state_revision:scope.commerce.revision}):null;
+  if (!scope.enabled && !area) return { status: "not_requested", rows: recent, targeted_count: 0 };
 
   const originalFacts = parseQuery(scope.question, [], [], false, scope).facts;
   const names = new Set([...(scope.requested_facts ?? []).map(keyNorm),
@@ -1752,6 +1755,10 @@ export async function loadScopedRecallVisitorSources(input: {
     if (id && id !== scope.source_message_id && !ids.includes(id)) ids.push(id);
   };
   const quoteStatusRead=isSourceBoundQuoteStatusQuestion(scope.question,scope.quote_status_frame);
+  if(area){
+    for(const source of scopedAreaSources(area))add(source.id);
+    for(const row of [...area.current,...area.superseded])add(row.prior_literal_source_id);
+  }
   for (const fact of scope.memory?.current_customer_facts ?? []) {
     if (fact.authority === "customer" &&
         (interested(fact.key)||quoteStatusRead&&fact.key==="customer_reported_quote_request"&&quotationReportText(fact.value)))
@@ -1859,7 +1866,7 @@ function resolveSemanticCustomerRecall(input:ConversationRecallInput):Conversati
   // Existing typed Memory keys may name other scalar customer attributes.
   // A model-proposed field can select an existing key, never create one.
   for(const key of proposal.requested_facts){
-    if(!UNSAFE_CUSTOMER_RECALL_KEY.test(key)&&!fields.some(f=>f.keys.some(k=>keyNorm(k)===keyNorm(key)))&&
+    if(!isLegacyRoomAreaKey(key)&&!keyMatches(key,"room_size")&&!UNSAFE_CUSTOMER_RECALL_KEY.test(key)&&!fields.some(f=>f.keys.some(k=>keyNorm(k)===keyNorm(key)))&&
        m.current_customer_facts.some(f=>f.authority==="customer"&&keyNorm(f.key)===keyNorm(key)))
       fields.push({fact:"customer_fact",keys:[key],words:[key]});
   }
@@ -1870,7 +1877,7 @@ function resolveSemanticCustomerRecall(input:ConversationRecallInput):Conversati
   const selection=summarySelection(input,activeEntities);
   for(let i=0;i<m.current_customer_facts.length;i++){
     const fact=m.current_customer_facts[i];
-    if(fact.authority!=="customer"||!field.keys.some(k=>keyNorm(k)===keyNorm(fact.key))||
+    if(fact.authority!=="customer"||isLegacyRoomAreaKey(fact.key)||keyMatches(fact.key,"room_size")||!field.keys.some(k=>keyNorm(k)===keyNorm(fact.key))||
        UNSAFE_CUSTOMER_RECALL_KEY.test(fact.key)||!fact.source_message_id||fact.source_message_id===input.source_message_id||
        !["string","number"].includes(typeof fact.value))continue;
     if(m.cancelled_or_superseded.some(old=>old.authority==="customer" &&
@@ -2360,7 +2367,7 @@ function canonicalCandidates(
       )
     ) add(`entities.${s.entities.indexOf(e)}.quantity`, e.quantity, e);
   }
-  if (["room_size", "horsepower", "brand_constraint"].includes(f)) {
+  if (["horsepower", "brand_constraint"].includes(f)) {
     const scan = (
       o: Record<string, unknown>,
       path: string,
@@ -2389,13 +2396,7 @@ function canonicalCandidates(
       scan(e.attributes, `entities.${s.entities.indexOf(e)}.attributes`, e);
     }
     scan(s.customer_constraints, "customer_constraints", null);
-    if (f === "room_size") {
-      scan(
-        s.installation.site_conditions,
-        "installation.site_conditions",
-        null,
-      );
-    }
+
   }
   if (f === "constraints") {
     for (const entity of selected.filter(isCurrentEntity)) {
@@ -2608,9 +2609,163 @@ function hasSourceBoundCompletedRecap(input: ConversationRecallInput): boolean {
   return changed;
 }
 
+// Resolve references against the labels in the source receipt. Consume the
+// complete request: an unmatched modifier or a second unknown referent must
+// not borrow the first match's measurement.
+function compactDimensionQuestion(q:string){return /^(?:幾大|几大|多大|大小)(?:呢)?[?？]?$|^(?:what\s+size|how\s+big)(?:\s+(?:is|are)\s+(?:it|that|they|those))?[?？]?$/i.test(q.trim());}
+function selectAreaScopes(receipt:NonNullable<ReturnType<typeof readScopedAreaReceipt>>,input:ConversationRecallInput){
+  const rows=receipt.current;
+  if(input.trusted_visitor_source_status!=="verified" || !rows.length)return [];
+  const labels=new Map<string,typeof rows>();
+  for(const row of rows){
+    const key=norm(row.scope);
+    if(!key || labels.has(key))return [];
+    labels.set(key,[row]);
+  }
+  // Group aliases derive only from the source-attested member labels.
+  const groups=new Map<string,typeof rows>();
+  for(const row of rows){
+    const group=norm(row.scope).match(/^(.+?)\s+(?:[a-z]|[0-9]+)$/u)?.[1];
+    if(group)groups.set(group,[...(groups.get(group)??[]),row]);
+  }
+  for(const [label,members] of groups)if(members.length>1&&!labels.has(label))labels.set(label,members);
+  const resolve=(ref:string)=>{
+    const label=norm(ref);
+    if(labels.has(label))return labels.get(label)!;
+    const count=label.match(/^([0-9一二兩两三四五六七八九十]+)(?:間|间|個|个|處|处)(.+)$/u);
+    if(!count)return [];
+    const members=rows.filter(row=>norm(row.scope).endsWith(count[2]));
+    return members.length===literalNumber(count[1])?members:[];
+  };
+  const field={fact:"room_size" as const,keys:["room_size"],words:FIELDS.room_size??[]};
+  const previous=input.recent_questions?.[0];
+  const trustedPrevious=previous && input.trusted_visitor_source_rows?.filter(row=>row.content===previous).length===1;
+  const implicit=compactDimensionQuestion(input.question);
+  const target=implicit && trustedPrevious?previous!:input.question;
+  const literalRefs=explicitRecallSubjects(target,field);
+  const directlyNamed=[...labels.keys()].filter(label=>phrase(target,label));
+  const literalMembers=(refs:readonly string[])=>{
+    const chosen=new Set<typeof rows[number]>();
+    for(const ref of refs){
+      const members=resolve(ref);
+      if(!members.length){
+        const parts=ref.split(/(?:及|與|与|和|同埋|同|、|\band\b)/iu).map(x=>x.trim());
+        if(parts.length<2 || parts.some(part=>!resolve(part).length))return null;
+        for(const part of parts)resolve(part).forEach(row=>chosen.add(row));
+        continue;
+      }
+      members.forEach(row=>chosen.add(row));
+    }
+    return chosen;
+  };
+  // Extract only the subject slot. A named or compound slot with an unknown
+  // member cannot inherit a neighbouring member's value.
+  function literalSelection(){
+    if(implicit && !trustedPrevious)return [];
+    const exactLabel=resolve(norm(target));
+    if(exactLabel.length)return exactLabel;
+    const namedPrefix=target.match(/^(.+?)(?=之前|頭先|头先)/u)?.[1];
+    const possessive=target.match(/^(.+?)(?:的|嘅)(?:面積|面积)/u)?.[1];
+    const slot=namedPrefix && namedPrefix!=="我"?namedPrefix:possessive;
+    if(slot){
+      const refs=slot.split(/(?:及|與|与|和|同埋|同|、|\band\b)/iu).map(ref=>ref.trim());
+      const selected=literalMembers(refs);
+      if(selected?.size)return [...selected];
+      // A contextual selection can name multiple exact members in a single
+      // source sentence. Require the entire joined member span.
+      if(!implicit || refs.length<2)return [];
+      const first=refs[0],ends=[...labels.keys()].filter(label=>first.endsWith(label));
+      if(ends.length!==1)return [];
+      const contextual=literalMembers([ends[0],...refs.slice(1)]);
+      return contextual?[...contextual]:[];
+    }
+    const exact=literalMembers(literalRefs);
+    if(exact?.size)return [...exact];
+    if(implicit && trustedPrevious && directlyNamed.length===1){
+      const group=directlyNamed[0];
+      if(groups.has(group) && phrase(target,group+" size"))return resolve(group);
+    }
+    // A field-only historical question can address a verified owner-level
+    // property. Never use cardinality alone to select a named sub-scope.
+    if(rows.length===1 && !implicit){
+      const row=rows[0],owner=input.commerce?.state.entities.find(e=>e.entity_id===receipt.subject_ref);
+      const ownerField=owner && entityAliases(owner).some(alias=>norm(alias)===norm(row.scope));
+      const sourceField=norm(row.scope).includes(norm(target.split(/是|係|系|[?？]/u)[0]));
+      const fieldOnly=/^(?:我)?(?:之前|頭先|头先)(?:提供的|講|讲)/u.exec(target);
+      if(fieldOnly && (ownerField||sourceField)){
+        const fieldText=target.slice(fieldOnly[0].length).split(/(?:是|係|系|[?？])/u)[0];
+        const fieldName=norm(fieldText);
+        if(fieldName && (field.words.some(word=>norm(word)===fieldName) ||
+            LABELS.room_size?.some(label=>norm(label).split("的").at(-1)===fieldName)))return rows;
+      }
+    }
+    return [];
+  }
+  const p=input.customer_recall_proposal;
+  let chosen:Set<typeof rows[number]>;
+  if(p){
+    if(p.intent!=="customer_fact_recall"||!input.company_id||!input.conversation_id||!input.source_message_id||
+      p.company_id!==input.company_id||p.conversation_id!==input.conversation_id||p.source_message_id!==input.source_message_id||
+      p.requested_facts.some(key=>!keyMatches(key,"room_size")))return [];
+    // The accepted current-turn Reading owns semantic selection. Its refs
+    // must resolve to actual receipt scopes; a previous utterance alone
+    // cannot select a different scope or create a value.
+    const refs=[...new Set(p.subject_refs.map(ref=>norm(ref)))];
+    if(!refs.length){
+      chosen=new Set(literalSelection());
+    }else{
+      const selected=literalMembers(refs);
+      if(!selected?.size)return [];
+      const groupProof=literalMembers(literalRefs);
+      if(literalRefs.length && !groupProof &&
+          (/[a-z]/iu.test(target) && literalRefs.some(ref=>!hasField(ref,"room_size") && !literalMembers([ref])) ||
+           literalRefs.some(ref=>/(?:及|與|与|和|同埋|、|\band\b)/iu.test(ref))))return [];
+      for(const ref of refs){
+        if(phrase(input.question,ref))continue;
+        const members=resolve(ref);
+        if(groupProof && members.every(row=>groupProof.has(row)))continue;
+        const priorReferent=input.referents?.some(h=>norm(h.ref)===ref&&h.confidence>=.9&&h.source==="prior_turn");
+        if(!implicit||!trustedPrevious||!priorReferent||!phrase(previous!,ref))return [];
+      }
+      // A Reading may not omit another explicitly present known scope.
+      if(rows.some(row=>phrase(input.question,row.scope)&&!selected.has(row)))return [];
+      if(groupProof?.size && [...groupProof].some(row=>!selected.has(row)))return [];
+      chosen=selected;
+    }
+  }else{
+    // No Reading: only the existing literal subject extraction and exact
+    // source-label pairing are admissible. No singleton or guessed scope.
+    chosen=new Set(literalSelection());
+    if(!chosen.size)return [];
+  }
+  const currentLabels=new Set(rows.map(row=>norm(row.scope)));
+  if(receipt.superseded.some(row=>!currentLabels.has(norm(row.scope))&&phrase(input.question,row.scope)))return [];
+  const selected=rows.filter(row=>chosen.has(row));
+  if(selected.some(row=>selected.some(other=>other!==row&&
+      (phrase(row.scope,other.scope)||phrase(other.scope,row.scope)))))return [];
+  return selected;
+}
+function scopedAreaReadValue(receipt:NonNullable<ReturnType<typeof readScopedAreaReceipt>>,input:ConversationRecallInput){
+  const selected=selectAreaScopes(receipt,input);
+  if(!selected.length)return null;
+  // Named scope replies keep the source label, even when only one value is
+  // available. Cardinality must never silently retarget a measurement.
+  return selected.map(row=>row.clause).join("；");
+}
+
 function originalSourceAttests(input:ConversationRecallInput,e:RecallEvidence,unsupportedTypedField:boolean):boolean {
+  if(e.fact_type==="room_size" && e.state_path==="customer_constraints.scoped_area_observations"){
+    const c=input.commerce;
+    if(!c || input.trusted_visitor_source_status!=="verified" || e.temporal_scope!=="current")return false;
+    const receipt=readScopedAreaReceipt(c.state,{...input,state_revision:c.revision});
+    if(!receipt || receipt.source_message_id!==e.evidence_source_message_id ||
+      e.entity_id!==(receipt.owner_kind==="persistent_state"?receipt.subject_ref:null))return false;
+    const history=(input.trusted_visitor_source_rows??[]).map(row=>({...row,role:"visitor"}));
+    const value=scopedAreaMemoryValue(receipt,history,c.state.language==="en"?"en":c.state.language==="zh-CN"?"zh-CN":"zh-TW");
+    return !!value && e.value===scopedAreaReadValue(receipt,input);
+  }
   const visitor=input.trusted_visitor_source_rows??[];
-    if (e.temporal_scope !== "current") return false;
+    if (e.fact_type === "room_size" || (e.attribute_key && (isLegacyRoomAreaKey(e.attribute_key)||keyMatches(e.attribute_key,"room_size"))) || e.temporal_scope !== "current") return false;
     if (e.evidence_source_message_id) {
       // T68/F1 (S3): independently verify the retained field against exactly
       // one server-read Visitor utterance; duplicate source IDs are unsafe.
@@ -2657,30 +2812,6 @@ function originalSourceAttests(input:ConversationRecallInput,e:RecallEvidence,un
         // T50: room-size collection projects member_id/value; canonical
         // Memory retains the original member label. Prove EACH label/value
         // together in one original Visitor clause, never merely two numbers.
-        if (e.fact_type === "room_size" && Array.isArray(e.value)) {
-          if (!e.value.length || e.value.length > 8) return false;
-          const originals=(input.memory?.current_customer_facts??[])
-            .filter(f=>f.authority==="customer" && keyMatches(f.key,"room_size") &&
-              f.source_message_id===e.evidence_source_message_id)
-            .flatMap(f=>Array.isArray(f.value)?f.value:[]);
-          const normalize=(s:string)=>s.normalize("NFKC").replace(/(?:sq\s*ft|sqft|平方[呎尺])/giu,"平方呎").replace(/\s+/gu,"").toLowerCase();
-          const clauses=sourceClauses(row.content).map(normalize);
-          return e.value.every(raw=>{
-            const member=object(raw);
-            if(typeof member?.member_id!=="string" ||
-               typeof member.value!=="string")return false;
-            const memberId=member.member_id, memberValue=member.value;
-            return originals.some(raw=>{
-              const original=object(raw);
-              if(!original || original.member_id!==memberId ||
-                 original.value!==memberValue ||
-                 typeof original.label!=="string" || original.label.length===0)return false;
-              const originalLabel=original.label;
-              return clauses.some(clause=>clause.includes(normalize(originalLabel)) &&
-                clause.includes(normalize(memberValue)));
-            });
-          });
-        }
         if (typeof e.value === "number") return numberTokens(row.content)
           .some(token => token.value === e.value);
         if (typeof e.value === "string") {
@@ -2760,6 +2891,16 @@ export function hasAttestedUnlabelledCustomerRecall(input:ConversationRecallInpu
       decision.provenance.commerce_source_message_id===input.commerce?.source_message_id&&
       sameCanonicalJson(decision.provenance.evidence[0],structured));
   }
+  if(decision.provenance.evidence.some(e=>e.source_kind==="source_bound_scoped_area")){
+    const [e]=decision.provenance.evidence;
+    return decision.provenance.evidence.length===1 && decision.fact_type==="room_size" &&
+      decision.authority==="CANONICAL_COMMERCE_STATE" && e.authority===decision.authority &&
+      decision.state_path===e.state_path && decision.value===e.value &&
+      decision.provenance.memory_revision===input.memory?.memory_revision &&
+      decision.provenance.commerce_state_revision===input.commerce?.revision &&
+      decision.provenance.commerce_source_message_id===input.commerce?.source_message_id &&
+      originalSourceAttests(input,e,false);
+  }
   const quoted=attestedCustomerQuantity(input);
   const typed=sourceAttestedTypedCustomerAttribute(input);
   return decision.provenance.evidence.every(e=>e.temporal_scope==="current"&&(
@@ -2788,7 +2929,7 @@ function sourceAttestedTypedCustomerAttribute(
     m.commerce_state_revision!==c.revision||
     !/(?:之前|頭先|头先|剛才|刚才|曾經|曾经|要求|提過|提过|did\s+i|i\s+(?:request|ask|mention)|earlier|previously)/iu.test(input.question))return null;
   const key=p.requested_facts[0];
-  if(!/^[a-z][a-z0-9_]{1,60}$/iu.test(key)||
+  if(isLegacyRoomAreaKey(key)||keyMatches(key,"room_size")||!/^[a-z][a-z0-9_]{1,60}$/iu.test(key)||
     /(?:price|stock|availability|order|payment|refund|policy|tier|entitlement|warranty|delivery|booking|identity|email|phone)/iu.test(key))return null;
   const named=c.state.entities.filter(isCurrentEntity).filter(e=>
     [e.model,e.attributes.product_name].some(v=>typeof v==="string"&&v.length>1&&
@@ -2796,7 +2937,7 @@ function sourceAttestedTypedCustomerAttribute(
   if(named.length!==1)return null;
   const e=named[0];
   const facts=m.current_customer_facts.filter(f=>f.authority==="customer"&&
-    keyNorm(f.key)===keyNorm(key)&&f.entity_id===e.entity_id&&
+    !isLegacyRoomAreaKey(f.key)&&!keyMatches(f.key,"room_size")&&keyNorm(f.key)===keyNorm(key)&&f.entity_id===e.entity_id&&
     typeof f.value==="string"&&!!f.source_message_id&&f.source_message_id!==input.source_message_id);
   if(facts.length!==1)return null;
   const fact=facts[0];
@@ -2964,7 +3105,19 @@ function resolveConversationRecallLegacy(
   const resolved = summarySelection(input, input.commerce?.state.entities ?? []);
   if (resolved.provenance === "trusted_referent" && resolved.entities.length === 1) retainedTargets.push("it", "that", "this");
   const recap = isCurrentRequirementsRecap(input.question, retainedTargets);
-  const parsed = parseQuery(input.question, input.recent_questions, retainedTargets, hasSourceBoundCompletedRecap(input), input);
+  const lexical = parseQuery(input.question, input.recent_questions, retainedTargets, hasSourceBoundCompletedRecap(input), input);
+  // Use the accepted field on the same read-only request. The subsequent
+  // selector checks each Visitor reference, receipt and original source.
+  // External, mutation, compound and lifecycle stops retain precedence.
+  const request=input.customer_recall_proposal;
+  const scopedReading=request?.intent==="customer_fact_recall" &&
+    request.company_id===input.company_id && request.conversation_id===input.conversation_id &&
+    request.source_message_id===input.source_message_id && request.requested_facts.length===1 &&
+    keyNorm(request.requested_facts[0])==="roomsize" && request.subject_refs.length>0 &&
+    input.trusted_visitor_source_status==="verified" && !customerRecallHasAction(input.question) &&
+    (!lexical.stop || (!lexical.stop.handled && lexical.stop.detail==="NO_SUPPORTED_FACT_SLOT")) &&
+    lexical.facts.every(f=>f==="room_size" || f==="constraints" && !hasField(input.question.replace(/(\p{Script=Han}{1,2})(?:不|唔)\1/gu,"$1"),"constraints"));
+  const parsed=scopedReading?{facts:["room_size" as RecallFact],stop:undefined}:lexical;
   const m = input.memory, c = input.commerce;
   // A current effective quantity read may legitimately target a previous
   // committed correction. Its memory source is not this question's source.
@@ -3194,6 +3347,16 @@ function resolveConversationRecallLegacy(
       const rawSummaryEntities = c ? scope.entities.filter(isCurrentEntity) : [];
       const aggregateCategories = new Set(rawSummaryEntities.filter((entity) => entity.entity_id.endsWith(":unscoped")).map((entity) => entity.category));
       const summaryEntities = rawSummaryEntities.filter((entity) => entity.entity_id.endsWith(":unscoped") || !aggregateCategories.has(entity.category));
+      // Attribute an area to an entity only when its original Visitor rows
+      // and the current active owner still match the scoped Commerce receipt.
+      const areaReceipt = c && input.trusted_visitor_source_status === "verified"
+        ? readScopedAreaReceipt(c.state, { ...input, state_revision: c.revision }) : null;
+      const areaOwner = areaReceipt?.owner_kind === "persistent_state"
+        ? summaryEntities.find(entity => entity.entity_id === areaReceipt.subject_ref) : null;
+      const areaHistory = input.trusted_visitor_source_rows?.map(row => ({ ...row, role: "visitor" })) ?? [];
+      const areaValue = areaReceipt ? scopedAreaMemoryValue(areaReceipt, areaHistory,
+        c?.state.language === "en" ? "en" : c?.state.language === "zh-CN" ? "zh-CN" : "zh-TW") : null;
+      const areaRows = areaOwner && areaReceipt && areaValue ? areaReceipt.current : [];
       const transaction = c ? {
         funnel_stage: c.state.conversion.funnel_stage,
         quotation_status: c.state.conversion.quotation_status,
@@ -3213,6 +3376,8 @@ function resolveConversationRecallLegacy(
             })),
           // Rich, authority-bound values stay internal. The only visible
           // projection is the shared natural recap composer below.
+          ...(areaRows.length && areaOwner ? { entity_area: { entity_id: areaOwner.entity_id, rows: areaRows.map(
+            ({ scope, amount, unit, approximate }) => ({ scope, amount, unit, approximate })) } } : {}),
           entity_details: c
             ? [...summaryEntities, ...scope.entities.filter(e => ["deferred", "cancelled"].includes(e.status))]
             : m.active_entities.map(e => ({
@@ -3230,7 +3395,9 @@ function resolveConversationRecallLegacy(
           constraints: scope.provenance === "global" ? m.active_constraints : [],
           regions: scope.provenance === "global" ? m.current_regions : [],
           customer_facts: scope.provenance === "global" ? [
-            ...m.current_customer_facts.filter(f=>f.key!=="site_observation"),
+            ...m.current_customer_facts.filter(f=>!isLegacyRoomAreaKey(f.key) && f.key!=="site_observation" && f.key!==SCOPED_AREA_KEY),
+            ...(!areaOwner && areaReceipt && areaValue ? [{ key: SCOPED_AREA_KEY, authority: "canonical_commerce",
+              source_message_id: areaReceipt.source_message_id, value: areaValue }] : []),
             ...Object.entries(c?.state.customer_constraints.customer_reported_facts ?? {}).flatMap(([key,value])=>{
               if(key!=="site_observation" || !value || typeof value!=="object" || Array.isArray(value))return [];
               const record=value as Record<string,unknown>;
@@ -3247,6 +3414,32 @@ function resolveConversationRecallLegacy(
         temporal_scope: "current",
         source_kind: "bounded_structured_projection",
       });
+      continue;
+    }
+    if(f==="room_size"){
+      const firstQuestion=input.question.match(/^([^?？]*[?？])\s*\S/u)?.[1];
+      if(firstQuestion && !parseQuery(firstQuestion,[],[],false,input).facts.includes("room_size"))
+        return fail("NOT_A_RECALL_QUERY","NO_SUPPORTED_FACT_SLOT",facts);
+      const receipt=c && input.trusted_visitor_source_status==="verified" ? readScopedAreaReceipt(c.state,{...input,state_revision:c.revision}) : null;
+      const history=(input.trusted_visitor_source_rows??[]).map(row=>({...row,role:"visitor"}));
+      const value=receipt && scopedAreaMemoryValue(receipt,history,c?.state.language==="en"?"en":c?.state.language==="zh-CN"?"zh-CN":"zh-TW");
+      const legacyValues=new Set([
+        ...selected.filter(isCurrentEntity).map(entity=>entity.attributes.room_size),
+        ...(m?.current_customer_facts??[]).filter(fact=>fact.key==="room_size" && selected.some(entity=>entity.entity_id===fact.entity_id)).map(fact=>fact.value),
+      ].filter(v=>typeof v==="string").map(v=>v.trim().toLowerCase()));
+      if(legacyValues.size>1)return fail("AMBIGUOUS","CONFLICTING_ROOM_SIZE",facts);
+      if(!receipt || !value)return fail("AMBIGUOUS","MISSING_ROOM_SIZE",facts);
+      const selection=summarySelection(input,c?.state.entities??[]);
+      if(selection.provenance!=="global" && !selection.entities.some(e=>e.entity_id===receipt.subject_ref))return fail("AMBIGUOUS","ENTITY_REFERENCE_AMBIGUOUS",facts);
+      const single=receipt.current.length===1?receipt.current[0]:null;
+      const literal=scopedAreaReadValue(receipt,input);
+      if(!literal)return fail("AMBIGUOUS","AREA_SCOPE_NOT_VERIFIED",facts);
+      if(single && [...legacyValues].some(proposed=>{
+        const old=String(proposed).match(/^([0-9]+(?:\.[0-9]+)?)\s*(.*)$/u);
+        return !old || Number(old[1])!==single.amount ||
+          (single.unit==="sq_ft"?!/^(?:平方[呎尺]|sq\.?\s*ft|square feet|ft2)$/iu.test(old[2]):!/^(?:平方米|平方公尺|sq\.?\s*m|square met(?:er|re)s?|m2)$/iu.test(old[2]));
+      }))return fail("AMBIGUOUS","CONFLICTING_ROOM_SIZE",facts);
+      evidence.push({fact_type:f,state_path:"customer_constraints.scoped_area_observations",value:literal??value,authority:"CANONICAL_COMMERCE_STATE",entity_id:receipt.owner_kind==="persistent_state"?receipt.subject_ref:null,region:null,evidence_source_message_id:receipt.source_message_id,temporal_scope:"current",source_kind:"source_bound_scoped_area"});
       continue;
     }
     if (
@@ -3314,15 +3507,6 @@ function resolveConversationRecallLegacy(
       return fail("AMBIGUOUS", `MISSING_${f.toUpperCase()}`, facts);
     }
     const best = candidates.filter((x) => x.rank === candidates[0].rank);
-    const resolvedCollection = f === "room_size"
-      ? resolvedRoomSizeCollection(input, best)
-      : null;
-    if (resolvedCollection) {
-      const fact: RecallEvidence = { ...resolvedCollection };
-      delete (fact as Partial<Candidate>).rank;
-      evidence.push(fact);
-      continue;
-    }
     const unique = new Map(
       best.map((x) => [`${x.entity_id ?? ""}|${JSON.stringify(x.value)}`, x]),
     );
@@ -3794,16 +3978,16 @@ export function customerObservationRecapEvidence(state:ConversationCommerceState
     c.history.length>50)return null;
   const l=language==="en"?"en":language==="zh-CN"?"zh-CN":"zh-TW";
   const facts:{key:string;value:string;authority:string;source_message_id:string}[]=[];
-  const sources:{id:string;text:string}[]=[];
+  const sources:{id:string;text:string;role?:"assistant"}[]=[];
   const measurementSources=new Set<string>();
   if(state.customer_constraints[SCOPED_AREA_KEY]!=null){
     const r=readScopedAreaReceipt(state,c);
-    const value=r?scopedAreaMemoryValue(r,c.history,l):null;
+    const value=r?scopedAreaMemoryValue(r,c.history.filter(h=>h.id!==c.source_message_id),l):null;
     if(!r||!value)return null;
     facts.push({key:SCOPED_AREA_KEY,value,authority:"canonical_commerce",source_message_id:r.source_message_id});
     for(const source of scopedAreaSources(r)){
       sources.push(source);
-      if(source.id!==r.owner_source_message_id)measurementSources.add(source.id);
+      if(!source.role && source.id!==r.owner_source_message_id)measurementSources.add(source.id);
     }
   }
   if(state.customer_constraints[PAIRED_SITE_KEY]!=null){
@@ -3834,10 +4018,11 @@ export function customerObservationRecapEvidence(state:ConversationCommerceState
   }
   if(byId.size>40)return null;
   for(const [id,text] of byId){
-    const rows=c.history.filter(h=>h.role==="visitor"&&h.id===id);
+    const role=sources.find(source=>source.id===id)?.role??"visitor";
+    const rows=c.history.filter(h=>h.role===role&&h.id===id);
     if(rows.length!==1||!pairedSiteSourceMatches(rows[0].content,text))return null;
   }
-  return {facts,sources:[...byId].map(([id,text])=>({id,text})),measurementSources};
+  return {facts,sources:sources.filter((s,i)=>sources.findIndex(other=>other.id===s.id)===i),measurementSources};
 }
 export function renderCanonicalCustomerFactRecap(state:ConversationCommerceState,language:string,
   context?:CustomerObservationRecapContext):string|null {
@@ -3850,7 +4035,7 @@ export function renderCanonicalCustomerFactRecap(state:ConversationCommerceState
     if(observation&&([SCOPED_AREA_KEY,PAIRED_SITE_KEY].includes(key)||
       (["room_size","room_area","site_observation"].includes(key)&&typeof p?.source_message_id==="string"&&
         observation.measurementSources.has(p.source_message_id))))return [];
-    return row && row.source_count_visibility!=="exact_recall_only" && Object.prototype.hasOwnProperty.call(row,"value") && p?.source_type==="customer" && typeof p.source_message_id==="string"
+    return !isLegacyRoomAreaKey(key) && row && row.source_count_visibility!=="exact_recall_only" && Object.prototype.hasOwnProperty.call(row,"value") && p?.source_type==="customer" && typeof p.source_message_id==="string"
       ? [{key,value:row.value,authority:"customer",source_message_id:p.source_message_id}] : [];
   });
   const current=[...facts,...(observation?.facts??[])];
@@ -3868,21 +4053,25 @@ function renderCustomerRecap(value: unknown, language: string): string {
     seat: ["席", "席"], seats: ["席", "席"], session: ["節", "节"], sessions: ["節", "节"],
     item: ["個", "个"], items: ["個", "个"], unit: ["個", "个"], units: ["個", "个"],
   };
-  const rooms: Record<string, [string, string, string]> = {}; // No implicit room labels.
   const describe = (e: CommerceEntity): string => {
     const unit = typeof e.attributes.unit === "string" ? e.attributes.unit
       : "";
     const count = customerRequestedQuantity(e) === null ? ["機數待確認", "数量待确认", "quantity not yet confirmed"][l] : l === 2 ? `${e.quantity}${unit ? " " + (e.quantity === 1 ? unit.replace(/s$/, "") : unit) : ""}`
       : `${e.quantity}${unit ? (unitLabels[unit]?.[l] ?? display(unit)) : ""}`;
     const facts: string[] = [];
-    const sizes = object(e.attributes.room_sizes);
-    for (const [room, size] of Object.entries(sizes ?? {})) {
-      if (typeof size !== "string") continue;
-      facts.push(`${rooms[room]?.[l] ?? room.replace(/_/g, " ")}${l === 2 ? " " : ""}${l === 2 ? display(size).replace(/平方[呎尺]|[呎尺]/u, " sq ft") : display(size)}`);
-    }
     if (typeof e.constraints.max_width_mm === "number") facts.push(l === 2 ? `maximum width ${e.constraints.max_width_mm} mm` : `最闊${e.constraints.max_width_mm} mm`);
     if (e.model && !label(e).includes(e.model)) facts.push(display(e.model));
-    // Phase1 legacy site-specific attributes are inert. Use customer facts only.
+    const area = object(v.entity_area);
+    if (area?.entity_id === e.entity_id && Array.isArray(area.rows)) {
+      for (const row of area.rows) {
+        const measure = object(row);
+        if (!measure || typeof measure.scope !== "string" || typeof measure.amount !== "number" ||
+            !["sq_ft", "sq_m"].includes(String(measure.unit))) continue;
+        const symbol = measure.unit === "sq_ft" ? ["平方呎", "平方呎", " sq ft"][l] : ["平方米", "平方米", " sq m"][l];
+        const qualifier = measure.approximate ? ["約", "约", "about "][l] : "";
+        facts.push(measure.scope + " " + qualifier + measure.amount + symbol);
+      }
+    }
     if (e.attributes.installation_type === "window_unit") facts.push(["窗口機", "窗口机", "window unit"][l]);
     if (Number.isInteger(e.attributes.door_count)) facts.push(l === 2 ? `${e.attributes.door_count} doors` : `${e.attributes.door_count}門`);
     if (l === 2) return renderEnglishRequirement(e,label(e)) + (facts.length ? ", "+facts.join(", ") : "");
@@ -3907,7 +4096,7 @@ function renderCustomerRecap(value: unknown, language: string): string {
     const prefix=region ? region+(l===2?": ":" "):"";
     if(f.key==="quantity" && typeof f.value==="number")return [prefix+["要求數量","要求数量","requested quantity " ][l]+f.value];
     if(f.key==="horsepower" && Array.isArray(f.value) && f.value.every(x=>typeof x==="string"))return [prefix+f.value.map(x=>l===2?String(x).replace(/匹/g," hp"):String(x)).join(l===2?", ":"、")];
-    if(f.key==="room_size" && Array.isArray(f.value))return f.value.flatMap(x=>{const row=object(x);return row && typeof row.label==="string" && typeof row.value==="string" ? [prefix+display(row.label)+" "+display(row.value)] : [];});
+    if(isLegacyRoomAreaKey(f.key))return [];
     if(f.key==="brand_required" && typeof f.value==="boolean")return [prefix+(f.value?["你要求指定品牌","你要求指定品牌","you require a specific brand"]:["你冇限定品牌","你没有限定品牌","you do not require a specific brand"])[l]];
     const names: Record<string, [string,string,string]> = {scoped_area_observations:["各範圍面積","各范围面积","Area by scope"],paired_site_observation:["現場尺寸","现场尺寸","Site dimensions"],site_observation:["客人提供的現場資料","客户提供的现场资料","Customer-provided observation"],team_size:["團隊人數","团队人数","team size"],monthly_budget:["每月預算","每月预算","monthly budget"],automatic_renewal:["自動續訂","自动续订","automatic renewal"],preferred_interface_language:["介面語言","界面语言","interface language"],business_type:["業務類型","业务类型","business type"],priority:["優先需求","优先需求","priority"],budget:["預算","预算","budget"],room_area:["面積","面积","room area"],product_count:["商品數量","商品数量","product count"],staff_count:["人手","人手","staff count"],app_interest:["App 需要","App 需要","app needed"],preferred_interface:["使用介面","使用界面","preferred interface"],current_market:["目前市場","目前市场","current market"],desired_features:["需要功能","需要功能","required features"],future_markets:["未來市場","未来市场","future markets"]};
     const renderValue = (raw:unknown):string|undefined => {
@@ -3937,7 +4126,8 @@ function renderCustomerRecap(value: unknown, language: string): string {
       }
       return undefined; // Never serialize an internal object as customer prose.
     };
-    const value = renderValue(f.value);
+    const value = f.key===SCOPED_AREA_KEY && l!==2 && typeof f.value==="string"
+      ? f.value.replace(/(\d)\s+(平方[呎尺米])/gu,"$1$2") : renderValue(f.value);
     return value === undefined ? [] : [prefix+(names[String(f.key)]?.[l] ?? display(String(f.key).replace(/_/g," ")))+": "+value];
   });
   const retainedText=retained.length ? ["而家記低咗","目前已记录","I have noted " ][l]+retained.join(l===2?"; ":"；")+(l===2?".":"。") : "";

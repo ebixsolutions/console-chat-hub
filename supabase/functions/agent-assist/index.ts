@@ -969,6 +969,7 @@ Deno.serve(async (req) => {
           },
           memory: assistMemory,
           commerce: recallSnapshot?.state ?? null,
+          commerce_snapshot: recallSnapshot,
           recent_messages: serviceMessages,
         }, serviceRuntime));
         const plannedDraft = renderServicePlanReply(

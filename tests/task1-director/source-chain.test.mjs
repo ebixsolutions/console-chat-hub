@@ -501,31 +501,37 @@ for (const scenario of [
   {name:"service training duration",text:"The course lasts 3 hours.",facts:[{key:"course_duration",value:{amount:3,unit:"hours"}}],expected:["course_duration",3,"hours"]},
   {name:"rental contract period",text:"The rental period is 24 months.",facts:[{key:"rental_period",value:{amount:24,unit:"months"}}],expected:["rental_period",24,"months"]},
   {name:"two separately sourced customer facts",text:"Our team has 8 staff; training takes 2 hours.",facts:[{key:"team_size",value:{amount:8,unit:"staff"}},{key:"training_duration",value:{amount:2,unit:"hours"}}],expected:["team_size",8,"staff"],other:["training_duration",2,"hours"]},
-  {name:"source unit retained without industry mapping",text:"細房約80呎，大房100呎，客廳就180呎。",facts:[{key:"small_room_area",value:{amount:80,unit:"sq_ft"}},{key:"large_room_area",value:{amount:100,unit:"sq_ft"}},{key:"living_room_area",value:{amount:180,unit:"sq_ft"}}],expected:["small_room_area",80,"呎"],other:["living_room_area",180,"呎"]},
+  {name:"source unit retained without industry mapping",text:"細房約80呎，大房100呎，客廳就180呎。",facts:[{key:"small_room_area",value:{amount:80,unit:"呎"}},{key:"large_room_area",value:{amount:100,unit:"呎"}},{key:"living_room_area",value:{amount:180,unit:"呎"}}],expected:["small_room_area",80,"呎"],other:["living_room_area",180,"呎"]},
 ]) test("Task3C P1 #178 source-bound generic observation: "+scenario.name,()=>{
   const next=reduceTurn(createEmptyConversationCommerceState(),{
     text:scenario.text,semantic_frame:semantic({operation:"NO_STATE_CHANGE",intent:"customer_context_update",requested_facts:[],customer_facts:scenario.facts}),
     source_message_id:SRC,conversation_id:CID,company_id:TID,language:"zh-TW"
-  },[]);
+  },[],{company_id:TID,conversation_id:CID,source_message_id:SRC,state_revision:0});
   const facts=next.customer_constraints.customer_reported_facts;
   for(const expected of [scenario.expected,...(scenario.other?[scenario.other]:[])]){
     const [key,amount,unit]=expected,record=facts[key];
     assert(record,JSON.stringify({scenario,record,facts}));
     assert.equal(record.value.amount,amount);
-    if(scenario.name==="source unit retained without industry mapping"){
-      // Frozen legacy area representation is value.unit='sq_ft' plus provenance.
-      // It never claimed to contain the generic fallback's source_unit_text.
-      assert.equal(record.value.unit,"sq_ft");
-      assert.equal(record.source_unit_text,undefined);
-    } else assert.equal(record.source_unit_text,unit);
+    assert.equal(record.value.unit,unit);
+    assert.equal(record.source_unit_text,unit);
     assert.equal(record.provenance.source_message_id,SRC);
     assert.equal(record.provenance.source_type,"customer");
+  }
+  if(scenario.name==="source unit retained without industry mapping"){
+    assert.equal(next.customer_constraints.scoped_area_observations,undefined);
+    for(const row of Object.values(facts)){
+      assert.equal(row.source_count_visibility,"exact_recall_only");
+      assert.equal(row.source_count_expires_after_revision-row.source_count_recorded_revision,32);
+      assert.equal(row.provenance.company_id,TID);
+      assert.equal(row.provenance.conversation_id,CID);
+    }
   }
   assert.equal(next.entities.length,0,"a customer observation must not create a sale item");
   assert.equal(next.quotes.length,0,"a customer observation is not a quote");
   assert.equal(next.conversion.order_status,"none");
 });
 for (const scenario of [
+  {name:"unseeded bare unit cannot verify square feet",text:"細房約80呎，大房100呎，客廳就180呎。",facts:[["small_room_area",80],["large_room_area",100],["living_room_area",180]].map(([key,amount])=>({key,value:{amount,unit:"sq_ft"}}))},
   {name:"question cannot become current",text:"Could the course be 3 hours?",facts:[{key:"course_duration",value:{amount:3,unit:"hours"}}]},
   {name:"unmatched quantity",text:"Our order needs 4 cartons.",facts:[{key:"wholesale_cartons",value:{amount:8,unit:"cartons"}}]},
   {name:"ambiguity two numerals one clause",text:"We have 2 staff and 5 seats.",facts:[{key:"seats",value:{amount:5,unit:"seats"}}]},
@@ -830,6 +836,21 @@ function r4aFixtureDb(){
    return {data:{result:"success",applied_revision:revision},error:null};}},
   snapshot:()=>({state:live,revision,writes,source}),withoutLegacy:()=>{delete live.installation.site_conditions.old_machine_removal_count;}};
 }
+test("Room literal-unit observations answer only exact in-window source and scope reads",async()=>{
+ const store=r4aFixtureDb(),text="細房約80呎，大房100呎，客廳就180呎。";
+ const source={...r4aBase,source_message_id:SRC,text,history:[],semantic_frame:semantic({operation:"NO_STATE_CHANGE",intent:"customer_context_update",requested_facts:[],customer_facts:[
+   {key:"small_room_area",value:{amount:80,unit:"呎"}},{key:"large_room_area",value:{amount:100,unit:"呎"}},{key:"living_room_area",value:{amount:180,unit:"呎"}}]})};
+ await runCommerceStateRuntime(store.db,source);
+ const history=[{id:SRC,role:"visitor",content:text}],before=JSON.stringify(store.snapshot());
+ const read=async(question,rows)=>await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:r4aReadId,text:question,history:rows});
+ const exact=await read("細房幾多呎？",history);
+ assert.equal(exact?.authority,"CONVERSATION_STATE");assert.match(exact.reply,/80/);assert.doesNotMatch(exact.reply,/平方|100|180/);
+ for(const rows of [[{...history[0],id:r4aCorrectionId}],[{...history[0],content:"細房約81呎。"}],
+   [...Array.from({length:33},(_,i)=>({id:"later-"+i,role:"visitor",content:"另有其他事項。"})),...history]]){
+   const result=await read("細房幾多呎？",rows);assert.notEqual(result?.authority,"CONVERSATION_STATE");
+ }
+ assert.equal(JSON.stringify(store.snapshot()),before);
+});
 const r4aOriginalFrame={...semantic({operation:"ASK_FACT",intent:"read authoritative current conversation state",requested_facts:["old_machine_removal_count"],confidence:.94}),topic:"installation"};
 const r4aScenarios=[
  {name:"frozen T44 to T59 without history IDs",source:r4aOriginal.turns[43],question:r4aOriginal.turns[58],amount:1,unit:"部",subject:"舊機拆",frame:r4aOriginalFrame,

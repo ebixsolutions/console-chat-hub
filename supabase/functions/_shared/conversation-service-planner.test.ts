@@ -1,3 +1,4 @@
+import { roomSourceFixture } from "../../../tests/fixtures/room-source-fixture.ts";
 import {
   applyServiceTone,
   planConversationService,
@@ -279,15 +280,17 @@ Deno.test("S4 contextual help reads canonical model and never promotes default q
   delete state.entities[0].attributes.model;
   state.entities[0].quantity = 1;
   state.entities[0].attributes.quantity_basis = "system_default";
-  state.entities[0].attributes.room_sizes = { small_bedroom: "80平方呎" };
-  const plan = planConversationService({ question: "可以幫我睇下嗎？", language: "zh-TW", recall: { handled: false, reason: "NOT_A_RECALL_QUERY" }, commerce: state, memory: null });
+  const snapshot={company_id:"fixture-company",conversation_id:"fixture-conversation",revision:2,source_message_id:"measurement"};
+  const history=roomSourceFixture(state,snapshot,"我想了解客廳冷氣 CW-SUL70BA。",state.entities[0].provenance.source_message_id!,[["細房",80]],snapshot.source_message_id);
+
+  const plan = planConversationService({ question: "可以幫我睇下嗎？", language: "zh-TW", recall: { handled: false, reason: "NOT_A_RECALL_QUERY" }, commerce: state, commerce_snapshot:snapshot, recent_messages:history, memory: null });
   assert(plan.known_facts.some(f => f.name.endsWith(":model") && f.value === "CW-SUL70BA"), "canonical model lost");
   assert(!plan.known_facts.some(f => f.name.endsWith(":quantity")), "default quantity promoted");
   const reply = renderServicePlanReply(plan, null) ?? "";
   assert(reply.includes("CW-SUL70BA") && reply.includes("80平方呎") && !/數量：1|1部/.test(reply), reply);
   state.entities[0].attributes.quantity_basis = "customer_explicit";
   state.entities[0].quantity = 3;
-  assert(planConversationService({ question: "可以幫我睇下嗎？", language: "zh-TW", recall: { handled: false, reason: "NOT_A_RECALL_QUERY" }, commerce: state, memory: null }).known_facts.some(f => f.name.endsWith(":quantity") && f.value === "3"), "explicit quantity lost");
+  assert(planConversationService({ question: "可以幫我睇下嗎？", language: "zh-TW", recall: { handled: false, reason: "NOT_A_RECALL_QUERY" }, commerce: state, commerce_snapshot:snapshot, recent_messages:history, memory: null }).known_facts.some(f => f.name.endsWith(":quantity") && f.value === "3"), "explicit quantity lost");
 });
 
 
@@ -299,13 +302,16 @@ Deno.test("Phase1 contextual projection uses schema locale, goal and pending che
       state.current_topic = "air_conditioner";
       state.current_intent = objective;
       state.entities = [{...state.entities[0], entity_id:"air_conditioner:unscoped", category:"air_conditioner", model:"SKU_air_conditioner-CW-SUL70BA", attributes:{
-        quantity_basis:"system_default", room_sizes:{living_room:"180平方呎",large_bedroom:"110平方呎",small_bedroom:"80平方呎"},
+        quantity_basis:"system_default",
         customer_goal:{category:"air_conditioner",objective,journey_stage:"sizing_guidance",collected:["room_sizes"],missing:["sizing_decision"],response_intent:"advance_decision",source_message_id:"source-1"}
       }}];
       state.entities.push({...state.entities[0],entity_id:"refrigerator:unscoped",category:"refrigerator",status:"deferred",model:"DEFERRED-SKU"});
       state.installation.pending_checks = ["window_opening_check"];
       const question = language === "en" ? "Could you take a look?" : "可以幫我睇下嗎？";
-      const input = {question,language,commerce:state,memory:null,recall:{handled:false,reason:"NOT_A_RECALL_QUERY" as const}};
+      const snapshot={company_id:"fixture-company",conversation_id:"fixture-conversation",source_message_id:"measurement",revision:2};
+      const sourceHistory=roomSourceFixture(state,snapshot,"I am considering SKU_air_conditioner-CW-SUL70BA.","source-1",
+        [["客廳",180],["大房",110],["細房",80]],snapshot.source_message_id);
+      const input = {question,language,commerce:state,memory:null,commerce_snapshot:snapshot,recent_messages:sourceHistory,recall:{handled:false,reason:"NOT_A_RECALL_QUERY" as const}};
       const before = JSON.stringify(input);
       const plan = planConversationService(input);
       const planBefore = JSON.stringify(plan);

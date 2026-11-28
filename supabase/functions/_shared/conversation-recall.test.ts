@@ -1,3 +1,7 @@
+import { roomSourceFixture } from "../../../tests/fixtures/room-source-fixture.ts";
+import { planConversationService } from "./conversation-service-planner.ts";
+import { SCOPED_AREA_KEY, verifiedScopedAreaProposal } from "./contextual-customer-update.ts";
+import { normalizeCommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import { customerDimensionPair, customerSunExposure } from "./commerce-state-authority.ts";
 import {
   type ConversationRecallInput,
@@ -171,6 +175,24 @@ export function recallFixture(
       { id: "delivery-source", content: "My delivery address is 測試屋苑 B block 9樓; recipient 測試收件人甲 and phone 90000001." },
     ],
   };
+}
+// Explicit measurement acquisition for former direct-state fixtures. Keep
+// the original ac-source row; the added observation has a distinct source ID.
+export function seedExplicitRecallArea(i:ConversationRecallInput){
+ const c=i.commerce!,entity=c.state.entities[0],ownerId=entity.provenance.source_message_id!;
+ const owner=i.trusted_visitor_source_rows!.find(row=>row.id===ownerId)!;
+ entity.attributes.product_name="aircon";
+ const rows=roomSourceFixture(c.state,c,owner.content,ownerId,[["aircon",180]],"explicit-area-observation",undefined," sqft");
+ i.trusted_visitor_source_rows=[...(i.trusted_visitor_source_rows??[]),...rows.filter(row=>row.id!==ownerId)];
+}
+function seedOriginalAreaRows(input:ConversationRecallInput,observations:[string,number][],source:string){
+  const c=input.commerce!,owner=c.state.entities[0];
+  const original=owner.provenance.source_message_id!;
+  const ownerId="prior-scoped-owner",ownerText="我想了解冷氣。";
+  owner.provenance={...owner.provenance,source_message_id:ownerId};
+  const rows=source.normalize("NFKC").split(/[,。]/u).map(x=>x.trim()).filter(Boolean);
+  const history=roomSourceFixture(c.state,c,ownerText,ownerId,observations,original,undefined,"平方呎",{text:source,rows});
+  input.trusted_visitor_source_rows=[...(input.trusted_visitor_source_rows??[]).filter(r=>r.id!==original),...history];
 }
 function answer(q: string, mutate?: (input: ConversationRecallInput) => void) {
   const input = recallFixture(q);
@@ -467,7 +489,7 @@ Deno.test("C3 semantic T40 corrected B-block address", () => {
   );
 });
 Deno.test("C3 semantic T50 early room-size retention", () =>
-  assert(answer("之前提供的房間面積是多少？").reply.includes("180 sqft")));
+  assert(answer("之前提供的房間面積是多少？",seedExplicitRecallArea).reply.includes("180 sqft")));
 Deno.test("C3 semantic T57 corrected address after topic switch", () => {
   const { reply } = answer("What is my corrected delivery address?", (i) => {
     i.memory!.current_topic = "washer";
@@ -783,9 +805,15 @@ Deno.test("C3 Cantonese and English requirement-recap paraphrases use structured
     assert(JSON.stringify(input)===before,"original Chinese source was changed");
   }
 });
+function seedStudy(input:ConversationRecallInput, amount:number, previous?:number) {
+  const c=input.commerce!, owner=c.state.entities[0], id=owner.provenance.source_message_id!;
+  const rows=roomSourceFixture(c.state,c,"我想了解冷氣。",id,[["書房",previous??amount]],"study-observation",
+    previous?{text:"更正：書房改為"+amount+"平方呎",id:"study-correction",scope:"書房",clause:"書房改為"+amount+"平方呎"}:undefined);
+  input.trusted_visitor_source_rows=[...(input.trusted_visitor_source_rows??[]).filter(row=>row.id!==id),...rows];
+}
 Deno.test("C3 two-sentence Cantonese recap presents known corrected and deferred state", () => {
   const input = recallFixture("可唔可以用廣東話兩句講返我而家嘅要求？");
-  input.commerce!.state.entities[0].attributes.room_sizes = { study: "105平方呎" };
+  seedStudy(input,105,95);
   input.commerce!.state.entities[1].category = "refrigerator";
   input.commerce!.state.entities[1].constraints.max_width_mm = 610;
   input.commerce!.state.latest_corrections = ["書房 95 → 105 平方呎"];
@@ -918,7 +946,28 @@ Deno.test("C3 unresolved short pronoun does not fall into KB", () => {
   assert(!d.handled && d.reason === "AMBIGUOUS");
 });
 Deno.test("C3 room size Cantonese paraphrase", () =>
-  assert(answer("我之前講間房幾大？").reply.includes("180")));
+  assert(answer("我之前講間房幾大？",seedExplicitRecallArea).reply.includes("180")));
+
+Deno.test("R4A verified singleton area is not authority for another requested scope",()=>{
+  const x=recallFixture("細房之前提供的房間面積是多少？");
+  x.customer_recall_proposal=undefined;
+  x.referents=[];x.recent_questions=[];
+  delete x.commerce!.state.entities[0].attributes.room_size;
+  delete x.memory!.active_entities[0].current_requirements.room_size;
+  x.memory!.current_customer_facts=x.memory!.current_customer_facts.filter(f=>f.key!=="room_size");
+  x.trusted_visitor_source_status="verified";
+  seedOriginalAreaRows(x,[["細房",90]],"細房90平方呎。");
+  const before=JSON.stringify(x);
+  const good=prepareConversationRecall(x,"zh-TW");
+  assert(good.decision.handled&&good.reply?.includes("90"),JSON.stringify(good));
+  for(const question of ["大房之前提供的房間面積是多少？","客廳之前提供的房間面積是多少？","新範圍之前提供的房間面積是多少？","細房及新範圍的面積是多少？","新細房的面積是多少？","細房或客廳的面積是多少？"]){
+    const read={...x,question,recent_questions:[x.question],trusted_visitor_source_rows:[
+      ...(x.trusted_visitor_source_rows??[]),{id:"verified-previous-area-read",content:x.question}]};
+    const result=prepareConversationRecall(read,"zh-TW");
+    assert(!result.decision.handled,JSON.stringify({question,result}));
+  }
+  assert(JSON.stringify(x)===before,"recall changed source state");
+});
 Deno.test("C3 original quantity is not substituted after correction", () => {
   const i = recallFixture("一開始冷氣幾部？");
   i.memory!.latest_corrections = ["quantity is 2, not 3"];
@@ -1019,7 +1068,7 @@ for (const [name,language,configure,expected] of [
     const s=i.commerce!.state;s.entities[0]={...s.entities[0],entity_id:"generic:qp-491-subscription",category:"subscription",quantity:12,attributes:{product_name:"QP-491 subscription",unit:"seats"}};
     s.entities[1]={...s.entities[1],entity_id:"generic:zx-682-add-on",category:"addon",attributes:{product_name:"ZX-682 add-on",unit:"items"}};
   },["QP-491 subscription at 12 seats","ZX-682 add-on for 1 item is paused"]],
-  ["R2 Cantonese equivalent","zh-TW",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0].attributes.room_sizes={study:"137平方呎"};},["137平方呎","暫緩"]],
+  ["R2 Cantonese equivalent","zh-TW",(i:ConversationRecallInput)=>{seedStudy(i,137);},["137平方呎","暫緩"]],
   ["R3 requested Booking remains unconfirmed","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities[0]={...i.commerce!.state.entities[0],category:"booking",quantity:5,attributes:{product_name:"BM-673 booking",unit:"sessions",requested_date:"2026-12-18",capabilities:{requires_booking:true}}};},["5 BM-673 sessions on 18 December 2026","still needs staff confirmation"]],
   ["R4 simple one entity","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=i.commerce!.state.entities.slice(0,1);},["冷氣 for 2"]],
   ["R5 no active entity or business goal","en",(i:ConversationRecallInput)=>{i.commerce!.state.entities=[];i.memory!.active_entities=[];i.memory!.current_goal=null;},["No specific requirements are available yet"]],
@@ -1055,6 +1104,10 @@ for(const company of ['3d6e17b5-ec79-4f75-aa7f-eaa824ff8493','4e0ea9f6-11d5-4968
  const i=recallFixture('請總結同票目前最新要求。');i.company_id=company;i.commerce!.company_id=company;i.memory!.company_id=company;
  i.commerce!.state.entities=i.commerce!.state.entities.slice(0,1);i.commerce!.state.entities[0].attributes={};i.commerce!.state.entities[0].status='deferred';
  i.memory!.current_customer_facts=[{key:'room_size',value:[{label:'客廳',value:'150平方呎'}],authority:'customer',source_message_id:i.source_message_id,entity_id:null,region:null},{key:'budget',value:{amount:5000,unit:'HKD'},authority:'customer',source_message_id:i.source_message_id,entity_id:null,region:null},{key:'priority',value:['quiet_operation_at_night','energy_efficiency'],authority:'customer',source_message_id:i.source_message_id,entity_id:null,region:null}];
+ const c=i.commerce!,ownerId="separate-advice-goal",label=c.state.current_topic||"空間規劃",ownerText="我想了解"+label+"。";
+ c.state.customer_constraints.contextual_goal={version:"contextual-scope-1",goal_id:"contextual-goal:"+ownerId,subject_label:label,source_text:ownerText,company_id:company,conversation_id:i.conversation_id,source_message_id:ownerId,recorded_revision:1,status:"active"};
+ const history=roomSourceFixture(c.state,c,ownerText,ownerId,[["客廳",150]],"venue-observation");
+ i.trusted_visitor_source_rows=[...(i.trusted_visitor_source_rows??[]),...history];
  const before=JSON.stringify(i),r=prepareConversationRecall(i,'zh-TW');assert(r.reply?.includes('150平方呎'),JSON.stringify(r));assert(r.reply?.includes('HK$5,000'),JSON.stringify(r));assert(r.reply?.includes('夜間安靜') && r.reply?.includes('能源效益'),JSON.stringify(r));assert(!r.reply?.includes('quiet_operation_at_night'));assert(JSON.stringify(i)===before,'read-only Summary changed canonical lifecycle/state');
 });
 
@@ -1170,6 +1223,7 @@ Deno.test("C3 semantic proposal preserves canonical address, multiple fields and
   ];
   for (const [id,question,requested_facts,expected] of cases) {
     const input=recallFixture(question);
+    if(id==="T50")seedExplicitRecallArea(input);
     const before=resolveConversationRecall(input);
     assert(before.handled, id+" original route not handled "+JSON.stringify(before));
     input.customer_recall_proposal={company_id:input.company_id,conversation_id:input.conversation_id,
@@ -1197,6 +1251,7 @@ Deno.test("C3 semantic fallback preserves hard scope and integrity stops",()=>{
 
 Deno.test("Task3C D3 source-owned room value mismatch cannot reuse canonical field", () => {
   const i=recallFixture("之前提供的房間面積是多少？");
+  seedExplicitRecallArea(i);
   i.customer_recall_proposal={company_id:i.company_id,conversation_id:i.conversation_id,
     source_message_id:i.source_message_id,intent:"customer_fact_recall",
     requested_facts:["room_size"],subject_refs:[]};
@@ -1237,6 +1292,7 @@ Deno.test("Task3C R1 unlabelled typed recall proves same original Visitor and re
   else x.commerce!.state.entities[0].attributes[attribute]=value;
   x.trusted_visitor_source_rows=[{id:"ac-source",content:source}];
   x.trusted_visitor_source_status="verified";
+  if(key==="room_size")seedOriginalAreaRows(x,[["我之前提供的房間面積",180]],source);
   const resolved=prepareConversationRecall(x,"zh-TW");
   assert(resolved.decision.handled,JSON.stringify(resolved.decision));
   assert(hasAttestedUnlabelledCustomerRecall(x,resolved.decision),"original Visitor provenance required");
@@ -1261,6 +1317,7 @@ Deno.test("Task3C T50 grouped room areas require individually source-attested la
  }];
  x.trusted_visitor_source_rows=[{id:"ac-source",content:"細房80平方呎，大房100平方呎。"}];
  x.trusted_visitor_source_status="verified";
+ seedOriginalAreaRows(x,[["細房",80],["大房",100]],x.trusted_visitor_source_rows[0].content);
  const good=prepareConversationRecall(x,"zh-TW");
  assert(good.decision.handled && hasAttestedUnlabelledCustomerRecall(x,good.decision),
    "each pair must derive from original Visitor line");
@@ -1366,4 +1423,42 @@ Deno.test("source-bound prior quantities accept a unique literal shortened subje
       assert(!hasAttestedUnlabelledCustomerRecall(bad,prepareConversationRecall(bad).decision),"ambiguous literal suffix certified");
     }
   }
+});
+
+Deno.test("Room retirement entity recap binds current area to its active owner alongside deferred constraints", () => {
+  const input = recallFixture("可唔可以用廣東話兩句講返我而家嘅要求？");
+  const commerce = input.commerce!;
+  const state = commerce.state;
+  state.entities[0].attributes.name = "aircon";
+  state.entities[1].constraints.max_width_mm = 610;
+  const owner = state.entities[0];
+  const history = input.trusted_visitor_source_rows!.map(row => ({ ...row, role: "visitor" }));
+  const source = "scope-area-observed";
+  const text = "書房105平方呎";
+  const context = { company_id: input.company_id, conversation_id: input.conversation_id,
+    state_revision: commerce.revision - 1, source_message_id: source };
+  const frame = normalizeCommerceSemanticFrame({ operation: "UPDATE_ITEM", confidence: .99,
+    intent: "customer_context_update", referents: [{ ref: owner.entity_id, source: "persistent_state", confidence: .99 }],
+    customer_facts: [{ key: SCOPED_AREA_KEY, value: { action: "observe", source_text: text,
+      scopes: ["書房"], row_texts: [text] } }] });
+  const receipt = verifiedScopedAreaProposal({ state, context, text, frame, history });
+  assert(receipt, "owner/source proof missing");
+  state.customer_constraints[SCOPED_AREA_KEY] = receipt;
+  input.trusted_visitor_source_rows = [...history, { id: source, content: text }];
+  for (const language of ["zh-TW", "zh-CN", "en"] as const) {
+    const plan = planConversationService({ language, question: input.question,
+      commerce: state, commerce_snapshot: { ...commerce, source_message_id: source }, memory: null,
+      recent_messages: [...history, { id: source, role: "visitor", content: text }],
+      recall: { handled: false, reason: "NOT_A_RECALL_QUERY" } });
+    const slot = plan.known_facts.find(f => f.name === `entity:${owner.entity_id}:${SCOPED_AREA_KEY}:1`);
+    assert(slot?.value === "105平方呎" && slot.label === "書房" && slot.authority === "CANONICAL_COMMERCE_STATE",
+      "planner lost the source measurement or changed its owner");
+  }
+  const before = JSON.stringify(input);
+  const reply = prepareConversationRecall(input, "zh-TW").reply ?? "";
+  assert(reply.includes("書房 105平方呎") && reply.includes("610 mm") && reply.includes("暫緩") &&
+    reply.split("。").filter(Boolean).length === 2, reply);
+  assert(JSON.stringify(input) === before, "recap mutated state");
+  input.trusted_visitor_source_rows = history;
+  assert(!prepareConversationRecall(input, "zh-TW").reply?.includes("105平方呎"), "missing source accepted");
 });

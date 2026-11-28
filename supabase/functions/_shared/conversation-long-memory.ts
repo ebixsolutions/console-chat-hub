@@ -1,4 +1,4 @@
-import { PAIRED_SITE_KEY,readPairedSiteReceipt,pairedSiteMemoryValue, SCOPED_AREA_KEY,readScopedAreaReceipt,scopedAreaMemoryValue,scopedAreaSources } from "./contextual-customer-update.ts";
+import { PAIRED_SITE_KEY,readPairedSiteReceipt,pairedSiteMemoryValue, SCOPED_AREA_KEY,readScopedAreaReceipt,scopedAreaMemoryValue,scopedAreaSources, type ScopedAreaReceipt } from "./contextual-customer-update.ts";
 import type { CustomerRequestDecision } from "./commerce-state-authority.ts";
 import { customerRequestedQuantity } from "./customer-journey-orchestration.ts";
 import { resolveConversationRecall, renderConversationRecall } from "./conversation-recall.ts";
@@ -63,6 +63,64 @@ export interface ConversationMemoryFact {
   source_message_id?: string | null;
   entity_id?: string | null;
   region?: string | null;
+}
+
+const SCOPED_AREA_HISTORY_KEY = `superseded_${SCOPED_AREA_KEY}`;
+
+/** Compact lineage of already source-verified area observations; never a second state writer. */
+function scopedAreaSupersededMemoryValue(receipt: ScopedAreaReceipt) {
+  return receipt.superseded.map(row => ({
+    scope: row.scope, amount: row.amount, unit: row.unit, approximate: row.approximate,
+    source_message_id: row.source_message_id, recorded_revision: row.recorded_revision,
+  }));
+}
+
+function scopedAreaMemoryProjectionMatches(memory: CanonicalConversationMemory | null,
+  receipt: ScopedAreaReceipt, value: string | null): boolean {
+  if (!memory || !value || memory.company_id !== receipt.company_id ||
+      memory.conversation_id !== receipt.conversation_id ||
+      memory.source_message_id !== receipt.source_message_id ||
+      memory.commerce_state_revision !== receipt.recorded_revision) return false;
+  const current = memory.current_customer_facts.filter(f => f.key === SCOPED_AREA_KEY);
+  if (current.length !== 1 || current[0].authority !== "canonical_commerce" ||
+      current[0].source_message_id !== receipt.source_message_id ||
+      // stableFacts normalizes display punctuation before persistence. Compare the
+      // complete normalized projection so a truncated fact still fails readback.
+      current[0].value !== clean(value, Infinity)) return false;
+  const expected = scopedAreaSupersededMemoryValue(receipt);
+  const history = memory.cancelled_or_superseded.filter(f => f.key === SCOPED_AREA_HISTORY_KEY);
+  if (expected.length ? history.length !== 1 ||
+      history[0].authority !== "canonical_commerce" ||
+      history[0].source_message_id !== receipt.source_message_id ||
+      !sameCanonicalJson(history[0].value, expected) : history.length !== 0) return false;
+  if (receipt.action === "correct" && !memory.latest_corrections.includes(receipt.source_text)) return false;
+  const sources = new Set([...receipt.current, ...receipt.superseded].map(row => row.source_message_id));
+  return !memory.current_customer_facts.some(f =>
+    f.key === "room_size" && !!f.source_message_id && sources.has(f.source_message_id));
+}
+
+/** Same-ticket, current source/revision, original Visitor history and exact Memory projection.
+ * This is a postcondition of the existing CAS commit, not an additional authority to write. */
+export function verifyCommittedScopedAreaMemory(input: {
+  memory: CanonicalConversationMemory | null;
+  commerce: { company_id: string; conversation_id: string; source_message_id: string;
+    revision: number; state: ConversationCommerceState } | null;
+  history: MemoryHistoryRow[];
+}): boolean {
+  const { memory, commerce } = input;
+  if (!commerce) return false;
+  const receipt = readScopedAreaReceipt(commerce.state, {
+    company_id: commerce.company_id, conversation_id: commerce.conversation_id,
+    source_message_id: commerce.source_message_id, state_revision: commerce.revision,
+  });
+  if (!receipt || receipt.source_message_id !== commerce.source_message_id ||
+      receipt.recorded_revision !== commerce.revision) return false;
+  const language = commerce.state.language === "en" ? "en" :
+    commerce.state.language === "zh-CN" ? "zh-CN" : "zh-TW";
+  const value = scopedAreaMemoryValue(receipt, input.history.flatMap(row =>
+    typeof row.role === "string" && typeof row.content === "string"
+      ? [{ id: row.id, role: row.role, content: row.content }] : []), language);
+  return scopedAreaMemoryProjectionMatches(memory, receipt, value);
 }
 
 /** Exact post-commit Memory ↔ Commerce parity; a reply cannot supply its own proof. */
@@ -339,6 +397,10 @@ function smallCustomerCount(raw: string): number | null {
   return ({ 一: 1, 二: 2, 兩: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 } as Record<string, number>)[raw] ?? null;
 }
 
+export function isLegacyRoomAreaKey(key:unknown):boolean {
+  return typeof key==="string" && /(?:^|[_:])(?:room_sizes?|room_areas?|area_sq_?ft)(?:$|[_:])|^(?:area_sqft|客廳面積|客厅面积)$/i.test(key);
+}
+
 export function retainedRoomSizes(text: string): Array<{
   member_id: string;
   group: "room" | "living_room";
@@ -398,7 +460,7 @@ function retainedCustomerFacts(rows: MemoryHistoryRow[], state: ConversationComm
   const add = (target: ConversationMemoryFact[], key: string, value: unknown, row: MemoryHistoryRow, entity_id?: string | null, region?: string | null) =>
     target.push({ key, value, authority: target === historical ? "historical" : "customer", source_message_id: clean(row.id, 80) || null, entity_id: entity_id ?? null, region: region ?? null });
   let currentAddress: ConversationMemoryFact | null = null;
-  let currentRoomSizes: ConversationMemoryFact | null = null;
+
 
   for (const row of [...rows].reverse()) {
     if (!CUSTOMER_ROLES.has(String(row.role ?? "").toLowerCase())) continue;
@@ -461,27 +523,6 @@ function retainedCustomerFacts(rows: MemoryHistoryRow[], state: ConversationComm
         region,
       };
       current.push(currentAddress);
-    }
-    const correction = roomSizeCorrection(text);
-    const roomFacts = retainedRoomSizes(text);
-    if (correction && currentRoomSizes && Array.isArray(currentRoomSizes.value)) {
-      const previous = currentRoomSizes.value as Array<{ member_id: string; group: "room" | "living_room"; label: string; value: string }>;
-      const correctedIndex = previous.findIndex((fact) => fact.label.normalize("NFKC").includes(correction.label) || correction.label.includes(fact.label.normalize("NFKC")) || fact.value === correction.old_value);
-      if (correctedIndex >= 0) {
-        const next = previous.map((fact, index) => index === correctedIndex ? { ...fact, value: correction.new_value } : { ...fact });
-        superseded.push({ key: "superseded_room_size", value: { label: previous[correctedIndex].label, value: previous[correctedIndex].value }, authority: "customer", source_message_id: clean(row.id, 80) || null, entity_id: null, region });
-        const currentIndex = current.indexOf(currentRoomSizes);
-        if (currentIndex >= 0) current.splice(currentIndex, 1);
-        currentRoomSizes = { key: "room_size", value: next, authority: "customer", source_message_id: clean(row.id, 80) || null, entity_id: null, region };
-        current.push(currentRoomSizes);
-      }
-    } else if (roomFacts.length) {
-      if (currentRoomSizes) {
-        const currentIndex = current.indexOf(currentRoomSizes);
-        if (currentIndex >= 0) current.splice(currentIndex, 1);
-      }
-      currentRoomSizes = { key: "room_size", value: roomFacts, authority: "customer", source_message_id: clean(row.id, 80) || null, entity_id: null, region };
-      current.push(currentRoomSizes);
     }
     const horsepowerFacts = [...text.matchAll(/(?:([^，,。]{1,16}?(?:房|客廳|客厅|型號|型号|model))\s*(?:要|是|係|為|为)?\s*)?(\d+(?:\.\d+)?)\s*匹/gi)].map((m) => `${m[1]?.trim() ? `${m[1].trim()} ` : ""}${m[2]}匹`);
     if (horsepowerFacts.length) add(current, "horsepower", horsepowerFacts, row);
@@ -567,7 +608,7 @@ function projectCommerce(
       requested_quantity: customerRequestedQuantity(entity),
       status: "active" as const,
       region: clean(entity.attributes?.region, 80) || null,
-      current_requirements: { ...entity.attributes, ...entity.constraints },
+      current_requirements: Object.fromEntries(Object.entries({ ...entity.attributes, ...entity.constraints }).filter(([key])=>!isLegacyRoomAreaKey(key))),
       transaction_state: {
         confirmed: state.conversion.confirmed_entity_ids.includes(entity.entity_id),
         tentative: state.conversion.tentative_entity_ids.includes(entity.entity_id),
@@ -830,8 +871,13 @@ export function buildCanonicalConversationMemory(args: {
   const area=args.commerce_state&&args.commerce_state_revision!==null?readScopedAreaReceipt(args.commerce_state,{company_id:args.company_id,conversation_id:args.conversation_id,source_message_id:args.source_message_id,state_revision:args.commerce_state_revision}):null;
   const areaValue=area?scopedAreaMemoryValue(area,args.newest_first.flatMap(row=>typeof row.role==="string"&&typeof row.content==="string"?[{id:row.id,role:row.role,content:row.content}]:[]),pairLanguage):null;
   const areaFact:ConversationMemoryFact|null=area&&areaValue?{key:SCOPED_AREA_KEY,value:areaValue,authority:"canonical_commerce",source_message_id:area.source_message_id}:null;
-  const areaSourceIds=new Set(area?scopedAreaSources(area).filter(x=>x.id!==area.owner_source_message_id).map(x=>x.id):[]);
-  const competingLegacyArea=(f:ConversationMemoryFact)=>f.key==="room_size"&&!!f.source_message_id&&areaSourceIds.has(f.source_message_id);
+  const areaHistoryFact: ConversationMemoryFact | null = area && areaValue && area.superseded.length
+    ? { key: SCOPED_AREA_HISTORY_KEY, value: scopedAreaSupersededMemoryValue(area),
+        authority: "canonical_commerce", source_message_id: area.source_message_id } : null;
+  const areaCorrection = area && areaValue && area.action === "correct" &&
+    area.source_message_id === args.source_message_id &&
+    area.recorded_revision === args.commerce_state_revision ? area : null;
+  const competingLegacyArea=(fact:ConversationMemoryFact)=>isLegacyRoomAreaKey(fact.key) || record(record(args.commerce_state?.customer_constraints.customer_reported_facts)?.[fact.key])?.source_count_visibility==="exact_recall_only";
   const currentReadAnchor = args.source_factual_turn || args.factual_read_request
     ? buildFactualReadAnchor({source_message_id: args.source_message_id,
       source_created_at: args.source_created_at, rows: args.newest_first,
@@ -848,13 +894,11 @@ export function buildCanonicalConversationMemory(args: {
   const genericGoal = genericEntities.length ? genericEntities.map(e=>`${e.attributes.product_name ?? e.category}: ${e.quantity} ${e.attributes.unit ?? "units"}${["cancelled","deferred"].includes(e.status)?` (${args.commerce_state?.language==="en"?e.status:e.status==="deferred"?"已暫緩":"已取消"})`:""}${e.attributes.requested_date?`, requested date ${e.attributes.requested_date}`:""}`).join("; ") : null;
   const entityGoal = !genericEntities.length && args.commerce_state?.entities.length ? args.commerce_state.entities.map(entity=> {
     const label=industryEntityLabel(entity.entity_id,"en") ?? entity.category.replace(/_/g," ");
-    const rooms=record(entity.attributes.room_sizes);
-    const requirements=rooms?Object.entries(rooms).map(([room,size])=>`${room.replace(/_/g," ")} ${size}`).join(", "):"";
     const width=typeof entity.constraints.max_width_mm === "number"?`, maximum width ${entity.constraints.max_width_mm} mm`:"";
-    return `${entity.model?entity.model+" ":""}${label}: ${customerRequestedQuantity(entity) === null ? "quantity not yet confirmed" : `${entity.quantity} units`}${requirements?", "+requirements:""}${width}${record(entity.attributes.room_sunlight) ? ", afternoon sun: " + Object.entries(record(entity.attributes.room_sunlight)!).map(([room,value])=>room.replace(/_/g," ")+": "+(value==="none"?"no afternoon sun":value==="strong_afternoon_sun"?"strong afternoon sun":"not confirmed")).join(", ") : entity.attributes.sunlight === "strong_afternoon_sun" ? ", afternoon sun (scope unspecified)" : entity.attributes.sunlight === "none" ? ", no afternoon sun (customer reported)" : ""}${entity.attributes.installation_type === "window_unit" ? ", window units" : ""}${["deferred","cancelled"].includes(entity.status)?` (${entity.status})`:""}`;
+    return `${entity.model?entity.model+" ":""}${label}: ${customerRequestedQuantity(entity) === null ? "quantity not yet confirmed" : `${entity.quantity} units`}${width}${record(entity.attributes.room_sunlight) ? ", afternoon sun: " + Object.entries(record(entity.attributes.room_sunlight)!).map(([room,value])=>room.replace(/_/g," ")+": "+(value==="none"?"no afternoon sun":value==="strong_afternoon_sun"?"strong afternoon sun":"not confirmed")).join(", ") : entity.attributes.sunlight === "strong_afternoon_sun" ? ", afternoon sun (scope unspecified)" : entity.attributes.sunlight === "none" ? ", no afternoon sun (customer reported)" : ""}${entity.attributes.installation_type === "window_unit" ? ", window units" : ""}${["deferred","cancelled"].includes(entity.status)?` (${entity.status})`:""}`;
   }).join("; "):null;
   const fallbackGoal=businessMessageText(prior?.current_goal) || businessMessageText(args.commerce_state?.current_intent) || runtime.first_customer_turn || null;
-  const goalFacts = stableFacts([...(prior?.current_customer_facts ?? []).filter(f=>f.key!==PAIRED_SITE_KEY&&f.key!==SCOPED_AREA_KEY&&!competingLegacyArea(f)), ...(args.customer_fact_delta ?? []), ...requirements.current.map(f => ({...f,authority:"customer" as const}))],MAX_FACTS);
+  const goalFacts = stableFacts([...(prior?.current_customer_facts ?? []).filter(f=>f.key!==PAIRED_SITE_KEY&&f.key!==SCOPED_AREA_KEY&&!competingLegacyArea(f)), ...(args.customer_fact_delta ?? []).filter(f=>!competingLegacyArea(f)), ...requirements.current.map(f => ({...f,authority:"customer" as const}))],MAX_FACTS);
   const factLabels: Record<string,string> = {product_count:"商品數量",staff_count:"人手",app_interest:"需要 App",current_market:"目前市場",preferred_interface:"使用介面",desired_features:"需要功能",future_markets:"未來市場"};
   const factValue = (value:unknown):string => value===false?"否":value===true?"是":value===null?"未確認":Array.isArray(value)?value.map(factValue).join("、"):typeof value==="object"?JSON.stringify(value):String(value)==="hong_kong"?"香港":String(value)==="web"?"網頁版":String(value);
   const requirementGoal = goalFacts.length ? goalFacts.map(fact => `${factLabels[fact.key] ?? fact.key.replaceAll("_"," ")}: ${factValue(fact.value)}`).join("; ") : null;
@@ -995,6 +1039,7 @@ export function buildCanonicalConversationMemory(args: {
     ...(prior?.question_lifecycle_incomplete || lifecycleResult.incomplete ? {question_lifecycle_incomplete: true} : {}),
     active_entities: commerce.active_entities,
     latest_corrections: uniqueStrings([
+      ...(areaCorrection ? [areaCorrection.source_text] : []),
       // The legacy Commerce ledger keeps a 300-character display marker.
       // Only this verified receipt may restore its complete source in Memory.
       ...(scopedCorrection?[scopedCorrection.source_text,scopedQuantityCorrectionSummary(scopedCorrection)]:[]),
@@ -1003,14 +1048,15 @@ export function buildCanonicalConversationMemory(args: {
       ...runtime.latest_corrections,
       ...(args.commerce_state?.latest_corrections ?? []),
       ...(prior?.latest_corrections ?? []),
-    ].map(businessMessageText).filter(Boolean), MAX_CORRECTIONS, scopedCorrection ? 1200 : 500),
+    ].map(value => value === areaCorrection?.source_text ? value : businessMessageText(value)).filter(Boolean),
+      MAX_CORRECTIONS, scopedCorrection || areaCorrection ? 1200 : 500),
     current_customer_facts: stableFacts([
       ...(prior?.current_customer_facts ?? []).filter((fact) =>
         fact.key!==PAIRED_SITE_KEY && fact.key!==SCOPED_AREA_KEY && !competingLegacyArea(fact) && !fact.key.startsWith("entity:") && !addressKeys.has(clean(fact.key, 120)) &&
         !(currentDeliveryPreferenceFact &&
           deliveryPreferenceKeys.has(clean(fact.key, 120)))
       ),
-      ...(args.customer_fact_delta ?? []).map(f=>({...f,authority:"customer" as const,source_message_id:args.source_message_id})),
+      ...(args.customer_fact_delta ?? []).filter(f=>!competingLegacyArea(f)).map(f=>({...f,authority:"customer" as const,source_message_id:args.source_message_id})),
       ...(pairFact?[pairFact]:[]),
       ...(areaFact?[areaFact]:[]),
       ...requirementFacts,
@@ -1038,9 +1084,9 @@ export function buildCanonicalConversationMemory(args: {
     ].map(businessMessageText), MAX_CONSTRAINTS),
     current_regions: currentRegions.length ? currentRegions : (prior?.current_regions ?? []).slice(0, MAX_REGIONS),
     transaction_summary: commerce.transaction_summary,
-    historical_facts: stableFacts([...(prior?.historical_facts ?? []), ...commerce.historical_facts, ...retained.historical], MAX_HISTORY),
+    historical_facts: stableFacts([...(prior?.historical_facts ?? []).filter(f=>!competingLegacyArea(f)), ...commerce.historical_facts, ...retained.historical], MAX_HISTORY),
     cancelled_or_superseded: stableFacts([
-      ...(prior?.cancelled_or_superseded ?? []),
+      ...(prior?.cancelled_or_superseded ?? []).filter(f => f.key !== SCOPED_AREA_HISTORY_KEY),
       ...(prior?.current_customer_facts ?? []).filter(old=>(args.customer_fact_delta ?? []).some(f=>f.key===old.key && !sameCanonicalJson(f.value,old.value))).map(f=>({...f,key:`superseded_${f.key}`})),
       ...supersededPriorAddresses,
       ...commerce.cancelled_or_superseded,
@@ -1052,6 +1098,7 @@ export function buildCanonicalConversationMemory(args: {
       {key:`superseded_entity:${scopedCorrection.entity_id}:scoped_customer_updates`,
         value:structuredClone(scopedCorrection.previous_updates),authority:"canonical_commerce" as const,
         source_message_id:scopedCorrection.source_message_id,entity_id:scopedCorrection.entity_id}] : []),
+      ...(areaHistoryFact ? [areaHistoryFact] : []),
     ], MAX_HISTORY),
     open_questions: open,
     pending_actions: uniqueStrings([...commerce.pending_actions,...lifecycle.filter(item=>item.status === "pending" && item.resolution?.includes("professional")).map(item=>item.text)],MAX_ACTIONS),
@@ -1153,7 +1200,7 @@ export function buildConversationMemoryMarkdown(memory: CanonicalConversationMem
   );
   const tx = memory.transaction_summary;
   const customerFacts = memory.current_customer_facts.filter(fact =>
-    !fact.key.startsWith("entity:") && !/(?:provenance|metadata|customer_reported_facts)/i.test(fact.key))
+    !isLegacyRoomAreaKey(fact.key) && !fact.key.startsWith("entity:") && !/(?:provenance|metadata|customer_reported_facts)/i.test(fact.key))
     .slice(-12).map(fact => {
       const value = displayCurrentCustomerFact(fact.value);
       const label = clean(fact.key.replace(/[_-]/g, " "), 70);
@@ -1247,6 +1294,7 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
   request_decision?: CustomerRequestDecision;
   customer_fact_delta?: ConversationMemoryFact[];
   committed_scoped_correction?: B2TrustedScopedJourneyProgress | null;
+  committed_scoped_area?: boolean;
   pending_lifecycle_reply?: B2TrustedLifecycleCommit | null;
   conversation_id: string;
   company_id: string;
@@ -1257,17 +1305,27 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
   newest_first: MemoryHistoryRow[];
   visitor_turn_count: number;
 }): Promise<{ ok: true; memory: CanonicalConversationMemory; markdown: string; revision: number; idempotent: boolean } | { ok: false; reason: string }> {
+  const areaProofRequired = args.committed_scoped_area === true;
+  const requiresExactMemoryReadback = Boolean(args.committed_scoped_correction || areaProofRequired);
+  const commerce = args.commerce_state && args.commerce_state_revision !== null
+    ? { company_id: args.company_id, conversation_id: args.conversation_id,
+        source_message_id: args.source_message_id, revision: args.commerce_state_revision,
+        state: args.commerce_state } : null;
+  const requiredMemoryMatches = (memory: CanonicalConversationMemory) =>
+    (!args.committed_scoped_correction || verifyCommittedScopedCorrectionMemory({
+      memory, receipt: args.committed_scoped_correction, commerce,
+    })) && (!areaProofRequired || verifyCommittedScopedAreaMemory({
+      memory, commerce, history: args.newest_first,
+    }));
   const verifiedCorrectionReadback = async (memory: CanonicalConversationMemory, markdown: string,
     revision: number, idempotent: boolean) => {
     const readback=await readExactConversationMemoryCommit(client,{conversation_id:args.conversation_id,
       company_id:args.company_id,source_message_id:args.source_message_id,revision,
       commerce_state_revision:args.commerce_state_revision,memory,markdown_projection:markdown});
     if(readback.status!=="committed" || !isCanonicalConversationMemory(readback.value.memory) ||
-      !verifyCommittedScopedCorrectionMemory({memory:readback.value.memory,
-        receipt:args.committed_scoped_correction??null,commerce:args.commerce_state && args.commerce_state_revision!==null
-          ? {company_id:args.company_id,conversation_id:args.conversation_id,source_message_id:args.source_message_id,
-            revision:args.commerce_state_revision,state:args.commerce_state}:null}))
-      return {ok:false as const,reason:"scoped_correction_memory_readback_unverified"};
+      !requiredMemoryMatches(readback.value.memory))
+      return {ok:false as const,reason:areaProofRequired
+        ? "scoped_area_memory_readback_unverified" : "scoped_correction_memory_readback_unverified"};
     return {ok:true as const,memory:readback.value.memory,markdown:readback.value.markdown_projection,
       revision:readback.value.revision,idempotent};
   };
@@ -1283,7 +1341,7 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
         ? {company_id:args.company_id,conversation_id:args.conversation_id,source_message_id:args.source_message_id,
           revision:args.commerce_state_revision,state:args.commerce_state}:null}))
       return {ok:false,reason:"scoped_correction_memory_mismatch"};
-    if(args.committed_scoped_correction)return await verifiedCorrectionReadback(existing.memory,
+    if(requiresExactMemoryReadback)return await verifiedCorrectionReadback(existing.memory,
       String(existing.markdown_projection??""),Number(existing.revision),true);
     return { ok: true, memory: existing.memory, markdown: String(existing.markdown_projection ?? ""), revision: Number(existing.revision), idempotent: true };
   }
@@ -1294,6 +1352,7 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
     ...args,
     next_memory_revision: expectedRevision + 1,
   });
+  if (areaProofRequired && !requiredMemoryMatches(memory)) return {ok:false,reason:"scoped_area_memory_projection_unverified"};
   const markdown = buildConversationMemoryMarkdown(memory);
   const recoverAmbiguousCommit = async (
     candidateMemory: CanonicalConversationMemory,
@@ -1312,10 +1371,7 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
     if (receipt.status !== "committed" || !isCanonicalConversationMemory(receipt.value.memory)) {
       return null;
     }
-    if(args.committed_scoped_correction && !verifyCommittedScopedCorrectionMemory({memory:receipt.value.memory,
-      receipt:args.committed_scoped_correction,commerce:args.commerce_state && args.commerce_state_revision!==null
-        ? {company_id:args.company_id,conversation_id:args.conversation_id,source_message_id:args.source_message_id,
-          revision:args.commerce_state_revision,state:args.commerce_state}:null}))return null;
+    if(!requiredMemoryMatches(receipt.value.memory))return null;
     return {
       ok: true as const,
       memory: receipt.value.memory,
@@ -1347,7 +1403,7 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
       .maybeSingle();
     if (freshError) return { ok: false, reason: "memory_retry_lookup_failed" };
     if (fresh?.source_message_id === args.source_message_id && isCanonicalConversationMemory(fresh.memory)) {
-      if(args.committed_scoped_correction)return await verifiedCorrectionReadback(fresh.memory,
+      if(requiresExactMemoryReadback)return await verifiedCorrectionReadback(fresh.memory,
         String(fresh.markdown_projection??""),Number(fresh.revision),true);
       return { ok: true, memory: fresh.memory, markdown: String(fresh.markdown_projection ?? ""), revision: Number(fresh.revision), idempotent: true };
     }
@@ -1357,6 +1413,7 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
       ...args,
       next_memory_revision: retryRevision + 1,
     });
+    if (areaProofRequired && !requiredMemoryMatches(retryMemory)) return {ok:false,reason:"scoped_area_memory_projection_unverified"};
     const retryMarkdown = buildConversationMemoryMarkdown(retryMemory);
     const retry = await client.rpc("c3_commit_conversation_memory_tx", {
       p_conversation_id: args.conversation_id,
@@ -1376,7 +1433,7 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
       return await recoverAmbiguousCommit(retryMemory, retryMarkdown, retryRevision + 1) ??
         { ok: false, reason: clean(retry.data?.result, 80) || "memory_retry_failed" };
     }
-    if(args.committed_scoped_correction)return await verifiedCorrectionReadback(retryMemory,retryMarkdown,
+    if(requiresExactMemoryReadback)return await verifiedCorrectionReadback(retryMemory,retryMarkdown,
       retryRevision+1,Boolean(retry.data.idempotent));
     return { ok: true, memory: retryMemory, markdown: retryMarkdown, revision: Number(retry.data.current_revision ?? retry.data.applied_revision), idempotent: Boolean(retry.data.idempotent) };
   }
@@ -1384,7 +1441,7 @@ export async function refreshConversationLongMemory(client: LongMemoryDbClient, 
     return await recoverAmbiguousCommit(memory, markdown, expectedRevision + 1) ??
       { ok: false, reason: result || "memory_commit_unknown" };
   }
-  if(args.committed_scoped_correction)return await verifiedCorrectionReadback(memory,markdown,expectedRevision+1,Boolean(data.idempotent));
+  if(requiresExactMemoryReadback)return await verifiedCorrectionReadback(memory,markdown,expectedRevision+1,Boolean(data.idempotent));
   return { ok: true, memory, markdown, revision: Number(data.current_revision ?? data.applied_revision), idempotent: Boolean(data.idempotent) };
 }
 

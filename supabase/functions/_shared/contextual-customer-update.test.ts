@@ -11,7 +11,7 @@ import {
   type SourceBoundScopeFact,
   readSourceBoundContextualGoal,
   verifiedCurrentScopeFacts,
-  SCOPED_AREA_KEY,verifiedScopedAreaProposal,readScopedAreaReceipt,parseScopedAreaClause,scopedAreaMemoryValue,
+  SCOPED_AREA_KEY,mixedScopedAreaReceipt,verifiedScopedAreaProposal,readScopedAreaReceipt,parseScopedAreaClause,scopedAreaMemoryValue,
 } from "./contextual-customer-update.ts";
 import type { DecisionValue } from "./bounded-decision-context.ts";
 import {
@@ -28,7 +28,7 @@ import {
 import { resolveCanonicalCommerceResolution } from "./conversation-resolution-contract.ts";
 import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
 import { prepareConversationRecall } from "./conversation-recall.ts";
-import { buildCanonicalConversationMemory, verifyCommittedRoomCorrectionMemory, verifyCommittedLifecycleMemory, type CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { buildCanonicalConversationMemory, verifyCommittedRoomCorrectionMemory, verifyCommittedLifecycleMemory, verifyCommittedScopedAreaMemory, type CanonicalConversationMemory } from "./conversation-long-memory.ts";
 import {
   arbitrateAnaphoricProductFollowUp,
   arbitrateCanonicalProductFollowUp,
@@ -3196,4 +3196,93 @@ Deno.test("R4A generic area preserves separate literal scopes and correction lin
  assert(readScopedAreaReceipt(pa,{...final,company_id:"other-tenant"})===null,"prior receipt crossed tenant");
  assert(readScopedAreaReceipt({...pa,current_topic:"different subject"},final)===null,"prior receipt crossed topic");
  assert(scopedAreaMemoryValue(pn,[...ph,{id:cc.source_message_id,role:"visitor",content:correction}],"en")==="North zone: 25 sq m; South zone: 30 sq m","prior correction current memory mismatch");
+});
+
+Deno.test("R4A retirement planner projects only source-verified current typed area",()=>{
+ const initial=createEmptyConversationCommerceState();
+ const c={company_id:"tenant-area",conversation_id:"ticket-area",source_message_id:"area-observe",state_revision:1};
+ const ownerText="I need exhibition planning for two zones";
+ const goal={version:"contextual-scope-1",goal_id:"contextual-goal:area-goal",subject_label:"exhibition planning",source_text:ownerText,
+  company_id:c.company_id,conversation_id:c.conversation_id,source_message_id:"area-goal",recorded_revision:1,status:"active"};
+ initial.current_topic=goal.subject_label;initial.customer_constraints.contextual_goal=goal;
+ const history=[{id:"area-goal",role:"visitor",content:ownerText}];
+ const frame=(action:"observe"|"correct",text:string,scopes:string[],row_texts:string[])=>normalizeCommerceSemanticFrame({
+  operation:"UPDATE_ITEM",intent:"customer_context_update",confidence:.99,customer_correction:action==="correct",
+  customer_facts:[{key:SCOPED_AREA_KEY,value:{action,source_text:text,scopes,row_texts}}],
+  referents:[{ref:goal.goal_id,source:"persistent_state",confidence:.99}]
+ });
+ const text="North zone about 20 sq m, South zone 30 sq m";
+ const first=verifiedScopedAreaProposal({state:initial,context:c,text,frame:frame("observe",text,["North zone","South zone"],
+  ["North zone about 20 sq m","South zone 30 sq m"]),history});
+ assert(first,"original area source rejected");
+ const committed=reduceCommerceState(initial,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:first}]);
+ const correction="Correction: North zone changed to 25 sq m, others unchanged";
+ const h=[...history,{id:c.source_message_id,role:"visitor",content:text}];
+ const cc={...c,source_message_id:"area-correct",state_revision:2};
+ const corrected=verifiedScopedAreaProposal({state:committed,context:cc,text:correction,
+  frame:frame("correct",correction,["North zone"],["North zone changed to 25 sq m"]),history:h});
+ assert(corrected,"correction receipt rejected");
+ const after=reduceCommerceState(committed,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:corrected}]);
+ const replaceText = "更正一下:North zone其實是25平方米";
+ const replace = verifiedScopedAreaProposal({ state: committed, context: cc, text: replaceText,
+   frame: frame("correct", replaceText, ["North zone"], ["North zone其實是25平方米"]), history: h });
+ assert(replace && replace.superseded[0].amount === 20 && replace.current[0].amount === 25 &&
+   replace.current[1].amount === 30, "replacement-only correction lost source or unaffected scope");
+ assert(!parseScopedAreaClause("North zone其實是25呎", "North zone", "correct"),
+   "correction grammar converted a bare length into area");
+ const rows=[...h,{id:cc.source_message_id,role:"visitor",content:correction}];
+ const snapshot={company_id:c.company_id,conversation_id:c.conversation_id,source_message_id:cc.source_message_id,revision:3};
+ const before=JSON.stringify(after);
+ const plan=(scope:typeof snapshot|null,sourceRows:typeof rows,state=after)=>planConversationService({
+  question:"Please summarize the current requirements.",language:"en",memory:null,commerce:state,
+  commerce_snapshot:scope,recent_messages:sourceRows,recall:{handled:false,reason:"NOT_A_RECALL_QUERY"}
+ }).known_facts.filter(f=>f.name===SCOPED_AREA_KEY);
+ const good=plan(snapshot,rows);
+ assert(good.length===1&&good[0].authority==="CANONICAL_COMMERCE_STATE"&&good[0].value.includes("25 sq m")&&
+  good[0].value.includes("30 sq m")&&!good[0].value.includes("20 sq m"),"stale/missing typed area");
+ assert(plan({...snapshot,company_id:"other"},rows).length===0,"cross-tenant area accepted");
+ assert(plan({...snapshot,conversation_id:"other"},rows).length===0,"cross-ticket area accepted");
+ assert(plan({...snapshot,revision:2},rows).length===0,"stale revision accepted");
+ assert(plan(snapshot,rows.slice(1)).length===0,"missing owner source accepted");
+ assert(plan(snapshot,rows.filter(x=>x.id!==c.source_message_id)).length===0,"missing original observation accepted");
+ assert(plan(snapshot,rows.map(x=>x.id===c.source_message_id?{...x,content:"North zone 99 sq m, South zone 30 sq m"}:x)).length===0,"forged source accepted");
+ assert(plan(snapshot,[...rows,rows[1]]).length===0,"duplicate source ID accepted");
+ assert(plan(null,rows).length===0,"unverified snapshot accepted");
+ assert(JSON.stringify(after)===before&&after.entities.length===0,"planning changed canonical state or invented quantity");
+ const memory=buildCanonicalConversationMemory({
+  company_id:c.company_id,conversation_id:c.conversation_id,source_message_id:cc.source_message_id,
+  commerce_state_revision:3,commerce_state:after,newest_first:rows.slice().reverse(),
+  source_created_at:"2026-11-27T00:00:00Z",visitor_turn_count:rows.length,next_memory_revision:3
+ });
+ const proof={memory,commerce:{...snapshot,state:after},history:rows};
+ assert(verifyCommittedScopedAreaMemory(proof),"typed correction Memory/Commerce mismatch");
+ const old=memory.cancelled_or_superseded.filter(f=>f.key==="superseded_"+SCOPED_AREA_KEY);
+ assert(old.length===1&&JSON.stringify(old[0].value).includes('"amount":20'),"old typed area lineage missing");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:null}),"missing Memory accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:{...memory,company_id:"other"}}),"wrong Memory tenant accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:{...memory,conversation_id:"other"}}),"wrong Memory ticket accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:{...memory,commerce_state_revision:2}}),"stale Memory revision accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:{...memory,cancelled_or_superseded:[]}}),"missing old lineage accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:{...memory,latest_corrections:[]}}),"missing correction source accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,history:rows.slice(1)}),"missing owner source accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,history:rows.filter(x=>x.id!==c.source_message_id)}),"missing prior measurement accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:{...memory,current_customer_facts:memory.current_customer_facts.map(f=>f.key===SCOPED_AREA_KEY?{...f,value:"North zone: 20 sq m; South zone: 30 sq m"}:f)}}),"superseded value revived");
+});
+
+Deno.test("Room mixed statements bind explicit measures to the active source owner and preserve other claims",()=>{
+ const initial=createEmptyConversationCommerceState(),source="I need the exhibit stand. Bay A 25 sq m; budget 600.";
+ const c={company_id:"mixed-company",conversation_id:"mixed-ticket",source_message_id:"mixed-source",state_revision:0};
+ const state=structuredClone(initial);
+ state.entities=[{entity_id:"stand",category:"generic",quantity:0,status:"tentative",attributes:{product_name:"exhibit stand"},constraints:{},model:null,brand:null,provenance:{source_type:"customer",source_message_id:c.source_message_id}}];
+ const frame=normalizeCommerceSemanticFrame({version:"commerce-semantic-1.0.0",operation:"ASK_FACT",intent:"customer_guidance",confidence:.98,
+   customer_facts:[{key:"measure",value:{amount:25,unit:"sq_m"}},{key:"budget",value:{amount:600,unit:"USD"}}]});
+ const read=(text:string,proposal=frame,candidate=state)=>mixedScopedAreaReceipt(initial,candidate,c,text,proposal,[]);
+ const receipt=read(source);
+ assert(receipt?.current.length===1 && receipt.current[0].scope==="Bay A" && receipt.current[0].amount===25 && receipt.current[0].unit==="sq_m","explicit mixed observation unproved");
+ assert(scopedAreaMemoryValue(receipt!,[{id:c.source_message_id,role:"visitor",content:source}],"en")==="Bay A: 25 sq m","mixed readback differs");
+ for(const text of [source.replace("25 sq m","25 m"),source.replace("25 sq m","24 sq m"),source.replace("Bay A","If Bay A"),source.replace("25 sq m","25 sq m?"),source.replace("exhibit stand","another service")])
+   assert(!read(text),"unproved mixed area admitted: "+text);
+ const cancelled=structuredClone(state);cancelled.entities[0].status="cancelled";
+ assert(!read(source,frame,cancelled),"cancelled owner admitted");
+ assert(!read(source,{...frame!,operation:"CANCEL_ITEM"} as CommerceSemanticFrame),"transactional reading admitted");
 });

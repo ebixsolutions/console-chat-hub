@@ -1,4 +1,4 @@
-import { hasPairedSiteProposal,verifiedPairedSiteProposal,readPairedSiteReceipt,pairedSiteReply,PAIRED_SITE_KEY,PAIRED_SITE_PATH,PAIRED_SITE_REASON, hasScopedAreaProposal,verifiedScopedAreaProposal,readScopedAreaReceipt,scopedAreaReply,SCOPED_AREA_KEY,SCOPED_AREA_PATH,SCOPED_AREA_REASON } from "./contextual-customer-update.ts";
+import { mixedScopedAreaReceipt, sourceAreaFrame, hasPairedSiteProposal,verifiedPairedSiteProposal,readPairedSiteReceipt,pairedSiteReply,PAIRED_SITE_KEY,PAIRED_SITE_PATH,PAIRED_SITE_REASON, hasScopedAreaProposal,verifiedScopedAreaProposal,readScopedAreaReceipt,scopedAreaReply,SCOPED_AREA_KEY,SCOPED_AREA_PATH,SCOPED_AREA_REASON } from "./contextual-customer-update.ts";
 import { retainedRecapTargets } from "./conversation-recall.ts";
 /**
  * TASK A3 — Commerce state runtime adapter.
@@ -25,7 +25,7 @@ import {
   createEmptyConversationCommerceState,
   isConversationCommerceState,
 } from "./commerce-state-contract.ts";
-import { retainedRoomSizes, roomSizeCorrection, isCanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { isCanonicalConversationMemory } from "./conversation-long-memory.ts";
 import { exactProductIdentifiers } from "./natural-customer-response.ts";
 import {
   type CommerceStateEvent,
@@ -2364,80 +2364,6 @@ function materializeRoomOnlyReferenceHints(
   return [...next.values()];
 }
 
-function roomScope(label: string): "small_bedroom" | "large_bedroom" | "living_room" | "study" | null {
-  if (/(?:細房|细房|小房|small\s*bedroom)/i.test(label)) return "small_bedroom";
-  if (/(?:大房|large\s*bedroom)/i.test(label)) return "large_bedroom";
-  if (/(?:客廳|客厅|個廳|个厅|living\s*room)/i.test(label)) return "living_room";
-  if (/(?:書房|书房|study)/i.test(label)) return "study";
-  return null;
-}
-
-function scopedRoomValues(value: unknown): Record<string, string> | null {
-  if (!isRecord(value)) return null;
-  const entries = Object.entries(value);
-  if (!entries.length || entries.some(([key, raw]) =>
-    !["small_bedroom", "large_bedroom", "living_room", "study"].includes(key) ||
-    typeof raw !== "string" || !/^\d+(?:\.\d+)?平方呎$/.test(raw)
-  )) return null;
-  return Object.fromEntries(entries) as Record<string, string>;
-}
-
-function deriveScopedRoomSizeEvents(
-  input: CommerceRuntimeInput,
-  previous: ConversationCommerceState,
-): CommerceStateEvent[] {
-  const declarative = input.text.split(/[?？]/)[0];
-  const correction = roomSizeCorrection(declarative);
-  const observations = correction ? [] : retainedRoomSizes(declarative);
-  if (!correction && !observations.length) return [];
-  // Room measurements belong to the active AC goal, never to the currently
-  // active refrigerator or a cancelled/ambiguous air-conditioner entity.
-  const active = previous.entities.filter((entity) =>
-    entity.category === "air_conditioner" &&
-    entity.status !== "cancelled" && entity.status !== "deferred"
-  );
-  if (active.length !== 1) return [];
-  const entity = active[0];
-  const before = scopedRoomValues(entity.attributes.room_sizes);
-  const values: Record<string, string> = { ...(before ?? {}) };
-  if (correction) {
-    const scope = roomScope(correction.label);
-    if (!scope || !before || before[scope] !== correction.old_value ||
-      correction.old_value === correction.new_value) return [];
-    values[scope] = correction.new_value;
-  } else {
-    for (const fact of observations) {
-      const scope = roomScope(fact.label);
-      if (!scope) continue;
-      if (values[scope] && values[scope] !== fact.value) {
-        // A new value may replace the old scoped observation only when the
-        // customer explicitly says this is a correction. The old value stays
-        // historical, and unrelated room scopes remain untouched.
-        if (!/(?:量錯|量错|改咗|改了|更正|其實係|其实是|actually|correction|i meant)/i.test(declarative)) return [];
-      }
-      values[scope] = fact.value;
-    }
-    if (Object.keys(values).length === Object.keys(before ?? {}).length &&
-      Object.entries(values).every(([scope, value]) => before?.[scope] === value)) return [];
-  }
-  const provenance = {
-    source_type: "customer" as const,
-    source_message_id: input.source_message_id,
-    recorded_at: input.occurred_at ?? null,
-  };
-  return [
-    { type: "SET_ENTITY_ATTRIBUTE", entity_id: entity.entity_id, key: "room_sizes", value: values, provenance },
-    ...(correction || observations.some((fact) => {
-      const scope = roomScope(fact.label);
-      return scope && before?.[scope] && before[scope] !== fact.value;
-    }) ? [{ type: "ADD_CORRECTION" as const, correction: observations.map((fact) => {
-        const scope = roomScope(fact.label);
-        return scope && before?.[scope] && before[scope] !== fact.value
-          ? `${scope} area: change from ${before[scope]} to ${fact.value}` : "";
-      }).filter(Boolean).join("; ") || clean(declarative) }] : []),
-  ];
-}
-
 function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: ConversationCommerceState, hints: CommerceTurnEntityHint[]): ConversationCommerceState {
   let reduced = state;
   // Customer-owned, explicitly stated facts bind only to one active product.
@@ -3164,7 +3090,6 @@ function reduceSingleTurn(
     : derivedWithoutAllocationOverwrite;
   let runtimeEvents = calculationTurn ? [] : [
     ...deriveA3RuntimeEvents(input, hints, previous),
-    ...deriveScopedRoomSizeEvents(input, previous),
   ];
   // A goal turn owns one durable aggregate entity. Room mentions are scopes of
   // that purchase goal, not separate products that can make later binding
@@ -3357,7 +3282,7 @@ function reduceSingleTurn(
     ? [{ type: "UPDATE_ENTITY", entity_id: chosenGoal.entity_id,
         patch: { quantity: explicitGoalNumber, ...(staleProductName ? { model: null,
           attributes: { quantity_basis: "customer_explicit", product_name: null,
-            sku: null, semantic_attributes: {}, installation_type: null, room_sizes: {} }, } : {
+            sku: null, semantic_attributes: {}, installation_type: null }, } : {
           attributes: { quantity_basis: "customer_explicit" } }) },
         provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } }]
     : [];
@@ -3498,11 +3423,7 @@ function reduceTurnOperations(
     !compoundQuantityBindingsValid(clauses,previous,rawHints)) return previous;
   if (clauses.length < 2 || clauses.length > 8 ||
     independentOperations < 2 && !semanticCustomerConditions) {
-    let whole = reduceSingleTurn(previous, input, rawHints, sourceContext);
-    if (!isHistoricalOrConditionalCustomerCalculationRequest(input.text)) {
-      const scoped = deriveScopedRoomSizeEvents(input, whole);
-      if (scoped.length) whole = reduceCommerceState(whole, scoped);
-    }
+    const whole = reduceSingleTurn(previous, input, rawHints, sourceContext);
     return restoreExplicitReturnTopic(enrichExplicitCustomerFacts(input,whole,rawHints), input.text);
   }
   let state = previous;
@@ -3573,13 +3494,6 @@ function reduceTurnOperations(
       }
     }
     if (owned.length) state = reduceCommerceState(state, owned);
-  }
-  // A condition may precede the clause that first creates its entity. Bind
-  // only the scoped customer observation after all clauses have been reduced.
-  // The extractor is idempotent and refuses ambiguous or unrelated targets.
-  if (!isHistoricalOrConditionalCustomerCalculationRequest(input.text)) {
-    const scoped = deriveScopedRoomSizeEvents(input, state);
-    if (scoped.length) state = reduceCommerceState(state, scoped);
   }
   const focus = input.trusted_product_topic_focus;
   if (focus && validateTrustedProductTopicFocus(input, state).valid &&
@@ -3691,65 +3605,6 @@ function sourceBoundPartialUnitRetention(
  * subject, numeric value and unit is independently visible in the original
  * Visitor sentence. Unproved/model-only facts remain in bounded Memory only;
  * they cannot obtain the Commerce/B2 readback proof. */
-function sourceAttestedNoStateAreaFacts(
-  previous: ConversationCommerceState,
-  input: CommerceRuntimeInput,
-): CommerceStateEvent[] {
-  const frame=input.semantic_frame;
-  if(!frame || frame.operation!=="NO_STATE_CHANGE" || frame.confidence<0.90 ||
-     frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
-     frame.entities.length>0 || !frame.customer_facts?.length ||
-     frame.customer_facts.length>8 ||
-     /[?？]|\b(?:if|what if|suppose|hypothetical|might)\b|(?:如果|假設|假设|假如|大概係咪|是否|有冇|幾多|几多)/iu.test(input.text))return [];
-  const clauses=input.text.normalize("NFKC").split(/[，,。；;\n]+/u)
-    .map(part=>part.trim()).filter(Boolean);
-  const labels:Record<string,RegExp>={
-    small_room:/(?:細房|细房|小房|small\s+(?:bed)?room)/iu,
-    large_room:/(?:大房|large\s+(?:bed)?room)/iu,
-    living_room:/(?:客廳|客厅|living\s+room)/iu,
-    meeting_room:/(?:會議室|会议室|meeting\s+room)/iu,
-    training_room:/(?:培訓室|培训室|training\s+room)/iu,
-    lobby:/(?:大堂|接待處|接待处|\blobby\b)/iu,
-  };
-  const existing=previous.customer_constraints.customer_reported_facts;
-  const prior=existing && typeof existing==="object" && !Array.isArray(existing)
-    ? existing as Record<string,unknown> : {};
-  const incoming:Record<string,unknown>={...prior};
-  const claimed=new Set<number>();
-  let changed=false;
-  for(const fact of frame.customer_facts){
-    if(!/^[a-z][a-z0-9_]{0,79}$/i.test(fact.key) ||
-       ["__proto__","prototype","constructor"].includes(fact.key))return [];
-    const match=fact.key.match(/^([a-z][a-z0-9_]*)_area$/);
-    const value=fact.value;
-    if(!match || !value || typeof value!=="object" || Array.isArray(value) ||
-       !("amount" in value) || !("unit" in value) ||
-       typeof value.amount!=="number" || !Number.isFinite(value.amount) ||
-       value.amount<=0 || value.amount>100000 || value.unit!=="sq_ft" ||
-       Object.keys(value).some(k=>k!=="amount"&&k!=="unit"))return [];
-    const scope=labels[match[1]] ??
-      new RegExp(String.raw`\b`+match[1].replace(/_/g,String.raw`\s+`)+String.raw`\b`,"iu");
-    const matching=clauses.flatMap((clause,i)=>{
-      if(!scope.test(clause) || !/(?:平方[呎尺]|[0-9]\s*[呎尺]|sq\.?\s*ft|square\s*feet)/iu.test(clause))return [];
-      const values=[...clause.matchAll(/(?<!\d)\d+(?:\.\d+)?(?!\d)/gu)].map(m=>Number(m[0]));
-      return values.length===1 && values[0]===value.amount ? [i] : [];
-    });
-    if(matching.length!==1 || claimed.has(matching[0]))return [];
-    claimed.add(matching[0]);
-    // NO_STATE_CHANGE cannot silently overwrite an existing customer fact;
-    // explicit updates remain the original revision-bound UPDATE_ITEM path.
-    if(Object.prototype.hasOwnProperty.call(prior,fact.key))continue;
-    incoming[fact.key]={
-      value:fact.value,
-      provenance:{source_type:"customer",source_message_id:input.source_message_id,
-        recorded_at:input.occurred_at??null},
-    };
-    changed=true;
-  }
-  if(!changed || claimed.size!==clauses.length)return [];
-  return [{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:incoming}];
-}
-
 /** Literal count-first source proof. No domain name, product classifier or
  * customer phrase table selects the subject. The proposed unit is verified
  * against the original clause; ambiguous or negated counts fail closed. */
@@ -3877,13 +3732,22 @@ function sourceAttestedUninterpretedCountFacts(previous:ConversationCommerceStat
   }}}];
 }
 
+function literalLengthObservation(clause:string,amount:number,unit:string){
+  if(!/^(?:呎|尺|feet|foot|ft)$/iu.test(unit))return null;
+  const matches=[...clause.matchAll(/[0-9]+(?:\.[0-9]+)?/gu)];
+  if(matches.length!==1 || Number(matches[0][0])!==amount)return null;
+  const start=matches[0].index!, writtenUnit=clause.slice(start+matches[0][0].length).trim();
+  const rawSubject=clause.slice(0,start).trim().replace(/(?:就|約|约|about|approximately)\s*$/iu,"").trim();
+  return writtenUnit===unit && rawSubject.length>=2 && /\p{L}/u.test(rawSubject)?{rawSubject,writtenUnit}:null;
+}
+
 /** A NO_STATE_CHANGE customer fact remains a customer observation only.
  * A semantic reading proposes its key/value, but a single original Visitor
  * clause must independently contain its number, subject and written unit.
  * This is not an entity, merchant price, stock, quote or order authority.
  * There are no industry, room, product or canonical-unit vocabulary tables. */
 function sourceAttestedGenericNoStateFacts(
-  previous:ConversationCommerceState,input:CommerceRuntimeInput,
+  previous:ConversationCommerceState,input:CommerceRuntimeInput,context?:ContextualSourceContext,
 ):CommerceStateEvent[]{
   const frame=input.semantic_frame;
   if(!frame || frame.operation!=="NO_STATE_CHANGE" || frame.confidence<0.90 ||
@@ -3939,11 +3803,24 @@ function sourceAttestedGenericNoStateFacts(
     // Existing effective facts must only change through the original
     // correction + source/revision/CAS contract, never NO_STATE_CHANGE.
     if(Object.prototype.hasOwnProperty.call(prior,fact.key))continue;
+    const literalDimension=/^(?:呎|尺|feet|foot|ft)$/iu.test(m.writtenUnit);
+    const revision=context?.state_revision;
+    if(literalDimension){
+      const literal=literalLengthObservation(m.clause,amount,m.writtenUnit);
+      if(!literal || revision==null || !Number.isSafeInteger(revision) || revision<0 ||
+        context?.company_id!==input.company_id || context.conversation_id!==input.conversation_id || context.source_message_id!==input.source_message_id)return [];
+      m.rawSubject=literal.rawSubject;
+      for(const [key,row] of Object.entries(incoming)){
+        if(isRecord(row) && row.source_count_visibility==="exact_recall_only" && typeof row.source_count_expires_after_revision==="number" && row.source_count_expires_after_revision<revision+1)delete incoming[key];
+      }
+      if(Object.values(incoming).filter(row=>isRecord(row) && row.source_count_visibility==="exact_recall_only").length>=LITERAL_COUNT_MAX_RECORDS)return [];
+    }
     incoming[fact.key]={value:val,source_text:m.clause,
+      ...(literalDimension?{source_count_origin:"literal_customer_clause",source_count_visibility:"exact_recall_only",source_count_order:"subject_first",source_count_recorded_revision:revision!+1,source_count_expires_after_revision:revision!+1+LITERAL_COUNT_REVISION_TTL}:{}),
       source_subject_text:m.rawSubject,source_unit_text:m.writtenUnit,
-      ...(m.countFirst?{source_count_order:"count_first"}:{}),
+      ...(m.countFirst&&!literalDimension?{source_count_order:"count_first"}:{}),
       provenance:{source_type:"customer",source_message_id:input.source_message_id,
-        recorded_at:input.occurred_at??null}};
+        company_id:input.company_id,conversation_id:input.conversation_id,recorded_at:input.occurred_at??null}};
     changed=true;
   }
   if(!changed)return [];
@@ -4548,7 +4425,9 @@ function sourceBoundTurnReduction(previous: ConversationCommerceState, input: Co
         provenance:{source_type:"customer",source_message_id:input.source_message_id,recorded_at:input.occurred_at??null}});
     }
   }
-  const state = removals.length ? reduceCommerceState(candidate, removals) : candidate;
+  const reduced = removals.length ? reduceCommerceState(candidate, removals) : candidate;
+  const area=mixedScopedAreaReceipt(previous,reduced,sourceContext,input.text,frame,input.history??[]);
+  const state=area?reduceCommerceState(reduced,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:area}]):reduced;
   // Apply the same authority postcondition to every candidate path, including
   // compound turns and source-attested early-return operations.
   const invalidations=sourceLiteralCountInvalidations(state,input);
@@ -4676,8 +4555,7 @@ function reduceTurnCandidate(previous: ConversationCommerceState,input: Commerce
     if (customerEvents.length) state = reduceCommerceState(state, customerEvents);
     // Only attested per-clause dimensions can advance customer facts on a
     // typed NO_STATE_CHANGE turn; never let it mutate an entity or transaction.
-    const area=sourceAttestedNoStateAreaFacts(state,input);
-    const attested=area.length ? area : sourceAttestedGenericNoStateFacts(state,input);
+    const attested=sourceAttestedGenericNoStateFacts(state,input,sourceContext);
     if(attested.length)state=reduceCommerceState(state,attested);
     const literalCounts=sourceAttestedUninterpretedCountFacts(state,input,sourceContext);
     if(literalCounts.length)state=reduceCommerceState(state,literalCounts);
@@ -5049,67 +4927,6 @@ function buildTrustedJourneyProgress(input: {
     committed_missing: [...committed.goal.missing],
     accepted_slots: acceptedSlots,
     accepted_corrections: acceptedCorrections,
-    transaction_before,
-    transaction_after,
-  };
-}
-
-function buildTrustedRoomCorrection(
-  input: CommerceRuntimeInput,
-  persisted: Awaited<ReturnType<typeof persistCommerceTurn>>,
-): B2TrustedCorrectionCommit | null {
-  const correction = roomSizeCorrection(input.text);
-  const scope = correction && roomScope(correction.label);
-  if (!correction || !scope || persisted.result !== "success" ||
-    persisted.revision !== persisted.previous_revision + 1) return null;
-  const before = persisted.previous_state.entities.filter((entity) =>
-    entity.category === "air_conditioner" &&
-    entity.status !== "cancelled" && entity.status !== "deferred"
-  );
-  const after = persisted.state.entities.filter((entity) =>
-    entity.category === "air_conditioner" &&
-    entity.status !== "cancelled" && entity.status !== "deferred"
-  );
-  if (before.length !== 1 || after.length !== 1 ||
-    before[0].entity_id !== after[0].entity_id) return null;
-  const previous_values = scopedRoomValues(before[0].attributes.room_sizes);
-  const committed_values = scopedRoomValues(after[0].attributes.room_sizes);
-  if (!previous_values || !committed_values ||
-    previous_values[scope] !== correction.old_value ||
-    committed_values[scope] !== correction.new_value ||
-    Object.keys(previous_values).some((key) =>
-      key !== scope && previous_values[key] !== committed_values[key]
-    ) ||
-    persisted.previous_state.latest_corrections.includes(clean(input.text)) ||
-    !persisted.state.latest_corrections.includes(clean(input.text))) return null;
-  const transaction_before = b2JourneyTransactionBoundary(persisted.previous_state);
-  const transaction_after = b2JourneyTransactionBoundary(persisted.state);
-  if (JSON.stringify(transaction_before) !== JSON.stringify(transaction_after)) return null;
-  const room = scope === "small_bedroom" ? { traditional: "細房", simplified: "小房" }
-    : scope === "large_bedroom" ? { traditional: "大房", simplified: "大房" }
-    : { traditional: "客廳", simplified: "客厅" };
-  const reply = input.language === "en"
-    ? `Updated the ${scope.replaceAll("_", " ")} from ${correction.old_value} to ${correction.new_value}.`
-    : input.language === "zh-CN"
-    ? `已把${room.simplified}面积由${correction.old_value}更正为${correction.new_value}。`
-    : `已將${room.traditional}面積由${correction.old_value}更正為${correction.new_value}，舊數字唔再作現時要求。`;
-  return {
-    contract: "scoped-correction-commit-v1",
-    company_id: input.company_id,
-    source_message_id: input.source_message_id,
-    source_text: input.text,
-    previous_revision: persisted.previous_revision,
-    committed_revision: persisted.revision,
-    entity_id: after[0].entity_id,
-    category: "air_conditioner",
-    scope,
-    field: "room_size",
-    previous_value: correction.old_value,
-    current_value: correction.new_value,
-    previous_values,
-    committed_values,
-    correction: clean(input.text),
-    reply,
     transaction_before,
     transaction_after,
   };
@@ -5518,7 +5335,7 @@ function readSourceBoundCountFirst(input:CommerceRuntimeInput,state:Conversation
   const entry=typed??literal[0];
   if(!entry)return {kind:"not_applicable"};
   const [key,row]=entry,raw=!typed;
-  if(!isRecord(row)||row.source_count_order!=="count_first"||
+  if(!isRecord(row)||!(row.source_count_order==="count_first" || raw && row.source_count_order==="subject_first")||
     !Number.isSafeInteger(revision)||revision<1||!input.company_id||!input.conversation_id||!input.source_message_id)return fail;
   if(frame&&(frame.operation!=="ASK_FACT"||frame.confidence<0.90||frame.ambiguity.is_ambiguous||
     frame.customer_correction||frame.additive||frame.explicit_negations.length||frame.entities.length||
@@ -5531,17 +5348,18 @@ function readSourceBoundCountFirst(input:CommerceRuntimeInput,state:Conversation
      !isRecord(provenance)||provenance.source_type!=="customer"||
      typeof provenance.source_message_id!=="string"||!provenance.source_message_id||
      provenance.source_message_id===input.source_message_id||typeof row.source_text!=="string")return fail;
-  const proof=countFirstObservation(row.source_text,val.amount,val.unit);
+  const subjectFirst=raw && row.source_count_order==="subject_first";
+  const proof=subjectFirst?literalLengthObservation(row.source_text,val.amount,val.unit):countFirstObservation(row.source_text,val.amount,val.unit);
   if(!proof||proof.rawSubject!==row.source_subject_text||proof.writtenUnit!==row.source_unit_text||
      !countObservationQueryMatches(input.text,proof.rawSubject,proof.writtenUnit))return fail;
-  if(raw&&(key!==sourceLiteralCountKey(proof.rawSubject,proof.writtenUnit)||
+  if(raw&&(!subjectFirst && key!==sourceLiteralCountKey(proof.rawSubject,proof.writtenUnit)||
     provenance.company_id!==input.company_id||provenance.conversation_id!==input.conversation_id||
     row.source_count_visibility!=="exact_recall_only"||
     typeof row.source_count_recorded_revision!=="number"||!Number.isSafeInteger(row.source_count_recorded_revision)||
     typeof row.source_count_expires_after_revision!=="number"||!Number.isSafeInteger(row.source_count_expires_after_revision)||
     row.source_count_expires_after_revision!==row.source_count_recorded_revision+LITERAL_COUNT_REVISION_TTL||
     revision<row.source_count_recorded_revision||revision>row.source_count_expires_after_revision||
-    !sourceBoundCustomerDeclarationClauses(row.source_text).includes(row.source_text)))return fail;
+    (!subjectFirst && !sourceBoundCustomerDeclarationClauses(row.source_text).includes(row.source_text))))return fail;
   const subject=proof.rawSubject.toLowerCase(),unit=proof.writtenUnit.toLowerCase();
   if(!(frame?.demands??[]).every(d=>d.source_quote.normalize("NFKC").trim()===input.text.normalize("NFKC").trim()&&
      d.subject_refs.every(ref=>ref.normalize("NFKC").toLowerCase()===subject)))return fail;
@@ -5551,7 +5369,7 @@ function readSourceBoundCountFirst(input:CommerceRuntimeInput,state:Conversation
   // tenant/ticket provenance. Only the legacy all-ID-less projection can
   // corroborate its unique literal source clause without claiming an ID
   // readback; any supplied IDs keep the exact ID requirement.
-  const allIdless=raw&&history.length>0&&history.every(h=>!h.id);
+  const allIdless=raw&&!subjectFirst&&history.length>0&&history.every(h=>!h.id);
   const origins=history.filter(h=>allIdless
     ?countObservationClauses(h.content).filter(clause=>clause===row.source_text).length===1
     :h.id===provenance.source_message_id);
@@ -5587,6 +5405,9 @@ export async function runCommerceStateRuntime(
       revision: contextualBefore.revision, persist_result: "read_only",
       reason: "read_only_current_requirements_recap", route: "commerce_state_answer" };
   }
+  const sourceMeasurements = sourceAreaFrame(contextualBefore.state, contextualSourceContext(input,contextualBefore.revision),
+    recapOriginalText, input.semantic_frame, input.history??[]);
+  if(sourceMeasurements) input={...input,semantic_frame:sourceMeasurements};
   if(hasScopedAreaProposal(input.semantic_frame)){
     const preview=verifiedScopedAreaProposal({state:contextualBefore.state,context:contextualSourceContext(input,contextualBefore.revision),
       text:recapOriginalText,frame:input.semantic_frame,history:input.history});
@@ -6229,18 +6050,6 @@ export async function runCommerceStateRuntime(
   if (resolveBoundLifecyclePlan(input, persisted.previous_state).kind === "mutation") {
     return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
       persist_result: persisted.result, reason: "unverified_lifecycle_commit", route: "commerce_state_answer" };
-  }
-  const committedRoomCorrection = buildTrustedRoomCorrection(runtimeInput, persisted);
-  if (committedRoomCorrection) {
-    return {
-      authority: "CONVERSATION_STATE",
-      reply: committedRoomCorrection.reply,
-      revision: persisted.revision,
-      persist_result: persisted.result,
-      reason: "authoritative_scoped_correction_applied",
-      route: "commerce_state_answer",
-      trusted_correction_commit: committedRoomCorrection,
-    };
   }
   if (
     (contextualDecision.route === "product_guidance" ||

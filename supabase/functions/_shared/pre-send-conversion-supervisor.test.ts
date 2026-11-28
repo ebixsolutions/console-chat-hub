@@ -1,3 +1,4 @@
+import { roomSourceFixture } from "../../../tests/fixtures/room-source-fixture.ts";
 import { prepareConversationRecall } from "./conversation-recall.ts";
 import { recallFixture } from "./conversation-recall.test.ts";
 import {
@@ -1452,14 +1453,16 @@ Deno.test("Phase1 localized pending-check statements pass unchanged B2 without k
   for (const language of ["zh-TW", "zh-CN", "en"] as const) {
     const state=createEmptyConversationCommerceState();
     state.language=language;state.current_topic="air_conditioner";state.current_intent="select_product";
-    state.entities=[{entity_id:"air_conditioner:unscoped",category:"air_conditioner",model:"CW-SUL70BA",quantity:1,status:"researching",attributes:{quantity_basis:"system_default",installation_type:"window_unit",room_sizes:{small_bedroom:"80平方呎",large_bedroom:"110平方呎"},customer_goal:{category:"air_conditioner",objective:"select_product",journey_stage:"sizing_guidance",collected:["room_sizes","installation_type"],missing:["sizing_decision"],response_intent:"advance_decision",source_message_id:"source-1"}},constraints:{},provenance:{source_type:"customer",source_message_id:"source-1"}}];
+    state.entities=[{entity_id:"air_conditioner:unscoped",category:"air_conditioner",model:"CW-SUL70BA",quantity:1,status:"researching",attributes:{quantity_basis:"system_default",installation_type:"window_unit",customer_goal:{category:"air_conditioner",objective:"select_product",journey_stage:"sizing_guidance",collected:["room_sizes","installation_type"],missing:["sizing_decision"],response_intent:"advance_decision",source_message_id:"source-1"}},constraints:{},provenance:{source_type:"customer",source_message_id:"source-1"}}];
     state.installation.pending_checks=["window_opening_check"];
     const question=language==="en"?"Could you take a look?":"可以幫我睇下嗎？";
-    const plan=planConversationService({question,language,commerce:state,memory:null,recall:{handled:false,reason:"NOT_A_RECALL_QUERY"}});
+    const snapshot={company_id:"fixture-company",conversation_id:"fixture-conversation",source_message_id:"measurement",revision:2};
+    const sourceRows=roomSourceFixture(state,snapshot,"I am considering CW-SUL70BA.","source-1",[["細房",80],["大房",110]],snapshot.source_message_id);
+    const plan=planConversationService({question,language,commerce:state,memory:null,commerce_snapshot:snapshot,recent_messages:sourceRows,recall:{handled:false,reason:"NOT_A_RECALL_QUERY"}});
     for(const recent of [[],[{role:"assistant",content:language==="en"?"What are the width and height of each window opening?":"各窗口位可放機嘅闊度同高度各係幾多？"}]]) {
       const reply=renderServicePlanReply(plan,null,recent)!;
       const before=JSON.stringify(state);
-      const result=evaluateB2BeforeCommit({proposed_response:reply,persistence_kind:"ai_reply",snapshot:{conversation_id:"fixture-conversation",company_id:"fixture-company",source_message_id:"source-2",source_message_content:question,commerce_state_revision:1,commerce_state_source_message_id:"source-1",state}});
+      const result=evaluateB2BeforeCommit({proposed_response:reply,persistence_kind:"ai_reply",snapshot:{conversation_id:"fixture-conversation",company_id:"fixture-company",source_message_id:"source-2",source_message_content:question,commerce_state_revision:2,commerce_state_source_message_id:"measurement",state}});
       assert(result.decision==="allow",`${language}: ${result.code}: ${result.detail}: ${reply}`);
       assert(JSON.stringify(state)===before,"renderer/B2 changed canonical state");
       assert(reply.includes("CW-SUL70BA") && reply.includes("80平方呎") && !reply.includes("查詢項目：air_conditioner"),"customer context lost");
@@ -1489,8 +1492,10 @@ Deno.test("Phase1 generic contextual owner questions pass B2 and preserve state"
 
 Deno.test('replacement-only room correction requires exact fresh canonical scope and proposed measurement',()=>{
  const state=createEmptyConversationCommerceState();state.latest_corrections=['更正一下:客廳其實是150平方呎'];
- state.entities=[{entity_id:'air_conditioner:living_room',category:'air_conditioner',brand:null,model:null,quantity:1,status:'researching',attributes:{room_sizes:{living_room:'150平方呎'}},constraints:{},provenance:{source_type:'customer',source_message_id:SOURCE_ID}}];
- const evaluate=(draft:string,s=state)=>evaluateB2BeforeCommit({proposed_response:draft,persistence_kind:'ai_reply',snapshot:snapshot(s)});
+ state.entities=[{entity_id:'air_conditioner:living_room',category:'air_conditioner',brand:null,model:null,quantity:1,status:'researching',attributes:{product_name:'冷氣'},constraints:{},provenance:{source_type:'customer',source_message_id:'area-owner'}}];
+ roomSourceFixture(state,{company_id:COMPANY_ID,conversation_id:CONVERSATION_ID,revision:7},"我想比較冷氣。","area-owner",[["客廳",180]],"old-size",
+   {text:state.latest_corrections[0],id:SOURCE_ID,scope:"客廳",clause:"客廳其實是150平方呎"});
+ const evaluate=(draft:string,s=state)=>evaluateB2BeforeCommit({proposed_response:draft,persistence_kind:'ai_reply',snapshot:{...snapshot(s),source_message_content:state.latest_corrections[0]}});
  assertEquals(evaluate('按最新客廳150平方呎，先量度安裝位置。').decision,'allow','resolved customer measurement is usable without erasing the ledger');
  assertEquals(evaluate('先量度安裝位置與散熱空間。').decision,'allow','advice without a measurement claim must not remain an unresolved correction after exact canonical readback');
  assert(evaluate('按180平方呎量度安裝位置。').decision!=='allow','unlabelled stale area remains denied');
@@ -1505,7 +1510,8 @@ Deno.test('replacement-only room correction requires exact fresh canonical scope
 Deno.test('Hosted same-ticket summary renders typed customer budget without internal entity bookkeeping',()=>{
  const input=recallFixture('請總結這張對話目前記低的最新面積、預算和優先需求。');
  input.commerce!.state=createEmptyConversationCommerceState();
- input.commerce!.state.entities=[{entity_id:'air_conditioner:living_room',category:'air_conditioner',quantity:1,status:'researching',attributes:{room_sizes:{living_room:'150平方呎'}},constraints:{},provenance:{source_type:'customer',source_message_id:input.source_message_id}}];
+ input.commerce!.state.entities=[{entity_id:'air_conditioner:living_room',category:'air_conditioner',quantity:1,status:'researching',attributes:{product_name:'冷氣'},constraints:{},provenance:{source_type:'customer',source_message_id:'area-owner'}}];
+ input.trusted_visitor_source_rows=roomSourceFixture(input.commerce!.state,input.commerce!,"我想比較冷氣。","area-owner",[["客廳",150]],"area-source");
  input.memory!.current_customer_facts=[
   {key:'budget',value:{unit:'HKD',amount:5000},authority:'customer',source_message_id:input.source_message_id,entity_id:null,region:null},
   {key:'priority',value:'quiet operation',authority:'customer',source_message_id:input.source_message_id,entity_id:null,region:null},
