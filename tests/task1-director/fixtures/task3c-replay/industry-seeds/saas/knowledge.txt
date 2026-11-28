@@ -1,0 +1,34 @@
+ORIGINAL SYNTHETIC KNOWLEDGE — NOT A REAL COMPANY FACT
+Shape reference: tests/emergency-p0/chain.test.mjs :: task3cManagedCase.
+Published/currentness values below are fixture data only. They do not attest any real source.
+{
+  "success": true,
+  "context_found": true,
+  "selected_documents": [
+    {
+      "document_id": "synthetic-saas-instructions-v1",
+      "title": "Synthetic Team Ledger — staff scheduling",
+      "source_type": "Other",
+      "document_score": 0.95,
+      "authority": {
+        "tenant_id": "9502",
+        "publication_state": "published",
+        "currentness": "unknown"
+      },
+      "evidence": [
+        {
+          "chunk_id": "synthetic-saas-instructions-v1-c1",
+          "chunk_type": "full_content",
+          "content": "The synthetic workspace supports a scheduling board. To configure it, open Team Settings, select Schedule, and save the timezone. This document does not establish live subscription prices or renewal terms.",
+          "score": 0.95
+        }
+      ]
+    }
+  ],
+  "citations": [
+    {
+      "document_id": "synthetic-saas-instructions-v1",
+      "relevance": "high"
+    }
+  ]
+}

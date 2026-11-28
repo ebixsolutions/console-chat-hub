@@ -1,0 +1,506 @@
+{
+  "source_baseline": "7b9579db2f0b5cb02b08e2ec17370459388b3fb4",
+  "evidence": "Actual complete-handler synthetic W11 switch turn7; no Hosted/model or production data",
+  "observed_error": "Error: C3_LIFECYCLE_RECEIPT_EXCEEDS_MEMORY_BUDGET",
+  "receipt": {
+    "contract": "entity-lifecycle-commit-v1",
+    "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+    "source_message_id": "00000000-0000-4000-8000-000000990907",
+    "source_text": "Cancel Workspace subscriptions. Focus on Event equipment rental.",
+    "previous_revision": 6,
+    "committed_revision": 7,
+    "plans": [
+      {
+        "target_category": "Workspace subscriptions",
+        "action": "cancelled",
+        "focus_category": "Event equipment rental"
+      }
+    ],
+    "target_entity_ids": [
+      "contextual-item:contextual-goal:00000000-0000-4000-8000-000000990904"
+    ],
+    "previous_state": {
+      "version": "commerce-state-1.0.0",
+      "language": "en",
+      "current_intent": "scoped allocation",
+      "current_topic": "Workspace subscriptions",
+      "current_industry": null,
+      "latest_corrections": [
+        "Correction: Event equipment rental width limit is 595mm"
+      ],
+      "unresolved_items": [],
+      "customer_constraints": {
+        "contextual_goal": {
+          "version": "contextual-scope-1",
+          "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+          "subject_label": "Workspace subscriptions",
+          "source_text": "Workspace subscriptions for 2 departments and 1 reception. Please compare the planning trade-offs.",
+          "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+          "conversation_id": "00000000-0000-4000-8000-000000000002",
+          "source_message_id": "00000000-0000-4000-8000-000000990904",
+          "recorded_revision": 4,
+          "status": "active"
+        },
+        "contextual_scope_facts": [
+          {
+            "version": "contextual-scope-1",
+            "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+            "subject_label": "Event equipment rental",
+            "scope": "booths",
+            "count": 2,
+            "source_text": "2 booths",
+            "source_message_text": "Event equipment rental for 2 booths and 1 stage. Please compare the planning trade-offs.",
+            "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+            "conversation_id": "00000000-0000-4000-8000-000000000002",
+            "source_message_id": "00000000-0000-4000-8000-000000990901",
+            "recorded_revision": 1
+          },
+          {
+            "version": "contextual-scope-1",
+            "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+            "subject_label": "Event equipment rental",
+            "scope": "stage",
+            "count": 1,
+            "source_text": "1 stage",
+            "source_message_text": "Event equipment rental for 2 booths and 1 stage. Please compare the planning trade-offs.",
+            "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+            "conversation_id": "00000000-0000-4000-8000-000000000002",
+            "source_message_id": "00000000-0000-4000-8000-000000990901",
+            "recorded_revision": 1
+          },
+          {
+            "version": "contextual-scope-1",
+            "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+            "subject_label": "Workspace subscriptions",
+            "scope": "departments",
+            "count": 2,
+            "source_text": "2 departments",
+            "source_message_text": "Workspace subscriptions for 2 departments and 1 reception. Please compare the planning trade-offs.",
+            "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+            "conversation_id": "00000000-0000-4000-8000-000000000002",
+            "source_message_id": "00000000-0000-4000-8000-000000990904",
+            "recorded_revision": 4
+          },
+          {
+            "version": "contextual-scope-1",
+            "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+            "subject_label": "Workspace subscriptions",
+            "scope": "reception",
+            "count": 1,
+            "source_text": "1 reception",
+            "source_message_text": "Workspace subscriptions for 2 departments and 1 reception. Please compare the planning trade-offs.",
+            "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+            "conversation_id": "00000000-0000-4000-8000-000000000002",
+            "source_message_id": "00000000-0000-4000-8000-000000990904",
+            "recorded_revision": 4
+          }
+        ]
+      },
+      "entities": [
+        {
+          "entity_id": "contextual-item:contextual-goal:00000000-0000-4000-8000-000000990901",
+          "category": "Event equipment rental",
+          "quantity": 3,
+          "status": "researching",
+          "attributes": {
+            "product_name": "Event equipment rental",
+            "contextual_goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+            "subject_source_message_id": "00000000-0000-4000-8000-000000990901",
+            "subject_source_revision": 1,
+            "unit": "kits",
+            "quantity_basis": "customer_explicit",
+            "scoped_customer_updates": [
+              {
+                "scope": "stage",
+                "attribute": "quantity",
+                "action": "set",
+                "value": 1,
+                "source_text": "stage 1 kits",
+                "source_message_id": "00000000-0000-4000-8000-000000990902",
+                "source_revision": 2
+              },
+              {
+                "scope": "booths#1",
+                "attribute": "quantity",
+                "action": "set",
+                "value": 1,
+                "source_text": "booths 1 kits each",
+                "group_scope": "booths",
+                "group_goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+                "scope_count_source": {
+                  "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+                  "source_text": "2 booths",
+                  "source_message_id": "00000000-0000-4000-8000-000000990901",
+                  "source_revision": 1
+                },
+                "source_message_id": "00000000-0000-4000-8000-000000990902",
+                "source_revision": 2
+              },
+              {
+                "scope": "booths#2",
+                "attribute": "quantity",
+                "action": "set",
+                "value": 1,
+                "source_text": "booths 1 kits each",
+                "group_scope": "booths",
+                "group_goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+                "scope_count_source": {
+                  "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+                  "source_text": "2 booths",
+                  "source_message_id": "00000000-0000-4000-8000-000000990901",
+                  "source_revision": 1
+                },
+                "source_message_id": "00000000-0000-4000-8000-000000990902",
+                "source_revision": 2
+              }
+            ]
+          },
+          "constraints": {
+            "max_width_mm": 595
+          },
+          "provenance": {
+            "source_type": "customer",
+            "source_message_id": "00000000-0000-4000-8000-000000990906",
+            "recorded_at": "2026-10-14T01:00:05.005Z"
+          }
+        },
+        {
+          "entity_id": "contextual-item:contextual-goal:00000000-0000-4000-8000-000000990904",
+          "category": "Workspace subscriptions",
+          "quantity": 3,
+          "status": "researching",
+          "attributes": {
+            "product_name": "Workspace subscriptions",
+            "contextual_goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+            "subject_source_message_id": "00000000-0000-4000-8000-000000990904",
+            "subject_source_revision": 4,
+            "unit": "licences",
+            "quantity_basis": "customer_explicit",
+            "scoped_customer_updates": [
+              {
+                "scope": "reception",
+                "attribute": "quantity",
+                "action": "set",
+                "value": 1,
+                "source_text": "reception 1 licences",
+                "source_message_id": "00000000-0000-4000-8000-000000990905",
+                "source_revision": 5
+              },
+              {
+                "scope": "departments#1",
+                "attribute": "quantity",
+                "action": "set",
+                "value": 1,
+                "source_text": "departments 1 licences each",
+                "group_scope": "departments",
+                "group_goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+                "scope_count_source": {
+                  "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+                  "source_text": "2 departments",
+                  "source_message_id": "00000000-0000-4000-8000-000000990904",
+                  "source_revision": 4
+                },
+                "source_message_id": "00000000-0000-4000-8000-000000990905",
+                "source_revision": 5
+              },
+              {
+                "scope": "departments#2",
+                "attribute": "quantity",
+                "action": "set",
+                "value": 1,
+                "source_text": "departments 1 licences each",
+                "group_scope": "departments",
+                "group_goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+                "scope_count_source": {
+                  "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+                  "source_text": "2 departments",
+                  "source_message_id": "00000000-0000-4000-8000-000000990904",
+                  "source_revision": 4
+                },
+                "source_message_id": "00000000-0000-4000-8000-000000990905",
+                "source_revision": 5
+              }
+            ]
+          },
+          "constraints": {},
+          "provenance": {
+            "source_type": "customer",
+            "source_message_id": "00000000-0000-4000-8000-000000990905",
+            "recorded_at": "2026-10-14T01:00:04.004Z"
+          }
+        }
+      ],
+      "quotes": [],
+      "delivery": {
+        "confirmed": false
+      },
+      "installation": {
+        "items": [],
+        "site_conditions": {},
+        "pending_checks": []
+      },
+      "conversion": {
+        "funnel_stage": "discovery",
+        "quotation_status": "none",
+        "order_status": "none",
+        "payment_status": "none",
+        "confirmed_entity_ids": [],
+        "tentative_entity_ids": [],
+        "cancelled_entity_ids": [],
+        "next_best_action": null
+      },
+      "metadata": {}
+    },
+    "committed_state": {
+      "version": "commerce-state-1.0.0",
+      "language": "en",
+      "current_intent": "scoped allocation",
+      "current_topic": "Event equipment rental",
+      "current_industry": null,
+      "latest_corrections": [
+        "Correction: Event equipment rental width limit is 595mm"
+      ],
+      "unresolved_items": [],
+      "customer_constraints": {
+        "contextual_goal": {
+          "version": "contextual-scope-1",
+          "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+          "subject_label": "Workspace subscriptions",
+          "source_text": "Workspace subscriptions for 2 departments and 1 reception. Please compare the planning trade-offs.",
+          "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+          "conversation_id": "00000000-0000-4000-8000-000000000002",
+          "source_message_id": "00000000-0000-4000-8000-000000990904",
+          "recorded_revision": 4,
+          "status": "active"
+        },
+        "contextual_scope_facts": [
+          {
+            "version": "contextual-scope-1",
+            "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+            "subject_label": "Event equipment rental",
+            "scope": "booths",
+            "count": 2,
+            "source_text": "2 booths",
+            "source_message_text": "Event equipment rental for 2 booths and 1 stage. Please compare the planning trade-offs.",
+            "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+            "conversation_id": "00000000-0000-4000-8000-000000000002",
+            "source_message_id": "00000000-0000-4000-8000-000000990901",
+            "recorded_revision": 1
+          },
+          {
+            "version": "contextual-scope-1",
+            "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+            "subject_label": "Event equipment rental",
+            "scope": "stage",
+            "count": 1,
+            "source_text": "1 stage",
+            "source_message_text": "Event equipment rental for 2 booths and 1 stage. Please compare the planning trade-offs.",
+            "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+            "conversation_id": "00000000-0000-4000-8000-000000000002",
+            "source_message_id": "00000000-0000-4000-8000-000000990901",
+            "recorded_revision": 1
+          },
+          {
+            "version": "contextual-scope-1",
+            "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+            "subject_label": "Workspace subscriptions",
+            "scope": "departments",
+            "count": 2,
+            "source_text": "2 departments",
+            "source_message_text": "Workspace subscriptions for 2 departments and 1 reception. Please compare the planning trade-offs.",
+            "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+            "conversation_id": "00000000-0000-4000-8000-000000000002",
+            "source_message_id": "00000000-0000-4000-8000-000000990904",
+            "recorded_revision": 4
+          },
+          {
+            "version": "contextual-scope-1",
+            "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+            "subject_label": "Workspace subscriptions",
+            "scope": "reception",
+            "count": 1,
+            "source_text": "1 reception",
+            "source_message_text": "Workspace subscriptions for 2 departments and 1 reception. Please compare the planning trade-offs.",
+            "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+            "conversation_id": "00000000-0000-4000-8000-000000000002",
+            "source_message_id": "00000000-0000-4000-8000-000000990904",
+            "recorded_revision": 4
+          }
+        ]
+      },
+      "entities": [
+        {
+          "entity_id": "contextual-item:contextual-goal:00000000-0000-4000-8000-000000990901",
+          "category": "Event equipment rental",
+          "quantity": 3,
+          "status": "researching",
+          "attributes": {
+            "product_name": "Event equipment rental",
+            "contextual_goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+            "subject_source_message_id": "00000000-0000-4000-8000-000000990901",
+            "subject_source_revision": 1,
+            "unit": "kits",
+            "quantity_basis": "customer_explicit",
+            "scoped_customer_updates": [
+              {
+                "scope": "stage",
+                "attribute": "quantity",
+                "action": "set",
+                "value": 1,
+                "source_text": "stage 1 kits",
+                "source_message_id": "00000000-0000-4000-8000-000000990902",
+                "source_revision": 2
+              },
+              {
+                "scope": "booths#1",
+                "attribute": "quantity",
+                "action": "set",
+                "value": 1,
+                "source_text": "booths 1 kits each",
+                "group_scope": "booths",
+                "group_goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+                "scope_count_source": {
+                  "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+                  "source_text": "2 booths",
+                  "source_message_id": "00000000-0000-4000-8000-000000990901",
+                  "source_revision": 1
+                },
+                "source_message_id": "00000000-0000-4000-8000-000000990902",
+                "source_revision": 2
+              },
+              {
+                "scope": "booths#2",
+                "attribute": "quantity",
+                "action": "set",
+                "value": 1,
+                "source_text": "booths 1 kits each",
+                "group_scope": "booths",
+                "group_goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+                "scope_count_source": {
+                  "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990901",
+                  "source_text": "2 booths",
+                  "source_message_id": "00000000-0000-4000-8000-000000990901",
+                  "source_revision": 1
+                },
+                "source_message_id": "00000000-0000-4000-8000-000000990902",
+                "source_revision": 2
+              }
+            ]
+          },
+          "constraints": {
+            "max_width_mm": 595
+          },
+          "provenance": {
+            "source_type": "customer",
+            "source_message_id": "00000000-0000-4000-8000-000000990906",
+            "recorded_at": "2026-10-14T01:00:05.005Z"
+          }
+        },
+        {
+          "entity_id": "contextual-item:contextual-goal:00000000-0000-4000-8000-000000990904",
+          "category": "Workspace subscriptions",
+          "quantity": 3,
+          "status": "cancelled",
+          "attributes": {
+            "product_name": "Workspace subscriptions",
+            "contextual_goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+            "subject_source_message_id": "00000000-0000-4000-8000-000000990904",
+            "subject_source_revision": 4,
+            "unit": "licences",
+            "quantity_basis": "customer_explicit",
+            "scoped_customer_updates": [
+              {
+                "scope": "reception",
+                "attribute": "quantity",
+                "action": "set",
+                "value": 1,
+                "source_text": "reception 1 licences",
+                "source_message_id": "00000000-0000-4000-8000-000000990905",
+                "source_revision": 5
+              },
+              {
+                "scope": "departments#1",
+                "attribute": "quantity",
+                "action": "set",
+                "value": 1,
+                "source_text": "departments 1 licences each",
+                "group_scope": "departments",
+                "group_goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+                "scope_count_source": {
+                  "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+                  "source_text": "2 departments",
+                  "source_message_id": "00000000-0000-4000-8000-000000990904",
+                  "source_revision": 4
+                },
+                "source_message_id": "00000000-0000-4000-8000-000000990905",
+                "source_revision": 5
+              },
+              {
+                "scope": "departments#2",
+                "attribute": "quantity",
+                "action": "set",
+                "value": 1,
+                "source_text": "departments 1 licences each",
+                "group_scope": "departments",
+                "group_goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+                "scope_count_source": {
+                  "goal_id": "contextual-goal:00000000-0000-4000-8000-000000990904",
+                  "source_text": "2 departments",
+                  "source_message_id": "00000000-0000-4000-8000-000000990904",
+                  "source_revision": 4
+                },
+                "source_message_id": "00000000-0000-4000-8000-000000990905",
+                "source_revision": 5
+              }
+            ]
+          },
+          "constraints": {},
+          "provenance": {
+            "source_type": "customer",
+            "source_message_id": "00000000-0000-4000-8000-000000990907",
+            "recorded_at": "2026-10-14T01:00:06.006Z"
+          }
+        }
+      ],
+      "quotes": [],
+      "delivery": {
+        "confirmed": false
+      },
+      "installation": {
+        "items": [],
+        "site_conditions": {},
+        "pending_checks": []
+      },
+      "conversion": {
+        "funnel_stage": "discovery",
+        "quotation_status": "none",
+        "order_status": "none",
+        "payment_status": "none",
+        "confirmed_entity_ids": [],
+        "tentative_entity_ids": [],
+        "cancelled_entity_ids": [
+          "contextual-item:contextual-goal:00000000-0000-4000-8000-000000990904"
+        ],
+        "next_best_action": null
+      },
+      "metadata": {}
+    },
+    "reply": "Workspace subscriptions is cancelled.",
+    "transaction_before": {
+      "quotes": [],
+      "delivery_confirmed": false,
+      "confirmed_installation_items": [],
+      "quotation_status": "none",
+      "order_status": "none",
+      "payment_status": "none"
+    },
+    "transaction_after": {
+      "quotes": [],
+      "delivery_confirmed": false,
+      "confirmed_installation_items": [],
+      "quotation_status": "none",
+      "order_status": "none",
+      "payment_status": "none"
+    }
+  }
+}

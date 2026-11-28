@@ -1,0 +1,1172 @@
+{
+  "contract": "C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1",
+  "task": 1,
+  "baseline_head": "180110a9c32b0e05ada6e20a13198d812eed0706",
+  "baseline_tree": "bef702a35d2bb2a986aad8564743f5ff533c7a50",
+  "accepted_baseline_ci": 39526376143,
+  "original_reference": "b0c76120537b53b5c9172cc81a3bad1c4060621b",
+  "implementation": {
+    "original": "Authenticated Admin-created widget_live_test -> generate-reply; old test markers alone were not paid permission.",
+    "regression": "Current fixed Company/test-marker dispatch classification forces all original Preview operations into synthetic lease admission. open_authorized cannot restore either account without that lease.",
+    "repair": "Explicit authenticated_admin_preview classification. Exact original verified-email Admin + active own Company/Channel; own-origin checks; signed server receipt binds actor/email/company/channel/conversation/session and permission revision. Original widget_live_test/test_mode/exclude_training markers remain. Genuine manual Preview uses existing Production Vertex path only after explicit paid permission. Existing c3_uat_widget tickets never become manual/ordinary.",
+    "chain": "Normal UI Send explicitly invokes original_preview_send -> existing marked Session/ticket -> authenticated receive-widget-message -> original transaction -> service-JWT generate-reply -> original Memory/Summary/handoff/idempotent persistence -> authenticated polling. Existing send remains UAT.",
+    "no_new_subsystems": "No accounting table/RPC, vendor backend, credential, model, endpoint, duplicated generator or browser permission flag. No total budget or historical quota fabricated.",
+    "existing_synthetic_threads": "Original account sees existing synthetic ticket read-only with New Conversation instruction; metadata/lease rules stay intact.",
+    "reconciliation": "Read-only probes both original and prior synthetic deterministic ticket identities; ambiguity denies. Revoking paid permission still permits authenticated owned history/polling.",
+    "traffic_purpose": "Dedicated original_preview_send action selects original Preview purpose only after server Auth/paid permission checks. Existing send/open_authorized retain synthetic UAT admission even for the same original Admin and even when normal Preview paid permission is active. The action itself grants nothing."
+  },
+  "accounts": [
+    {
+      "email": "frankien.ng@gmail.com",
+      "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+      "channel_id": "b0000000-0000-0000-0000-000000000001"
+    },
+    {
+      "email": "authe@gmail.com",
+      "company_id": "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+      "channel_id": "0405282f-77dc-47cf-8074-99dd3dc6c393"
+    }
+  ],
+  "source_sha256": [
+    {
+      "path": ".github/workflows/task-ai-abc-c3-final-gate.yml",
+      "sha256": "c31d3e387a6b26ae46296bf7d8a948c895a94466ffb5c16c47807186b268b4e1"
+    },
+    {
+      "path": "src/lib/widget-live-recovery.ts",
+      "sha256": "4e74bbfc16117d6ff2dcb362c8cd4af3fe37bde987f9d136d2bd26156c2df274"
+    },
+    {
+      "path": "src/routes/_authenticated/console.widget-preview.tsx",
+      "sha256": "7b306c7b85d44bd6bd52b1a3bef078d4f355ffc8c183e75f4de8f5948aecae92"
+    },
+    {
+      "path": "supabase/functions/_shared/execution-failure.ts",
+      "sha256": "6d437d5e690ae0c748e345a12a73928ccaf9121d2c38eab10539a0b4ccdcfef1"
+    },
+    {
+      "path": "supabase/functions/_shared/model-attempt-accounting.ts",
+      "sha256": "481d5138fe0312f8ddf32818802eed786091c8509e82287ae07f2b0bb90476a7"
+    },
+    {
+      "path": "supabase/functions/_shared/original-widget-preview.ts",
+      "sha256": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738"
+    },
+    {
+      "path": "supabase/functions/_shared/uat-execution-contract.ts",
+      "sha256": "5fb5b79e5f30ae3b884422075b6cdaac1383217900208dac7a9479181362653b"
+    },
+    {
+      "path": "supabase/functions/generate-reply/index.ts",
+      "sha256": "2df1090109c4c70eb3e6e49132ff3f86db3b1e3296b6fb397bd66a96504e4fed"
+    },
+    {
+      "path": "supabase/functions/receive-widget-message/index.ts",
+      "sha256": "1813dbe405db9c1550614dc5b7cb96e247194329fa2cc1fec2e03e8330322632"
+    },
+    {
+      "path": "supabase/functions/widget-live-ai-test/index.ts",
+      "sha256": "a358f9db80a0858cd04ccf49585bec28ddfd09ed49b36115ec266d357e21fb1e"
+    },
+    {
+      "path": "supabase/functions/widget-poll-messages/index.ts",
+      "sha256": "70d966005455079b30522706cac608f9a9126d83dd81363a6c595bef2c48c8e8"
+    },
+    {
+      "path": "tests/c3-widget-live-auth/handler.test.mjs",
+      "sha256": "b130256411baab366b46497b41050888ab9fffd0b385fd940e0bc10a60d1f21c"
+    },
+    {
+      "path": "tests/c3-widget-live-auth/legacy-history.test.mjs",
+      "sha256": "3ab95c2c8da33785572252c0cda2a7230d72c255606678a1ed3d0df1704a07e1"
+    },
+    {
+      "path": "tests/c3-widget-live-auth/original-preview-ingress.test.mjs",
+      "sha256": "b5a62c2133f4a420e0d531e59aad778fc685737edf8306fb2641f89c83c05f35"
+    },
+    {
+      "path": "tests/c3-widget-live-auth/original-preview.test.mjs",
+      "sha256": "b2a6782671013425713d62fd53b778208fedefdb7dcbf25819cfd4e0db853d7f"
+    },
+    {
+      "path": "tests/console-navigation/widget-input-dom.test.mjs",
+      "sha256": "08f445943ef2310f727b057551f08bc7dae34115162eb8230d70cbe491e7a271"
+    }
+  ],
+  "release": {
+    "project_id": "nrfxhqabwblzxoushgnm",
+    "functions": [
+      {
+        "slug": "widget-live-ai-test",
+        "version": 15,
+        "verify_jwt": true,
+        "import_map": false,
+        "entrypoint_path": "functions/widget-live-ai-test/index.ts",
+        "import_map_path": null,
+        "baseline_sha256": "7b12a0a1d104fe4b3f83392f3484ce7e03aa1e3f3692a1ca278825ffd06ce0d2",
+        "baseline": [
+          {
+            "path": "functions/_shared/conversational-routing.ts",
+            "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+          },
+          {
+            "path": "functions/_shared/execution-failure.ts",
+            "sha256": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249"
+          },
+          {
+            "path": "functions/_shared/handoff-intent.ts",
+            "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+          },
+          {
+            "path": "functions/_shared/supabase-admin-key.ts",
+            "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+          },
+          {
+            "path": "functions/_shared/supabase-cors.ts",
+            "sha256": "7beec6546ab29f0dc4bc586fdca49b2dbd65195c9c6455471c42458d6ecdc9d1"
+          },
+          {
+            "path": "functions/_shared/uat-execution-contract.ts",
+            "sha256": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd"
+          },
+          {
+            "path": "functions/_shared/uat-execution-readiness.ts",
+            "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+          },
+          {
+            "path": "functions/_shared/vertex-generation-config.ts",
+            "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+          },
+          {
+            "path": "functions/widget-live-ai-test/index.ts",
+            "sha256": "b8c05ccb43b43cbf3360943ade89d0f5212a7ce26ebde16da3d5878c2b47d826"
+          }
+        ],
+        "target_sha256": "f048e39276529cdab643860d9f0cbf2a4cb00607550276f4208064ebc04ff414",
+        "target": [
+          {
+            "path": "functions/_shared/conversational-routing.ts",
+            "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+          },
+          {
+            "path": "functions/_shared/execution-failure.ts",
+            "sha256": "6d437d5e690ae0c748e345a12a73928ccaf9121d2c38eab10539a0b4ccdcfef1"
+          },
+          {
+            "path": "functions/_shared/handoff-intent.ts",
+            "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+          },
+          {
+            "path": "functions/_shared/original-widget-preview.ts",
+            "sha256": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738"
+          },
+          {
+            "path": "functions/_shared/supabase-admin-key.ts",
+            "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+          },
+          {
+            "path": "functions/_shared/supabase-cors.ts",
+            "sha256": "7beec6546ab29f0dc4bc586fdca49b2dbd65195c9c6455471c42458d6ecdc9d1"
+          },
+          {
+            "path": "functions/_shared/uat-execution-contract.ts",
+            "sha256": "5fb5b79e5f30ae3b884422075b6cdaac1383217900208dac7a9479181362653b"
+          },
+          {
+            "path": "functions/_shared/uat-execution-readiness.ts",
+            "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+          },
+          {
+            "path": "functions/_shared/vertex-generation-config.ts",
+            "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+          },
+          {
+            "path": "functions/widget-live-ai-test/index.ts",
+            "sha256": "a358f9db80a0858cd04ccf49585bec28ddfd09ed49b36115ec266d357e21fb1e"
+          }
+        ],
+        "changed": [
+          {
+            "path": "functions/_shared/execution-failure.ts",
+            "sha256": "6d437d5e690ae0c748e345a12a73928ccaf9121d2c38eab10539a0b4ccdcfef1"
+          },
+          {
+            "path": "functions/_shared/original-widget-preview.ts",
+            "sha256": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738"
+          },
+          {
+            "path": "functions/_shared/uat-execution-contract.ts",
+            "sha256": "5fb5b79e5f30ae3b884422075b6cdaac1383217900208dac7a9479181362653b"
+          },
+          {
+            "path": "functions/widget-live-ai-test/index.ts",
+            "sha256": "a358f9db80a0858cd04ccf49585bec28ddfd09ed49b36115ec266d357e21fb1e"
+          }
+        ],
+        "removed": []
+      },
+      {
+        "slug": "receive-widget-message",
+        "version": 30,
+        "verify_jwt": false,
+        "import_map": true,
+        "entrypoint_path": "functions/receive-widget-message/index.ts",
+        "import_map_path": "functions/receive-widget-message/deno.json",
+        "baseline_sha256": "a0324a68372bb60ce4a32d71b370bcefae462f89d0a258f903eb2b80d98cbaf5",
+        "baseline": [
+          {
+            "path": "functions/_shared/commerce-state-authority.ts",
+            "sha256": "2c6932b6db06d135f4a9324e9e36464f5215851b9db423babfffec9573b677d7"
+          },
+          {
+            "path": "functions/_shared/conversation-runtime-state-core.ts",
+            "sha256": "12af48041e25e5cc3c5bd6b091906077e5cd4a35995fcbcd0144e933ae1ace9f"
+          },
+          {
+            "path": "functions/_shared/conversation-runtime-state.ts",
+            "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492"
+          },
+          {
+            "path": "functions/_shared/conversation-semantic-contract.ts",
+            "sha256": "1880fbb696b1ce3d7a68a9e47a18843186ebe25052f1a06d29297315803b336f"
+          },
+          {
+            "path": "functions/_shared/conversational-routing.ts",
+            "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+          },
+          {
+            "path": "functions/_shared/cors.ts",
+            "sha256": "24cba23c64b46fba83055278a9dc6437f3abcbcdf4cf4cfa9fb9dfc9f424c232"
+          },
+          {
+            "path": "functions/_shared/handoff-intent.ts",
+            "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+          },
+          {
+            "path": "functions/_shared/natural-customer-response.ts",
+            "sha256": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854"
+          },
+          {
+            "path": "functions/_shared/supabase-admin-key.ts",
+            "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+          },
+          {
+            "path": "functions/_shared/widget-origin.ts",
+            "sha256": "fed6092195ec96351c7c9ee62e866c80ee5bdd6da67b6dfb18cdd9e54bdcd614"
+          },
+          {
+            "path": "functions/_shared/widget-preview-authority.ts",
+            "sha256": "ddc26a7c3cc533d47bb0689bac79fcaa0c9eaa96c11e01878121e8d61f3a86aa"
+          },
+          {
+            "path": "functions/_shared/widget-preview-control.ts",
+            "sha256": "9e2e79b7b8db2b5f3b8d892ef6d56f3d86e8a9f296e31a9751784e27e6a9b394"
+          },
+          {
+            "path": "functions/receive-widget-message/deno.json",
+            "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
+          },
+          {
+            "path": "functions/receive-widget-message/index.ts",
+            "sha256": "fff8d87eb720e3bb5ec887cbd5a180e2155e4d8c6288b2ab89720ae299903c1d"
+          }
+        ],
+        "target_sha256": "35dc09fe7cdcff47cf1a4b702ef8de4990616b9d2c803f2d45a6f23a44a6cbfa",
+        "target": [
+          {
+            "path": "functions/_shared/commerce-state-authority.ts",
+            "sha256": "2c6932b6db06d135f4a9324e9e36464f5215851b9db423babfffec9573b677d7"
+          },
+          {
+            "path": "functions/_shared/conversation-runtime-state-core.ts",
+            "sha256": "12af48041e25e5cc3c5bd6b091906077e5cd4a35995fcbcd0144e933ae1ace9f"
+          },
+          {
+            "path": "functions/_shared/conversation-runtime-state.ts",
+            "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492"
+          },
+          {
+            "path": "functions/_shared/conversation-semantic-contract.ts",
+            "sha256": "1880fbb696b1ce3d7a68a9e47a18843186ebe25052f1a06d29297315803b336f"
+          },
+          {
+            "path": "functions/_shared/conversational-routing.ts",
+            "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+          },
+          {
+            "path": "functions/_shared/cors.ts",
+            "sha256": "24cba23c64b46fba83055278a9dc6437f3abcbcdf4cf4cfa9fb9dfc9f424c232"
+          },
+          {
+            "path": "functions/_shared/handoff-intent.ts",
+            "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+          },
+          {
+            "path": "functions/_shared/natural-customer-response.ts",
+            "sha256": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854"
+          },
+          {
+            "path": "functions/_shared/original-widget-preview.ts",
+            "sha256": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738"
+          },
+          {
+            "path": "functions/_shared/supabase-admin-key.ts",
+            "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+          },
+          {
+            "path": "functions/_shared/widget-origin.ts",
+            "sha256": "fed6092195ec96351c7c9ee62e866c80ee5bdd6da67b6dfb18cdd9e54bdcd614"
+          },
+          {
+            "path": "functions/_shared/widget-preview-authority.ts",
+            "sha256": "ddc26a7c3cc533d47bb0689bac79fcaa0c9eaa96c11e01878121e8d61f3a86aa"
+          },
+          {
+            "path": "functions/_shared/widget-preview-control.ts",
+            "sha256": "9e2e79b7b8db2b5f3b8d892ef6d56f3d86e8a9f296e31a9751784e27e6a9b394"
+          },
+          {
+            "path": "functions/receive-widget-message/deno.json",
+            "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
+          },
+          {
+            "path": "functions/receive-widget-message/index.ts",
+            "sha256": "1813dbe405db9c1550614dc5b7cb96e247194329fa2cc1fec2e03e8330322632"
+          }
+        ],
+        "changed": [
+          {
+            "path": "functions/_shared/original-widget-preview.ts",
+            "sha256": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738"
+          },
+          {
+            "path": "functions/receive-widget-message/index.ts",
+            "sha256": "1813dbe405db9c1550614dc5b7cb96e247194329fa2cc1fec2e03e8330322632"
+          }
+        ],
+        "removed": []
+      },
+      {
+        "slug": "widget-poll-messages",
+        "version": 25,
+        "verify_jwt": false,
+        "import_map": true,
+        "entrypoint_path": "widget-poll-messages/index.ts",
+        "import_map_path": "deno.json",
+        "baseline_sha256": "913f5537af5cd9c8b970d0773ceeaea872b15d8768c356228234e672192cf639",
+        "baseline": [
+          {
+            "path": "_shared/cors.ts",
+            "sha256": "24cba23c64b46fba83055278a9dc6437f3abcbcdf4cf4cfa9fb9dfc9f424c232"
+          },
+          {
+            "path": "_shared/supabase-admin-key.ts",
+            "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+          },
+          {
+            "path": "_shared/widget-origin.ts",
+            "sha256": "fed6092195ec96351c7c9ee62e866c80ee5bdd6da67b6dfb18cdd9e54bdcd614"
+          },
+          {
+            "path": "deno.json",
+            "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
+          },
+          {
+            "path": "widget-poll-messages/index.ts",
+            "sha256": "cbee2917b5adfbcced95532d6d2dc47971322b98a715bd545d69203c33fc0c76"
+          }
+        ],
+        "target_sha256": "a1b343d49c4898f46548efcf49f509969a734a94ad46c1b8ca9974c13920b52d",
+        "target": [
+          {
+            "path": "_shared/cors.ts",
+            "sha256": "24cba23c64b46fba83055278a9dc6437f3abcbcdf4cf4cfa9fb9dfc9f424c232"
+          },
+          {
+            "path": "_shared/original-widget-preview.ts",
+            "sha256": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738"
+          },
+          {
+            "path": "_shared/supabase-admin-key.ts",
+            "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+          },
+          {
+            "path": "_shared/widget-origin.ts",
+            "sha256": "fed6092195ec96351c7c9ee62e866c80ee5bdd6da67b6dfb18cdd9e54bdcd614"
+          },
+          {
+            "path": "deno.json",
+            "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
+          },
+          {
+            "path": "widget-poll-messages/index.ts",
+            "sha256": "70d966005455079b30522706cac608f9a9126d83dd81363a6c595bef2c48c8e8"
+          }
+        ],
+        "changed": [
+          {
+            "path": "_shared/original-widget-preview.ts",
+            "sha256": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738"
+          },
+          {
+            "path": "widget-poll-messages/index.ts",
+            "sha256": "70d966005455079b30522706cac608f9a9126d83dd81363a6c595bef2c48c8e8"
+          }
+        ],
+        "removed": []
+      },
+      {
+        "slug": "generate-reply",
+        "version": 222,
+        "verify_jwt": true,
+        "import_map": true,
+        "entrypoint_path": "functions/generate-reply/index.ts",
+        "import_map_path": "functions/generate-reply/deno.json",
+        "baseline_sha256": "903e27b9bb71bde602bb4370222e35a4ff5e21968421261bed824d4d647ff7fe",
+        "baseline": [
+          {
+            "path": "functions/_shared/authoritative-commit-readback.ts",
+            "sha256": "2d2c14fbab89f4caede7d8c43faed0aae3bd07064e69a948f2d9a28a6a7b62bc"
+          },
+          {
+            "path": "functions/_shared/b2-journey-progress-contract.ts",
+            "sha256": "50c152406251e7cc53a0a624907bdf0cf28b1560011a5b2f57e02ca58a284ffd"
+          },
+          {
+            "path": "functions/_shared/bounded-decision-context.ts",
+            "sha256": "f93b59b56469f4a79518374f2cb3b73fab8d09028ce2b3c5c6cbb1c6c90f01f1"
+          },
+          {
+            "path": "functions/_shared/canonical-grounding.ts",
+            "sha256": "17d4d99d6b2953017fe04c5d032bf8e8ccf5b17d08406786af53b4b964cf51f7"
+          },
+          {
+            "path": "functions/_shared/canonical-json.ts",
+            "sha256": "efe44b2683ff6b90db1b9d40f438560f3011d985c1eb5a131492913acc0e4295"
+          },
+          {
+            "path": "functions/_shared/canonical-kb-direct-answer.ts",
+            "sha256": "120d0e8f4a6eb2273d21bb7c621aec6ffe803cacfb7eb3a4eff0f182b2104d41"
+          },
+          {
+            "path": "functions/_shared/citation-lineage.ts",
+            "sha256": "66dfac164fe0e8f166e6651d8ac3a5dd7d629002b73b599ff81e256b2c840f8e"
+          },
+          {
+            "path": "functions/_shared/commerce-capability-runtime.ts",
+            "sha256": "09a3c5917529d967d91560ead71519d987186d02c68b3638929a93a2fee83b72"
+          },
+          {
+            "path": "functions/_shared/commerce-semantic-adapter.ts",
+            "sha256": "553abf039af853014f9dbc2c89c86f02f78c1e339176b1423c409cf28050e7ca"
+          },
+          {
+            "path": "functions/_shared/commerce-semantic-frame.ts",
+            "sha256": "79f63bfd4fd2898a06e468873f8699032174f7d48237ab8f4b5a15ee5aa64ceb"
+          },
+          {
+            "path": "functions/_shared/commerce-semantic-interpreter.ts",
+            "sha256": "dfbe7a1eefb5e65c567b3656a9b603bccbb93211ee29c8415b370d9e88028128"
+          },
+          {
+            "path": "functions/_shared/commerce-state-authority.ts",
+            "sha256": "2c6932b6db06d135f4a9324e9e36464f5215851b9db423babfffec9573b677d7"
+          },
+          {
+            "path": "functions/_shared/commerce-state-contract.ts",
+            "sha256": "b75848856f1854f9df5f458ba5d3e491b6693c550458f5e3178cf88874b6e3be"
+          },
+          {
+            "path": "functions/_shared/commerce-state-reducer.ts",
+            "sha256": "b303bcf3cb610976bf6286a6a01767a192668c1604adb0aa86832b4632d8843f"
+          },
+          {
+            "path": "functions/_shared/commerce-state-runtime-base.ts",
+            "sha256": "6f8cfd56409d9185ab448677e5af24a6436424ecada869ae085a4bda3ba53035"
+          },
+          {
+            "path": "functions/_shared/commerce-state-runtime.ts",
+            "sha256": "ea72c62ed61bcfeab576a8521fe19d0e9388af2cb16c62bfe870676be6074949"
+          },
+          {
+            "path": "functions/_shared/contextual-customer-update.ts",
+            "sha256": "9b4b0d3a8deae05450d2f6a96421ad9b2e409379b2b2e32bc0ea1ee9e5333b9b"
+          },
+          {
+            "path": "functions/_shared/conversation-closure.ts",
+            "sha256": "12431e3c5d285f56270945e28a3e026d0d1b1544fa8dbe7484cc4fd67b1995dd"
+          },
+          {
+            "path": "functions/_shared/conversation-intelligence.ts",
+            "sha256": "5c6e2b0973df9c41dee0fb9a324b661ce7835946e129210d37071519d5e41658"
+          },
+          {
+            "path": "functions/_shared/conversation-long-memory.ts",
+            "sha256": "27102c323642dadde8ea3a212a964192e68199137d4887a1a00b062ff978851b"
+          },
+          {
+            "path": "functions/_shared/conversation-recall.ts",
+            "sha256": "281fbccaa51198a1651a28f9500a3336a0031a6e503484e9ce82a6b1c5f2af3b"
+          },
+          {
+            "path": "functions/_shared/conversation-resolution-contract.ts",
+            "sha256": "56e62a58ef4c1528e870d272244ac696bd548a95cafb7b8023bdc4c8beb4bb2f"
+          },
+          {
+            "path": "functions/_shared/conversation-runtime-state-core.ts",
+            "sha256": "12af48041e25e5cc3c5bd6b091906077e5cd4a35995fcbcd0144e933ae1ace9f"
+          },
+          {
+            "path": "functions/_shared/conversation-runtime-state.ts",
+            "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492"
+          },
+          {
+            "path": "functions/_shared/conversation-semantic-contract.ts",
+            "sha256": "1880fbb696b1ce3d7a68a9e47a18843186ebe25052f1a06d29297315803b336f"
+          },
+          {
+            "path": "functions/_shared/conversation-service-planner.ts",
+            "sha256": "2c72fc2e666689ae26a481f7a4b165fcfd974e942171aebff22429c3c17a3bbe"
+          },
+          {
+            "path": "functions/_shared/conversation-service-runtime.ts",
+            "sha256": "df6a1c2248cc4508dead4222312cb687ce98f96d2ac5b9bc45412a24eefc7344"
+          },
+          {
+            "path": "functions/_shared/conversational-routing.ts",
+            "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+          },
+          {
+            "path": "functions/_shared/current-fact-evidence.ts",
+            "sha256": "29bd2d56d2d82a202a9057d11e6ee085a09c1c3c9da1dee5afe717de61f2fbd9"
+          },
+          {
+            "path": "functions/_shared/customer-journey-orchestration.ts",
+            "sha256": "3978f4bd89914dcf915758f48d10a6cffd96b7c98a944e208b53c59245be2df4"
+          },
+          {
+            "path": "functions/_shared/customer-money-facts.ts",
+            "sha256": "bad7b229031d97f0a0fcd054408b7c69bad88891bac1319dd27e1d3366d1ed19"
+          },
+          {
+            "path": "functions/_shared/customer360-entitlement-client.ts",
+            "sha256": "2da12c29740371bcbdd752bbfe6b5adc7fd58286294aefe3e2af7779115fe13b"
+          },
+          {
+            "path": "functions/_shared/customer360-entitlement-contract.ts",
+            "sha256": "0338ca5d879e0023403005198f5e88247939bbc65938b9170694bf85ae6a0e97"
+          },
+          {
+            "path": "functions/_shared/e2-direct-threat.ts",
+            "sha256": "ebd0f8ed645804b99fcef8f295079acf6fe00b41917850184b3c562255e56dfd"
+          },
+          {
+            "path": "functions/_shared/emotion-reply-strategy.ts",
+            "sha256": "950423ffed4221143e0cdf2cf6e7d9ce106e6a71dfa0cb7981006bf7d013b82b"
+          },
+          {
+            "path": "functions/_shared/escalation-live.ts",
+            "sha256": "ccf21ab50fbd2212f25f2292f30d82e8ba1f6d5ae7e37bafb88935a5b161ae92"
+          },
+          {
+            "path": "functions/_shared/escalation-p1.ts",
+            "sha256": "f38ade68e72a1234594fd91032cae5a6cd15da7dccab841d986e4ef8e262b96a"
+          },
+          {
+            "path": "functions/_shared/escalation-policy.ts",
+            "sha256": "bebf933242d5e391f65c429097a86eb23f0feececf34aa27ebff132ccc652edc"
+          },
+          {
+            "path": "functions/_shared/escalation-rules.ts",
+            "sha256": "50b1e4604d1f11b1e888afbcd6cf5edf42e1c0510c529865327399d30cb2318d"
+          },
+          {
+            "path": "functions/_shared/escalation-shadow.ts",
+            "sha256": "757ed25aab8694bed31a1da7ef5daa911fd8adbbb772578629b4b0cdbaceb9b8"
+          },
+          {
+            "path": "functions/_shared/escalation-signals.ts",
+            "sha256": "f4aab1682fb348b09041230a7f6d3c301abc893a83d521afc9ba14c2bbd02b6d"
+          },
+          {
+            "path": "functions/_shared/execution-failure.ts",
+            "sha256": "a598437c4aaa0d03bd3a0da7ba3eeb55665347035d14f46df4635a3449382249"
+          },
+          {
+            "path": "functions/_shared/generation-terminal-guard.ts",
+            "sha256": "b594946be00d0df338d8bc74cfc42ec0bf7dcdb4438c63262b2fb9b8b2dfadc5"
+          },
+          {
+            "path": "functions/_shared/handoff-decision.ts",
+            "sha256": "865049906acb93b206c6cb4f613bfeed60943862f710a7e6b930062906d20f6f"
+          },
+          {
+            "path": "functions/_shared/handoff-intent.ts",
+            "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+          },
+          {
+            "path": "functions/_shared/industry-agent-registry.ts",
+            "sha256": "cb4525633baf7fca5d936b3c212fbfa1cd97c9da8b54b8c97f2064f4d84e088e"
+          },
+          {
+            "path": "functions/_shared/industry-profiles/home-appliance-v1.ts",
+            "sha256": "04f8f83d88a0bc413b57b9f449e56bd62fa3455567d4893a5caedf08c9d5e687"
+          },
+          {
+            "path": "functions/_shared/industry-runtime-adapter.ts",
+            "sha256": "fbe1615f5fadd15e6c70e8b3b0bbb7528b202042fbbc92af8e1dd79b0d698f37"
+          },
+          {
+            "path": "functions/_shared/industry-schema.ts",
+            "sha256": "149c208a8b898faedab61234cfc7f85e7a40d71c92996a5b61354e4cf85d35dd"
+          },
+          {
+            "path": "functions/_shared/kb-aggregation-response.ts",
+            "sha256": "c38365d92cd0860bfba541f3cb072a01d095cb0d2c3be84162c88173ca612ba2"
+          },
+          {
+            "path": "functions/_shared/kb-auth.ts",
+            "sha256": "696473ccbae22ea1328778785659be96204328ca6be5ca35ed7e94e70483e6d7"
+          },
+          {
+            "path": "functions/_shared/kb-client.ts",
+            "sha256": "56246bfa52baeb8e644233bc64d267e11882d4f54afc245def2eee02b7e16071"
+          },
+          {
+            "path": "functions/_shared/llm-router.ts",
+            "sha256": "064e3634d22c75cdaf1757963827839b22e596d55e47de64d75b105f438693e8"
+          },
+          {
+            "path": "functions/_shared/memory-reply-lifecycle-readback.ts",
+            "sha256": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062"
+          },
+          {
+            "path": "functions/_shared/model-attempt-accounting.ts",
+            "sha256": "23131b006e5289cccb83e33d3e0d535dee64330dfcc0d24a48fd4b129c7b23fc"
+          },
+          {
+            "path": "functions/_shared/natural-customer-response.ts",
+            "sha256": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854"
+          },
+          {
+            "path": "functions/_shared/nonproduction-secret.ts",
+            "sha256": "9a760728a4298c09a080237a8d0c90492e7caa029fa41db9aaecc5da74daebd5"
+          },
+          {
+            "path": "functions/_shared/pre-send-conversion-supervisor.ts",
+            "sha256": "745d7aa988df3195ea9f8af75659861acdc5ea6e6d3e9dd8f387af0b2ef50f56"
+          },
+          {
+            "path": "functions/_shared/prior-grounded-transform-core.ts",
+            "sha256": "4a61e1cad24e725ce7743d4ecde31431ee614663f9251f8a6fad1919a362e9f0"
+          },
+          {
+            "path": "functions/_shared/prior-grounded-transform.ts",
+            "sha256": "151ff0ddc3256d395f3bc6d5c77eb13d41af5b72b5666a78cf2232167bd29946"
+          },
+          {
+            "path": "functions/_shared/product-kb-semantic-contract.ts",
+            "sha256": "3fc1d296c395b05f547a4c585cf7a291d5732bbc4d443dab4a5cc9c2ad5f0231"
+          },
+          {
+            "path": "functions/_shared/remote-model-accounting.ts",
+            "sha256": "1faa1ecebdc13e9f2f067611130e1a0ff65ba8697884387587a74b7f135947c5"
+          },
+          {
+            "path": "functions/_shared/return-to-ai-control.ts",
+            "sha256": "e0f44e4417aecb974634e2185baf0f558df5cdb3e63d29f161a656b7ae51c1d2"
+          },
+          {
+            "path": "functions/_shared/revision-bound-reply.ts",
+            "sha256": "13439a22cffcda24508d4a07bc875c9c4aeeb6966b9ee8336535ba878a4aa690"
+          },
+          {
+            "path": "functions/_shared/runtime-signal-lifecycle.ts",
+            "sha256": "113d45ea7a36c9a04d8cd7193e52d432514785538a35df4f578221b73f2b8b62"
+          },
+          {
+            "path": "functions/_shared/service-semantic-routing.ts",
+            "sha256": "117b06bc1365e1dddbb0c80f1515b934ee45116a2826004a6e8e9f892799cc3c"
+          },
+          {
+            "path": "functions/_shared/supabase-admin-key.ts",
+            "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+          },
+          {
+            "path": "functions/_shared/transaction-closure-handoff.ts",
+            "sha256": "8d68d0e53b9333f619b59b5675f3f10216644a2ce21ff487c1c0e9faa8900715"
+          },
+          {
+            "path": "functions/_shared/uat-execution-contract.ts",
+            "sha256": "b74db94d56bb6401185cef2581b9a88688d1b35b6385a7ea71aaaefed3a111bd"
+          },
+          {
+            "path": "functions/_shared/uat-execution-readiness.ts",
+            "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+          },
+          {
+            "path": "functions/_shared/vertex-generation-config.ts",
+            "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+          },
+          {
+            "path": "functions/_shared/vertex-parse.ts",
+            "sha256": "83062c4576e309ac92af3850f5f7aaf4fef2285b553a9d5a81df29451cee2a34"
+          },
+          {
+            "path": "functions/_shared/warm-handoff.ts",
+            "sha256": "ececeb9fc88f37f22ce6b9a1fe264211b0899994cf634d6ebc6c871689420068"
+          },
+          {
+            "path": "functions/generate-reply/deno.json",
+            "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
+          },
+          {
+            "path": "functions/generate-reply/index.ts",
+            "sha256": "0731769d66c0c7207f4114ad1de84807e52d61e2c64a24dbed40de31e5611d55"
+          }
+        ],
+        "target_sha256": "0b6f426916d57a8db1e07f371040eb644fafca8ad429cde61a0e20fa209dc235",
+        "target": [
+          {
+            "path": "functions/_shared/authoritative-commit-readback.ts",
+            "sha256": "2d2c14fbab89f4caede7d8c43faed0aae3bd07064e69a948f2d9a28a6a7b62bc"
+          },
+          {
+            "path": "functions/_shared/b2-journey-progress-contract.ts",
+            "sha256": "50c152406251e7cc53a0a624907bdf0cf28b1560011a5b2f57e02ca58a284ffd"
+          },
+          {
+            "path": "functions/_shared/bounded-decision-context.ts",
+            "sha256": "f93b59b56469f4a79518374f2cb3b73fab8d09028ce2b3c5c6cbb1c6c90f01f1"
+          },
+          {
+            "path": "functions/_shared/canonical-grounding.ts",
+            "sha256": "17d4d99d6b2953017fe04c5d032bf8e8ccf5b17d08406786af53b4b964cf51f7"
+          },
+          {
+            "path": "functions/_shared/canonical-json.ts",
+            "sha256": "efe44b2683ff6b90db1b9d40f438560f3011d985c1eb5a131492913acc0e4295"
+          },
+          {
+            "path": "functions/_shared/canonical-kb-direct-answer.ts",
+            "sha256": "120d0e8f4a6eb2273d21bb7c621aec6ffe803cacfb7eb3a4eff0f182b2104d41"
+          },
+          {
+            "path": "functions/_shared/citation-lineage.ts",
+            "sha256": "66dfac164fe0e8f166e6651d8ac3a5dd7d629002b73b599ff81e256b2c840f8e"
+          },
+          {
+            "path": "functions/_shared/commerce-capability-runtime.ts",
+            "sha256": "09a3c5917529d967d91560ead71519d987186d02c68b3638929a93a2fee83b72"
+          },
+          {
+            "path": "functions/_shared/commerce-semantic-adapter.ts",
+            "sha256": "553abf039af853014f9dbc2c89c86f02f78c1e339176b1423c409cf28050e7ca"
+          },
+          {
+            "path": "functions/_shared/commerce-semantic-frame.ts",
+            "sha256": "79f63bfd4fd2898a06e468873f8699032174f7d48237ab8f4b5a15ee5aa64ceb"
+          },
+          {
+            "path": "functions/_shared/commerce-semantic-interpreter.ts",
+            "sha256": "dfbe7a1eefb5e65c567b3656a9b603bccbb93211ee29c8415b370d9e88028128"
+          },
+          {
+            "path": "functions/_shared/commerce-state-authority.ts",
+            "sha256": "2c6932b6db06d135f4a9324e9e36464f5215851b9db423babfffec9573b677d7"
+          },
+          {
+            "path": "functions/_shared/commerce-state-contract.ts",
+            "sha256": "b75848856f1854f9df5f458ba5d3e491b6693c550458f5e3178cf88874b6e3be"
+          },
+          {
+            "path": "functions/_shared/commerce-state-reducer.ts",
+            "sha256": "b303bcf3cb610976bf6286a6a01767a192668c1604adb0aa86832b4632d8843f"
+          },
+          {
+            "path": "functions/_shared/commerce-state-runtime-base.ts",
+            "sha256": "6f8cfd56409d9185ab448677e5af24a6436424ecada869ae085a4bda3ba53035"
+          },
+          {
+            "path": "functions/_shared/commerce-state-runtime.ts",
+            "sha256": "ea72c62ed61bcfeab576a8521fe19d0e9388af2cb16c62bfe870676be6074949"
+          },
+          {
+            "path": "functions/_shared/contextual-customer-update.ts",
+            "sha256": "9b4b0d3a8deae05450d2f6a96421ad9b2e409379b2b2e32bc0ea1ee9e5333b9b"
+          },
+          {
+            "path": "functions/_shared/conversation-closure.ts",
+            "sha256": "12431e3c5d285f56270945e28a3e026d0d1b1544fa8dbe7484cc4fd67b1995dd"
+          },
+          {
+            "path": "functions/_shared/conversation-intelligence.ts",
+            "sha256": "5c6e2b0973df9c41dee0fb9a324b661ce7835946e129210d37071519d5e41658"
+          },
+          {
+            "path": "functions/_shared/conversation-long-memory.ts",
+            "sha256": "27102c323642dadde8ea3a212a964192e68199137d4887a1a00b062ff978851b"
+          },
+          {
+            "path": "functions/_shared/conversation-recall.ts",
+            "sha256": "281fbccaa51198a1651a28f9500a3336a0031a6e503484e9ce82a6b1c5f2af3b"
+          },
+          {
+            "path": "functions/_shared/conversation-resolution-contract.ts",
+            "sha256": "56e62a58ef4c1528e870d272244ac696bd548a95cafb7b8023bdc4c8beb4bb2f"
+          },
+          {
+            "path": "functions/_shared/conversation-runtime-state-core.ts",
+            "sha256": "12af48041e25e5cc3c5bd6b091906077e5cd4a35995fcbcd0144e933ae1ace9f"
+          },
+          {
+            "path": "functions/_shared/conversation-runtime-state.ts",
+            "sha256": "7a5aa11e36f78d71aa27029e6e89fd12f51deafdc36a3cab550d1d889abe5492"
+          },
+          {
+            "path": "functions/_shared/conversation-semantic-contract.ts",
+            "sha256": "1880fbb696b1ce3d7a68a9e47a18843186ebe25052f1a06d29297315803b336f"
+          },
+          {
+            "path": "functions/_shared/conversation-service-planner.ts",
+            "sha256": "2c72fc2e666689ae26a481f7a4b165fcfd974e942171aebff22429c3c17a3bbe"
+          },
+          {
+            "path": "functions/_shared/conversation-service-runtime.ts",
+            "sha256": "df6a1c2248cc4508dead4222312cb687ce98f96d2ac5b9bc45412a24eefc7344"
+          },
+          {
+            "path": "functions/_shared/conversational-routing.ts",
+            "sha256": "ee0ceb7c2e5f09d7e6e207c692bbbe2e3323882b242a389040a637e2a37e31c3"
+          },
+          {
+            "path": "functions/_shared/current-fact-evidence.ts",
+            "sha256": "29bd2d56d2d82a202a9057d11e6ee085a09c1c3c9da1dee5afe717de61f2fbd9"
+          },
+          {
+            "path": "functions/_shared/customer-journey-orchestration.ts",
+            "sha256": "3978f4bd89914dcf915758f48d10a6cffd96b7c98a944e208b53c59245be2df4"
+          },
+          {
+            "path": "functions/_shared/customer-money-facts.ts",
+            "sha256": "bad7b229031d97f0a0fcd054408b7c69bad88891bac1319dd27e1d3366d1ed19"
+          },
+          {
+            "path": "functions/_shared/customer360-entitlement-client.ts",
+            "sha256": "2da12c29740371bcbdd752bbfe6b5adc7fd58286294aefe3e2af7779115fe13b"
+          },
+          {
+            "path": "functions/_shared/customer360-entitlement-contract.ts",
+            "sha256": "0338ca5d879e0023403005198f5e88247939bbc65938b9170694bf85ae6a0e97"
+          },
+          {
+            "path": "functions/_shared/e2-direct-threat.ts",
+            "sha256": "ebd0f8ed645804b99fcef8f295079acf6fe00b41917850184b3c562255e56dfd"
+          },
+          {
+            "path": "functions/_shared/emotion-reply-strategy.ts",
+            "sha256": "950423ffed4221143e0cdf2cf6e7d9ce106e6a71dfa0cb7981006bf7d013b82b"
+          },
+          {
+            "path": "functions/_shared/escalation-live.ts",
+            "sha256": "ccf21ab50fbd2212f25f2292f30d82e8ba1f6d5ae7e37bafb88935a5b161ae92"
+          },
+          {
+            "path": "functions/_shared/escalation-p1.ts",
+            "sha256": "f38ade68e72a1234594fd91032cae5a6cd15da7dccab841d986e4ef8e262b96a"
+          },
+          {
+            "path": "functions/_shared/escalation-policy.ts",
+            "sha256": "bebf933242d5e391f65c429097a86eb23f0feececf34aa27ebff132ccc652edc"
+          },
+          {
+            "path": "functions/_shared/escalation-rules.ts",
+            "sha256": "50b1e4604d1f11b1e888afbcd6cf5edf42e1c0510c529865327399d30cb2318d"
+          },
+          {
+            "path": "functions/_shared/escalation-shadow.ts",
+            "sha256": "757ed25aab8694bed31a1da7ef5daa911fd8adbbb772578629b4b0cdbaceb9b8"
+          },
+          {
+            "path": "functions/_shared/escalation-signals.ts",
+            "sha256": "f4aab1682fb348b09041230a7f6d3c301abc893a83d521afc9ba14c2bbd02b6d"
+          },
+          {
+            "path": "functions/_shared/execution-failure.ts",
+            "sha256": "6d437d5e690ae0c748e345a12a73928ccaf9121d2c38eab10539a0b4ccdcfef1"
+          },
+          {
+            "path": "functions/_shared/generation-terminal-guard.ts",
+            "sha256": "b594946be00d0df338d8bc74cfc42ec0bf7dcdb4438c63262b2fb9b8b2dfadc5"
+          },
+          {
+            "path": "functions/_shared/handoff-decision.ts",
+            "sha256": "865049906acb93b206c6cb4f613bfeed60943862f710a7e6b930062906d20f6f"
+          },
+          {
+            "path": "functions/_shared/handoff-intent.ts",
+            "sha256": "d1752a7e1c51f6e7b3b811d0eb4897b6913a8de210bee61fc2ae0ccf598da262"
+          },
+          {
+            "path": "functions/_shared/industry-agent-registry.ts",
+            "sha256": "cb4525633baf7fca5d936b3c212fbfa1cd97c9da8b54b8c97f2064f4d84e088e"
+          },
+          {
+            "path": "functions/_shared/industry-profiles/home-appliance-v1.ts",
+            "sha256": "04f8f83d88a0bc413b57b9f449e56bd62fa3455567d4893a5caedf08c9d5e687"
+          },
+          {
+            "path": "functions/_shared/industry-runtime-adapter.ts",
+            "sha256": "fbe1615f5fadd15e6c70e8b3b0bbb7528b202042fbbc92af8e1dd79b0d698f37"
+          },
+          {
+            "path": "functions/_shared/industry-schema.ts",
+            "sha256": "149c208a8b898faedab61234cfc7f85e7a40d71c92996a5b61354e4cf85d35dd"
+          },
+          {
+            "path": "functions/_shared/kb-aggregation-response.ts",
+            "sha256": "c38365d92cd0860bfba541f3cb072a01d095cb0d2c3be84162c88173ca612ba2"
+          },
+          {
+            "path": "functions/_shared/kb-auth.ts",
+            "sha256": "696473ccbae22ea1328778785659be96204328ca6be5ca35ed7e94e70483e6d7"
+          },
+          {
+            "path": "functions/_shared/kb-client.ts",
+            "sha256": "56246bfa52baeb8e644233bc64d267e11882d4f54afc245def2eee02b7e16071"
+          },
+          {
+            "path": "functions/_shared/llm-router.ts",
+            "sha256": "064e3634d22c75cdaf1757963827839b22e596d55e47de64d75b105f438693e8"
+          },
+          {
+            "path": "functions/_shared/memory-reply-lifecycle-readback.ts",
+            "sha256": "c4db46a3bffeac99879ed66f19b187189b47504ce95628b8d57d8408e3fe7062"
+          },
+          {
+            "path": "functions/_shared/model-attempt-accounting.ts",
+            "sha256": "481d5138fe0312f8ddf32818802eed786091c8509e82287ae07f2b0bb90476a7"
+          },
+          {
+            "path": "functions/_shared/natural-customer-response.ts",
+            "sha256": "4a23b771c541d7a1faac85c936ffc5cffcd73165d4389f831c54579bf7bfe854"
+          },
+          {
+            "path": "functions/_shared/nonproduction-secret.ts",
+            "sha256": "9a760728a4298c09a080237a8d0c90492e7caa029fa41db9aaecc5da74daebd5"
+          },
+          {
+            "path": "functions/_shared/original-widget-preview.ts",
+            "sha256": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738"
+          },
+          {
+            "path": "functions/_shared/pre-send-conversion-supervisor.ts",
+            "sha256": "745d7aa988df3195ea9f8af75659861acdc5ea6e6d3e9dd8f387af0b2ef50f56"
+          },
+          {
+            "path": "functions/_shared/prior-grounded-transform-core.ts",
+            "sha256": "4a61e1cad24e725ce7743d4ecde31431ee614663f9251f8a6fad1919a362e9f0"
+          },
+          {
+            "path": "functions/_shared/prior-grounded-transform.ts",
+            "sha256": "151ff0ddc3256d395f3bc6d5c77eb13d41af5b72b5666a78cf2232167bd29946"
+          },
+          {
+            "path": "functions/_shared/product-kb-semantic-contract.ts",
+            "sha256": "3fc1d296c395b05f547a4c585cf7a291d5732bbc4d443dab4a5cc9c2ad5f0231"
+          },
+          {
+            "path": "functions/_shared/remote-model-accounting.ts",
+            "sha256": "1faa1ecebdc13e9f2f067611130e1a0ff65ba8697884387587a74b7f135947c5"
+          },
+          {
+            "path": "functions/_shared/return-to-ai-control.ts",
+            "sha256": "e0f44e4417aecb974634e2185baf0f558df5cdb3e63d29f161a656b7ae51c1d2"
+          },
+          {
+            "path": "functions/_shared/revision-bound-reply.ts",
+            "sha256": "13439a22cffcda24508d4a07bc875c9c4aeeb6966b9ee8336535ba878a4aa690"
+          },
+          {
+            "path": "functions/_shared/runtime-signal-lifecycle.ts",
+            "sha256": "113d45ea7a36c9a04d8cd7193e52d432514785538a35df4f578221b73f2b8b62"
+          },
+          {
+            "path": "functions/_shared/service-semantic-routing.ts",
+            "sha256": "117b06bc1365e1dddbb0c80f1515b934ee45116a2826004a6e8e9f892799cc3c"
+          },
+          {
+            "path": "functions/_shared/supabase-admin-key.ts",
+            "sha256": "bb008429a3d017c0188ea59a86c1397d54b50616ea96c475f1df5719590acb11"
+          },
+          {
+            "path": "functions/_shared/transaction-closure-handoff.ts",
+            "sha256": "8d68d0e53b9333f619b59b5675f3f10216644a2ce21ff487c1c0e9faa8900715"
+          },
+          {
+            "path": "functions/_shared/uat-execution-contract.ts",
+            "sha256": "5fb5b79e5f30ae3b884422075b6cdaac1383217900208dac7a9479181362653b"
+          },
+          {
+            "path": "functions/_shared/uat-execution-readiness.ts",
+            "sha256": "35edd1e87cc8eb5cf420b5c296254623e443f117deba41e46a70a1d16a36046d"
+          },
+          {
+            "path": "functions/_shared/vertex-generation-config.ts",
+            "sha256": "8a8f8540171340a1d03820beb74698eb28bb2037d605daf831bbb6a7d31dcda6"
+          },
+          {
+            "path": "functions/_shared/vertex-parse.ts",
+            "sha256": "83062c4576e309ac92af3850f5f7aaf4fef2285b553a9d5a81df29451cee2a34"
+          },
+          {
+            "path": "functions/_shared/warm-handoff.ts",
+            "sha256": "ececeb9fc88f37f22ce6b9a1fe264211b0899994cf634d6ebc6c871689420068"
+          },
+          {
+            "path": "functions/generate-reply/deno.json",
+            "sha256": "aec9c8902433a25e9572022bab3a5b572babf44ecab034ba69a706fe98ae7d7b"
+          },
+          {
+            "path": "functions/generate-reply/index.ts",
+            "sha256": "2df1090109c4c70eb3e6e49132ff3f86db3b1e3296b6fb397bd66a96504e4fed"
+          }
+        ],
+        "changed": [
+          {
+            "path": "functions/_shared/execution-failure.ts",
+            "sha256": "6d437d5e690ae0c748e345a12a73928ccaf9121d2c38eab10539a0b4ccdcfef1"
+          },
+          {
+            "path": "functions/_shared/model-attempt-accounting.ts",
+            "sha256": "481d5138fe0312f8ddf32818802eed786091c8509e82287ae07f2b0bb90476a7"
+          },
+          {
+            "path": "functions/_shared/original-widget-preview.ts",
+            "sha256": "431d340e1e26c4e2477810fe70f0b4755dc202dbeeac9bb059da15cfcdeee738"
+          },
+          {
+            "path": "functions/_shared/uat-execution-contract.ts",
+            "sha256": "5fb5b79e5f30ae3b884422075b6cdaac1383217900208dac7a9479181362653b"
+          },
+          {
+            "path": "functions/generate-reply/index.ts",
+            "sha256": "2df1090109c4c70eb3e6e49132ff3f86db3b1e3296b6fb397bd66a96504e4fed"
+          }
+        ],
+        "removed": []
+      }
+    ],
+    "frontend": {
+      "project_id": "4dbf593e-577e-4af4-a553-460441c34473",
+      "source_delta": [
+        "src/routes/_authenticated/console.widget-preview.tsx"
+      ],
+      "baseline_published_identity": {
+        "projectId": "4dbf593e-577e-4af4-a553-460441c34473",
+        "identitySource": "git",
+        "head": "27fb304a385e7e79647ea51451f49753ea9e3817",
+        "tree": "f60a1ed1d290455f9d7f5ebf8a03f1e6b8fa10d1",
+        "modified": false,
+        "buildEnvIdentity": null,
+        "buildEnvMetadataStatus": "unavailable",
+        "sourceSha256": "4e850e2caa2210eeff9444191e645ff62b890879d47b038e54f59561fa5b3926",
+        "sourceManifestVersion": "c3-source-manifest-v2",
+        "sourceFileCount": 462,
+        "buildProfile": "production",
+        "sourceBackendRef": "nrfxhqabwblzxoushgnm",
+        "backendRuntimeVerified": false
+      },
+      "publish": "Full same-clean-commit client/SSR build, not backend only. Exact served HEAD/TREE/sourceSha256 required. Recheck actual published identity before release; drift stops."
+    },
+    "configuration": {
+      "key": "ORIGINAL_WIDGET_PREVIEW_AUTHORIZATION",
+      "value": "original-widget-preview-v1:frankie-authe:existing-vertex-production",
+      "type": "server-only paid-use authorization setting, not a new provider credential",
+      "current_preimage": "NOT_READ: connector does not expose Edge environment metadata. Require operator-confirmed absent setting before write; unexpected existing setting stops. No overwrite under this scope.",
+      "credential_changes": []
+    },
+    "order": [
+      "Verify exact approved HEAD/TREE/clean state, four deployed bundle preimage manifests, published frontend preimage, and absent new authorization setting. Stop on drift.",
+      "Deploy exactly four target Function bundles with captured per-Function JWT/import-map settings, preserving import-map bytes. Paid permission remains inactive.",
+      "Publish the complete matching frontend; verify served identities and four actual Function file hashes. No paid smoke during code verification.",
+      "Only under explicit combined Director paid-use approval, install the one authorization setting; no other setting or credential changes.",
+      "Run actual Hosted free-form/persistence/correction/Memory/same-ticket Summary/handoff cases for each original account through normal application APIs. No direct SQL fixtures or synthetic relabeling."
+    ]
+  },
+  "one_minimal_director_decision": {
+    "status": "NOT_GRANTED",
+    "decision": "Approve one exact-source release + full original frontend Publish + the explicit setting authorizing these two original Admins to use the existing Production Vertex credential/project billing for normal manual Preview. This includes the resulting normal application Session/ticket/message/Memory/Summary/handoff writes and actual Hosted acceptance sends. This is paid-use authorization, not merely a deployment approval.",
+    "paid_scope": "Ongoing original two-account manual Preview under existing Production provider/IAM/project quotas and original bounded request/retry controls. No synthetic UAT quota reset/borrow, no new cumulative USD allowance or hard-stop guarantee. Director must authorize normal Preview charges to the configured existing Google project.",
+    "enforced_request_bounds": {
+      "provider": "existing configured vertex only",
+      "models": "existing LLM_MODEL_GENERATION/ASSIST/EVALUATION values only; exact configured project/region/model endpoint",
+      "max_attempt_per_model_operation": 3,
+      "max_output_tokens_per_attempt": 8192,
+      "max_serialized_request_bytes": 256000,
+      "redirects": "error",
+      "fallback_provider": "denied"
+    },
+    "provider_requirements": [
+      "Existing GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_PROJECT_ID, GOOGLE_REGION, LLM_PROVIDER=vertex and existing LLM_MODEL_* remain configured; do not request/copy credentials.",
+      "Existing Google project must permit this billed use: service account has aiplatform.endpoints.predict, API/billing active and selected model/region/quota available. Source/config presence does not prove live IAM success; no unauthorized paid probe was made.",
+      "Director explicitly approves existing billed provider use for these two manual Preview actors. If this approval cannot be given, keep the setting absent and paid dispatch denied."
+    ],
+    "provider_docs": [
+      "https://cloud.google.com/vertex-ai/generative-ai/docs/access-control",
+      "https://cloud.google.com/vertex-ai/generative-ai/docs/start/gcp-auth"
+    ],
+    "not_a_prerequisite": "Synthetic UAT historical quota/lease reconciliation is not imposed on the separately authorized original manual Preview route. It remains mandatory for c3_uat_widget traffic.",
+    "excluded": [
+      "Production SQL or manual data writes",
+      "New/changed Google credentials, IAM, project, billing account or provider endpoint",
+      "Remote Singapore KB paid use or ownership changes",
+      "Automated synthetic UAT paid traffic",
+      "Agent browser restriction workaround",
+      "PR merge"
+    ]
+  },
+  "hosted_plan": {
+    "accounts": "Both exact original accounts, each in own Company/Channel and allowed Origin; actual Auth receipts retained.",
+    "app_writes": "At most one fresh marked manual Preview ticket per account for acceptance, at most six Visitor messages per account including the explicit handoff. Summary/readback are normal own-ticket reads.",
+    "assertions": [
+      "Unrestricted meaningful natural-language query -> actual Vertex reply, source-bound persisted Assistant and stable delivery receipt.",
+      "Continue same ticket with customer facts/correction and verify recalled corrected Memory.",
+      "Read same-ticket Summary and perform explicit handoff; verify pending/assigned state and AI suppression.",
+      "Reload/poll and repeat client ID to verify no duplicate Visitor/Assistant delivery.",
+      "Cross-Tenant/Session/actor denials remain; no synthetic route is relabeled."
+    ],
+    "not_approved_yet": true,
+    "agent_case": "browser_security_restricted remains separate; no repeat Agent login attempt.",
+    "KB_cases": "kb_bounds_verified=false; UAT_REMOTE_BOUND_UNVERIFIED retained. KB-dependent facts remain separately blocked; no KB-empty claim or remote bypass."
+  },
+  "preserved": {
+    "history_eligibility": "Accepted 37/38 unchanged; invalid Session remains denied. No repeat live history investigation.",
+    "Frozen_B12_Demo": "unchanged",
+    "original_memory_summary_handoff_controls": "unchanged existing implementations, targeted regression and original required gate",
+    "ordinary_Frankie_customers": "legacy dispatch unchanged; new manual classification is explicit and does not convert ordinary or synthetic traffic.",
+    "synthetic_lease_quota": "unchanged and still denies without lease"
+  },
+  "rollback": {
+    "first": "Remove only the new authorization setting to stop new manual paid admission. Do not alter existing provider credentials or synthetic grants.",
+    "functions": "Restore exact captured four Function preimages including import maps and original JWT flags; verify all file SHA256.",
+    "frontend": "Restore full published 27fb304a385e7e79647ea51451f49753ea9e3817 source/artifact and verify recorded published identity.",
+    "source": "Revert this successor commit under exact HEAD guard to 180110a9, preserving accepted history repair.",
+    "data": "No deletes/refunds/rewrites. New signed manual tickets and actual outcomes remain persisted; old code may hide these new-format tickets until a forward fix."
+  },
+  "actual_status": {
+    "production_writes": 0,
+    "provider_calls": 0,
+    "KB_calls": 0,
+    "deployed": false,
+    "published": false,
+    "paid_setting_installed": false,
+    "hosted_P0": "NOT_TESTED",
+    "task1_accepted": false,
+    "task2_started": false,
+    "uat_start_allowed": false,
+    "kb_bounds_verified": false,
+    "remote_status": "UAT_REMOTE_BOUND_UNVERIFIED"
+  },
+  "validation": "Final command exits, exact successor identity and Required CI evidence recorded externally after commit; isolated adapters/native checks are not Hosted PASS."
+}

@@ -8,28 +8,10 @@ export const AUTHORITATIVE_SUPABASE_FUNCTIONS_ORIGIN = `${AUTHORITATIVE_SUPABASE
 export const AUTHORITATIVE_SUPABASE_PUBLISHABLE_KEY =
   'sb_publishable_s7QHy6gRiJfwvzj9o1E0ZQ_rt5XDpsr';
 
-function decodeJwtProjectRef(key) {
-  const parts = key.split('.');
-  if (parts.length !== 3) return null;
-  try {
-    const json = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const decoded =
-      typeof atob === 'function'
-        ? atob(json)
-        : Buffer.from(json, 'base64').toString('utf8');
-    const ref = JSON.parse(decoded)?.ref;
-    return typeof ref === 'string' ? ref : null;
-  } catch {
-    return null;
-  }
-}
-
-// A publishable key is rejected when it demonstrably belongs to another project.
+// Opaque publishable keys have no verifiable project ref. Only the source-declared
+// canonical public key may replace the fallback; malformed or injected keys cannot.
 export function publishableKeyMatchesAuthority(key) {
-  if (!key) return false;
-  const ref = decodeJwtProjectRef(key);
-  if (ref === null) return true; // opaque sb_publishable_* keys carry no ref
-  return ref === AUTHORITATIVE_SUPABASE_PROJECT_ID;
+  return key === AUTHORITATIVE_SUPABASE_PUBLISHABLE_KEY;
 }
 
 // Single source of truth for every Preview/frontend + SSR Supabase binding.

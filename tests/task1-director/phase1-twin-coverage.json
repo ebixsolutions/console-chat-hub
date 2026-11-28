@@ -1,0 +1,2581 @@
+{
+  "schema_version": 1,
+  "closure_contract": "C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1",
+  "task": "AI-ABC-C3 / Task3C / P0-1 / Director takeover",
+  "authoritative_repository": "ebixsolutions/console-chat-hub",
+  "authoritative_branch": "director/ai-abc-c3-long-memory-final-cutover",
+  "pull_request": 12,
+  "baseline_head": "b0264643b1b5f9e4524e8eef42a2b38090fec94e",
+  "baseline_native_ci": {
+    "source": "b0264643b1b5f9e4524e8eef42a2b38090fec94e",
+    "baseline": "aa1e1ea2afe23bcabe5ea750895148dec735d637",
+    "source_evidence": "GitHub Actions decoded original preproduction job logs, not Supervisor local stand-ins",
+    "run_id": 45388273784,
+    "job_id": 138426984554,
+    "previous_job_id": 138416602881,
+    "native": {
+      "pass": 841,
+      "fail": 20,
+      "total": 861,
+      "exit": 1
+    },
+    "baseline_native": {
+      "pass": 839,
+      "fail": 20,
+      "total": 859,
+      "exit": 1
+    },
+    "added_failures": [],
+    "resolved_failures": [],
+    "failures": [
+      {
+        "name": "Director failed natural dialogue: consecutive source runtime and CAS boundary",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 824
+      },
+      {
+        "name": "home appliance A: useful guidance rather than generic clarification",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 887
+      },
+      {
+        "name": "home appliance W9-1: scoped allocation from established context",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 914
+      },
+      {
+        "name": "home appliance W9-2: scoped allocation from established context",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 914
+      },
+      {
+        "name": "W9 established AC context survives intervening service and memory turns",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 987
+      },
+      {
+        "name": "W11 production-shaped T1-T5 advances one durable AC purchase journey",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 1041
+      },
+      {
+        "name": "W13 T1-T5 committed journey progress carries bounded B2 authorization",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 1136
+      },
+      {
+        "name": "W15 sequential T1-T8 preserves journey then prioritizes factual follow-up",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 1214
+      },
+      {
+        "name": "W19 sequential T1-T16 source replay preserves customer journey, KB and transaction boundaries",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 1286
+      },
+      {
+        "name": "W21 entity lifecycle scope, ambiguous target, reversal, cancellation and no silent reactivation",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 1568
+      },
+      {
+        "name": "W13 journey authorization fails closed across tenant, revision, entity, replay and transaction drift",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 1641
+      },
+      {
+        "name": "W11 entity switch, room correction and cancellation stay scoped",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 1761
+      },
+      {
+        "name": "hosted compound shopping start retains enumerated room areas and skips known questions",
+        "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+        "line": 1907
+      },
+      {
+        "name": "C3 exact canonical T006 leaves unallocated room-plan machine quantity unconfirmed",
+        "path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+        "line": 420
+      },
+      {
+        "name": "C3 exact T016 resolved cancellation reply outranks generic clarification",
+        "path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+        "line": 581
+      },
+      {
+        "name": "C3 exact canonical turn 17 supersedes the tentative correction before B2",
+        "path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+        "line": 683
+      },
+      {
+        "name": "C3 captured production turn 27 rejects AC quantity and resolves refrigerator width constraint",
+        "path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+        "line": 2370
+      },
+      {
+        "name": "C3 attribute-compatible referent routing is fail-closed across topic switches and quantities",
+        "path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+        "line": 2404
+      },
+      {
+        "name": "C3 pending technician aggregates distinguish global scope from entity scope",
+        "path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+        "line": 2718
+      },
+      {
+        "name": "entity-scoped_vs_global_recap_partition",
+        "path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+        "line": 2780
+      }
+    ],
+    "handler": {
+      "tests": 580,
+      "pass": 580,
+      "fail": 0
+    },
+    "native_command_excerpt": "(cd \"$RUNNER_TEMP/c3-deno-checkout\" && deno test --no-lock --allow-read --node-modules-dir=auto \\\n  supabase/functions/_shared/conversation-service-runtime.test.ts \\\n  supabase/functions/_shared/natural-customer-response.test.ts \\\n  supabase/functions/_shared/customer-money-facts.test.ts \\\n  supabase/functions/_shared/conversation-service-planner.test.ts \\\n  supabase/functions/_shared/pre-send-conversion-supervisor.test.ts \\\n  supabase/functions/_shared/contextual-customer-update.test.ts \\\n  supabase/functions/_shared/product-factual-query.test.ts \\\n  supabase/functions/_shared/canonical-kb-direct-answer.test.ts \\\n  supabase/functions/_shared/canonical-kb-b2-price.test.ts \\\n  supabase/functions/_shared/conversation-recall.integration.test.ts)\n",
+    "a2": {
+      "run_id": 45388274039,
+      "job_id": 138424853123,
+      "conclusion": "success"
+    },
+    "b12": {
+      "run_id": 45388273694,
+      "job_id": 138424853131,
+      "conclusion": "success"
+    },
+    "c3_preproduction": "failure",
+    "source_final": "skipped",
+    "isolated_final": "skipped",
+    "claim_limit": "Native contract scoped CI only, no Hosted/model/KB/UAT acceptance"
+  },
+  "decision": "Implement exact3 real-run routes and same-class generic defects; retain every original callback, actual17remaining failures, pending named parking/CI scopes.",
+  "parking_enabled": false,
+  "approved_parked_test_names": [],
+  "ci_failure_exemptions": [],
+  "original_test_count": 20,
+  "original_preservation": {
+    "supabase/functions/_shared/contextual-customer-update.test.ts": {
+      "baseline": "7b9579db2f0b5cb02b08e2ec17370459388b3fb4",
+      "baseline_sha256": "5efc8a90c38371f37e0449a39ee55b0691069c32285cc088650077d4e2832d57",
+      "preservation": "All callbacks retained; only three named W9 inputs/source-word assertions changed. Other assertions independently compared by AST; new callbacks/imports appended."
+    },
+    "supabase/functions/_shared/conversation-recall.integration.test.ts": {
+      "baseline": "7b9579db2f0b5cb02b08e2ec17370459388b3fb4",
+      "preservation": "identical full file",
+      "sha256": "996bb87a71acd77ee5d568fa17643e4de7ab20fa4d9c47299305930e8e5a7750"
+    },
+    "tests/emergency-p0/chain.test.mjs": {
+      "baseline": "7b9579db2f0b5cb02b08e2ec17370459388b3fb4",
+      "preservation": "entire584-callback source is identical prefix; only new handler registration appended"
+    }
+  },
+  "test_paths": [
+    "tests/task1-director/phase1-safety-twins.test.ts",
+    "tests/task1-director/phase1-recall-twins.test.ts",
+    "tests/task1-director/phase1-journey-twins.test.ts",
+    "tests/task1-director/phase1-journey-integrity-twins.test.ts",
+    "tests/task1-director/phase1-correction-integrity-twins.test.ts",
+    "tests/task1-director/phase1-business-context-twins.test.ts",
+    "tests/task1-director/phase1-dimension-source-twins.test.ts",
+    "tests/task1-director/phase1-full-journey-twins.test.ts",
+    "tests/task1-director/phase1-lifecycle-storage-twins.test.ts",
+    "tests/task1-director/phase1-bounded-json-storage.test.ts",
+    "tests/task1-director/phase1-recap-clause-twins.test.ts"
+  ],
+  "handler_registration": {
+    "original_suite": "tests/emergency-p0/chain.test.mjs",
+    "register": "tests/task1-director/phase1-correction-handler-register.mjs",
+    "original_580_callbacks": "entire original file remains byte prefix; no skip or exemption",
+    "new_callbacks": 4,
+    "scope": "Original complete handler+decoder+runtime+Memory+B2+requery+R1+suppression; scripted external SDK/HTTP only. Actual original584callbacks retained. Not Hosted/model/remoteKB/AuthRLS evidence.",
+    "additional_register": "tests/task1-director/phase1-full-journey-handler-register.mjs"
+  },
+  "changed_source_and_tests_sha256": {
+    "supabase/functions/_shared/commerce-state-runtime-base.ts": "c3a3fc87659c1690732b18e42b8dc12b51aa9a0714d36fdbb70e79bbb1d05e2e",
+    "supabase/functions/_shared/contextual-customer-update.ts": "7c6018cc50c2ac05e056d2c6fa2c7d8b4e66427f0d6cab9712ff08545debf438",
+    "supabase/functions/_shared/conversation-service-runtime.ts": "cb23c636a8cfeb9c3eacb30ff30a0e605c708812be01ff7fa3b27c4a99fadcec",
+    "supabase/functions/_shared/b2-journey-progress-contract.ts": "367d2bae82405f7936861b8d0abf740b787b1c84c7e9e5838308a517db251f5d",
+    "supabase/functions/_shared/conversation-long-memory.ts": "12ebe058c039c1b08b72ba9010e9aaee12982dff0558715969a030e7cd05ff21",
+    "supabase/functions/_shared/pre-send-conversion-supervisor.ts": "6547be5f9bc720c77ba98b49c994b614c43a08cbe329c887cc9e419ffb841f81",
+    "supabase/functions/generate-reply/index.ts": "fa791618fd0edfb007e2e36ca323b25bb2edc2136521937a473181347e2cd827",
+    "tests/task1-director/phase1-safety-twins.test.ts": "c7d8f3009dec7a3bb09ae0f1628f02d6512caaba32b94ba79f2717a990469ac9",
+    "tests/task1-director/phase1-recall-twins.test.ts": "d7a14cdfa4503c0b003300b7851f508068a5d66caa33f936d6f688d8aebb2a21",
+    "tests/task1-director/phase1-journey-twins.test.ts": "3b213122754ad085d29855f9136ea8505a451b40c83906865ccee8619a9082bb",
+    "tests/task1-director/phase1-journey-integrity-twins.test.ts": "b8014e661f1204950ed13414f4ac8d4647b76b9e512b76380a132da9ae895d71",
+    "tests/task1-director/phase1-correction-integrity-twins.test.ts": "5bf43bccb052205b4461ec09c2ad9cf846443d13c5ee08dee202af8ade33fb4f",
+    "supabase/functions/_shared/contextual-customer-update.test.ts": "a7a0bdc78dd447a04d33572901078a7a5ae5ea7036d51e287c48dfbb497c8ac0",
+    "tests/emergency-p0/chain.test.mjs": "81f47785c4bc000af00763dface08262a9fe946164e24595051880c7cd47ced7",
+    "tests/task1-director/phase1-correction-handler-register.mjs": "3574982f7244bebda28a8e1ce95d0dff7f1ecc378dd779b312973fcf92ce49ea",
+    "supabase/functions/_shared/bounded-json-storage.ts": "e90fb8ce1fdef2f67b78cfe1f22b4df209c8e6776cb72e258e431785f4f64efe",
+    "supabase/functions/_shared/commerce-state-authority.ts": "6cecc87547163bf51da59fb1ed9c8a348dd0f7c8ed352c7ab0adc4764acc87f6",
+    "supabase/functions/_shared/current-factual-request.ts": "de331169be7c9e16d7a0602fb49ba3e6187da15e5673cfe312d9e2d8f682589c",
+    "supabase/functions/_shared/lifecycle-receipt-storage.ts": "4ba0001f03f2993cad9bbc2df8a0e37be41b14e6967b351fae2c6ec998e3947c",
+    "supabase/functions/_shared/revision-bound-reply.ts": "743f82ca9d4fab98c2615fbc28a9064e65cf2b180dd025a3801daff8f167a47e",
+    "tests/task1-director/fixtures/phase1-business-context.ts": "e11f444b25bb460eebe15c14adf56f642d85bafca1907f605a407508a086dff3",
+    "tests/task1-director/fixtures/phase1-large-lifecycle-memory.json": "c1241a5f639303739ce848b2e6e89bcef912f3453f00e5f046965e2c9276a340",
+    "tests/task1-director/fixtures/phase1-large-lifecycle-receipt.json": "a00bc59631c2398928cee6fa40fa291704e424f44cd8751bad4f3e6d817d891d",
+    "tests/task1-director/phase1-bounded-json-storage.test.ts": "11e1a7cf949d809286efff59ba8ebac6bcdf3e5b7e70c378886b3a49d6042326",
+    "tests/task1-director/phase1-business-context-twins.test.ts": "7340f6ebe97d9efc2059f09c426462ceb6ba7bc7379c04c7f82e56c6054aeea8",
+    "tests/task1-director/phase1-dimension-source-twins.test.ts": "fc02c7a3a4165d8975225bebad60795ad140dc5c63d612673ee47b71cf09db66",
+    "tests/task1-director/phase1-full-journey-handler-register.mjs": "fefd34ce6138ddf9e8bee19d2c9683633593edb6156fa7b1bc7ef837ee24323d",
+    "tests/task1-director/phase1-full-journey-twins.test.ts": "298374a229b0b1bf147b57c6cdf02b278f714a4bb5ef1b98d16108510d63e9d2",
+    "tests/task1-director/phase1-lifecycle-storage-twins.test.ts": "db1882cd9339a96c7ecba2a2c64b6bc7786c5ca1b0c99329f99ad84718a5e7f4",
+    "tests/task1-director/phase1-recap-clause-twins.test.ts": "6bb318ac6553f192b6c4547b50184a45f82b2cb546927ad9fbd16b075ea17762"
+  },
+  "local_runtime_validation_command": "DENO_NO_PACKAGE_JSON=1 deno test --no-lock --no-check --node-modules-dir=manual --allow-read tests/task1-director/phase1-safety-twins.test.ts tests/task1-director/phase1-recall-twins.test.ts tests/task1-director/phase1-journey-twins.test.ts tests/task1-director/phase1-journey-integrity-twins.test.ts tests/task1-director/phase1-correction-integrity-twins.test.ts",
+  "validation_boundary": "The native command runs actual source with deterministic persistence/test inputs and omits type checking. Exact successor CI is recorded separately. Neither this register nor native passing twins are Hosted, Auth/RLS, database concurrency, real model/KB, Quality95 or UAT acceptance.",
+  "acceptance": {
+    "TASK3C": "FAIL_OPEN",
+    "P1": "PARTIAL",
+    "uat_start_allowed": false,
+    "FUNCTIONAL_UAT_ACCEPTED": false,
+    "VIBECODE_FUNCTIONAL_HANDOFF_READY": false,
+    "PRODUCTION_RELEASE_READY": false
+  },
+  "rows": [
+    {
+      "id": "P1-LEGACY-01",
+      "original_name": "Director failed natural dialogue: consecutive source runtime and CAS boundary",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "NATURAL-DIALOGUE",
+      "generic_obligations": [
+        "Topic switch preserves independently stated dimensional constraint",
+        "Later correction preserves source scope and defers other subject only",
+        "Read-only historical calculation15210 leaves state untouched",
+        "Explicit human intent occurs only correct requested turn and stays under human control",
+        "No order inferred"
+      ],
+      "industry_specific_assertions": [
+        "AC model/window/sunlight/sizing and fridge width background parsing",
+        "category aliases and room_sizes.study=105平方呎 schema"
+      ],
+      "replacement_or_existing_test_names": [
+        "P1 twin natural dialogue subset: historical calculation is read-only and explicit human request is recognized",
+        "Delegated safety dimension/lifecycle twins",
+        "P1 twin historical negative missing-basis: unproved arithmetic stays read-only without an answer",
+        "P1 twin historical negative mixed-currency: unproved arithmetic stays read-only without an answer",
+        "P1 twin historical negative current-price and transaction requests are not arithmetic authorization"
+      ],
+      "new_test_file": "tests/task1-director/phase1-journey-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval.",
+        "This is a new generic10-turn sequence, not the original appliance10-turn transcript translated line by line. Generic dimension correction/continued comparison and detailed correction-integrity negatives are mapped through companion tests.",
+        "Auth/RLS, real concurrent database CAS, remote provider/KB and Widget/Console UI are not exercised by the local transport fixture."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "PARTIAL_DO_NOT_PARK",
+        "coverage_gaps": [
+          "Original test itself only classifies human intent; does not perform actual transfer",
+          "Generic full consecutive ten-turn flow, bilingual recap, wrong/unknown model and true handoff remain not proven"
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "last-eight",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "additional_handler_file": "tests/task1-director/phase1-full-journey-handler-register.mjs",
+      "current_generic_handler_mapping": {
+        "original_callback_body_modified_by_this_agent": false,
+        "original_result_relabelled": false,
+        "handler_test_names": [
+          "P1 full journey: natural dialogue ten consecutive persisted turns with bilingual recap and real R1 control",
+          "P1 full journey: language-prefixed complete recap is read-only en",
+          "P1 full journey: language-prefixed complete recap is read-only zh-TW"
+        ],
+        "resolved_offline_generic_obligations": [
+          "Ten actual consecutive persisted handler turns cover scoped requirements, a second explicit item quantity1, latest scoped correction, scoped defer with retained first subject, read-only English and Cantonese recap, historical15210 without mutation, unknown model refusal, and actual R1 RPC on the same ticket.",
+          "R1 uses the original actual handler control flow, not a locally toggled test variable. Additional16-turn W19 callback proves subsequent persisted human control suppresses both AI/model and KB calls.",
+          "Independent complete-handler language-prefix recap callbacks cover both actual originally failing presentation-prefix source phrases with successful read-only recaps; not treated as acceptable fallback."
+        ],
+        "residual_exact_equivalence_and_runtime_boundary": [
+          "This is a new generic10-turn sequence, not the original appliance10-turn transcript translated line by line. Generic dimension correction/continued comparison and detailed correction-integrity negatives are mapped through companion tests.",
+          "Auth/RLS, real concurrent database CAS, remote provider/KB and Widget/Console UI are not exercised by the local transport fixture."
+        ],
+        "parked": false,
+        "phase2_deferral_approved": false,
+        "ci_exemption": false,
+        "automatic_eligibility_claimed": false,
+        "turn_assertion_mapping": {
+          "T1-T4": [
+            "First goal/allocation3; second explicit quantity1; first scoped correction total4"
+          ],
+          "T5": [
+            "Only second subject deferred with first retained"
+          ],
+          "T6-T7": [
+            "English/Cantonese full current recaps; no stale or inactive-as-active requirements"
+          ],
+          "T8": [
+            "Historical15210 exact and Commerce byte unchanged"
+          ],
+          "T9": [
+            "Unknown model retained in refusal; no fabricated feature/private KB proof"
+          ],
+          "T10": [
+            "Actual R1 RPC; same ticket under human control; no AI commit; quantities/lifecycle retained"
+          ]
+        }
+      }
+    },
+    {
+      "id": "P1-LEGACY-02",
+      "original_name": "home appliance A: useful guidance rather than generic clarification",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "A",
+      "generic_obligations": [
+        "Useful specific guidance is actually delivered; no generic dead-end acknowledgement",
+        "No false order or customer_goal/internal identifier in reply",
+        "Durable subject context",
+        "Canonical resolution preserves correct service-planner precedence"
+      ],
+      "industry_specific_assertions": [
+        "Reply must mention room/living-room and area",
+        "current_topic must equal air_conditioner"
+      ],
+      "replacement_or_existing_test_names": [
+        "CTX-GUIDANCE G1-training-demand-only",
+        "CTX-GUIDANCE G1-cake-demand-only",
+        "CTX-GUIDANCE R4-training-scope-facts"
+      ],
+      "new_test_file": "tests/task1-director/phase1-journey-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval.",
+        "Provider advice and interpretation are scripted at the unchanged external transport boundary. This proves final-handler forwarding, persistence and guards, not fresh model usefulness or independent Quality95.",
+        "Original appliance wording/current_topic identifier and exact native route shape are preserved in the original test, not reimplemented as generic runtime defaults."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "PARTIAL",
+        "coverage_gaps": [
+          "Existing full real handler uses scripted provider output; no fresh real model usefulness or original conversation equivalent",
+          "Native G1 reply=null only tests delegation and cannot replace useful final-answer assertion"
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "last-eight",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "additional_handler_file": "tests/task1-director/phase1-full-journey-handler-register.mjs",
+      "current_generic_handler_mapping": {
+        "original_callback_body_modified_by_this_agent": false,
+        "original_result_relabelled": false,
+        "handler_test_names": [
+          "P1 full journey: A useful final guidance catering",
+          "P1 full journey: A useful final guidance subscriptions",
+          "P1 full journey: A useful final guidance rentals",
+          "P1 full journey: unproved transaction draft is blocked catering",
+          "P1 full journey: unproved transaction draft is blocked subscriptions",
+          "P1 full journey: unproved transaction draft is blocked rentals"
+        ],
+        "resolved_offline_generic_obligations": [
+          "Three business contexts execute complete accepted Reading -> source-owned scope/Memory -> actual guidance provider request -> supplied useful draft -> B2 -> exactly one persisted final reply.",
+          "Assertions inspect final specific advice, no phantom product/default quantity, correct canonical subject context, actual prompt, no KB request, no transaction and exact source replay."
+        ],
+        "residual_exact_equivalence_and_runtime_boundary": [
+          "Provider advice and interpretation are scripted at the unchanged external transport boundary. This proves final-handler forwarding, persistence and guards, not fresh model usefulness or independent Quality95.",
+          "Original appliance wording/current_topic identifier and exact native route shape are preserved in the original test, not reimplemented as generic runtime defaults."
+        ],
+        "parked": false,
+        "phase2_deferral_approved": false,
+        "ci_exemption": false,
+        "automatic_eligibility_claimed": false,
+        "turn_assertion_mapping": {
+          "T1": [
+            "Current scope remains context with zero product entities",
+            "Actual provider generation receives subject and scopes",
+            "Useful supplied final advice passes B2 and persists exactly once",
+            "No KB or transaction; same-source replay unchanged"
+          ]
+        }
+      }
+    },
+    {
+      "id": "P1-LEGACY-03",
+      "original_name": "home appliance W9-1: scoped allocation from established context",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "W9-1",
+      "generic_obligations": [
+        "Two-turn persisted context owns scope count",
+        "Exact 1+1+1 allocation equals3 and three rows",
+        "Readable correct scope/quantity; no transaction/internal claim",
+        "Canonical precedence",
+        "Read-only refusal on absent/invalid interpretation",
+        "B2/Memory/source revision and same-source replay"
+      ],
+      "industry_specific_assertions": [
+        "Original room labels normalized to 客廳/兩間房",
+        "Output exact Chinese numeral三部 rather than source-faithful number/unit"
+      ],
+      "replacement_or_existing_test_names": [
+        "P1 twin W9-1: literal scoped allocation commits three source-owned requirements",
+        "P1 twin W9-1 negative missing: invalid Reading cannot mutate",
+        "P1 twin W9-1 negative count: invalid Reading cannot mutate",
+        "P1 twin W9-1 negative per-scope: invalid Reading cannot mutate",
+        "P1 twin W9-1 negative source-quote: invalid Reading cannot mutate",
+        "P1 twin W9-1 negative goal: invalid Reading cannot mutate",
+        "P1 twin W9-1 negative unit: invalid Reading cannot mutate",
+        "P1 twin W9-1 negative total: invalid Reading cannot mutate"
+      ],
+      "new_test_file": "tests/task1-director/phase1-journey-twins.test.ts",
+      "coverage_gaps": [
+        "Exact same-head checked CI result remains separate; W9-2 original language is zh-TW and retains source Simplified words. New explicit zh-CN handler coverage does not declare Quality95 language acceptance."
+      ],
+      "coverage_status": "NAMED_ROUTE_IMPLEMENTED_CHECKED_CI_PENDING",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "GENERIC_NATIVE_ALLOCATION_OBLIGATIONS_PASSED_NOT_PARKED",
+        "coverage_gaps": [
+          "All eight named native callbacks passed. Persistence is a deterministic native harness; Hosted/Auth/RLS and generated business guidance remain unproven by these callbacks."
+        ]
+      },
+      "resolution_route": "REAL_ORIGINAL_RUN_WITH_EXACT_NAMED_READING_AND_CUSTOMER_WORD_ASSERTIONS",
+      "additional_independent_negatives": "P1 named W9 source negative W9-1: missing-reading/weak-reading/wrong-ref/wrong-value/wrong-unit/forged-source/extra-entity"
+    },
+    {
+      "id": "P1-LEGACY-04",
+      "original_name": "home appliance W9-2: scoped allocation from established context",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "W9-2",
+      "generic_obligations": [
+        "Source-owned 2-group count plus1 individual scope",
+        "No model-count/invented-total/unit authority",
+        "One actual scoped canonical entity",
+        "Readable exact literal unit and no internal ID",
+        "Bounded B2 accepted receipt, Memory parity, replay"
+      ],
+      "industry_specific_assertions": [
+        "Simplified 台 input requires Traditional canonical room names and 三部 output"
+      ],
+      "replacement_or_existing_test_names": [
+        "P1 twin W9-2: literal scoped allocation commits three source-owned requirements",
+        "P1 twin W9-2 negative missing: invalid Reading cannot mutate",
+        "P1 twin W9-2 negative count: invalid Reading cannot mutate",
+        "P1 twin W9-2 negative per-scope: invalid Reading cannot mutate",
+        "P1 twin W9-2 negative source-quote: invalid Reading cannot mutate",
+        "P1 twin W9-2 negative goal: invalid Reading cannot mutate",
+        "P1 twin W9-2 negative unit: invalid Reading cannot mutate",
+        "P1 twin W9-2 negative total: invalid Reading cannot mutate"
+      ],
+      "new_test_file": "tests/task1-director/phase1-journey-twins.test.ts",
+      "coverage_gaps": [
+        "Exact same-head checked CI result remains separate; W9-2 original language is zh-TW and retains source Simplified words. New explicit zh-CN handler coverage does not declare Quality95 language acceptance."
+      ],
+      "coverage_status": "NAMED_ROUTE_IMPLEMENTED_CHECKED_CI_PENDING",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "PARTIAL",
+        "coverage_gaps": [
+          "All eight named native callbacks passed. Cross-script fidelity requires separate multilingual cases and is not proved by the English subject substitution. Hosted/Auth/RLS remain unproven by these callbacks."
+        ]
+      },
+      "resolution_route": "REAL_ORIGINAL_RUN_WITH_EXACT_NAMED_READING_AND_CUSTOMER_WORD_ASSERTIONS",
+      "additional_independent_negatives": "P1 named W9 source negative W9-2: missing-reading/weak-reading/wrong-ref/wrong-value/wrong-unit/forged-source/extra-entity"
+    },
+    {
+      "id": "P1-LEGACY-05",
+      "original_name": "W9 established AC context survives intervening service and memory turns",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "W9",
+      "generic_obligations": [
+        "First scope source survives three intermediate customer details",
+        "One active entity receives3 not inferred room count",
+        "Three quantity rows each1",
+        "No quote/order/payment promotion"
+      ],
+      "industry_specific_assertions": [
+        "current_topic/category exact air_conditioner",
+        "Room sizes/window-installation/sunlight parsing without Reading"
+      ],
+      "replacement_or_existing_test_names": [
+        "P1 twin W9: three intervening customer details retain first-turn scope and exact provenance",
+        "CTX-KB-RETENTION scope-facts-survive-empty-merchant-KB",
+        "CTX-KB-RETENTION scope-facts-survive-published-merchant-evidence"
+      ],
+      "new_test_file": "tests/task1-director/phase1-journey-twins.test.ts",
+      "coverage_gaps": [
+        "Exact same-head checked CI result remains separate; W9-2 original language is zh-TW and retains source Simplified words. New explicit zh-CN handler coverage does not declare Quality95 language acceptance."
+      ],
+      "coverage_status": "NAMED_ROUTE_IMPLEMENTED_CHECKED_CI_PENDING",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "PARTIAL",
+        "coverage_gaps": [
+          "New native test intentionally asserts stronger retained three detail values/provenance, but final response semantics and actual same-ticket handler for all five turns remain separate"
+        ]
+      },
+      "resolution_route": "REAL_ORIGINAL_RUN_WITH_EXACT_NAMED_READING_AND_CUSTOMER_WORD_ASSERTIONS",
+      "additional_independent_negatives": "P1 named W9 source negative W9: missing-reading/weak-reading/wrong-ref/wrong-value/wrong-unit/forged-source/extra-entity"
+    },
+    {
+      "id": "P1-LEGACY-06",
+      "original_name": "W11 production-shaped T1-T5 advances one durable AC purchase journey",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "W11-JOURNEY",
+      "generic_obligations": [
+        "Five sequential turns retain one customer objective",
+        "Known supplied details must not be asked again",
+        "Correct later scope allocation and no transaction"
+      ],
+      "industry_specific_assertions": [
+        "Progression area→window/install type→sunlight→load/hp caveat",
+        "Specific canonical entity air_conditioner:unscoped",
+        "Goal replace_existing_appliance and sizing_guidance",
+        "Collected room_sizes,installation_type,sunlight; missing sizing_decision,suitable_models",
+        "Exact T5 sentence 記低客廳一部、兩間房各一部，共三部；呢個係選購要求，未落單。"
+      ],
+      "replacement_or_existing_test_names": [
+        "P1 twin W9: three intervening customer details retain first-turn scope and exact provenance",
+        "P1 twin W13 positive: sequential accepted quantity uses bounded current-source B2 receipt"
+      ],
+      "new_test_file": "tests/task1-director/phase1-journey-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval.",
+        "Generic scope plus independent customer Memory facts replaces the appliance customer_goal fields and preselected area/window/sunlight/horsepower progression. Exact appliance schema/wording is neither silently passed nor reconstructed.",
+        "The fixed supplied advice fixtures establish offline next-step plumbing and known-fact retention; fresh provider choice of useful next questions remains original Hosted/Quality95 evaluation."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "PARTIAL",
+        "coverage_gaps": [
+          "No five-turn generated useful advice/next-step/known-details recovery equivalent yet; cannot satisfy with null runtime replies"
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "last-eight",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "additional_handler_file": "tests/task1-director/phase1-full-journey-handler-register.mjs",
+      "current_generic_handler_mapping": {
+        "original_callback_body_modified_by_this_agent": false,
+        "original_result_relabelled": false,
+        "handler_test_names": [
+          "P1 full journey: W11 five persisted turns retain known details and allocate",
+          "P1 full journey: unproved transaction draft is blocked catering",
+          "P1 full journey: unproved transaction draft is blocked subscriptions",
+          "P1 full journey: unproved transaction draft is blocked rentals"
+        ],
+        "resolved_offline_generic_obligations": [
+          "Five consecutive complete handler turns: source-owned catering scope, dietary priority, serving style, service time, explicit allocation of three trays.",
+          "Each advice turn delivers the useful source fixture through the actual generation route; the final durable Memory retains all three independent known details; the final reply and canonical aggregate equal three; no transaction; replay no duplicate."
+        ],
+        "residual_exact_equivalence_and_runtime_boundary": [
+          "Generic scope plus independent customer Memory facts replaces the appliance customer_goal fields and preselected area/window/sunlight/horsepower progression. Exact appliance schema/wording is neither silently passed nor reconstructed.",
+          "The fixed supplied advice fixtures establish offline next-step plumbing and known-fact retention; fresh provider choice of useful next questions remains original Hosted/Quality95 evaluation."
+        ],
+        "parked": false,
+        "phase2_deferral_approved": false,
+        "ci_exemption": false,
+        "automatic_eligibility_claimed": false,
+        "turn_assertion_mapping": {
+          "T1": [
+            "Retained source-owned catering goal/scope"
+          ],
+          "T2-T4": [
+            "Three independent supplied facts reach actual useful advice",
+            "Current source appears in each generation request"
+          ],
+          "T5": [
+            "Quantity3 and Total3trays final reply",
+            "All three known details retained in durable Memory",
+            "No transaction; source replay has no duplicate effect"
+          ]
+        }
+      }
+    },
+    {
+      "id": "P1-LEGACY-07",
+      "original_name": "W13 T1-T5 committed journey progress carries bounded B2 authorization",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "W13-POSITIVE",
+      "generic_obligations": [
+        "Each accepted turn produces bound committed-source B2 authority",
+        "Current tenant/ticket/source/revision supplied into B2",
+        "Five positive allowances first general then accepted-update code",
+        "Allocation3 with three scoped rows; no transaction"
+      ],
+      "industry_specific_assertions": [
+        "Original unframed area/window/sunlight guidance prerequisite",
+        "Final canonical air_conditioner:unscoped identity"
+      ],
+      "replacement_or_existing_test_names": [
+        "P1 twin W13 positive: sequential accepted quantity uses bounded current-source B2 receipt",
+        "Task3C accepted scope readback supplies one exact receipt to metadata and unchanged B2"
+      ],
+      "new_test_file": "tests/task1-director/phase1-journey-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval.",
+        "First current-source guidance uses actual generic scope state and normal B2 path; later updates use scoped quantity correction receipts. Exact old update_kind=customer_goal for all earlier appliance turns is not asserted or needed for this different generic representation.",
+        "Five source-bound allowances do not imply the old customer_goal producer is reachable without an industry profile; all existing negative receipt/tenant/revision checks remain."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "PARTIAL",
+        "coverage_gaps": [
+          "Generic allocation proof is contextual_scoped_update, original first four proof.kind customer_goal; full five current-source accepted updates not yet mapped one-for-one"
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "last-eight",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "additional_handler_file": "tests/task1-director/phase1-full-journey-handler-register.mjs",
+      "current_generic_handler_mapping": {
+        "original_callback_body_modified_by_this_agent": false,
+        "original_result_relabelled": false,
+        "handler_test_names": [
+          "P1 full journey: W13 each of five accepted updates carries current B2 authority"
+        ],
+        "resolved_offline_generic_obligations": [
+          "Five consecutive current-source commits: source-owned background scope then allocation and three explicit scoped quantity corrections.",
+          "Every final AI reply passes actual B2 persistence with current tenant/source/revision; first generic guidance has its existing normal B2 allowance, each subsequent accepted scoped update requires B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE and exact stamped updates; Memory parity and replay asserted."
+        ],
+        "residual_exact_equivalence_and_runtime_boundary": [
+          "First current-source guidance uses actual generic scope state and normal B2 path; later updates use scoped quantity correction receipts. Exact old update_kind=customer_goal for all earlier appliance turns is not asserted or needed for this different generic representation.",
+          "Five source-bound allowances do not imply the old customer_goal producer is reachable without an industry profile; all existing negative receipt/tenant/revision checks remain."
+        ],
+        "parked": false,
+        "phase2_deferral_approved": false,
+        "ci_exemption": false,
+        "automatic_eligibility_claimed": false,
+        "turn_assertion_mapping": {
+          "T1-T5": [
+            "Every committed source equals current source",
+            "Every final B2 expected revision equals actual committed revision",
+            "Each accepted update increments exactly one revision",
+            "Memory active quantity parity after every turn"
+          ],
+          "T2-T5": [
+            "B2 accepted-update code required",
+            "Every accepted scoped row source/revision equals current commit"
+          ],
+          "T5": [
+            "Final quantity3 and exact source replay no mutation"
+          ]
+        }
+      }
+    },
+    {
+      "id": "P1-LEGACY-08",
+      "original_name": "W15 sequential T1-T8 preserves journey then prioritizes factual follow-up",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "W15",
+      "generic_obligations": [
+        "Retained prior customer plan then factual/price follow-up requires current merchant evidence",
+        "Unambiguous latest product referent",
+        "Topic switch preserves first requirement and avoids leaking attributes",
+        "No transaction or phantom item/default quantity"
+      ],
+      "industry_specific_assertions": [
+        "features,horsepower,suitability exact facts",
+        "Air conditioner sizing journey and refrigerator default quantity1",
+        "room180/sunlight cross-scope markers"
+      ],
+      "replacement_or_existing_test_names": [
+        "P1 twin W15: current merchant facts keep evidence authority after a generic journey",
+        "P1 twin new-subject negative missing-reading: another item cannot grant planning authority",
+        "P1 twin new-subject negative forged-quote: another item cannot grant planning authority",
+        "P1 twin new-subject negative wrong-count: another item cannot grant planning authority",
+        "P1 twin new-subject negative old-referent: another item cannot grant planning authority",
+        "P1 twin new-subject negative mixed-subject: another item cannot grant planning authority",
+        "P1 twin new-subject negative unproved-correction: another item cannot grant planning authority",
+        "P1 twin new-allocation negative borrowed-old-goal: new source cannot borrow earlier item authority",
+        "P1 twin new-allocation negative borrowed-old-count: new source cannot borrow earlier item authority",
+        "P1 twin new-allocation negative future-count: new source cannot borrow earlier item authority",
+        "P1 twin new-allocation negative foreign-count: new source cannot borrow earlier item authority",
+        "P1 twin new-allocation negative inactive-target: new source cannot borrow earlier item authority",
+        "P1 twin second-subject replay negative different-source: a committed receipt grants no new authority",
+        "P1 twin second-subject replay negative altered-allocation: a committed receipt grants no new authority",
+        "P1 twin second-subject replay negative duplicate-goal: a committed receipt grants no new authority",
+        "P1 twin second-subject replay negative extra-referent: a committed receipt grants no new authority",
+        "P1 twin second-subject target negative old-text-new-goal: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative new-text-old-entity: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative new-text-old-name-and-ref: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative unnamed-old-entity: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative old-text-contradictory-name: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative old-text-foreign-ref: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative old-text-extra-referent: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative multiple-active-old-text-new-goal: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target positive: an explicitly named old item may receive its own sourced allocation"
+      ],
+      "new_test_file": "tests/task1-director/phase1-journey-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval.",
+        "The full-handler fresh-price turns name ER-QZ81 explicitly. Generic latest-product anaphora remains separately covered by existing P1 twin W15 native callback, not claimed to have been passed through these eight final-handler turns.",
+        "Second research context intentionally does not invent quantity1. The original appliance default quantity oracle remains unchanged, with its intended policy difference explicit."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "PARTIAL",
+        "coverage_gaps": [
+          "No actual KB/handler factual response in new native callback",
+          "Original assertion refrigerator quantity1 conflicts no invented quantity; source new research context with0 new items is intentional proposed changed oracle"
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "last-eight",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "additional_handler_file": "tests/task1-director/phase1-full-journey-handler-register.mjs",
+      "current_generic_handler_mapping": {
+        "original_callback_body_modified_by_this_agent": false,
+        "original_result_relabelled": false,
+        "handler_test_names": [
+          "P1 full journey: W15 eight persisted turns require fresh merchant evidence and isolate a new topic"
+        ],
+        "resolved_offline_generic_obligations": [
+          "Eight consecutive handler turns preserve four planning turns plus allocation, execute merchant retrieval at price1280 then actually requery price1460, and start an independent subscriptions topic.",
+          "Current published source document/chunk and owner/currentness assertions are consumed by real retrieval/grounding/direct-answer and persistence plumbing; stale1280 is absent after fresh query; retained rental entity is byte-identical after topic switch; no invented second quantity."
+        ],
+        "residual_exact_equivalence_and_runtime_boundary": [
+          "The full-handler fresh-price turns name ER-QZ81 explicitly. Generic latest-product anaphora remains separately covered by existing P1 twin W15 native callback, not claimed to have been passed through these eight final-handler turns.",
+          "Second research context intentionally does not invent quantity1. The original appliance default quantity oracle remains unchanged, with its intended policy difference explicit."
+        ],
+        "parked": false,
+        "phase2_deferral_approved": false,
+        "ci_exemption": false,
+        "automatic_eligibility_claimed": false,
+        "turn_assertion_mapping": {
+          "T1-T5": [
+            "Useful planning advice and known facts precede explicit allocation3"
+          ],
+          "T6": [
+            "Actual KB request resolves current1280 with source lineage"
+          ],
+          "T7": [
+            "Actual new KB request resolves1460; old1280 not reused"
+          ],
+          "T8": [
+            "New subscriptions context retains original rental entity byte-for-byte",
+            "No inferred second quantity; no transaction"
+          ]
+        }
+      }
+    },
+    {
+      "id": "P1-LEGACY-09",
+      "original_name": "W19 sequential T1-T16 source replay preserves customer journey, KB and transaction boundaries",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "W19",
+      "generic_obligations": [
+        "Current merchant evidence for model/features/price/suitability",
+        "Verified per-topic focus after topic switch",
+        "Correction exact old/new value at one revision and unaffected sibling",
+        "Canonical Memory current/superseded fact parity and source lineage",
+        "Memory reject missing/tenant/source/stale/missing-history proof",
+        "B2 correction receipt rejects no-proof/failed-commit/stale/replay/tenant/scope/entity/text-only/order/cancelled/duplicate",
+        "Runtime failedCAS cannot mint correction proof; wrong old value cannot overwrite",
+        "Scoped lifecycle defers exact subject without phantom or sibling change",
+        "Lifecycle Memory parity and missing active/deferred/stale negatives",
+        "Lifecycle B2 proof rejects absent/failed/stale/replay/tenant/wrong-scope/quantity/ghost/order",
+        "Read-only current recap no writes or old superseded values or wrong subject",
+        "Current published KB tenant/currentness authority, including missing/historical/unknown/foreign refusal",
+        "Historical arithmetic12850 exact customer-supplied terms current source, no current quote",
+        "Operation-failure safe troubleshooting and no false product-spec route",
+        "Unknown model no fabricated fact and no ask-for-known-model",
+        "Cross-language partial answer preserves supported fact and explicitly lacks suitability evidence",
+        "No quote/order/payment anywhere"
+      ],
+      "industry_specific_assertions": [
+        "Full AC sizing script/model CW-SUL70BA/horsepower facts",
+        "air_conditioner and refrigerator canonical identities",
+        "Room names/room_sizes room_sunlight/strong_afternoon_sun/window data",
+        "Fridge research silently materializes quantity1",
+        "Exact room correction lexical formats and branded English wording"
+      ],
+      "replacement_or_existing_test_names": [
+        "P1 twin W13 positive: sequential accepted quantity uses bounded current-source B2 receipt",
+        "P1 twin W11 switch: correction keeps unrelated scopes and an old goal cannot cross a new subject",
+        "P1 twin W15: current merchant facts keep evidence authority after a generic journey",
+        "P1 twin natural dialogue subset: historical calculation is read-only and explicit human request is recognized",
+        "P1TW-W19 integrity positive: actual generic lifecycle receipt agrees with canonical Memory",
+        "P1TW-W19 Memory negative: missing-memory",
+        "P1TW-W19 Memory negative: missing-receipt",
+        "P1TW-W19 Memory negative: missing-commerce",
+        "P1TW-W19 Memory negative: memory-tenant",
+        "P1TW-W19 Memory negative: commerce-tenant",
+        "P1TW-W19 Memory negative: memory-source",
+        "P1TW-W19 Memory negative: commerce-source",
+        "P1TW-W19 Memory negative: memory-revision",
+        "P1TW-W19 Memory negative: commerce-revision",
+        "P1TW-W19 Memory negative: missing-active",
+        "P1TW-W19 Memory negative: missing-deferred",
+        "P1TW-W19 Memory negative: active-quantity",
+        "P1TW-W19 Memory negative: active-requirements",
+        "P1TW-W19 Memory negative: duplicate-active",
+        "P1TW-W19 Memory negative: duplicate-deferred",
+        "P1TW-W19 Memory negative: inactive-as-active",
+        "P1TW-W19 B2 negative: wrong-target cannot reach reply persistence",
+        "P1TW-W19 B2 negative: retained-quantity cannot reach reply persistence",
+        "P1TW-W19 B2 negative: ghost-entity cannot reach reply persistence",
+        "P1 correction full chain single-scope: committed old/new Memory reaches bounded B2 once",
+        "P1 correction full chain group: committed old/new Memory reaches bounded B2 once",
+        "P1 correction exact-source replay: original ledger and durable Memory remain idempotent",
+        "P1 correction source negative old-value: no unverified old value reaches the writer",
+        "P1 correction source negative forged-quote: no unverified old value reaches the writer",
+        "P1 correction source negative new-value: no unverified old value reaches the writer",
+        "P1 correction source negative unit: no unverified old value reaches the writer",
+        "P1 correction source negative unknown-scope: no unverified old value reaches the writer",
+        "P1 correction source negative duplicate-change: no unverified old value reaches the writer",
+        "P1 correction source negative extra-quantity: no unverified old value reaches the writer",
+        "P1 correction source negative missing-reading: no unverified old value reaches the writer",
+        "P1 correction source negative wrong-reference: no unverified old value reaches the writer",
+        "P1 correction source negative extra-reference: no unverified old value reaches the writer",
+        "P1 correction source negative transaction: no unverified old value reaches the writer",
+        "P1 correction source negative question: no unverified old value reaches the writer",
+        "P1 correction source negative negation: no unverified old value reaches the writer",
+        "P1 correction source negative blank-old-source: no unverified old value reaches the writer",
+        "P1 correction source negative blank-old-quote: no unverified old value reaches the writer",
+        "P1 correction source negative future-old-revision: no unverified old value reaches the writer",
+        "P1 correction source negative duplicate-old-row: no unverified old value reaches the writer",
+        "P1 correction source negative mixed-group-goal: no unverified old value reaches the writer",
+        "P1 correction source negative partial-old-group: no unverified old value reaches the writer",
+        "P1 correction CAS negative transport: uncommitted proposal cannot produce a receipt",
+        "P1 correction CAS negative revision-conflict: uncommitted proposal cannot produce a receipt",
+        "P1 correction CAS negative wrong-old-value-after-retry: uncommitted proposal cannot produce a receipt",
+        "P1 correction Memory negative missing-memory: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative missing-receipt: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative tenant: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative ticket: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative missing-ticket: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative source: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative revision: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative old-value: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative current-value: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative old-row-source: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative missing-history: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative missing-current: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative duplicate-history: parity rejects corrupted persisted facts",
+        "P1 correction Memory negative active-rows: parity rejects corrupted persisted facts",
+        "P1 correction Memory persistence negative transport: success requires actual durable readback",
+        "P1 correction Memory persistence negative success-without-row: success requires actual durable readback",
+        "P1 correction Memory persistence negative retry-success-without-row: success requires actual durable readback",
+        "P1 correction Memory persistence negative wrong-row-tenant: success requires actual durable readback",
+        "P1 correction Memory persistence negative wrong-event-source: success requires actual durable readback",
+        "P1 correction Memory persistence negative wrong-revision: success requires actual durable readback",
+        "P1 correction Memory persistence negative wrong-hash: success requires actual durable readback",
+        "P1 correction Memory persistence negative drop-current: success requires actual durable readback",
+        "P1 correction Memory persistence negative drop-history: success requires actual durable readback",
+        "P1 correction B2 negative missing-proof: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative missing-scoped-payload: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative stripped-metadata: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative tenant: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative ticket: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative source: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative revision: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative entity: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative old-total: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative new-total: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative old-row: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative new-row: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative unit: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative quote: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative metadata-mismatch: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative current-rows: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative changed-source: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative missing-accepted-scope: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative extra-accepted-scope: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative order: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative payment: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative remove-ledger-and-strip-proof: no corrupted correction can authorize a reply",
+        "P1 correction B2 negative corrupt-all-markers-and-strip-proof: no corrupted correction can authorize a reply",
+        "P1 correction B2 revalidation negative revision drift: final reply callback stays uncalled",
+        "P1 correction historical-ledger compatibility: unrelated later source requires no new correction proof",
+        "P1 correction source bound above 500 characters retains full durable Memory parity"
+      ],
+      "new_test_file": "tests/task1-director/phase1-journey-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval.",
+        "This is a real consecutive generic16-turn handler sequence, not an exact transcript or proof-type reproduction of the old room-size16-turn original.",
+        "Generic quantity correction fully covers old/new aggregate/row provenance and current/superseded Memory. It does not claim arbitrary-field room-size correction schema or an arbitrary dimension superseded-Memory verifier.",
+        "Provider readings/drafts/grounding and KB documents are scripted at external transport. Real remote authority/currentness, model judgment, Hosted and original Quality95 remain separate requirements.",
+        "The previously unmapped generic earlier-model return after another named product is now composed through actual handler/decoder/currentKB/B2; exact legacy PER_TOPIC_REFERENT_HISTORY enum shape is not required or claimed. Lifecycle-before-return is additional coverage, not an assertion about the original W19 ordering."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "additional_integrity_review": "additional_journey_integrity_coverage",
+      "additional_test_file": "tests/task1-director/phase1-journey-integrity-twins.test.ts",
+      "resolved_generic_quantity_correction": "Actual accepted non-appliance old→new scope correction now carries canonical source-bound ledger, unchanged sibling/other-scope preservation, exact prior/new aggregate, current/superseded canonical Memory after durable state+event readback, actual B2 read/evaluate/revalidate/commit, and source-replay recovery without duplicate mutation.",
+      "correction_test_file": "tests/task1-director/phase1-correction-integrity-twins.test.ts",
+      "review_history_7b": {
+        "coverage_status": "PARTIAL_DO_NOT_PARK",
+        "coverage_gaps": [
+          "Full original 16-turn combined business journey is not reproduced by component and quantity-correction twins.",
+          "The source-bound generic quantity correction chain is now implemented and tested; original room-size ontology and arbitrary attribute correction are not claimed equivalent.",
+          "Actual current KB/model/Hosted/usefulness, authenticated database RLS and real concurrent transaction evidence remain separate original requirements."
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "last-eight",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "additional_handler_file": "tests/task1-director/phase1-full-journey-handler-register.mjs",
+      "current_generic_handler_mapping": {
+        "original_callback_body_modified_by_this_agent": false,
+        "original_result_relabelled": false,
+        "handler_test_names": [
+          "P1 full journey: W19 sixteen consecutive persisted turns preserve correction evidence and suppress AI after R1",
+          "P1 full journey: language-prefixed complete recap is read-only en",
+          "P1 full journey: language-prefixed complete recap is read-only zh-TW",
+          "P1 full journey: operating failure negative mixed price",
+          "P1 full journey: operating failure negative mixed specification",
+          "P1 full journey: operating failure negative mixed policy",
+          "P1 full journey: operating failure negative missing Reading",
+          "P1 full journey: operating failure negative forged source quote",
+          "P1 full journey: W19 earlier model after competing topic correct reference",
+          "P1 full journey: W19 earlier model after competing topic wrong known reference",
+          "P1 full journey: W19 earlier model after competing topic missing reference"
+        ],
+        "resolved_offline_generic_obligations": [
+          "Sixteen actual consecutive persisted handler turns execute compound planning, allocation3, exact scoped correction to4, supported features+price1280, fresh price1460, independent subscriptions scope/allocation, scoped DEFER/focus restoration, English and Cantonese current recap, historical12850, unknown model refusal, useful diagnostic question, partial supportedprice/unavailablecompatibility answer, actual same-ticket R1, then AI/KB suppression under durable human control.",
+          "Actual quantity correction receipt -> canonical state/event persistence -> durable Memory current/superseded -> B2 -> final reply is exercised inside the long chain, with detailed independent adversaries in the already committed phase1-correction-integrity-twins.test.ts.",
+          "Oversized actual lifecycle state/receipt now passes the unchanged total Memory budget using parent-owned lossless storage and original exact proof revalidation; no receipt fields dropped.",
+          "Known merchant answers and unavailable demand are carried through actual complete handler with scripted external facts/verifier; partial reply exposes unavailable wireless support instead of fabricating suitability.",
+          "New source-bound diagnostic routing executes existing indicator/error next-step without Commerce mutation or a merchant KB request; five handler negatives preserve price/spec/policy KB obligations and reject missing or forged Reading.",
+          "Composed8-turn complete-handler case now covers actual scoped lifecycle, competing named merchant model, then source-owned first-model return: fresh old-model1640 retrieved from original Visitor-source lineage and delivered through B2, without Commerce mutation. Wrong-known and missing refs independently clarify with0KB; both potential model documents are available to detect wrong binding rather than trivial no-data refusal."
+        ],
+        "residual_exact_equivalence_and_runtime_boundary": [
+          "This is a real consecutive generic16-turn handler sequence, not an exact transcript or proof-type reproduction of the old room-size16-turn original.",
+          "Generic quantity correction fully covers old/new aggregate/row provenance and current/superseded Memory. It does not claim arbitrary-field room-size correction schema or an arbitrary dimension superseded-Memory verifier.",
+          "Provider readings/drafts/grounding and KB documents are scripted at external transport. Real remote authority/currentness, model judgment, Hosted and original Quality95 remain separate requirements.",
+          "The previously unmapped generic earlier-model return after another named product is now composed through actual handler/decoder/currentKB/B2; exact legacy PER_TOPIC_REFERENT_HISTORY enum shape is not required or claimed. Lifecycle-before-return is additional coverage, not an assertion about the original W19 ordering."
+        ],
+        "parked": false,
+        "phase2_deferral_approved": false,
+        "ci_exemption": false,
+        "automatic_eligibility_claimed": false,
+        "turn_assertion_mapping": {
+          "T1-T3": [
+            "Compound facts then allocation3 and exact latest scoped quantity correction4"
+          ],
+          "T4": [
+            "Actual supported features+price1280 final reply and exact document citation"
+          ],
+          "T5": [
+            "Fresh KB1460 current answer"
+          ],
+          "T6-T8": [
+            "Independent subscriptions goal/allocation; only subscriptions deferred; focus rental; exact Memory/B2 proof under original budget"
+          ],
+          "T9-T10": [
+            "Read-only English and Cantonese current recaps incl paused subscription and active rental4"
+          ],
+          "T11": [
+            "Historical12850 exact; Commerce byte unchanged"
+          ],
+          "T12": [
+            "Unknown model explicitly refused with no current KB proof"
+          ],
+          "T13": [
+            "Actual indicator/error next question; no KB; exact Commerce unchanged"
+          ],
+          "T14": [
+            "Actual1460 partial answer plus explicitly unavailable wireless support",
+            "Unresolved demand2 and partial verifier result retained",
+            "One actual KB request; Commerce unchanged; Memory parity and rental4"
+          ],
+          "T15": [
+            "Actual R1 same-ticket handoff"
+          ],
+          "T16": [
+            "Persisted human_control; zero model, KB and AI commits; Commerce unchanged"
+          ],
+          "Additional composed8-turn callback": [
+            "T1-T2 source-owned rental goal/allocation3",
+            "T3 original modelER-OLD71 factual source and1280",
+            "T4-T6 independent subscriptions goal/allocation then actual scopedDEFER",
+            "T7 competing named modelCT-NEW82/current9990",
+            "T8 current first-model source query resolves onlyER-OLD71, originalT3source lineage, fresh1640, currentdocument/B2/one persisted reply, Commerce unchanged and replay once",
+            "Independent wrong-knownCT-NEW82/missing refs both return bounded clarification with0KB and unchanged Commerce"
+          ]
+        }
+      }
+    },
+    {
+      "id": "P1-LEGACY-10",
+      "original_name": "W21 entity lifecycle scope, ambiguous target, reversal, cancellation and no silent reactivation",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "W21_LIFECYCLE",
+      "generic_obligations": [
+        "Forward, reverse, explicit-both and cancel operations affect exact customer-owned targets only.",
+        "Retained sibling, quantities, attributes, constraints, entity cardinality and transaction state remain intact.",
+        "Ambiguous/deictic missing Reading, weak/contradictory Reading and partial aggregate mutation are rejected.",
+        "Deferred return and same-source replay cannot reactivate or duplicate writes.",
+        "Failed commit cannot return successful lifecycle receipt/reply.",
+        "Compound plan binds every target and unique unchanged focus; forged demands, extra subjects, wrong action and foreign snapshot cannot authorize it.",
+        "Actual runtime forward/reverse/both receipts pass real evaluateB2BeforeCommit then executeB2PersistenceGate with two canonical reads and exactly one callback per attempt.",
+        "Missing/tampered receipt/source/tenant/revision/reply/failed metadata never reaches callback. Missing canonical state, stale first revision, and second-read revision/source/tenant drift independently leave callback count zero.",
+        "Model identifiers and exact-both language cannot authorize conditional, reported, negated, partial-quantity, or whitespace-provenance mutations."
+      ],
+      "industry_specific_assertions": [
+        "Unframed 雪櫃/冷氣 requires mapping language aliases to refrigerator/air_conditioner categories that have no customer-owned names.",
+        "Room/area attribute values in the unchanged sibling are payload examples, not permission to defer generic isolation."
+      ],
+      "replacement_or_existing_test_names": [
+        "P1TW-W21 positive reading: forward",
+        "P1TW-W21 positive reading: reverse",
+        "P1TW-W21 positive reading: both",
+        "P1TW-W21 positive reading: cancel",
+        "P1TW-W21 positive literal-no-reading: forward",
+        "P1TW-W21 positive literal-no-reading: reverse",
+        "P1TW-W21 positive literal-no-reading: both",
+        "P1TW-W21 positive literal-no-reading: cancel",
+        "P1TW-W21 negative: ambiguous",
+        "P1TW-W21 negative: missing-reading",
+        "P1TW-W21 negative: weak-reading",
+        "P1TW-W21 negative: wrong-operation",
+        "P1TW-W21 negative: failed-commit",
+        "P1TW-W21 negative: deferred-return",
+        "P1TW-W21 negative: replay",
+        "P1TW-W21 compound negative: both-missing-refs",
+        "P1TW-W21 compound negative: both-one-ref",
+        "P1TW-W21 compound negative: both-wrong-ref",
+        "P1TW-W21 compound negative: focus-is-not-target",
+        "P1TW-W21 compound negative: extra-entity",
+        "P1TW-W21 compound negative: partial-group",
+        "P1TW-W21 compound negative: wrong-action",
+        "P1TW-W21 compound negative: forged-quote",
+        "P1TW-W21 compound negative: demand-subject",
+        "P1TW-W21 compound negative: negation",
+        "P1TW-W21 compound negative: transaction",
+        "P1TW-W21 compound negative: unknown-mixed-clause",
+        "P1TW-W21 compound negative: foreign-company",
+        "P1TW-W21 compound negative: foreign-ticket",
+        "P1TW-W21 source-clause negative: conditional-model-id",
+        "P1TW-W21 source-clause negative: reported-model-id",
+        "P1TW-W21 source-clause negative: partial-model-id",
+        "P1TW-W21 source-clause negative: negated-model-id",
+        "P1TW-W21 source-clause negative: whitespace-source",
+        "P1TW-W21 source-clause negative: conditional-both",
+        "P1TW-W21 source-clause negative: negated-both",
+        "P1TW-W21 B2 positive: forward evaluates revalidates and commits once",
+        "P1TW-W21 B2 negative: forward missing-proof",
+        "P1TW-W21 B2 negative: forward proof-source",
+        "P1TW-W21 B2 negative: forward proof-tenant",
+        "P1TW-W21 B2 negative: forward proof-revision",
+        "P1TW-W21 B2 negative: forward reply",
+        "P1TW-W21 B2 negative: forward failed-metadata",
+        "P1TW-W21 B2 negative: forward missing-state",
+        "P1TW-W21 B2 negative: forward stale-first-revision",
+        "P1TW-W21 B2 negative: forward revision-drift",
+        "P1TW-W21 B2 negative: forward source-drift",
+        "P1TW-W21 B2 negative: forward tenant-drift",
+        "P1TW-W21 B2 positive: reverse evaluates revalidates and commits once",
+        "P1TW-W21 B2 negative: reverse missing-proof",
+        "P1TW-W21 B2 negative: reverse proof-source",
+        "P1TW-W21 B2 negative: reverse proof-tenant",
+        "P1TW-W21 B2 negative: reverse proof-revision",
+        "P1TW-W21 B2 negative: reverse reply",
+        "P1TW-W21 B2 negative: reverse failed-metadata",
+        "P1TW-W21 B2 negative: reverse missing-state",
+        "P1TW-W21 B2 negative: reverse stale-first-revision",
+        "P1TW-W21 B2 negative: reverse revision-drift",
+        "P1TW-W21 B2 negative: reverse source-drift",
+        "P1TW-W21 B2 negative: reverse tenant-drift",
+        "P1TW-W21 B2 positive: both evaluates revalidates and commits once",
+        "P1TW-W21 B2 negative: both missing-proof",
+        "P1TW-W21 B2 negative: both proof-source",
+        "P1TW-W21 B2 negative: both proof-tenant",
+        "P1TW-W21 B2 negative: both proof-revision",
+        "P1TW-W21 B2 negative: both reply",
+        "P1TW-W21 B2 negative: both failed-metadata",
+        "P1TW-W21 B2 negative: both missing-state",
+        "P1TW-W21 B2 negative: both stale-first-revision",
+        "P1TW-W21 B2 negative: both revision-drift",
+        "P1TW-W21 B2 negative: both source-drift",
+        "P1TW-W21 B2 negative: both tenant-drift"
+      ],
+      "new_test_file": "tests/task1-director/phase1-safety-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "positive_callbacks": 11,
+      "negative_callbacks": 61,
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "NAMED_NATIVE_GENERIC_SAFETY_SET_PASSED_NOT_PARKED",
+        "coverage_gaps": [
+          "The actual same-class valid Reading compound defect was discovered by twins and repaired by root; it is Phase1 source work, not Phase2 deferral.",
+          "NOT Hosted, database concurrency or Auth/RLS evidence."
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "first-nine",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ]
+    },
+    {
+      "id": "P1-LEGACY-11",
+      "original_name": "W13 journey authorization fails closed across tenant, revision, entity, replay and transaction drift",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "W13_FAIL_CLOSED",
+      "generic_obligations": [
+        "Real accepted update generates one server receipt consumed by unchanged B2.",
+        "Missing receipt, known quantity/product reask, fake next step must fail closed.",
+        "Tenant, revision, entity, source ID, source text, committed source rows and transaction boundary cannot be forged.",
+        "Cancelled/deferred target and superseded value cannot acquire current authority.",
+        "False order/payment completion cannot pass.",
+        "Unverified Reading cannot commit allocation; failed transport/CAS/wrong revision/false dedup cannot acknowledge success."
+      ],
+      "industry_specific_assertions": [
+        "The original producer setup requires an unframed air-conditioner area/window/sunlight planning script which is disabled in Phase1.",
+        "Neutral receipt members customer_goal/collected/missing/next-slot are not intrinsically industry-specific; their original bounded B2 test remains executing alongside generic scoped-update proof tests."
+      ],
+      "replacement_or_existing_test_names": [
+        "P1TW-W13 positive: committed generic allocation carries bounded B2 authority",
+        "P1TW-W13 negative: missing-receipt",
+        "P1TW-W13 negative: tenant",
+        "P1TW-W13 negative: revision",
+        "P1TW-W13 negative: entity",
+        "P1TW-W13 negative: replay",
+        "P1TW-W13 negative: source-text",
+        "P1TW-W13 negative: cancelled",
+        "P1TW-W13 negative: deferred",
+        "P1TW-W13 negative: transaction-drift",
+        "P1TW-W13 negative: accepted-source-revision",
+        "P1TW-W13 negative: known-quantity-reask",
+        "P1TW-W13 negative: known-product-reask",
+        "P1TW-W13 negative: fake-next-step",
+        "P1TW-W13 negative: superseded-value",
+        "P1TW-W13 negative: false-order",
+        "P1TW-W13 negative: false-payment",
+        "P1TW-W13 input negative: missing-reading",
+        "P1TW-W13 input negative: fabricated-quote",
+        "P1TW-W13 input negative: wrong-subject",
+        "P1TW-W13 input negative: wrong-operation",
+        "P1TW-W13 input negative: low-confidence",
+        "P1TW-W13 input negative: foreign snapshot company_id",
+        "P1TW-W13 input negative: foreign snapshot conversation_id",
+        "P1TW-W13 commit negative: transport",
+        "P1TW-W13 commit negative: cas",
+        "P1TW-W13 commit negative: wrong-revision",
+        "P1TW-W13 commit negative: false-dedup"
+      ],
+      "new_test_file": "tests/task1-director/phase1-safety-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "positive_callbacks": 1,
+      "negative_callbacks": 27,
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "NAMED_NATIVE_GENERIC_SAFETY_SET_PASSED_NOT_PARKED",
+        "coverage_gaps": [
+          "The twin covers the generic contextual_scoped_update receipt member. It does not exercise the appliance-only customer_goal member or its journey-stage/collected-slot branch.",
+          "NOT Hosted, real Auth/RLS, concurrent database, real provider, or user usefulness evidence."
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "first-nine",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "receipt_equivalence": "Common source/company/revision/actualcommit/target/reply/transaction envelope verified. customer_goal collected/missing/nextslot differs from scopedupdates and is not intrinsically appliance-only. Existing W13 B2 commits only revision-bound progress to a different journey slot remains live; useful generated nextquestion still original P3/Section15/Quality95.",
+      "industry_specific_assertions_historical_7b": [
+        "Positive setup assumes an unframed AC/room-area planning script.",
+        "Private customer_goal journey stage, collected-slot and next-question vocabulary belongs to the removed appliance planner branch."
+      ]
+    },
+    {
+      "id": "P1-LEGACY-12",
+      "original_name": "W11 entity switch, room correction and cancellation stay scoped",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "W11-SWITCH",
+      "generic_obligations": [
+        "Topic switch leaves two independent requirements",
+        "Ambiguous allocation read-only, no cross-subject quantity",
+        "Correction targets prior subject and latest value supersedes old",
+        "Cancellation/defer scoped to one target",
+        "Unrelated continuation cannot reactivate cancelled target"
+      ],
+      "industry_specific_assertions": [
+        "air_conditioner/refrigerator category aliases",
+        "area/window/sunlight predefined schema and guidance route",
+        "room mapping large_bedroom, exact correction string"
+      ],
+      "replacement_or_existing_test_names": [
+        "P1 twin W11 switch: correction keeps unrelated scopes and an old goal cannot cross a new subject",
+        "Delegated safety lifecycle twin",
+        "P1 twin second-subject target negative old-text-new-goal: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative new-text-old-entity: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative new-text-old-name-and-ref: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative unnamed-old-entity: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative old-text-contradictory-name: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative old-text-foreign-ref: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative old-text-extra-referent: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target negative multiple-active-old-text-new-goal: contradictory identity cannot mutate a sibling",
+        "P1 twin second-subject target positive: an explicitly named old item may receive its own sourced allocation"
+      ],
+      "new_test_file": "tests/task1-director/phase1-journey-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval.",
+        "Current dimensional constraint correction uses max_width_mm and exact source old/new measurements; old room_sizes ontology is not reproduced.",
+        "This callback asserts canonical current constraint, unchanged sibling and subsequent read-only comparison; it does not claim a new arbitrary-attribute superseded-Memory receipt. The separate scoped quantity correction suite owns old/current Memory lineage assertions."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "PARTIAL",
+        "coverage_gaps": [
+          "New test covers corrected scope facts and topic isolation; full materialized-field correction after switch and final cancelled-target continuation need safety/lifecycle mapping"
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "last-eight",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "additional_handler_file": "tests/task1-director/phase1-full-journey-handler-register.mjs",
+      "current_generic_handler_mapping": {
+        "original_callback_body_modified_by_this_agent": false,
+        "original_result_relabelled": false,
+        "handler_test_names": [
+          "P1 full journey: W11 materialized dimension correction after switch survives cancellation and continuation",
+          "P1 full journey: dimension read negative mixed merchant price",
+          "P1 full journey: dimension read negative merchant specification without measurement",
+          "P1 full journey: dimension read negative forged comparison quote",
+          "P1 full journey: dimension writer rejection asks exact clarification wrongvalue",
+          "P1 full journey: dimension writer rejection asks exact clarification wrongtarget",
+          "P1 full journey: dimension writer rejection asks exact clarification no-number",
+          "P1 full journey: dimension writer rejection asks exact clarification wrongaxis"
+        ],
+        "resolved_offline_generic_obligations": [
+          "Eight consecutive handler turns materialize a600mm requirement, create a second subject, correct the first requirement to595mm with explicit prior600, cancel only the second subject, then compare a customer-supplied598mm against the current595mm limit.",
+          "Exact target/sibling isolation, cancelled status, unchanged state/Memory during comparison, no KB, actual final answer and source replay are asserted. Three complete-handler routing negatives keep mixed merchant requests on KB and reject forged comparison source.",
+          "Independent native negatives cover visible references, owner/source/provenance/inactive/duplicate/contradictory target restrictions and current dimension source/axis/unit/value/transaction/revalidation boundaries.",
+          "Four independently registered complete-handler invalid dimension writer cases (wrongvalue/wrongtarget/no-number/wrongaxis) return normal HTTP200 source-targeted clarification and actual B2_ALLOW_TARGETED_READ_ONLY_CLARIFICATION; no unproved numeric acknowledgement, no Commerce/MemoryRPC, exact prior state+Memory retained,0KB, source replay exactly once. Parent owns the production rejection-consumer change."
+        ],
+        "residual_exact_equivalence_and_runtime_boundary": [
+          "Current dimensional constraint correction uses max_width_mm and exact source old/new measurements; old room_sizes ontology is not reproduced.",
+          "This callback asserts canonical current constraint, unchanged sibling and subsequent read-only comparison; it does not claim a new arbitrary-attribute superseded-Memory receipt. The separate scoped quantity correction suite owns old/current Memory lineage assertions."
+        ],
+        "parked": false,
+        "phase2_deferral_approved": false,
+        "ci_exemption": false,
+        "automatic_eligibility_claimed": false,
+        "turn_assertion_mapping": {
+          "T1-T3": [
+            "Rental goal/allocation3 and actual600mm constraint"
+          ],
+          "T4-T5": [
+            "Independent subscriptions goal/allocation"
+          ],
+          "T6": [
+            "Explicit prior600 corrected to595 on original rental; sibling exact unchanged"
+          ],
+          "T7": [
+            "Only subscriptions cancelled; rental595 retained"
+          ],
+          "T8": [
+            "Actual598vs595 read-only final answer",
+            "No KB/Commerce CAS/Memory mutation",
+            "Cancelled entity byte unchanged; actual source replay unchanged"
+          ],
+          "Additional4 source-rejection callbacks": [
+            "Prepare two actual active subjects plus verified595mm constraint",
+            "Inject wrongvalue/wrongtarget/no-number/wrongaxis accepted Reading at next actual source",
+            "UNVERIFIED_CUSTOMER_REQUIREMENT -> read_only targeted question, generation_success not false",
+            "Actual B2 allow, no590/600 acknowledgement,0writeRPC/0KB, exact Commerce/Memory parity",
+            "Actual same-source replay leaves one reply and no new calls"
+          ]
+        }
+      }
+    },
+    {
+      "id": "P1-LEGACY-13",
+      "original_name": "hosted compound shopping start retains enumerated room areas and skips known questions",
+      "original_path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "HOSTED-COMPOUND",
+      "generic_obligations": [
+        "Compound supplied context retained once without duplicate/ambiguous entities",
+        "Only missing detail may be asked; known values not reasked",
+        "Partial supplied context still useful",
+        "No false order/payment"
+      ],
+      "industry_specific_assertions": [
+        "room_sizes small_bedroom/large_bedroom/living_room canonical mapping",
+        "installation_type window_unit, room_sunlight strong_afternoon_sun",
+        "Exact fixed next question window/installation and mention西斜",
+        "One implicit default entity on research opening"
+      ],
+      "replacement_or_existing_test_names": [
+        "P1 twin compound start: multiple customer scope facts remain context until an actual allocation",
+        "CTX-GUIDANCE R4-training-scope-facts"
+      ],
+      "new_test_file": "tests/task1-director/phase1-journey-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval.",
+        "Original name contains hosted but these callbacks are offline complete-handler tests. No Hosted service was called.",
+        "Scope counts and independently owned preferences are used as generic structured context; exact room area/installation/sunlight schema and fixed next-question text remain original industry-specific assertions."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "PARTIAL",
+        "coverage_gaps": [
+          "New native test verifies durable compound facts, no phantom and Memory only",
+          "Full known-detail question selection/generation not established; name hosted is historical test name not actual Hosted execution"
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "last-eight",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "additional_handler_file": "tests/task1-director/phase1-full-journey-handler-register.mjs",
+      "current_generic_handler_mapping": {
+        "original_callback_body_modified_by_this_agent": false,
+        "original_result_relabelled": false,
+        "handler_test_names": [
+          "P1 full journey: compound facts skip known questions catering",
+          "P1 full journey: compound facts skip known questions subscriptions",
+          "P1 full journey: compound facts skip known questions rentals",
+          "P1 full journey: compound scope negative forged-count",
+          "P1 full journey: compound scope negative duplicate-scope",
+          "P1 full journey: unproved transaction draft is blocked catering",
+          "P1 full journey: unproved transaction draft is blocked subscriptions",
+          "P1 full journey: unproved transaction draft is blocked rentals"
+        ],
+        "resolved_offline_generic_obligations": [
+          "Three complete-handler business contexts persist two contextual scope rows and an independently supplied preference in the same source; Memory preference source is exactly the current source; actual generation prompt includes known detail.",
+          "Useful final draft is delivered without asking known counts, with no invented item/order/payment; missing-detail version is covered by each A callback. Forged scope counts and duplicate reserved facts cannot write canonical scope while independent fact propagation remains intact."
+        ],
+        "residual_exact_equivalence_and_runtime_boundary": [
+          "Original name contains hosted but these callbacks are offline complete-handler tests. No Hosted service was called.",
+          "Scope counts and independently owned preferences are used as generic structured context; exact room area/installation/sunlight schema and fixed next-question text remain original industry-specific assertions."
+        ],
+        "parked": false,
+        "phase2_deferral_approved": false,
+        "ci_exemption": false,
+        "automatic_eligibility_claimed": false,
+        "turn_assertion_mapping": {
+          "T1": [
+            "Two current source-stamped scope rows",
+            "Independent supplied preference retained in durable Memory with same source",
+            "Generation receives preference; final reply does not reask supplied counts",
+            "No phantom item or transaction"
+          ],
+          "negative callbacks": [
+            "Forged count and duplicate reserved scope do not mutate canonical scope",
+            "Independent preference still follows original Memory propagation"
+          ]
+        }
+      }
+    },
+    {
+      "id": "P1-LEGACY-14",
+      "original_name": "C3 exact canonical T006 leaves unallocated room-plan machine quantity unconfirmed",
+      "original_path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "T006",
+      "generic_obligations": [
+        "An audience/location plan is not a product/unit count",
+        "Unknown quantity stays unconfirmed",
+        "Do not invent a product or transaction",
+        "Recall does not mutate"
+      ],
+      "industry_specific_assertions": [
+        "Six canonical unframed appliance turns",
+        "expects state.entities[0] to exist with quantity_basis system_default despite Phase1 no automatic product creation"
+      ],
+      "replacement_or_existing_test_names": [
+        "Phase1 twin T006: background scope counts cannot become a session quantity or phantom product",
+        "Task3C runtime stores background scope counts before allocating source-bound quantities",
+        "Task3C canonical quantity never supplies default or unconfirmed counts",
+        "Task3C canonical quantity excludes inactive, unsourced and non-customer records"
+      ],
+      "new_test_file": "tests/task1-director/phase1-recall-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "NATIVE_GENERIC_CHAIN_ONLY_NOT_FULL_HOSTED_EQUIVALENCE",
+        "coverage_gaps": [
+          "May eventually park only the old default-entity/script expectation; generic unknown-count safety remains Phase1. New twin explicitly proves absence is safe and no default is necessary."
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "first-nine",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "additional_existing_assertions": [
+        "Task3C canonical quantity never supplies default or unconfirmed counts",
+        "Task3C no-reading singleton requires a current sourced customer quantity"
+      ],
+      "equivalence_limit": "Unknown quantity invariant is preserved including system_default; neutral field is not appliance-specific. New chain is not old6turn transcript."
+    },
+    {
+      "id": "P1-LEGACY-15",
+      "original_name": "C3 exact T016 resolved cancellation reply outranks generic clarification",
+      "original_path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "T016",
+      "generic_obligations": [
+        "Current source-bound scoped lifecycle change affects one target",
+        "Other retained quantity2 stays intact",
+        "Committed acknowledgement outranks a generic clarification",
+        "No phantom semantic entity shadow",
+        "Replay and failed commit cannot create authority"
+      ],
+      "industry_specific_assertions": [
+        "15 prior appliance turns reduced without Reading",
+        "current frame EXISTS (lines612-654) but no full source-bound demands",
+        "air_conditioner:living_room canonical key",
+        "DEFER semantic frame but expects cancelled and exactly 2 部"
+      ],
+      "replacement_or_existing_test_names": [
+        "Phase1 twin T016: resolved cancellation and deferral acknowledge the committed target and preserve its sibling",
+        "Task3C source-bound full-entity correction uses the existing exact lifecycle receipt across industries",
+        "Task3C an independently canonical child can be cancelled without changing the retained sibling",
+        "Task3C a failed lifecycle commit cannot acknowledge a successful cancellation"
+      ],
+      "new_test_file": "tests/task1-director/phase1-recall-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "NATIVE_GENERIC_CHAIN_ONLY_NOT_FULL_HOSTED_EQUIVALENCE",
+        "coverage_gaps": [
+          "Generic lifecycle positive/negative remains Phase1. Current semantic frame omission claim is inaccurate; distinguish prior unframed setup vs current sparse frame. Test cancellation and deferral separately rather than reproducing accidental status equivalence."
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "first-nine",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "invalid_original_oracle": "Customer暫時唔買住/currentDEFER conflicts with expectedcancelled/已取消. Preserve historicaloriginal; future industrypack must not restore this mistaken requirement."
+    },
+    {
+      "id": "P1-LEGACY-16",
+      "original_name": "C3 exact canonical turn 17 supersedes the tentative correction before B2",
+      "original_path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "T17",
+      "generic_obligations": [
+        "Definitive latest correction overrides tentative older quantity",
+        "Inactive target excluded from current total",
+        "Current quantity2 is recalled without mutation",
+        "B2 allows bound canonical response, refuses stale proof",
+        "No order/payment promotion"
+      ],
+      "industry_specific_assertions": [
+        "16 prior unframed appliance turns",
+        "air_conditioner:living_room key",
+        "specific correction prefix 改做一部1匹 and exact quantity display 部",
+        "appliance proposed response text"
+      ],
+      "replacement_or_existing_test_names": [
+        "Phase1 twin T17: latest source-bound correction and cancellation determine read-only quantity before B2",
+        "Task3C canonical quantity reads exact customer-owned categories across industries",
+        "Task3C source-bound full-entity correction uses the existing exact lifecycle receipt across industries",
+        "C3 captured production turn 55 known quantity is read-only and outranks clarification"
+      ],
+      "new_test_file": "tests/task1-director/phase1-recall-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "NATIVE_GENERIC_CHAIN_ONLY_NOT_FULL_HOSTED_EQUIVALENCE",
+        "coverage_gaps": [
+          "Do not defer universal correction/B2 chain. New callback executes real runtime correction then lifecycle then recall/B2; seeded initial state synthetic, not original Hosted replay."
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "first-nine",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "equivalence_limit": "Real6→2correction→otheritemcancel→canonicalrecall→B2finalcallback, plus stalevalue/revisionnegatives; not original16unframedsetupreplay."
+    },
+    {
+      "id": "P1-LEGACY-17",
+      "original_name": "C3 captured production turn 27 rejects AC quantity and resolves refrigerator width constraint",
+      "original_path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "T27",
+      "generic_obligations": [
+        "Bind size comparison to correct current customer entity/dimension",
+        "Use canonical latest limit",
+        "Do not answer unrelated quantity",
+        "Query cannot write or alter provenance/revision/status",
+        "Unbound history-only limits cannot become authority"
+      ],
+      "industry_specific_assertions": [
+        "default turn55CommerceState has only2 AC entities and no refrigerator or stored595",
+        "raw history carries refrigerator width595 but no committed entity/source limit",
+        "requires customer_constraints.refrigerator.width exact appliance path"
+      ],
+      "replacement_or_existing_test_names": [
+        "Phase1 twin T27: dimension comparison uses its canonical target and rejects history-only limits",
+        "Task3C canonical dimension lookup uses one exact stored category across industries",
+        "Task3C original row 27 first canonical width subcase is independently reachable",
+        "Task3C canonical dimension lookup rejects missing, ambiguous and unowned facts"
+      ],
+      "new_test_file": "tests/task1-director/phase1-recall-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "NATIVE_GENERIC_CHAIN_ONLY_NOT_FULL_HOSTED_EQUIVALENCE",
+        "coverage_gaps": [
+          "Setup mismatch confirmed for this ORIGINAL T27; do not confuse separate passing row27 seeded-width test. Full live dimension capture/persistence is not proven by a synthetic canonical state."
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "first-nine",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "dimension_writer_prerequisite": "New dimension-source suite verifies source capture→correction→comparison including3business contexts and all original corruptions; checked samehead results required. Seeded-limit reads alone are insufficient."
+    },
+    {
+      "id": "P1-LEGACY-18",
+      "original_name": "C3 attribute-compatible referent routing is fail-closed across topic switches and quantities",
+      "original_path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "REFERENT_ROUTING",
+      "generic_obligations": [
+        "Width/height/depth compare only the matching source-owned committed dimension.",
+        "Quantity queries cannot substitute for dimensions or leak another product quantity.",
+        "Topic switch/return selects exactly the intended active customer subject.",
+        "Missing/weak/ambiguous/conflicting Reading, missing canonical constraint, inactive/unowned/foreign or invalid-revision data cannot answer.",
+        "Raw history cannot become committed missing height/depth authority.",
+        "Read-only query causes zero RPC, state/provenance change and transaction promotion."
+      ],
+      "industry_specific_assertions": [
+        "Explicit refrigerator and air_conditioner categories/Chinese alias wording are legacy fixture identity.",
+        "Original height1800/depth650 are only supplied in raw history, not the seeded canonical state; this is a provenance/setup conflict, not an intrinsically appliance-only feature."
+      ],
+      "replacement_or_existing_test_names": [
+        "P1TW-REFERENT positive: source-owned width constraint",
+        "P1TW-REFERENT positive: source-owned height constraint",
+        "P1TW-REFERENT positive: source-owned depth constraint",
+        "P1TW-REFERENT positive: quantity topic switch and return preserve dimensions",
+        "P1TW-REFERENT negative: missing-reading",
+        "P1TW-REFERENT negative: wrong-subject",
+        "P1TW-REFERENT negative: ambiguous",
+        "P1TW-REFERENT negative: weak",
+        "P1TW-REFERENT negative: raw-history-only",
+        "P1TW-REFERENT negative: wrong-dimension",
+        "P1TW-REFERENT negative: cancelled",
+        "P1TW-REFERENT negative: deferred",
+        "P1TW-REFERENT negative: foreign-owner",
+        "P1TW-REFERENT negative: foreign-ticket",
+        "P1TW-REFERENT negative: invalid-revision",
+        "P1TW-REFERENT negative: forged-quote",
+        "P1TW-REFERENT negative: correction",
+        "P1TW-REFERENT negative: wrong-operation"
+      ],
+      "new_test_file": "tests/task1-director/phase1-safety-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "positive_callbacks": 4,
+      "negative_callbacks": 14,
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "NAMED_NATIVE_GENERIC_SAFETY_SET_PASSED_NOT_PARKED",
+        "coverage_gaps": [
+          "Full zero-inactive-current-quantity behavior also relies on existing canonical-quantity source tests; this new file targets the original routing matrix plus changed source-owned dimensions.",
+          "No automatic right to park generic history/provenance defects.",
+          "NOT Hosted, real role/RLS or provider evidence."
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "first-nine",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ],
+      "dimension_writer_prerequisite": "New dimension-source suite verifies source capture→correction→comparison including3business contexts and all original corruptions; checked samehead results required. Seeded-limit reads alone are insufficient."
+    },
+    {
+      "id": "P1-LEGACY-19",
+      "original_name": "C3 pending technician aggregates distinguish global scope from entity scope",
+      "original_path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "TECHNICIAN_AGGREGATES",
+      "generic_obligations": [
+        "Named and Reading-bound deictic entity queries return only that entity pending items.",
+        "Global query returns the entire pending set and is not narrowed by an incidental reference.",
+        "Canonical zero remains distinct from missing entity binding.",
+        "Ambiguous/unowned/inactive/unknown/conflicting/forged or foreign subject cannot leak another item checks.",
+        "Mutation/correction/negation Reading cannot masquerade as a read.",
+        "Read and replay leave exact state/provenance/revision unchanged and call no RPC."
+      ],
+      "industry_specific_assertions": [
+        "呢部雪櫃 requires legacy alias mapping to bare category refrigerator without a stored source-owned label.",
+        "窗口尺寸檢查/安裝現場檢查 display labels are legacy check vocabulary."
+      ],
+      "replacement_or_existing_test_names": [
+        "P1TW-PENDING positive: named",
+        "P1TW-PENDING positive: deictic",
+        "P1TW-PENDING positive: global",
+        "P1TW-PENDING positive: zero",
+        "P1TW-PENDING positive: replay",
+        "P1TW-PENDING negative: missing-reading",
+        "P1TW-PENDING negative: unknown-reference",
+        "P1TW-PENDING negative: conflicting-subject",
+        "P1TW-PENDING negative: ambiguous",
+        "P1TW-PENDING negative: weak",
+        "P1TW-PENDING negative: inactive",
+        "P1TW-PENDING negative: unowned",
+        "P1TW-PENDING negative: missing-source",
+        "P1TW-PENDING negative: unknown-binding",
+        "P1TW-PENDING negative: foreign-owner",
+        "P1TW-PENDING negative: foreign-ticket",
+        "P1TW-PENDING negative: invalid-revision",
+        "P1TW-PENDING negative: forged-quote",
+        "P1TW-PENDING negative: wrong-operation",
+        "P1TW-PENDING negative: correction",
+        "P1TW-PENDING negative: negation"
+      ],
+      "new_test_file": "tests/task1-director/phase1-safety-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "positive_callbacks": 5,
+      "negative_callbacks": 16,
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "NAMED_NATIVE_GENERIC_SAFETY_SET_PASSED_NOT_PARKED",
+        "coverage_gaps": [
+          "Pending check lookup is a generic Phase1 requirement. Only the unsupported alias/script fixture may be considered for a later industry pack.",
+          "NOT Hosted, real role/RLS or provider evidence."
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "first-nine",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ]
+    },
+    {
+      "id": "P1-LEGACY-20",
+      "original_name": "entity-scoped_vs_global_recap_partition",
+      "original_path": "supabase/functions/_shared/conversation-recall.integration.test.ts",
+      "baseline_result": "FAIL_ACTUAL_NATIVE_CI",
+      "review_id": "recap-partition",
+      "generic_obligations": [
+        "Named entity recap excludes unrelated inactive facts and transaction",
+        "Global recap includes deferred/cancelled subjects truthfully",
+        "No last-topic leakage",
+        "Ambiguous subjects refuse choice",
+        "Missing model never invented",
+        "Read-only and same tenant/revision"
+      ],
+      "industry_specific_assertions": [
+        "AC/冷氣 aliases must bind to product named ZX-731 cooling using implicit appliance category dictionary",
+        "category-only noModel alias resolution",
+        "shared appliance fixture seed"
+      ],
+      "replacement_or_existing_test_names": [
+        "Phase1 twin recap partition: named scope and global recap retain inactive items without cross-entity leakage",
+        "explicit_recap_intent_is_independent_of_entity_scope",
+        "P0-1 whole-turn recap cannot swallow another demand or an unbound target",
+        "P0-1 pre-Semantic recap requires scoped successful current readback"
+      ],
+      "new_test_file": "tests/task1-director/phase1-recall-twins.test.ts",
+      "coverage_gaps": [
+        "Original remains executable and blocking. Passing native/handler twins do not authorize parking or represent real model usefulness/Hosted/AuthRLS/concurrency. A Director internal assertion review is not an external Supervisor signature or owner by-name approval."
+      ],
+      "coverage_status": "GENERIC_SOURCE_IMPLEMENTED_SAME_HEAD_CI_AND_ROW_REVIEW_REQUIRED_NOT_PARKED",
+      "parked": false,
+      "phase2_deferral_approved": false,
+      "ci_failure_exemption": false,
+      "original_status_relabelled_not_run": false,
+      "review_history_7b": {
+        "coverage_status": "NATIVE_GENERIC_CHAIN_ONLY_NOT_FULL_HOSTED_EQUIVALENCE",
+        "coverage_gaps": [
+          "Generic partition remains Phase1; source-owned names/referents replace implicit appliance alias lookup. Native synthetic scope proof does not claim true-model language interpretation."
+        ]
+      },
+      "resolution_route": "NAMED_PARKING_CANDIDATE_REQUIRES_SAME_HEAD_REVIEW_AND_OWNER_NAME",
+      "review_batch": "first-nine",
+      "additional_native_test_files": [
+        "tests/task1-director/phase1-business-context-twins.test.ts",
+        "tests/task1-director/phase1-dimension-source-twins.test.ts",
+        "tests/task1-director/phase1-full-journey-twins.test.ts"
+      ]
+    }
+  ],
+  "additional_journey_integrity_coverage": {
+    "schema": "phase1-w19-integrity-coverage-v1",
+    "baseline": "b0264643b1b5f9e4524e8eef42a2b38090fec94e",
+    "original": {
+      "path": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "name": "W19 sequential T1-T16 source replay preserves customer journey, KB and transaction boundaries",
+      "callback_lines": [
+        1286,
+        1566
+      ],
+      "unchanged": true,
+      "baseline_status": "FAIL; first assertion prevents later T10/T11 obligations from executing; no credit to those unreachable assertions"
+    },
+    "observed_ci": {
+      "job_id": 138426984554,
+      "run_id": 45388273784,
+      "baseline_checked_in_job": true,
+      "total": "841 PASS /20 FAIL",
+      "claim": "Historical exact-source native CI evidence only; not candidate rerun or Hosted"
+    },
+    "existing_coverage": [
+      {
+        "requirement": "Source-bound latest correction; retain unrelated scopes; no raw-history authority",
+        "file": "supabase/functions/_shared/commerce-state-contextual-scope-runtime.test.ts",
+        "tests": [
+          "Task3C runtime corrections retain unrelated scopes and cannot borrow raw history",
+          "Task3C a full allocation after a scope-count correction replaces superseded members and totals",
+          "Task3C a partial group replacement preserves unrelated source and does not reconfirm the total"
+        ],
+        "limit": "Actual generic scope-runtime component coverage; not W19 room-size receipt/Memory/B2 end-to-end equivalence.",
+        "baseline_ci_observations": [
+          {
+            "name": "Task3C runtime corrections retain unrelated scopes and cannot borrow raw history",
+            "evidence": "2026-11-24T12:02:09.2087767Z Task3C runtime corrections retain unrelated scopes and cannot borrow raw history ... ok (5ms)"
+          },
+          {
+            "name": "Task3C a full allocation after a scope-count correction replaces superseded members and totals",
+            "evidence": "2026-11-24T12:02:09.2180878Z Task3C a full allocation after a scope-count correction replaces superseded members and totals ... ok (9ms)"
+          },
+          {
+            "name": "Task3C a partial group replacement preserves unrelated source and does not reconfirm the total",
+            "evidence": "2026-11-24T12:02:09.2215388Z Task3C a partial group replacement preserves unrelated source and does not reconfirm the total ... ok (3ms)"
+          }
+        ]
+      },
+      {
+        "requirement": "Reject foreign/future/inactive scope and wrong snapshot owner or revision",
+        "file": "supabase/functions/_shared/commerce-state-contextual-scope-runtime.test.ts",
+        "tests": [
+          "Task3C runtime refuses foreign, future, switched and inactive scope receipts",
+          "Task3C runtime verifies returned snapshot identity without weakening existing caller contracts"
+        ],
+        "limit": "Injected database adapter; not authenticated tenant RLS.",
+        "baseline_ci_observations": [
+          {
+            "name": "Task3C runtime refuses foreign, future, switched and inactive scope receipts",
+            "evidence": "2026-11-24T12:02:09.2257136Z Task3C runtime refuses foreign, future, switched and inactive scope receipts ... ok (4ms)"
+          },
+          {
+            "name": "Task3C runtime verifies returned snapshot identity without weakening existing caller contracts",
+            "evidence": "2026-11-24T12:02:09.2271489Z Task3C runtime verifies returned snapshot identity without weakening existing caller contracts ... ok (1ms)"
+          }
+        ]
+      },
+      {
+        "requirement": "Failed CAS/transport cannot acknowledge; recompute from winning revision and reject superseded target",
+        "file": "supabase/functions/_shared/commerce-state-contextual-scope-runtime.test.ts",
+        "tests": [
+          "Task3C runtime never acknowledges transport, CAS or invalid revision failures",
+          "Task3C runtime recomputes allocation and reply from the winning CAS snapshot",
+          "Task3C runtime does not acknowledge a superseded target after a CAS retry"
+        ],
+        "limit": "Sequential deterministic conflict injection; not real database concurrency.",
+        "baseline_ci_observations": [
+          {
+            "name": "Task3C runtime never acknowledges transport, CAS or invalid revision failures",
+            "evidence": "2026-11-24T12:02:09.2548478Z Task3C runtime never acknowledges transport, CAS or invalid revision failures ... ok (5ms)"
+          },
+          {
+            "name": "Task3C runtime recomputes allocation and reply from the winning CAS snapshot",
+            "evidence": "2026-11-24T12:02:09.2568446Z Task3C runtime recomputes allocation and reply from the winning CAS snapshot ... ok (1ms)"
+          },
+          {
+            "name": "Task3C runtime does not acknowledge a superseded target after a CAS retry",
+            "evidence": "2026-11-24T12:02:09.2584970Z Task3C runtime does not acknowledge a superseded target after a CAS retry ... ok (1ms)"
+          }
+        ]
+      },
+      {
+        "requirement": "Canonical correction, superseded history, inactive isolation and nonmutation",
+        "file": "supabase/functions/_shared/conversation-long-memory.test.ts",
+        "tests": [
+          "latest correction wins and remains bounded",
+          "room-size correction replaces the superseded value in current memory",
+          "cancelled entity never remains active",
+          "deferred entity never remains active",
+          "multi-entity A and B stay isolated",
+          "entity correction does not cross entity",
+          "structured memory never mutates canonical commerce input",
+          "canonical commerce outranks prior memory disagreement",
+          "no cross-tenant identifier can be inherited from prior memory"
+        ],
+        "limit": "Memory projection tests. The room-size case uses appliance-room text. The entity correction test checks projected pre-existing state; it does not execute a corrective runtime write.",
+        "baseline_ci_observations": [
+          {
+            "name": "latest correction wins and remains bounded",
+            "evidence": "2026-11-24T12:02:00.5482534Z latest correction wins and remains bounded ... ok (572µs)"
+          },
+          {
+            "name": "room-size correction replaces the superseded value in current memory",
+            "evidence": "2026-11-24T12:02:00.5566820Z room-size correction replaces the superseded value in current memory ... ok (8ms)"
+          },
+          {
+            "name": "cancelled entity never remains active",
+            "evidence": "2026-11-24T12:02:00.5574012Z cancelled entity never remains active ... ok (778µs)"
+          },
+          {
+            "name": "deferred entity never remains active",
+            "evidence": "2026-11-24T12:02:00.5579608Z deferred entity never remains active ... ok (482µs)"
+          },
+          {
+            "name": "multi-entity A and B stay isolated",
+            "evidence": "2026-11-24T12:02:00.5695057Z multi-entity A and B stay isolated ... ok (8ms)"
+          },
+          {
+            "name": "entity correction does not cross entity",
+            "evidence": "2026-11-24T12:02:00.5700888Z entity correction does not cross entity ... ok (540µs)"
+          },
+          {
+            "name": "structured memory never mutates canonical commerce input",
+            "evidence": "2026-11-24T12:02:00.5730035Z structured memory never mutates canonical commerce input ... ok (476µs)"
+          },
+          {
+            "name": "canonical commerce outranks prior memory disagreement",
+            "evidence": "2026-11-24T12:02:00.5738102Z canonical commerce outranks prior memory disagreement ... ok (740µs)"
+          },
+          {
+            "name": "no cross-tenant identifier can be inherited from prior memory",
+            "evidence": "2026-11-24T12:02:00.6140183Z no cross-tenant identifier can be inherited from prior memory ... ok (728µs)"
+          }
+        ]
+      },
+      {
+        "requirement": "Persisted Memory exact identity, idempotency, stale/superseded rejection, conflict and durable acknowledgment recovery",
+        "file": "supabase/functions/_shared/conversation-long-memory.integration.test.ts",
+        "tests": [
+          "integration commits memory through one guarded RPC",
+          "integration binds exact tenant conversation source and commerce revision",
+          "integration reuses same-source current memory idempotently",
+          "integration rejects stale commerce result without pretending success",
+          "integration rejects superseded source without persistence success",
+          "integration rejects memory revision conflict",
+          "integration retries one fresh revision conflict and succeeds",
+          "integration fails safely on transport error",
+          "transport acknowledgement loss with the exact durable memory commit classifies committed",
+          "transport acknowledgement loss without an exact durable commit remains fail-closed",
+          "replay after recovered acknowledgement loss creates no duplicate revision or event"
+        ],
+        "limit": "Original MockClient exercises actual refreshConversationLongMemory; not live database/RLS.",
+        "baseline_ci_observations": [
+          {
+            "name": "integration commits memory through one guarded RPC",
+            "evidence": "2026-11-24T12:02:00.8190399Z integration commits memory through one guarded RPC ... ok (15ms)"
+          },
+          {
+            "name": "integration binds exact tenant conversation source and commerce revision",
+            "evidence": "2026-11-24T12:02:00.8209958Z integration binds exact tenant conversation source and commerce revision ... ok (1ms)"
+          },
+          {
+            "name": "integration reuses same-source current memory idempotently",
+            "evidence": "2026-11-24T12:02:00.8219045Z integration reuses same-source current memory idempotently ... ok (835µs)"
+          },
+          {
+            "name": "integration rejects stale commerce result without pretending success",
+            "evidence": "2026-11-24T12:02:00.8229172Z integration rejects stale commerce result without pretending success ... ok (903µs)"
+          },
+          {
+            "name": "integration rejects superseded source without persistence success",
+            "evidence": "2026-11-24T12:02:00.8238697Z integration rejects superseded source without persistence success ... ok (814µs)"
+          },
+          {
+            "name": "integration rejects memory revision conflict",
+            "evidence": "2026-11-24T12:02:00.8253658Z integration rejects memory revision conflict ... ok (1ms)"
+          },
+          {
+            "name": "integration retries one fresh revision conflict and succeeds",
+            "evidence": "2026-11-24T12:02:00.8263740Z integration retries one fresh revision conflict and succeeds ... ok (944µs)"
+          },
+          {
+            "name": "integration fails safely on transport error",
+            "evidence": "2026-11-24T12:02:00.8271808Z integration fails safely on transport error ... ok (731µs)"
+          },
+          {
+            "name": "transport acknowledgement loss with the exact durable memory commit classifies committed",
+            "evidence": "2026-11-24T12:02:00.8283750Z transport acknowledgement loss with the exact durable memory commit classifies committed ... ok (1ms)"
+          },
+          {
+            "name": "transport acknowledgement loss without an exact durable commit remains fail-closed",
+            "evidence": "2026-11-24T12:02:00.8291209Z transport acknowledgement loss without an exact durable commit remains fail-closed ... ok (687µs)"
+          },
+          {
+            "name": "replay after recovered acknowledgement loss creates no duplicate revision or event",
+            "evidence": "2026-11-24T12:02:00.8298746Z replay after recovered acknowledgement loss creates no duplicate revision or event ... ok (669µs)"
+          }
+        ]
+      }
+    ],
+    "new_file": {
+      "path": "tests/task1-director/phase1-journey-integrity-twins.test.ts",
+      "sha256": "b8014e661f1204950ed13414f4ac8d4647b76b9e512b76380a132da9ae895d71",
+      "status": "FROZEN after actual native runtime validation",
+      "registered": 20,
+      "positive": 1,
+      "negative": 19,
+      "test_names": [
+        "P1TW-W19 integrity positive: actual generic lifecycle receipt agrees with canonical Memory",
+        "P1TW-W19 Memory negative: missing-memory",
+        "P1TW-W19 Memory negative: missing-receipt",
+        "P1TW-W19 Memory negative: missing-commerce",
+        "P1TW-W19 Memory negative: memory-tenant",
+        "P1TW-W19 Memory negative: commerce-tenant",
+        "P1TW-W19 Memory negative: memory-source",
+        "P1TW-W19 Memory negative: commerce-source",
+        "P1TW-W19 Memory negative: memory-revision",
+        "P1TW-W19 Memory negative: commerce-revision",
+        "P1TW-W19 Memory negative: missing-active",
+        "P1TW-W19 Memory negative: missing-deferred",
+        "P1TW-W19 Memory negative: active-quantity",
+        "P1TW-W19 Memory negative: active-requirements",
+        "P1TW-W19 Memory negative: duplicate-active",
+        "P1TW-W19 Memory negative: duplicate-deferred",
+        "P1TW-W19 Memory negative: inactive-as-active",
+        "P1TW-W19 B2 negative: wrong-target cannot reach reply persistence",
+        "P1TW-W19 B2 negative: retained-quantity cannot reach reply persistence",
+        "P1TW-W19 B2 negative: ghost-entity cannot reach reply persistence"
+      ],
+      "command": "DENO_NO_PACKAGE_JSON=1 deno test --no-lock --no-check --node-modules-dir=manual --allow-read tests/task1-director/phase1-safety-twins.test.ts tests/task1-director/phase1-recall-twins.test.ts tests/task1-director/phase1-journey-twins.test.ts tests/task1-director/phase1-journey-integrity-twins.test.ts tests/task1-director/phase1-correction-integrity-twins.test.ts",
+      "exit": 0,
+      "result": "20 PASS /0 FAIL",
+      "log": "validation-evidence/final-native-twins-typefix-runtime.log",
+      "type_check": "NOT CLAIMED by --no-check",
+      "aggregate_run_passed": 289
+    },
+    "frozen_safety": {
+      "path": "tests/task1-director/phase1-safety-twins.test.ts",
+      "sha256": "c7d8f3009dec7a3bb09ae0f1628f02d6512caaba32b94ba79f2717a990469ac9",
+      "registered": 139,
+      "status": "Unchanged"
+    },
+    "remaining": [
+      {
+        "kind": "historical review finding resolved for generic quantity correction",
+        "detail": "Actual accepted non-appliance old→new scope correction now carries canonical source-bound ledger, unchanged sibling/other-scope preservation, exact prior/new aggregate, current/superseded canonical Memory after durable state+event readback, actual B2 read/evaluate/revalidate/commit, and source-replay recovery without duplicate mutation."
+      },
+      {
+        "kind": "remaining scope limit",
+        "detail": "Full original 16-turn combined business journey is not reproduced by component and quantity-correction twins.; The source-bound generic quantity correction chain is now implemented and tested; original room-size ontology and arbitrary attribute correction are not claimed equivalent.; Actual current KB/model/Hosted/usefulness, authenticated database RLS and real concurrent transaction evidence remain separate original requirements."
+      }
+    ],
+    "parked_originals": [],
+    "workflow_exemptions": [],
+    "runtime_edits_by_this_agent": [],
+    "initial_4963_new_file_evidence": {
+      "path": "tests/task1-director/phase1-journey-integrity-twins.test.ts",
+      "sha256": "086e051b79e49c7f77697b540c058ab3b42c24b8401ea47a71e733a9fb3069ac",
+      "status": "FROZEN after actual native runtime validation",
+      "registered": 20,
+      "positive": 1,
+      "negative": 19,
+      "test_names": [
+        "P1TW-W19 integrity positive: actual generic lifecycle receipt agrees with canonical Memory",
+        "P1TW-W19 Memory negative: missing-memory",
+        "P1TW-W19 Memory negative: missing-receipt",
+        "P1TW-W19 Memory negative: missing-commerce",
+        "P1TW-W19 Memory negative: memory-tenant",
+        "P1TW-W19 Memory negative: commerce-tenant",
+        "P1TW-W19 Memory negative: memory-source",
+        "P1TW-W19 Memory negative: commerce-source",
+        "P1TW-W19 Memory negative: memory-revision",
+        "P1TW-W19 Memory negative: commerce-revision",
+        "P1TW-W19 Memory negative: missing-active",
+        "P1TW-W19 Memory negative: missing-deferred",
+        "P1TW-W19 Memory negative: active-quantity",
+        "P1TW-W19 Memory negative: active-requirements",
+        "P1TW-W19 Memory negative: duplicate-active",
+        "P1TW-W19 Memory negative: duplicate-deferred",
+        "P1TW-W19 Memory negative: inactive-as-active",
+        "P1TW-W19 B2 negative: wrong-target cannot reach reply persistence",
+        "P1TW-W19 B2 negative: retained-quantity cannot reach reply persistence",
+        "P1TW-W19 B2 negative: ghost-entity cannot reach reply persistence"
+      ],
+      "command": "DENO_NO_PACKAGE_JSON=1 /workspace/scratch/857704bbb86e/native-tools/node_modules/.bin/deno test --no-lock --no-check --node-modules-dir=manual --allow-read tests/task1-director/phase1-journey-integrity-twins.test.ts",
+      "exit": 0,
+      "result": "20 PASS /0 FAIL",
+      "log": "validation-evidence/journey-integrity-twins.log",
+      "type_check": "NOT CLAIMED by --no-check"
+    }
+  },
+  "generic_correction_integrity_coverage": {
+    "task": "Task3C existing manual patch / original PR12, internal correction integrity implementation; no new gate",
+    "authoritative_baseline": "b0264643b1b5f9e4524e8eef42a2b38090fec94e",
+    "status": "IMPLEMENTED_AND_NATIVE_VERIFIED_NOT_HOSTED_OR_FULL_W19_EQUIVALENCE",
+    "original_mapping": {
+      "file": "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "name": "W19 sequential T1-T16 source replay preserves customer journey, KB and transaction boundaries",
+      "original_focus": "T10 accepted scoped correction, current/superseded Memory parity, source/owner/revision-bound B2 and failed-CAS/stale-old-value refusal",
+      "prior_gap": "Generic contextual quantity replacement3→4 could commit without preserving previous3 in cancelled_or_superseded; explicit scoped customer_correction Reading was refused. Original room correction verifier could not validate generic scope quantity correction.",
+      "resolved": "Actual accepted non-appliance old→new scope correction now carries canonical source-bound ledger, unchanged sibling/other-scope preservation, exact prior/new aggregate, current/superseded canonical Memory after durable state+event readback, actual B2 read/evaluate/revalidate/commit, and source-replay recovery without duplicate mutation.",
+      "not_claimed": [
+        "Original room-size ontology, room aliases or appliance script equality",
+        "Full original16-turn W19 integrated journey",
+        "Whole-project Hosted/Auth/RLS/model/KB quality or originalcase retirement",
+        "Arbitrary unseen correction grammar; accepted scope and unit remain literal and all previous/new quantities must be independently source-attested"
+      ],
+      "phase2_deferral_approved": false,
+      "original_callbacks_or_assertions_modified_by_this_work": false
+    },
+    "implementation": [
+      {
+        "source": "supabase/functions/_shared/contextual-customer-update.ts",
+        "role": "Writer accepts explicit scoped correction only for existing literal subject/ref, old values matching committed prior rows, exact old→new source quotes and unit; preserves other scoped rows; records latest bounded correction ledger and deterministic total; exact-source replay reuses unchanged ledger."
+      },
+      {
+        "source": "supabase/functions/_shared/b2-journey-progress-contract.ts",
+        "role": "Shared pure readVerifiedScopedQuantityCorrection validator binds owner/ticket/source/revision/entity/unit, reconstructs actual current rows from prior rows and changes, and validates exact old/current totals and retained provenance. Existing room correction proof remains unchanged; optional scoped_correction added only to existing scoped journey proof."
+      },
+      {
+        "source": "supabase/functions/_shared/conversation-long-memory.ts",
+        "role": "Memory derives superseded canonical quantity and old scoped rows from verified committed ledger, checks current/superseded parity, preserves complete verified source <=1200 while existing reducer retains its300character display projection, and requires durable state+event+matchinghash+exactpayload readback on initial/retry/idempotent correction success."
+      },
+      {
+        "source": "supabase/functions/_shared/commerce-state-runtime-base.ts",
+        "owner": "root",
+        "role": "Proof built only from actual winning CAS snapshot/readback; exact before rows/total and unchanged sibling state checked; exact source replay reuses original prev→committed bound."
+      },
+      {
+        "source": "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
+        "owner": "ci_recall_review",
+        "role": "Existing B2 scopedjourney validation extended to shared verified ledger, exact privateproof/contextualmetadata, currentrows, acceptedchangedscope set, transaction and source/revision; stripped or erased correction markers cannot fall back to ordinary allow."
+      },
+      {
+        "source": "supabase/functions/generate-reply/index.ts",
+        "owner": "root",
+        "role": "Actual handler passes only scoped_correction-present private receipt to refresh; consumes durable Memory parity before response/B2, suppressing success on mismatch; root independently tests actual complete handler fixture."
+      }
+    ],
+    "validation": {
+      "command": "DENO_NO_PACKAGE_JSON=1 deno test --no-lock --no-check --node-modules-dir=manual --allow-read tests/task1-director/phase1-safety-twins.test.ts tests/task1-director/phase1-recall-twins.test.ts tests/task1-director/phase1-journey-twins.test.ts tests/task1-director/phase1-journey-integrity-twins.test.ts tests/task1-director/phase1-correction-integrity-twins.test.ts",
+      "cwd": "/workspace/scratch/857704bbb86e/console-chat-hub",
+      "exit_code": 0,
+      "passed": 74,
+      "failed": 0,
+      "independently_registered_callbacks": 74,
+      "explicit_negative_callbacks": 69,
+      "positive_or_compatibility_callbacks": 5,
+      "log": "validation-evidence/final-native-twins-typefix-runtime.log",
+      "runtime": "Actual nativeDeno2.9.6, original runtime imports, deterministic database harness; no import replacements",
+      "typecheck_in_command": false,
+      "hosted": false,
+      "aggregate_run_passed": 289,
+      "aggregate_run_steps": 37,
+      "module_callbacks_passed": 74
+    },
+    "independent_validation": {
+      "reviewer": "ci_recall_review",
+      "new_callbacks": 74,
+      "existing_B2_callbacks": 280,
+      "passed": 354,
+      "failed": 0,
+      "exit_code": 0,
+      "log": "/workspace/scratch/857704bbb86e/validation-evidence/scoped-correction-b2-final.log",
+      "evidence_revision": "Historical initial4963, preserved; successorCI separately required"
+    },
+    "obligation_groups": [
+      {
+        "obligation": "Source-owned old/new scoped correction and no partial/unproved write",
+        "tests": [
+          "P1 correction full chain single-scope: committed old/new Memory reaches bounded B2 once",
+          "P1 correction full chain group: committed old/new Memory reaches bounded B2 once",
+          "P1 correction source negative old-value: no unverified old value reaches the writer",
+          "P1 correction source negative forged-quote: no unverified old value reaches the writer",
+          "P1 correction source negative new-value: no unverified old value reaches the writer",
+          "P1 correction source negative unit: no unverified old value reaches the writer",
+          "P1 correction source negative unknown-scope: no unverified old value reaches the writer",
+          "P1 correction source negative duplicate-change: no unverified old value reaches the writer",
+          "P1 correction source negative extra-quantity: no unverified old value reaches the writer",
+          "P1 correction source negative missing-reading: no unverified old value reaches the writer",
+          "P1 correction source negative wrong-reference: no unverified old value reaches the writer",
+          "P1 correction source negative extra-reference: no unverified old value reaches the writer",
+          "P1 correction source negative transaction: no unverified old value reaches the writer",
+          "P1 correction source negative question: no unverified old value reaches the writer",
+          "P1 correction source negative negation: no unverified old value reaches the writer",
+          "P1 correction source negative blank-old-source: no unverified old value reaches the writer",
+          "P1 correction source negative blank-old-quote: no unverified old value reaches the writer",
+          "P1 correction source negative future-old-revision: no unverified old value reaches the writer",
+          "P1 correction source negative duplicate-old-row: no unverified old value reaches the writer",
+          "P1 correction source negative mixed-group-goal: no unverified old value reaches the writer",
+          "P1 correction source negative partial-old-group: no unverified old value reaches the writer"
+        ]
+      },
+      {
+        "obligation": "CAS failure and changed prior value on retry cannot mint success/proof",
+        "tests": [
+          "P1 correction CAS negative transport: uncommitted proposal cannot produce a receipt",
+          "P1 correction CAS negative revision-conflict: uncommitted proposal cannot produce a receipt",
+          "P1 correction CAS negative wrong-old-value-after-retry: uncommitted proposal cannot produce a receipt"
+        ]
+      },
+      {
+        "obligation": "Same-source replay remains idempotent and may recover one final reply through actual B2 gate",
+        "tests": [
+          "P1 correction exact-source replay: original ledger and durable Memory remain idempotent"
+        ]
+      },
+      {
+        "obligation": "Current/superseded Memory with exact source, owner, ticket, revision, old/current values and row provenance",
+        "tests": [
+          "P1 correction Memory negative missing-memory: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative missing-receipt: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative tenant: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative ticket: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative missing-ticket: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative source: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative revision: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative old-value: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative current-value: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative old-row-source: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative missing-history: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative missing-current: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative duplicate-history: parity rejects corrupted persisted facts",
+          "P1 correction Memory negative active-rows: parity rejects corrupted persisted facts"
+        ]
+      },
+      {
+        "obligation": "Persisted Memory must be read back; RPC success alone cannot substitute actual state/event/hash/payload",
+        "tests": [
+          "P1 correction full chain single-scope: committed old/new Memory reaches bounded B2 once",
+          "P1 correction full chain group: committed old/new Memory reaches bounded B2 once",
+          "P1 correction Memory persistence negative transport: success requires actual durable readback",
+          "P1 correction Memory persistence negative success-without-row: success requires actual durable readback",
+          "P1 correction Memory persistence negative retry-success-without-row: success requires actual durable readback",
+          "P1 correction Memory persistence negative wrong-row-tenant: success requires actual durable readback",
+          "P1 correction Memory persistence negative wrong-event-source: success requires actual durable readback",
+          "P1 correction Memory persistence negative wrong-revision: success requires actual durable readback",
+          "P1 correction Memory persistence negative wrong-hash: success requires actual durable readback",
+          "P1 correction Memory persistence negative drop-current: success requires actual durable readback",
+          "P1 correction Memory persistence negative drop-history: success requires actual durable readback"
+        ]
+      },
+      {
+        "obligation": "B2 denies missing/forged/stripped correction authority and revision changes before final callback",
+        "tests": [
+          "P1 correction B2 negative missing-proof: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative missing-scoped-payload: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative stripped-metadata: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative tenant: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative ticket: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative source: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative revision: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative entity: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative old-total: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative new-total: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative old-row: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative new-row: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative unit: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative quote: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative metadata-mismatch: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative current-rows: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative changed-source: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative missing-accepted-scope: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative extra-accepted-scope: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative order: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative payment: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative remove-ledger-and-strip-proof: no corrupted correction can authorize a reply",
+          "P1 correction B2 negative corrupt-all-markers-and-strip-proof: no corrupted correction can authorize a reply",
+          "P1 correction B2 revalidation negative revision drift: final reply callback stays uncalled"
+        ]
+      },
+      {
+        "obligation": "A historical correction does not block unrelated later source; supported longsource preserves exact Memory",
+        "tests": [
+          "P1 correction historical-ledger compatibility: unrelated later source requires no new correction proof",
+          "P1 correction source bound above 500 characters retains full durable Memory parity"
+        ]
+      }
+    ],
+    "all_test_names": [
+      "P1 correction full chain single-scope: committed old/new Memory reaches bounded B2 once",
+      "P1 correction full chain group: committed old/new Memory reaches bounded B2 once",
+      "P1 correction exact-source replay: original ledger and durable Memory remain idempotent",
+      "P1 correction source negative old-value: no unverified old value reaches the writer",
+      "P1 correction source negative forged-quote: no unverified old value reaches the writer",
+      "P1 correction source negative new-value: no unverified old value reaches the writer",
+      "P1 correction source negative unit: no unverified old value reaches the writer",
+      "P1 correction source negative unknown-scope: no unverified old value reaches the writer",
+      "P1 correction source negative duplicate-change: no unverified old value reaches the writer",
+      "P1 correction source negative extra-quantity: no unverified old value reaches the writer",
+      "P1 correction source negative missing-reading: no unverified old value reaches the writer",
+      "P1 correction source negative wrong-reference: no unverified old value reaches the writer",
+      "P1 correction source negative extra-reference: no unverified old value reaches the writer",
+      "P1 correction source negative transaction: no unverified old value reaches the writer",
+      "P1 correction source negative question: no unverified old value reaches the writer",
+      "P1 correction source negative negation: no unverified old value reaches the writer",
+      "P1 correction source negative blank-old-source: no unverified old value reaches the writer",
+      "P1 correction source negative blank-old-quote: no unverified old value reaches the writer",
+      "P1 correction source negative future-old-revision: no unverified old value reaches the writer",
+      "P1 correction source negative duplicate-old-row: no unverified old value reaches the writer",
+      "P1 correction source negative mixed-group-goal: no unverified old value reaches the writer",
+      "P1 correction source negative partial-old-group: no unverified old value reaches the writer",
+      "P1 correction CAS negative transport: uncommitted proposal cannot produce a receipt",
+      "P1 correction CAS negative revision-conflict: uncommitted proposal cannot produce a receipt",
+      "P1 correction CAS negative wrong-old-value-after-retry: uncommitted proposal cannot produce a receipt",
+      "P1 correction Memory negative missing-memory: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative missing-receipt: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative tenant: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative ticket: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative missing-ticket: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative source: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative revision: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative old-value: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative current-value: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative old-row-source: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative missing-history: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative missing-current: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative duplicate-history: parity rejects corrupted persisted facts",
+      "P1 correction Memory negative active-rows: parity rejects corrupted persisted facts",
+      "P1 correction Memory persistence negative transport: success requires actual durable readback",
+      "P1 correction Memory persistence negative success-without-row: success requires actual durable readback",
+      "P1 correction Memory persistence negative retry-success-without-row: success requires actual durable readback",
+      "P1 correction Memory persistence negative wrong-row-tenant: success requires actual durable readback",
+      "P1 correction Memory persistence negative wrong-event-source: success requires actual durable readback",
+      "P1 correction Memory persistence negative wrong-revision: success requires actual durable readback",
+      "P1 correction Memory persistence negative wrong-hash: success requires actual durable readback",
+      "P1 correction Memory persistence negative drop-current: success requires actual durable readback",
+      "P1 correction Memory persistence negative drop-history: success requires actual durable readback",
+      "P1 correction B2 negative missing-proof: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative missing-scoped-payload: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative stripped-metadata: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative tenant: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative ticket: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative source: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative revision: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative entity: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative old-total: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative new-total: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative old-row: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative new-row: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative unit: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative quote: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative metadata-mismatch: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative current-rows: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative changed-source: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative missing-accepted-scope: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative extra-accepted-scope: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative order: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative payment: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative remove-ledger-and-strip-proof: no corrupted correction can authorize a reply",
+      "P1 correction B2 negative corrupt-all-markers-and-strip-proof: no corrupted correction can authorize a reply",
+      "P1 correction B2 revalidation negative revision drift: final reply callback stays uncalled",
+      "P1 correction historical-ledger compatibility: unrelated later source requires no new correction proof",
+      "P1 correction source bound above 500 characters retains full durable Memory parity"
+    ],
+    "frozen_owned_files_sha256": {
+      "supabase/functions/_shared/contextual-customer-update.ts": "b1c47a2c83331f00832b078f3f348cc815412c5e1db64799137a38b80c019f22",
+      "supabase/functions/_shared/conversation-long-memory.ts": "66da11a4c973921ee057c234f5ead29f9b1a52757554f4f3a9d37aee8a654354",
+      "supabase/functions/_shared/b2-journey-progress-contract.ts": "367d2bae82405f7936861b8d0abf740b787b1c84c7e9e5838308a517db251f5d",
+      "tests/task1-director/phase1-correction-integrity-twins.test.ts": "5bf43bccb052205b4461ec09c2ad9cf846443d13c5ee08dee202af8ade33fb4f"
+    },
+    "unchanged_limits": [
+      "Original300-character legacy reducer display projection remains unchanged; sharedprojection used onlyas independent must-have-proof marker, not source authority",
+      "Full source must remain exact and≤1200; each quote≤200 and explicit scope/unit literal",
+      "Existing C3Memory JSON totalbudget remains unchanged; parity fails closed if evidence cannot fit",
+      "No new tables, RPCs, functions, unit/industry catalogue, deployment, or Production traffic"
+    ],
+    "remaining_root_work": "Final combined and original tests, source pins, build/typecheck, same-branch CI and package. Native success does not approve any original test deferral.",
+    "initial_4963_runtime_evidence": {
+      "validation": {
+        "command": "DENO_NO_PACKAGE_JSON=1 /workspace/scratch/857704bbb86e/native-tools/node_modules/.bin/deno test --no-lock --no-check --node-modules-dir=manual --allow-read tests/task1-director/phase1-correction-integrity-twins.test.ts",
+        "cwd": "/workspace/scratch/857704bbb86e/console-chat-hub",
+        "exit_code": 0,
+        "passed": 74,
+        "failed": 0,
+        "independently_registered_callbacks": 74,
+        "explicit_negative_callbacks": 69,
+        "positive_or_compatibility_callbacks": 5,
+        "log": "/workspace/scratch/857704bbb86e/validation-evidence/correction-integrity-native-final.log",
+        "runtime": "Actual nativeDeno2.9.6, original runtime imports, deterministic database harness; no import replacements",
+        "typecheck_in_command": false,
+        "hosted": false
+      },
+      "independent_validation": {
+        "reviewer": "ci_recall_review",
+        "new_callbacks": 74,
+        "existing_B2_callbacks": 280,
+        "passed": 354,
+        "failed": 0,
+        "exit_code": 0,
+        "log": "/workspace/scratch/857704bbb86e/validation-evidence/scoped-correction-b2-final.log"
+      },
+      "frozen_owned_files_sha256": {
+        "supabase/functions/_shared/contextual-customer-update.ts": "b1c47a2c83331f00832b078f3f348cc815412c5e1db64799137a38b80c019f22",
+        "supabase/functions/_shared/conversation-long-memory.ts": "66da11a4c973921ee057c234f5ead29f9b1a52757554f4f3a9d37aee8a654354",
+        "supabase/functions/_shared/b2-journey-progress-contract.ts": "367d2bae82405f7936861b8d0abf740b787b1c84c7e9e5838308a517db251f5d",
+        "tests/task1-director/phase1-correction-integrity-twins.test.ts": "e38fa5cd4d8b1833037a7b735d510cf7cf8451f9e1d84d7e27c43266f548f8bc"
+      }
+    }
+  },
+  "same_source_guidance_handler_validation": {
+    "command": "C3_CONSOLE_SDK_ROOT=<exact Supabase SDK 2.45.0> node tests/task1-director/contextual-guidance-runner.mjs",
+    "expected_cases": 6,
+    "executed_cases": 6,
+    "passed": 6,
+    "failed": 0,
+    "exit_code": 0,
+    "scope": "Existing complete-handler G1/R4 and merchant boundary cases with scripted provider/KB. Real model, real KB and Hosted NOT RUN."
+  },
+  "test_typecheck_repair": {
+    "initial_commit": "4963c26eaf1a2e48dcb929c36580f33778e22e1b",
+    "initial_C3_run": 45429174104,
+    "initial_preproduction_job": 138572213875,
+    "initial_exit_code": 1,
+    "initial_type_errors": 11,
+    "initial_final_native_suite": "NOT_RUN_TYPECHECK_FAILED",
+    "initial_handler_passed": 584,
+    "changes": [
+      "Assert actual nonnull string runtime replies before later B2 use",
+      "Assert actual numeric Memory revision before stale-value mutation",
+      "Read actual post-await entity array without stale literal type narrowing",
+      "Use legal confirmed transaction enum in correction rejection test"
+    ],
+    "changed_test_sha256": {
+      "tests/task1-director/phase1-recall-twins.test.ts": "d7a14cdfa4503c0b003300b7851f508068a5d66caa33f936d6f688d8aebb2a21",
+      "tests/task1-director/phase1-journey-twins.test.ts": "3b213122754ad085d29855f9136ea8505a451b40c83906865ccee8619a9082bb",
+      "tests/task1-director/phase1-journey-integrity-twins.test.ts": "b8014e661f1204950ed13414f4ac8d4647b76b9e512b76380a132da9ae895d71",
+      "tests/task1-director/phase1-correction-integrity-twins.test.ts": "5bf43bccb052205b4461ec09c2ad9cf846443d13c5ee08dee202af8ade33fb4f"
+    },
+    "new_callbacks_removed": 0,
+    "original_callbacks_changed": 0,
+    "typecheck_suppression_added": false,
+    "runtime_rerun": {
+      "command": "DENO_NO_PACKAGE_JSON=1 deno test --no-lock --no-check --node-modules-dir=manual --allow-read tests/task1-director/phase1-safety-twins.test.ts tests/task1-director/phase1-recall-twins.test.ts tests/task1-director/phase1-journey-twins.test.ts tests/task1-director/phase1-journey-integrity-twins.test.ts tests/task1-director/phase1-correction-integrity-twins.test.ts",
+      "exit_code": 0,
+      "passed": 289,
+      "steps_passed": 37,
+      "failed": 0,
+      "log": "validation-evidence/final-native-twins-typefix-runtime.log",
+      "typecheck": false
+    },
+    "local_checked_attempts": [
+      {
+        "scope": "recall",
+        "exit_code": 1,
+        "result": "DEPENDENCY_NETWORK_TTL_EXPIRED",
+        "log": "validation-evidence/recall-typecheck-repair.log"
+      },
+      {
+        "scope": "journey integrity and correction",
+        "exit_code": 130,
+        "result": "INTERRUPTED_STALLED_DEPENDENCY_IMPORTS",
+        "log": "validation-evidence/three-twins-types-runtime-fix.log"
+      }
+    ],
+    "successor_checked_CI": "MUST_VERIFY_EXACT_SUCCESSOR",
+    "parked_originals": 0,
+    "ci_exemptions": 0
+  },
+  "consensus_2026_11_25": {
+    "baseline_head": "7b9579db2f0b5cb02b08e2ec17370459388b3fb4",
+    "supervisor_memory_head": "9ef7ad88166e3b0376b9cff2d4a18a43429ea6c7",
+    "director_rule_memory": "34c502962caa9093b99b937d8bf8879fe466e601",
+    "rule": "Original eight points plus Supervisor S1-S4 agreed; same original Closure Contract, Task3C/P0-1/PR12",
+    "owner_instruction": "讀取Project Memory對supervisor建議的以下修復建議是否同意及達成一致共識？如是立即開始實作；否則必須作出反建議。Manual patch route only.",
+    "authorization_interpretation": "Conditional instruction acted upon after agreement: exact W9-1/W9-2/W9 Reading/source-word oracle route and demonstrated generic Source repairs. No claim that owner used a separate slogan. Rule agreement parks no original and approves no CI exclusion.",
+    "named_original_changes": [
+      "home appliance W9-1: scoped allocation from established context",
+      "home appliance W9-2: scoped allocation from established context",
+      "W9 established AC context survives intervening service and memory turns"
+    ],
+    "original_customer_text_changed": false,
+    "other_original_assertions_changed": false,
+    "original_callbacks_deleted": 0,
+    "same_head_checked_ci": "Recorded in Project Memory after this exact candidate is committed; local no-check evidence is not a checked CI result",
+    "full_handler_validation": "Original584 callbacks plus all new full-journey callbacks execute without a name exclusion. New advice fixtures validate orchestration only; useful real-model guidance remains original P3/Section15/Quality95.",
+    "source_boundary": "Current literal source/subject/value/axis/unit verified before entire candidate commit; CAS reload revalidates. Invalid Reading does not gain authority from hints or raw fallback. Rejected non-writing requirements use existing read-only targeted B2 clarification and preserve canonical Memory; storage errors remain failures.",
+    "memory_boundary": "Original16384-character Memory budget; lossless full lifecycle proof restored before original transition/current-state/B2 checks; current facts and correction history retained; original fitMemory can trim history, projections and read excerpts; bounded JSON table preserves every receipt value",
+    "deferred_counts": {
+      "parked": 0,
+      "ci_exemptions": 0
+    },
+    "ci_boundary": "Workflow files and execution/filter/exit behavior unchanged; current authorized Source SHA256 maps and exact dependency inventory advance to the repaired complete files. The two new shared Memory storage modules are dependencies, not new deployed Functions.",
+    "word_rules": "New literal source checks corroborate accepted Readings or conservative read-only routing; they do not infer an industry or invent values. Four existing literal-no-reading lifecycle positives retain LEGACY_WORD_GATE status; paraphrase measurement stays original P4 scope.",
+    "remaining_measurements": "Original P3/Section15/Quality95/Hosted/real model/remoteKB/authenticatedRLS/concurrency and existing P4/P7 exact scope remain. This implementation gives no traffic/deploy authority.",
+    "controlled_paths": [
+      "supabase/functions/_shared/bounded-json-storage.ts",
+      "supabase/functions/_shared/commerce-state-authority.ts",
+      "supabase/functions/_shared/commerce-state-runtime-base.ts",
+      "supabase/functions/_shared/contextual-customer-update.test.ts",
+      "supabase/functions/_shared/contextual-customer-update.ts",
+      "supabase/functions/_shared/conversation-long-memory.ts",
+      "supabase/functions/_shared/current-factual-request.ts",
+      "supabase/functions/_shared/lifecycle-receipt-storage.ts",
+      "supabase/functions/_shared/pre-send-conversion-supervisor.ts",
+      "supabase/functions/_shared/revision-bound-reply.ts",
+      "supabase/functions/generate-reply/index.ts",
+      "tests/emergency-p0/chain.test.mjs",
+      "tests/task1-director/fixtures/phase1-business-context.ts",
+      "tests/task1-director/fixtures/phase1-large-lifecycle-memory.json",
+      "tests/task1-director/fixtures/phase1-large-lifecycle-receipt.json",
+      "tests/task1-director/phase1-bounded-json-storage.test.ts",
+      "tests/task1-director/phase1-business-context-twins.test.ts",
+      "tests/task1-director/phase1-dimension-source-twins.test.ts",
+      "tests/task1-director/phase1-full-journey-handler-register.mjs",
+      "tests/task1-director/phase1-full-journey-twins.test.ts",
+      "tests/task1-director/phase1-lifecycle-storage-twins.test.ts",
+      "tests/task1-director/phase1-recap-clause-twins.test.ts"
+    ]
+  },
+  "original_preservation_historical_7b": {
+    "supabase/functions/_shared/contextual-customer-update.test.ts": {
+      "baseline_sha256": "562443c8cf7346816667ebc50f285065436e8af36293a9c5e28c3b0d7cc75f03",
+      "baseline_bytes": 133374,
+      "preservation": "complete byte prefix"
+    },
+    "supabase/functions/_shared/conversation-recall.integration.test.ts": {
+      "baseline_sha256": "996bb87a71acd77ee5d568fa17643e4de7ab20fa4d9c47299305930e8e5a7750",
+      "baseline_bytes": 136926,
+      "preservation": "identical file"
+    },
+    "tests/emergency-p0/chain.test.mjs": {
+      "baseline_sha256": "c42daefb2cd92259f6fb79b2895eed5cc812b4e25c87b7ab0aca5ec98c2c4160",
+      "baseline_bytes": 398903,
+      "preservation": "complete byte prefix"
+    }
+  },
+  "legacy_word_gate_compatibility": {
+    "desired_future_behavior": false,
+    "source_change_or_removal_in_this_patch": false,
+    "top_level_callbacks": [
+      "P1TW-W21 positive literal-no-reading: forward",
+      "P1TW-W21 positive literal-no-reading: reverse",
+      "P1TW-W21 positive literal-no-reading: both",
+      "P1TW-W21 positive literal-no-reading: cancel"
+    ],
+    "nested_step": "Phase1 twin T016 / exact-literal-without-reading-compatibility",
+    "additional_setup_dependencies": [
+      "P1TW-W21 negative deferred-return",
+      "P1TW-W21 negative replay"
+    ],
+    "status": "LEGACY_WORD_GATE; original P3 inventory/P4b decision; not a requirement to preserve no-Reading word fallback forever"
+  }
+}

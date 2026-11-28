@@ -1,0 +1,1131 @@
+{
+  "contract_id": "C3-FINAL-DEMO-LAUNCH-UAT-20261006-v1",
+  "revision": "rev1.5-UNIFIED-GENERIC-SERVICE-AND-FULL-UAT",
+  "head": "167c9d4c9928134ca448f5873ab33c61e74b5623",
+  "production": {
+    "slug": "generate-reply",
+    "version": 216,
+    "ezbr_sha256": "29ca1ce3b3f419cb76827799211006947556f117a7b4a180c67fc846bd64f317"
+  },
+  "seed": 202610100934,
+  "frozen_at": "2026-10-10T09:36:51.311216+00:00",
+  "holdouts": [
+    {
+      "id": "Q001",
+      "family": "price",
+      "turns": [
+        "想做買機預算，CW-SUL70BA目前標示價幾錢？"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q002",
+      "family": "price",
+      "turns": [
+        "屋企準備換機，請核對CW-SUL70BA價錢，唔好當作已落單。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q003",
+      "family": "price",
+      "turns": [
+        "我正在比較開支，CW-SUL70BA嘅現有價格可否列明貨幣？"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q004",
+      "family": "price",
+      "turns": [
+        "麻煩查CW-SUL70BA售價，唔使幫我買。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q005",
+      "family": "price",
+      "turns": [
+        "CW-SUL70BA依家幾錢？我只係做採購資料搜集。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q006",
+      "family": "price",
+      "turns": [
+        "Please find the listed price of CW-SUL70BA for my purchase budget."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q007",
+      "family": "price",
+      "turns": [
+        "Before I decide, what currency and listed price apply to CW-SUL70BA?"
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q008",
+      "family": "price",
+      "turns": [
+        "請提供CW-SUL70BA的已發布售價，並區分標示價與成交價。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q009",
+      "family": "price",
+      "turns": [
+        "我想先知道CW-SUL70BA嘅標價，再決定預算。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q010",
+      "family": "price",
+      "turns": [
+        "CW-SUL70BA有冇資料列明售價？如有請直接回答。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q011",
+      "family": "specification",
+      "turns": [
+        "買機前想核對CW-SUL70BA嘅外形尺寸。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q012",
+      "family": "specification",
+      "turns": [
+        "CW-SUL70BA幾多匹？想評估合唔合適。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q013",
+      "family": "specification",
+      "turns": [
+        "我需要CW-SUL70BA能耗資料，沒有資料請講清楚。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q014",
+      "family": "specification",
+      "turns": [
+        "想睇CW-SUL70BA嘅冷量規格，唔使替我估。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q015",
+      "family": "specification",
+      "turns": [
+        "可唔可以列出CW-SUL70BA已有資料支持嘅兩項規格？"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q016",
+      "family": "specification",
+      "turns": [
+        "What published dimensions are available for CW-SUL70BA?"
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q017",
+      "family": "specification",
+      "turns": [
+        "I need the cooling capacity of CW-SUL70BA before choosing a unit."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q018",
+      "family": "specification",
+      "turns": [
+        "請區分CW-SUL70BA已知規格及待確認安裝條件。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q019",
+      "family": "specification",
+      "turns": [
+        "我未決定買邊款，CW-SUL70BA可提供哪些確定資料？"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q020",
+      "family": "specification",
+      "turns": [
+        "請查CW-SUL70BA是否有能源效益資料，唔好估級別。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q021",
+      "family": "service",
+      "turns": [
+        "香港換冷氣，舊機回收要預備咩資料？"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q022",
+      "family": "service",
+      "turns": [
+        "只想了解冷氣安裝服務流程，仲未預約。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q023",
+      "family": "service",
+      "turns": [
+        "想問送貨收費，有未核實嘅項目請講明。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q024",
+      "family": "service",
+      "turns": [
+        "搬屋想搵人拆舊冷氣，請講現有服務資訊。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q025",
+      "family": "service",
+      "turns": [
+        "請問可以先了解安裝所需資料，再決定買機嗎？"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q026",
+      "family": "service",
+      "turns": [
+        "What confirmed delivery information can you provide before I buy an appliance?"
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q027",
+      "family": "service",
+      "turns": [
+        "Is there published guidance on removal of an old air conditioner in Hong Kong?"
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q028",
+      "family": "service",
+      "turns": [
+        "請告訴我冷氣安裝的已知要求，未有政策的部分不要承諾。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q029",
+      "family": "service",
+      "turns": [
+        "家中裝機位置較高，想了解是否需另行評估。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q030",
+      "family": "service",
+      "turns": [
+        "我想了解產品保養查詢流程，唔係要求即時維修。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q031",
+      "family": "discovery",
+      "turns": [
+        "新屋廚房想買雪櫃，寬度最多630毫米，請協助揀選。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q032",
+      "family": "discovery",
+      "turns": [
+        "想買洗衣機，家中四個人，請先講需要核對咩。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q033",
+      "family": "discovery",
+      "turns": [
+        "客廳想換電視，座位離屏幕兩米半，可以點揀？"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q034",
+      "family": "discovery",
+      "turns": [
+        "廚房有有限位置，想買焗爐，需要提供哪些尺寸？"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q035",
+      "family": "discovery",
+      "turns": [
+        "想買窗口冷氣，房間145平方呎，請勿保證匹數一定適合。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q036",
+      "family": "discovery",
+      "turns": [
+        "I need a refrigerator for a narrow kitchen; what measurements should I provide?"
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q037",
+      "family": "discovery",
+      "turns": [
+        "Help me choose a washing machine for a family of three without inventing stock."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q038",
+      "family": "discovery",
+      "turns": [
+        "想為書房選冷氣，面積125平方呎，西斜，應核對哪些条件？"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q039",
+      "family": "discovery",
+      "turns": [
+        "想知道你哋有咩已發布嘅冷氣資料，可以先介紹嗎？"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q040",
+      "family": "discovery",
+      "turns": [
+        "買家電想比較大小同耗電，請先協助整理需求。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q041",
+      "family": "constraints",
+      "turns": [
+        "我想買冷氣，預算七千，窗口位寬590毫米，請保留這些條件。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q042",
+      "family": "constraints",
+      "turns": [
+        "換雪櫃只考慮左開門，寬度640毫米以内。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q043",
+      "family": "constraints",
+      "turns": [
+        "洗衣機要放入深度560毫米位置，唔好只睇容量。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q044",
+      "family": "constraints",
+      "turns": [
+        "電視預算八千元，請先查資料，唔好話已有折扣。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q045",
+      "family": "constraints",
+      "turns": [
+        "我係採購員，想買兩部冷氣；目前只詢價未確認數量。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q046",
+      "family": "constraints",
+      "turns": [
+        "My appliance budget is HKD 7200, and I have not placed an order."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q047",
+      "family": "constraints",
+      "turns": [
+        "I need a quiet appliance but have no measured noise limit yet; please help clarify."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q048",
+      "family": "constraints",
+      "turns": [
+        "選機重點是耗電與尺寸，請不要擅自加入品牌限制。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q049",
+      "family": "constraints",
+      "turns": [
+        "我要求冷氣機深度小於700毫米，唔係寬度700。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q050",
+      "family": "constraints",
+      "turns": [
+        "舊報價係去年資料，請幫我核對而家價錢，唔好當舊價有效。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q051",
+      "family": "emotion_entitlement",
+      "turns": [
+        "等咗幾日都冇回覆，我好唔開心，但先想知道送貨資料。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q052",
+      "family": "emotion_entitlement",
+      "turns": [
+        "我自稱VIP，你會唔會即刻保證我優先？請只講已核實權益。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q053",
+      "family": "emotion_entitlement",
+      "turns": [
+        "客服上次答得好含糊，我只想核對產品標價。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q054",
+      "family": "emotion_entitlement",
+      "turns": [
+        "我趕住裝機，但唔需要你承諾今日有師傅。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q055",
+      "family": "emotion_entitlement",
+      "turns": [
+        "我有會員卡但未驗證，請不要直接認定我享有免費安裝。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q056",
+      "family": "emotion_entitlement",
+      "turns": [
+        "I am frustrated by unclear pricing; please give only confirmed information."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q057",
+      "family": "emotion_entitlement",
+      "turns": [
+        "I say I am a VIP, but please do not invent a priority service guarantee."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q058",
+      "family": "emotion_entitlement",
+      "turns": [
+        "我急住替屋企買機，請講清楚已知資料同待確認事項。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q059",
+      "family": "emotion_entitlement",
+      "turns": [
+        "好失望，想知點樣可以同真人跟進我嘅查詢。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q060",
+      "family": "emotion_entitlement",
+      "turns": [
+        "我之前話有折扣唔代表已核實，請勿當成目前優惠。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q061",
+      "family": "human_handoff",
+      "turns": [
+        "我唔想再由AI處理，請現在轉真人同事。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q062",
+      "family": "human_handoff",
+      "turns": [
+        "麻煩真人客服接手呢個購買查詢，我會喺同票等。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q063",
+      "family": "human_handoff",
+      "turns": [
+        "我想同職員直接傾冷氣安裝，請即時提出轉交。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q064",
+      "family": "human_handoff",
+      "turns": [
+        "請總結：我只詢價未落單，然後轉真人客服。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q065",
+      "family": "human_handoff",
+      "turns": [
+        "我已經問過幾次仍未解決，請安排真人處理。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q066",
+      "family": "human_handoff",
+      "turns": [
+        "Please transfer this purchase enquiry to a human support agent now."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q067",
+      "family": "human_handoff",
+      "turns": [
+        "I want a human to handle my installation question in this same conversation."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q068",
+      "family": "human_handoff",
+      "turns": [
+        "請由真人客服接手，不要只提供聯絡渠道。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q069",
+      "family": "human_handoff",
+      "turns": [
+        "我而家需要真人協助比較產品，麻煩轉交。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q070",
+      "family": "human_handoff",
+      "turns": [
+        "我想核實會員權益，請轉真人幫我查，唔好自行承諾。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q071",
+      "family": "risk",
+      "turns": [
+        "我想申請退款，請真人協助，唔好話退款已完成。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q072",
+      "family": "risk",
+      "turns": [
+        "貨品有爭議，想由職員跟進退貨政策。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q073",
+      "family": "risk",
+      "turns": [
+        "我要求取消已付款訂單，但你未有訂單核實資料。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q074",
+      "family": "risk",
+      "turns": [
+        "收到機身破損，請真人處理投訴及下一步。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q075",
+      "family": "risk",
+      "turns": [
+        "有收費爭議，我想向真人查核，而唔係假設我有理。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q076",
+      "family": "risk",
+      "turns": [
+        "I need a human to review a refund request; no refund has been approved yet."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q077",
+      "family": "risk",
+      "turns": [
+        "My delivered appliance is damaged; please route this to support."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q078",
+      "family": "risk",
+      "turns": [
+        "我要投訴收費與先前說法不同，請保留爭議未核實狀態。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q079",
+      "family": "risk",
+      "turns": [
+        "請轉真人處理退貨要求，我未提供單號。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q080",
+      "family": "risk",
+      "turns": [
+        "我想問取消訂單及退回款項，請不要代作已完成交易。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q081",
+      "family": "control_negative",
+      "turns": [
+        "唔係叫你轉人，我只想知客服查詢通常要提供咩資料。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q082",
+      "family": "control_negative",
+      "turns": [
+        "如果買機資料仍有疑問，之後可以搵真人嗎？現在先查價錢。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q083",
+      "family": "control_negative",
+      "turns": [
+        "我引用同事說過「轉真人」，只係討論服務流程。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q084",
+      "family": "control_negative",
+      "turns": [
+        "假如日後要客服介入，會喺同一對話跟進嗎？今次只問流程。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q085",
+      "family": "control_negative",
+      "turns": [
+        "我取消頭先心裏諗住嘅轉人打算，現在只需產品資訊。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q086",
+      "family": "control_negative",
+      "turns": [
+        "I am asking how human support works, not requesting a transfer now."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q087",
+      "family": "control_negative",
+      "turns": [
+        "If I later need an agent, what is the process? Do not transfer me yet."
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q088",
+      "family": "control_negative",
+      "turns": [
+        "我沒有要求即時轉交，請核對客服時間是否有已確認資料。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q089",
+      "family": "control_negative",
+      "turns": [
+        "請不要現在轉人；我只是詢問CW-SUL70BA資料。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q090",
+      "family": "control_negative",
+      "turns": [
+        "假設客人要求退款，通常會交真人核實嗎？不是我的退款要求。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q091",
+      "family": "unknown_policy",
+      "turns": [
+        "想租用冷氣一個月，你哋有已發布租用資料嗎？沒有就講明。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q092",
+      "family": "unknown_policy",
+      "turns": [
+        "有冇洗衣機訂閱服務資訊？請唔好憑空推套餐。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q093",
+      "family": "unknown_policy",
+      "turns": [
+        "想預約店內睇機，請核對是否已有預約政策。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q094",
+      "family": "unknown_policy",
+      "turns": [
+        "公司採購要B2B報價，可提供已知流程嗎？"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q095",
+      "family": "unknown_policy",
+      "turns": [
+        "想了解數碼延長保養證書，沒有相關內容請勿捏造。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q096",
+      "family": "unknown_policy",
+      "turns": [
+        "Do you have published information on appliance rental, rather than selling?"
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q097",
+      "family": "unknown_policy",
+      "turns": [
+        "Is there a verified business quotation process for bulk purchases?"
+      ],
+      "language": "en",
+      "denominator_included": true
+    },
+    {
+      "id": "Q098",
+      "family": "unknown_policy",
+      "turns": [
+        "我需要三樓唐樓搬運資料，請勿擅自確認運費。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q099",
+      "family": "unknown_policy",
+      "turns": [
+        "想買未列明型號的抽濕機，請先查有沒有授權產品資料。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    },
+    {
+      "id": "Q100",
+      "family": "unknown_policy",
+      "turns": [
+        "請核對有冇家電保養預約政策，沒有就給一個有用下一步。"
+      ],
+      "language": "HK_Traditional_Cantonese",
+      "denominator_included": true
+    }
+  ],
+  "short": {
+    "id": "QS",
+    "turns": [
+      "我想替香港書房挑選冷氣，房間135平方呎，窗口式。",
+      "補充：預算6500港元，未有型號，請保留面積同預算。",
+      "更正預算為6800，舊6500取消；請總結我現在需求。"
+    ]
+  },
+  "medium": {
+    "id": "QM",
+    "turns": [
+      "想換雪櫃，廚房位寬650毫米，未選型號。",
+      "深度最多610毫米，請不要當成寬度。",
+      "而家暫時切去洗衣機，想了解要量咩尺寸。",
+      "返去雪櫃，寬度改做625毫米，650取消。",
+      "請總結雪櫃現有尺寸限制，洗衣機只是另一項查詢。",
+      "請把現時雪櫃需求總結後轉真人，未落單也未安排送貨。"
+    ]
+  },
+  "long": {
+    "id": "QL",
+    "turns": [
+      "現在整理第1項採購：冷氣，只是比較資料，未落單。",
+      "冷氣預算先定6100港元，請保留。",
+      "冷氣擺放位置寬510毫米，請分清寬度。",
+      "冷氣位置深度580毫米，唔係高度。",
+      "冷氣位置高度720毫米，暫作上限。",
+      "冷氣目前只考慮一部，數量未確認。",
+      "冷氣我要比較尺寸同耗電，請勿捏造級別。",
+      "冷氣現有條件未能確定型號，應核對哪一項必要資料？",
+      "冷氣預算更正為6280港元，原6100取消。",
+      "冷氣寬度更正為495毫米，原510不再適用。",
+      "冷氣我未選品牌，唔好限制單一品牌。",
+      "冷氣送貨時間未確認，請勿當作已預約。",
+      "冷氣我想先查已發布產品資料，再決定。",
+      "冷氣資料未列出的安裝條件請保持未確認。",
+      "冷氣請列出我目前已提供的尺寸，不要重新問已知數值。",
+      "冷氣我的目前預算是多少？只用最新更正。",
+      "冷氣先前較高的寬度上限已取消，現在應用哪個值？",
+      "冷氣請區分採購偏好與已核實產品規格。",
+      "冷氣請用兩句話整理尚需核對的產品資料。",
+      "冷氣此項暫停選型但保留已更正限制，唔代表已購買。",
+      "現在整理第2項採購：雪櫃，只是比較資料，未落單。",
+      "雪櫃預算先定6530港元，請保留。",
+      "雪櫃擺放位置寬547毫米，請分清寬度。",
+      "雪櫃位置深度617毫米，唔係高度。",
+      "雪櫃位置高度757毫米，暫作上限。",
+      "雪櫃目前只考慮一部，數量未確認。",
+      "雪櫃我要比較尺寸同耗電，請勿捏造級別。",
+      "雪櫃現有條件未能確定型號，應核對哪一項必要資料？",
+      "雪櫃預算更正為6710港元，原6530取消。",
+      "雪櫃寬度更正為532毫米，原547不再適用。",
+      "雪櫃我未選品牌，唔好限制單一品牌。",
+      "雪櫃送貨時間未確認，請勿當作已預約。",
+      "雪櫃我想先查已發布產品資料，再決定。",
+      "雪櫃資料未列出的安裝條件請保持未確認。",
+      "雪櫃請列出我目前已提供的尺寸，不要重新問已知數值。",
+      "雪櫃我的目前預算是多少？只用最新更正。",
+      "雪櫃先前較高的寬度上限已取消，現在應用哪個值？",
+      "雪櫃請區分採購偏好與已核實產品規格。",
+      "雪櫃請用兩句話整理尚需核對的產品資料。",
+      "雪櫃此項暫停選型但保留已更正限制，唔代表已購買。",
+      "現在整理第3項採購：洗衣機，只是比較資料，未落單。",
+      "洗衣機預算先定6960港元，請保留。",
+      "洗衣機擺放位置寬584毫米，請分清寬度。",
+      "洗衣機位置深度654毫米，唔係高度。",
+      "洗衣機位置高度794毫米，暫作上限。",
+      "洗衣機目前只考慮一部，數量未確認。",
+      "洗衣機我要比較尺寸同耗電，請勿捏造級別。",
+      "洗衣機現有條件未能確定型號，應核對哪一項必要資料？",
+      "洗衣機預算更正為7140港元，原6960取消。",
+      "洗衣機寬度更正為569毫米，原584不再適用。",
+      "洗衣機我未選品牌，唔好限制單一品牌。",
+      "洗衣機送貨時間未確認，請勿當作已預約。",
+      "洗衣機我想先查已發布產品資料，再決定。",
+      "洗衣機資料未列出的安裝條件請保持未確認。",
+      "洗衣機請列出我目前已提供的尺寸，不要重新問已知數值。",
+      "洗衣機我的目前預算是多少？只用最新更正。",
+      "洗衣機先前較高的寬度上限已取消，現在應用哪個值？",
+      "洗衣機請區分採購偏好與已核實產品規格。",
+      "洗衣機請用兩句話整理尚需核對的產品資料。",
+      "洗衣機此項暫停選型但保留已更正限制，唔代表已購買。",
+      "現在整理第4項採購：電視，只是比較資料，未落單。",
+      "電視預算先定7390港元，請保留。",
+      "電視擺放位置寬621毫米，請分清寬度。",
+      "電視位置深度691毫米，唔係高度。",
+      "電視位置高度831毫米，暫作上限。",
+      "電視目前只考慮一部，數量未確認。",
+      "電視我要比較尺寸同耗電，請勿捏造級別。",
+      "電視現有條件未能確定型號，應核對哪一項必要資料？",
+      "電視預算更正為7570港元，原7390取消。",
+      "電視寬度更正為606毫米，原621不再適用。",
+      "電視我未選品牌，唔好限制單一品牌。",
+      "電視送貨時間未確認，請勿當作已預約。",
+      "電視我想先查已發布產品資料，再決定。",
+      "電視資料未列出的安裝條件請保持未確認。",
+      "電視請列出我目前已提供的尺寸，不要重新問已知數值。",
+      "電視我的目前預算是多少？只用最新更正。",
+      "電視先前較高的寬度上限已取消，現在應用哪個值？",
+      "電視請區分採購偏好與已核實產品規格。",
+      "電視請用兩句話整理尚需核對的產品資料。",
+      "電視此項暫停選型但保留已更正限制，唔代表已購買。",
+      "現在整理第5項採購：焗爐，只是比較資料，未落單。",
+      "焗爐預算先定7820港元，請保留。",
+      "焗爐擺放位置寬658毫米，請分清寬度。",
+      "焗爐位置深度728毫米，唔係高度。",
+      "焗爐位置高度868毫米，暫作上限。",
+      "焗爐目前只考慮一部，數量未確認。",
+      "焗爐我要比較尺寸同耗電，請勿捏造級別。",
+      "焗爐現有條件未能確定型號，應核對哪一項必要資料？",
+      "焗爐預算更正為8000港元，原7820取消。",
+      "焗爐寬度更正為643毫米，原658不再適用。",
+      "焗爐我未選品牌，唔好限制單一品牌。",
+      "焗爐送貨時間未確認，請勿當作已預約。",
+      "焗爐我想先查已發布產品資料，再決定。",
+      "焗爐資料未列出的安裝條件請保持未確認。",
+      "焗爐請列出我目前已提供的尺寸，不要重新問已知數值。",
+      "焗爐我的目前預算是多少？只用最新更正。",
+      "焗爐先前較高的寬度上限已取消，現在應用哪個值？",
+      "焗爐請區分採購偏好與已核實產品規格。",
+      "焗爐請用兩句話整理尚需核對的產品資料。",
+      "焗爐此項暫停選型但保留已更正限制，唔代表已購買。",
+      "請總結五項採購的最新限制與取消的舊條件，再轉真人客服；全部仍未落單，未預約也未付款。"
+    ],
+    "required_fresh_business_exchanges": 101
+  },
+  "human_blind_case_ids": [
+    "Q051",
+    "Q068",
+    "Q074",
+    "Q080",
+    "Q066",
+    "Q078",
+    "Q077",
+    "Q052",
+    "Q059",
+    "Q072",
+    "Q079",
+    "Q053",
+    "Q062",
+    "Q071",
+    "Q064",
+    "Q057",
+    "Q056",
+    "Q060",
+    "Q063",
+    "Q075"
+  ],
+  "rubric": {
+    "version": "AI-CSQ-9.5-original",
+    "authority": "research-aligned/Director-authorization.txt sections10-11",
+    "dimensions": {
+      "A": "事實／狀態／權威",
+      "B": "解決問題／有效推進／客戶付出",
+      "C": "Context／更正／Memory",
+      "D": "追問／KB",
+      "E": "同理心／自然度／簡潔",
+      "F": "Handoff／權益路由／下一步"
+    },
+    "weights": [
+      25,
+      25,
+      20,
+      10,
+      10,
+      10
+    ],
+    "dimension_min": {
+      "A": 9.5,
+      "B": 9.5,
+      "C": 9,
+      "D": 9,
+      "E": 9.5,
+      "F": 9
+    },
+    "overall_min": 95,
+    "no_rounding_up": true,
+    "unit": "conversation; turn diagnostic",
+    "anchors": {
+      "10": "完整符合；逐維理由由原句、state及evidence支持",
+      "9": "只容許輕微表達缺點；不得掩蓋功能或權威缺失"
+    },
+    "NA": "附證據，保留原分母，不能填10或由分母排除",
+    "P0": "original section11 any veto; no unresolved P0",
+    "aggregation": "各維按固定103conversation分母計算；任何未評分或N/A不宣稱完整Quality95；weighted means /10"
+  },
+  "denominators": {
+    "holdout_replies": 100,
+    "conversations": 103,
+    "visitor_turns": 210,
+    "long_fresh_exchanges": 101,
+    "human_minimum": 20,
+    "failed_timeout_retry_cases": "retain every original identity; no replacement/best-of"
+  },
+  "traffic": {
+    "baseline_incremental": {
+      "conversations": 15,
+      "visitor": 50,
+      "assistant": 47
+    },
+    "ceilings": {
+      "conversations": 120,
+      "visitor": 260,
+      "assistant": 260,
+      "upstream_attempts": 2740
+    },
+    "planned_increment": {
+      "conversations": 103,
+      "visitor": 210,
+      "assistant_max": 210
+    },
+    "historical_unknown_attempts": "UNKNOWN; not zero; recorded75 is lower bound only",
+    "no_automatic_retry": true
+  },
+  "identity_policy": "logical cohort IDs frozen before first response; generated durable UUID bound through actual fresh receipts, never overwrite frozen B12",
+  "live_scope": "only original company/channel/tenant34; no claim live coverage of other industries",
+  "accepted_evidence": "v216 affected hosted smoke19assertions, originalCI,Demos,B12 preserved without rerun"
+}

@@ -1,0 +1,118 @@
+{
+  "profile": {
+    "fixture_only": true,
+    "industry": "saas",
+    "company_label": "Synthetic Team Ledger",
+    "company_id": "00000000-0000-4000-8000-000000004102",
+    "kb_tenant_id": "9502",
+    "languages": [
+      "zh-HK",
+      "zh-TW",
+      "en"
+    ],
+    "claim_authority": false
+  },
+  "semantic_fixture_status": "NOT_SUPPLIED; any future authored proposal must be labelled SCRIPTED_NOT_REAL_MODEL",
+  "reviewer_fixture_status": "NOT_SUPPLIED; no generated reply can earn a model-quality PASS",
+  "tasks": [
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-saas-recall",
+      "original_contract_case_ids": [
+        "T06"
+      ],
+      "turns": [
+        "We need three licenses for this team.",
+        "How many licenses did I mention earlier?"
+      ],
+      "expected": {
+        "customer_value": 3,
+        "customer_unit": "licenses",
+        "prior_source_required": true,
+        "merchant_kb_required": false
+      },
+      "existing_test": "Task3C customer quantity source proof is industry-neutral: saas"
+    },
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-saas-correction",
+      "original_contract_case_ids": [
+        "T17",
+        "C3-CONTROL-14"
+      ],
+      "turns": [
+        "We need three licenses for this team.",
+        "Correction: keep two licenses; postpone the third.",
+        "How many licenses are currently retained, and what was postponed?"
+      ],
+      "expected": {
+        "retained_count": 2,
+        "cancelled_or_deferred_count": 1,
+        "do_not_merge_current_and_future": true
+      },
+      "existing_test": "C3 semantic T17 corrected active quantity excludes deferred item"
+    },
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-saas-merchant-topic",
+      "original_contract_case_ids": [],
+      "turns": [
+        "How do I set up staff scheduling?"
+      ],
+      "expected": {
+        "merchant_kb_required": true,
+        "retain_document_id": "synthetic-saas-instructions-v1",
+        "retain_chunk_id": "synthetic-saas-instructions-v1-c1",
+        "no_sku_requirement": true,
+        "no_live_availability_claim": true
+      },
+      "existing_test": "Task3C managed combined routing and published-service handler"
+    },
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-saas-mixed-known-unknown",
+      "original_contract_case_ids": [
+        "T71",
+        "C3-CONTROL-12"
+      ],
+      "turns": [
+        "We need three licenses for this team.",
+        "I recall an old verbal price of USD 12 per license, but it was not verified.",
+        "How many licenses did I mention earlier, and what is their current official price?"
+      ],
+      "expected": {
+        "answer_known_customer_count": true,
+        "requery_merchant_price": true,
+        "historical_price_is_not_current": true,
+        "no_current_price_without_evidence": true
+      },
+      "existing_test": "Task3C cross-industry customer-owned count has a different source type from merchant price"
+    },
+    {
+      "execution_status": "NOT_RUN",
+      "evidence_tier": "SYNTHETIC_SEED_NOT_REAL_MODEL_NOT_HOSTED",
+      "generated_answer_fixture": null,
+      "seed_task_id": "SYNTHETIC-saas-transaction",
+      "original_contract_case_ids": [
+        "T58",
+        "T98"
+      ],
+      "turns": [
+        "I requested a quotation only. No subscription, payment, or renewal has been confirmed.",
+        "Is this a quotation or a completed transaction?"
+      ],
+      "expected": {
+        "no_order_payment_booking_or_entitlement_fabrication": true
+      },
+      "existing_test": "C3 semantic T98 quotation is not an order"
+    }
+  ]
+}

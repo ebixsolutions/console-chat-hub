@@ -59,3 +59,6 @@ verify_jwt = false
 
 [functions.widget-live-ai-test]
 verify_jwt = true
+
+[functions.model-attempt-accounting]
+verify_jwt = false

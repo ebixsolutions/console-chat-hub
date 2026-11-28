@@ -1,0 +1,34 @@
+ORIGINAL SYNTHETIC KNOWLEDGE — NOT A REAL COMPANY FACT
+Shape reference: tests/emergency-p0/chain.test.mjs :: task3cManagedCase.
+Published/currentness values below are fixture data only. They do not attest any real source.
+{
+  "success": true,
+  "context_found": true,
+  "selected_documents": [
+    {
+      "document_id": "synthetic-beauty-instructions-v1",
+      "title": "Synthetic Studio Cedar — 預約方式",
+      "source_type": "Other",
+      "document_score": 0.95,
+      "authority": {
+        "tenant_id": "9503",
+        "publication_state": "published",
+        "currentness": "unknown"
+      },
+      "evidence": [
+        {
+          "chunk_id": "synthetic-beauty-instructions-v1-c1",
+          "chunk_type": "full_content",
+          "content": "測試工作室的預約說明列出：先選服務類別，再提供偏好時段，職員回覆確認後才算預約成立。此文件沒有即時空位、醫療效果或退款承諾。",
+          "score": 0.95
+        }
+      ]
+    }
+  ],
+  "citations": [
+    {
+      "document_id": "synthetic-beauty-instructions-v1",
+      "relevance": "high"
+    }
+  ]
+}

@@ -1,0 +1,691 @@
+{
+  "memory": {
+    "conversation_id": "81d5aece-1f67-5c5d-afa5-a10c1dcbcf6c",
+    "company_id": "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+    "revision": 10,
+    "source_message_id": "8a02c587-2e3b-4aea-97e6-a3a618fa8ef8",
+    "commerce_state_revision": null,
+    "memory": {
+      "version": "conversation-memory-1.0.0",
+      "company_id": "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+      "updated_at": "2026-10-10T06:30:02.8529+00:00",
+      "current_goal": "暫時唔使轉真人客服。我想知 CW-SUL70BA 而家賣幾錢？",
+      "prior_topics": [
+        "暫時唔使轉真人客服 我想知 CW-SUL70BA 而家賣幾錢",
+        "如果一直未解決 再轉真人客服",
+        "等聽日再轉真人客服",
+        "客人話「請轉真人客服」",
+        "假設你唔識答 請轉真人客服"
+      ],
+      "current_topic": "真人客服係咪24小時",
+      "open_questions": [
+        "你想核對產品資料,定係跟進使用問題?"
+      ],
+      "active_entities": [],
+      "conversation_id": "81d5aece-1f67-5c5d-afa5-a10c1dcbcf6c",
+      "current_regions": [],
+      "memory_revision": 10,
+      "pending_actions": [],
+      "historical_facts": [],
+      "source_message_id": "8a02c587-2e3b-4aea-97e6-a3a618fa8ef8",
+      "updated_from_turn": 7,
+      "active_constraints": [],
+      "latest_corrections": [],
+      "question_lifecycle": [
+        {
+          "text": "暫時唔使轉真人客服。我想知 CW-SUL70BA 而家賣幾錢?",
+          "status": "resolved",
+          "entity_id": null,
+          "resolution": "canonical_kb_direct_answer",
+          "source_message_id": "8968c42e-6532-442a-80c8-e5c285637912",
+          "resolution_source_message_id": "a0dd9342-fcd6-4785-88e4-ff176c22185e"
+        },
+        {
+          "text": "你想核對產品資料,定係跟進使用問題?",
+          "status": "pending",
+          "entity_id": null,
+          "resolution": "customer information required",
+          "source_message_id": "0207997e-ea60-487b-b67f-b93204f11052",
+          "resolution_source_message_id": "65a9f7c9-364f-4680-a126-b40211d20ad9"
+        },
+        {
+          "text": "真人客服係咪24小時?",
+          "status": "resolved",
+          "entity_id": null,
+          "resolution": "human_support_information",
+          "source_message_id": "a0974275-97bf-47d8-b073-5ee7adbf0752",
+          "resolution_source_message_id": "9815459e-47f9-43c5-909e-623e01a5b8f8"
+        }
+      ],
+      "transaction_summary": {
+        "order": "unknown",
+        "payment": "unknown",
+        "delivery": "unknown",
+        "quotation": "unknown",
+        "installation": "unknown"
+      },
+      "customer_preferences": [],
+      "current_customer_facts": [],
+      "handoff_relevant_state": {
+        "current_goal": "暫時唔使轉真人客服。我想知 CW-SUL70BA 而家賣幾錢？",
+        "open_questions": [
+          "你想核對產品資料,定係跟進使用問題?"
+        ],
+        "pending_actions": [],
+        "active_entity_ids": []
+      },
+      "cancelled_or_superseded": [],
+      "commerce_state_revision": null,
+      "grounded_reference_lineage": [
+        {
+          "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+          "source_message_id": "8968c42e-6532-442a-80c8-e5c285637912",
+          "evidence_chunk_ids": [
+            "21fd757daf0d45dd8726b05a22c5ce32"
+          ]
+        }
+      ]
+    },
+    "markdown_projection": "### Current Goal\n暫時唔使轉真人客服。我想知 CW-SUL70BA 而家賣幾錢？\n\n### Active Entities\n- —\n\n### Latest Corrections\n- —\n\n### Transaction State\n- Quotation: unknown\n- Order: unknown\n- Payment: unknown\n- Delivery: unknown\n- Installation: unknown\n\n### Open Questions\n- 你想核對產品資料,定係跟進使用問題?\n\n### Pending Actions\n- —\n\n### Historical / Superseded\n- —",
+    "memory_hash": "bc89a620bbb64edb8c164f46640755ebcd8a89784eec55118e8c599ba9cca6e3",
+    "updated_from_turn": 7,
+    "created_at": "2026-10-10 06:27:09.325131+00",
+    "updated_at": "2026-10-10 06:30:06.266348+00",
+    "commerce": null
+  },
+  "receipt": {
+    "id": "81d5aece-1f67-5c5d-afa5-a10c1dcbcf6c",
+    "status": "pending",
+    "company": "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+    "handoffs": [
+      {
+        "id": "0b747969-3546-41ee-a302-dffc278c4fb4",
+        "rule": "R1",
+        "branch": "ESC_R1_EXPLICIT",
+        "source": "d16bf66d-6cea-4cbf-85dd-ce9debb7c533",
+        "summary": "{\"schema_version\": \"c2-handoff-1.0.0\", \"summary_markdown\": \"### Customer Goal\\n更正一下，我想了解香港冷氣機回收，唔係買新機。請先總結我而家嘅需求，再幫我轉真人客服。\\n\\n### Current State\\n- Active entities: 0\\n- Order: unknown\\n- Payment: unknown\\n- Delivery: unknown\\n- Installation: unknown\\n\\n### Latest Correction\\n- —\\n\\n### Pending\\n- —\\n\\n### Handoff Reason\\nVisitor explicitly requested human agent (R1)\\n\\n### Recommended Next Action\\nReview the current request and confirm the next authorized action.\", \"structured_package\": {\"citations\": [], \"company_id\": \"4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec\", \"generated_at\": \"2026-10-10T06:30:48.116787+00:00\", \"handoff_reason\": \"Visitor explicitly requested human agent (R1)\", \"open_questions\": [], \"schema_version\": \"c2-handoff-1.0.0\", \"active_entities\": [], \"confirmed_facts\": [], \"conversation_id\": \"81d5aece-1f67-5c5d-afa5-a10c1dcbcf6c\", \"pending_actions\": [], \"handoff_authority\": \"R1\", \"transaction_state\": {\"order\": \"unknown\", \"payment\": \"unknown\", \"delivery\": \"unknown\", \"quotation\": \"unknown\", \"installation\": \"unknown\"}, \"latest_corrections\": [], \"handoff_reason_code\": \"explicit_customer_request\", \"customer_preferences\": [], \"current_customer_goal\": \"更正一下，我想了解香港冷氣機回收，唔係買新機。請先總結我而家嘅需求，再幫我轉真人客服。\", \"commerce_state_revision\": null, \"recommended_next_human_action\": \"Review the current request and confirm the next authorized action.\", \"current_authoritative_kb_facts\": [], \"historical_or_superseded_facts\": [], \"generated_from_source_message_id\": \"d16bf66d-6cea-4cbf-85dd-ce9debb7c533\", \"safety_or_professional_requirements\": []}}"
+      }
+    ],
+    "messages": [
+      {
+        "id": "8968c42e-6532-442a-80c8-e5c285637912",
+        "role": "visitor",
+        "content": "暫時唔使轉真人客服。我想知 CW-SUL70BA 而家賣幾錢？",
+        "metadata": {
+          "client_message_id": "e55ac1a7-1632-42e2-900c-345696f84cef"
+        },
+        "created_at": "2026-10-10T06:27:03.316614+00:00"
+      },
+      {
+        "id": "a0dd9342-fcd6-4785-88e4-ff176c22185e",
+        "role": "assistant",
+        "content": "目前產品資料列出 CW-SUL70BA 售價為 HK$5,680；實際結帳價請再確認。",
+        "metadata": {
+          "citations": [
+            {
+              "label": "Row 2",
+              "chunk_id": "21fd757daf0d45dd8726b05a22c5ce32",
+              "relevance": "medium",
+              "chunk_type": "full_content",
+              "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+              "source_type": "Product",
+              "target_topics": [
+                "product_facts"
+              ],
+              "evidence_state": "current",
+              "authority_decision": "USE_CURRENT_KB",
+              "target_entity_model": [
+                "sul70ba"
+              ]
+            }
+          ],
+          "answer_kind": "price",
+          "kb_fact_proof": {
+            "field": "selling_price",
+            "model": "CW-SUL70BA",
+            "value": 5680,
+            "chunk_id": "21fd757daf0d45dd8726b05a22c5ce32",
+            "currency": "HKD",
+            "tenant_id": "34",
+            "currentness": "current",
+            "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+            "authority_decision": "USE_CURRENT_KB"
+          },
+          "control_commit": "ai",
+          "rag_api_status": "success",
+          "response_route": "canonical_kb_direct_answer",
+          "b2_commit_source": "commit_ai_reply_tx",
+          "b2_gate_contract": "executeB2PersistenceGate:allow_after_revalidation",
+          "b2_response_hash": "78a01cf7de7f24b843d93e33ffdc8073201842ba054e0264ceeb5adc79a92c4e",
+          "citation_lineage": {
+            "current_target": {
+              "region": null,
+              "topic_ids": [
+                "product_facts"
+              ],
+              "entity_ids": [
+                "sul70ba"
+              ],
+              "explicit_topic": false,
+              "target_changed": false,
+              "explicit_entity": true
+            },
+            "evidence_count": 1,
+            "evidence_state": "current",
+            "authority_decision": "USE_CURRENT_KB",
+            "evidence_chunk_ids": [
+              "21fd757daf0d45dd8726b05a22c5ce32"
+            ],
+            "selected_document_id": "cac65f77a60f43a8bbade929c48e0ef4"
+          },
+          "source_message_id": "8968c42e-6532-442a-80c8-e5c285637912",
+          "b2_idempotency_key": "3e78b72fbd10d16b02bcc2fd35fec3c3c82450247c36ba3b7fd2b495d9995dc2",
+          "reference_authority": {
+            "reason": "highest_bound_current_authority_selected",
+            "contract": "AI-ABC-C1",
+            "decision": "USE_CURRENT_KB",
+            "rejected": [
+              {
+                "reason": "wrong_entity",
+                "source_id": "4f446f53b7cf4dd58a85a84f4d39c39e"
+              },
+              {
+                "reason": "wrong_entity",
+                "source_id": "cb88030ceea74ecc8bdb296564b2b024"
+              },
+              {
+                "reason": "wrong_entity",
+                "source_id": "d9b9d8163a32464083d3a7c46d4adce8"
+              },
+              {
+                "reason": "wrong_entity",
+                "source_id": "c727d3175ec14f15bacfc3e0698518ba"
+              }
+            ],
+            "provenance": {
+              "region": "hong_kong",
+              "version": null,
+              "tenant_id": "34",
+              "topic_ids": [
+                "product_facts",
+                "features",
+                "product row",
+                "row",
+                "sul70ba"
+              ],
+              "entity_ids": [
+                "product row",
+                "row",
+                "sul70ba"
+              ],
+              "currentness": "current",
+              "source_type": "Product"
+            },
+            "selected_source_id": "cac65f77a60f43a8bbade929c48e0ef4",
+            "conflict_source_ids": [],
+            "selected_authority_class": "CURRENT_KB"
+          },
+          "b2_expected_revision": 0,
+          "b2_source_message_id": "8968c42e-6532-442a-80c8-e5c285637912",
+          "kb_retrieval_request": "{\"question\":\"暫時唔使轉真人客服。我想知 CW-SUL70BA 而家賣幾錢?\",\"topic\":\"CW-SUL70BA\",\"requested_facts\":[],\"explicit_ne",
+          "authoritative_kb_facts": [
+            {
+              "field": "model",
+              "model": "CW-SUL70BA",
+              "value": "CW-SUL70BA",
+              "chunk_id": "21fd757daf0d45dd8726b05a22c5ce32",
+              "authority": "CURRENT_KB",
+              "tenant_id": "34",
+              "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+              "source_message_id": "8968c42e-6532-442a-80c8-e5c285637912",
+              "currentness_at_answer": "current"
+            },
+            {
+              "field": "horsepower",
+              "model": "CW-SUL70BA",
+              "value": "3/4匹",
+              "chunk_id": "21fd757daf0d45dd8726b05a22c5ce32",
+              "authority": "CURRENT_KB",
+              "tenant_id": "34",
+              "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+              "source_message_id": "8968c42e-6532-442a-80c8-e5c285637912",
+              "currentness_at_answer": "current"
+            },
+            {
+              "field": "features",
+              "model": "CW-SUL70BA",
+              "value": "變頻 淨冷",
+              "chunk_id": "21fd757daf0d45dd8726b05a22c5ce32",
+              "authority": "CURRENT_KB",
+              "tenant_id": "34",
+              "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+              "source_message_id": "8968c42e-6532-442a-80c8-e5c285637912",
+              "currentness_at_answer": "current"
+            }
+          ],
+          "b2_expected_company_id": "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+          "unresolved_fact_fields": [],
+          "product_follow_up_arbitration": null
+        },
+        "created_at": "2026-10-10T06:27:15.807041+00:00"
+      },
+      {
+        "id": "29b7d33b-8662-4e8d-9cc5-5c61a21e5e9b",
+        "role": "visitor",
+        "content": "如果一直未解決，再轉真人客服",
+        "metadata": {
+          "client_message_id": "13e3c98a-d04b-4ede-bdd7-2426e666ddf6"
+        },
+        "created_at": "2026-10-10T06:27:34.831113+00:00"
+      },
+      {
+        "id": "8375640c-f33e-4a09-99ae-70162c94c10e",
+        "role": "assistant",
+        "content": "收到，呢個係有條件或稍後先考慮嘅轉交，今次唔會當作即時要求；亦未有安排日後自動轉交。",
+        "metadata": {
+          "emotion_trace": null,
+          "missing_slots": [],
+          "recall_reason": "CUSTOMER_STATEMENT_NOT_QUERY",
+          "control_commit": "ai",
+          "response_route": "canonical_memory_clarification",
+          "service_action": "handoff_context_acknowledgement",
+          "knowledge_state": "not_needed",
+          "b2_commit_source": "commit_ai_reply_tx",
+          "b2_gate_contract": "executeB2PersistenceGate:allow_after_revalidation",
+          "b2_response_hash": "c5380876c3dc54e6058240eb7e23f15cc4d124a51dcdae18f54bed80906cd2be",
+          "handoff_required": false,
+          "recall_authority": null,
+          "recall_fact_type": null,
+          "safe_assumptions": [],
+          "entitlement_trace": null,
+          "recall_provenance": [],
+          "source_message_id": "29b7d33b-8662-4e8d-9cc5-5c61a21e5e9b",
+          "b2_idempotency_key": "f8ae3da6dbc73e3e75cd61ce962b87edb02f8030e1da5cb684297d1b41acd967",
+          "entitlement_status": "unknown",
+          "b2_expected_revision": 0,
+          "b2_source_message_id": "29b7d33b-8662-4e8d-9cc5-5c61a21e5e9b",
+          "clarification_target": null,
+          "service_plan_version": "c3-service-plan-1.1.0",
+          "conversation_grounded": false,
+          "b2_expected_company_id": "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+          "commerce_state_revision": null,
+          "service_runtime_version": "c3-service-runtime-1.0.0",
+          "calculation_input_status": "not_requested",
+          "factual_grounding_required": false,
+          "conversation_memory_revision": 3,
+          "clarification_previously_asked": false
+        },
+        "created_at": "2026-10-10T06:27:42.698867+00:00"
+      },
+      {
+        "id": "0207997e-ea60-487b-b67f-b93204f11052",
+        "role": "visitor",
+        "content": "等聽日再轉真人客服",
+        "metadata": {
+          "client_message_id": "0183888b-18a0-4385-aabb-2a5276702dd3"
+        },
+        "created_at": "2026-10-10T06:27:58.369778+00:00"
+      },
+      {
+        "id": "65a9f7c9-364f-4680-a126-b40211d20ad9",
+        "role": "assistant",
+        "content": "仲未確認你指邊項產品。你想核對產品資料，定係跟進使用問題？",
+        "metadata": {
+          "emotion_trace": null,
+          "missing_slots": [
+            "customer_goal"
+          ],
+          "recall_reason": "CUSTOMER_STATEMENT_NOT_QUERY",
+          "control_commit": "ai",
+          "response_route": "canonical_memory_clarification",
+          "service_action": "partial_answer_then_question",
+          "knowledge_state": "not_needed",
+          "b2_commit_source": "commit_ai_reply_tx",
+          "b2_gate_contract": "executeB2PersistenceGate:allow_after_revalidation",
+          "b2_response_hash": "b2f58d8760a8eb579037bfb5181234edf5cb01201658610320963ab8225a1f95",
+          "handoff_required": false,
+          "recall_authority": null,
+          "recall_fact_type": null,
+          "safe_assumptions": [],
+          "entitlement_trace": null,
+          "recall_provenance": [],
+          "source_message_id": "0207997e-ea60-487b-b67f-b93204f11052",
+          "b2_idempotency_key": "ee1e1e8caf47e36db1432f575f5f91c785f38d3ed248c8e6e5e2632653cfb410",
+          "entitlement_status": "unknown",
+          "b2_expected_revision": 0,
+          "b2_source_message_id": "0207997e-ea60-487b-b67f-b93204f11052",
+          "clarification_target": "customer_goal",
+          "service_plan_version": "c3-service-plan-1.1.0",
+          "conversation_grounded": false,
+          "b2_expected_company_id": "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+          "commerce_state_revision": null,
+          "service_runtime_version": "c3-service-runtime-1.0.0",
+          "calculation_input_status": "not_requested",
+          "factual_grounding_required": false,
+          "conversation_memory_revision": 4,
+          "clarification_previously_asked": false
+        },
+        "created_at": "2026-10-10T06:28:06.746928+00:00"
+      },
+      {
+        "id": "03f33c2f-f41b-46db-a22c-639837d83850",
+        "role": "visitor",
+        "content": "客人話「請轉真人客服」",
+        "metadata": {
+          "client_message_id": "778139b6-5d7b-4c6b-bf84-d19d422566f2"
+        },
+        "created_at": "2026-10-10T06:28:35.013894+00:00"
+      },
+      {
+        "id": "58e7bca1-23cf-4560-9842-7f8df0e571b9",
+        "role": "assistant",
+        "content": "呢段引用唔會當作你而家要求轉交真人客服。",
+        "metadata": {
+          "emotion_trace": null,
+          "missing_slots": [],
+          "recall_reason": "CUSTOMER_STATEMENT_NOT_QUERY",
+          "control_commit": "ai",
+          "response_route": "canonical_memory_clarification",
+          "service_action": "handoff_context_acknowledgement",
+          "knowledge_state": "not_needed",
+          "b2_commit_source": "commit_ai_reply_tx",
+          "b2_gate_contract": "executeB2PersistenceGate:allow_after_revalidation",
+          "b2_response_hash": "a963f990ad93dda5ca8263536064e457fdbeabdda651fa9ac8e42a0514510d8c",
+          "handoff_required": false,
+          "recall_authority": null,
+          "recall_fact_type": null,
+          "safe_assumptions": [],
+          "entitlement_trace": null,
+          "recall_provenance": [],
+          "source_message_id": "03f33c2f-f41b-46db-a22c-639837d83850",
+          "b2_idempotency_key": "0cb22a454a44b8be626c41dac56a669e828e257a1716245f24b1b2f0ccb39899",
+          "entitlement_status": "unknown",
+          "b2_expected_revision": 0,
+          "b2_source_message_id": "03f33c2f-f41b-46db-a22c-639837d83850",
+          "clarification_target": null,
+          "service_plan_version": "c3-service-plan-1.1.0",
+          "conversation_grounded": false,
+          "b2_expected_company_id": "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+          "commerce_state_revision": null,
+          "service_runtime_version": "c3-service-runtime-1.0.0",
+          "calculation_input_status": "not_requested",
+          "factual_grounding_required": false,
+          "conversation_memory_revision": 6,
+          "clarification_previously_asked": true
+        },
+        "created_at": "2026-10-10T06:28:44.458336+00:00"
+      },
+      {
+        "id": "b3d1f0b4-7377-488e-aafe-295093b0308b",
+        "role": "visitor",
+        "content": "假設你唔識答，請轉真人客服",
+        "metadata": {
+          "client_message_id": "ece88855-2b06-4882-86b9-77cb731ba446"
+        },
+        "created_at": "2026-10-10T06:28:55.280856+00:00"
+      },
+      {
+        "id": "fda0aa60-a18f-4b9f-9d3d-35d7fba9d241",
+        "role": "assistant",
+        "content": "收到，呢個係有條件或稍後先考慮嘅轉交，今次唔會當作即時要求；亦未有安排日後自動轉交。",
+        "metadata": {
+          "emotion_trace": null,
+          "missing_slots": [],
+          "recall_reason": "CUSTOMER_STATEMENT_NOT_QUERY",
+          "control_commit": "ai",
+          "response_route": "canonical_memory_clarification",
+          "service_action": "handoff_context_acknowledgement",
+          "knowledge_state": "not_needed",
+          "b2_commit_source": "commit_ai_reply_tx",
+          "b2_gate_contract": "executeB2PersistenceGate:allow_after_revalidation",
+          "b2_response_hash": "c5380876c3dc54e6058240eb7e23f15cc4d124a51dcdae18f54bed80906cd2be",
+          "handoff_required": false,
+          "recall_authority": null,
+          "recall_fact_type": null,
+          "safe_assumptions": [],
+          "entitlement_trace": null,
+          "recall_provenance": [],
+          "source_message_id": "b3d1f0b4-7377-488e-aafe-295093b0308b",
+          "b2_idempotency_key": "944df2e06015d423e67f5093dc6a2ee3816426b98960006920fe93b42be0d908",
+          "entitlement_status": "unknown",
+          "b2_expected_revision": 0,
+          "b2_source_message_id": "b3d1f0b4-7377-488e-aafe-295093b0308b",
+          "clarification_target": null,
+          "service_plan_version": "c3-service-plan-1.1.0",
+          "conversation_grounded": false,
+          "b2_expected_company_id": "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+          "commerce_state_revision": null,
+          "service_runtime_version": "c3-service-runtime-1.0.0",
+          "calculation_input_status": "not_requested",
+          "factual_grounding_required": false,
+          "conversation_memory_revision": 7,
+          "clarification_previously_asked": true
+        },
+        "created_at": "2026-10-10T06:29:03.822588+00:00"
+      },
+      {
+        "id": "a0974275-97bf-47d8-b073-5ee7adbf0752",
+        "role": "visitor",
+        "content": "真人客服係咪24小時？",
+        "metadata": {
+          "client_message_id": "3200d7c0-1bdf-4ebd-9756-d37f50415376"
+        },
+        "created_at": "2026-10-10T06:29:25.758153+00:00"
+      },
+      {
+        "id": "9815459e-47f9-43c5-909e-623e01a5b8f8",
+        "role": "assistant",
+        "content": "我目前沒有已確認的真人客服服務時間資料。如果你現在要轉真人客服，可以直接告訴我。",
+        "metadata": {
+          "control_commit": "ai",
+          "response_route": "human_support_information",
+          "escalation_rule": null,
+          "b2_commit_source": "commit_ai_reply_tx",
+          "b2_gate_contract": "executeB2PersistenceGate:allow_after_revalidation",
+          "b2_response_hash": "37e19203c25b40c353bdb9e8ce4e1d98a388fb9b4a9e59edb42dbdd7be1224de",
+          "handoff_required": false,
+          "source_message_id": "a0974275-97bf-47d8-b073-5ee7adbf0752",
+          "b2_idempotency_key": "923bbe4ab5e28b8a900e6c5906d05fcfdff95eebfeb472f8215f6ab47c8f491c",
+          "handoff_intent_kind": "question_about_human_support",
+          "b2_expected_revision": 0,
+          "b2_source_message_id": "a0974275-97bf-47d8-b073-5ee7adbf0752",
+          "b2_expected_company_id": "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec"
+        },
+        "created_at": "2026-10-10T06:29:34.215504+00:00"
+      },
+      {
+        "id": "8a02c587-2e3b-4aea-97e6-a3a618fa8ef8",
+        "role": "visitor",
+        "content": "頭先嗰部型號同價錢係乜？簡單總結一下。",
+        "metadata": {
+          "client_message_id": "7b29a2a1-5439-4440-8495-b7bd64fdf8bc"
+        },
+        "created_at": "2026-10-10T06:30:02.8529+00:00"
+      },
+      {
+        "id": "9cc1369c-5e4a-4f46-b7c8-98a5605c7e34",
+        "role": "assistant",
+        "content": "現行產品資料列出 PANASONIC 樂聲牌 CW-SUL70BA：3/4匹Inverter LITE變頻式淨冷窗口機；功能：變頻 淨冷。 產品資料售價為 HK$5,680。",
+        "metadata": {
+          "citations": [
+            {
+              "label": "Row 2",
+              "chunk_id": "21fd757daf0d45dd8726b05a22c5ce32",
+              "relevance": "medium",
+              "chunk_type": "full_content",
+              "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+              "source_type": "Product",
+              "target_topics": [
+                "product_facts"
+              ],
+              "evidence_state": "current",
+              "authority_decision": "USE_CURRENT_KB",
+              "target_entity_model": [
+                "sul70ba"
+              ]
+            }
+          ],
+          "answer_kind": "price",
+          "kb_fact_proof": {
+            "field": "selling_price",
+            "model": "CW-SUL70BA",
+            "value": 5680,
+            "chunk_id": "21fd757daf0d45dd8726b05a22c5ce32",
+            "currency": "HKD",
+            "tenant_id": "34",
+            "currentness": "current",
+            "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+            "authority_decision": "USE_CURRENT_KB"
+          },
+          "control_commit": "ai",
+          "rag_api_status": "success",
+          "response_route": "canonical_kb_direct_answer",
+          "b2_commit_source": "commit_ai_reply_tx",
+          "b2_gate_contract": "executeB2PersistenceGate:allow_after_revalidation",
+          "b2_response_hash": "fff568c07508ce799021e1b8eaa35b401e351dbe9f5a43be293cc854968d2b1f",
+          "citation_lineage": {
+            "current_target": {
+              "region": null,
+              "topic_ids": [
+                "product_facts"
+              ],
+              "entity_ids": [
+                "sul70ba"
+              ],
+              "explicit_topic": true,
+              "target_changed": false,
+              "explicit_entity": true
+            },
+            "evidence_count": 1,
+            "evidence_state": "current",
+            "authority_decision": "USE_CURRENT_KB",
+            "evidence_chunk_ids": [
+              "21fd757daf0d45dd8726b05a22c5ce32"
+            ],
+            "selected_document_id": "cac65f77a60f43a8bbade929c48e0ef4"
+          },
+          "source_message_id": "8a02c587-2e3b-4aea-97e6-a3a618fa8ef8",
+          "b2_idempotency_key": "87573cdd35a4761e2eabd9668f36c37c0184f5ea8ba683129f86bb11e79dc798",
+          "reference_authority": {
+            "reason": "highest_bound_current_authority_selected",
+            "contract": "AI-ABC-C1",
+            "decision": "USE_CURRENT_KB",
+            "rejected": [
+              {
+                "reason": "wrong_entity",
+                "source_id": "4f446f53b7cf4dd58a85a84f4d39c39e"
+              },
+              {
+                "reason": "wrong_entity",
+                "source_id": "e3df5fc4e58143388693af3512eca7e2"
+              },
+              {
+                "reason": "wrong_entity",
+                "source_id": "cb141ae1d4ee40f5ac50adaf28319aab"
+              }
+            ],
+            "provenance": {
+              "region": "hong_kong",
+              "version": null,
+              "tenant_id": "34",
+              "topic_ids": [
+                "product_facts",
+                "features",
+                "product row",
+                "row",
+                "sul70ba"
+              ],
+              "entity_ids": [
+                "product row",
+                "row",
+                "sul70ba"
+              ],
+              "currentness": "current",
+              "source_type": "Product"
+            },
+            "selected_source_id": "cac65f77a60f43a8bbade929c48e0ef4",
+            "conflict_source_ids": [],
+            "selected_authority_class": "CURRENT_KB"
+          },
+          "b2_expected_revision": 0,
+          "b2_source_message_id": "8a02c587-2e3b-4aea-97e6-a3a618fa8ef8",
+          "kb_retrieval_request": "{\"question\":\"CW-SUL70BA 頭先嗰部型號同價錢係乜?簡單總結一下。\",\"topic\":null,\"requested_facts\":[],\"explicit_negations\":",
+          "authoritative_kb_facts": [
+            {
+              "field": "model",
+              "model": "CW-SUL70BA",
+              "value": "CW-SUL70BA",
+              "chunk_id": "21fd757daf0d45dd8726b05a22c5ce32",
+              "authority": "CURRENT_KB",
+              "tenant_id": "34",
+              "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+              "source_message_id": "8a02c587-2e3b-4aea-97e6-a3a618fa8ef8",
+              "currentness_at_answer": "current"
+            },
+            {
+              "field": "horsepower",
+              "model": "CW-SUL70BA",
+              "value": "3/4匹",
+              "chunk_id": "21fd757daf0d45dd8726b05a22c5ce32",
+              "authority": "CURRENT_KB",
+              "tenant_id": "34",
+              "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+              "source_message_id": "8a02c587-2e3b-4aea-97e6-a3a618fa8ef8",
+              "currentness_at_answer": "current"
+            },
+            {
+              "field": "features",
+              "model": "CW-SUL70BA",
+              "value": "變頻 淨冷",
+              "chunk_id": "21fd757daf0d45dd8726b05a22c5ce32",
+              "authority": "CURRENT_KB",
+              "tenant_id": "34",
+              "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+              "source_message_id": "8a02c587-2e3b-4aea-97e6-a3a618fa8ef8",
+              "currentness_at_answer": "current"
+            }
+          ],
+          "b2_expected_company_id": "4e0ea9f6-11d5-4968-97f6-f0ed8bf7cfec",
+          "unresolved_fact_fields": [],
+          "product_follow_up_arbitration": {
+            "decision": "CURRENT_KB_REQUIRED",
+            "referent": "CW-SUL70BA",
+            "attributes": [
+              "price",
+              "model_info"
+            ],
+            "resolved_topic": null,
+            "source_turn_offset": 5,
+            "resolution_strategy": "RECENT_GLOBAL_REFERENT"
+          }
+        },
+        "created_at": "2026-10-10T06:30:14.163484+00:00"
+      },
+      {
+        "id": "d16bf66d-6cea-4cbf-85dd-ce9debb7c533",
+        "role": "visitor",
+        "content": "更正一下，我想了解香港冷氣機回收，唔係買新機。請先總結我而家嘅需求，再幫我轉真人客服。",
+        "metadata": {
+          "client_message_id": "eaac06f0-1572-4710-a8fe-c803116dfd9a"
+        },
+        "created_at": "2026-10-10T06:30:44.30561+00:00"
+      },
+      {
+        "id": "3e2c15cb-504c-44da-a835-dcf82bc84aee",
+        "role": "assistant",
+        "content": "我們已將你的對話轉交真人客服。客服接手後會在此對話中回覆你；如目前有可用的輪候資料，系統會在此顯示輪候位置及預計等候時間。",
+        "metadata": {},
+        "created_at": "2026-10-10T06:30:48.116787+00:00"
+      }
+    ],
+    "model_log_rows": 6,
+    "metadata_source": {
+      "source": "c3_uat_widget",
+      "synthetic": true,
+      "scope_mode": "canonical",
+      "owner_user_id": "4348ee35-9632-4626-a846-e313bcc4a5f9",
+      "exclude_training": true,
+      "canonical_company_attached": true
+    }
+  }
+}

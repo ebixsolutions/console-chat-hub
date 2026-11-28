@@ -1,3 +1,5 @@
+import { mixedScopedAreaReceipt, sourceAreaFrame, hasPairedSiteProposal,verifiedPairedSiteProposal,readPairedSiteReceipt,pairedSiteReply,PAIRED_SITE_KEY,PAIRED_SITE_PATH,PAIRED_SITE_REASON, hasScopedAreaProposal,verifiedScopedAreaProposal,readScopedAreaReceipt,scopedAreaReply,SCOPED_AREA_KEY,SCOPED_AREA_PATH,SCOPED_AREA_REASON } from "./contextual-customer-update.ts";
+import { retainedRecapTargets } from "./conversation-recall.ts";
 /**
  * TASK A3 — Commerce state runtime adapter.
  *
@@ -16,38 +18,81 @@
  *    through to the existing authoritative KB retrieval path.
  */
 
+import { matchesReferenceLabel } from "./industry-agent-registry.ts";
+import { resolveSourceOwnedSubject,sourceOwnedSubjectLabels,customerOwnedDisplayLabel,safeCustomerDisplayText,canonicalUnitPartitions,renderCanonicalUnitPartition } from "./commerce-subject-resolution.ts";
 import {
   type ConversationCommerceState,
   createEmptyConversationCommerceState,
   isConversationCommerceState,
 } from "./commerce-state-contract.ts";
+import { isCanonicalConversationMemory } from "./conversation-long-memory.ts";
+import { exactProductIdentifiers } from "./natural-customer-response.ts";
 import {
   type CommerceStateEvent,
   type CommerceTurnEntityHint,
   deriveCommerceEventsFromCustomerTurn,
+  extractDeliveryPreference,
+  parseAddressReplacementCorrection,
   reduceCommerceState,
 } from "./commerce-state-reducer.ts";
 import {
   type CommerceAnswerAuthority,
   type CommerceCalculationTerm,
+  type CommerceDimensionAttribute,
+  inferCommerceDimensionAttribute,
+  isCurrentRequirementsRecap,
+  isBareCommerceSubjectMention,
+  customerSunExposure,
+  withoutExcludedLookups,
+  customerBusinessText,
+  acceptsInitialAdviceGoalReading,
+  requirementMutationText,
+  splitCustomerOperationClauses,
+  isReadOnlyCurrentStateAggregateQuery,
+  isReadOnlyMemoryOrCurrentStateRecall,
+  parseCommerceDimensionMeasurement,
   resolveCommerceAnswerAuthority,
+  resolveCustomerRequestDecision,
+  countObservationClauses,countFirstLiteralNumber,countFirstObservation,countObservationQueryMatches,
 } from "./commerce-state-authority.ts";
 import {
   buildCapabilityAwarePreorderNextStep,
   buildGenericCommerceEntityHints,
-  genericEntityLabelFromId,
+  renderEnglishRequirement,
 } from "./commerce-capability-runtime.ts";
+import { resumeCommittedLifecycleReply } from "./revision-bound-reply.ts";
 import type { CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
 import {
   mergeCommerceEntityHints,
   semanticFrameToEntityHints,
   semanticFrameToStateEvents,
+  sourceBoundMixedCustomerFactEvents,
+  sourceBoundCustomerDeclarationClauses,
 } from "./commerce-semantic-adapter.ts";
-import { industryEntityLabel, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
+import { industryEntityQuantityUnit, resolveIndustryContextualCandidate, resolveIndustryCustomerJourney, resolveIndustryRuntime } from "./industry-runtime-adapter.ts";
+import { contextualUpdateEvents, readSourceBoundContextualGoal, resolveContextualCustomerUpdate, resolveSemanticContextualCandidate, verifiedCurrentScopeFacts } from "./contextual-customer-update.ts";
+import { deriveTypedCustomerCalculation, isHistoricalOrConditionalCustomerCalculationRequest } from "./conversation-service-runtime.ts";
+import type { ContextualDecision, ContextualSourceContext, SourceBoundContextualGoal, SourceBoundScopeFact } from "./contextual-customer-update.ts";
 import {
-  HOME_APPLIANCE_CATEGORIES as CATEGORY_SPECS,
-  HOME_APPLIANCE_ROOMS as ROOM_SPECS,
-} from "./industry-profiles/home-appliance-v1.ts";
+  activeCustomerGoal,
+  planCustomerJourney,
+  customerRequestedQuantity,
+  type CustomerJourneyPlan,
+} from "./customer-journey-orchestration.ts";
+import {
+  b2JourneyTransactionBoundary,
+  type B2TrustedCorrectionCommit,
+  type B2TrustedJourneyProgress,
+  type B2TrustedLifecycleCommit,
+  readVerifiedScopedQuantityCorrection,
+  resolveEntityLifecyclePlan,
+  verifyEntityLifecycleTransition,
+} from "./b2-journey-progress-contract.ts";
+// Phase 1: no implicit industry or room vocabulary. Historic fields are
+// retained for data compatibility, not for category detection or routing.
+type InertVocabularyEntry = { key: string; aliases: readonly string[]; label: Record<CommerceLanguage, string> };
+const CATEGORY_SPECS: readonly InertVocabularyEntry[] = [];
+const ROOM_SPECS: readonly InertVocabularyEntry[] = [];
 
 export type CommerceLanguage = "zh-TW" | "zh-CN" | "en";
 
@@ -56,18 +101,22 @@ export interface CommerceStateQueryResult {
   error: unknown;
 }
 
+export interface CommerceStateFilteredQuery {
+  maybeSingle(): Promise<CommerceStateQueryResult>;
+  eq?(column: string, value: string): CommerceStateFilteredQuery;
+}
+
 export interface CommerceStateDbClient {
   from(table: string): {
     select(columns: string): {
-      eq(column: string, value: string): {
-        maybeSingle(): Promise<CommerceStateQueryResult>;
-      };
+      eq(column: string, value: string): CommerceStateFilteredQuery;
     };
   };
   rpc(fn: string, params: Record<string, unknown>): Promise<CommerceStateQueryResult>;
 }
 
 export interface CommerceHistoryTurn {
+  id?: string | null;
   role: string;
   content: string;
 }
@@ -82,6 +131,12 @@ export interface CommerceRuntimeInput {
   occurred_at?: string | null;
   semantic_frame?: CommerceSemanticFrame | null;
   industry_identifier?: string | null;
+  /** Server-derived only: restores focus to one verified active topic. */
+  trusted_product_topic_focus?: {
+    topic: string;
+    product: string;
+    resolution_strategy: "PER_TOPIC_REFERENT_HISTORY";
+  } | null;
 }
 
 export interface CommerceRuntimeOutcome {
@@ -92,7 +147,49 @@ export interface CommerceRuntimeOutcome {
   reason: string;
   state_path?: string | null;
   calculation?: { expression: string; result: number; currency?: string | null } | null;
-  route: "commerce_state_answer" | "commerce_transaction_summary" | "commerce_kb_required";
+  route: "commerce_state_answer" | "commerce_transaction_summary" | "commerce_kb_required" | "product_guidance" | "contextual_scoped_update";
+  contextual_decision?: ContextualDecision;
+  /** Private in-process B2 evidence. Never persist this object as metadata. */
+  trusted_journey_progress?: B2TrustedJourneyProgress;
+  trusted_correction_commit?: B2TrustedCorrectionCommit;
+  trusted_lifecycle_commit?: B2TrustedLifecycleCommit;
+}
+
+export interface CommittedAddressCorrectionResolution {
+  status: "RESOLVED";
+  operation: "FULL_REPLACE" | "SCOPED_COMPONENT_UPDATE";
+  address: string;
+  source_message_id: string;
+  reply: string;
+  reason: "authoritative_address_correction_resolved";
+}
+
+export interface CommittedAddressCorrectionEvidence {
+  text: string;
+  source_message_id: string;
+  language: CommerceLanguage;
+  memory: {
+    source_message_id: string;
+    commerce_state_revision: number | null;
+    current_customer_facts: Array<{
+      key: string;
+      value: unknown;
+      authority: string;
+      source_message_id?: string | null;
+    }>;
+    cancelled_or_superseded: Array<{
+      key: string;
+      value: unknown;
+      source_message_id?: string | null;
+    }>;
+    latest_corrections: string[];
+    open_questions: string[];
+  } | null;
+  commerce: {
+    source_message_id: string;
+    revision: number;
+    state: ConversationCommerceState;
+  } | null;
 }
 
 const COMMERCE_STATE_RPC = "upsert_conversation_commerce_state_v1" as const;
@@ -113,7 +210,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * ------------------------------------------------------------------ */
 
 function matchedAliases(lower: string, aliases: readonly string[]): string[] {
-  return aliases.filter((alias) => alias.trim().length >= 2 && lower.includes(alias.trim().toLowerCase()));
+  return aliases.filter((alias) => matchesReferenceLabel(lower,alias));
 }
 
 function detectCategories(text: string) {
@@ -121,24 +218,951 @@ function detectCategories(text: string) {
   return CATEGORY_SPECS.filter((spec) => matchedAliases(lower, spec.aliases).length > 0);
 }
 
+type AttributeConstraintQueryResolution = {
+  authority: CommerceAnswerAuthority;
+  reason:
+    | "read_only_attribute_constraint_query_resolved"
+    | "read_only_attribute_constraint_query_unresolved";
+  reply: string;
+  state_path: string | null;
+};
+
+type PendingCheckAggregateResolution = {
+  authority: CommerceAnswerAuthority;
+  reason: "read_only_current_state_aggregate_query_resolved" | "read_only_current_state_aggregate_query_unresolved";
+  reply: string;
+  state_path: string | null;
+};
+
+type PendingCheckAggregateScope =
+  | { mode: "global"; source_conflict?: true }
+  | { mode: "entity"; entity_id: string | null };
+
+function pendingCheckLabel(check: string, language: CommerceLanguage): string {
+  const labels: Record<string, Record<CommerceLanguage, string>> = {
+    installation_site_check: { "zh-TW": "安裝現場檢查", "zh-CN": "安装现场检查", en: "installation site check" },
+    window_opening_check: { "zh-TW": "窗口尺寸檢查", "zh-CN": "窗口尺寸检查", en: "window-opening check" },
+    wall_structure_check: { "zh-TW": "牆身承托檢查", "zh-CN": "墙体承托检查", en: "wall-structure check" },
+    electrical_supply_check: { "zh-TW": "電力供應檢查", "zh-CN": "电力供应检查", en: "electrical-supply check" },
+    drainage_check: { "zh-TW": "排水檢查", "zh-CN": "排水检查", en: "drainage check" },
+  };
+  return labels[check]?.[language] ?? clean(check, 120).replaceAll("_", " ");
+}
+
+function resolvePendingCheckAggregateScope(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+  revision: number,
+): PendingCheckAggregateScope {
+  const text = clean(input.text);
+  const lower = text.toLowerCase();
+  const categories = detectCategories(text).map((category) => category.key);
+  const rooms = detectRooms(text).map((room) => room.key);
+  const semanticRefs = input.semantic_frame?.entities.flatMap((entity) => [
+    clean(entity.entity_ref, 160),
+    clean(entity.name, 160),
+    clean(entity.category_hint, 160),
+  ]).filter((value) => {
+    const normalized = value.toLowerCase();
+    return normalized.length >= 2 &&
+      !["product", "item", "installation", "產品", "产品", "安裝", "安装"].includes(normalized) &&
+      lower.includes(normalized);
+  }) ?? [];
+  const explicitDeictic = /(?:呢|這|这|嗰|那)(?:一|兩|两|二|\d+)?(?:部|件|個|个|樣|样|位)|\bthis\s+(?:one|item|unit|product|installation|refrigerator|fridge|air\s*conditioner)\b|\bfor\s+(?:this|the)\b/i.test(text);
+  const active = state.entities.filter((entity) =>
+    ["researching", "tentative", "confirmed"].includes(entity.status)
+  );
+  // A customer-named, already persisted product/service is a scoped read,
+  // even when this industry has no registered vocabulary and the semantic
+  // frame omits an entity. Never turn that question into a global aggregate.
+  // Full recorded labels only: no partial category guess, raw-history
+  // promotion, model-only name, new entity, or state mutation.
+  // A named inactive item is still an entity-scoped question. Its absence
+  // from the active candidates cannot turn the question into a global read.
+  const sourceNamed = state.entities.filter((entity) =>
+    entity.provenance.source_type === "customer" &&
+    Boolean(entity.provenance.source_message_id) &&
+    sourceOwnedSubjectLabels(entity).some((label) =>
+      matchesReferenceLabel(text, label))
+  );
+  const sourceScope = categories.length > 0 || rooms.length > 0 ||
+    semanticRefs.length > 0 || explicitDeictic || sourceNamed.length > 0;
+  const frame = input.semantic_frame;
+  const suppliedDemands = frame?.demands ?? [];
+  // A demanded subject is not the same as an incidental model referent.
+  // It must never disappear merely because no known customer alias matched.
+  const demandedScope = suppliedDemands.some(demand => demand.subject_refs.length > 0);
+  const explicitScope = sourceScope || demandedScope;
+  const invalidOperation = Boolean(frame && (!["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) ||
+    frame.customer_correction || frame.additive || frame.explicit_negations.length ||
+    frame.customer_facts?.length));
+  const invalidDemand = suppliedDemands.some(demand =>
+    demand.customer_correction || demand.explicit_negations.length ||
+    !clean(demand.source_quote,2400) || !text.includes(clean(demand.source_quote,2400)));
+  if (!explicitScope) {
+    // No demanded item needs resolving for an already admitted global,
+    // committed-state aggregate. Incidental entity ambiguity/confidence does
+    // not invalidate it; genuine domain/source/operation conflicts still do.
+    // This path only selects a read scope, never a writer or a new fact.
+    if (invalidOperation || invalidDemand || hasPendingCheckDomainAmbiguity(input))
+      return { mode: "global", source_conflict: true };
+    return { mode: "global" };
+  }
+  // A model-demanded scope without original-text corroboration cannot be
+  // converted into either global or specific-item authority.
+  if (invalidOperation || invalidDemand || (demandedScope && !sourceScope) ||
+    frame?.ambiguity.is_ambiguous || suppliedDemands.some(demand => demand.ambiguity.is_ambiguous))
+    return { mode: "entity", entity_id: null };
+  // Confidence controls positive scoped selection, not validation of supplied evidence.
+  const qualified = frame && ["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) &&
+    frame.confidence >= 0.9 && !frame.ambiguity.is_ambiguous && !frame.customer_correction &&
+    !frame.additive && !frame.customer_facts?.length && input.company_id &&
+    input.conversation_id && input.source_message_id;
+  const references = qualified ? frame.referents.filter(reference =>
+    reference.source === "persistent_state" && reference.confidence >= 0.9) : [];
+  const referenceIds = [...new Set(references.map(reference => reference.ref))];
+  const selected = referenceIds.length === 1 ? active.filter(entity => entity.entity_id === referenceIds[0] &&
+    entity.provenance.source_type === "customer" && Boolean(entity.provenance.source_message_id) &&
+    ["researching", "tentative", "confirmed"].includes(entity.status)) : [];
+  // This bound applies to the new selector, not the existing no-reading path.
+  if (referenceIds.length && (!Number.isSafeInteger(revision) || revision < 1 || selected.length !== 1))
+    return { mode: "entity", entity_id: null };
+
+  let candidates = active.filter((entity) => {
+    if (selected.length && selected[0].entity_id !== entity.entity_id) return false;
+    // A duplicate customer label is ambiguous; competing canonical entities
+    // must never be picked by array order or the previous topic.
+    if (sourceNamed.length && !sourceNamed.some((named) =>
+      named.entity_id === entity.entity_id)) return false;
+    if (categories.length && !categories.includes(entity.category)) return false;
+    if (rooms.length) {
+      const room = entity.entity_id.split(":")[1] ?? "";
+      if (!rooms.includes(room)) return false;
+    }
+    if (semanticRefs.length) {
+      // A scoped operational read may select a customer's already persisted
+      // product/service name or model. Never use a partial substring or a
+      // semantic echo as proof of an unrelated canonical entity.
+      const sourceLabels = [entity.entity_id, entity.category,
+        ...sourceOwnedSubjectLabels(entity)].map((value) => clean(value, 160).toLowerCase());
+      if (!semanticRefs.some((ref) =>
+        sourceLabels.includes(clean(ref, 160).toLowerCase()))) return false;
+    }
+    return true;
+  });
+  if (!categories.length && !rooms.length && !semanticRefs.length && !sourceNamed.length &&
+    !selected.length && explicitDeictic) {
+    candidates = active;
+  }
+  const target = candidates.length === 1 ? candidates[0] : null;
+  if (!target || target.provenance.source_type !== "customer" ||
+    !target.provenance.source_message_id) return { mode: "entity", entity_id: null };
+  if (frame?.referents.some(reference => reference.confidence >= 0.9 &&
+    (reference.source === "persistent_state" ||
+      state.entities.some(entity => entity.entity_id === reference.ref)) &&
+    reference.ref !== target.entity_id)) return { mode: "entity", entity_id: null };
+  // Validate only supplied demand facts. Empty/absent demand lists add no gate.
+  const owned = state.entities.filter(entity => entity.provenance.source_type === "customer" &&
+    Boolean(entity.provenance.source_message_id));
+  for (const demand of suppliedDemands) for (const ref of demand.subject_refs) {
+    const subject = clean(ref,160);
+    if (!subject) return { mode: "entity", entity_id: null };
+    const named = owned.filter(entity => [entity.entity_id,entity.category,...sourceOwnedSubjectLabels(entity)]
+      .some(label => clean(label,160).toLowerCase() === subject.toLowerCase()));
+    // A new name in the exact current quote is not a stored alias for this
+    // item. Only a unique customer-owned canonical identity can bind it.
+    if (named.length !== 1 || named[0].entity_id !== target.entity_id)
+      return { mode: "entity", entity_id: null };
+  }
+  return { mode: "entity", entity_id: target.entity_id };
+}
+
+function hasPendingCheckDomainAmbiguity(input: CommerceRuntimeInput): boolean {
+  const frame = input.semantic_frame;
+  const ambiguities = [frame?.ambiguity, ...(frame?.demands ?? []).map(demand => demand.ambiguity)];
+  return ambiguities.some(ambiguity => ambiguity?.is_ambiguous === true &&
+    ambiguity.reasons.some((reason) =>
+      /(?:incompatible|different|multiple)\s+(?:meaning|interpretation|domain)|(?:師傅|师傅|technician|professional).*(?:意思|含義|含义|meaning|ambiguous)/i.test(
+        clean(reason, 240),
+      )
+    ));
+}
+
+function pendingCheckUnknownReply(
+  language: CommerceLanguage,
+  mode: PendingCheckAggregateScope["mode"],
+): string {
+  if (mode === "global") {
+    if (language === "en") return "I can't confirm the current pending technician-check total because no authoritative pending-check state is available yet.";
+    if (language === "zh-CN") return "目前没有可核实的待师傅确认状态，所以暂时无法确认总数。";
+    return "而家未有可核實嘅待師傅確認狀態，所以暫時未能確認總數。";
+  }
+  if (language === "en") return "Which product or installation do you mean? I can check its pending technician items without changing them.";
+  if (language === "zh-CN") return "你是指哪件产品或哪项安装？我可以只查看对应的待师傅确认项目，不会更改它们。";
+  return "你係指邊件產品或邊項安裝？我可以只查看對應嘅待師傅確認項目，唔會更改佢哋。";
+}
+
+function resolvePendingCheckAggregateQuery(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+  revision: number,
+): PendingCheckAggregateResolution | null {
+  if (
+    !isReadOnlyCurrentStateAggregateQuery(input.text, input.semantic_frame) &&
+    !/(?:有咩|有什么|what).{0,18}(?:仲未|還沒|还没|未|not yet|outstanding|pending).{0,12}(?:confirm|確認|确认)|(?:仲未|還沒|还没|not yet).{0,12}(?:confirm|確認|确认).{0,12}(?:有咩|有什么|what)/i.test(input.text)
+  ) return null;
+  const scope = resolvePendingCheckAggregateScope(input, state, revision);
+  if (scope.mode === "global" && scope.source_conflict) {
+    const reply = input.language === "en"
+      ? "I couldn't verify the current pending-check request. Please confirm what you want me to check."
+      : input.language === "zh-CN"
+        ? "暂时无法核实这次待确认事项查询。请确认你想查看哪些事项。"
+        : "暫時未能核實今次待確認事項查詢。請確認你想查看邊啲事項。";
+    return { authority: "INSUFFICIENT_INFORMATION", reason: "read_only_current_state_aggregate_query_unresolved", reply, state_path: null };
+  }
+  if (
+    !Number.isSafeInteger(revision) || revision < 1 ||
+    (scope.mode === "global" && hasPendingCheckDomainAmbiguity(input)) ||
+    (scope.mode === "entity" &&
+      (scope.entity_id === null || hasPendingCheckDomainAmbiguity(input)))
+  ) {
+    const reply = pendingCheckUnknownReply(input.language, scope.mode);
+    return { authority: "INSUFFICIENT_INFORMATION", reason: "read_only_current_state_aggregate_query_unresolved", reply, state_path: null };
+  }
+  const scopedItems = state.installation.items.filter((item) =>
+    item.status === "pending" &&
+    (scope.mode === "global" || item.entity_id === scope.entity_id)
+  );
+  if (
+    scope.mode === "entity" &&
+    state.installation.pending_checks.length > 0 &&
+    !state.installation.items.some((item) => Boolean(item.entity_id))
+  ) {
+    return {
+      authority: "INSUFFICIENT_INFORMATION",
+      reason: "read_only_current_state_aggregate_query_unresolved",
+      reply: pendingCheckUnknownReply(input.language, scope.mode),
+      state_path: null,
+    };
+  }
+  const pending = [...new Set([
+    ...(scope.mode === "global" ? state.installation.pending_checks : []),
+    ...scopedItems.map((item) => item.kind),
+  ].map((item) => clean(item, 160)).filter(Boolean))];
+  const labels = pending.map((item) => pendingCheckLabel(item, input.language));
+  const asksForList = /(?:邊啲|边啲|哪些|which\s+(?:checks?|items?)|what\s+(?:still\s+)?(?:needs?|requires?))/i.test(input.text);
+  let reply: string;
+  if (input.language === "en") {
+    reply = pending.length === 0
+      ? "There are currently no pending technician-confirmation items."
+      : asksForList
+      ? `The pending technician-confirmation item${pending.length === 1 ? " is" : "s are"}: ${labels.join(", ")}.`
+      : `There ${pending.length === 1 ? "is" : "are"} currently ${pending.length} pending technician-confirmation item${pending.length === 1 ? "" : "s"}: ${labels.join(", ")}.`;
+  } else if (input.language === "zh-CN") {
+    reply = pending.length === 0 ? "目前没有待师傅确认的项目。" : asksForList ? `待师傅确认的是：${labels.join("、")}。` : `目前有 ${pending.length} 项待师傅确认：${labels.join("、")}。`;
+  } else {
+    reply = pending.length === 0 ? "而家冇待師傅確認嘅項目。" : asksForList ? `待師傅確認嘅係：${labels.join("、")}。` : `而家有 ${pending.length} 項要師傅確認：${labels.join("、")}。`;
+  }
+  return {
+    authority: "CONVERSATION_STATE",
+    reason: "read_only_current_state_aggregate_query_resolved",
+    reply,
+    state_path: scope.mode === "global"
+      ? "installation.pending_checks"
+      : `installation.items[entity_id=${scope.entity_id}]`,
+  };
+}
+
+function semanticCategoryKeys(frame: CommerceSemanticFrame | null | undefined): string[] {
+  if (!frame) return [];
+  const values = [
+    frame.topic,
+    ...frame.entities.flatMap((entity) => [
+      entity.category_hint ?? "",
+      entity.entity_ref ?? "",
+      entity.name ?? "",
+    ]),
+    ...frame.referents.map((referent) => referent.ref),
+  ];
+  const keys = new Set<string>();
+  for (const value of values) {
+    const normalized = clean(value, 160).toLowerCase();
+    if (!normalized) continue;
+    const exact = CATEGORY_SPECS.find((spec) => spec.key === normalized);
+    if (exact) keys.add(exact.key);
+    for (const category of detectCategories(normalized)) keys.add(category.key);
+  }
+  return [...keys];
+}
+
+function explicitCategoryKeys(text: string): string[] {
+  return [...new Set(detectCategories(text).map((category) => category.key))];
+}
+
+/** An initialism is evidence only when it expands to the already stored,
+ * uniquely active canonical topic AND the customer's original same-product
+ * message contains those exact topic words. No trade-name translation table,
+ * history-derived quantity, or new alias is created. */
+function sourceAttestedTopicInitialism(
+  customerSource: string, sourceSubject: string, canonicalTopic: string,
+): boolean {
+  const words = canonicalTopic.replace(/[_-]+/gu, " ").split(/\s+/u).filter(Boolean);
+  if (words.length < 2 || words.length > 5 ||
+      !words.every(word => /^[a-z]{2,32}$/iu.test(word)) ||
+      !/^[a-z]{2,5}$/iu.test(sourceSubject)) return false;
+  const initials = words.map(word => word[0].toUpperCase()).join("");
+  return sourceSubject.toUpperCase() === initials &&
+    matchesReferenceLabel(customerSource, words.join(" "));
+}
+
+/** The existing return-clause parser, shared by validation and the committed
+ * literal alias receipt. It never derives a label from a category. */
+function trustedResearchReturnSubject(text: string): string {
+  const returning = text.split(/[，,；;。!?！？]/).find((part) =>
+    /(?:講返|说回|講回|返去|回到|back\s+to|return\s+to)/i.test(part));
+  return returning
+    ? returning.replace(/^.*?(?:講返|说回|講回|返去|回到|back\s+to|return\s+to)\s*/iu, "")
+      .replace(/^(?:(?:頭先|头先|之前|先前|剛才|刚才|嗰|呢|那|這|这|個|个|一|兩|两|件|部|台|隻|只|張|张|款|種|种)\s*|(?:the|my|our|that|this|previous|earlier|same|one|it)\b\s*)+/iu, "")
+      .trim()
+    : "";
+}
+
+export function validateTrustedProductTopicFocus(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+): { valid: true } | { valid: false; reason: string } {
+  const focus = input.trusted_product_topic_focus;
+  if (!focus) return { valid: false, reason: "FOCUS_MISSING" };
+  if (focus.resolution_strategy !== "PER_TOPIC_REFERENT_HISTORY") return { valid: false, reason: "UNTRUSTED_RESOLUTION_STRATEGY" };
+  const explicitTopics = explicitCategoryKeys(input.text);
+  const returning = input.text.split(/[，,；;。!?！？]/).find((part) =>
+    /(?:講返|说回|講回|返去|回到|back\s+to|return\s+to)/i.test(part)
+  );
+  const returnTopics = returning ? explicitCategoryKeys(returning) : [];
+  // After Phase 1 removed industry vocabulary, an empty returnTopics list
+  // cannot prove that "back to <other item>" refers to the trusted focus.
+  // A new explicit return subject must occur in customer-authored history
+  // together with the exact focus product. Deictic-only returns can still
+  // use the separately validated unique active focus. No industry noun list.
+  const returnSubject = trustedResearchReturnSubject(input.text);
+  if (returnSubject && !(input.history ?? []).some((turn) =>
+    ["visitor", "user", "customer"].includes(turn.role) &&
+    clean(turn.content).toUpperCase().includes(clean(focus.product).toUpperCase()) &&
+    (matchesReferenceLabel(turn.content, returnSubject) ||
+      sourceAttestedTopicInitialism(turn.content, returnSubject, focus.topic))
+  )) return { valid: false, reason: "RETURN_SUBJECT_SOURCE_MISMATCH" };
+  if (!(explicitTopics.length === 1 && explicitTopics[0] === focus.topic) &&
+    !(returning && (returnTopics.length === 0 ||
+      (returnTopics.length === 1 && returnTopics[0] === focus.topic)))) {
+    return { valid: false, reason: "EXPLICIT_TOPIC_MISMATCH" };
+  }
+  const matchingActiveEntities = state.entities.filter((entity) => entity.category === focus.topic && entity.status !== "cancelled" && entity.status !== "deferred");
+  if (matchingActiveEntities.length !== 1) return { valid: false, reason: "ACTIVE_TOPIC_ENTITY_NOT_UNIQUE" };
+  const product = clean(focus.product).toUpperCase();
+  if (product.length < 5 || !/[A-Z]/.test(product) || !/\d/.test(product)) return { valid: false, reason: "INVALID_EXPLICIT_PRODUCT" };
+  if (!(input.history ?? []).some((turn) => clean(turn.content).toUpperCase().includes(product))) return { valid: false, reason: "PRODUCT_NOT_IN_SCOPED_HISTORY" };
+  return { valid: true };
+}
+
+/** Project only validated source-bound research identity onto the existing unique entity. */
+function trustedResearchFocusEvents(input: CommerceRuntimeInput, state: ConversationCommerceState): CommerceStateEvent[] {
+  const focus = input.trusted_product_topic_focus;
+  if (!focus || !validateTrustedProductTopicFocus(input, state).valid) return [];
+  const entity = state.entities.find(e => e.category === focus.topic && e.status !== "cancelled" && e.status !== "deferred")!;
+  const literal = trustedResearchReturnSubject(input.text);
+  const canRetain = literal.length >= 2 && literal.length <= 160 && input.text.length <= 2400 && input.text.includes(literal) &&
+    input.company_id.length > 0 && input.conversation_id.length > 0 && input.source_message_id.length > 0;
+  const priorAliases = Array.isArray(entity.attributes.source_owned_recap_aliases)
+    ? entity.attributes.source_owned_recap_aliases : [];
+  const aliases = canRetain ? [...priorAliases.filter(value => value && typeof value === "object" &&
+    !Array.isArray(value) && (value as Record<string, unknown>).alias !== literal).slice(-7), {
+      contract: "source-owned-recap-alias-v1", alias: literal, entity_id: entity.entity_id,
+      company_id: input.company_id, conversation_id: input.conversation_id,
+      source_message_id: input.source_message_id, source_quote: input.text,
+      model: clean(focus.product).toUpperCase(),
+    }] : null;
+  return [{ type: "SET_CONTEXT", topic: focus.topic },
+    { type: "UPDATE_ENTITY", entity_id: entity.entity_id, patch: { model: clean(focus.product).toUpperCase(),
+      ...(aliases ? { attributes: { source_owned_recap_aliases: aliases } } : {}) },
+      provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } }];
+}
+
+/** Server-snapshot, original customer-owned exact referent. No industry alias
+ * or singleton category grants an attribute scope. */
+function trustedAttributeReferent(input:CommerceRuntimeInput,state:ConversationCommerceState):
+ ConversationCommerceState["entities"][number]|null {
+ const frame=input.semantic_frame;
+ if(!frame||frame.confidence<0.90||frame.ambiguity.is_ambiguous||
+    !input.company_id||!input.conversation_id||!input.source_message_id)return null;
+ const refs=frame.referents.filter(r=>r.confidence>=0.90&&
+    ["persistent_state","prior_turn"].includes(r.source));
+ if(refs.length!==1)return null;
+ const e=state.entities.find(e=>e.entity_id===refs[0].ref&&
+    e.provenance.source_type==="customer"&&!!e.provenance.source_message_id&&
+    !["cancelled","deferred","superseded"].includes(e.status));
+ return e&&sourceOwnedSubjectLabels(e).some(label=>
+    matchesReferenceLabel(input.text,label))?e:null;
+}
+
+/** A read-only semantic topic may select an exact stored category when that
+ * category has one customer-owned subject. Selecting a subject is separate
+ * from finding its dimension limit: a missing limit requires a targeted
+ * clarification, not another product-identification question.
+ * The model supplies no value and grants no writer action.
+ * This also supports older canonical records that have no display-name alias;
+ * no industry dictionary or raw-history constraint is restored. */
+function canonicalDimensionReferent(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+): { entity: ConversationCommerceState["entities"][number] | null; ambiguous: boolean } {
+  const frame = input.semantic_frame;
+  if (!frame || frame.operation !== "ASK_FACT" || frame.confidence < 0.9 ||
+    frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+    frame.explicit_negations.length || !input.company_id || !input.conversation_id ||
+    !input.source_message_id || !isReadOnlyCommerceQuestion(input.text, frame))
+    return { entity: null, ambiguous: false };
+  const topic = clean(frame.topic, 160);
+  const attribute = inferCommerceDimensionAttribute(input.text, frame);
+  if (!topic || !attribute || !parseCommerceDimensionMeasurement(input.text))
+    return { entity: null, ambiguous: false };
+  const active = state.entities.filter(entity =>
+    entity.provenance.source_type === "customer" && Boolean(entity.provenance.source_message_id) &&
+    !["cancelled", "deferred", "superseded"].includes(entity.status));
+  const candidates = active.filter(entity => entity.category === topic);
+  if (candidates.length !== 1) return { entity: null, ambiguous: candidates.length > 1 };
+  const entity = candidates[0];
+  const named = active.filter(candidate => sourceOwnedSubjectLabels(candidate).some(label =>
+    matchesReferenceLabel(input.text, label)));
+  const conflictingReference = frame.referents.some(reference =>
+    reference.confidence >= 0.9 &&
+    (reference.source === "persistent_state" ||
+      state.entities.some(stored => stored.entity_id === reference.ref)) &&
+    reference.ref !== entity.entity_id);
+  const conflictingEntity = frame.entities.some(candidate =>
+    candidate.confidence >= 0.9 && ((candidate.category_hint && candidate.category_hint !== topic) ||
+      (active.some(stored => stored.entity_id === candidate.entity_ref) &&
+        candidate.entity_ref !== entity.entity_id)));
+  if (named.some(candidate => candidate.entity_id !== entity.entity_id) ||
+    conflictingReference || conflictingEntity)
+    return { entity: null, ambiguous: false };
+  return { entity, ambiguous: false };
+}
+
+/** A supplied semantic demand is additional evidence to verify, never a
+ * reason to ignore an original-source conflict. This check applies equally
+ * to literal and semantic selectors and does not invent missing readings. */
+function dimensionDemandMatchesTarget(input: CommerceRuntimeInput,
+  state: ConversationCommerceState, entityId: string | undefined): boolean {
+  const frame = input.semantic_frame;
+  if (!frame) return true;
+  if (!["ASK_FACT", "NO_STATE_CHANGE"].includes(frame.operation) ||
+    frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+    frame.explicit_negations.length) return false;
+  const target = entityId ? state.entities.find(entity => entity.entity_id === entityId) : null;
+  const owned = state.entities.filter(entity => entity.provenance.source_type === "customer" &&
+    Boolean(entity.provenance.source_message_id));
+  if (target && frame.referents.some(reference => reference.confidence >= 0.9 &&
+    (reference.source === "persistent_state" ||
+      state.entities.some(entity => entity.entity_id === reference.ref)) &&
+    reference.ref !== target.entity_id)) return false;
+  for (const demand of frame.demands ?? []) {
+    const quote = clean(demand.source_quote, 2400);
+    if (!quote || !clean(input.text, 2400).includes(quote) ||
+      demand.customer_correction || demand.ambiguity.is_ambiguous ||
+      demand.explicit_negations.length) return false;
+    for (const ref of demand.subject_refs) {
+      const subject = clean(ref, 160);
+      if (!subject) return false;
+      const named = owned.filter(entity =>
+        [entity.entity_id, entity.category, ...sourceOwnedSubjectLabels(entity)].some(label =>
+          clean(label, 160).toLowerCase() === subject.toLowerCase()));
+      // A newly mentioned name is evidence of the question's subject, not
+      // evidence that it is this existing item. A literal quote alone cannot
+      // merge the two subjects through a model-proposed topic.
+      if (!target || named.length !== 1 || named[0].entity_id !== target.entity_id) return false;
+    }
+  }
+  return true;
+}
+function resolveAttributeQueryCategory(input: CommerceRuntimeInput,
+  state?:ConversationCommerceState): {
+  category: string | null;
+  ambiguous: boolean;
+  entity_id?: string;
+} {
+  // Current-turn semantics outrank stale topic inheritance.  A unique explicit
+  // category in the utterance is the strongest binding, followed by the
+  // schema-constrained semantic frame, then the nearest prior customer topic.
+  const current = explicitCategoryKeys(input.text);
+  if (current.length > 1) return { category: null, ambiguous: true };
+  if (current.length === 1) return { category: current[0], ambiguous: false };
+  const bound=state?trustedAttributeReferent(input,state):null;
+  if(bound)return {category:bound.category,entity_id:bound.entity_id,ambiguous:false};
+  const canonical = state ? canonicalDimensionReferent(input, state) : null;
+  if (canonical?.ambiguous) return { category: null, ambiguous: true };
+  if (canonical?.entity) return { category: canonical.entity.category,
+    entity_id: canonical.entity.entity_id, ambiguous: false };
+  const semantic = semanticCategoryKeys(input.semantic_frame);
+  if (semantic.length > 1) return { category: null, ambiguous: true };
+  if (semantic.length === 1) return { category: semantic[0], ambiguous: false };
+
+  for (const turn of input.history ?? []) {
+    if (!["visitor", "user", "customer"].includes(turn.role)) continue;
+    const recent = explicitCategoryKeys(turn.content);
+    if (recent.length > 1) return { category: null, ambiguous: true };
+    if (recent.length === 1) return { category: recent[0], ambiguous: false };
+  }
+  return { category: null, ambiguous: false };
+}
+
+function dimensionConstraintKey(attribute: CommerceDimensionAttribute): string[] {
+  return [`max_${attribute}_mm`, `${attribute}_max_mm`, `${attribute}_mm`, attribute];
+}
+
+function numericConstraint(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  if (typeof value !== "string") return null;
+  return (
+    parseCommerceDimensionMeasurement(value)?.value_mm ??
+    (/^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) : null)
+  );
+}
+
+function stateDimensionConstraint(
+  state: ConversationCommerceState,
+  category: string,
+  attribute: CommerceDimensionAttribute,
+  entityId:string|null=null,
+): { value_mm: number; path: string } | null {
+  const active=state.entities.filter(entity=>
+    entity.category===category && (!entityId||entity.entity_id===entityId) &&
+    entity.status!=="cancelled"&&entity.status!=="deferred");
+  if (active.length === 1) {
+    const entityIndex = state.entities.indexOf(active[0]);
+    for (const key of dimensionConstraintKey(attribute)) {
+      const value = numericConstraint(active[0].constraints[key]);
+      if (value !== null) {
+        return { value_mm: value, path: `entities.${entityIndex}.constraints.${key}` };
+      }
+    }
+  }
+
+  if(entityId)return null; // A specific item cannot inherit another's limit.
+  const categoryConstraints = state.customer_constraints[category];
+  if (isRecord(categoryConstraints)) {
+    for (const key of dimensionConstraintKey(attribute)) {
+      const value = numericConstraint(categoryConstraints[key]);
+      if (value !== null) {
+        return { value_mm: value, path: `customer_constraints.${category}.${key}` };
+      }
+    }
+  }
+  return null;
+}
+
+function maximumConstraintLanguage(text: string): boolean {
+  return /(?:樓下|楼下|以下|上限|最多|唔好超過|不要超過|不超過|不超过|不能超過|不能超过|至多|≤|<=|at most|no more than|maximum|max\.?|under)/i.test(
+    text,
+  );
+}
+
+function parseProductDimension(text: string): {
+  attribute: CommerceDimensionAttribute | null;
+  value: number;
+  unit: "mm";
+  value_mm: number;
+} | ReturnType<typeof parseCommerceDimensionMeasurement> {
+  const explicit = parseCommerceDimensionMeasurement(text);
+  if (explicit) return explicit;
+  const compact = clean(text).match(/(\d{2,4}(?:\.\d+)?)\s*(闊|宽|高|深)(?:度)?/i);
+  if (!compact) return null;
+  const value = Number(compact[1]);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const attribute: CommerceDimensionAttribute = /闊|宽/i.test(compact[2])
+    ? "width"
+    : /高/i.test(compact[2]) ? "height" : "depth";
+  return { attribute, value, unit: "mm", value_mm: value };
+}
+
+function contextualConstraintAttribute(
+  history: CommerceHistoryTurn[],
+  index: number,
+  category: string,
+): CommerceDimensionAttribute | null {
+  const direct = inferCommerceDimensionAttribute(history[index]?.content ?? "");
+  if (direct) return direct;
+  // A terse correction such as "595mm以下先啱" inherits only from the
+  // nearest older compatible dimension statement.  A conflicting explicit
+  // category closes the window instead of allowing cross-entity carryover.
+  for (let offset = index + 1; offset < Math.min(history.length, index + 6); offset += 1) {
+    const turn = history[offset];
+    if (!["visitor", "user", "customer"].includes(turn.role)) continue;
+    const categories = explicitCategoryKeys(turn.content);
+    if (categories.length && !categories.includes(category)) break;
+    const inherited = inferCommerceDimensionAttribute(turn.content);
+    if (inherited) return inherited;
+  }
+  return null;
+}
+
+
+// Presentation only. A resolver category is not a customer-facing name.
+// Use a verified active canonical subject's stored customer label, otherwise
+// ask about the item in the customer's language without inventing a name.
+function dimensionSubjectLabel(state: ConversationCommerceState, entityId: string | undefined,
+  language: CommerceLanguage): string {
+  const entity = entityId ? state.entities.find(candidate =>
+    candidate.entity_id === entityId &&
+    !["cancelled", "deferred", "superseded"].includes(candidate.status)) : undefined;
+  return (entity ? customerOwnedDisplayLabel(entity) : null) ??
+    (language === "en" ? "this item" : language === "zh-CN" ? "这件产品" : "呢件產品");
+}
+
+function dimensionLabel(attribute: CommerceDimensionAttribute, language: CommerceLanguage): string {
+  const labels = {
+    width: { "zh-TW": "闊度", "zh-CN": "宽度", en: "width" },
+    height: { "zh-TW": "高度", "zh-CN": "高度", en: "height" },
+    depth: { "zh-TW": "深度", "zh-CN": "深度", en: "depth" },
+  } as const;
+  return labels[attribute][language];
+}
+
+function formatMillimetres(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(Math.round(value * 10) / 10);
+}
+
+function resolveReadOnlyAttributeConstraintQuery(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+  revision: number,
+): AttributeConstraintQueryResolution | null {
+  if (!isReadOnlyCommerceQuestion(input.text, input.semantic_frame)) return null;
+  const measurement = parseCommerceDimensionMeasurement(input.text);
+  if (!measurement) return null;
+
+  let categoryResolution = resolveAttributeQueryCategory(input,state);
+  if (!Number.isSafeInteger(revision) || revision < 1 ||
+    !dimensionDemandMatchesTarget(input, state, categoryResolution.entity_id)) {
+    categoryResolution = { category: null, ambiguous: true };
+  }
+  const attribute =
+    inferCommerceDimensionAttribute(input.text, input.semantic_frame) ??
+    (() => {
+      const history = (input.history ?? []).filter((turn) =>
+        ["visitor", "user", "customer"].includes(turn.role),
+      );
+      for (let index = 0; index < history.length; index += 1) {
+        const candidate = contextualConstraintAttribute(
+          history,
+          index,
+          categoryResolution.category ?? "",
+        );
+        if (candidate) return candidate;
+      }
+      return null;
+    })();
+
+  if (categoryResolution.ambiguous || !categoryResolution.category) {
+    const value = `${measurement.value}${measurement.unit}`;
+    const reply =
+      input.language === "en"
+        ? `Which product is the ${value} measurement for? I will compare it only with that product's current dimension constraint.`
+        : input.language === "zh-CN"
+          ? `这个 ${value} 尺寸是指哪类产品？我只会用该产品目前的尺寸限制来比较。`
+          : `呢個 ${value} 尺寸係指邊類產品？我只會用該產品目前嘅尺寸限制去比較。`;
+    return {
+      authority: "INSUFFICIENT_INFORMATION",
+      reason: "read_only_attribute_constraint_query_unresolved",
+      reply,
+      state_path: null,
+    };
+  }
+
+  const category = categoryResolution.category;
+  if (!attribute) {
+    const product = dimensionSubjectLabel(state, categoryResolution.entity_id, input.language);
+    const reply =
+      input.language === "en"
+        ? `For ${product}, does ${measurement.value}${measurement.unit} refer to its width, height or depth?`
+        : input.language === "zh-CN"
+          ? `你说的${product} ${measurement.value}${measurement.unit} 是指宽度、高度还是深度？`
+          : `你講嘅${product} ${measurement.value}${measurement.unit} 係指闊度、高度定深度？`;
+    return {
+      authority: "INSUFFICIENT_INFORMATION",
+      reason: "read_only_attribute_constraint_query_unresolved",
+      reply,
+      state_path: null,
+    };
+  }
+
+  // Raw conversation history is context for interpretation, never evidence
+  // that a customer constraint was committed. A comparison requires the
+  // canonical, scoped Commerce state (or a persisted customer constraint).
+  // A missing/ambiguous persisted limit must ask for the limit, not turn
+  // an earlier uncommitted utterance into current customer authority.
+  const constraint = stateDimensionConstraint(
+    state, category, attribute, categoryResolution.entity_id ?? null,
+  );
+  if (!constraint) {
+    const product = dimensionSubjectLabel(state, categoryResolution.entity_id, input.language);
+    const dimension = dimensionLabel(attribute, input.language);
+    const reply =
+      input.language === "en"
+        ? `What is the current ${dimension} limit for ${product}? I cannot safely compare ${measurement.value}${measurement.unit} with another product's state.`
+        : input.language === "zh-CN"
+          ? `${product}目前的${dimension}上限是多少？我不能用其他产品的状态来判断 ${measurement.value}${measurement.unit}。`
+          : `${product}目前嘅${dimension}上限係幾多？我唔可以用其他產品嘅狀態去判斷 ${measurement.value}${measurement.unit}。`;
+    return {
+      authority: "INSUFFICIENT_INFORMATION",
+      reason: "read_only_attribute_constraint_query_unresolved",
+      reply,
+      state_path: null,
+    };
+  }
+
+  const candidateMm = measurement.value_mm;
+  const limitMm = constraint.value_mm;
+  const candidate = formatMillimetres(candidateMm);
+  const limit = formatMillimetres(limitMm);
+  const exceeds = candidateMm > limitMm;
+  const reply =
+    input.language === "en"
+      ? exceeds
+        ? `${candidate} mm exceeds your current ${limit} mm ${dimensionLabel(attribute, "en")} limit, so it is not recommended under the current requirement.`
+        : `${candidate} mm is within your current ${limit} mm ${dimensionLabel(attribute, "en")} limit, so it can be considered on that dimension.`
+      : input.language === "zh-CN"
+        ? exceeds
+          ? `${candidate}mm 超过你目前设定的 ${limit}mm ${dimensionLabel(attribute, "zh-CN")}上限，所以按现有条件不建议考虑。`
+          : `${candidate}mm 没有超过你目前设定的 ${limit}mm ${dimensionLabel(attribute, "zh-CN")}上限，所以按这个尺寸条件可以考虑。`
+        : exceeds
+          ? `${candidate}mm 超過你目前設定嘅 ${limit}mm ${dimensionLabel(attribute, "zh-TW")}上限，所以按現有條件唔建議考慮。`
+          : `${candidate}mm 冇超過你目前設定嘅 ${limit}mm ${dimensionLabel(attribute, "zh-TW")}上限，所以按呢個尺寸條件可以考慮。`;
+  return {
+    authority: "CONVERSATION_STATE",
+    reason: "read_only_attribute_constraint_query_resolved",
+    reply,
+    state_path: constraint.path,
+  };
+}
+
+/** A complete customer-supplied comparison may be answered without treating
+ * the stated measurement as a request for a merchant's dimensions. This is a
+ * read probe only: the existing dimension resolver supplies the actual answer.
+ */
+export function sourceBoundDimensionComparison(input: CommerceRuntimeInput, snapshot: {
+  company_id: string; conversation_id: string; source_message_id: string | null;
+  revision: number; state: ConversationCommerceState;
+}): CommerceRuntimeOutcome | null {
+  const frame = input.semantic_frame, source = clean(input.text, 2400);
+  if (!frame || frame.operation !== "ASK_FACT" || frame.confidence < 0.9 ||
+    frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+    frame.explicit_negations.length || frame.customer_facts?.length || frame.entities.length ||
+    frame.referents.length !== 1 || frame.demands?.length !== 1 ||
+    !input.company_id?.trim() || !input.conversation_id?.trim() || !input.source_message_id?.trim() ||
+    snapshot.company_id !== input.company_id || snapshot.conversation_id !== input.conversation_id ||
+    !snapshot.source_message_id?.trim() || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 1 ||
+    !isConversationCommerceState(snapshot.state) || !source || source.length > 600 ||
+    /["“”「」『』`\n]/u.test(input.text) ||
+    ![frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state]
+      .every(value => value === "none" || value === "unknown")) return null;
+  const measurement = parseCommerceDimensionMeasurement(source);
+  const axis = inferCommerceDimensionAttribute(source);
+  const demand = frame.demands[0];
+  if (!measurement || !axis || frame.requested_facts.length !== 1 || frame.requested_facts[0] !== axis ||
+    demand.requested_facts.length !== 1 || demand.requested_facts[0] !== axis ||
+    !["general", "unknown"].includes(demand.source_type) || clean(demand.source_quote, 2400) !== source ||
+    clean(demand.question, 2400) !== source || demand.subject_refs.length !== 1 ||
+    demand.customer_correction || demand.ambiguity.is_ambiguous || demand.explicit_negations.length ||
+    Object.keys(demand.constraints).length) return null;
+  const reference = frame.referents[0];
+  if (reference.confidence < 0.9 || !["persistent_state", "prior_turn"].includes(reference.source)) return null;
+  const norm = (value: string) => value.normalize("NFKC").trim().toLowerCase();
+  const candidates = snapshot.state.entities.filter(entity =>
+    sourceOwnedSubjectLabels(entity).some(label => matchesReferenceLabel(source, label)));
+  if (candidates.length !== 1) return null;
+  const target = candidates[0], labels = sourceOwnedSubjectLabels(target);
+  if (target.provenance.source_type !== "customer" || !target.provenance.source_message_id?.trim() ||
+    ["cancelled", "deferred", "superseded"].includes(target.status)) return null;
+  const binds = (value: string) => value === target.entity_id || labels.includes(norm(value));
+  if (!binds(reference.ref) || !binds(demand.subject_refs[0]) ||
+    (frame.topic && !labels.includes(norm(frame.topic)))) return null;
+  // Reuse the existing unit parser; a raw source span is used only to prove
+  // that no second clause, merchant fact or unquoted measurement is omitted.
+  const spans = (source.match(/\d{1,5}(?:\.\d+)?\s*(?:mm|毫米|cm|厘米|公分|inch(?:es)?|吋)(?![\p{L}\p{N}])/giu) ?? [])
+    .filter(value => parseCommerceDimensionMeasurement(value));
+  if (spans.length !== 1 || parseCommerceDimensionMeasurement(spans[0])?.value_mm !== measurement.value_mm) return null;
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const complete = labels.some(label => {
+    const name = escape(label), number = escape(spans[0]);
+    return new RegExp(`^(?:would ${name} ${axis}|(?:back to ${name}:\\s*)would (?:a )?${axis}(?: of)?)\\s+${number}\\s+fit[?？]?$`, "iu").test(source);
+  });
+  if (!complete) return null;
+  const boundFrame: CommerceSemanticFrame = { ...frame,
+    referents: [{ ...reference, ref: target.entity_id }],
+    demands: [{ ...demand, subject_refs: [target.entity_id] }] };
+  const result = resolveReadOnlyAttributeConstraintQuery({ ...input, semantic_frame: boundFrame }, snapshot.state, snapshot.revision);
+  return result?.authority === "CONVERSATION_STATE" && result.reason === "read_only_attribute_constraint_query_resolved" && result.state_path
+    ? { ...result, revision: snapshot.revision, persist_result: "read_only", route: "commerce_state_answer" } : null;
+}
+
+export async function readSourceBoundDimensionComparison(db: CommerceStateDbClient,
+  input: CommerceRuntimeInput): Promise<CommerceRuntimeOutcome | null> {
+  if (input.semantic_frame?.operation !== "ASK_FACT" || !parseCommerceDimensionMeasurement(input.text)) return null;
+  const scoped = db.from("conversation_commerce_state")
+    .select("company_id,conversation_id,source_message_id,revision,state")
+    .eq("conversation_id", input.conversation_id);
+  if (typeof scoped.eq !== "function") throw new Error("commerce_state_scope_filter_unavailable");
+  const { data, error } = await scoped.eq("company_id", input.company_id).maybeSingle();
+  if (error) throw new Error("commerce_state_read_failed");
+  if (!isRecord(data) || !isConversationCommerceState(data.state)) return null;
+  if (data.company_id !== input.company_id || data.conversation_id !== input.conversation_id)
+    throw new Error("commerce_state_scope_mismatch");
+  return sourceBoundDimensionComparison(input, { company_id: input.company_id, conversation_id: input.conversation_id,
+    source_message_id: typeof data.source_message_id === "string" ? data.source_message_id : null,
+    revision: Number(data.revision), state: data.state });
+}
+
+type CanonicalQuantityRead =
+  | { kind: "not_applicable" }
+  | { kind: "unresolved" }
+  | { kind: "resolved"; entity: ConversationCommerceState["entities"][number] };
+
+/** Read one already committed quantity from an exact semantic category. A
+ * reading selects the record; its proposed numbers never supply the answer.
+ * A rejected qualified selector cannot fall through to singleton inference.
+ * No reading / no exact topic retains the existing read-only compatibility. */
+function canonicalQuantityReferent(input: CommerceRuntimeInput,
+  state: ConversationCommerceState, revision: number): CanonicalQuantityRead {
+  const frame = input.semantic_frame;
+  const quantityFields = new Set(["quantity", "current_quantity"]);
+  if (!frame || frame.operation !== "ASK_FACT" || frame.confidence < 0.9 ||
+    !frame.requested_facts.length || !frame.requested_facts.every(fact => quantityFields.has(fact)) ||
+    !input.company_id || !input.conversation_id || !input.source_message_id ||
+    !isReadOnlyCommerceQuestion(input.text, frame)) return { kind: "not_applicable" };
+  const topic = clean(frame.topic, 160);
+  if (!topic) return { kind: "not_applicable" };
+  const unresolved: CanonicalQuantityRead = { kind: "unresolved" };
+  if (!Number.isSafeInteger(revision) || revision < 1 ||
+    frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+    frame.explicit_negations.length || frame.customer_facts?.length ||
+    (frame.demands ?? []).some(demand => demand.customer_correction || demand.ambiguity.is_ambiguous ||
+      demand.explicit_negations.length || demand.requested_facts.some(fact => !quantityFields.has(fact)))) return unresolved;
+  const owned = state.entities.filter(entity => entity.provenance.source_type === "customer" &&
+    Boolean(entity.provenance.source_message_id));
+  const active = owned.filter(entity =>
+    ["researching", "tentative", "confirmed"].includes(entity.status));
+  const matches = active.filter(entity => entity.category === topic);
+  if (matches.length !== 1) return unresolved;
+  const entity = matches[0], count = customerRequestedQuantity(entity);
+  if (count === null || !Number.isFinite(count) || count < 0 ||
+    (count === 0 && entity.attributes.quantity_basis !== "customer_explicit")) return unresolved;
+  if (active.some(candidate => candidate.entity_id !== entity.entity_id &&
+    sourceOwnedSubjectLabels(candidate).some(label => matchesReferenceLabel(input.text, label))) ||
+    frame.referents.some(reference => reference.confidence >= 0.9 &&
+      (reference.source === "persistent_state" || active.some(candidate => candidate.entity_id === reference.ref)) &&
+      reference.ref !== entity.entity_id) ||
+    frame.entities.some(candidate => candidate.quantity !== null || (candidate.confidence >= 0.9 &&
+      ((candidate.category_hint && candidate.category_hint !== topic) ||
+        (candidate.entity_ref && candidate.entity_ref !== entity.entity_id))))) return unresolved;
+  for (const demand of frame.demands ?? []) {
+    const quote = clean(demand.source_quote, 2400);
+    if (!quote || !clean(input.text, 2400).includes(quote)) return unresolved;
+    for (const ref of demand.subject_refs) {
+      const subject = clean(ref, 160);
+      if (!subject) return unresolved;
+      const named = owned.filter(candidate =>
+        [candidate.entity_id, candidate.category, ...sourceOwnedSubjectLabels(candidate)]
+          .some(label => clean(label, 160).toLowerCase() === subject.toLowerCase()));
+      if (named.length && (named.length !== 1 || named[0].entity_id !== entity.entity_id)) return unresolved;
+      if (!named.length && !matchesReferenceLabel(quote, subject)) return unresolved;
+    }
+  }
+  return { kind: "resolved", entity };
+}
+
+// The retired scalar must not become an unrelated entity quantity through the generic fallback.
+const RETIRED_LEGACY_COUNT_RECALL = Symbol("retired_legacy_count_recall");
+
+function compatibleQuantityStatePath(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+  canonicalQuantity: ConversationCommerceState["entities"][number] | null = null,
+): string | null | typeof RETIRED_LEGACY_COUNT_RECALL {
+  const requested = (input.semantic_frame?.requested_facts ?? []).join(" ");
+  const text = clean(input.text);
+  const deliveryFields: Array<[RegExp, keyof ConversationCommerceState["delivery"]]> = [
+    [/(?:地址|address|邊座|哪座)/i, "address"],
+    [/(?:收貨人|收货人|recipient)/i, "recipient_name"],
+    [/(?:電話|电话|phone|contact)/i, "recipient_phone"],
+    [/(?:送(?:貨|货)?.{0,8}(?:星期|邊日|边日|日期|幾時|几时)|delivery\s*(?:day|date)|preferred_date)/i, "preferred_date"],
+  ];
+  for (const [pattern, field] of deliveryFields) {
+    if ((pattern.test(text) || new RegExp(String(field), "i").test(requested)) && state.delivery[field] != null) return `delivery.${field}`;
+  }
+  if (/(?:舊機|旧机|舊冷氣|旧空调).{0,12}(?:拆|移除)|(?:拆|移除).{0,12}(?:舊機|旧机)/i.test(text)) {
+    return RETIRED_LEGACY_COUNT_RECALL;
+  }
+  if (/(?:匹數|匹数|幾匹|几匹|horsepower|\bhp\b)/i.test(text + " " + requested)) {
+    const resolved = resolveAttributeQueryCategory(input);
+    if (!resolved.ambiguous && resolved.category) {
+      const compatible = state.entities.filter((entity) => entity.category === resolved.category && entity.status !== "cancelled" && entity.status !== "deferred");
+      const facts = compatible.map((entity) => ({ index: state.entities.indexOf(entity), value: entity.attributes["horsepower"] })).filter((item) => item.value != null);
+      if (facts.length === 1) return `entities.${facts[0].index}.attributes.horsepower`;
+    }
+    return null;
+  }
+  if (
+    /(?:狀態|状态|status|已取消|取消咗|取消了|仲要|仍然要|still active|cancelled|canceled)/i.test(
+      input.text,
+    ) ||
+    /(?:status|current_state)/i.test(requested)
+  )
+    return null;
+  const asksQuantity =
+    /(?:quantity|current_quantity)/i.test(requested) ||
+    /(?:數量|数量|quantity|how many|幾多|几多|多少)/i.test(input.text) ||
+    /(?:記唔記得|记不记得|記得嗎|记得吗|仲記得|还记得|還記得|頭先|头先|do you remember|remind me).{0,30}(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套)/i.test(
+      input.text,
+    ) ||
+    /(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套).{0,20}(?:定|還是|还是|or).{0,20}(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套)/i.test(
+      input.text,
+    );
+  if (!asksQuantity) return null;
+  if (canonicalQuantity) return `entities.${state.entities.indexOf(canonicalQuantity)}.quantity`;
+  const resolved = resolveAttributeQueryCategory(input);
+  if (resolved.ambiguous || !resolved.category) return null;
+  const compatible = state.entities.filter(
+    (entity) =>
+      entity.category === resolved.category &&
+      entity.status !== "cancelled" &&
+      entity.status !== "deferred",
+  );
+  if (compatible.length !== 1) return null;
+  return `entities.${state.entities.indexOf(compatible[0])}.quantity`;
+}
+
+
 function detectRooms(text: string) {
   const lower = clean(text).toLowerCase();
   return ROOM_SPECS.filter((spec) => matchedAliases(lower, spec.aliases).length > 0);
 }
 
-function entityLabel(entityId: string, language: CommerceLanguage): string {
-  const generic = genericEntityLabelFromId(entityId);
-  if (generic) return generic;
-  const industry = industryEntityLabel(entityId, language);
-  if (industry) return industry;
-  const [categoryKey, roomKey] = entityId.split(":");
-  const category = CATEGORY_SPECS.find((x) => x.key === categoryKey);
-  const room = ROOM_SPECS.find((x) => x.key === roomKey);
-  const categoryText = category ? category.label[language] : clean(categoryKey, 60);
-  if (!room) return categoryText;
-  return language === "en"
-    ? `${room.label.en} ${categoryText}`
-    : `${room.label[language]}${categoryText}`;
+function detectReferencedRooms(text: string) {
+  const rooms = new Map(detectRooms(text).map((room) => [room.key, room]));
+  // Cantonese commonly shortens 客廳 to 個廳/我個廳 in a follow-up.  Treat
+  // that as a referent only; buildCommerceEntityHints continues to require a
+  // full room alias, so a first-turn aggregate such as "兩間房加個廳" is not
+  // collapsed into one scoped entity.
+  if (/(?:我(?:個|个)?|呢(?:個|个)|這(?:個|个)|这(?:个|個)|嗰(?:個|个)|果(?:個|个))?\s*(?:個|个)?(?:廳|厅)(?!房)/i.test(clean(text))) {
+    const livingRoom = ROOM_SPECS.find((room) => room.key === "living_room");
+    if (livingRoom) rooms.set(livingRoom.key, livingRoom);
+  }
+  return [...rooms.values()];
+}
+
+function entityLabel(entity: ConversationCommerceState["entities"][number], language: CommerceLanguage): string {
+  return customerOwnedDisplayLabel(entity) ??
+    (language === "en" ? "recorded item" : language === "zh-CN" ? "已记录项目" : "已記錄項目");
 }
 
 /** Build entity hints from the whole conversation so state survives topic drift. */
@@ -150,6 +1174,9 @@ export function buildCommerceEntityHints(texts: string[]): CommerceTurnEntityHin
     const categories = detectCategories(text);
     if (categories.length) {
       const rooms = detectRooms(text);
+      const models = exactProductIdentifiers(text);
+      const model = categories.length === 1 && rooms.length <= 1 && models.length === 1
+        ? models[0] : null;
       for (const category of categories) {
         const scopes = rooms.length ? rooms : [null];
         for (const room of scopes) {
@@ -158,7 +1185,8 @@ export function buildCommerceEntityHints(texts: string[]): CommerceTurnEntityHin
           hints.set(entityId, {
             entity_id: entityId,
             category: category.key,
-            aliases: [...category.aliases, ...(room ? room.aliases : [])],
+            model,
+            aliases: [...category.aliases, ...(room ? room.aliases : []), ...(model ? [model] : [])],
           });
         }
       }
@@ -177,19 +1205,40 @@ export function buildCommerceEntityHints(texts: string[]): CommerceTurnEntityHin
   return [...hints.values()];
 }
 
-function hintsMentionedInTurn(text: string, hints: CommerceTurnEntityHint[]): CommerceTurnEntityHint[] {
+function hintsMentionedInTurn(text: string, hints: CommerceTurnEntityHint[], state?: ConversationCommerceState): CommerceTurnEntityHint[] {
   const lower = clean(text).toLowerCase();
-  const rooms = detectRooms(text);
   const categories = detectCategories(text).map((x) => x.key);
+  const rooms = categories.length > 0
+    ? detectRooms(text)
+    : detectReferencedRooms(text);
   return hints.filter((hint) => {
+    const entity=state?.entities.find(e=>e.entity_id===hint.entity_id);
+    // Only names recorded in a customer-owned canonical entity, never a
+    // category/profile alias, can select a historic non-generic subject.
+    const storedLabels=entity?.provenance.source_type==="customer" ? [
+      entity.model, entity.attributes.product_name, entity.attributes.name,
+      ...(Array.isArray(entity.attributes.customer_subject_aliases)
+        ? entity.attributes.customer_subject_aliases : []),
+    ].filter((v):v is string=>typeof v==="string"&&v.trim().length>=2):[];
+    const explicitName=storedLabels.some(label=>matchesReferenceLabel(lower,label));
+    if(explicitName) {
+      if(entity && ["cancelled","deferred","superseded"].includes(entity.status) &&
+          !detectEntityReactivation(text)) return false;
+      return true;
+    }
     if (hint.entity_id.startsWith("generic:")) {
       return (hint.aliases ?? []).some((alias) => {
         const normalized = clean(alias, 80).toLowerCase();
-        return normalized.length >= 2 && lower.includes(normalized);
+        return matchesReferenceLabel(lower,normalized);
       });
     }
-    if (!categories.includes(hint.category)) return false;
     const [, roomKey] = hint.entity_id.split(":");
+    if (!categories.includes(hint.category)) {
+      // A scoped follow-up can refer to an already-known commerce entity by
+      // room alone (for example, cancelling "the living-room one").
+      return rooms.length > 0 && roomKey !== "unscoped" &&
+        rooms.some((room) => room.key === roomKey);
+    }
     if (!rooms.length) return true;
     if (roomKey === "unscoped") return false;
     return rooms.some((room) => room.key === roomKey) || Boolean(lower) === false;
@@ -219,11 +1268,11 @@ function countTokenValue(raw: string): number | null {
 
 export function detectQuantityCorrectionSignal(text: string): boolean {
   const t = clean(text);
-  return /(?:更正|改(?:做|成|為|为|返)?|變成|变成|唔係.+?(?:而係|係|系)|不是.+?(?:而是|是)|不係.+?(?:而係|係)|actually|change(?:\s+it)?\s+to|make\s+it)/i.test(t);
+  return /(?:更正|改(?:做|成|為|为|返)?|變成|变成|唔係.+?(?:而係|係|系)|不是.+?(?:而是|是)|不係.+?(?:而係|係)|actually|change\s+(?:[^.!?。！？]{1,80}\s+)?to|make\s+it)/i.test(t);
 }
 
 function parseCount(text: string): number | null {
-  const t = clean(text);
+  const t = clean(text).replace(/(?:[一二兩两三四五六七八九十]|\d{1,2})\s*(?:間|间)\s*(?:睡房|臥室|卧室|房間|房间|客房|房)/giu, "");
   if (!t) return null;
 
   const correctionPatterns = [
@@ -242,12 +1291,207 @@ function parseCount(text: string): number | null {
   return countTokenValue(m[1]);
 }
 
+/** Source-owned item counters and repeated literal specification units.
+ * A category name, model or industry must never select a quantity target.
+ * The dimension numbers are attributes, not count multipliers. */
+function specificationAllocationPattern(unit: unknown): RegExp | null {
+  if (typeof unit !== "string" || unit !== unit.trim() ||
+      !/^[\p{L}\p{M}][\p{L}\p{M}\p{N} '\/-]{0,63}$/u.test(unit)) return null;
+  const escaped = unit.replace(/[.*+?^$\x7b\x7d()|[\]\\]/g, "\\$&");
+  return new RegExp("("+COUNT_TOKEN+")\\s*"+escaped+"\\s*\\d+(?:\\.\\d+)?\\s*([\\p{L}\\p{M}%°]{1,12})(?=$|[\\s,，。;；.!?！？])","giu");
+}
+function sourceBoundSpecificationAllocation(input: CommerceRuntimeInput, state: ConversationCommerceState):
+  {entity_id:string;quantity:number}|null {
+  if (!input.company_id || !input.conversation_id || !input.source_message_id ||
+      !detectQuantityCorrectionSignal(input.text) || isReadOnlyCommerceQuestion(input.text)) return null;
+  const active=state.entities.filter(e=>!["cancelled","deferred","superseded"].includes(e.status));
+  if(active.length!==1)return null;
+  const target=active[0],pattern=specificationAllocationPattern(target.attributes.unit);
+  if(!pattern||target.provenance.source_type!=="customer"||!target.provenance.source_message_id)return null;
+  const text=clean(input.text);
+  const matches=[...text.matchAll(pattern)];
+  if(matches.length<2 || new Set(matches.map(m=>m[2].normalize("NFKC").toLowerCase())).size!==1)return null;
+  const counts=matches.map(m=>countTokenValue(m[1]));
+  if(counts.some(n=>n===null||!Number.isSafeInteger(n)||n<1))return null;
+  const quantity=counts.reduce<number>((sum,n)=>sum+(n??0),0);
+  if(quantity>100000)return null;
+  const labels=sourceOwnedSubjectLabels(target);
+  const named=state.entities.filter(e=>sourceOwnedSubjectLabels(e).some(label=>matchesReferenceLabel(text,label)));
+  if(named.some(e=>e.entity_id!==target.entity_id))return null;
+  const frame=input.semantic_frame;
+  if(frame){
+    if(frame.confidence<0.72||frame.ambiguity.is_ambiguous||frame.additive||
+       !["SET_QUANTITY","UPDATE_ITEM"].includes(frame.operation)||
+       frame.explicit_negations.length||frame.requested_facts.length||
+       (frame.demands??[]).some(d=>d.explicit_negations.length||d.source_type!=="general")||
+       frame.entities.length!==1)return null;
+    const item=frame.entities[0],normalize=(v:unknown)=>clean(v).toLowerCase().replace(/[_\s-]+/g,"_");
+    if(item.confidence<0.72||item.entity_ref!==target.entity_id||
+       item.quantity!==quantity||item.unit!==target.attributes.unit||
+       (normalize(frame.topic)&&normalize(state.current_topic)&&normalize(frame.topic)!==normalize(state.current_topic))||
+       frame.referents.some(r=>r.confidence<0.72||r.ref!==target.entity_id))return null;
+  }
+  // Match the complete current source, not only the numerals; unrelated nouns,
+  // other operations and unallocated context cannot borrow a canonical count.
+  let residue=text.replace(pattern,"");
+  for(const label of labels)if(matchesReferenceLabel(residue,label))
+    residue=residue.replace(new RegExp(label.replace(/[.*+?^$\x7b\x7d()|[\]\\]/g,"\\$&"),"giu"),"");
+  residue=residue.replace(/(?:可唔可以|可不可以|可以|麻煩|麻烦|請|请|幫我|帮我|將|将|把|改(?:做|成|為|为|返)?|更正|另外|另|要|先|就好|便可|即可|嗎|吗|呢|同埋|同|及|\b(?:please|actually|change|make|it|to|and)\b)/giu,"")
+    .replace(/[\s:：,，.。;；!！?？]+/gu,"");
+  return residue ? null : {entity_id:target.entity_id,quantity};
+}
+
+function looksInterrogative(text: string): boolean {
+  const t = clean(text);
+  return /[?？]/.test(t) ||
+    /(?:係咪|系咪|是否|有冇|有沒有|有没有|幾多|几多|多少|邊個|边个|哪個|哪个|咩|什麼|什么|定係|定系|仲係|仲系|還是|还是|how many|what(?:'s| is)|which|is it|do i|did i|have i|current|status)/i.test(t);
+}
+
+function hasExplicitSupportedMutation(text: string): boolean {
+  const t = clean(text);
+  if (!t) return false;
+  if (parseAddressReplacementCorrection(t)) return true;
+  const strongMutation = /(?:更正|改(?:做|成|為|为|返)|變成|变成|再加|加多|新增|另外加|取消|移除|刪除|删除|change\s+(?:it\s+)?to|set\s+(?:it\s+)?to|add\s+(?:another|one|two|three|\d)|cancel|remove)/i.test(t);
+  if (strongMutation) return true;
+  // Deliberative questions such as "要唔要考慮？" ask for advice; the
+  // embedded 要/不要 alternation is not a BUY/CANCEL instruction.
+  if (
+    looksInterrogative(t) &&
+    /(?:要唔要|要不要|應唔應該|应不应该|需唔需要|需不需要|值唔值得|值不值得|should\s+i|do\s+i\s+need\s+to|worth\s+considering)/i.test(t)
+  ) return false;
+  if (
+    /(?:更正|改(?:做|成|為|为|返)|變成|变成|再加|加多|新增|另外加|我要|我想(?:買|买|訂|订)|想(?:買|买|訂|订)|要(?:買|买|訂|订)|落單|下單|下单)/i.test(t) ||
+    /(?:幫我|帮我|請|请).{0,24}(?:改|加|取消|移除|刪除|删除|設定|设置|買|买|訂|订)/i.test(t) ||
+    /(?:change|set|make|add|buy|purchase|order|cancel|remove)\b/i.test(t)
+  ) return true;
+  if (!looksInterrogative(t) && (detectCancellation(t) || detectDeferral(t))) return true;
+  if (!looksInterrogative(t) && detectEntityReactivation(t)) return true;
+  if (
+    !looksInterrogative(t) &&
+    /(?:星期[一二三四五六日天]|週[一二三四五六日天]|周[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(t) &&
+    /(?:首選|首选|改(?:做|成|為|为)|安排|prefer|preferred|make it|set it)/i.test(t)
+  ) return true;
+  // A bare counted statement remains a supported SET/ADD input. The same
+  // words inside a question are mentions, not mutation authority.
+  return !looksInterrogative(t) && parseCount(t) !== null;
+}
+
+/**
+ * Shared fail-closed contract for factual questions. An interrogative cannot
+ * authorize commerce mutation merely because it contains an entity or count.
+ * Explicit supported mutation language still wins (including polite requests
+ * phrased with a question mark).
+ */
+export function isReadOnlyCommerceQuestion(
+  text: string,
+  semanticFrame?: CommerceSemanticFrame | null,
+): boolean {
+  if (semanticFrame && semanticFrame.confidence >= 0.72 && !semanticFrame.ambiguity.is_ambiguous &&
+      semanticFrame.operation === "UPDATE_ITEM" && semanticFrame.customer_facts?.length) return false;
+  const semanticRead = semanticFrame?.operation === "ASK_FACT" ||
+    semanticFrame?.operation === "ASK_CALCULATION" ||
+    semanticFrame?.operation === "NO_STATE_CHANGE";
+  return (semanticRead || looksInterrogative(text)) &&
+    !hasExplicitSupportedMutation(text);
+}
+
+/** READ_ONLY_CURRENT_STATE_QUERY is distinct from every mutation operation. */
+export function isReadOnlyCurrentStateQuery(
+  text: string,
+  semanticFrame?: CommerceSemanticFrame | null,
+): boolean {
+  // A genuine customer-owned first selection goal remains a state-bearing
+  // statement even when the same message also asks a product question. A
+  // model-only ADD_ITEM proposal never suffices without its literal subject
+  // and an actual customer action in this very source turn.
+  const explicitGenericGoal=semanticFrame?.operation==="ADD_ITEM" &&
+    semanticFrame.confidence>=0.72 && !semanticFrame.ambiguity.is_ambiguous &&
+    semanticFrame.entities.length>0 &&
+    /(?:想揀|想選|想选|想買|想买|選購|选购|購買|购买|want to (?:choose|select|buy)|i (?:want|need) to (?:choose|buy))/iu.test(text) &&
+    !/(?:以前|之前|上次|曾經|曾经|historically|last time)/iu.test(text) &&
+    semanticFrame.entities.some(entity=>entity.confidence>=0.72 &&
+      typeof entity.name==="string" && matchesReferenceLabel(text,entity.name));
+  if(explicitGenericGoal)return false;
+  if (isCurrentRequirementsRecap(text)) return true;
+  if (isReadOnlyCurrentStateAggregateQuery(text, semanticFrame)) return true;
+  if (isReadOnlyMemoryOrCurrentStateRecall(text, semanticFrame)) return true;
+  if (!isReadOnlyCommerceQuestion(text, semanticFrame)) return false;
+  const t = clean(text);
+  const requested = (semanticFrame?.requested_facts ?? []).join(" ");
+  const quantity = /(?:數量|数量|quantity|how many|幾多|几多|多少|(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|units?|items?).{0,20}?(?:定|還是|还是|or)\s*(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|units?|items?))/i.test(t) ||
+    /(?:quantity|current_quantity)/i.test(requested);
+  const status = /(?:狀態|状态|status|已取消|取消咗|取消了|仲要|仍然要|still active|cancelled|canceled)/i.test(t) ||
+    /(?:status|current_state)/i.test(requested);
+  return quantity || status;
+}
+
+function isAllocationBreakdown(text: string): boolean {
+  const matches = clean(text).match(
+    /(?:[一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|個|个|套|units?|items?)/gi,
+  );
+  return (matches?.length ?? 0) > 1;
+}
+
+/**
+ * A room counter is not itself a product-unit counter.  For room-scoped
+ * appliances, an explicit "one in each space" allocation is evidence
+ * for the requested aggregate; room counts alone are not.  Keep
+ * this separate from parseCount so isolated room sizes/counts never become a
+ * product quantity, and require both a recognised commerce category and at
+ * least one explicitly counted room group.
+ */
+export function parseSpaceScopedCommerceQuantity(text: string): number | null {
+  const t = clean(text);
+  if (!t || detectCategories(t).length === 0 || !/(?:各|每).{0,8}(?:一|1)\s*(?:部|台)|one\s+(?:unit|AC|air conditioner)\s+(?:in|for)\s+each/iu.test(t)) return null;
+
+  const countedRoom = t.match(
+    /([一二兩两三四五六七八九十]|\d{1,2})\s*(?:間|间)\s*(?:睡房|臥室|卧室|房間|房间|客房|房)/i,
+  );
+  const base = countedRoom?.[1] ? countTokenValue(countedRoom[1]) : null;
+  if (base === null || base < 1) return null;
+
+  const remainder = t.slice((countedRoom?.index ?? 0) + countedRoom![0].length);
+  const additionalSpaces = [
+    /(?:一\s*(?:個|个|間|间)|(?:個|个))?\s*(?:客廳|客厅|廳|厅)/i,
+    /(?:一\s*(?:個|个|間|间)|(?:個|个))?\s*(?:廚房|厨房)/i,
+    /(?:an?\s+)?(?:living\s+room|lounge|kitchen)/i,
+  ].reduce((sum, pattern) => sum + (pattern.test(remainder) ? 1 : 0), 0);
+
+  return additionalSpaces > 0 ? base + additionalSpaces : null;
+}
+
 function detectCancellation(text: string): boolean {
-  return /(?:取消|唔要|不要|唔買|不买|不買|cancel|remove it|drop it)/i.test(text);
+  text = withoutExcludedLookups(text);
+  return /(?:取消|唔要|不要|唔買|不买|不買|唔裝|不裝|不装|cancel|remove it|drop it|not install|won't install|do not install)/i.test(text);
 }
 
 function detectDeferral(text: string): boolean {
-  return /(?:暫時唔|暫時不|暂时不|稍後先|稍后再|later|hold off|defer)/i.test(text);
+  text = withoutExcludedLookups(text);
+  return /(?:暫時唔|暫時不|暂时不|未決定(?:買|购|購|要)?住|未决定(?:买|购|要)?|稍後先|稍后再|later|hold off|defer|not decided yet)/i.test(text);
+}
+
+function dimensionConstraintCancellation(text: string): boolean {
+  return /(?:(?:闊度|宽度|高度|深度|尺寸|dimension|width|height|depth).{0,18}(?:限制|上限|constraint|limit).{0,12}(?:取消|唔要|不要|remove|cancel)|(?:取消|唔要|不要|remove|cancel).{0,12}(?:闊度|宽度|高度|深度|尺寸|dimension|width|height|depth).{0,18}(?:限制|上限|constraint|limit)?)/i.test(clean(text));
+}
+
+function establishesDurableProductResearch(text: string): boolean {
+  const t = clean(text);
+  if (explicitCategoryKeys(t).length !== 1) return false;
+  if (
+    looksInterrogative(t) && parseCommerceDimensionMeasurement(t) &&
+    !/(?:我位得|位置得|上限|最多|唔好超過|不要超过|at most|maximum)/i.test(t)
+  ) return false;
+  if (detectExplicitEntityCreationSignal(t)) return true;
+  if (dimensionConstraintCancellation(t) || parseSpaceScopedCommerceQuantity(t) !== null) return true;
+  return /(?:想問|想问|問埋|问埋|想要|想揀|想选|想睇|想看|want to (?:choose|select|look at)|我位得|位置|限制|上限|樓下|楼下|以下|接受|照舊|照旧|三門|三门|前置式|\d+\s*kg|買咩|买什么|邊款|哪款|recommend|advice|considering)/i.test(t);
+}
+
+function detectEntityReactivation(text: string): boolean {
+  const t = clean(text);
+  if (!t || looksInterrogative(t) || detectCancellation(t) || detectDeferral(t)) {
+    return false;
+  }
+  return /(?:恢復|恢复|加返|要返|裝返|装返|都係(?:要|買|买|裝|装)|都要(?:買|买|裝|装)|裝埋|装埋|重新(?:要|加入|安裝|安装)|reactivate|restore|add (?:it|that|the .+?) back|include (?:it|that|the .+?)|go ahead with)/i.test(t);
 }
 
 const SITE_CHECK_PATTERNS: Array<[RegExp, string]> = [
@@ -310,24 +1554,78 @@ function scanNegatedTransaction(text: string): NegatedTransactionScan {
   };
 }
 
-function explicitOrderConfirmation(text: string): boolean {
-  return /(?:已付款|已付|付咗|paid\b|正式落單|正式下单|確認落單|确认下单|confirm(?:ed)? (?:the )?order|已預約|已预约|booked)/i.test(text);
-}
-
-function explicitPaymentConfirmation(text: string): boolean {
-  return /(?:已付款|已付|付咗|已支付|paid\b)/i.test(text);
-}
-
-function explicitBookingConfirmation(text: string): boolean {
-  return /(?:已預約|已预约|已約|已约|已安排|booked|scheduled)/i.test(text);
-}
-
 function quotationOnlySignal(text: string): boolean {
-  return /(?:報價|报价|quotation|quote|未落單|未下单|未正式|唔係落單|不是下单|先問價|先问价)/i.test(text);
+  return /(?:報價|报价|quotation|quote|先問價|先问价)/i.test(text);
+}
+
+function explicitQuotationOnlySignal(text: string): boolean {
+  return /(?:quotation|報價|报价)\s*(?:咋|啫|而已|only)|(?:只係|只是|淨係|净是)\s*(?:quotation|報價|报价)|(?:未\s*(?:confirm|確認|确认).{0,18}(?:正式)?(?:order|落單|落单|下單|下单)|唔好.{0,12}當.{0,8}(?:正式)?(?:order|落單|落单|訂單|订单))/i.test(text);
 }
 
 export function detectTransactionSummaryIntent(text: string): boolean {
-  return /(?:幫我總結|帮我总结|總結一下|总结一下|幫我整理|帮我整理|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|hand over to)/i.test(clean(text));
+  return /(?:幫我總結|帮我总结|總結一下|总结一下|幫我整理|帮我整理|簡單講一次|简单说一次|成單而家有咩|整張單而家有咩|整理(?:一下)?(?:比|畀|給|给)?同事|同事跟進|同事跟进|summar(?:y|ise|ize)|recap|what(?:'s| is) in (?:the|my) (?:quote|order)|hand over to)/i.test(clean(text));
+}
+
+function detectsConstraintRecall(text: string): boolean {
+  if (dimensionConstraintCancellation(text)) return false;
+  return /(?:限制|條件|条件|要求|constraint|limit|requirement).{0,8}(?:呢|係咩|是什么|有咩|what)?[?？]?$/i.test(clean(text));
+}
+
+function detectsPortfolioRecall(text: string): boolean {
+  return /(?:(?:總共|总共|依家|而家|目前|currently).{0,18}(?:睇緊|看着|考慮|考虑|considering).{0,10}(?:咩|什么|what)|(?:睇緊|看着|considering).{0,10}(?:咩電器|什么电器|what))/i.test(clean(text));
+}
+
+function detectsQuoteReadyRecall(text: string): boolean {
+  if (detectTransactionSummaryIntent(text)) return false;
+  return /(?:真正|實際|实际|而家|目前|currently).{0,16}(?:準備|准备|ready).{0,8}(?:報價|报价|quote).{0,12}(?:係咩|是什么|有咩|what)|(?:準備|准备|ready).{0,8}(?:報價|报价|quote)/i.test(clean(text));
+}
+
+function detectsQuoteProvenanceRecall(text: string): boolean {
+  return /(?:邊個|边个|哪些|which).{0,12}(?:價|价|price|quote).{0,12}(?:有來源|有来源|source|來源|来源)/i.test(clean(text));
+}
+
+function detectsBrandRequirementRecall(text: string): boolean {
+  return /(?:品牌|牌子|brand).{0,16}(?:一定|指定|必須|必须|required|mandatory)|(?:一定|指定|必須|必须|required|mandatory).{0,16}(?:品牌|牌子|brand)/i.test(clean(text));
+}
+
+function buildEntityPortfolioAnswer(state: ConversationCommerceState, language: CommerceLanguage, quoteReadyOnly: boolean): string {
+  const entities = state.entities.filter((entity) => entity.status !== "cancelled" && (!quoteReadyOnly || entity.status !== "deferred"));
+  const labels = entities.map((entity) => `${entityLabel(entity, language)} ${customerRequestedQuantity(entity) === null ? (language === "en" ? "quantity not confirmed" : "數量待確認") : "x" + entity.quantity}`);
+  if (language === "en") return labels.length ? `${quoteReadyOnly ? "The currently active items are" : "You are currently considering"}: ${labels.join(", ")}.` : `There are currently no ${quoteReadyOnly ? "active items" : "items under consideration"}.`;
+  if (language === "zh-CN") return labels.length ? `${quoteReadyOnly ? "目前有效项目是" : "你目前正在考虑的是"}：${labels.join("、")}。` : `目前没有${quoteReadyOnly ? "有效" : "正在考虑"}的产品。`;
+  return labels.length ? `${quoteReadyOnly ? "而家有效嘅項目係" : "你而家睇緊嘅係"}：${labels.join("、")}。` : `而家未有${quoteReadyOnly ? "有效" : "考慮中"}嘅產品。`;
+}
+
+function buildScopedConstraintAnswer(input: CommerceRuntimeInput, state: ConversationCommerceState): { reply: string; path: string } | null {
+  const categoryResolution = resolveAttributeQueryCategory(input,state);
+  if (categoryResolution.ambiguous || !categoryResolution.category) return null;
+  const category = categoryResolution.category;
+  const active=state.entities.filter(e=>e.category===category&&
+    (!categoryResolution.entity_id||e.entity_id===categoryResolution.entity_id)&&
+    e.status!=="cancelled"&&e.status!=="deferred");
+  if(active.length!==1)return null;
+  const entity=active[0];
+  const labels: string[] = [];
+  for (const [key, raw] of Object.entries(entity.constraints)) {
+    const value = numericConstraint(raw);
+    const match = key.match(/^(?:max|excluded)_(width|height|depth)_mm$/);
+    if (value === null || !match) continue;
+    const dimension = dimensionLabel(match[1] as CommerceDimensionAttribute, input.language);
+    if (input.language === "en") labels.push(key.startsWith("excluded_") ? `${dimension} ${formatMillimetres(value)} mm is excluded` : `${dimension} up to ${formatMillimetres(value)} mm`);
+    else if (input.language === "zh-CN") labels.push(key.startsWith("excluded_") ? `${dimension}不接受 ${formatMillimetres(value)}mm` : `${dimension}上限 ${formatMillimetres(value)}mm`);
+    else labels.push(key.startsWith("excluded_") ? `${dimension}唔接受 ${formatMillimetres(value)}mm` : `${dimension}上限 ${formatMillimetres(value)}mm`);
+  }
+  if (!labels.length) return null;
+  const product=entityLabel(entity,input.language);
+  const reply = input.language === "en" ? `The current ${product} constraint is: ${labels.join(", ")}.` : input.language === "zh-CN" ? `目前${product}的限制是：${labels.join("、")}。` : `而家${product}嘅限制係：${labels.join("、")}。`;
+  return { reply, path: `entities.${state.entities.indexOf(entity)}.constraints` };
+}
+
+function buildQuoteProvenanceAnswer(state: ConversationCommerceState, language: CommerceLanguage): string {
+  const values = state.quotes.filter((quote) => quote.quote_type === "customer_reported_historical").map((quote) => `${quote.currency} ${quote.amount}`);
+  if (language === "en") return values.length ? `The sourced figures on record are the historical prices you provided: ${values.join(", ")}. They are references, not verified current prices.` : "There is no sourced price on record yet, so I cannot confirm a current price.";
+  if (language === "zh-CN") return values.length ? `目前有来源的数字是你提供的历史报价：${values.join("、")}。这些只作参考，并非已核实的现价。` : "目前没有已记录来源的价格，所以暂时无法确认现价。";
+  return values.length ? `目前有來源嘅數字係你提供過嘅歷史報價：${values.join("、")}。呢啲只係參考，唔係已核實嘅現價。` : "目前未有已記錄來源嘅價錢，所以暫時未能確認現價。";
 }
 
 export function detectCurrentPriceValidityQuestion(text: string): boolean {
@@ -338,6 +1636,36 @@ export function detectCurrentPriceValidityQuestion(text: string): boolean {
   const current = /(?:而家|現在|现在|目前|最新|仲係|还是|仍然|current|latest|still)/i.test(t);
   const validity = /(?:一定|作準|作准|有效|同價|同价|一樣|一样|same|valid|guarantee|guaranteed)/i.test(t);
   return historical && price && (current || validity);
+}
+
+function asksToReuseRecordedPrice(text: string, state: ConversationCommerceState): boolean {
+  if (!/[?？]/.test(text)) return false;
+  const amounts = (text.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((value) => Number(value.replace(/,/g, "")));
+  return amounts.length > 0 && state.quotes.some((quote) => amounts.includes(quote.amount) && (quote.quote_type !== "current_verified" || quote.validity_status !== "current"));
+}
+
+function historicalPriceExclusionInstruction(text: string): boolean {
+  return /(?:唔好|不要|不可|不能|not|don'?t).{0,30}(?:當|当|用|沿用|treat|use).{0,30}(?:正式價|正式价|現價|现价|落單|下单|order|current\s*price)|(?:舊價|旧价|old\s*(?:price|quote)).{0,30}(?:唔好|不要|not|don'?t).{0,20}(?:用|沿用|use)/i.test(text);
+}
+
+function buildHistoricalPriceExclusionAnswer(language: CommerceLanguage): string {
+  if (language === "en") return "Understood. Recorded or previous prices will stay historical only and will not be used as a current price or to place an order.";
+  if (language === "zh-CN") return "明白。已记录或之前的价格只会保留作历史参考，不会当作现价或用来下单。";
+  return "明白。已記錄或之前嘅價錢只會保留做歷史參考，唔會當現價或用嚟落單。";
+}
+
+function paymentChecklistIntent(text: string): boolean {
+  return /(?:付款|支付|payment).{0,24}(?:前|之前|before).{0,24}(?:checklist|清單|清单|核對|核对)|(?:checklist|清單|清单).{0,24}(?:付款|支付|payment)/i.test(text);
+}
+
+function buildPaymentChecklist(state: ConversationCommerceState, language: CommerceLanguage): string {
+  const pending = [...new Set([...state.installation.pending_checks, ...state.installation.items.filter((item) => item.status === "pending").map((item) => item.kind)])];
+  const items = language === "en"
+    ? ["Confirm the final item list and quantities", "Confirm the current written quote and all fees", "Confirm delivery details", pending.length ? "Complete the outstanding technician checks" : "Confirm whether any technician check is still required", "Confirm the order before payment"]
+    : language === "zh-CN"
+    ? ["核对最终产品及数量", "核实当前书面报价和所有费用", "核对收货资料", pending.length ? "完成待师傅确认项目" : "确认是否仍需师傅检查", "付款前再次确认订单"]
+    : ["核對最終產品同數量", "核實最新書面報價同所有費用", "核對收貨資料", pending.length ? "完成待師傅確認項目" : "確認係咪仲需要師傅檢查", "付款前再確認訂單"];
+  return items.map((item, index) => `${index + 1}. ${item}`).join("\n");
 }
 
 export function detectPreorderUnpaidIntent(text: string): boolean {
@@ -361,7 +1689,7 @@ function parseMoneyTerms(text: string): number[] {
 }
 
 export function detectExplicitCalculationRequest(text: string): boolean {
-  return /(?:加埋|合共|總共|总共|一共|總數|总数|埋一齊|埋一起|total|altogether|calculate|計下|计下|算下|計算|计算|how much.*(?:total|altogether))/i.test(clean(text));
+  return /(?:加埋|合共|總共|总共|一共|總數|总数|埋一齊|埋一起|total|altogether|calculate|計下|计下|算下|計算|计算|計幾錢|计多少钱|算幾錢|算多少钱|how much.*(?:total|altogether)|(?:按|用).{0,24}(?:報價|报价|price|quote).{0,24}(?:計|计|算))/i.test(clean(text));
 }
 
 export function extractCommerceCalculationTerms(
@@ -370,17 +1698,23 @@ export function extractCommerceCalculationTerms(
   options?: { include_historical_state?: boolean },
 ): { terms: CommerceCalculationTerm[]; currency: string | null } {
   const amounts: number[] = [];
-  for (const raw of texts) {
-    const text = clean(raw);
-    if (!text) continue;
-    for (const amount of parseMoneyTerms(text)) amounts.push(amount);
-  }
   if (options?.include_historical_state) {
-    const textAmounts = new Set(amounts);
-    for (const quote of state.quotes) {
-      if (quote.quote_type !== "customer_reported_historical") continue;
-      if (textAmounts.has(quote.amount)) continue;
-      amounts.push(quote.amount);
+    const latestHistorical = state.quotes.filter((quote) => quote.quote_type === "customer_reported_historical").at(-1);
+    if (latestHistorical) amounts.push(latestHistorical.amount);
+    for (const raw of texts) {
+      const text = clean(raw);
+      const costPattern = /(?:安裝|安装|鋁架|铝架|支架|架|拆機|拆机|運費|运费|送貨費|送货费|installation|frame|bracket|delivery\s*fee)\s*(?:費|费|係|是|:|：)?\s*(\d[\d,]*(?:\.\d+)?)/gi;
+      let match: RegExpExecArray | null;
+      while ((match = costPattern.exec(text)) !== null) {
+        const amount = Number(match[1].replaceAll(",", ""));
+        if (Number.isFinite(amount) && amount > 0) amounts.push(amount);
+      }
+    }
+  } else {
+    for (const raw of texts) {
+      const text = clean(raw);
+      if (!text) continue;
+      for (const amount of parseMoneyTerms(text)) amounts.push(amount);
     }
   }
   const unique: number[] = [];
@@ -398,10 +1732,13 @@ export function extractCommerceCalculationTerms(
   const activeEntities = state.entities.filter(
     (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
   );
-  const stateMultiplier = activeEntities.length === 1
-    ? Math.max(1, activeEntities[0].quantity)
-    : activeEntities.reduce((sum, entity) => sum + Math.max(0, entity.quantity), 0) || 1;
+  const sourcedCounts=activeEntities.map(customerRequestedQuantity);
+  // Unknown customer quantities never become an implicit purchase multiplier.
+  const stateMultiplier=sourcedCounts.length > 0 &&
+      sourcedCounts.every(value => value !== null && value > 0)
+    ? sourcedCounts.reduce<number>((sum,value) => sum + (value ?? 0),0) : null;
   const multiplier = currentTurnMultiplier ?? stateMultiplier;
+  if(multiplier===null)return {terms:[],currency:null};
 
   const currency = state.quotes.find((q) => q.currency)?.currency ?? "HKD";
   return {
@@ -424,15 +1761,113 @@ interface LoadedCommerceState {
 export async function loadCommerceState(
   db: CommerceStateDbClient,
   conversation_id: string,
+  company_id?: string,
 ): Promise<LoadedCommerceState> {
-  const { data, error } = await db.from("conversation_commerce_state").select("revision, state").eq("conversation_id", conversation_id).maybeSingle();
-  if (error || !isRecord(data)) return { state: createEmptyConversationCommerceState(), revision: 0 };
+  const { data, error } = await db.from("conversation_commerce_state").select("company_id, conversation_id, revision, state").eq("conversation_id", conversation_id).maybeSingle();
+  if (error) throw new Error("commerce_state_read_failed");
+  if (data === null || data === undefined) return { state: createEmptyConversationCommerceState(), revision: 0 };
+  if (!isRecord(data) || !isConversationCommerceState(data["state"])) {
+    throw new Error("commerce_state_invalid_snapshot");
+  }
+  // The caller already uses the established conversation/RLS read contract.
+  // When identity fields are returned, refuse a mismatched snapshot before
+  // either a read-only reply or the existing CAS writer can consume it.
+  if ((typeof data.company_id === "string" && company_id && data.company_id !== company_id) ||
+    (typeof data.conversation_id === "string" && data.conversation_id !== conversation_id)) {
+    throw new Error("commerce_state_scope_mismatch");
+  }
   const revision = typeof data["revision"] === "number" ? data["revision"] : Number(data["revision"] ?? 0);
   const state = data["state"];
   return {
-    state: isConversationCommerceState(state) ? state : createEmptyConversationCommerceState(),
+    state: state as ConversationCommerceState,
     revision: Number.isFinite(revision) && revision > 0 ? revision : 0,
   };
+}
+
+
+/** Accept only a unique regular English inflection of a source-owned name.
+ * No industry/noun list or loose string similarity supplies entity authority. */
+function sourceHasUniqueEnglishInflection(text:string,label:string):boolean {
+  const key=label.normalize("NFKC").trim().toLowerCase();
+  if(!/^[a-z]{2,}(?:[ -][a-z]{2,})*$/u.test(key) ||
+     matchesReferenceLabel(text,key))return false;
+  const lastIndex=Math.max(key.lastIndexOf(" "),key.lastIndexOf("-"))+1;
+  const prefix=key.slice(0,lastIndex),last=key.slice(lastIndex);
+  const endings=new Set<string>();
+  if(/[^aeiou]y$/u.test(last))endings.add(last.slice(0,-1)+"ies");
+  else if(/(?:s|x|z|ch|sh)$/u.test(last))endings.add(last+"es");
+  else endings.add(last+"s");
+  if(/[^aeiou]ies$/u.test(last))endings.add(last.slice(0,-3)+"y");
+  else if(/(?:ches|shes|xes|zes|sses)$/u.test(last))endings.add(last.slice(0,-2));
+  else if(/s$/u.test(last)&&!/ss$/u.test(last))endings.add(last.slice(0,-1));
+  return [...endings].filter(form=>form!==last &&
+    matchesReferenceLabel(text,prefix+form)).length===1;
+}
+
+
+/** New item quantities must have one customer-authored numeral bound to the
+ * corresponding named item. No industry, noun, verb or unit allowlist. */
+function attestedItemQuantity(text:string,name:string,proposed:number|null,unit?:string|null):number|null {
+ if(proposed===null || !Number.isInteger(proposed) || proposed<0 || proposed>100000 ||
+    typeof name!=="string" || !name.trim())return null;
+ const key=name.normalize("NFKC").trim().toLowerCase();
+ const forms=[key];
+ if(/^[a-z]{2,}(?:[ -][a-z]{2,})*$/u.test(key)){
+  const at=key.lastIndexOf(" ")+1,pre=key.slice(0,at),end=key.slice(at);
+  if(/[^aeiou]y$/u.test(end))forms.push(pre+end.slice(0,-1)+"ies");
+  else if(/(?:s|x|z|ch|sh)$/u.test(end))forms.push(pre+end+"es");
+  else forms.push(pre+end+"s");
+  if(/[^aeiou]ies$/u.test(end))forms.push(pre+end.slice(0,-3)+"y");
+  else if(/(?:ches|shes|xes|zes|sses)$/u.test(end))forms.push(pre+end.slice(0,-2));
+  else if(end.endsWith("s") && !end.endsWith("ss"))forms.push(pre+end.slice(0,-1));
+ }
+ const words:Record<string,number>={zero:0,one:1,two:2,three:3,four:4,five:5,
+   six:6,seven:7,eight:8,nine:9,ten:10};
+ const spans=new Map<string,number>();
+ for(const [i,clause] of text.normalize("NFKC").toLowerCase()
+   .split(/[，,。；;!?！？\n]+|(?<!\d)\.(?=\s|$)|(?<=\d)\.(?!\d)(?=\s|$)/u).map(s=>s.trim()).filter(Boolean).entries()){
+  for(const form of [...new Set(forms)]){
+   if(!matchesReferenceLabel(clause,form))continue;
+   const at=clause.indexOf(form),tail=at+form.length;
+   if(at<0)continue;
+   for(const m of clause.matchAll(/\d{1,5}|[一二兩两三四五六七八九十]|\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/giu)){
+    const start=m.index??-1,end=start+m[0].length;
+    const n=countTokenValue(m[0])??words[m[0].toLowerCase()]??null;
+    if(n===null)continue;
+    const before=end<=at?clause.slice(end,at):null;
+    const sourceUnit=typeof unit==="string"?unit.normalize("NFKC").trim().toLowerCase():"";
+    // English "3 licenses for subscription" binds a semantic unit and one
+    // current item. There is no built-in domain vocabulary or unit word list.
+    const unitForItem=Boolean(sourceUnit && sourceUnit.length<=36 &&
+      before!==null &&
+      [" "+sourceUnit+" for "," "+sourceUnit+" of "," "+sourceUnit+" to "].includes(before.toLowerCase()));
+    const prefix=before!==null && (/^\s*$/u.test(before) ||
+      (/^\s*[\p{Script=Han}]{1,2}\s*$/u.test(before) &&
+      (!unit || before.trim()===unit)) || unitForItem);
+    const after=start>=tail?clause.slice(tail,start):null;
+    const remainder=clause.slice(end).trim();
+    const suffix=after!==null && /^\s*(?:[:：×x]\s*)?$/u.test(after) &&
+      (remainder==="" || (sourceUnit && (remainder===sourceUnit ||
+        remainder.startsWith(sourceUnit) && /^\s/u.test(remainder.slice(sourceUnit.length)))));
+    if(prefix||suffix)spans.set(i+":"+start+":"+at,n);
+   }
+  }
+ }
+ if(spans.size===1)return [...spans.values()][0]===proposed?proposed:null;
+ // A fresh explicitly totaled goal can put its total in a separate clause.
+ // Require the same written item name in the turn and the same *semantic
+ // customer unit* immediately following exactly one total. A count of people
+ // cannot satisfy a different item's written unit.
+ const requestedUnit=typeof unit==="string"?unit.normalize("NFKC").trim().toLowerCase():"";
+ if(!spans.size && requestedUnit && requestedUnit.length<=36 &&
+    matchesReferenceLabel(text,name)){
+   const total=[...text.normalize("NFKC").toLowerCase().matchAll(
+     /(?:合共|總共|总共|總數|总数|共計|共计|\bin\s+total\b|\btotal(?:\s+of)?\b)\s*([一二兩两三四五六七八九十]|\d{1,4})\s*([\p{L}\p{N}]{1,36})/giu,
+   )].filter(match=>countTokenValue(match[1])===proposed &&
+     match[2]===requestedUnit);
+   if(total.length===1)return proposed;
+ }
+ return null;
 }
 
 function deriveA3RuntimeEvents(
@@ -447,15 +1882,168 @@ function deriveA3RuntimeEvents(
     source_message_id: input.source_message_id,
     recorded_at: input.occurred_at ?? null,
   };
-  const mentioned = hintsMentionedInTurn(text, hints);
-  const quantity = parseCount(text);
-  const cancelled = detectCancellation(text);
-  const deferred = detectDeferral(text);
+  const mentioned = hintsMentionedInTurn(text, hints, previous);
+  // A confident reading proposes; source-bound subject and numeral verify.
+  // ADD_ITEM cannot borrow counts describing people or a customer's budget.
+  const reading=input.semantic_frame;
+  // A weak *overall* reading is not quantity authority. However an explicit
+  // same-turn additive request can corroborate one separately confident item
+  // referent against an existing, uniquely active customer-owned entity ID.
+  // The literal name, count and unit must bind in the Visitor's source; a
+  // model echo, person count, other topic or unknown target cannot qualify.
+  const corroboratedWeakAdditive=(()=>{
+    if(!reading || reading.confidence>=0.72 ||
+       reading.ambiguity.is_ambiguous || reading.operation!=="ADD_ITEM" ||
+       !reading.additive || reading.customer_correction ||
+       reading.entities.length!==1 ||
+       !detectAdditiveEntityCreationSignal(text) ||
+       isReadOnlyCommerceQuestion(text,reading))return null;
+    const item=reading.entities[0];
+    const active=previous.entities.filter(entity=>
+      !["cancelled","deferred","superseded"].includes(entity.status));
+    if(active.length!==1 || item.confidence<0.90 ||
+       item.entity_ref!==active[0].entity_id ||
+       (item.category_hint && item.category_hint!==active[0].category) ||
+       active[0].provenance.source_type!=="customer" ||
+       !active[0].provenance.source_message_id ||
+       !matchesReferenceLabel(text,item.name))return null;
+    return attestedItemQuantity(text,item.name,item.quantity,item.unit);
+  })();
+  const quantity=reading
+    ? reading.confidence>=0.72 && !reading.ambiguity.is_ambiguous &&
+       reading.entities.length===1
+        ? attestedItemQuantity(text,reading.entities[0].name,
+            reading.entities[0].quantity,reading.entities[0].unit)
+        : corroboratedWeakAdditive
+    : parseSpaceScopedCommerceQuantity(text) ?? parseCount(text);
+  const constraintCancellation = dimensionConstraintCancellation(text);
+  const semanticRejectsLifecycle=Boolean(input.semantic_frame &&
+    input.semantic_frame.confidence>=0.72 &&
+    !input.semantic_frame.ambiguity.is_ambiguous &&
+    !["DEFER","CANCEL_ITEM","REMOVE_ITEM"].includes(input.semantic_frame.operation));
+  const cancelled = !semanticRejectsLifecycle &&
+    detectCancellation(text) && !constraintCancellation;
+  const deferred = !semanticRejectsLifecycle && detectDeferral(text);
+  const reactivated = detectEntityReactivation(text);
+  const semanticAuthoritative = Boolean(
+    input.semantic_frame && input.semantic_frame.confidence >= 0.72,
+  );
+  const activeAggregates = previous.entities.filter((entity) =>
+    entity.entity_id.endsWith(":unscoped") &&
+    entity.status !== "cancelled" && entity.status !== "deferred"
+  );
   const additive = detectAdditiveEntityCreationSignal(text);
-  const explicitCreation = detectExplicitEntityCreationSignal(text);
-  const correction = detectQuantityCorrectionSignal(text);
+  const explicitCreation = detectExplicitEntityCreationSignal(text) || establishesDurableProductResearch(text);
+  const correction = quantity !== null && detectQuantityCorrectionSignal(text);
+  const allocationBreakdown = correction && isAllocationBreakdown(text);
+  const addressCorrection = parseAddressReplacementCorrection(text);
 
-  if (correction && quantity !== null && mentioned.length === 0) {
+  const trustedTopicFocus = input.trusted_product_topic_focus;
+  if (trustedTopicFocus && validateTrustedProductTopicFocus(input, previous).valid) {
+    events.push(...trustedResearchFocusEvents(input, previous));
+  }
+
+  // The semantic adapter owns entity mutation when its frame is authoritative,
+  // but B2 still needs the customer's exact correction ledger. Record explicit
+  // quantity corrections here so a later, superseded tentative statement cannot
+  // remain the apparent "latest" correction merely because semantic extraction
+  // handled the entity updates.
+  if (correction || addressCorrection) {
+    events.push({ type: "ADD_CORRECTION", correction: text });
+  }
+
+  if (addressCorrection) {
+    events.push({
+      type: "SET_DELIVERY",
+      patch: {},
+      address_update: addressCorrection,
+      provenance,
+    });
+  }
+
+  const currentCategories = explicitCategoryKeys(text);
+  if (currentCategories.length === 1 && establishesDurableProductResearch(text)) {
+    events.push({ type: "SET_CONTEXT", topic: currentCategories[0] });
+  }
+  // A generic initial advice intent is a durable customer-conversation state
+  // even without a known product quantity. Never invent an entity or unit.
+  const frame = input.semantic_frame;
+  if (previous.entities.length === 0 && frame && frame.confidence >= 0.72 &&
+      !frame.ambiguity.is_ambiguous && frame.operation === "ASK_FACT" &&
+      ["customer_guidance","ask_for_advice"].includes(frame.intent) &&
+      acceptsInitialAdviceGoalReading(input,frame)) {
+    events.push({type:"SET_CONTEXT",intent:"customer_guidance"});
+  }
+
+  // Persist dimension constraints against the same uniquely scoped product
+  // used by the reader, preventing cross-entity carryover.
+  const dimensionCategory=resolveAttributeQueryCategory(input,previous);
+  const interpretedDimensions = input.semantic_frame?.entities.some(item => Object.keys(item.constraints).some(key => dimensionKeyAxis(key)));
+  if(!interpretedDimensions&&!dimensionCategory.ambiguous&&dimensionCategory.category&&!looksInterrogative(text)){
+    const category=dimensionCategory.category;
+    const candidates=previous.entities.filter(e=>e.category===category&&
+      !["cancelled","deferred","superseded"].includes(e.status));
+    const target=dimensionCategory.entity_id
+      ? candidates.find(e=>e.entity_id===dimensionCategory.entity_id)
+      : candidates.length===1?candidates[0]
+      : !candidates.length?mentioned.find(h=>h.category===category):null;
+    if (target) {
+      if (constraintCancellation) {
+        const attribute = inferCommerceDimensionAttribute(text) ?? "width";
+        for (const key of dimensionConstraintKey(attribute)) {
+          events.push({ type: "REMOVE_ENTITY_CONSTRAINT", entity_id: target.entity_id, key, provenance });
+        }
+      } else {
+        const measurement = parseProductDimension(text);
+        const attribute = measurement
+          ? inferCommerceDimensionAttribute(text, input.semantic_frame) ??
+            measurement.attribute ?? contextualConstraintAttribute(input.history ?? [], 0, category)
+          : null;
+        if (measurement && attribute && (maximumConstraintLanguage(text) || /(?:位得|位置得|接受|照舊|照旧|fit|accept)/i.test(text))) {
+          events.push({ type: "SET_ENTITY_CONSTRAINT", entity_id: target.entity_id, key: `max_${attribute}_mm`, value: measurement.value_mm, provenance });
+        }
+        if (measurement && attribute && /(?:就唔好|就不要|唔接受|不接受|排除|exclude|reject)/i.test(text)) {
+          events.push({ type: "SET_ENTITY_CONSTRAINT", entity_id: target.entity_id, key: `excluded_${attribute}_mm`, value: measurement.value_mm, provenance });
+        }
+      }
+    }
+  }
+
+  // generate-reply supplies newest-first history.  Reading the tail here used
+  // the oldest turns and dropped the immediately preceding delivery context in
+  // long conversations (captured production T058).  Keep the bounded newest
+  // window and let the shared extractor reject questions/policy/cancellation.
+  const deliveryContext = (input.history ?? []).slice(0, MAX_HISTORY_TURNS).some((turn) =>
+    /(?:送貨|送货|配送|派送|delivery|deliver)/i.test(turn.content)
+  );
+  const preferredDeliveryDate = extractDeliveryPreference(text, deliveryContext);
+  if (preferredDeliveryDate) {
+    events.push({
+      type: "SET_DELIVERY",
+      patch: { preferred_date: preferredDeliveryDate },
+      provenance,
+    });
+  }
+
+  // Customer specifications are owned by the accepted semantic entity attributes.
+  // A literal measurement unit cannot itself select an attribute key or target.
+
+  if (/(?:[\p{L}\p{N}-]+[、,，]){1,}[\p{L}\p{N}-]+(?:都得|均可|皆可|any\s+(?:is|are)\s+fine)/iu.test(text)) {
+    events.push({ type: "SET_CUSTOMER_CONSTRAINT", key: "brand_required", value: false });
+  }
+
+  // Explicit machine/spec allocations provide their own total; never carry
+  // forward a room-plan default or treat the first allocation as the total.
+  const specificationAllocation = sourceBoundSpecificationAllocation(input, previous);
+  if (specificationAllocation) {
+    events.push({type:"SET_ENTITY_QUANTITY",entity_id:specificationAllocation.entity_id,
+      quantity:specificationAllocation.quantity,provenance});
+  }
+
+  if (
+    correction && !allocationBreakdown && quantity !== null &&
+    mentioned.length === 0
+  ) {
     const active = previous.entities.filter(
       (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
     );
@@ -485,13 +2073,81 @@ function deriveA3RuntimeEvents(
   }
 
   for (const hint of mentioned) {
+    const existing = previous.entities.find((entity) =>
+      entity.entity_id === hint.entity_id
+    );
+    const aggregate = previous.entities.find((entity) =>
+      entity.category === hint.category &&
+      entity.entity_id.endsWith(":unscoped") &&
+      entity.status !== "cancelled" && entity.status !== "deferred"
+    );
+    const scopedEntity = hint.entity_id.startsWith(`${hint.category}:`) &&
+      !hint.entity_id.endsWith(":unscoped");
+    const canMaterializeSemanticScope = semanticAuthoritative && !existing &&
+      scopedEntity && activeAggregates.length === 1 &&
+      activeAggregates[0].category === hint.category;
+
+    if ((cancelled || deferred) && canMaterializeSemanticScope) {
+      events.push({
+        type: "ENSURE_ENTITY",
+        entity: {
+          entity_id: hint.entity_id,
+          category: hint.category,
+          brand: hint.brand ?? null,
+          model: hint.model ?? null,
+          quantity: hint.quantity ?? 1,
+          status: "tentative",
+          attributes: { ...(hint.attributes ?? {}) },
+          constraints: { ...(hint.constraints ?? {}) },
+          provenance,
+        },
+      });
+    }
+
     if (cancelled) {
+      // A semantic-authoritative mutation may only target a durable entity or
+      // the uniquely materialized scoped entity above. Ambiguous references
+      // stay read-only so downstream clarification remains fail-closed.
+      if (semanticAuthoritative && !existing && !canMaterializeSemanticScope) continue;
       events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "cancelled", provenance });
+      if (!existing && aggregate && aggregate.quantity > 0 && (
+        aggregate.attributes.quantity_basis == null ||
+        Boolean((aggregate.attributes.room_allocation as Record<string,unknown> ?? {})[hint.entity_id.split(":")[1]]) ||
+        (Array.isArray(aggregate.attributes.scoped_customer_updates) && aggregate.attributes.scoped_customer_updates.some((v: {scope?:string;attribute?:string})=>v.attribute === "quantity" && v.scope === hint.entity_id.split(":")[1]))
+      )) {
+        events.push({
+          type: "SET_ENTITY_QUANTITY",
+          entity_id: aggregate.entity_id,
+          quantity: Math.max(0, aggregate.quantity - (hint.quantity ?? 1)),
+          provenance,
+        });
+      }
       continue;
     }
     if (deferred) {
+      if (semanticAuthoritative && !existing && !canMaterializeSemanticScope) continue;
       events.push({ type: "SET_ENTITY_STATUS", entity_id: hint.entity_id, status: "deferred", provenance });
+      if (!existing && aggregate && aggregate.quantity > 0 && (
+        aggregate.attributes.quantity_basis == null ||
+        Boolean((aggregate.attributes.room_allocation as Record<string,unknown> ?? {})[hint.entity_id.split(":")[1]]) ||
+        (Array.isArray(aggregate.attributes.scoped_customer_updates) && aggregate.attributes.scoped_customer_updates.some((v: {scope?:string;attribute?:string})=>v.attribute === "quantity" && v.scope === hint.entity_id.split(":")[1]))
+      )) {
+        events.push({
+          type: "SET_ENTITY_QUANTITY",
+          entity_id: aggregate.entity_id,
+          quantity: Math.max(0, aggregate.quantity - (hint.quantity ?? 1)),
+          provenance,
+        });
+      }
       continue;
+    }
+    if (reactivated && existing && ["cancelled", "deferred"].includes(existing.status)) {
+      events.push({
+        type: "SET_ENTITY_STATUS",
+        entity_id: hint.entity_id,
+        status: "tentative",
+        provenance,
+      });
     }
     if (quantity !== null && (additive || mentioned.length === 1)) {
       const existing = previous.entities.find((entity) => entity.entity_id === hint.entity_id);
@@ -504,43 +2160,96 @@ function deriveA3RuntimeEvents(
   }
 
   const checks = detectSiteChecks(text);
-  if (checks.length) events.push({ type: "SET_PENDING_CHECKS", checks });
+  if (checks.length) {
+    const nextChecks = detectCancellation(text)
+      ? previous.installation.pending_checks.filter((check) => !checks.includes(check))
+      : [...previous.installation.pending_checks, ...checks];
+    events.push({ type: "SET_PENDING_CHECKS", checks: [...new Set(nextChecks)] });
+  }
   return events;
 }
 
-export function enforceQuotationNotOrderEvents(
+export function customerHistoricalQuoteProof(
+  input:CommerceRuntimeInput,
+  quote:Extract<CommerceStateEvent,{type:"ADD_QUOTE"}>["quote"],
+):boolean {
+  const frame=input.semantic_frame;
+  if(!frame || frame.confidence<0.72 || frame.ambiguity.is_ambiguous ||
+     quote.quote_type!=="customer_reported_historical" ||
+     quote.provenance.source_type!=="customer" ||
+     quote.provenance.source_message_id!==input.source_message_id)return false;
+  const sourceNumbers=[...input.text.matchAll(/(?<![\d.])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![\d.])/gu)]
+    .filter(match=>Number(match[0].replace(/,/g,""))===quote.amount);
+  if(sourceNumbers.length!==1)return false;
+  const historicalFacts=(frame.customer_facts??[]).filter(fact=>
+    /^(?:(?:customer_)?historical|previous|prior|customer_reported)_(?:price|quote|quotation|quoted_price)(?:_amount)?$/i.test(fact.key));
+  return historicalFacts.some(fact=>{
+    const value=fact.value;
+    const amount=typeof value==="number"?value:
+      (value && typeof value==="object" && !Array.isArray(value) && "amount" in value &&
+       typeof value.amount==="number"?value.amount:null);
+    const currency=value && typeof value==="object" && !Array.isArray(value) &&
+      "unit" in value && typeof value.unit==="string"?value.unit.toUpperCase():null;
+    return amount===quote.amount && (!currency || currency===quote.currency.toUpperCase());
+  });
+}
+
+// A customer turn is not a merchant transaction readback.  Neither the
+// compatibility extractor nor a semantic proposal may authorize a completed
+// order, payment, verified quotation, or fulfilment.  Keep the frozen A2
+// reducer available for separately authorized events; constrain its callers here.
+type CustomerTurnConversion = Partial<ConversationCommerceState["conversion"]>;
+function hasProtectedTransactionLifecycle(value: CustomerTurnConversion): boolean {
+  return value.funnel_stage === "order_confirmed" || value.funnel_stage === "post_purchase" ||
+    (value.order_status !== undefined && ["confirmed", "completed", "cancelled"].includes(value.order_status)) ||
+    (value.payment_status !== undefined && ["paid", "failed", "refunded", "partially_refunded"].includes(value.payment_status)) ||
+    (value.quotation_status !== undefined && ["verified", "accepted", "expired", "cancelled"].includes(value.quotation_status));
+}
+
+function preserveCustomerTurnTransactionAuthority(
+  previous: ConversationCommerceState, candidate: ConversationCommerceState,
+): ConversationCommerceState {
+  // A persisted prior lifecycle is not re-verified by this function. Preserve
+  // it verbatim; do not use a customer utterance to promote OR erase it.
+  // In particular, a paid word in a historical report or negated list cannot
+  // manufacture payment authority. A separately trusted transaction reader
+  // must supply any actual business-state change.
+  const protectConversion = hasProtectedTransactionLifecycle(previous.conversion) ||
+    hasProtectedTransactionLifecycle(candidate.conversion);
+  const protectDelivery = previous.delivery.confirmed !== candidate.delivery.confirmed;
+  if (!protectConversion && !protectDelivery) return candidate;
+  return {
+    ...candidate,
+    conversion: protectConversion ? {
+      ...candidate.conversion,
+      funnel_stage: previous.conversion.funnel_stage,
+      quotation_status: previous.conversion.quotation_status,
+      order_status: previous.conversion.order_status,
+      payment_status: previous.conversion.payment_status,
+    } : candidate.conversion,
+    delivery: protectDelivery ? {...candidate.delivery, confirmed: previous.delivery.confirmed} : candidate.delivery,
+  };
+}
+
+function enforceQuotationNotOrderEvents(
   text: string,
   state: ConversationCommerceState,
+  frame?: CommerceSemanticFrame | null,
 ): CommerceStateEvent[] {
-  const scan = scanNegatedTransaction(text);
-  const positiveOrder = explicitOrderConfirmation(scan.positive);
-  const positivePayment = explicitPaymentConfirmation(scan.positive);
-  const positiveBooking = explicitBookingConfirmation(scan.positive);
-  const events: CommerceStateEvent[] = [];
-
-  if (scan.negated_booking && !positiveBooking && state.delivery.confirmed) {
-    events.push({ type: "SET_DELIVERY", patch: { confirmed: false }, provenance: { source_type: "derived" } });
-  }
-  if (positiveOrder) return events;
-
-  const promoted = state.conversion.order_status === "confirmed" || state.conversion.order_status === "completed" || state.conversion.funnel_stage === "order_confirmed";
-  const paidDrift = !positivePayment && scan.negated_payment && (state.conversion.payment_status === "paid" || state.conversion.payment_status === "pending_payment");
-
-  if (!promoted && !paidDrift) {
-    if (quotationOnlySignal(text) && state.conversion.quotation_status === "none") {
-      events.push({ type: "SET_CONVERSION", patch: { funnel_stage: "quotation", quotation_status: "draft" } });
-    }
-    return events;
-  }
-
-  const patch: Partial<ConversationCommerceState["conversion"]> = {
-    funnel_stage: "quotation",
-    quotation_status: state.conversion.quotation_status === "none" ? "draft" : state.conversion.quotation_status,
-  };
-  if (promoted) patch.order_status = "draft";
-  if (paidDrift) patch.payment_status = "pending_quote";
-  events.push({ type: "SET_CONVERSION", patch });
-  return events;
+  // Draft quotation intent remains a supported customer-owned operation. Do
+  // not derive a merchant confirmation or downgrade a prior lifecycle from
+  // words such as "paid", "booked", or "not paid".
+  if (hasProtectedTransactionLifecycle(state.conversion)) return [];
+  if (frame && frame.confidence >= 0.72 && !frame.ambiguity.is_ambiguous &&
+      frame.operation === "ASK_FACT" &&
+      (frame.intent === "customer_guidance" || frame.intent === "ask_for_advice")) return [];
+  if (!quotationOnlySignal(text) || state.conversion.quotation_status !== "none") return [];
+  const negation = scanNegatedTransaction(text);
+  const quoteOnly = explicitQuotationOnlySignal(text) || negation.negated_order || negation.negated_payment;
+  const patch: CustomerTurnConversion = {funnel_stage: "quotation", quotation_status: "draft"};
+  if (quoteOnly && state.conversion.order_status === "none") patch.order_status = "draft";
+  if (quoteOnly && state.conversion.payment_status === "none") patch.payment_status = "pending_quote";
+  return [{type: "SET_CONVERSION", patch}];
 }
 
 export function detectExplicitEntityCreationSignal(text: string): boolean {
@@ -561,7 +2270,7 @@ export function filterGhostUnscopedHints(
   state: ConversationCommerceState,
   hints: CommerceTurnEntityHint[],
 ): CommerceTurnEntityHint[] {
-  const explicitCreation = detectExplicitEntityCreationSignal(text);
+  const explicitCreation = detectExplicitEntityCreationSignal(text) || establishesDurableProductResearch(text);
   const additive = detectAdditiveEntityCreationSignal(text);
   const categories = new Set(detectCategories(text).map((category) => category.key));
   const rooms = detectRooms(text);
@@ -569,7 +2278,9 @@ export function filterGhostUnscopedHints(
   return hints.filter((hint) => {
     if (!categories.has(hint.category)) return true;
     const roomKey = hint.entity_id.split(":")[1];
-    if (rooms.length > 0 && roomKey === "unscoped") return false;
+    if (rooms.length > 0 && roomKey === "unscoped" &&
+      !(establishesDurableProductResearch(text) &&
+        !state.entities.some((entity) => entity.category === hint.category))) return false;
     if (additive && rooms.length === 0) return roomKey === "unscoped";
     if (roomKey !== "unscoped") return true;
     if (state.entities.some((e) => e.entity_id === hint.entity_id)) return true;
@@ -582,39 +2293,2376 @@ export function filterGhostUnscopedHints(
   });
 }
 
-export function reduceTurn(
+function materializeRoomOnlyReferenceHints(
+  text: string,
+  state: ConversationCommerceState,
+  hints: CommerceTurnEntityHint[],
+  history: CommerceHistoryTurn[] = [],
+): CommerceTurnEntityHint[] {
+  const rooms = detectReferencedRooms(text);
+  const scopedAttributeAssignment = !looksInterrogative(text) &&
+    /(?:\d+(?:\.\d+)?\s*匹|horsepower|\bhp\b)/i.test(text);
+  if (
+    rooms.length === 0 || detectCategories(text).length > 0 ||
+    (!detectCancellation(text) && !detectDeferral(text) &&
+      !detectEntityReactivation(text) && !scopedAttributeAssignment)
+  ) return hints;
+
+  let aggregateCategories = [...new Set(
+    state.entities.filter((entity) =>
+      entity.entity_id.endsWith(":unscoped") &&
+      entity.status !== "cancelled" && entity.status !== "deferred"
+    ).map((entity) => entity.category),
+  )];
+  if (aggregateCategories.length > 1) {
+    for (const turn of history) {
+      if (!["visitor", "user", "customer"].includes(turn.role)) continue;
+      const recent = explicitCategoryKeys(turn.content).filter((category) => aggregateCategories.includes(category));
+      if (recent.length === 1) {
+        aggregateCategories = recent;
+        break;
+      }
+    }
+  }
+  // A room-only reference is resolvable only when the current state supplies
+  // one authoritative aggregate category. Multiple active categories remain
+  // ambiguous and must not be guessed here.
+  if (aggregateCategories.length !== 1) return hints;
+
+  const category = aggregateCategories[0];
+  const canonicalEntityIds = new Set(rooms.map((room) => `${category}:${room.key}`));
+  const roomAliases = rooms.flatMap((room) => room.aliases)
+    .map((alias) => clean(alias, 80).toLowerCase())
+    .filter(Boolean);
+  // A semantic frame can describe the same scoped phrase with a generated
+  // entity id (for example, generic:<room phrase>). Once the aggregate and
+  // room make the reference deterministic, discard that non-persisted shadow
+  // before events are built; otherwise it can fail mutation before the
+  // canonical scoped entity is materialized and leave reply routing unaware
+  // that the requested action was successfully resolved.
+  const next = new Map(hints.filter((hint) => {
+    if (hint.category !== category || canonicalEntityIds.has(hint.entity_id)) return true;
+    if (state.entities.some((entity) => entity.entity_id === hint.entity_id)) return true;
+    return !(hint.aliases ?? []).some((alias) => {
+      const normalized = clean(alias, 80).toLowerCase();
+      return normalized && roomAliases.some((roomAlias) =>
+        normalized.includes(roomAlias) || roomAlias.includes(normalized)
+      );
+    });
+  }).map((hint) => [hint.entity_id, hint]));
+  for (const room of rooms) {
+    const entity_id = `${category}:${room.key}`;
+    if (!next.has(entity_id)) {
+      next.set(entity_id, {
+        entity_id,
+        category,
+        quantity: 1,
+        aliases: [...room.aliases],
+      });
+    }
+  }
+  return [...next.values()];
+}
+
+function enrichExplicitCustomerFacts(input: CommerceRuntimeInput, state: ConversationCommerceState, hints: CommerceTurnEntityHint[]): ConversationCommerceState {
+  let reduced = state;
+  // Customer-owned, explicitly stated facts bind only to one active product.
+  const active = reduced.entities.filter((entity) => !["cancelled", "deferred"].includes(entity.status));
+  const categories = detectCategories(input.text);
+  const modelHints = hints.filter((hint) => hint.model && clean(input.text).toUpperCase().includes(hint.model.toUpperCase()));
+  const named = active.filter((entity) => categories.some((category) => category.key === entity.category));
+  const provenance = { source_type: "customer" as const, source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null };
+  const generic = active.filter(entity=>entity.entity_id.startsWith("generic:") &&
+    [entity.attributes.product_name,entity.category].some(name=>typeof name === "string" && matchesReferenceLabel(input.text,name)));
+  const date = input.text.match(/\b20\d{2}-\d{2}-\d{2}\b/)?.[0];
+  const explicitQuantity=parseCount(input.text);
+  if (generic.length===1 && explicitQuantity!==null && generic[0].quantity===explicitQuantity &&
+    generic[0].provenance.source_message_id===input.source_message_id && !looksInterrogative(input.text) &&
+    !isHistoricalOrConditionalCustomerCalculationRequest(input.text)) {
+    reduced=reduceCommerceState(reduced,[{type:"SET_ENTITY_ATTRIBUTE",entity_id:generic[0].entity_id,
+      key:"quantity_basis",value:"customer_explicit",provenance}]);
+  }
+  if(generic.length===1 && date && !/[?？]|should|could|can|what|幾時|係咪/i.test(input.text)) {
+    const previousDate = generic[0].attributes.requested_date;
+    reduced=reduceCommerceState(reduced,[{type:"SET_ENTITY_ATTRIBUTE",entity_id:generic[0].entity_id,key:"requested_date",value:date,provenance},
+      ...(typeof previousDate === "string" && previousDate !== date ? [{type:"ADD_CORRECTION" as const,
+        correction:`${generic[0].attributes.product_name ?? generic[0].category} requested date: change from ${previousDate} to ${date}`}] : [])]);
+  }
+  if (categories.length === 1 && named.length === 1 && new Set(modelHints.map((hint) => hint.model)).size === 1 && !named[0].model) {
+    reduced = reduceCommerceState(reduced, [{ type: "UPDATE_ENTITY", entity_id: named[0].entity_id, patch: { model: modelHints[0].model }, provenance }]);
+  }
+  // No category-specific installation, room, horsepower, sunlight or
+  // quantity guesses. Use only source-bound semantic/canonical customer facts.
+  return reduced;
+}
+
+
+/** A numeric customer fact is not quantity authority for another entity.
+ * Bind the count to one customer-authored clause and the actual target. The
+ * anonymous form is limited to a pure, unambiguous contextual count update;
+ * a provider's repeated old entity is never sufficient by itself. */
+/** A customer-authored purchase goal with a literal aggregate quantity is
+ * state, not a request to calculate a total. Both the Visitor text and one
+ * unambiguous semantic proposal must agree; industry/profile defaults never
+ * supply the subject, count, unit or authority. */
+function sourceBoundAffirmativeAggregateGoal(
+  input: CommerceRuntimeInput,
+  previous: ConversationCommerceState,
+): number | null {
+  const frame = input.semantic_frame;
+  if (!frame || frame.confidence < 0.72 || frame.ambiguity.is_ambiguous ||
+      frame.operation !== "ADD_ITEM" || frame.additive || frame.customer_correction ||
+      frame.entities.length !== 1) return null;
+  const text = clean(input.text);
+  if (looksInterrogative(text) || isHistoricalOrConditionalCustomerCalculationRequest(text) ||
+      /(?:唔|不|無需|无需|不要|唔好|別|别).{0,12}(?:選購|选购|購買|购买|買|买|訂購|订购)|\b(?:do not|don't|never|not)\s+(?:want|need|buy|purchase)\b/iu.test(text)) return null;
+  if (!/(?:我要|我想|我哋|我们|需要|想|\b(?:i|we)\s+(?:want|need)\b).{0,90}?(?:選購|选购|購買|购买|買|买|訂購|订购|purchase|buy|order)/iu.test(text)) return null;
+  const total = text.match(
+    /(?:合共|總共|总共|一共|總數|总数|共計|共计|in\s+total|total(?:\s+of)?)\s*(?:要|需|有|為|为|是|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(部|台|件|個|个|套|份|盒|箱|包|堂|課|课|units?|pieces?|items?|sets?|boxes?|packs?|lessons?|sessions?|seats?|nights?)/iu,
+  );
+  const quantity = total ? countTokenValue(total[1]) : null;
+  const proposed = frame.entities[0];
+  if (quantity === null || quantity <= 0 || proposed.quantity !== quantity ||
+      proposed.confidence < 0.72) return null;
+  // The unit must be literally sourced, not invented from a previous product
+  // or a provider echo. Unknown-unit proposals may use the explicit source.
+  const sourceUnit = total![2].toLowerCase();
+  if (proposed.unit && clean(proposed.unit).toLowerCase() !== sourceUnit) return null;
+  const bound = previous.entities.find(entity =>
+    entity.entity_id === proposed.entity_ref &&
+    entity.provenance.source_type === "customer" &&
+    !["cancelled", "deferred", "superseded"].includes(entity.status));
+  if (bound && proposed.category_hint && proposed.category_hint !== bound.category) return null;
+  const literalNames: unknown[] = [
+    proposed.name,
+    ...(bound ? [bound.attributes.name, bound.attributes.product_name, bound.model] : []),
+  ];
+  return literalNames.some(name => typeof name === "string" &&
+    name.length > 1 && matchesReferenceLabel(text, name))
+    ? quantity : null;
+}
+
+/** A reading may propose a replacement count/unit; only the current Visitor
+ * literal bound to one existing customer subject supplies the value. No unit
+ * equivalence, translation, industry vocabulary or historical text is used. */
+export function sourceBoundQuantityUnit(
+  input: CommerceRuntimeInput,
+  previous: ConversationCommerceState,
+): { entity_id: string; name: string; quantity: number; unit: string; source_text: string } | null {
+  const frame = input.semantic_frame;
+  if (!frame || frame.confidence < 0.72 || frame.ambiguity.is_ambiguous ||
+      frame.explicit_negations.length ||
+      (frame.demands ?? []).some(demand => demand.explicit_negations.length) ||
+      frame.additive || frame.entities.length !== 1 ||
+      !(frame.operation === "SET_QUANTITY" ||
+        frame.operation === "UPDATE_ITEM" && frame.customer_correction) ||
+      !input.company_id || !input.conversation_id || !input.source_message_id) return null;
+  const proposed = frame.entities[0];
+  if (proposed.confidence < 0.72 || proposed.quantity === null ||
+      !Number.isSafeInteger(proposed.quantity) || proposed.quantity < 0 || proposed.quantity > 100000 ||
+      typeof proposed.unit !== "string" || proposed.unit !== proposed.unit.trim() ||
+      !/^[\p{L}\p{M}][\p{L}\p{M}\p{N} '\/-]{0,63}$/u.test(proposed.unit)) return null;
+  const target = previous.entities.find(entity => entity.entity_id === proposed.entity_ref);
+  if (!target || target.provenance.source_type !== "customer" ||
+      !target.provenance.source_message_id ||
+      ["cancelled", "deferred", "superseded"].includes(target.status)) return null;
+  const name = proposed.name.normalize("NFKC").trim().toLowerCase();
+  if (!name || !sourceOwnedSubjectLabels(target).includes(name) ||
+      !matchesReferenceLabel(input.text, name)) return null;
+  const owners = previous.entities.filter(entity =>
+    !["cancelled", "deferred", "superseded"].includes(entity.status) &&
+    sourceOwnedSubjectLabels(entity).includes(name));
+  if (owners.length !== 1 || owners[0].entity_id !== target.entity_id ||
+      frame.referents.some(ref => ref.source === "persistent_state" &&
+        (ref.confidence < 0.72 || ref.ref !== target.entity_id))) return null;
+  // An optional quote is corroboration, not a substitute for the server-owned
+  // current source. A supplied empty, foreign or repeated quote is invalid.
+  for (const demand of frame.demands ?? []) {
+    if (Object.prototype.hasOwnProperty.call(demand, "source_quote")) {
+      const quote = demand.source_quote;
+      const source = input.text.normalize("NFKC");
+      const quoted = typeof quote === "string" ? quote.normalize("NFKC") : "";
+      if (!quoted.trim() || source.indexOf(quoted) < 0 ||
+          source.indexOf(quoted) !== source.lastIndexOf(quoted)) return null;
+    }
+    if (demand.ambiguity.is_ambiguous || demand.subject_refs.some(ref =>
+        ref !== target.entity_id && ref.normalize("NFKC").trim().toLowerCase() !== name)) return null;
+  }
+  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Consume the entire numeral so 30, 3.5 or 三十 cannot attest quantity 3.
+  const count = "([0-9]+(?:\\.[0-9]+)?|[零〇一二兩两三四五六七八九十百千萬万億亿兆]+)";
+  const pattern = new RegExp(count + "\\s*" + escape(proposed.unit), "gu");
+  const literals = [...input.text.matchAll(pattern)].filter(match => {
+    const start = match.index ?? 0, end = start + match[0].length;
+    const before = input.text.slice(0, start).at(-1) ?? "";
+    const after = input.text.slice(end);
+    if (/[0-9.]/u.test(before) ||
+        after && !/^[\s,，。;；.!?！？:：]/u.test(after) &&
+        !after.normalize("NFKC").toLowerCase().startsWith(name)) return false;
+    return true;
+  });
+  if (literals.length !== 1 || countTokenValue(literals[0][1]) !== proposed.quantity) return null;
+  const literal = literals[0], at = literal.index ?? 0;
+  const clauses = input.text.split(/[，,。；;!?！？\n]+/u);
+  let offset = 0;
+  for (const clause of clauses) {
+    const start = input.text.indexOf(clause, offset), end = start + clause.length;
+    offset = end + 1;
+    if (at < start || at >= end) continue;
+    if (!matchesReferenceLabel(clause, name)) return null;
+    const competing = previous.entities.filter(entity => entity.entity_id !== target.entity_id &&
+      !["cancelled", "deferred", "superseded"].includes(entity.status) &&
+      sourceOwnedSubjectLabels(entity).some(label => matchesReferenceLabel(clause, label)));
+    if (competing.length) return null;
+    return { entity_id: target.entity_id, name: proposed.name, quantity: proposed.quantity,
+      unit: proposed.unit, source_text: literal[0] };
+  }
+  return null;
+}
+
+/** An identity-only correction can omit its count while the current source
+ * states one exact count in the existing customer's unit. It cannot create a
+ * subject, infer/change a unit, borrow a sibling, or override a read-only frame.
+ * This admits only an existing event to the original source-quantity verifier. */
+function isSourceBoundIdentityQuantityCorrection(
+  event: Extract<CommerceStateEvent, { type: "SET_ENTITY_QUANTITY" }>,
+  input: CommerceRuntimeInput,
+  previous: ConversationCommerceState,
+): boolean {
+  const frame = input.semantic_frame;
+  if (!frame || frame.confidence < 0.72 || frame.ambiguity.is_ambiguous ||
+      frame.operation !== "UPDATE_ITEM" || !frame.customer_correction || frame.additive ||
+      frame.explicit_negations.length || frame.customer_facts?.length ||
+      (frame.demands ?? []).length || frame.entities.length !== 1 ||
+      ![input.company_id,input.conversation_id,input.source_message_id]
+        .every(value => typeof value === "string" && !!value.trim()) ||
+      [frame.transaction_state,frame.payment_state,frame.booking_state,frame.fulfillment_state]
+        .some(value => !["none","unknown"].includes(value)) ||
+      looksInterrogative(input.text) || isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return false;
+  const proposed = frame.entities[0];
+  if (proposed.confidence < 0.72 || proposed.quantity !== null || proposed.unit !== null ||
+      Object.keys(proposed.attributes).length || Object.keys(proposed.constraints).length) return false;
+  const target = previous.entities.find(entity => entity.entity_id === event.entity_id);
+  if (!target || target.provenance.source_type !== "customer" || !target.provenance.source_message_id ||
+      ["cancelled","deferred","superseded"].includes(target.status)) return false;
+  const unit = target.attributes.unit;
+  if (typeof unit !== "string" || !unit.trim() || unit !== unit.trim() || unit.length > 64) return false;
+  // A compatibility-local ref may be opaque, but a ref that resolves to a
+  // saved ID or customer alias may not contradict the independently named owner.
+  const ref = proposed.entity_ref.normalize("NFKC").trim().toLowerCase();
+  const refOwners = previous.entities.filter(entity =>
+    entity.entity_id.normalize("NFKC").trim().toLowerCase() === ref ||
+    sourceOwnedSubjectLabels(entity).includes(ref));
+  if (refOwners.length > 1 || refOwners.some(entity => entity.entity_id !== target.entity_id)) return false;
+  const labels = sourceOwnedSubjectLabels(target);
+  const proposedLabels = [proposed.name,proposed.model,proposed.sku]
+    .filter((value): value is string => typeof value === "string" && !!value.trim())
+    .map(value => value.normalize("NFKC").trim().toLowerCase());
+  if (!proposedLabels.length || proposedLabels.some(label => !labels.includes(label)) ||
+      !proposedLabels.some(label => matchesReferenceLabel(input.text,label)) ||
+      frame.referents.some(ref => ref.confidence < 0.72 || ref.ref !== target.entity_id)) return false;
+  // Every current literal subject must identify this same canonical owner.
+  // Include inactive siblings so a cancelled named subject cannot borrow it.
+  const named = previous.entities.filter(entity => sourceOwnedSubjectLabels(entity)
+    .some(label => matchesReferenceLabel(input.text,label)));
+  if (named.length !== 1 || named[0].entity_id !== target.entity_id) return false;
+  const escapedUnit = unit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const count = "([0-9]+(?:\\.[0-9]+)?|[零〇一二兩两三四五六七八九十百千萬万億亿兆]+)";
+  const literals = [...input.text.matchAll(new RegExp(count + "\\s*" + escapedUnit, "gu"))]
+    .filter(match => !/[0-9.]/u.test(input.text.slice(0,match.index).at(-1) ?? "") &&
+      /^(?:$|[\s,，。;；.!?！？:：])/u.test(input.text.slice((match.index ?? 0)+match[0].length)));
+  return literals.length === 1 && countTokenValue(literals[0][1]) === event.quantity;
+}
+
+function hasSourceBoundQuantityMutation(
+  event: Extract<CommerceStateEvent, { type: "SET_ENTITY_QUANTITY" }>,
+  input: CommerceRuntimeInput,
+  previous: ConversationCommerceState,
+  hints: CommerceTurnEntityHint[],
+): boolean {
+  const active = previous.entities.filter(entity =>
+    !["cancelled", "deferred", "superseded"].includes(entity.status));
+  const target = active.find(entity => entity.entity_id === event.entity_id);
+  const quantityReading = input.semantic_frame;
+  if (quantityReading && quantityReading.confidence >= 0.72 &&
+      ["SET_QUANTITY", "UPDATE_ITEM"].includes(quantityReading.operation) &&
+      (quantityReading.explicit_negations.length ||
+        (quantityReading.demands ?? []).some(demand => demand.explicit_negations.length))) return false;
+  const allocationPattern=specificationAllocationPattern(target?.attributes.unit);
+  if(allocationPattern && [...clean(input.text).matchAll(allocationPattern)].length>=2){
+    const allocation=sourceBoundSpecificationAllocation(input,previous);
+    return allocation?.entity_id===event.entity_id && allocation.quantity===event.quantity;
+  }
+  const sourceUnit = sourceBoundQuantityUnit(input, previous);
+  if (sourceUnit?.entity_id === event.entity_id && sourceUnit.quantity === event.quantity) return true;
+  const proposedUnit = input.semantic_frame?.entities.find(entity => entity.entity_ref === event.entity_id ||
+    target && sourceOwnedSubjectLabels(target).includes(entity.name.normalize("NFKC").trim().toLowerCase()));
+  // A changed unit is part of the quantity value. Refuse the whole proposed
+  // named change when the current source does not attest that new dimension.
+  // An unnamed counter remains subject to the existing unique-target/topic
+  // and unit compatibility guards below; it gains no unit-write authority.
+  if (target && proposedUnit && typeof proposedUnit.unit === "string" &&
+      typeof target.attributes.unit === "string" && target.attributes.unit.trim().length > 0 &&
+      sourceOwnedSubjectLabels(target).some(label => matchesReferenceLabel(input.text, label)) &&
+      proposedUnit.unit !== target.attributes.unit &&
+      proposedUnit.quantity === event.quantity &&
+      input.semantic_frame && ["SET_QUANTITY", "UPDATE_ITEM"].includes(input.semantic_frame.operation)) return false;
+  // A shared category word is not a unique referent when several current
+  // items of that category exist. Require one source-named distinct identity.
+  const sameCategory=target ? active.filter(entity=>entity.category===target.category) : [];
+  // An explicit fresh aggregate selection can update only the one active,
+  // customer-owned referent selected by a semantic entity ID and the Visitor's
+  // own subject label. A cancelled room or another active item cannot inherit
+  // the quantity, and a question or background numeric fact never qualifies.
+  const aggregateGoal = sourceBoundAffirmativeAggregateGoal(input, previous);
+  if (target && aggregateGoal !== null && event.quantity === aggregateGoal &&
+      input.semantic_frame?.entities[0]?.entity_ref === target.entity_id &&
+      sameCategory.length === 1 &&
+      [target.attributes.name, target.attributes.product_name, target.model]
+        .some(label => typeof label === "string" && label.length > 1 &&
+          matchesReferenceLabel(input.text, label))) return true;
+  if(target && sameCategory.length>1) {
+    const unique=[target.model,target.attributes.sku,target.attributes.product_name]
+      .filter((v):v is string=>typeof v==="string"&&v.trim().length>=2)
+      .filter(label=>matchesReferenceLabel(input.text,label) &&
+        sameCategory.every(other=>other.entity_id===target.entity_id ||
+          ![other.model,other.attributes.sku,other.attributes.product_name]
+            .some(v=>typeof v==="string" && v.toLowerCase()===label.toLowerCase())));
+    if(unique.length===0)return false;
+  }
+  const identities = new Map<string, string[]>();
+  for (const hint of hints) identities.set(hint.entity_id,
+    [hint.model, hint.category, hint.attributes?.sku, hint.attributes?.product_name,
+      ...(hint.aliases ?? [])].filter((value): value is string =>
+        typeof value === "string" && value.length >= 2));
+  for (const entity of active) identities.set(entity.entity_id,
+    [...(identities.get(entity.entity_id) ?? []), entity.model, entity.category,
+      entity.attributes.sku, entity.attributes.product_name,entity.attributes.name,
+      ...(Array.isArray(entity.attributes.customer_subject_aliases)
+        ? entity.attributes.customer_subject_aliases : [])].filter((value): value is string =>
+        typeof value === "string" && value.length >= 2));
+  const namedTargets = (clause: string): string[] => {
+    const categories = new Set(detectCategories(clause).map(category => category.key));
+    // A place mentioned in a purchase goal is contextual information, not
+    // authority to redirect its item quantity to a separate room entity.
+    const specific = [...identities.keys()].filter(id => {
+      const stored = previous.entities.find(entity => entity.entity_id === id);
+      const hint = hints.find(candidate => candidate.entity_id === id);
+      return [stored?.model, stored?.attributes.sku, stored?.attributes.product_name,
+        hint?.model, hint?.attributes?.sku, hint?.attributes?.product_name]
+        .some(value => typeof value === "string" && value.length >= 2 && matchesReferenceLabel(clause, value));
+    });
+    return [...identities].filter(([id, labels]) => {
+      if (specific.length && !specific.includes(id)) return false;
+      // Scoped identities are selected only through source-backed names,
+      // never from an industry room taxonomy.
+      const stored = previous.entities.find(entity => entity.entity_id === id);
+      // Historical inactive hints cannot make a generic category correction
+      // ambiguous, or act as authority to revive the cancelled item.
+      if (stored && ["cancelled", "deferred", "superseded"].includes(stored.status) &&
+        !detectEntityReactivation(clause)) return false;
+      return labels.some(label => matchesReferenceLabel(clause, label)) ||
+        active.some(entity => entity.entity_id === id && categories.has(entity.category)) ||
+        hints.some(hint => hint.entity_id === id && categories.has(hint.category));
+    }).map(([id]) => id);
+  };
+  const normalizeWords = (text: string): string => text.replace(
+    /\b(zero|one|two|three|four|five|six|seven|eight|nine|ten)\b/giu,
+    word => String(["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"].indexOf(word.toLowerCase())),
+  );
+  // Explicit correction of a named cancelled subject cannot silently edit
+  // another active subject. A fresh unqualified goal is not a correction.
+  if(detectQuantityCorrectionSignal(input.text) && !detectEntityReactivation(input.text) &&
+      previous.entities.some(entity=>
+        ["cancelled","deferred","superseded"].includes(entity.status) &&
+        entity.provenance.source_type==="customer" &&
+        [entity.attributes.name,
+         ...(Array.isArray(entity.attributes.customer_subject_aliases)
+          ? entity.attributes.customer_subject_aliases : [])]
+          .some(label=>typeof label==="string"&&matchesReferenceLabel(input.text,label)))) return false;
+  const frame = input.semantic_frame;
+  const acceptedFrame = Boolean(frame && frame.confidence >= 0.72 && !frame.ambiguity.is_ambiguous);
+  const semanticTargets = acceptedFrame ? (frame?.entities ?? []).filter(entity =>
+    entity.confidence >= 0.72 && [entity.entity_ref, entity.name, entity.model, entity.sku]
+      .some(value => typeof value === "string" &&
+        (value === event.entity_id || (identities.get(event.entity_id) ?? []).some(label =>
+          clean(label).toLowerCase() === clean(value).toLowerCase())))) : [];
+  const frameTopic = clean(frame?.topic).toLowerCase().replace(/[_\s-]+/g, "_");
+  const currentTopic = clean(previous.current_topic).toLowerCase().replace(/[_\s-]+/g, "_");
+  const topicalContinuation = !acceptedFrame || !frameTopic || !currentTopic || frameTopic === currentTopic;
+  // An echoed model unit is a proposal, not the target's declared dimension.
+  // A known entity unit or an actually selected industry supplies that basis.
+  const unit = target?.attributes.unit ?? (target
+    ? industryEntityQuantityUnit(target.entity_id, input.language, target.quantity) : null);
+  const extraUnits = [unit]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map(value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const units = [...extraUnits, COUNT_UNIT].join("|");
+  const countPattern = new RegExp(`(${COUNT_TOKEN})\\s*(${units})`, "giu");
+  const clauses = splitCustomerOperationClauses(input.text);
+  const fullTargets = namedTargets(input.text);
+  const unitKind = (value: string): string => {
+    const normalized = clean(value).toLowerCase();
+    for (const [kind, pattern] of [
+      ["generic", /^(?:部|台|件|個|个|units?|items?|pieces?|pcs?)$/iu],
+      ["seat", /^(?:位|席|seats?|people|persons?)$/iu],
+      ["session", /^(?:堂|課|课|次|sessions?|lessons?)$/iu],
+      ["night", /^(?:晚|nights?)$/iu],
+      ["box", /^(?:盒|箱|box(?:es)?)$/iu],
+      ["pack", /^(?:包|packs?)$/iu],
+      ["set", /^(?:套|sets?)$/iu],
+      ["bottle", /^(?:樽|瓶|bottles?)$/iu],
+      ["pair", /^(?:對|对|雙|双|pairs?)$/iu],
+    ] as const) if (pattern.test(normalized)) return kind;
+    return normalized;
+  };
+  for (const clause of clauses) {
+    if (isReadOnlyCommerceQuestion(clause) ||
+      /(?:數量|数量|quantity|count).{0,12}(?:不變|不变|唔變|unchanged|same)|(?:keep|leave).{0,50}(?:unchanged|the same)/iu.test(clause)) continue;
+    const normalized = normalizeWords(clause);
+    const matches = [...normalized.matchAll(countPattern)];
+    const localQuantity = parseSpaceScopedCommerceQuantity(normalized) ?? parseCount(normalized) ??
+      (matches.length === 1 ? countTokenValue(matches[0][1]) : null);
+    if (localQuantity === null) continue;
+    const additive = detectAdditiveEntityCreationSignal(clause);
+    const expected = additive && target ? target.quantity + localQuantity : localQuantity;
+    if (event.quantity !== expected) continue;
+    const literal = matches.filter(match => countTokenValue(match[1]) === localQuantity).at(-1);
+    if (!literal) continue;
+    const ids = namedTargets(clause);
+    // A bare 個/个 followed by a different noun is a background count, even
+    // if the product happens to be mentioned elsewhere in the same clause.
+    const tail = normalized.slice((literal.index ?? 0) + literal[0].length).trim();
+    if (/^(?:個|个)$/u.test(literal[2]) && tail &&
+      !/^(?:就好|便可|即可|先|please\b|only\b)/iu.test(tail) &&
+      !(identities.get(event.entity_id) ?? []).some(label => matchesReferenceLabel(tail, label))) continue;
+    if (ids.length === 1 && ids[0] === event.entity_id) return true;
+    // A total clause directly accompanying one named subject shares that
+    // subject, but a separately named background noun never does.
+    if (ids.length === 0 && fullTargets.length === 1 && fullTargets[0] === event.entity_id &&
+      /^(?:即|所以|that is\b|in total\b|total(?:\s+of)?\b|合共|總共|总共|一共|總數|总数|共計|共计)/iu.test(normalized) &&
+      !tail) return true;
+    if (ids.length > 0 || !target || active.length !== 1 || !topicalContinuation) continue;
+    const observedUnit = unitKind(literal[2]);
+    if (observedUnit !== "generic" &&
+      (typeof unit !== "string" || observedUnit !== unitKind(unit))) continue;
+    if (frame && (!acceptedFrame || semanticTargets.length !== 1 ||
+      !(frame.customer_correction || frame.additive || ["SET_QUANTITY", "UPDATE_ITEM"].includes(frame.operation)))) continue;
+    // Removing the one count may leave only operation grammar and pronouns.
+    // "now only 6 tabs" and "change browser tabs to 6" cannot satisfy this.
+    const residue = (normalized.slice(0, literal.index) + tail)
+      .replace(/^(?:(?:可唔可以|可不可以|可以|能不能|能否|可否|麻煩|麻烦|請|请|幫我|帮我|替我|協助我|协助我)\s*)+/u, "")
+      .replace(/^(?:can|could|would|will)\s+you(?:\s+please)?\s+/iu, "")
+      .replace(/(?:好嗎|好吗|得唔得|嗎|吗|呢)[?？.!！。]*$/u, "")
+      .replace(/(?:請|请|麻煩|麻烦|再加|加多|另外加|增加|加|再|更正|數量|数量|改(?:做|成|為|为|返)?|變成|变成|要|只(?:要|係|是)?|合共|總共|总共|一共|先|就好|便可|即可)/gu, "")
+      .replace(/\b(?:please|actually|correction|change|set|make|it|that|the|quantity|count|to|now|only|need|want|add|another|more|in|total|of)\b/giu, "")
+      .replace(/[\s:：,，.。;；!！?？]+/gu, "");
+    if (!residue) return true;
+  }
+  // Existing scoped allocation parsing supplies an explicit aggregate. It is
+  // separate from an unrelated numeric customer_facts value.
+  const allocated = parseSpaceScopedCommerceQuantity(input.text);
+  return allocated === event.quantity && fullTargets.length === 1 && fullTargets[0] === event.entity_id;
+}
+
+/** A model-suggested action/subject becomes a candidate only after source-owned
+ * unique identity and original company/ticket snapshot verification. It grants
+ * no mutation permission: the existing B2 plan still verifies its action. */
+function verifiedLifecycleProposal(input:CommerceRuntimeInput,state:ConversationCommerceState):
+  {entity:ConversationCommerceState["entities"][number];action:"cancelled"|"deferred"}|null {
+  const frame=input.semantic_frame;
+  if(!frame||frame.confidence<0.90||frame.ambiguity.is_ambiguous||
+    !input.conversation_id||!input.company_id||!input.source_message_id||
+    isReadOnlyCommerceQuestion(input.text,frame))return null;
+  const action=["CANCEL_ITEM","REMOVE_ITEM"].includes(frame.operation)?"cancelled":
+    frame.operation==="DEFER"?"deferred":null;
+  if(!action)return null;
+  const refs=[...new Set(frame.referents.filter(ref=>
+    ref.confidence>=0.90&&["persistent_state","prior_turn"].includes(ref.source)
+  ).map(ref=>ref.ref))];
+  if(refs.length!==1)return null;
+  const entity=state.entities.find(e=>e.entity_id===refs[0]&&
+    e.provenance.source_type==="customer"&&Boolean(e.provenance.source_message_id)&&
+    !["cancelled","deferred","superseded"].includes(e.status));
+  if(!entity||frame.entities.some(e=>e.confidence>=0.72&&e.entity_ref&&
+    e.entity_ref!==entity.entity_id))return null;
+  // A correction to a named part is not permission to cancel the complete
+  // multi-unit subject. The Reading chooses the operation; its target must
+  // name one complete, customer-owned canonical subject in the current source.
+  // A stored unit is a data constraint, never a classifier vocabulary. An
+  // unpartitioned group needs clarification rather than invented child rows.
+  if(entity.quantity>1){
+    const proposed=frame.entities.length===1?frame.entities[0]:null;
+    const unit=typeof entity.attributes.unit==="string"?entity.attributes.unit.trim():null;
+    const name=proposed?.name.normalize("NFKC").trim().toLowerCase()??"";
+    // Reuse the existing whole-subject mutation verifier without granting it
+    // the proposed reference. An accepted ref may select a row, but cannot
+    // turn a partial phrase into authority over the complete group.
+    const whole=resolveSourceOwnedSubject(state,input.text,{mode:"mutation"});
+    if(whole.kind!=="one" || whole.entity.entity_id!==entity.entity_id ||
+      frame.entities.length>1 || frame.additive || (frame.explicit_negations?.length??0)>0)return null;
+    // Earlier accepted sparse readings can name the complete target by their
+    // sole ref and current literal alone. Validate optional entity data when
+    // supplied; its absence does not create a new input requirement.
+    if(proposed && (proposed.confidence<0.90 || proposed.entity_ref!==entity.entity_id ||
+      (proposed.quantity!==null && proposed.quantity!==undefined) ||
+      !sourceOwnedSubjectLabels(entity).includes(name) ||
+      !matchesReferenceLabel(input.text,proposed.name) ||
+      (proposed.unit!==null && proposed.unit!==undefined &&
+        (!unit || proposed.unit.normalize("NFKC").trim()!==unit.normalize("NFKC")))))return null;
+  }
+  const sameCategory=state.entities.filter(e=>e.category===entity.category&&
+    !["cancelled","deferred","superseded"].includes(e.status));
+  if(sameCategory.length!==1){
+    // For an unrecognised *action wording*, this check identifies one
+    // customer-authored noun only. It does NOT grant a mutation. The single
+    // B2 lifecycle parser must still verify the operation before a write.
+    const named=sameCategory.filter(candidate=>
+      sourceOwnedSubjectLabels(candidate).some(label=>
+        matchesReferenceLabel(input.text,label)));
+    if(named.length!==1||named[0].entity_id!==entity.entity_id)return null;
+  }
+  if(state.entities.some(e=>e.entity_id!==entity.entity_id&&
+    sourceOwnedSubjectLabels(e).some(label=>matchesReferenceLabel(input.text,label))))return null;
+  return {entity,action};
+}
+function acceptedLifecycleEntityRef(input:CommerceRuntimeInput,state:ConversationCommerceState):string|null {
+  const proposal=verifiedLifecycleProposal(input,state);
+  if(!proposal)return null;
+  // Single source of lifecycle interpretation guard: no independent second
+  // verb list. This parser is only a fail-closed gate, not authority.
+  const parsed=resolveEntityLifecyclePlan(input.text,state,
+    {accepted_entity_ref:proposal.entity.entity_id});
+  if(parsed.kind!=="mutation"||parsed.plans.length!==1||
+    parsed.plans[0].action!==proposal.action)return null;
+  const plan=parsed.plans[0];
+  const targets=state.entities.filter(e=>(plan.target_entity_id
+    ?e.entity_id===plan.target_entity_id:e.category===plan.target_category) &&
+    (plan.action==="cancelled"||e.status!=="cancelled"));
+  if(targets.length!==1||targets[0].entity_id!==proposal.entity.entity_id)return null;
+  return proposal.entity.entity_id;
+}
+
+/** A compound lifecycle Reading corroborates the complete existing source plan.
+ * Focus is not a second mutation target. No model ref may extend the parsed
+ * targets, and a partial name cannot cancel an entire canonical aggregate. */
+function acceptedCompoundLifecyclePlan(input: CommerceRuntimeInput, state: ConversationCommerceState): boolean {
+  const frame = input.semantic_frame;
+  if (!frame || frame.confidence < 0.90 || frame.ambiguity.is_ambiguous ||
+      !input.company_id?.trim() || !input.conversation_id?.trim() || !input.source_message_id?.trim() ||
+      frame.additive || frame.explicit_negations.length || frame.customer_facts?.length ||
+      frame.requested_facts.length ||
+      ![frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state]
+        .every(value => value === "none" || value === "unknown")) return false;
+  const action = frame.operation === "DEFER" ? "deferred" :
+    ["CANCEL_ITEM", "REMOVE_ITEM"].includes(frame.operation) ? "cancelled" : null;
+  if (!action) return false;
+  // This path never lends a proposed ref to the parser: every clause must
+  // independently resolve against the current, customer-owned snapshot.
+  const parsed = resolveEntityLifecyclePlan(input.text, state);
+  if (parsed.kind !== "mutation" ||
+      (parsed.plans.length === 1 && !parsed.plans[0].focus_category) ||
+      parsed.plans.some(plan => plan.action !== action)) return false;
+  const targets = parsed.plans.map(plan => state.entities.filter(entity =>
+    plan.target_entity_id ? entity.entity_id === plan.target_entity_id : entity.category === plan.target_category));
+  const activeOwned = (entity: ConversationCommerceState["entities"][number]) =>
+    entity.provenance.source_type === "customer" && Boolean(entity.provenance.source_message_id?.trim()) &&
+    !["cancelled", "deferred", "superseded"].includes(entity.status);
+  if (targets.some(matches => matches.length !== 1 || !activeOwned(matches[0]))) return false;
+  const targetIds = targets.map(matches => matches[0].entity_id);
+  if (new Set(targetIds).size !== targetIds.length) return false;
+  const focusKey = parsed.plans[0].focus_category;
+  if (parsed.plans.some(plan => plan.focus_category !== focusKey)) return false;
+  const focus = focusKey ? state.entities.filter(entity => entity.category === focusKey && activeOwned(entity)) : [];
+  if (focusKey && (focus.length !== 1 || targetIds.includes(focus[0].entity_id))) return false;
+  const allowed = [...targets.map(matches => matches[0]), ...focus];
+  // Older projected identifiers may be redacted. An exact visible customer
+  // name can bind the same already-parsed subject, without guessing its ID
+  // or granting the Reading any additional lifecycle target.
+  const boundReference = (ref: string): ConversationCommerceState["entities"][number] | null => {
+    const direct = allowed.find(entity => entity.entity_id === ref);
+    if (direct) return direct;
+    const label = ref.normalize("NFKC").trim().toLowerCase();
+    if (!label || label.length > 160 || !matchesReferenceLabel(input.text, label)) return null;
+    const matches = state.entities.filter(entity => sourceOwnedSubjectLabels(entity).includes(label));
+    return matches.length === 1 && activeOwned(matches[0]) &&
+      allowed.some(entity => entity.entity_id === matches[0].entity_id) ? matches[0] : null;
+  };
+  const refs = frame.referents.map(ref => boundReference(ref.ref)?.entity_id ?? null);
+  if (refs.some(ref => ref === null) || new Set(refs).size !== refs.length || targetIds.some(id => !refs.includes(id)) ||
+      frame.referents.some(ref => ref.confidence < 0.90 ||
+        !["persistent_state", "prior_turn"].includes(ref.source))) return false;
+  if (frame.entities.some(proposal => {
+    const entity = proposal.entity_ref ? boundReference(proposal.entity_ref) : null;
+    const unit = typeof entity?.attributes.unit === "string" ? entity.attributes.unit : null;
+    return !entity || proposal.confidence < 0.90 || proposal.quantity != null ||
+      !sourceOwnedSubjectLabels(entity).includes(proposal.name.normalize("NFKC").trim().toLowerCase()) ||
+      (proposal.unit != null && proposal.unit.normalize("NFKC") !== unit?.normalize("NFKC"));
+  })) return false;
+  const source = input.text.normalize("NFKC").trim();
+  if (frame.demands?.some(demand => demand.source_type !== "general" ||
+      demand.source_quote?.normalize("NFKC").trim() !== source || demand.ambiguity.is_ambiguous ||
+      demand.requested_facts.length || demand.explicit_negations.length ||
+      !demand.subject_refs.length || demand.subject_refs.some(ref =>
+        !boundReference(ref)))) return false;
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return splitCustomerOperationClauses(input.text).every(clause => {
+    const part = resolveEntityLifecyclePlan(clause, state);
+    if (part.kind === "mutation") return part.plans.every(plan => {
+      const matches = targets.filter(([entity]) => plan.target_entity_id ?
+        plan.target_entity_id === entity.entity_id : plan.target_category === entity.category);
+      if (plan.action !== action || matches.length !== 1) return false;
+      const entity = matches[0][0];
+      // The lifecycle parser can recognise a model identifier inside an
+      // otherwise unsafe clause. Whole-subject verification must still reject
+      // reported/conditional/negated instructions and partial aggregate names.
+      // For the parser's exact two-target collective, expand only the subject
+      // to each already verified name for this check; nothing is persisted.
+      const collective = part.plans.length === 2 && /兩樣都|两样都|\bboth\b/iu.test(clause);
+      const label = sourceOwnedSubjectLabels(entity)[0];
+      if (!label) return false;
+      const completeClause = collective ? clause.replace(/兩樣都|两样都|\bboth\b/giu, () => label) : clause;
+      const whole = resolveSourceOwnedSubject({ ...state, entities: [entity] }, completeClause, { mode: "mutation" });
+      return whole.kind === "one" && whole.entity.entity_id === entity.entity_id;
+    });
+    // The only non-mutation clause may focus on the exact retained subject.
+    return focus.length === 1 && sourceOwnedSubjectLabels(focus[0]).some(label =>
+      new RegExp("^(?:focus on|back to|return to|先搞|先處理|先处理)\\s*" + escape(label) + "[。.!]?\\s*$", "iu")
+        .test(clause.normalize("NFKC").trim()));
+  });
+}
+function resolveBoundLifecyclePlan(
+  input:CommerceRuntimeInput,state:ConversationCommerceState,
+): ReturnType<typeof resolveEntityLifecyclePlan> {
+  // A lexical defer/cancel cue can only corroborate a semantic lifecycle
+  // proposal. It cannot start lifecycle handling against a confident,
+  // non-lifecycle customer request such as "do not check models yet".
+  const frame=input.semantic_frame;
+  if(frame && frame.confidence>=0.72 && !frame.ambiguity.is_ambiguous &&
+     !["DEFER","CANCEL_ITEM","REMOVE_ITEM"].includes(frame.operation))
+    return {kind:"none"};
+  const parsed=resolveEntityLifecyclePlan(input.text,state,
+    {accepted_entity_ref:acceptedLifecycleEntityRef(input,state)});
+  // An existing no-frame strictly source-named lifecycle instruction is a
+  // frozen deterministic positive contract. Preserve it. A present but
+  // low-confidence/ambiguous interpretation cannot independently authorize
+  // a mutation and requires clarification instead.
+  if(frame && (frame.confidence<0.72 || frame.ambiguity.is_ambiguous) &&
+     parsed.kind==="mutation")
+    return {kind:"ambiguous",action:parsed.plans[0]?.action??"deferred"};
+  return parsed;
+}
+
+function reduceSingleTurn(
   previous: ConversationCommerceState,
   input: CommerceRuntimeInput,
   rawHints: CommerceTurnEntityHint[],
+  sourceContext?: ContextualSourceContext,
 ): ConversationCommerceState {
-  const calculationTurn = detectExplicitCalculationRequest(input.text);
-  const hints = calculationTurn ? [] : filterGhostUnscopedHints(input.text, previous, rawHints);
-  const mentioned = calculationTurn ? [] : hintsMentionedInTurn(input.text, hints);
+  const lifecycle = resolveBoundLifecyclePlan(input, previous);
+  // A customer asks which option might be deferred; that is advice, not a
+  // lifecycle command. Retain independently sourced customer facts in ASK_FACT.
+  if (lifecycle.kind === "ambiguous" &&
+      !isReadOnlyCommerceQuestion(input.text,input.semantic_frame)) return previous;
+  if (lifecycle.kind === "mutation") {
+    const events: CommerceStateEvent[] = lifecycle.plans.map((plan) => ({
+      type: "SET_ENTITY_STATUS",
+      entity_id: previous.entities.find((entity) => (plan.target_entity_id ? entity.entity_id===plan.target_entity_id : entity.category===plan.target_category) &&
+        (plan.action === "cancelled" || entity.status !== "cancelled"))!.entity_id,
+      status: plan.action,
+      provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null },
+    }));
+    if (lifecycle.plans[0].focus_category) events.push({ type: "SET_CONTEXT", topic: lifecycle.plans[0].focus_category });
+    return reduceCommerceState(previous, events);
+  }
+  // A verified factual return to an earlier product changes topic focus only.
+  // Room words in that question must not materialize extra purchase entities.
+  if (
+    input.trusted_product_topic_focus &&
+    looksInterrogative(input.text) &&
+    validateTrustedProductTopicFocus(input, previous).valid
+  ) {
+    return reduceCommerceState(previous, trustedResearchFocusEvents(input, previous));
+  }
+  // READ_ONLY_CURRENT_STATE_QUERY (and other factual interrogatives) emits no
+  // state events. Persistence may still record this source-message revision,
+  // but its canonical state payload remains byte-for-byte unchanged.
+  const durableResearchTurn = establishesDurableProductResearch(input.text);
+  const affirmativeAggregateGoal = sourceBoundAffirmativeAggregateGoal(input, previous);
+  if (isReadOnlyCurrentStateQuery(input.text, input.semantic_frame) && !durableResearchTurn && affirmativeAggregateGoal === null && !input.trusted_product_topic_focus) {
+    return previous;
+  }
+  // Bare product/service names are references; do not commit an LLM's inferred
+  // quantity or new transaction without a customer-authored action.
+  if (isBareCommerceSubjectMention(input.text,input.semantic_frame)) return previous;
+  const contextual = resolveContextualTurn(input, previous, sourceContext);
+  if (contextual.route === "targeted_clarification") return previous;
+  if (contextual.route === "contextual_scoped_update") {
+    return reduceCommerceState(previous, contextualUpdateEvents(
+      contextual, previous, input.source_message_id, input.occurred_at,
+      sourceContext ? sourceContext.state_revision + 1 : undefined,
+    ));
+  }
+  const journey = resolveCustomerJourneyTurn(input, previous);
+  const calculationTurn = !input.trusted_product_topic_focus && affirmativeAggregateGoal === null && detectExplicitCalculationRequest(input.text);
+  const proposedHints = calculationTurn
+    ? []
+    : materializeRoomOnlyReferenceHints(input.text, previous, rawHints, input.history ?? []);
+  // A correction's schema identifier refers to an existing customer entity.
+  // A compatibility hint ID is not authority to create a second SKU entity.
+  const boundHints = proposedHints.map(hint => {
+    if (!input.semantic_frame?.customer_correction) return hint;
+    const identifiers = [hint.model, hint.attributes?.sku, hint.attributes?.product_name, ...(hint.aliases ?? [])]
+      .filter((v): v is string => typeof v === "string" && v.length > 1).map(v=>v.toLowerCase());
+    const matches = previous.entities.filter(entity => [entity.model, entity.attributes.sku, entity.attributes.product_name]
+      .some(v=>typeof v === "string" && identifiers.includes(v.toLowerCase())));
+    if (matches.length !== 1) return hint;
+    const entity=matches[0];
+    return {...hint,entity_id:entity.entity_id,category:entity.category,model:entity.model,
+      attributes:{...hint.attributes,...entity.attributes}};
+  });
+  const resolvedHints = [...boundHints.reduce((map,hint) => {
+    const existing=map.get(hint.entity_id);
+    map.set(hint.entity_id,existing ? {...existing,aliases:[...new Set([...(existing.aliases??[]),...(hint.aliases??[])])]} : hint);
+    return map;
+  },new Map<string,CommerceTurnEntityHint>()).values()];
+  const hints = calculationTurn
+    ? []
+    : filterGhostUnscopedHints(input.text, previous, resolvedHints);
+  const mentioned = calculationTurn ? [] : hintsMentionedInTurn(input.text, hints, previous);
   const bookingWithoutDelivery = mentioned.some(hintRequiresBookingWithoutDelivery);
-  const semanticAuthoritative = !calculationTurn && Boolean(input.semantic_frame && input.semantic_frame.confidence >= 0.72);
-  const semanticEventsRaw = semanticAuthoritative
+  const semanticProposed = !calculationTurn && Boolean(input.semantic_frame && input.semantic_frame.confidence >= 0.72);
+  const semanticEventsRaw = semanticProposed
     ? semanticFrameToStateEvents(input.semantic_frame, previous, hints, input.source_message_id, input.occurred_at ?? null)
     : [];
-  const semanticEvents = bookingWithoutDelivery
+  // Identity-only correction frames contain no corrected value. They cannot
+  // suppress an explicitly scoped deterministic customer assignment.
+  const semanticAuthoritative = semanticProposed &&
+    semanticEventsRaw.some(event => event.type !== "SET_CONTEXT" && event.type !== "ENSURE_ENTITY" &&
+      !(event.type==="SET_CUSTOMER_CONSTRAINT" && event.key==="customer_reported_facts"));
+  let semanticEvents = bookingWithoutDelivery
     ? semanticEventsRaw.filter((event) => event.type !== "SET_DELIVERY")
     : semanticEventsRaw;
-  const derivedRaw = calculationTurn || semanticAuthoritative ? [] : deriveCommerceEventsFromCustomerTurn({
+  const semanticRejectsLifecycle=Boolean(input.semantic_frame &&
+    input.semantic_frame.confidence>=0.72 &&
+    !input.semantic_frame.ambiguity.is_ambiguous &&
+    !["DEFER","CANCEL_ITEM","REMOVE_ITEM"].includes(input.semantic_frame.operation));
+  const deterministicEvents = calculationTurn ? [] : deriveCommerceEventsFromCustomerTurn({
     text: input.text,
     source_message_id: input.source_message_id,
     occurred_at: input.occurred_at ?? null,
     entity_hints: hints,
     current_language: input.language,
+  }).filter(event => {
+    // The customer budget is a typed fact, NOT a quotation record.
+    // Only a sourced and typed historical customer price can be emitted.
+    if(event.type==="ADD_QUOTE")
+      return customerHistoricalQuoteProof(input,event.quote);
+    // Source words can corroborate, never override the semantic operation.
+    if (event.type !== "SET_ENTITY_STATUS") return true;
+    if (semanticRejectsLifecycle &&
+        (event.status==="cancelled" || event.status==="deferred"))return false;
+    if (event.status === "deferred") return detectDeferral(input.text);
+    if (event.status === "cancelled") return detectCancellation(input.text);
+    return true;
   });
-  const derived = bookingWithoutDelivery
-    ? derivedRaw.filter((event) => event.type !== "SET_DELIVERY")
+  // Semantic interpretation owns entity mutations, but it has no address
+  // component contract. Keep deterministic delivery events so a complete
+  // address is present before a later scoped correction is merged.
+  const derivedRaw = semanticAuthoritative
+    ? deterministicEvents.filter((event) =>
+      event.type === "SET_DELIVERY" ||
+      (durableResearchTurn && (event.type === "ENSURE_ENTITY" || event.type === "SET_CONTEXT"))
+    )
+    : deterministicEvents;
+  const derivedWithoutConstraintCancellation = dimensionConstraintCancellation(input.text)
+    ? derivedRaw.filter((event) => event.type !== "SET_ENTITY_STATUS")
     : derivedRaw;
-  const runtimeEvents = calculationTurn ? [] : deriveA3RuntimeEvents(input, hints, previous);
-  const industryEvent: CommerceStateEvent[] = input.industry_identifier
-    ? [{ type: "SET_CONTEXT", language: input.language, industry: input.industry_identifier }]
+  const allocationBreakdown = detectQuantityCorrectionSignal(input.text) &&
+    isAllocationBreakdown(input.text);
+  const derivedWithoutAllocationOverwrite = allocationBreakdown
+    ? derivedWithoutConstraintCancellation.filter((event) => event.type !== "SET_ENTITY_QUANTITY")
+    : derivedWithoutConstraintCancellation;
+  let derived = bookingWithoutDelivery
+    ? derivedWithoutAllocationOverwrite.filter((event) =>
+      event.type !== "SET_DELIVERY"
+    )
+    : derivedWithoutAllocationOverwrite;
+  let runtimeEvents = calculationTurn ? [] : [
+    ...deriveA3RuntimeEvents(input, hints, previous),
+  ];
+  // A goal turn owns one durable aggregate entity. Room mentions are scopes of
+  // that purchase goal, not separate products that can make later binding
+  // ambiguous.
+  if (journey.status === "advance" && journey.entity_id) {
+    const compatible = (event: CommerceStateEvent): boolean => {
+      if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
+        return event.entity.entity_id === journey.entity_id;
+      }
+      if (
+        event.type === "UPDATE_ENTITY" || event.type === "SET_ENTITY_STATUS" ||
+        event.type === "SET_ENTITY_QUANTITY" || event.type === "SET_ENTITY_ATTRIBUTE" ||
+        event.type === "SET_ENTITY_CONSTRAINT" || event.type === "REMOVE_ENTITY_CONSTRAINT"
+      ) return event.entity_id === journey.entity_id;
+      return true;
+    };
+    semanticEvents = semanticEvents.filter(compatible);
+    derived = derived.filter(compatible);
+    runtimeEvents = runtimeEvents.filter(compatible);
+  }
+  const industryEvent: CommerceStateEvent[] = []; // A legacy caller cannot select an industry.
+  const machineQuantity = parseSpaceScopedCommerceQuantity(input.text) ?? parseCount(input.text);
+  // A customer count belongs to the source's subject, not automatically to a
+  // previously active product. An UPDATE_ITEM can carry typed customer facts
+  // ("six tabs", "three people", "four bookings") while the provider also
+  // echoes a stale entity. Reject that unrelated entity mutation unless this
+  // very turn identifies the same commerce entity. Keep typed customer facts.
+  const scopedProductReferences = new Set(hintsMentionedInTurn(input.text, hints, previous).map(h => h.entity_id));
+  const explicitProductCategories = new Set(detectCategories(input.text).map(category => category.key));
+  const sourceNumbers = new Set<number>();
+  const collectSourceNumbers = (value: unknown, depth = 0): void => {
+    if (depth > 4 || sourceNumbers.size > 24) return;
+    if (typeof value === "number" && Number.isFinite(value)) { sourceNumbers.add(value); return; }
+    if (Array.isArray(value)) { for (const item of value.slice(0, 12)) collectSourceNumbers(item, depth + 1); return; }
+    if (value && typeof value === "object") {
+      for (const item of Object.values(value).slice(0, 12)) collectSourceNumbers(item, depth + 1);
+    }
+  };
+  if (input.semantic_frame?.operation === "UPDATE_ITEM" &&
+      input.semantic_frame.customer_facts?.length &&
+      !input.semantic_frame.ambiguity.is_ambiguous) {
+    for (const fact of input.semantic_frame.customer_facts.slice(0, 12))
+      collectSourceNumbers(fact.value);
+  }
+  const isSourceBoundEntity = (id: string): boolean => {
+    const entity = previous.entities.find(e => e.entity_id === id);
+    return scopedProductReferences.has(id) || Boolean(entity && explicitProductCategories.has(entity.category));
+  };
+  const sourcedEntities=input.semantic_frame && input.semantic_frame.confidence>=0.72 &&
+    !input.semantic_frame.ambiguity.is_ambiguous ? input.semantic_frame.entities : [];
+  const itemCountUnknown=sourcedEntities.length>0 &&
+    sourcedEntities.every(entity=>entity.quantity===null);
+  const guidanceUncounted=itemCountUnknown &&
+    input.semantic_frame?.operation==="ASK_FACT" &&
+    ["customer_guidance","ask_for_advice"].includes(input.semantic_frame.intent);
+  const eventCandidates=[...industryEvent,...journey.events,...semanticEvents,...derived,...runtimeEvents];
+  const sourceNames=(name:string):boolean=>{
+    if(matchesReferenceLabel(input.text,name))return true;
+    if(!sourceHasUniqueEnglishInflection(input.text,name))return false;
+    // An inflected name belongs to exactly one confident semantic entity,
+    // and any item quantity must also be independently visible in Visitor text.
+    const proposals=input.semantic_frame?.entities.filter(entity=>
+      entity.confidence>=0.72 && entity.name.toLowerCase()===name.toLowerCase())??[];
+    return proposals.length===1 &&
+      (proposals[0].quantity===null ||
+       attestedItemQuantity(input.text,proposals[0].name,proposals[0].quantity,
+         proposals[0].unit)===proposals[0].quantity);
+  };
+  // If a new entity is not source-attested, drop that creation together with
+  // every dependent event; never execute an update against a missing entity.
+  const refusedNewIds=new Set(eventCandidates.filter(event=>
+    (event.type==="ENSURE_ENTITY"||event.type==="ADD_ENTITY") &&
+    !previous.entities.some(entity=>entity.entity_id===event.entity.entity_id) &&
+    !(typeof event.entity.attributes.product_name==="string" &&
+      sourceNames(event.entity.attributes.product_name))
+  ).map(event=>(event.type==="ENSURE_ENTITY"||event.type==="ADD_ENTITY")
+    ? event.entity.entity_id:""));
+  const quantityEvents = eventCandidates.filter(event => {
+    if(event.type==="ADD_QUOTE" && !customerHistoricalQuoteProof(input,event.quote))
+      return false;
+    if((event.type==="ENSURE_ENTITY"||event.type==="ADD_ENTITY") &&
+       refusedNewIds.has(event.entity.entity_id))return false;
+    if("entity_id" in event && typeof event.entity_id==="string" &&
+       refusedNewIds.has(event.entity_id))return false;
+    if(semanticRejectsLifecycle && event.type==="SET_ENTITY_STATUS" &&
+      (event.status==="cancelled" || event.status==="deferred"))return false;
+    // All candidate events in this reducer originate in the customer turn,
+    // including legacy extraction, semantic proposals and journey hints.
+    // None is an authorized merchant transaction readback.
+    if (event.type === "SET_CONVERSION" &&
+        (guidanceUncounted || hasProtectedTransactionLifecycle(event.patch) ||
+         hasProtectedTransactionLifecycle(previous.conversion))) return false;
+    if(itemCountUnknown && event.type==="SET_ENTITY_QUANTITY" &&
+       !isSourceBoundIdentityQuantityCorrection(event,input,previous))return false;
+    if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
+      const named=typeof event.entity.attributes.product_name==="string"
+        ? event.entity.attributes.product_name : "";
+      // The source must contain this name exactly or in one uniquely
+      // attested regular inflection; model-only or fuzzy names are rejected.
+      if(!named || !sourceNames(named))return false;
+    }
+    if (event.type === "SET_ENTITY_STATUS" && !["cancelled", "deferred", "superseded"].includes(event.status)) {
+      const stored = previous.entities.find(entity => entity.entity_id === event.entity_id);
+      // Changing an active quantity must not revive an unrelated cancelled
+      // scope. The existing explicit restoration path still needs one target.
+      if (stored && ["cancelled", "deferred", "superseded"].includes(stored.status) &&
+        !(detectEntityReactivation(input.text) && mentioned.length === 1 &&
+          mentioned[0].entity_id === event.entity_id)) return false;
+    }
+    if (event.type === "SET_ENTITY_QUANTITY" &&
+        !hasSourceBoundQuantityMutation(event, input, previous, hints)) return false;
+    // A rejected background count must not rewrite the old entity's source
+    // merely because the generic extractor also repeated its current status.
+    if (event.type === "SET_ENTITY_STATUS" && machineQuantity !== null &&
+        previous.entities.some(entity => entity.entity_id === event.entity_id && entity.status === event.status) &&
+        !hasSourceBoundQuantityMutation({type:"SET_ENTITY_QUANTITY", entity_id:event.entity_id,
+          quantity:machineQuantity, provenance:event.provenance}, input, previous, hints)) return false;
+    // A provider may echo stale entity metadata with a customer-only update;
+    // an unmentioned product may not be revised by such a preference change.
+    if (sourceNumbers.size > 0 && (event.type === "SET_ENTITY_ATTRIBUTE" ||
+        event.type === "SET_ENTITY_CONSTRAINT" || event.type === "REMOVE_ENTITY_CONSTRAINT") &&
+        !isSourceBoundEntity(event.entity_id) &&
+        !hasSourceBoundQuantityMutation({type:"SET_ENTITY_QUANTITY", entity_id:event.entity_id,
+          quantity: parseCount(input.text) ?? -1, provenance:{source_type:"customer"}}, input, previous, hints)) return false;
+    // A room count describes spatial scope, never machine count. The frozen
+    // generic reducer still supports room-based products in their own domain.
+    if (event.type !== "SET_ENTITY_QUANTITY" || machineQuantity !== null) return true;
+    const sourceUnit = sourceBoundQuantityUnit(input, previous);
+    return sourceUnit?.entity_id === event.entity_id && sourceUnit.quantity === event.quantity;
+  }).map(event => {
+    if (event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY") {
+      const proposedEntity=event.entity;
+      // Capture the discriminated event's entity before nested callbacks:
+      // event itself is later replaced with a source-attested copy.
+      if(sourcedEntities.length>0 && !previous.entities.some(e=>e.entity_id===proposedEntity.entity_id)){
+        const candidates=sourcedEntities.filter(entity=>entity.confidence>=0.72 &&
+          (entity.entity_ref===proposedEntity.entity_id ||
+           entity.name===proposedEntity.attributes.product_name ||
+           (sourcedEntities.length===1 && entity.category_hint===proposedEntity.category)));
+        const attested=candidates.length===1
+          ?attestedItemQuantity(input.text,candidates[0].name,
+             candidates[0].quantity,candidates[0].unit):null;
+        event={...event,entity:{...event.entity,quantity:attested??0,
+          attributes:{...event.entity.attributes,
+            quantity_basis:attested===null?"system_default":"customer_explicit"}}};
+      }
+      const entityId = event.entity.entity_id;
+      const scoped = boundHints.filter(hint => hint.entity_id === entityId);
+      if (scoped.length === 1) {
+        // A journey may create the same entity before the generic hint event.
+        // Carry its validated typed customer requirements into that authorized
+        // creation; never guess a referent or promote them to merchant evidence.
+        event = {...event, entity: {...event.entity,
+          attributes: {...scoped[0].attributes, ...event.entity.attributes},
+          constraints: {...scoped[0].constraints, ...event.entity.constraints}}};
+      }
+    }
+    return event;
+  });
+  // An authorized materialization must precede field updates. Unknown targets
+  // still throw; no proposed mutation is silently dropped or guessed.
+  const explicitGoalTotal = input.text.match(
+    /(?:合共|總共|总共|一共|總數|总数|共計|共计|in total|total of)\s*(?:要|需|有|為|为|是|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(?:部|台|件|套|份|盒|箱|包|堂|課|课|units?|pieces?|items?|sets?|boxes?|packs?|lessons?|sessions?)/iu,
+  );
+  const explicitGoalNumber = explicitGoalTotal ? countTokenValue(explicitGoalTotal[1]) : null;
+  const sourceGoalCategories = detectCategories(input.text);
+  const goalTargets = sourceGoalCategories.length === 1
+    ? previous.entities.filter(entity => entity.category === sourceGoalCategories[0].key &&
+      !["deferred", "cancelled", "superseded"].includes(entity.status))
+    : affirmativeAggregateGoal !== null
+    ? previous.entities.filter(entity => {
+      if (entity.entity_id !== input.semantic_frame?.entities[0]?.entity_ref ||
+          ["deferred","cancelled","superseded"].includes(entity.status)) return false;
+      const compatible=previous.entities.filter(e => e.category === entity.category &&
+        !["deferred","cancelled","superseded"].includes(e.status));
+      return compatible.length === 1 &&
+        [entity.attributes.name,entity.attributes.product_name,entity.model]
+          .some(name => typeof name === "string" && name.length > 1 &&
+            matchesReferenceLabel(input.text,name));
+    }) : [];
+  const isFreshGoal = Boolean(explicitGoalNumber !== null &&
+    /(?:選購|选购|購入|購買|购买|想買|想买|要買|要买|want to buy|need to purchase|shopping for)/iu.test(input.text) &&
+    !looksInterrogative(input.text) && goalTargets.length === 1 &&
+    !input.semantic_frame?.customer_correction && !input.semantic_frame?.additive &&
+    (!input.semantic_frame || ["ADD_ITEM", "UPDATE_ITEM", "NO_STATE_CHANGE"].includes(input.semantic_frame.operation)));
+  const chosenGoal = goalTargets[0];
+  const staleProductName = typeof chosenGoal?.model === "string" && chosenGoal.model.length > 0 &&
+    !matchesReferenceLabel(input.text, chosenGoal.model);
+  const newGoalEvents: CommerceStateEvent[] = isFreshGoal && chosenGoal && explicitGoalNumber !== null
+    ? [{ type: "UPDATE_ENTITY", entity_id: chosenGoal.entity_id,
+        patch: { quantity: explicitGoalNumber, ...(staleProductName ? { model: null,
+          attributes: { quantity_basis: "customer_explicit", product_name: null,
+            sku: null, semantic_attributes: {}, installation_type: null }, } : {
+          attributes: { quantity_basis: "customer_explicit" } }) },
+        provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } }]
     : [];
-  const reduced = reduceCommerceState(previous, [...industryEvent, ...semanticEvents, ...derived, ...runtimeEvents]);
-  const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced);
+  const sourceUnit = sourceBoundQuantityUnit(input, previous);
+  const unitEvents: CommerceStateEvent[] = sourceUnit && quantityEvents.some(event =>
+    event.type === "SET_ENTITY_QUANTITY" && event.entity_id === sourceUnit.entity_id &&
+    event.quantity === sourceUnit.quantity)
+    ? [{ type: "SET_ENTITY_ATTRIBUTE", entity_id: sourceUnit.entity_id, key: "unit", value: sourceUnit.unit,
+         provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } },
+       { type: "SET_ENTITY_ATTRIBUTE", entity_id: sourceUnit.entity_id, key: "quantity_basis", value: "customer_explicit",
+         provenance: { source_type: "customer", source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } }]
+    : [];
+  const orderedEvents = [
+    ...quantityEvents.filter(event => event.type === "ENSURE_ENTITY" || event.type === "ADD_ENTITY"),
+    ...quantityEvents.filter(event => event.type !== "ENSURE_ENTITY" && event.type !== "ADD_ENTITY"),
+    ...newGoalEvents,
+    ...unitEvents,
+  ];
+  const withoutCorrections=orderedEvents.filter(event=>event.type!=="ADD_CORRECTION");
+  const candidate=reduceCommerceState(previous,withoutCorrections);
+  // A source replay with identical field/provenance readback must not append
+  // the raw clause again beside its already normalized correction ledger.
+  let reduced = JSON.stringify(candidate)===JSON.stringify(previous)
+    ? candidate : reduceCommerceState(previous,orderedEvents);
+  reduced = enrichExplicitCustomerFacts(input,reduced,hints);
+  const guard = enforceQuotationNotOrderEvents(clean(input.text), reduced, input.semantic_frame);
   return guard.length ? reduceCommerceState(reduced, guard) : reduced;
+}
+
+function restoreExplicitReturnTopic(
+  state: ConversationCommerceState,
+  text: string,
+): ConversationCommerceState {
+  const clause = splitCustomerOperationClauses(text).find((part) =>
+    /(?:講返|说回|講回|返去|回到|back to|return to|about that)/i.test(part)
+  );
+  if (!clause) return state;
+  const lower = clause.toLowerCase();
+  const matches = state.entities.filter((entity) =>
+    !["deferred","cancelled","superseded"].includes(entity.status) &&
+    [entity.category, entity.model, entity.attributes.product_name].some((value) =>
+      typeof value === "string" && value.trim().length >= 2 &&
+      matchesReferenceLabel(lower,value))
+  );
+  return matches.length === 1
+    ? reduceCommerceState(state, [{ type: "SET_CONTEXT", topic: matches[0].category }])
+    : state;
+}
+
+/** Preflight all explicit counted replacements against the same before-state.
+ * No earlier defer may turn an unknown later target into a single-item fallback.
+ * Conflicting or inactive targets reject the entire compound transition.
+ */
+function compoundQuantityBindingsValid(
+  clauses: string[], state: ConversationCommerceState, hints: CommerceTurnEntityHint[],
+): boolean {
+  const assignments=new Map<string,number>();
+  for(const clause of clauses){
+    const quantity=parseCount(clause);
+    if(quantity===null || !detectQuantityCorrectionSignal(clause) || isReadOnlyCommerceQuestion(clause)) continue;
+    const identities=(entity:ConversationCommerceState["entities"][number])=>
+      [entity.model,entity.attributes.sku,entity.attributes.product_name,
+        ...hints.filter(h=>h.entity_id===entity.entity_id).flatMap(h=>h.aliases??[])]
+      .filter((v):v is string=>typeof v==="string"&&v.length>=2&&v!==entity.category);
+    let targets=state.entities.filter(e=>identities(e).some(label=>matchesReferenceLabel(clause,label)));
+    if(!targets.length) targets=state.entities.filter(e=>matchesReferenceLabel(clause,e.category));
+    const namedSubject=clause.match(/\bchange\s+(.{1,80}?)\s+to\s+\d/iu)?.[1]
+      ?? clause.match(/^(?:請|请|麻煩|麻烦)?(?:把|將|将)?(.{2,80}?)(?:改(?:做|成|為|为)|更正(?:為|为)?)\s*\d/u)?.[1];
+    if(!targets.length){
+      if(namedSubject && !/^(?:it|that|the quantity|quantity|數量|数量)$/iu.test(namedSubject.trim()))return false;
+      targets=state.entities.filter(e=>!["deferred","cancelled","superseded"].includes(e.status));
+    }
+    if(targets.length!==1 || ["deferred","cancelled","superseded"].includes(targets[0].status)) return false;
+    const prior=assignments.get(targets[0].entity_id);
+    if(prior!==undefined&&prior!==quantity)return false;
+    assignments.set(targets[0].entity_id,quantity);
+    const lifecycle=resolveEntityLifecyclePlan(clauses.join("。"),state);
+    if(lifecycle.kind==="mutation"&&lifecycle.plans.some(p=>p.target_entity_id
+      ? p.target_entity_id===targets[0].entity_id : p.target_category===targets[0].category)) return false;
+  }
+  return true;
+}
+
+/** Reduce independent clauses in one CAS write, retaining the same source ID.
+ * A factual question is never allowed to veto the preceding customer-owned
+ * operations. An unresolved lifecycle target rejects the whole event set.
+ */
+function reduceTurnOperations(
+  previous: ConversationCommerceState,
+  input: CommerceRuntimeInput,
+  rawHints: CommerceTurnEntityHint[],
+  sourceContext?: ContextualSourceContext,
+): ConversationCommerceState {
+  // Resolve conflicting lifecycle clauses before reducing any one of them.
+  if (!isReadOnlyCommerceQuestion(input.text,input.semantic_frame) &&
+      resolveBoundLifecyclePlan(input, previous).kind === "ambiguous") return previous;
+  const clauses = splitCustomerOperationClauses(input.text);
+  // The complete lifecycle plan already resolves all independent clauses.
+  // Do not isolate a clause by dropping its validated semantic frame.
+  if (clauses.length === 1 && /[?？]/.test(clauses[0]) &&
+    /(?:暫緩|暂缓|defer|pause|cancel|取消|唔要|不要)/i.test(clauses[0]) &&
+    resolveEntityLifecyclePlan(clauses[0], previous).kind === "none") return previous;
+  // Preserve one independently sourced, model-interpreted new item with a
+  // literal dimension assignment. Splitting by punctuation before reading its
+  // semantic frame loses the source subject and makes the constraint orphaned.
+  // All numeric values, unit and dimension must independently match Visitor text.
+  const proposed=input.semantic_frame;
+  if(proposed?.operation==="ADD_ITEM" && proposed.confidence>=0.90 &&
+     !proposed.ambiguity.is_ambiguous && !proposed.additive &&
+     !proposed.customer_correction && proposed.entities.length===1 &&
+     !looksInterrogative(input.text) && !isBareCommerceSubjectMention(input.text,proposed) &&
+     !isHistoricalOrConditionalCustomerCalculationRequest(input.text)){
+    const item=proposed.entities[0],proof=parseCommerceDimensionMeasurement(input.text);
+    const entries=Object.entries(item.constraints);
+    const axis=inferCommerceDimensionAttribute(input.text,proposed);
+    if(item.confidence>=0.90 && typeof item.name==="string" &&
+       matchesReferenceLabel(input.text,item.name) &&
+       proof && proof.value_mm>0 && axis &&
+       entries.length===1 && entries[0][0]===`max_${axis}_mm` &&
+       typeof entries[0][1]==="number" && entries[0][1]===proof.value_mm &&
+       !previous.entities.some(e=>e.entity_id===item.entity_ref &&
+         ["cancelled","deferred","superseded"].includes(e.status)))
+      return reduceSingleTurn(previous,input,rawHints,sourceContext);
+  }
+  const semanticCustomerConditions = Boolean(input.semantic_frame?.entities.some((entity) =>
+    Object.keys(entity.constraints).length > 0
+  ));
+  // An enumeration inside one operation (room counts, models, or a two-item
+  // correction) must retain the whole-turn parser's aggregate interpretation.
+  // Split only when at least two clauses independently express an operation or
+  // customer condition; the other clauses may then supply a question or focus.
+  const independentOperations = clauses.filter((clause) =>
+    /(?:暫緩|暂缓|先擺低|先放低|defer|pause|hold off|取消|cancel|更正|改咗|改為|改做|量錯|其實係|actually|correct|change|最多|上限|at most|maximum|想|需要|want|need)/i.test(clause)
+  ).length;
+  if (clauses.length > 8 && independentOperations >= 2) return previous;
+  if ((independentOperations >= 2 || independentOperations >= 1 &&
+    previous.entities.some(entity=>entity.entity_id.startsWith("generic:"))) &&
+    !compoundQuantityBindingsValid(clauses,previous,rawHints)) return previous;
+  if (clauses.length < 2 || clauses.length > 8 ||
+    independentOperations < 2 && !semanticCustomerConditions) {
+    const whole = reduceSingleTurn(previous, input, rawHints, sourceContext);
+    return restoreExplicitReturnTopic(enrichExplicitCustomerFacts(input,whole,rawHints), input.text);
+  }
+  let state = previous;
+  for (const [index, clause] of clauses.entries()) {
+    if (resolveBoundLifecyclePlan({...input,text:clause}, state).kind === "ambiguous") return previous;
+    const hints = rawHints.filter((hint) => {
+      if (state.entities.some((entity) => entity.entity_id === hint.entity_id)) return true;
+      // A location or customer condition about an existing aggregate is not
+      // another purchase entity. Only an explicit additional item can open a
+      // new scoped entity in that category.
+      return !state.entities.some((entity) =>
+        entity.category === hint.category && entity.entity_id.endsWith(":unscoped")
+      ) || detectAdditiveEntityCreationSignal(clause);
+    });
+    state = reduceSingleTurn(state, {
+      ...input,
+      text: clause,
+      history: index > 0
+        ? [{ role: "visitor", content: clauses.slice(0, index).join("。") }, ...(input.history ?? [])]
+        : input.history,
+      // Only this independently verified clause may inherit its original
+      // semantic action; every other clause stays isolated and read-only.
+      semantic_frame: acceptedLifecycleEntityRef({...input,text:clause},state)
+        ? input.semantic_frame : null,
+    }, hints, sourceContext);
+  }
+  // A multi-clause customer correction retains one server-validated semantic
+  // customer-fact delta. Individual clause reducers deliberately cannot inherit
+  // the whole-turn entity mutation plan, but must not drop an explicitly
+  // validated customer-owned correction (or retain a superseded requirement).
+  // Apply only the canonical customer-fact event; never infer an entity,
+  // merchant fact, policy or lifecycle mutation from this projection.
+  if (input.semantic_frame && input.semantic_frame.confidence >= 0.72 &&
+      !input.semantic_frame.ambiguity.is_ambiguous &&
+      ["UPDATE_ITEM", "ADD_ITEM"].includes(input.semantic_frame.operation) &&
+      input.semantic_frame.customer_facts?.length &&
+      !isHistoricalOrConditionalCustomerCalculationRequest(input.text)) {
+    const customerEvents=semanticFrameToStateEvents(
+      input.semantic_frame,state,[],input.source_message_id,input.occurred_at ?? null,
+    ).filter(event=>event.type==="SET_CUSTOMER_CONSTRAINT" && event.key==="customer_reported_facts");
+    if (customerEvents.length) state=reduceCommerceState(state,customerEvents);
+  }
+  // A schema-constrained semantic frame may describe a customer preference
+  // while its factual question is routed to KB. Bind only customer constraints
+  // to one existing, named entity; never copy a proposed merchant fact.
+  if (input.semantic_frame && input.semantic_frame.confidence >= 0.72 &&
+    !input.semantic_frame.ambiguity.is_ambiguous &&
+    !isHistoricalOrConditionalCustomerCalculationRequest(input.text)) {
+    const owned: CommerceStateEvent[] = [];
+    for (const candidate of input.semantic_frame.entities.slice(0, 8)) {
+      if (candidate.confidence < 0.75) continue;
+      const names = [candidate.name, candidate.category_hint, candidate.entity_ref]
+        .filter((value): value is string => typeof value === "string" && value.length >= 2);
+      if (!names.some((name) => matchesReferenceLabel(input.text,name))) continue;
+      const targets = state.entities.filter((entity) =>
+        entity.status !== "cancelled" && entity.status !== "deferred" &&
+        (entity.category === candidate.category_hint || names.includes(entity.category))
+      );
+      if (targets.length !== 1) continue;
+      for (const [key, value] of Object.entries(candidate.constraints).slice(0, 8)) {
+        if (!/^[a-z][a-z0-9_]{1,60}$/i.test(key) ||
+          /(?:price|stock|availability|suitability|warranty|policy|verified|quote|payment|order)/i.test(key) ||
+          value === null || typeof value === "object" ||
+          (typeof value === "string" && value.length > 160)) continue;
+        owned.push({ type: "SET_ENTITY_CONSTRAINT", entity_id: targets[0].entity_id,
+          key, value, provenance: { source_type: "customer",
+            source_message_id: input.source_message_id, recorded_at: input.occurred_at ?? null } });
+      }
+    }
+    if (owned.length) state = reduceCommerceState(state, owned);
+  }
+  const focus = input.trusted_product_topic_focus;
+  if (focus && validateTrustedProductTopicFocus(input, state).valid &&
+    state.entities.filter((entity) => entity.category === focus.topic &&
+      entity.status !== "deferred" && entity.status !== "cancelled").length === 1) {
+    state = reduceCommerceState(state, trustedResearchFocusEvents(input, state));
+  }
+  state = enrichExplicitCustomerFacts(input,state,rawHints);
+  return focus ? state : restoreExplicitReturnTopic(state, input.text);
+}
+
+/** Generic, source-bound unit correction. A difference in counts is NOT by
+ * itself evidence of cancellation; status requires its own customer operation.
+ * No number or unit may be borrowed from an unrelated background fact. */
+function sourceBoundPartialUnitRetention(
+  previous:ConversationCommerceState,input:CommerceRuntimeInput,
+):CommerceStateEvent[] | null {
+  const frame=input.semantic_frame;
+  if(!frame || frame.confidence<0.72 || frame.ambiguity.is_ambiguous ||
+    frame.explicit_negations.length ||
+    (frame.demands ?? []).some(demand=>demand.explicit_negations.length) ||
+    !frame.customer_correction ||
+    !["SET_QUANTITY","UPDATE_ITEM"].includes(frame.operation) ||
+    frame.entities.length!==1 || frame.additive ||
+    detectAdditiveEntityCreationSignal(input.text) ||
+    isReadOnlyCommerceQuestion(input.text,frame)) return null;
+  const active=previous.entities.filter(e=>!["cancelled","deferred","superseded"].includes(e.status));
+  if(active.length!==1) return null;
+  const entity=active[0], proposed=frame.entities[0];
+  if(proposed.confidence<0.72 || proposed.quantity===null ||
+    !Number.isInteger(proposed.quantity) || proposed.quantity<0 ||
+    proposed.quantity===entity.quantity) return null;
+  const unit=typeof entity.attributes.unit==="string" ? entity.attributes.unit.trim():"";
+  if(!unit || unit.length>32 || !/^[\p{L}\p{N}]+$/u.test(unit))return null;
+  if(proposed.category_hint && proposed.category_hint!==entity.category)return null;
+  if(typeof proposed.unit==="string" && proposed.unit &&
+      proposed.unit.toLowerCase()!==unit.toLowerCase())return null;
+  const text=clean(input.text).normalize("NFKC");
+  // An inactive named scope cannot retarget the single active aggregate.
+  if (previous.entities.some(candidate =>
+    ["cancelled","deferred","superseded"].includes(candidate.status) &&
+    [candidate.attributes.name,
+      ...(Array.isArray(candidate.attributes.customer_subject_aliases)
+        ? candidate.attributes.customer_subject_aliases : [])]
+      .some(alias => typeof alias === "string" && alias.length > 1 &&
+        matchesReferenceLabel(text,alias)) && !detectEntityReactivation(text))) return null;
+  const names=[entity.model,entity.attributes.product_name].filter(
+    (v):v is string=>typeof v==="string" && v.length>1);
+  const sourceSubject=names.some(name=>matchesReferenceLabel(text,name));
+  const frameSubject=proposed.entity_ref===entity.entity_id ||
+    names.some(name=>clean(proposed.name).toLowerCase()===clean(name).toLowerCase());
+  if(!sourceSubject && !frameSubject &&
+    !(active.length===1 && text.includes(unit) &&
+      /(?:更正|改|只(?:保留|留低|留返)|取消|暫緩|暂缓|keep|change|correct)/iu.test(text) &&
+      !/(?:分頁|分页|browser\s+tabs?|web\s+pages?)/iu.test(text))) return null;
+  const number="([0-9]{1,4}|[一二兩两三四五六七八九十]|one|two|three|four|five|six|seven|eight|nine|ten)";
+  const escaped=unit.replace(/[.*+?^$(){}|[\]\\]/g,"\\$&");
+  const words:Record<string,number>={one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10};
+  const counted=[...text.matchAll(new RegExp(number+"\\s*"+escaped,"giu"))]
+    .filter(m=>text.slice(Math.max(0,(m.index??0)-1),m.index)!=="第")
+    .map(m=>countTokenValue(m[1])??words[m[1].toLowerCase()]??null)
+    .filter((n):n is number=>n!==null);
+  const explicitTotal=counted.includes(proposed.quantity);
+  const delta=entity.quantity-proposed.quantity;
+  const cancelled=/(?:取消|唔要|不要|cancel\b|remove\b)/iu.test(text) &&
+    !/(?:唔係|不是|並非|并非)\s*(?:要)?取消/iu.test(text);
+  const deferred=/(?:暫緩|暂缓|延期|延後|延后|postpone\b|defer\b|hold\s+off)/iu.test(text);
+  // The customer's final unit is source-scoped by a quantity and an ordinal
+  // status instruction, never by an unrelated browser-tab or capacity count.
+  const ordinals=["first","second","third","fourth","fifth","sixth","seventh","eighth","ninth","tenth"];
+  const lastOrdinal=entity.quantity>=1 && entity.quantity<=ordinals.length
+    ? ordinals[entity.quantity-1] : null;
+  const explicitInactiveOrdinal=delta===1 && explicitTotal && lastOrdinal!==null &&
+    new RegExp("\\b(?:postpone|defer|cancel|hold\\s+off)\\s+(?:the\\s+)?"+
+      lastOrdinal+"\\b","iu").test(text);
+  // A numbered member or stated portion links the status to this quantity.
+  const scopedInactive=delta>0 && (cancelled||deferred) &&
+    (new RegExp("第\\s*"+number+"\\s*"+escaped,"iu").test(text) ||
+      /(?:其(?:中|餘|余)|剩低|剩下|另外|other|remaining)/iu.test(text) ||
+      explicitInactiveOrdinal) &&
+    (counted.includes(delta) || explicitTotal || delta===1);
+  const decrementOne=delta===1 && !explicitTotal && cancelled &&
+    /(?:其中|其餘|其余|one\s+of|one\s+less)/iu.test(text) &&
+    (counted.includes(1) || /一\s*/u.test(text));
+  if(!explicitTotal && !decrementOne)return null;
+  const provenance={source_type:"customer" as const,source_message_id:input.source_message_id,
+    recorded_at:input.occurred_at??null};
+  const events:CommerceStateEvent[]=[
+    {type:"SET_ENTITY_QUANTITY",entity_id:entity.entity_id,quantity:proposed.quantity,provenance}
+  ];
+  if(scopedInactive){
+    const inactiveStatus=deferred?"deferred":"cancelled";
+    const id=entity.entity_id+":unit-status:"+input.source_message_id;
+    events.push({type:"ENSURE_ENTITY",entity:{...entity,entity_id:id,quantity:delta,status:inactiveStatus,
+      attributes:{...entity.attributes,quantity_basis:"customer_explicit",
+        customer_part_of_entity_id:entity.entity_id,customer_unit_partition:"source_bound_status"},
+      constraints:{...entity.constraints,source_bound_partial_unit:true},provenance}});
+    events.push({type:"SET_ENTITY_CONSTRAINT",entity_id:entity.entity_id,
+      key:"customer_inactive_unit_count",value:delta,provenance});
+    events.push({type:"SET_ENTITY_CONSTRAINT",entity_id:entity.entity_id,
+      key:"customer_inactive_unit_status",value:inactiveStatus,provenance});
+  }
+  return events;
+}
+
+
+/** NO_STATE_CHANGE is not an entity/transaction mutation. A typed customer
+ * measurement may nevertheless become a Commerce customer fact when EACH
+ * subject, numeric value and unit is independently visible in the original
+ * Visitor sentence. Unproved/model-only facts remain in bounded Memory only;
+ * they cannot obtain the Commerce/B2 readback proof. */
+/** Literal count-first source proof. No domain name, product classifier or
+ * customer phrase table selects the subject. The proposed unit is verified
+ * against the original clause; ambiguous or negated counts fail closed. */
+function countObservationConflict(text:string,subject:string,unit:string,amount:number):boolean{
+  const norm=subject.normalize("NFKC").trim().toLowerCase();
+  const u=unit.normalize("NFKC").trim().toLowerCase();
+  const fragments=new Set<string>();
+  for(const part of norm.split(/[\s-]+/u)){
+    if(/^[\p{Script=Han}]+$/u.test(part)){
+      const chars=[...part];
+      for(let i=0;i+1<chars.length;i++)fragments.add(chars[i]+chars[i+1]);
+    }else if(part.length>=3)fragments.add(part);
+  }
+  return splitCustomerOperationClauses(text.normalize("NFKC")).some(clause=>{
+    if(looksInterrogative(clause))return false;
+    const c=clause.normalize("NFKC").toLowerCase();
+    const proof=countFirstObservation(clause,amount,unit);
+    if(proof&&proof.rawSubject.toLowerCase()===norm&&proof.writtenUnit.toLowerCase()===u)return false;
+    const direct=c.includes(norm);
+    const correction=detectQuantityCorrectionSignal(clause)||
+      /(?:取消|暫緩|暂缓|刪除|删除|唔|不|冇|沒有|没有|未|無|无)|\b(?:cancel|defer|pause|remove|not|no|without)\b/iu.test(clause);
+    // A partial literal reference plus a contradiction can only VETO an
+    // older fact. It cannot supply a new amount or select another entity.
+    const overlaps=[...fragments].some(part=>c.includes(part));
+    return direct||correction&&(overlaps||c.includes(u));
+  });
+}
+
+function sourceLiteralCountInvalidations(state:ConversationCommerceState,input:CommerceRuntimeInput):CommerceStateEvent[]{
+  if(!input.company_id||!input.conversation_id||!input.source_message_id)return [];
+  const prior=state.customer_constraints.customer_reported_facts;
+  if(!isRecord(prior))return [];
+  const next={...prior};
+  let changed=false;
+  for(const [key,row] of Object.entries(prior)){
+    if(!isRecord(row)||row.source_count_origin!=="literal_customer_clause"||
+      !isRecord(row.value)||typeof row.value.amount!=="number"||
+      typeof row.source_subject_text!=="string"||typeof row.source_unit_text!=="string"||
+      !isRecord(row.provenance)||row.provenance.source_type!=="customer"||
+      row.provenance.company_id!==input.company_id||row.provenance.conversation_id!==input.conversation_id||
+      row.provenance.source_message_id===input.source_message_id)continue;
+    if(!countObservationConflict(input.text,row.source_subject_text,row.source_unit_text,row.value.amount))continue;
+    // Retain source provenance as an unresolved observation, not a current
+    // number. This blocks the stale count from both recap and B2 readback.
+    next[key]={...row,value:null,source_count_status:"unresolved",
+      provenance:{...row.provenance,invalidated_by_source_message_id:input.source_message_id}};
+    changed=true;
+  }
+  return changed?[{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:next}]:[];
+}
+
+function sourceLiteralCountKey(subject:string,unit:string):string|null{
+  const key=subject.normalize("NFKC").trim().toLowerCase().replace(/\s+/gu,"_")+"_"+unit.toLowerCase();
+  return key.length<=80&&/^[\p{L}\p{M}_-]+$/u.test(key)&&
+    !["__proto__","prototype","constructor"].includes(key)?key:null;
+}
+
+const LITERAL_COUNT_MAX_RECORDS=8;
+const LITERAL_COUNT_REVISION_TTL=32;
+
+function sourceAttestedUninterpretedCountFacts(previous:ConversationCommerceState,input:CommerceRuntimeInput,
+  context?:ContextualSourceContext):CommerceStateEvent[]{
+  if(!context||context.company_id!==input.company_id||context.conversation_id!==input.conversation_id||
+    context.source_message_id!==input.source_message_id||!Number.isSafeInteger(context.state_revision)||context.state_revision<0)return [];
+  if(input.semantic_frame||!input.company_id||!input.conversation_id||!input.source_message_id||
+    input.text.length>1600||looksInterrogative(input.text)||
+    isHistoricalOrConditionalCustomerCalculationRequest(input.text))return [];
+  const clauses=countObservationClauses(input.text);
+  if(!clauses.length||clauses.length>8)return [];
+  const declarations=new Set(sourceBoundCustomerDeclarationClauses(input.text));
+  const candidates=clauses.flatMap((clause,idx)=>{
+    if(!declarations.has(clause)||
+      /(?:價錢|价钱|價格|价格|售價|售价|庫存|库存|付款|已付|訂單|订单|退款|保養|保修|政策|權益|权益)|\b(?:price|cost|stock|inventory|order|paid|payment|refund|warranty|policy|entitlement|sla)\b/iu.test(clause))return [];
+    const token=countFirstLiteralNumber(clause);
+    if(!token)return [];
+    const unit=clause.slice(token.end).trimStart().match(new RegExp("^("+COUNT_UNIT+")","iu"))?.[0];
+    if(!unit)return [];
+    const proof=countFirstObservation(clause,token.amount,unit);
+    if(!proof)return [];
+    const key=sourceLiteralCountKey(proof.rawSubject,proof.writtenUnit);
+    return key?[{idx,clause,key,amount:token.amount,...proof}]:[];
+  });
+  if(candidates.length!==1)return [];
+  const m=candidates[0],sub=m.rawSubject.toLowerCase(),unit=m.writtenUnit.toLowerCase();
+  if(clauses.some((c,i)=>i!==m.idx&&(c.toLowerCase().includes(sub)||c.toLowerCase().includes(unit))))return [];
+  const prior=previous.customer_constraints.customer_reported_facts;
+  const facts=isRecord(prior)?prior:{};
+  // Never create a parallel fact when the typed writer already owns the
+  // same source subject/unit; a colliding or ambiguous key stays unbound.
+  const existing=Object.entries(facts).filter(([key,row])=>isRecord(row)&&
+    typeof row.source_subject_text==="string"&&row.source_subject_text.toLowerCase()===sub&&
+    typeof row.source_unit_text==="string"&&row.source_unit_text.toLowerCase()===unit);
+  if(existing.length>1||existing.length===1&&existing[0][0]!==m.key)return [];
+  if(Object.prototype.hasOwnProperty.call(facts,m.key)){
+    const row=facts[m.key];
+    if(!isRecord(row)||row.source_count_origin!=="literal_customer_clause"||
+      !(isRecord(row.value)||row.value===null&&row.source_count_status==="unresolved")||
+      !isRecord(row.provenance)||row.provenance.source_type!=="customer"||
+      row.provenance.company_id!==input.company_id||row.provenance.conversation_id!==input.conversation_id||
+      row.provenance.source_message_id===input.source_message_id||
+      row.provenance.invalidated_by_source_message_id===input.source_message_id||
+      isRecord(row.value)&&row.value.amount===m.amount||!detectQuantityCorrectionSignal(input.text))return [];
+  }
+  // Retain at most eight raw observations (including invalidated entries).
+  // Expired raw records are not general Memory facts. A new valid observation
+  // can reclaim an expired slot; do not evict active facts or invent relevance.
+  const bounded={...facts};
+  for(const [key,row] of Object.entries(bounded)){
+    if(key!==m.key&&isRecord(row)&&row.source_count_origin==="literal_customer_clause"&&
+      typeof row.source_count_expires_after_revision==="number"&&
+      row.source_count_expires_after_revision<context.state_revision+1)delete bounded[key];
+  }
+  const count=Object.entries(bounded).filter(([key,row])=>key!==m.key&&isRecord(row)&&
+    row.source_count_origin==="literal_customer_clause").length;
+  if(count>=LITERAL_COUNT_MAX_RECORDS)return [];
+  return [{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:{...bounded,[m.key]:{
+    value:{amount:m.amount,unit:m.writtenUnit},source_text:m.clause,
+    source_subject_text:m.rawSubject,source_unit_text:m.writtenUnit,
+    source_count_order:"count_first",source_count_origin:"literal_customer_clause",
+    source_count_visibility:"exact_recall_only",
+    source_count_recorded_revision:context.state_revision+1,
+    source_count_expires_after_revision:context.state_revision+1+LITERAL_COUNT_REVISION_TTL,
+    provenance:{source_type:"customer",source_message_id:input.source_message_id,
+      company_id:input.company_id,conversation_id:input.conversation_id,recorded_at:input.occurred_at??null}
+  }}}];
+}
+
+function literalLengthObservation(clause:string,amount:number,unit:string){
+  if(!/^(?:呎|尺|feet|foot|ft)$/iu.test(unit))return null;
+  const matches=[...clause.matchAll(/[0-9]+(?:\.[0-9]+)?/gu)];
+  if(matches.length!==1 || Number(matches[0][0])!==amount)return null;
+  const start=matches[0].index!, writtenUnit=clause.slice(start+matches[0][0].length).trim();
+  const rawSubject=clause.slice(0,start).trim().replace(/(?:就|約|约|about|approximately)\s*$/iu,"").trim();
+  return writtenUnit===unit && rawSubject.length>=2 && /\p{L}/u.test(rawSubject)?{rawSubject,writtenUnit}:null;
+}
+
+/** A NO_STATE_CHANGE customer fact remains a customer observation only.
+ * A semantic reading proposes its key/value, but a single original Visitor
+ * clause must independently contain its number, subject and written unit.
+ * This is not an entity, merchant price, stock, quote or order authority.
+ * There are no industry, room, product or canonical-unit vocabulary tables. */
+function sourceAttestedGenericNoStateFacts(
+  previous:ConversationCommerceState,input:CommerceRuntimeInput,context?:ContextualSourceContext,
+):CommerceStateEvent[]{
+  const frame=input.semantic_frame;
+  if(!frame || frame.operation!=="NO_STATE_CHANGE" || frame.confidence<0.90 ||
+     frame.intent!=="customer_context_update" ||
+     frame.ambiguity.is_ambiguous || frame.customer_correction || frame.additive ||
+     frame.entities.length>0 || !frame.customer_facts?.length ||
+     frame.customer_facts.length>8 || (frame.explicit_negations?.length??0)>0 ||
+     !input.company_id || !input.conversation_id || !input.source_message_id ||
+     looksInterrogative(input.text) ||
+     /\b(?:could|would|should|might|maybe|perhaps|suppose|hypothetical|whether|if)\b|(?:可能|假設|假设|假如|如果|會否|会否)/iu.test(input.text) ||
+     isHistoricalOrConditionalCustomerCalculationRequest(input.text))return [];
+  const clauses=countObservationClauses(input.text);
+  if(!clauses.length || clauses.length>8)return [];
+  const existing=previous.customer_constraints.customer_reported_facts;
+  const prior=existing && typeof existing==="object" && !Array.isArray(existing)
+    ? existing as Record<string,unknown> : {};
+  const incoming:Record<string,unknown>={...prior};
+  const used=new Set<number>();
+  const countFirstProofs:Array<{rawSubject:string;writtenUnit:string}>=[];
+  let changed=false;
+  for(const fact of frame.customer_facts){
+    if(!/^[a-z][a-z0-9_]{0,79}$/i.test(fact.key) ||
+       ["__proto__","prototype","constructor"].includes(fact.key) ||
+       /(?:^|_)(?:price|stock|inventory|verified|quote|order|payment|paid|refund|entitlement|warranty|policy|sla)(?:_|$)/i.test(fact.key))return [];
+    const val=fact.value;
+    const obj=val && typeof val==="object" && !Array.isArray(val)?val:null;
+    const amount=obj && "amount" in obj && typeof obj.amount==="number"
+      ?obj.amount:null;
+    const customerUnit=obj && "unit" in obj && typeof obj.unit==="string"
+      ?obj.unit.trim():null;
+    if(!obj || amount===null || !Number.isFinite(amount) || amount<0 || amount>1000000000 ||
+       Object.keys(obj).some(key=>key!=="amount"&&key!=="unit") ||
+       !customerUnit || customerUnit.length>40)return [];
+    const matches=clauses.flatMap((clause,idx)=>{
+      if(used.has(idx))return [];
+      const countFirst=countFirstObservation(clause,amount,customerUnit);
+      if(countFirst)return [{idx,clause,...countFirst}];
+      const numbers=[...clause.matchAll(/(?<!\d)\d+(?:\.\d+)?(?!\d)/gu)];
+      if(numbers.length!==1 || Number(numbers[0][0])!==amount)return [];
+      const hit=numbers[0],at=hit.index??0;
+      const rawSubject=clause.slice(0,at).trim();
+      const after=clause.slice(at+hit[0].length).trim();
+      const writtenUnit=after.match(/^([\p{L}\p{N}%°²]{1,36})/u)?.[1]??null;
+      if(rawSubject.length<2 || !/[\p{L}]/u.test(rawSubject) || !writtenUnit ||
+       writtenUnit.toLowerCase()!==customerUnit.toLowerCase())return [];
+      return [{idx,clause,rawSubject,writtenUnit,countFirst:false}];
+    });
+    // Equal numeric values in multiple clauses are NOT proof of which
+    // arbitrary customer field owns either amount. Fail closed.
+    if(matches.length!==1)return [];
+    const m=matches[0];used.add(m.idx);
+    if(m.countFirst)countFirstProofs.push(m);
+    // Existing effective facts must only change through the original
+    // correction + source/revision/CAS contract, never NO_STATE_CHANGE.
+    if(Object.prototype.hasOwnProperty.call(prior,fact.key))continue;
+    const literalDimension=/^(?:呎|尺|feet|foot|ft)$/iu.test(m.writtenUnit);
+    const revision=context?.state_revision;
+    if(literalDimension){
+      const literal=literalLengthObservation(m.clause,amount,m.writtenUnit);
+      if(!literal || revision==null || !Number.isSafeInteger(revision) || revision<0 ||
+        context?.company_id!==input.company_id || context.conversation_id!==input.conversation_id || context.source_message_id!==input.source_message_id)return [];
+      m.rawSubject=literal.rawSubject;
+      for(const [key,row] of Object.entries(incoming)){
+        if(isRecord(row) && row.source_count_visibility==="exact_recall_only" && typeof row.source_count_expires_after_revision==="number" && row.source_count_expires_after_revision<revision+1)delete incoming[key];
+      }
+      if(Object.values(incoming).filter(row=>isRecord(row) && row.source_count_visibility==="exact_recall_only").length>=LITERAL_COUNT_MAX_RECORDS)return [];
+    }
+    incoming[fact.key]={value:val,source_text:m.clause,
+      ...(literalDimension?{source_count_origin:"literal_customer_clause",source_count_visibility:"exact_recall_only",source_count_order:"subject_first",source_count_recorded_revision:revision!+1,source_count_expires_after_revision:revision!+1+LITERAL_COUNT_REVISION_TTL}:{}),
+      source_subject_text:m.rawSubject,source_unit_text:m.writtenUnit,
+      ...(m.countFirst&&!literalDimension?{source_count_order:"count_first"}:{}),
+      provenance:{source_type:"customer",source_message_id:input.source_message_id,
+        company_id:input.company_id,conversation_id:input.conversation_id,recorded_at:input.occurred_at??null}};
+    changed=true;
+  }
+  if(!changed)return [];
+  // Partial clause acceptance is limited to count-first proofs. Unclaimed
+  // clauses must not mention a claimed subject OR unit, so another count,
+  // correction or contradictory observation cannot be silently discarded.
+  if(used.size!==clauses.length &&
+    (countFirstProofs.length!==frame.customer_facts.length ||
+     clauses.some((clause,idx)=>!used.has(idx)&&countFirstProofs.some(proof=>
+       clause.toLowerCase().includes(proof.rawSubject.toLowerCase())||
+       clause.toLowerCase().includes(proof.writtenUnit.toLowerCase())))))return [];
+  return [{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",value:incoming}];
+}
+
+
+/** A prior collapsed, customer-owned group must be retired once the customer
+ * expressly cancels its named part AND states the still-retained unit count.
+ * The original whole-group record becomes historical; no active retained
+ * quantity is invented by this legacy-only compatibility projection. */
+function sourceBoundLegacyCollapsedCancellation(
+  previous:ConversationCommerceState,input:CommerceRuntimeInput,
+):CommerceStateEvent[]|null {
+  if(input.semantic_frame||isReadOnlyCommerceQuestion(input.text)||
+    /[?？]|(?:如果|假設|假设|假如|hypothetical|what if)/iu.test(input.text))return null;
+  const active=previous.entities.filter(e=>!["cancelled","deferred","superseded"].includes(e.status));
+  if(previous.entities.length!==1||active.length!==1||
+    !active[0].entity_id.startsWith("generic:")||
+    active[0].provenance.source_type!=="customer"||
+    !active[0].provenance.source_message_id)return null;
+  const entity=active[0],unit=entity.attributes.unit;
+  if(typeof unit!=="string"||!/^[\p{L}\p{N}]{1,12}$/u.test(unit)||
+    !Number.isInteger(entity.quantity)||entity.quantity<2||entity.quantity>100)return null;
+  const prior=(input.history??[]).find(row=>
+    row.id===entity.provenance.source_message_id&&
+    ["visitor","user","customer"].includes(row.role));
+  if(!prior)return null;
+  const original=clean(prior.content),text=clean(input.text);
+  if(!/(?:更正|correction|correct)/iu.test(text)||
+    !/(?:取消|cancel)/iu.test(text)||
+    !/(?:只保留|僅保留|仅保留|keep only|retain only)/iu.test(text))return null;
+  const number="([一二兩两三四五六七八九十]|[0-9]{1,4})";
+  const sourceCounts=[...original.matchAll(new RegExp(number+"\\s*"+unit,"giu"))]
+    .map(m=>countTokenValue(m[1]));
+  if(!sourceCounts.includes(entity.quantity))return null;
+  const countMatch=text.match(new RegExp("(?:只保留|僅保留|仅保留|keep only|retain only)[^，,。;；]{0,60}?"+number+"\\s*"+unit,"iu"));
+  const retained=countMatch?countTokenValue(countMatch[1]):null;
+  if(retained===null||retained<1||entity.quantity-retained!==1)return null;
+  // Require the unit already recorded for this customer-owned entity.
+  // A fixed item-classifier list can cancel a different item by mistake.
+  const scope=text.match(new RegExp(
+    String.raw`(?:更正|correction|correct)\s*[:：]\s*([^，,。;；:：]{1,32}?)\s*(?:那|嗰|這|这|呢)?\s*` +
+      unit +
+    String.raw`\s*(?:暫時|暂时)?\s*(?:取消|cancel)`,
+    "iu",
+  ));
+  const cancelled=scope?.[1]?.trim()??"";
+  if(cancelled.length<2||!original.includes(cancelled))return null;
+  const provenance={source_type:"customer" as const,source_message_id:input.source_message_id,
+    recorded_at:input.occurred_at??null};
+  return [
+    {type:"SET_ENTITY_STATUS",entity_id:entity.entity_id,status:"cancelled",provenance},
+    {type:"ADD_CORRECTION",correction:text},
+  ];
+}
+
+function contextualSourceContext(input: CommerceRuntimeInput, revision: number): ContextualSourceContext {
+  return { company_id: input.company_id, conversation_id: input.conversation_id,
+    source_message_id: input.source_message_id, state_revision: revision };
+}
+
+function hasContextualScopeFactProposal(input: CommerceRuntimeInput): boolean {
+  return Boolean(input.semantic_frame?.customer_facts?.some(fact =>
+    ["contextual_scope_counts", "contextual_goal", "contextual_scope_facts"].includes(fact.key)));
+}
+
+function hasContextualScopeAllocation(input: CommerceRuntimeInput): boolean {
+  return Boolean(input.semantic_frame?.entities.some(entity =>
+    Object.prototype.hasOwnProperty.call(entity.attributes, "scoped_customer_updates")));
+}
+
+/** Scope background uses the existing canonical constraint event and one CAS.
+ * The model never supplies owner/source/revision receipts. A correction updates
+ * only its named scope, preserving each unrelated fact's original provenance. */
+function contextualScopeFactState(previous: ConversationCommerceState,
+  input: CommerceRuntimeInput, context: ContextualSourceContext | undefined): ConversationCommerceState {
+  const proposal = verifiedCurrentScopeFacts({ text: input.text, semantic_frame: input.semantic_frame,
+    state: previous, context });
+  if (!proposal || !context) return previous;
+  const existingGoal = readSourceBoundContextualGoal(previous, context);
+  const goal: SourceBoundContextualGoal = existingGoal?.goal_id === proposal.goal.goal_id
+    ? existingGoal : { ...proposal.goal, recorded_revision: context.state_revision + 1 };
+  const original = previous.customer_constraints.contextual_scope_facts;
+  if (original !== undefined && (!Array.isArray(original) || original.length > 24)) return previous;
+  const facts: SourceBoundScopeFact[] = Array.isArray(original) ? structuredClone(original) : [];
+  for (const proposed of proposal.facts) {
+    const indices = facts.flatMap((fact, index) => fact && fact.goal_id === proposed.goal_id &&
+      fact.scope === proposed.scope ? [index] : []);
+    if (indices.length > 1) return previous;
+    const old = indices.length ? facts[indices[0]] : null;
+    // An identical assertion is not a new fact or a reason to relabel old
+    // facts with the replay/current source. The RPC remains exactly once.
+    if (old && old.count === proposed.count && old.subject_label === proposed.subject_label &&
+      old.company_id === context.company_id && old.conversation_id === context.conversation_id &&
+      Number.isInteger(old.recorded_revision) && old.recorded_revision > 0 &&
+      old.recorded_revision <= context.state_revision) continue;
+    const fact = { ...proposed, recorded_revision: context.state_revision + 1 };
+    if (indices.length) facts[indices[0]] = fact;
+    else facts.push(fact);
+  }
+  if (facts.length > 24) return previous;
+  return reduceCommerceState(previous, [
+    { type: "SET_CUSTOMER_CONSTRAINT", key: "contextual_goal", value: goal },
+    { type: "SET_CUSTOMER_CONSTRAINT", key: "contextual_scope_facts", value: facts },
+    { type: "SET_CONTEXT", intent: "customer_guidance", topic: goal.subject_label },
+  ]);
+}
+
+/** A goal with no product quantity can be cancelled/paused as a goal. Use the
+ * existing exact-subject lifecycle verifier over an ephemeral identity view;
+ * that view is never sent to the reducer or written as a Commerce entity. */
+function contextualGoalLifecycle(input: CommerceRuntimeInput, previous: ConversationCommerceState,
+  context: ContextualSourceContext | undefined): { goal: SourceBoundContextualGoal;
+    status: "cancelled" | "deferred" } | null {
+  if (!context) return null;
+  const goal = readSourceBoundContextualGoal(previous, context), frame = input.semantic_frame;
+  if (!goal || !frame || frame.confidence < 0.9 || frame.ambiguity.is_ambiguous ||
+    frame.additive || frame.customer_facts?.length || frame.requested_facts.length ||
+    !["CANCEL_ITEM", "REMOVE_ITEM", "DEFER"].includes(frame.operation) ||
+    !matchesReferenceLabel(input.text, goal.subject_label) ||
+    previous.entities.some(entity => entity.attributes.contextual_goal_id === goal.goal_id)) return null;
+  if (frame.entities.some(entity => entity.name !== goal.subject_label ||
+    (entity.entity_ref && entity.entity_ref !== goal.goal_id)) ||
+    frame.referents.some(reference => reference.ref !== goal.goal_id ||
+      reference.source !== "persistent_state" || reference.confidence < 0.9)) return null;
+  const virtualId = "contextual-item:" + goal.goal_id;
+  const view = { ...previous, entities: [...previous.entities, {
+    entity_id: virtualId, category: goal.subject_label, quantity: 0, status: "researching" as const,
+    attributes: { product_name: goal.subject_label }, constraints: {},
+    provenance: { source_type: "customer" as const, source_message_id: goal.source_message_id },
+  }] };
+  const plan = resolveEntityLifecyclePlan(input.text, view);
+  const status = frame.operation === "DEFER" ? "deferred" : "cancelled";
+  if (plan.kind !== "mutation" || plan.plans.length !== 1 ||
+    plan.plans[0].action !== status || plan.plans[0].target_category !== goal.subject_label ||
+    (plan.plans[0].target_entity_id && plan.plans[0].target_entity_id !== virtualId)) return null;
+  return { goal, status };
+}
+
+function contextualGoalStatusState(state: ConversationCommerceState,
+  goal: SourceBoundContextualGoal, status: "cancelled" | "deferred" | "superseded",
+  context: ContextualSourceContext): ConversationCommerceState {
+  return reduceCommerceState(state, [{ type: "SET_CUSTOMER_CONSTRAINT", key: "contextual_goal",
+    value: { ...goal, status, status_source_message_id: context.source_message_id,
+      status_recorded_revision: context.state_revision + 1 } }]);
+}
+
+function contextualUpdateCommitted(decision: ContextualDecision,
+  state: ConversationCommerceState, sourceMessageId: string, revision: number): boolean {
+  if (decision.route !== "contextual_scoped_update") return false;
+  const entity = state.entities.find(value => value.entity_id === decision.entity_id &&
+    value.category === decision.topic && !["cancelled", "deferred", "superseded"].includes(value.status));
+  if (!entity || entity.provenance.source_type !== "customer" ||
+    entity.provenance.source_message_id !== sourceMessageId || !decision.updates.length) return false;
+  const rows = entity.attributes.scoped_customer_updates;
+  if (!Array.isArray(rows)) return false;
+  for (const update of decision.updates) {
+    const matches = rows.filter(row => isRecord(row) && row.scope === update.scope &&
+      row.attribute === update.attribute);
+    if (matches.length !== 1) return false;
+    const row = matches[0];
+    if (row.action !== update.action || row.value !== update.value ||
+      row.group_scope !== update.group_scope || row.group_goal_id !== update.group_goal_id ||
+      (update.source_text && (row.source_text !== update.source_text ||
+        row.source_message_id !== sourceMessageId || typeof row.source_revision !== "number" || !Number.isInteger(row.source_revision) ||
+        row.source_revision < 1 || row.source_revision > revision)) ||
+      JSON.stringify(row.scope_count_source ?? null) !== JSON.stringify(update.scope_count_source ?? null)) return false;
+  }
+  return decision.aggregate_quantity === undefined || entity.quantity === decision.aggregate_quantity;
+}
+
+type DimensionWrite = { entity_id: string; key: string; value: unknown; remove: boolean };
+const dimensionKeyAxis = (key: string): CommerceDimensionAttribute | null => {
+  const match = key.match(/^(?:(?:max|min|excluded)_)?(width|height|depth)(?:_max)?(?:_mm)?$/u);
+  return match ? match[1] as CommerceDimensionAttribute : null;
+};
+
+
+// Closed numeric/unit verification only. Semantic axis, bound and speech act
+// come from the Reading; a literal measurement alone cannot authorize a write.
+function literalDimensionSpans(text: string): { quote: string; index: number; value_mm: number }[] {
+  const units: Record<string, number> = {
+    mm:1, 毫米:1, cm:10, 厘米:10, 公分:10, m:1000, 米:1000, 公尺:1000,
+    inch:25.4, inches:25.4, 吋:25.4, 英寸:25.4, 英吋:25.4,
+    ft:304.8, foot:304.8, feet:304.8, 呎:304.8, 英尺:304.8,
+  };
+  return [...text.matchAll(/(?<![\p{Script=Latin}\p{N}_.+\-−])(\d{1,5}(?:\.\d+)?)\s*(mm\b|cm\b|m\b|inches\b|inch\b|feet\b|foot\b|ft\b|毫米|厘米|公分|公尺|英寸|英吋|英尺|米|吋|呎)/giu)]
+    .flatMap(match => {
+      const scale = units[match[2].toLowerCase()], value = Number(match[1]);
+      return scale && Number.isFinite(value) && value > 0
+        ? [{ quote: match[0], index: match.index!, value_mm: Math.round(value * scale * 1000) / 1000 }]
+        : [];
+    });
+}
+function literalDimensionValue(text: string): number | null {
+  const spans = literalDimensionSpans(text);
+  return spans.length === 1 && spans[0].index === 0 && spans[0].quote === text ? spans[0].value_mm : null;
+}
+function dimensionBound(key: string): "maximum" | "minimum" | "excluded" | "exact" | null {
+  if (/^(?:max_(?:width|height|depth)|(?:width|height|depth)_max)(?:_mm)?$/u.test(key)) return "maximum";
+  if (/^min_(?:width|height|depth)(?:_mm)?$/u.test(key)) return "minimum";
+  if (/^excluded_(?:width|height|depth)(?:_mm)?$/u.test(key)) return "excluded";
+  return /^(?:width|height|depth)(?:_mm)?$/u.test(key) ? "exact" : null;
+}
+
+/** A complete, separately quoted customer dimension statement may coexist
+ * with one independently sourced merchant question. Only the existing typed
+ * dimension writer owns the statement; the entire original turn remains the
+ * authority for validation and the subsequent KB request. No phrase supplies
+ * the operation or measurement. Other compound shapes retain fail-closed
+ * behavior rather than guessing a partial write.
+ */
+function sourceBoundMixedDimensionStatement(input: CommerceRuntimeInput): string | null {
+  const frame = input.semantic_frame;
+  if (!frame || frame.confidence < 0.9 || frame.ambiguity.is_ambiguous ||
+      !["ADD_ITEM", "UPDATE_ITEM"].includes(frame.operation) ||
+      frame.additive || frame.customer_correction || frame.explicit_negations.length ||
+      frame.customer_facts?.length || frame.entities.length !== 1 ||
+      [frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state]
+        .some(value => !["none", "unknown"].includes(value))) return null;
+  const item = frame.entities[0], proofs = item.attributes.dimension_source_proofs;
+  const entries = Object.entries(item.constraints);
+  if (item.quantity !== null || Object.keys(item.attributes).some(key => key !== "dimension_source_proofs") ||
+      !entries.length || !isRecord(proofs)) return null;
+  const normalize = (value: string) => value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  const clauses: string[] = [];
+  for (const [key,value] of entries) {
+    const proof = proofs[key];
+    if (!dimensionKeyAxis(key) || typeof value !== "number" || !Number.isFinite(value) || value <= 0 ||
+        !isRecord(proof) || proof.status !== "current_affirmative" || typeof proof.clause !== "string") return null;
+    clauses.push(normalize(proof.clause));
+  }
+  const statement = clauses[0];
+  if (!statement || clauses.some(clause => clause !== statement) ||
+      looksInterrogative(statement) || !/[.!;。！；]$/u.test(statement) ||
+      item.confidence < 0.9 || !matchesReferenceLabel(statement, item.name) ||
+      [item.model, item.sku].some(label => label && !matchesReferenceLabel(statement, label))) return null;
+  const demands = frame.demands ?? [];
+  const merchant = demands.filter(demand => ["product","policy"].includes(demand.source_type) && demand.requested_facts.length > 0);
+  if (merchant.length !== 1 || demands.some(demand => demand.ambiguity.is_ambiguous ||
+      demand.customer_correction || demand.explicit_negations.length)) return null;
+  const question = normalize(merchant[0].source_quote ?? "");
+  if (!question || !looksInterrogative(question) || !/[?？]$/u.test(question) ||
+      demands.some(demand => demand !== merchant[0] &&
+        !(demand.source_type === "general" && !demand.requested_facts.length &&
+          normalize(demand.source_quote ?? "") === statement))) return null;
+  const text = normalize(input.text);
+  // Exact complete clauses, in either order. No hidden prefix, omitted
+  // negation, overlapping question fragment or unaccounted source text.
+  if (![statement + " " + question, statement + question,
+        question + " " + statement, question + statement].includes(text)) return null;
+  return statement;
+}
+
+/** Validate proposed dimensions at the complete reduction boundary. A model
+ * key, an old message or a copied hint cannot supply the customer's dimension.
+ * These technical axis/unit checks corroborate an accepted Reading; they never
+ * infer a mutation operation or an industry from prose. */
+function sourceBoundDimensionReduction(previous: ConversationCommerceState,
+  next: ConversationCommerceState, input: CommerceRuntimeInput, guidanceContextOnly = false): boolean {
+  const changed: DimensionWrite[] = [];
+  for (const entity of next.entities) {
+    const old = previous.entities.find(value => value.entity_id === entity.entity_id);
+    for (const key of new Set([...Object.keys(old?.constraints ?? {}), ...Object.keys(entity.constraints)])) {
+      if (dimensionKeyAxis(key) && JSON.stringify(old?.constraints[key]) !== JSON.stringify(entity.constraints[key]))
+        changed.push({ entity_id: entity.entity_id, key, value: entity.constraints[key],
+          remove: !Object.prototype.hasOwnProperty.call(entity.constraints, key) });
+    }
+  }
+  const frame = input.semantic_frame;
+  const proposals = frame?.entities.flatMap(item => Object.entries(item.constraints)
+    .filter(([key]) => dimensionKeyAxis(key)).map(([key, value]) => ({ item, key, value }))) ?? [];
+  if (!changed.length && !proposals.length) return !frame?.entities.some(item => Object.hasOwn(item.attributes, "dimension_source_proofs"));
+  // A legacy word/hint-derived dimension event is not an accepted Reading.
+  if (!proposals.length) return false;
+  if (!frame || frame.confidence < 0.9 || frame.ambiguity.is_ambiguous || frame.additive ||
+    !(guidanceContextOnly ? frame.operation === "ASK_FACT" : ["ADD_ITEM", "UPDATE_ITEM"].includes(frame.operation)) ||
+    ![input.company_id, input.conversation_id, input.source_message_id].every(value => value.trim()) ||
+    [frame.transaction_state, frame.payment_state, frame.booking_state, frame.fulfillment_state]
+      .some(value => !["none", "unknown"].includes(value)) ||
+    (!guidanceContextOnly && looksInterrogative(input.text) && !sourceBoundMixedDimensionStatement(input)) || /(?:\bif\b|\bwhen\b|hypothetic|假如|如果|假設|假设)/iu.test(input.text)) return false;
+  const mixedDimensionStatement = sourceBoundMixedDimensionStatement(input);
+  if (mixedDimensionStatement && JSON.stringify(b2JourneyTransactionBoundary(previous)) !==
+      JSON.stringify(b2JourneyTransactionBoundary(next))) return false;
+  if (guidanceContextOnly && (changed.length || frame.customer_correction || frame.explicit_negations.length ||
+    frame.entities.some(item => item.quantity !== null) ||
+    JSON.stringify(previous.entities) !== JSON.stringify(next.entities) ||
+    JSON.stringify(b2JourneyTransactionBoundary(previous)) !== JSON.stringify(b2JourneyTransactionBoundary(next)))) return false;
+  const text = input.text.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  if (!text || text.length > 2400) return false;
+  const normalize = (value: string) => value.normalize("NFKC").trim().toLowerCase();
+  const owned = (entity: ConversationCommerceState["entities"][number]) =>
+    entity.provenance.source_type === "customer" &&
+    typeof entity.provenance.source_message_id === "string" && !!entity.provenance.source_message_id.trim() &&
+    !["cancelled", "deferred", "superseded"].includes(entity.status);
+  const resolveRef = (ref: string) => previous.entities.filter(entity => entity.entity_id === ref ||
+    sourceOwnedSubjectLabels(entity).some(label => normalize(label) === normalize(ref)));
+  const targets = new Map<string, string[]>();
+  const proposalWrites: (DimensionWrite & { proof: unknown })[] = [];
+  for (const item of frame.entities) {
+    const keys = Object.keys(item.constraints).filter(key => dimensionKeyAxis(key));
+    const proofs = item.attributes.dimension_source_proofs;
+    if (keys.length ? !isRecord(proofs) || Object.keys(proofs).length !== keys.length || keys.some(key => !Object.hasOwn(proofs, key))
+      : proofs !== undefined) return false;
+  }
+  for (const { item, key, value } of proposals) {
+    if (item.confidence < 0.9 || !item.name.trim() || !matchesReferenceLabel(text, item.name)) return false;
+    const refs = resolveRef(item.entity_ref ?? "");
+    const named = previous.entities.filter(entity => sourceOwnedSubjectLabels(entity)
+      .some(label => normalize(label) === normalize(item.name)));
+    let target: ConversationCommerceState["entities"][number] | undefined;
+    let contextValue = value;
+    if (guidanceContextOnly && isRecord(value)) {
+      if (Object.keys(value).length !== 2 || typeof value.amount !== "number" || !Number.isFinite(value.amount) ||
+        value.amount <= 0 || typeof value.unit !== "string") return false;
+      const measurement = literalDimensionValue(`${value.amount}${value.unit}`);
+      if (measurement === null) return false;
+      contextValue = measurement;
+    }
+    if (refs.length || named.length) {
+      if (refs.length !== 1 || named.length !== 1 || refs[0].entity_id !== named[0].entity_id || !owned(refs[0])) return false;
+      target = refs[0];
+    } else {
+      if (guidanceContextOnly) {
+        // This temporary identity selects source spans only. It is never a
+        // reducer entity, a quantity or a persisted dimension constraint.
+        const id = item.entity_ref || item.name;
+        targets.set(id, [normalize(item.name)]);
+        proposalWrites.push({ entity_id: id, key, value: contextValue, remove: false,
+          proof: (item.attributes.dimension_source_proofs as Record<string, unknown>)[key] });
+        continue;
+      }
+      if (frame.operation !== "ADD_ITEM") return false;
+      const created = next.entities.filter(entity => !previous.entities.some(old => old.entity_id === entity.entity_id) &&
+        normalize(String(entity.attributes.product_name ?? "")) === normalize(item.name));
+      if (created.length !== 1 || !owned(created[0])) return false;
+      target = created[0];
+    }
+    targets.set(target.entity_id, [...new Set([...sourceOwnedSubjectLabels(target), normalize(item.name)])]);
+    proposalWrites.push({ entity_id: target.entity_id, key, value: contextValue, remove: false,
+      proof: (item.attributes.dimension_source_proofs as Record<string, unknown>)[key] });
+  }
+  for (const change of changed) {
+    const current = next.entities.find(entity => entity.entity_id === change.entity_id);
+    const old = previous.entities.find(entity => entity.entity_id === change.entity_id);
+    if (!current || !owned(current) || current.provenance.source_message_id !== input.source_message_id ||
+      (old && !owned(old))) return false;
+    if (!targets.has(change.entity_id)) {
+      // The existing sparse UPDATE_ITEM contract has no entity proposal. Its
+      // exact current customer name and unique persisted reference still bind.
+      if (proposals.length || !old || frame.operation !== "UPDATE_ITEM" || frame.entities.length) return false;
+      const refs = frame.referents.filter(ref => ref.confidence >= 0.9 &&
+        ["persistent_state", "prior_turn"].includes(ref.source));
+      if (refs.length !== 1 || resolveRef(refs[0].ref).length !== 1 ||
+        resolveRef(refs[0].ref)[0].entity_id !== old.entity_id) return false;
+      targets.set(old.entity_id, sourceOwnedSubjectLabels(old));
+    }
+  }
+  if (!targets.size) return false;
+  const permittedRef = (ref: string) => {
+    const existing = resolveRef(ref);
+    if (existing.length) return existing.length === 1 && targets.has(existing[0].entity_id);
+    return [...targets].some(([id, labels]) => id === ref || labels.some(label => normalize(label) === normalize(ref)));
+  };
+  if (frame.referents.some(ref => ref.confidence < 0.9 || !permittedRef(ref.ref) ||
+    guidanceContextOnly && ["persistent_state", "prior_turn"].includes(ref.source) && resolveRef(ref.ref).length !== 1)) return false;
+  for (const demand of frame.demands ?? []) {
+    const quote = demand.source_quote?.normalize("NFKC").replace(/\s+/gu, " ").trim();
+    // A lookup classification is neither evidence for nor a veto of the
+    // independently attested customer statement in this same source quote.
+    if (!quote || !text.includes(quote) || demand.ambiguity.is_ambiguous ||
+      demand.subject_refs.some(ref => !permittedRef(ref))) return false;
+  }
+  // A verified dimension cannot incidentally create a shadow item or revise a
+  // sibling. Non-entity customer facts still pass through the original reducer.
+  for (const entity of next.entities) {
+    const old = previous.entities.find(value => value.entity_id === entity.entity_id);
+    if (!targets.has(entity.entity_id) && JSON.stringify(entity) !== JSON.stringify(old)) return false;
+    if (targets.has(entity.entity_id) && old && (entity.quantity !== old.quantity || entity.status !== old.status)) return false;
+    if (mixedDimensionStatement && targets.has(entity.entity_id)) {
+      if (!old && (entity.quantity !== 0 || entity.status !== "tentative")) return false;
+      if (old) {
+        const { constraints: _priorConstraints, provenance: _priorProvenance, ...priorIdentity } = old;
+        const { constraints: _nextConstraints, provenance: _nextProvenance, ...nextIdentity } = entity;
+        if (JSON.stringify(priorIdentity) !== JSON.stringify(nextIdentity)) return false;
+      }
+    }
+  }
+  // Every actual change must belong to an independently verified Reading.
+  // Extra lexical candidates, copied hints and implicit removals fail closed.
+  if (changed.some(change => change.remove || !proposalWrites.some(write =>
+    write.entity_id === change.entity_id && write.key === change.key && write.value === change.value))) return false;
+  const occupied = new Set<number>();
+  const keys = new Set<string>();
+  const uniqueIndex = (source: string, quote: string): number => {
+    const i = source.indexOf(quote);
+    return i >= 0 && source.indexOf(quote, i + 1) < 0 ? i : -1;
+  };
+  for (const write of proposalWrites) {
+    const identity = write.entity_id + "\0" + write.key;
+    if (keys.has(identity)) return false;
+    keys.add(identity);
+    const axis = dimensionKeyAxis(write.key), bound = dimensionBound(write.key), proof = write.proof;
+    // Preserve the supported canonical maximum/fit contract. Never translate
+    // a lower bound into a maximum; unsupported comparisons clarify.
+    const withdrawal = write.value === null;
+    if (!axis || !bound || bound === "minimum" || !isRecord(proof) ||
+      !Object.keys(proof).every(key => ["axis","bound","status","clause","measurement","prior_measurement"].includes(key)) ||
+      proof.axis !== axis || proof.bound !== bound ||
+      proof.status !== (withdrawal ? "withdrawn" : "current_affirmative") ||
+      typeof proof.clause !== "string") return false;
+    if (withdrawal) {
+      // The old bound comes only from the same-owner committed snapshot.
+      // The Reading proposes the field to withdraw, never an unstated old number.
+      // A withdrawal cannot be retried across a changed CAS snapshot.
+      if (guidanceContextOnly || frame.operation !== "UPDATE_ITEM" || !frame.customer_correction ||
+        frame.explicit_negations.length || frame.customer_facts?.length ||
+        (frame.demands ?? []).some(demand => demand.explicit_negations.length) ||
+        frame.entities.some(item => item.quantity !== null || Object.keys(item.attributes).some(key => key !== "dimension_source_proofs") ||
+          Object.keys(item.constraints).some(key => !dimensionKeyAxis(key))) ||
+        (proof.measurement !== undefined && proof.measurement !== null)) return false;
+      const old = previous.entities.find(entity => entity.entity_id === write.entity_id);
+      const oldValue = old?.constraints[write.key];
+      if (!old || !owned(old) || typeof oldValue !== "number" ||
+        !Number.isFinite(oldValue) || oldValue <= 0 ||
+        JSON.stringify(b2JourneyTransactionBoundary(previous)) !== JSON.stringify(b2JourneyTransactionBoundary(next))) return false;
+    } else if (typeof proof.measurement !== "string" || typeof write.value !== "number" ||
+      !Number.isFinite(write.value) || write.value <= 0) return false;
+    const clause = proof.clause.normalize("NFKC").replace(/\s+/gu, " ").trim();
+    if (!clause || clause.length > 300) return false;
+    const at = uniqueIndex(text, clause);
+    const labels = targets.get(write.entity_id) ?? [];
+    if (at < 0 || !labels.some(label => matchesReferenceLabel(clause, label)) ||
+      previous.entities.some(entity => entity.entity_id !== write.entity_id && sourceOwnedSubjectLabels(entity)
+        .some(label => matchesReferenceLabel(clause, label)))) return false;
+    const local = literalDimensionSpans(clause);
+    if (withdrawal) {
+      // No current number is invented when the customer withdraws a bound.
+      // If they quote its old number, prove that literal against the stored
+      // value; otherwise the clause must not contain another measurement.
+      if (proof.prior_measurement !== undefined && proof.prior_measurement !== null) {
+        if (typeof proof.prior_measurement !== "string") return false;
+        const oldQuote = proof.prior_measurement.normalize("NFKC").replace(/\s+/gu," ").trim();
+        const oldSpans = local.filter(span => span.quote === oldQuote);
+        if (oldSpans.length !== 1 || oldSpans[0].value_mm !== previous.entities.find(entity => entity.entity_id === write.entity_id)?.constraints[write.key] ||
+          occupied.has(at + oldSpans[0].index)) return false;
+        occupied.add(at + oldSpans[0].index);
+      }
+      // Keep the same explicit-axis contradiction veto used for new values.
+      // A model supplies the withdrawal intent; no new positive phrase list.
+      const axes = [...clause.matchAll(/\b(?:width|wide|wider|height|high|higher|tall|taller|depth|deep|deeper)\b|闊度?|寬度?|宽度?|高度?|深度?/giu)];
+      const explicitAxes = new Set(axes.map(token => /(?:width|wide|闊|寬|宽)/iu.test(token[0]) ? "width" :
+        /(?:height|high|tall|高)/iu.test(token[0]) ? "height" : "depth"));
+      if (explicitAxes.size === 1 && !explicitAxes.has(axis)) return false;
+      if (local.some(span => !occupied.has(at + span.index))) return false;
+      const committed = next.entities.find(entity => entity.entity_id === write.entity_id);
+      const prior = previous.entities.find(entity => entity.entity_id === write.entity_id);
+      if (!committed || !prior || committed.constraints[write.key] !== null) return false;
+      const { constraints: _oldConstraints, provenance: _oldProvenance, ...oldIdentity } = prior;
+      const { constraints: _newConstraints, provenance: _newProvenance, ...newIdentity } = committed;
+      if (JSON.stringify(oldIdentity) !== JSON.stringify(newIdentity)) return false;
+      // This is an ephemeral candidate null. It is converted to a deletion
+      // by the same checked reducer boundary below, never persisted as null.
+      continue;
+    }
+    const measurement = (proof.measurement as string).normalize("NFKC").replace(/\s+/gu, " ").trim();
+    if (!measurement) return false;
+    const matching = local.filter(span => span.quote === measurement);
+    if (matching.length !== 1 || matching[0].value_mm !== write.value) return false;
+    const current = matching[0], absolute = at + current.index;
+    if (occupied.has(absolute)) return false;
+    occupied.add(absolute);
+    // Existing explicit axis recognition is a negative contradiction veto only.
+    // Absence of a known word or a multi-axis clause supplies no semantic veto.
+    const axes = [...clause.matchAll(/\b(?:width|wide|wider|height|high|higher|tall|taller|depth|deep|deeper)\b|闊度?|寬度?|宽度?|高度?|深度?/giu)];
+    const axisOf = (token: string) => /(?:width|wide|闊|寬|宽)/iu.test(token) ? "width" :
+      /(?:height|high|tall|高)/iu.test(token) ? "height" : "depth";
+    const explicitAxes = new Set(axes.map(token => axisOf(token[0])));
+    if (explicitAxes.size === 1 && !explicitAxes.has(axis)) return false;
+    // Retained explicit-denial safeguards are negative only, never a source
+    // of the axis, comparator, subject or value.
+    if (/(?:\b(?:not|never|no longer)\s+(?:required|necessary|needed|a requirement|a limit)|\b(?:need not|do(?:es)? not need|don't need|doesn't need|do(?:es)? not have to|don't have to|doesn't have to|previously|formerly|used to|last time|historically)\b|無需|无需|毋須|唔需要|不需要|不用|唔使|不再|之前|以前|上次|曾經|曾经)/iu.test(clause)) return false;
+    const previousSpan = local.filter(span => span.index < current.index).at(-1);
+    let prefix = clause.slice(previousSpan ? previousSpan.index + previousSpan.quote.length : 0, current.index);
+    // Old comparative exception narrows the negative veto only. The Reading,
+    // not this pattern, supplies the bound.
+    const comparative = prefix.match(/\b(?:no|not)\s+(?:wider|higher|taller|deeper)\s+than\s*$/iu);
+    if (comparative) prefix = prefix.slice(0, comparative.index);
+    if (/(?:\bnot\b(?!\s+more\s+than)|\bnever\b|不是|唔係|並非|并非|唔好改|不要改)/iu.test(prefix)) return false;
+    if (proof.prior_measurement !== undefined && proof.prior_measurement !== null) {
+      if (!frame.customer_correction || typeof proof.prior_measurement !== "string") return false;
+      const oldQuote = proof.prior_measurement.normalize("NFKC").replace(/\s+/gu, " ").trim();
+      const oldSpans = local.filter(span => span.quote === oldQuote);
+      const old = previous.entities.find(entity => entity.entity_id === write.entity_id)?.constraints[write.key];
+      if (oldSpans.length !== 1 || oldSpans[0].value_mm !== old ||
+        occupied.has(at + oldSpans[0].index)) return false;
+      occupied.add(at + oldSpans[0].index);
+    }
+    if (!guidanceContextOnly) {
+      const committed = next.entities.find(entity => entity.entity_id === write.entity_id);
+      if (!committed || committed.constraints[write.key] !== write.value) return false;
+    }
+  }
+  // No partial interpretation may silently discard another literal dimension.
+  // Several independently bound measurements are accepted.
+  if (literalDimensionSpans(text).some(span => !occupied.has(span.index))) return false;
+  return true;
+}
+
+/** A raw scalar fallback cannot contradict already committed per-scope
+ * quantities. Partial row updates may leave an explicitly unreconfirmed total;
+ * changing the aggregate itself requires the complete current allocation. */
+function scopedQuantityReductionConsistent(previous: ConversationCommerceState, next: ConversationCommerceState): boolean {
+  for (const old of previous.entities) {
+    const entity = next.entities.find(value => value.entity_id === old.entity_id);
+    if (!entity || entity.quantity === old.quantity || !Array.isArray(old.attributes.scoped_customer_updates)) continue;
+    if (!old.attributes.scoped_customer_updates.some(row => isRecord(row) && row.attribute === "quantity")) continue;
+    const rows = entity.attributes.scoped_customer_updates;
+    if (!Array.isArray(rows) || !rows.length || rows.some(row => !isRecord(row) || row.attribute !== "quantity" ||
+      typeof row.value !== "number" || !Number.isInteger(row.value) || row.value < 0)) return false;
+    if (rows.reduce((sum, row) => sum + row.value, 0) !== entity.quantity) return false;
+  }
+  return true;
+}
+
+/** The mixed turn has a single typed dimension owner. Use the existing
+ * semantic adapter/reducer, not unrelated history or lexical hint candidates.
+ * This only proposes a state; sourceBoundDimensionReduction still verifies
+ * the complete original source, every value, exact owner and transaction
+ * boundary before the existing CAS writer is allowed to commit it. Recompute
+ * the target from the snapshot supplied to this reduction, including retry. */
+function mixedDimensionCandidate(previous: ConversationCommerceState,
+  input: CommerceRuntimeInput, frame: CommerceSemanticFrame): ConversationCommerceState {
+  const item = frame.entities[0];
+  const normalize = (value: string) => value.normalize("NFKC").trim().toLowerCase();
+  const named = previous.entities.filter(entity => sourceOwnedSubjectLabels(entity)
+    .some(label => normalize(label) === normalize(item.name)));
+  const referenced = previous.entities.filter(entity => entity.entity_id === item.entity_ref ||
+    sourceOwnedSubjectLabels(entity).some(label => normalize(label) === normalize(item.entity_ref)));
+  let scopedHints = semanticFrameToEntityHints(frame);
+  if (named.length || referenced.length) {
+    if (frame.operation !== "UPDATE_ITEM" || named.length !== 1 || referenced.length !== 1 ||
+        named[0].entity_id !== referenced[0].entity_id) return previous;
+    const target = named[0];
+    scopedHints = [{ entity_id: target.entity_id, category: target.category,
+      model: target.model, aliases: [item.name, item.entity_ref] }];
+  } else if (frame.operation !== "ADD_ITEM" || scopedHints.length !== 1 ||
+    previous.entities.some(entity => entity.entity_id === scopedHints[0].entity_id)) return previous;
+  return reduceCommerceState(previous, semanticFrameToStateEvents(
+    frame, previous, scopedHints, input.source_message_id, input.occurred_at ?? null,
+  ));
+}
+
+function sourceBoundTurnReduction(previous: ConversationCommerceState, input: CommerceRuntimeInput,
+  hints: CommerceTurnEntityHint[], sourceContext?: ContextualSourceContext): { state: ConversationCommerceState; rejected: boolean; dimension_rejected?: boolean } {
+  const frame = input.semantic_frame;
+  if(hasScopedAreaProposal(frame)){
+    const receipt=verifiedScopedAreaProposal({state:previous,context:sourceContext,text:input.text,frame,history:input.history});
+    return receipt?{state:reduceCommerceState(previous,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:receipt}]),rejected:false}:{state:previous,rejected:true};
+  }
+  if(hasPairedSiteProposal(frame)){
+    const receipt=verifiedPairedSiteProposal({state:previous,context:sourceContext,text:input.text,frame,history:input.history});
+    return receipt?{state:reduceCommerceState(previous,[{type:"SET_CUSTOMER_CONSTRAINT",key:PAIRED_SITE_KEY,value:receipt}]),rejected:false}:{state:previous,rejected:true};
+  }
+  const guidance = frame?.operation === "ASK_FACT" && frame.entities.some(item =>
+    Object.keys(item.constraints).some(key => dimensionKeyAxis(key)))
+    ? resolveContextualTurn(input, previous, sourceContext) : null;
+  const guidanceContextOnly = guidance?.route === "product_guidance" && guidance.requires_generated_guidance === true;
+  // The existing source-bound advice consumer accepted requirements for a
+  // generated comparison. Its dimension context must not enter the generic
+  // purchase/hint parser and materialize default or duplicate entities.
+  // All proposed dimensions are still independently checked below, and an
+  // invalid proposal rejects these context/fact events together as one turn.
+  const mixedStatement = sourceBoundMixedDimensionStatement(input);
+  const candidate = mixedStatement && frame ? mixedDimensionCandidate(previous, input, frame)
+    : guidanceContextOnly ? reduceCommerceState(previous, [
+    { type: "SET_CONTEXT", language: input.language, intent: "customer_guidance", topic: guidance.topic },
+    ...sourceBoundMixedCustomerFactEvents(frame, previous, input.text, input.source_message_id, input.occurred_at ?? null),
+  ]) : reduceTurnCandidate(previous, input, hints, sourceContext);
+  const dimensionAccepted = sourceBoundDimensionReduction(previous, candidate, input, guidanceContextOnly);
+  const quantityAccepted = scopedQuantityReductionConsistent(previous, candidate);
+  if (!dimensionAccepted || !quantityAccepted) return { state: previous, rejected: true,
+    dimension_rejected: !dimensionAccepted && quantityAccepted && Boolean(frame?.entities.some(item =>
+      Object.keys(item.constraints).some(key => dimensionKeyAxis(key)))) };
+  const removals: CommerceStateEvent[] = [];
+  for (const entity of candidate.entities) {
+    const old = previous.entities.find(value => value.entity_id === entity.entity_id);
+    for (const [key,value] of Object.entries(entity.constraints)) {
+      if (!dimensionKeyAxis(key) || value !== null || old?.constraints[key] === null) continue;
+      // A changed dimension null has already passed the complete proof
+      // boundary above. Preserve unrelated fields and the active entity.
+      removals.push({type:"REMOVE_ENTITY_CONSTRAINT",entity_id:entity.entity_id,key,
+        provenance:{source_type:"customer",source_message_id:input.source_message_id,recorded_at:input.occurred_at??null}});
+    }
+  }
+  const reduced = removals.length ? reduceCommerceState(candidate, removals) : candidate;
+  const area=mixedScopedAreaReceipt(previous,reduced,sourceContext,input.text,frame,input.history??[]);
+  const state=area?reduceCommerceState(reduced,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:area}]):reduced;
+  // Apply the same authority postcondition to every candidate path, including
+  // compound turns and source-attested early-return operations.
+  const invalidations=sourceLiteralCountInvalidations(state,input);
+  const checked=invalidations.length?reduceCommerceState(state,invalidations):state;
+  return { state: preserveCustomerTurnTransactionAuthority(previous, checked), rejected: false };
+}
+
+export function reduceTurn(previous: ConversationCommerceState, input: CommerceRuntimeInput, hints: CommerceTurnEntityHint[],
+  sourceContext?: ContextualSourceContext): ConversationCommerceState {
+  return sourceBoundTurnReduction(previous, input, hints, sourceContext).state;
+}
+
+/** Keep a concrete before/after ledger for generic replacements; raw imperatives are not values. */
+function reduceTurnCandidate(previous: ConversationCommerceState,input: CommerceRuntimeInput,hints: CommerceTurnEntityHint[],
+  sourceContext?: ContextualSourceContext): ConversationCommerceState {
+  // Reserved scope facts have one source-verifying consumer. Never let an
+  // unsupported/forged proposal fall into the general semantic fact adapter.
+  if (hasContextualScopeFactProposal(input)) return contextualScopeFactState(previous, input, sourceContext);
+  const goalLifecycle = contextualGoalLifecycle(input, previous, sourceContext);
+  if (goalLifecycle && sourceContext) return contextualGoalStatusState(previous, goalLifecycle.goal,
+    goalLifecycle.status, sourceContext);
+  // A question that only reads canonical customer/Commerce facts must not
+  // create an item, change an entity, or rewrite a transaction. Enforce this
+  // at the reducer entry as well as in each response/recall branch: a stray
+  // compatibility hint must never turn a read-only question into a purchase.
+  // A source-verified mutation is classified by the existing shared guard,
+  // not inferred from a product, room, unit or industry word list.
+  // Only a supplied, non-mutating semantic reading can enable this extra
+  // read-only guard. In a no-frame turn the existing source-attested research
+  // and quantity checks remain authoritative (including an explicit first
+  // model with unknown quantity), not an inferred shopping transaction.
+  if (input.semantic_frame &&
+      ["ASK_FACT","ASK_CALCULATION","NO_STATE_CHANGE"].includes(input.semantic_frame.operation) &&
+      isReadOnlyCurrentStateQuery(input.text,input.semantic_frame) &&
+      !input.trusted_product_topic_focus &&
+      // Mixed question + customer-owned correction must retain its factual
+      // part after exact sentence/source validation; no invented entity.
+      !input.semantic_frame.customer_facts?.length) return previous;
+  if (isHistoricalOrConditionalCustomerCalculationRequest(input.text)) return previous;
+  const oldCollapsed=sourceBoundLegacyCollapsedCancellation(previous,input);
+  if(oldCollapsed)return reduceCommerceState(previous,oldCollapsed);
+  // A high-confidence lifecycle proposal without an accepted B2 target/action
+  // is never permission to mutate a different item or transaction state.
+  if(input.semantic_frame && input.semantic_frame.confidence>=0.72 &&
+    ["DEFER","CANCEL_ITEM","REMOVE_ITEM"].includes(input.semantic_frame.operation) &&
+    !acceptedLifecycleEntityRef(input,previous) && !acceptedCompoundLifecyclePlan(input,previous))return previous;
+  // A missing lifecycle subject blocks all commerce-state side effects in the
+  // turn (including quote/order/payment drafts). Visitor and audit persistence
+  // remain outside this reducer.
+  if (!isReadOnlyCommerceQuestion(input.text,input.semantic_frame) &&
+      resolveBoundLifecyclePlan(input,previous).kind==="ambiguous") return previous;
+  const partial=sourceBoundPartialUnitRetention(previous,input);
+  if(partial){
+    let state=reduceCommerceState(previous,partial);
+    // Extra browser-tab/background facts are not the entity's quantity.
+    const owned=sourceBoundMixedCustomerFactEvents(input.semantic_frame,state,input.text,
+      input.source_message_id,input.occurred_at??null);
+    if(owned.length)state=reduceCommerceState(state,owned);
+    return state;
+  }
+  let state = reduceTurnOperations(previous,input,hints,sourceContext);
+  // A counted room/person in a first service-advice question is not a
+  // customer assertion of an additional product or unit. Persist intent only
+  // through the existing source/revision-bound Commerce RPC.
+  const advisoryFrame=input.semantic_frame;
+  if(advisoryFrame?.operation==="ASK_FACT" && advisoryFrame.confidence>=0.90 &&
+     !advisoryFrame.ambiguity.is_ambiguous && !advisoryFrame.customer_correction &&
+     !advisoryFrame.additive && advisoryFrame.entities.length===0 &&
+     !advisoryFrame.customer_facts?.length &&
+     ["customer_guidance","ask_for_advice"].includes(advisoryFrame.intent) &&
+     acceptsInitialAdviceGoalReading(input,advisoryFrame) &&
+     previous.entities.length===0 && state.entities.length===0 &&
+     state.current_intent!=="customer_guidance") {
+    state=reduceCommerceState(state,[{type:"SET_CONTEXT",intent:"customer_guidance"}]);
+  }
+  // Persist the customer-authored exact model as an unknown-quantity subject.
+  // A no-frame product inquiry is not evidence for count=1 or any industry.
+  if (!input.semantic_frame && state.entities.length===0 &&
+      /(?:想揀|想选|想買|想买|我想要|我要買|我要买|想選購|想选购|want to buy|want to choose)/iu.test(input.text) &&
+      !/(?:如果|假如|假設|假设|what if|hypothetically)/iu.test(input.text)){
+    const models=exactProductIdentifiers(input.text);
+    if(models.length===1){
+      const model=models[0],source={source_type:"customer" as const,source_message_id:input.source_message_id,recorded_at:input.occurred_at??null};
+      state=reduceCommerceState(state,[{type:"ENSURE_ENTITY",entity:{
+        entity_id:"generic:"+model.toLowerCase(),category:"generic_product",
+        brand:null,model,quantity:0,status:"tentative",
+        attributes:{product_name:model,customer_subject_aliases:[model],unit:null,quantity_basis:"system_default"},
+        constraints:{},provenance:source,
+      }}]);
+    }
+  }
+  // Recover a fresh explicitly counted goal WITHOUT a semantic frame.
+  // Only a current customer purchase sentence with an independently written
+  // total and noun qualifies; unrelated browser tabs, historical models,
+  // guesses, merchant facts and transaction state never supply that quantity.
+  if(!input.semantic_frame && !/[?？]/u.test(input.text) &&
+     !/(?:如果|假如|假設|假设|what if|hypothetically)/iu.test(input.text)){
+    const stated=clean(input.text);
+    const goal=stated.match(/(?:選購|选购|購買|购买|purchase|buy|order)\s*([^，,。；;！？!?]{2,60})\s*[,，；;]\s*(?:即|所以|即係|即是)?\s*(?:合共|總共|总共|一共|共計|共计|in total|total of)\s*(?:要|需|有|為|为|是|:|：)?\s*([一二兩两三四五六七八九十]|\d{1,4})\s*(部|台|件|個|个|套|份|盒|箱|包|堂|課|课|units?|pieces?|items?|sets?|boxes?|packs?|lessons?|sessions?|seats?|nights?)/iu);
+    if(goal && /(?:我要|我想|我哋|我们|需要|\b(?:i|we)\s+(?:want|need)\b)/iu.test(stated.slice(0,goal.index))){
+      const noun=clean(goal[1],80),count=countTokenValue(goal[2]),unit=goal[3];
+      const slug=noun.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,"-").replace(/^-+|-+$/gu,"").slice(0,64);
+      const id="generic:customer-goal:"+slug;
+      if(noun.length>=2&&slug&&count!==null&&count>0&&count<=1000&&
+        state.entities.every(e=>e.entity_id!==id&&e.provenance.source_message_id!==input.source_message_id)){
+        state=reduceCommerceState(state,[{type:"ENSURE_ENTITY",entity:{
+          entity_id:id,category:"generic_product",brand:null,model:null,
+          quantity:count,status:"tentative",
+          attributes:{product_name:noun,customer_subject_aliases:[noun],
+            quantity_basis:"customer_explicit",unit},
+          constraints:{},provenance:{source_type:"customer",
+            source_message_id:input.source_message_id,recorded_at:input.occurred_at??null}
+        }}]);
+      }
+    }
+  }
+  // An explicit customer-owned declaration can accompany ASK_FACT/general
+  // guidance. Commit only literal-source-backed changed leaves via the original
+  // deterministic reducer and source-message CAS, never a merchant claim or
+  // the model's proposed transaction/booking/payment state.
+  if (isReadOnlyCommerceQuestion(input.text,input.semantic_frame) ||
+      resolveBoundLifecyclePlan(input, previous).kind !== "ambiguous") {
+    const customerEvents = sourceBoundMixedCustomerFactEvents(input.semantic_frame,
+      state, input.text, input.source_message_id, input.occurred_at ?? null);
+    if (customerEvents.length) state = reduceCommerceState(state, customerEvents);
+    // Only attested per-clause dimensions can advance customer facts on a
+    // typed NO_STATE_CHANGE turn; never let it mutate an entity or transaction.
+    const attested=sourceAttestedGenericNoStateFacts(state,input,sourceContext);
+    if(attested.length)state=reduceCommerceState(state,attested);
+    const literalCounts=sourceAttestedUninterpretedCountFacts(state,input,sourceContext);
+    if(literalCounts.length)state=reduceCommerceState(state,literalCounts);
+  }
+  // Generic current customer fact with exact Visitor provenance; never
+  // propagate the old air-conditioning sunlight/room_sunlight schema.
+  const observation=customerSunExposure(input.text);
+  if(observation){
+    const all=state.customer_constraints.customer_reported_facts;
+    const original=all && typeof all==="object" && !Array.isArray(all) ? all as Record<string,unknown> : {};
+    const scope=/(?:全屋|整間屋|所有房間|the whole house|all rooms|entire premises)/iu.test(input.text)
+      ? "whole_premises" : "unscoped";
+    const value={value:observation,scope,source_text:input.text,
+      provenance:{source_type:"customer" as const,source_message_id:input.source_message_id,recorded_at:input.occurred_at??null}};
+    state=reduceCommerceState(state,[{type:"SET_CUSTOMER_CONSTRAINT",key:"customer_reported_facts",
+      value:{...original,site_observation:value}}]);
+  }
+  const currentUnitCorrection = sourceBoundQuantityUnit(input, previous);
+  if (detectQuantityCorrectionSignal(input.text) || currentUnitCorrection) {
+    for (const entity of state.entities.filter(e=>e.entity_id.startsWith("generic:") || e.entity_id === currentUnitCorrection?.entity_id)) {
+      const old=previous.entities.find(e=>e.entity_id===entity.entity_id);
+      if (!old || old.quantity===entity.quantity && old.attributes.unit===entity.attributes.unit) continue;
+      const unit = typeof entity.attributes.unit === "string" && entity.attributes.unit ? " " + entity.attributes.unit : "";
+      const oldUnit = typeof old.attributes.unit === "string" && old.attributes.unit ? " " + old.attributes.unit : "";
+      state={...state,latest_corrections:state.latest_corrections.filter(entry=>entry !== input.text &&
+        !(input.text.includes(entry) && /change/i.test(entry) && entry.includes(String(entity.attributes.product_name))))};
+      state=reduceCommerceState(state,[{type:"ADD_CORRECTION",correction:`${entity.attributes.product_name ?? entity.model ?? entity.category} quantity: change from ${old.quantity}${oldUnit} to ${entity.quantity}${unit}`}]);
+    }
+  }
+  if (sourceContext) {
+    const goal = readSourceBoundContextualGoal(previous, sourceContext);
+    if (goal) {
+      // Once materialized, the entity's canonical status remains the lifecycle
+      // authority. Do not add unrelated goal writes to the frozen B2 transition.
+      const contextual = resolveContextualTurn(input, previous, sourceContext);
+      if (contextual.route === "product_guidance" && contextual.requires_generated_guidance &&
+        contextual.topic !== goal.subject_label) {
+        // A source-quoted new subject changes focus. Retained old scope
+        // counts cannot silently become the new subject's quantities.
+        state = reduceCommerceState(state, [{ type: "SET_CONTEXT", topic: contextual.topic }]);
+      }
+    }
+  }
+  return state;
+}
+
+/** Customer statements can be acknowledged ahead of a KB conflict without
+ * treating them as verified merchant facts or exposing storage field names. */
+export function acknowledgeCurrentCustomerDimensions(
+  state: ConversationCommerceState,
+  language: CommerceLanguage,
+): string | null {
+  const relevant = state.entities.filter((entity) =>
+    entity.category === state.current_topic &&
+    entity.status !== "cancelled" && entity.status !== "deferred"
+  );
+  if (relevant.length !== 1) return null;
+  const facts = Object.entries(relevant[0].constraints)
+    .filter(([key, value]) => /^max_(width|height|depth)_mm$/.test(key) &&
+      typeof value === "number" && Number.isFinite(value) && value > 0)
+    .slice(0, 3).map(([key, value]) => {
+      const dimension = key.split("_")[1];
+      const label = language === "en"
+        ? dimension : language === "zh-CN"
+        ? ({ width: "宽", height: "高", depth: "深" } as Record<string, string>)[dimension]
+        : ({ width: "闊", height: "高", depth: "深" } as Record<string, string>)[dimension];
+      return language === "en" ? `maximum ${label} ${value} mm` : `最${label} ${value} mm`;
+    });
+  if (!facts.length) return null;
+  return language === "en" ? `I’ve noted your stated condition: ${facts.join(", ")}. `
+    : language === "zh-CN" ? `已记下你提供的条件：${facts.join("、")}。`
+    : `已記低你提供嘅條件：${facts.join("、")}。`;
+}
+
+function resolveContextualTurn(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+  context?: ContextualSourceContext,
+): ContextualDecision {
+  const history = (input.history ?? [])
+    .filter((turn) => ["visitor", "user", "customer"].includes(turn.role))
+    .slice(0, MAX_HISTORY_TURNS).map((turn) => clean(turn.content));
+  const candidate = resolveSemanticContextualCandidate({
+    text: input.text, language: input.language, state,
+    semantic_frame: input.semantic_frame, context,
+  }) ?? resolveIndustryContextualCandidate({
+    text: input.text, history, state, language: input.language,
+  });
+  return resolveContextualCustomerUpdate({
+    candidate,
+    state,
+    read_only: isReadOnlyCurrentStateQuery(input.text, input.semantic_frame),
+  });
+}
+
+function resolveCustomerJourneyTurn(
+  input: CommerceRuntimeInput,
+  state: ConversationCommerceState,
+): CustomerJourneyPlan {
+  const signal = resolveIndustryCustomerJourney({
+    text: input.text, state, language: input.language,
+    semantic_frame: input.semantic_frame,
+  });
+  return planCustomerJourney({
+    signal, state, source_message_id: input.source_message_id,
+    occurred_at: input.occurred_at,
+  });
 }
 
 function rpcResult(data: unknown): { result: string; applied_revision: number | null } {
@@ -628,12 +4676,36 @@ export async function persistCommerceTurn(
   db: CommerceStateDbClient,
   input: CommerceRuntimeInput,
   hints: CommerceTurnEntityHint[],
-): Promise<{ state: ConversationCommerceState; revision: number; result: string }> {
-  const loaded = await loadCommerceState(db, input.conversation_id);
+): Promise<{
+  previous_state: ConversationCommerceState;
+  state: ConversationCommerceState;
+  previous_revision: number;
+  revision: number;
+  result: string;
+  dimension_rejected?: boolean;
+}> {
+  const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
   let expected = loaded.revision;
-  let next = reduceTurn(loaded.state, input, hints);
+  let previous = loaded.state;
+  let reduction = sourceBoundTurnReduction(previous, input, hints, contextualSourceContext(input, expected));
+  let next = reduction.state;
 
   for (let attempt = 0; attempt < 2; attempt++) {
+    if (reduction.rejected) return { previous_state: previous, state: previous,
+      previous_revision: expected, revision: expected, result: "unverified_customer_requirement",
+      dimension_rejected: reduction.dimension_rejected };
+    // A conversational turn that does not alter the canonical commerce state
+    // has no mutation receipt by design. Preserve revision and provenance, and
+    // let the B2 readback contract prove the authoritative no-op.
+    if (JSON.stringify(next) === JSON.stringify(previous)) {
+      return {
+        previous_state: previous,
+        state: previous,
+        previous_revision: expected,
+        revision: expected,
+        result: "no_semantic_change",
+      };
+    }
     const { data, error } = await db.rpc(COMMERCE_STATE_RPC, {
       p_conversation_id: input.conversation_id,
       p_company_id: input.company_id,
@@ -641,18 +4713,223 @@ export async function persistCommerceTurn(
       p_source_message_id: input.source_message_id,
       p_state: next,
     });
-    if (error) return { state: next, revision: expected, result: "rpc_transport_error" };
+    if (error) {
+      return {
+        previous_state: previous,
+        state: next,
+        previous_revision: expected,
+        revision: expected,
+        result: "rpc_transport_error",
+      };
+    }
     const parsed = rpcResult(data);
-    if (parsed.result === "success") return { state: next, revision: parsed.applied_revision ?? expected + 1, result: "success" };
+    if (parsed.result === "success") {
+      if ((input.semantic_frame?.entities.some(item => Object.keys(item.constraints).some(key => dimensionKeyAxis(key))) ||
+          hasContextualScopeFactProposal(input) || hasContextualScopeAllocation(input) || hasScopedAreaProposal(input.semantic_frame) || hasPairedSiteProposal(input.semantic_frame) ||
+          contextualGoalLifecycle(input, previous, contextualSourceContext(input, expected))) &&
+        parsed.applied_revision !== expected + 1) {
+        return { previous_state: previous, state: previous, previous_revision: expected,
+          revision: expected, result: "contextual_commit_revision_mismatch" };
+      }
+      return {
+        previous_state: previous,
+        state: next,
+        previous_revision: expected,
+        revision: parsed.applied_revision ?? expected + 1,
+        result: "success",
+      };
+    }
+    if (parsed.result === "source_message_already_applied" &&
+      (hasContextualScopeFactProposal(input) || hasContextualScopeAllocation(input) || hasScopedAreaProposal(input.semantic_frame) || hasPairedSiteProposal(input.semantic_frame))) {
+      // A dedup receipt does not commit the candidate built in this attempt.
+      // Read the canonical state before any source-bound acknowledgement.
+      const reloaded = await loadCommerceState(db, input.conversation_id, input.company_id);
+      return { previous_state: reloaded.state, state: reloaded.state,
+        previous_revision: reloaded.revision, revision: reloaded.revision,
+        result: "source_message_already_applied" };
+    }
     if (parsed.result === "revision_conflict" && attempt === 0) {
-      const reloaded = await loadCommerceState(db, input.conversation_id);
+      const reloaded = await loadCommerceState(db, input.conversation_id, input.company_id);
+      if(hasScopedAreaProposal(input.semantic_frame)||hasPairedSiteProposal(input.semantic_frame))return {previous_state:reloaded.state,state:reloaded.state,previous_revision:reloaded.revision,revision:reloaded.revision,result:"revision_conflict"};
+      // A withdrawal is bound to the initial server-read field/revision, not
+      // an invented old value from the model. On conflict never delete a newer
+      // requirement (including a same-value replacement with new provenance).
+      if (input.semantic_frame?.entities.some(item => Object.entries(item.constraints).some(
+        ([key,value]) => dimensionKeyAxis(key) && value === null))) return {
+        previous_state: reloaded.state, state: reloaded.state,
+        previous_revision: reloaded.revision, revision: reloaded.revision,
+        result: "unverified_customer_requirement", dimension_rejected: true };
       expected = reloaded.revision;
-      next = reduceTurn(reloaded.state, input, hints);
+      previous = reloaded.state;
+      reduction = sourceBoundTurnReduction(previous, input, hints, contextualSourceContext(input, expected));
+      next = reduction.state;
       continue;
     }
-    return { state: next, revision: expected, result: parsed.result };
+    return {
+      previous_state: previous,
+      state: next,
+      previous_revision: expected,
+      revision: expected,
+      result: parsed.result,
+    };
   }
-  return { state: next, revision: expected, result: "revision_conflict" };
+  return {
+    previous_state: previous,
+    state: next,
+    previous_revision: expected,
+    revision: expected,
+    result: "revision_conflict",
+  };
+}
+
+function buildTrustedJourneyProgress(input: {
+  runtime_input: CommerceRuntimeInput;
+  persisted: Awaited<ReturnType<typeof persistCommerceTurn>>;
+  journey: CustomerJourneyPlan;
+  contextual: ContextualDecision;
+  reply: string;
+  route: "product_guidance" | "contextual_scoped_update";
+  reason: string;
+}): B2TrustedJourneyProgress | undefined {
+  const { runtime_input, persisted } = input;
+  const proposedCorrection = input.contextual.route === "contextual_scoped_update"
+    ? input.contextual.scoped_correction : undefined;
+  const scopedCorrection = proposedCorrection ? readVerifiedScopedQuantityCorrection({
+    state: persisted.state, company_id: runtime_input.company_id,
+    conversation_id: runtime_input.conversation_id,
+    source_message_id: runtime_input.source_message_id, source_text: runtime_input.text,
+    revision: persisted.revision,
+  }) : null;
+  if (proposedCorrection && (!scopedCorrection ||
+    JSON.stringify(proposedCorrection) !== JSON.stringify(scopedCorrection))) return undefined;
+  const committedNow = persisted.result === "success" &&
+    persisted.revision === persisted.previous_revision + 1;
+  // Recovery after a committed correction may reuse only that exact source's
+  // canonical ledger. It grants no new write, revision or allocation authority.
+  const replayedCorrection = Boolean(scopedCorrection &&
+    ["no_semantic_change", "source_message_already_applied"].includes(persisted.result) &&
+    persisted.previous_revision === persisted.revision &&
+    JSON.stringify(persisted.previous_state) === JSON.stringify(persisted.state));
+  if (!committedNow && !replayedCorrection) return undefined;
+  const transaction_before = b2JourneyTransactionBoundary(
+    persisted.previous_state,
+  );
+  const transaction_after = b2JourneyTransactionBoundary(persisted.state);
+  if (JSON.stringify(transaction_before) !== JSON.stringify(transaction_after)) {
+    return undefined;
+  }
+
+  if (
+    input.contextual.route === "contextual_scoped_update" &&
+    input.route === "contextual_scoped_update"
+  ) {
+    const contextual = input.contextual;
+    const entity = persisted.state.entities.find((candidate) =>
+      candidate.entity_id === contextual.entity_id &&
+      candidate.category === contextual.topic &&
+      candidate.status !== "cancelled" && candidate.status !== "deferred"
+    );
+    const committed = entity?.attributes.scoped_customer_updates;
+    if (!entity || !Array.isArray(committed) || !contextual.updates.length) {
+      return undefined;
+    }
+    if (scopedCorrection && committedNow) {
+      const previous = persisted.previous_state.entities.find(value => value.entity_id === entity.entity_id);
+      if (!previous || previous.quantity !== scopedCorrection.previous_quantity ||
+        scopedCorrection.previous_revision !== persisted.previous_revision ||
+        JSON.stringify(previous.attributes.scoped_customer_updates) !== JSON.stringify(scopedCorrection.previous_updates) ||
+        persisted.previous_state.entities.length !== persisted.state.entities.length ||
+        persisted.previous_state.entities.some(value => value.entity_id !== entity.entity_id &&
+          JSON.stringify(value) !== JSON.stringify(persisted.state.entities.find(next => next.entity_id === value.entity_id)))) return undefined;
+      // Only the accepted rows, their ledger, quantity and customer provenance
+      // may change on this item. A correction cannot borrow sibling attributes.
+      const retained = structuredClone(entity);
+      retained.quantity = previous.quantity;
+      retained.provenance = structuredClone(previous.provenance);
+      retained.attributes.scoped_customer_updates = structuredClone(previous.attributes.scoped_customer_updates);
+      if (Object.hasOwn(previous.attributes, "scoped_quantity_correction")) {
+        retained.attributes.scoped_quantity_correction = structuredClone(previous.attributes.scoped_quantity_correction);
+      } else delete retained.attributes.scoped_quantity_correction;
+      if (JSON.stringify(retained) !== JSON.stringify(previous)) return undefined;
+    }
+    const goal = activeCustomerGoal(persisted.state, entity.category)?.goal;
+    return {
+      contract: "journey-progress-after-accepted-update-v1",
+      update_kind: "contextual_scoped_update",
+      company_id: runtime_input.company_id,
+      source_message_id: runtime_input.source_message_id,
+      source_text: runtime_input.text,
+      previous_revision: scopedCorrection?.previous_revision ?? persisted.previous_revision,
+      committed_revision: persisted.revision,
+      entity_id: entity.entity_id,
+      category: entity.category,
+      journey_stage: goal?.journey_stage ?? "requirements_update",
+      next_missing_slot: goal?.missing[0] ?? null,
+      response_decision: "confirm_controlled_update",
+      response_route: input.route,
+      response_reason: input.reason,
+      reply: input.reply,
+      accepted_updates: structuredClone(contextual.updates),
+      committed_updates: structuredClone(committed),
+      ...(scopedCorrection ? { scoped_correction: structuredClone(scopedCorrection) } : {}),
+      ...(contextual.aggregate_quantity === undefined
+        ? {}
+        : { aggregate_quantity: contextual.aggregate_quantity }),
+      transaction_before,
+      transaction_after,
+    };
+  }
+
+  if (
+    input.journey.status !== "advance" || !input.journey.entity_id ||
+    !input.journey.goal || input.route !== "product_guidance"
+  ) return undefined;
+  const previous = activeCustomerGoal(
+    persisted.previous_state,
+    input.journey.goal.category,
+  )?.goal;
+  const committed = activeCustomerGoal(
+    persisted.state,
+    input.journey.goal.category,
+  );
+  if (
+    !committed || committed.entity_id !== input.journey.entity_id ||
+    committed.goal.source_message_id !== runtime_input.source_message_id
+  ) return undefined;
+  const previousCollected = previous?.collected ?? [];
+  const acceptedSlots = committed.goal.collected.filter((slot) =>
+    !previousCollected.includes(slot)
+  );
+  const previousCorrections = persisted.previous_state.latest_corrections;
+  const acceptedCorrections = persisted.state.latest_corrections.filter((item) =>
+    !previousCorrections.includes(item)
+  );
+  if (!acceptedSlots.length && !acceptedCorrections.length) return undefined;
+  return {
+    contract: "journey-progress-after-accepted-update-v1",
+    update_kind: "customer_goal",
+    company_id: runtime_input.company_id,
+    source_message_id: runtime_input.source_message_id,
+    source_text: runtime_input.text,
+    previous_revision: persisted.previous_revision,
+    committed_revision: persisted.revision,
+    entity_id: committed.entity_id,
+    category: committed.goal.category,
+    journey_stage: committed.goal.journey_stage,
+    next_missing_slot: committed.goal.missing[0] ?? null,
+    response_decision: committed.goal.response_intent,
+    response_route: input.route,
+    response_reason: input.reason,
+    reply: input.reply,
+    previous_collected: [...previousCollected],
+    committed_collected: [...committed.goal.collected],
+    previous_missing: [...(previous?.missing ?? [])],
+    committed_missing: [...committed.goal.missing],
+    accepted_slots: acceptedSlots,
+    accepted_corrections: acceptedCorrections,
+    transaction_before,
+    transaction_after,
+  };
 }
 
 function statusLabel(status: string, language: CommerceLanguage): string {
@@ -688,13 +4965,26 @@ export function buildTransactionSummary(
   } as const;
 
   lines.push(t.head[language]);
-  lines.push(`${t.items[language]}: ${active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity} (${statusLabel(e.status, language)})`).join("、") : t.none[language]}`);
-  if (inactive.length) lines.push(`${t.removed[language]}: ${inactive.map((e) => `${entityLabel(e.entity_id, language)} (${statusLabel(e.status, language)})`).join("、")}`);
+  const renderEntity = (entity: ConversationCommerceState["entities"][number]) => {
+    const constraints = Object.entries(entity.constraints).flatMap(([key, raw]) => {
+      const value = numericConstraint(raw);
+      const match = key.match(/^(?:max|excluded)_(width|height|depth)_mm$/);
+      if (value === null || !match) return [];
+      const dimension = dimensionLabel(match[1] as CommerceDimensionAttribute, language);
+      const prefix = key.startsWith("excluded_") ? language === "en" ? "exclude" : language === "zh-CN" ? "不接受" : "唔接受" : language === "en" ? "max" : "上限";
+      return [`${dimension}${prefix} ${formatMillimetres(value)}mm`];
+    });
+    const horsepower = clean(entity.attributes.horsepower, 80);
+    const details = [horsepower, ...constraints].filter(Boolean);
+    return `${entityLabel(entity, language)} ${customerRequestedQuantity(entity) === null ? (language === "en" ? "quantity not yet confirmed" : language === "zh-CN" ? "数量待确认" : "數量待確認") : `x${entity.quantity}`} (${statusLabel(entity.status, language)}${details.length ? `；${details.join("、")}` : ""})`;
+  };
+  lines.push(`${t.items[language]}: ${active.length ? active.map(renderEntity).join("、") : t.none[language]}`);
+  if (inactive.length) lines.push(`${t.removed[language]}: ${inactive.map((e) => `${entityLabel(e, language)} (${statusLabel(e.status, language)})`).join("、")}`);
   const delivery = state.delivery;
   const deliveryParts = [delivery.preferred_date, delivery.preferred_window, delivery.address, delivery.recipient_name, delivery.recipient_phone].map((x) => clean(x, 180)).filter(Boolean);
   lines.push(`${t.delivery[language]}: ${deliveryParts.length ? deliveryParts.join(" / ") : t.none[language]}`);
   const pending = [...state.installation.pending_checks, ...state.installation.items.filter((i) => i.status === "pending").map((i) => i.kind)];
-  if (pending.length) lines.push(`${t.pending[language]}: ${[...new Set(pending)].join("、")}`);
+  if (pending.length) lines.push(`${t.pending[language]}: ${[...new Set(pending)].map((item) => pendingCheckLabel(item, language)).join("、")}`);
   if (historical.length) lines.push(`${t.quotes[language]}: ${historical.map((q) => `${q.currency} ${q.amount}`).join("、")}`);
   const orderConfirmed = state.conversion.order_status === "confirmed" || state.conversion.order_status === "completed";
   const paymentPaid = state.conversion.payment_status === "paid";
@@ -715,8 +5005,9 @@ export function buildTransactionSummary(
 function buildQuantityAnswer(state: ConversationCommerceState, language: CommerceLanguage): string | null {
   const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
   if (!active.length) return null;
+  if (active.some(e=>customerRequestedQuantity(e) === null)) return language === "en" ? "The requested quantity is not yet confirmed." : language === "zh-CN" ? "所需数量尚未确认。" : "所需數量尚未確認。";
   const total = active.reduce((sum, e) => sum + e.quantity, 0);
-  const breakdown = active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、");
+  const breakdown = active.map((e) => `${entityLabel(e, language)} x${e.quantity}`).join("、");
   if (language === "en") return `You currently have ${total} unit(s) in total: ${breakdown}.`;
   if (language === "zh-CN") return `你目前合共 ${total} 个单位：${breakdown}。`;
   return `你而家合共 ${total} 個單位：${breakdown}。`;
@@ -724,13 +5015,245 @@ function buildQuantityAnswer(state: ConversationCommerceState, language: Commerc
 
 function buildKnownStateAnswer(language: CommerceLanguage, statePath: string, value: unknown, state: ConversationCommerceState): string {
   if (statePath.startsWith("entities.") && statePath.endsWith(".quantity")) {
+    const index = Number(statePath.split(".")[1]);
+    const entity = Number.isInteger(index) ? state.entities[index] : null;
+    if (entity && entity.status !== "cancelled" && entity.status !== "deferred") {
+      if (customerRequestedQuantity(entity) === null) return language === "en" ? "The requested quantity is not yet confirmed." : language === "zh-CN" ? "所需数量尚未确认。" : "所需數量尚未確認。";
+      const quantity = typeof value === "number" ? value : entity.quantity;
+      const label = entityLabel(entity, language);
+      // A canonical quantity has a known count but may have no customer-
+      // supplied measurement unit. Express the unit as unrecorded rather
+      // than guessing one from the product category. Keep the numeric count
+      // independently parseable by the original B2 read-only proof gate.
+      const storedUnit = typeof entity.attributes.unit === "string" &&
+        entity.attributes.unit.trim() ? entity.attributes.unit.trim() : null;
+      if (language === "en") return `Your current ${label} quantity is ${quantity} ${storedUnit ?? "items (measurement unit not recorded)"}.`;
+      const unit = storedUnit ? " " + storedUnit : " 個項目（實際計量單位未記錄）";
+      if (language === "zh-CN") return `你目前的${label}数量是 ${quantity}${unit}。`;
+      return `你而家嘅${label}數量係 ${quantity}${unit}。`;
+    }
     const answer = buildQuantityAnswer(state, language);
     if (answer) return answer;
   }
   const rendered = typeof value === "object" ? JSON.stringify(value) : clean(String(value), 300);
+  if (statePath === "delivery.preferred_date") {
+    if (language === "en") return `Your recorded preferred delivery day is ${rendered}.`;
+    if (language === "zh-CN") return `目前记录的首选送货日期是${rendered}。`;
+    return `而家記錄嘅首選送貨日係${rendered}。`;
+  }
   if (language === "en") return `From what you already told me: ${rendered}.`;
   if (language === "zh-CN") return `按你之前提供的资料：${rendered}。`;
   return `按你之前提供嘅資料：${rendered}。`;
+}
+
+/** A partial-unit split is not a cancellation of the entire subject.
+ * Recompute the existing source-bound transition from the actual preimage,
+ * then require the same owner/ticket/source/revision in a fresh DB readback.
+ * No new industry vocabulary, event, mutation or B2 authority is introduced.
+ * A rejected or stale partition never falls through to the full-item reply. */
+export async function buildVerifiedPartialUnitStatusAnswer(
+  db: CommerceStateDbClient, input: CommerceRuntimeInput,
+  persisted: Awaited<ReturnType<typeof persistCommerceTurn>>,
+): Promise<string | null> {
+  if (persisted.result !== "success" ||
+      !input.company_id || !input.conversation_id || !input.source_message_id ||
+      !Number.isSafeInteger(persisted.previous_revision) ||
+      persisted.revision !== persisted.previous_revision + 1) return null;
+  const frame = input.semantic_frame;
+  if (!frame || frame.requested_facts.length || (frame.demands ?? []).some(d =>
+      d.requested_facts.length || d.source_type !== "general")) return null;
+  const events = sourceBoundPartialUnitRetention(persisted.previous_state, input);
+  if (!events) return null;
+  let expected = reduceCommerceState(persisted.previous_state, events);
+  const owned = sourceBoundMixedCustomerFactEvents(frame, expected, input.text,
+    input.source_message_id, input.occurred_at ?? null);
+  if (owned.length) expected = reduceCommerceState(expected, owned);
+  if (JSON.stringify(expected) !== JSON.stringify(persisted.state) ||
+      JSON.stringify(b2JourneyTransactionBoundary(persisted.previous_state)) !==
+        JSON.stringify(b2JourneyTransactionBoundary(expected))) return null;
+  const children = expected.entities.filter(e =>
+    e.attributes.customer_unit_partition === "source_bound_status" &&
+    e.constraints.source_bound_partial_unit === true &&
+    e.provenance.source_type === "customer" &&
+    e.provenance.source_message_id === input.source_message_id &&
+    ["cancelled","deferred"].includes(e.status));
+  if (children.length !== 1) return null;
+  const child = children[0], parentId = child.attributes.customer_part_of_entity_id;
+  if (typeof parentId !== "string" || !parentId || parentId === child.entity_id ||
+      child.entity_id !== parentId + ":unit-status:" + input.source_message_id) return null;
+  const parents = expected.entities.filter(e => e.entity_id === parentId);
+  const previousParents = persisted.previous_state.entities.filter(e => e.entity_id === parentId);
+  if (parents.length !== 1 || previousParents.length !== 1 ||
+      persisted.previous_state.entities.some(e => e.entity_id === child.entity_id)) return null;
+  const parent = parents[0], before = previousParents[0], unit = parent.attributes.unit;
+  const label = customerOwnedDisplayLabel(parent);
+  if (!label || typeof unit !== "string" || unit !== unit.trim() || !unit ||
+      unit.length > 64 || !/^[\p{L}\p{N}\p{M}]+(?:[ ./_-][\p{L}\p{N}\p{M}]+)*$/u.test(unit) ||
+      child.attributes.unit !== unit || before.attributes.unit !== unit ||
+      parent.attributes.quantity_basis !== "customer_explicit" ||
+      child.attributes.quantity_basis !== "customer_explicit" ||
+      before.attributes.quantity_basis !== "customer_explicit" ||
+      parent.provenance.source_type !== "customer" || before.provenance.source_type !== "customer" ||
+      !before.provenance.source_message_id ||
+      parent.provenance.source_message_id !== input.source_message_id ||
+      ["cancelled","deferred","superseded"].includes(parent.status) ||
+      parent.status !== before.status || parent.category !== child.category ||
+      parent.category !== before.category || parent.model !== child.model ||
+      parent.model !== before.model || customerOwnedDisplayLabel(child) !== label ||
+      customerOwnedDisplayLabel(before) !== label ||
+      !Number.isSafeInteger(parent.quantity) || parent.quantity < 1 ||
+      !Number.isSafeInteger(child.quantity) || child.quantity < 1 ||
+      !Number.isSafeInteger(before.quantity) || parent.quantity + child.quantity !== before.quantity ||
+      parent.constraints.customer_inactive_unit_count !== child.quantity ||
+      parent.constraints.customer_inactive_unit_status !== child.status) return null;
+  try {
+    const {data,error} = await db.from("conversation_commerce_state")
+      .select("company_id,conversation_id,source_message_id,revision,state")
+      .eq("conversation_id",input.conversation_id).maybeSingle();
+    if (error || !isRecord(data) || data.company_id !== input.company_id ||
+        data.conversation_id !== input.conversation_id ||
+        data.source_message_id !== input.source_message_id ||
+        data.revision !== persisted.revision || !isConversationCommerceState(data.state) ||
+        JSON.stringify(data.state) !== JSON.stringify(expected)) return null;
+  } catch { return null; }
+  const pairs=canonicalUnitPartitions(expected,input.source_message_id).filter(pair=>
+    pair.parent.entity_id===parent.entity_id&&pair.child.entity_id===child.entity_id);
+  return pairs.length===1?renderCanonicalUnitPartition(pairs[0],input.language):null;
+}
+
+function buildResolvedEntityStatusChangeAnswer(input: CommerceRuntimeInput, state: ConversationCommerceState): string | null {
+  if (!detectCancellation(input.text) && !detectDeferral(input.text)) return null;
+  const changed = state.entities.filter((entity) =>
+    ["cancelled", "deferred"].includes(entity.status) &&
+    entity.provenance.source_message_id === input.source_message_id
+  );
+  // Only this turn's uniquely resolved entity may bypass clarification.
+  if (changed.length !== 1) return null;
+  const entity = changed[0];
+  // Partial portions are never whole-item lifecycle acknowledgements.
+  if (entity.attributes.customer_unit_partition === "source_bound_status" ||
+      entity.constraints.source_bound_partial_unit === true ||
+      Object.prototype.hasOwnProperty.call(entity.attributes,"customer_part_of_entity_id")) return null;
+  // Generic products share a schema category, never a quantity aggregate.
+  // The lifecycle event verifies this specific entity, not unrelated items.
+  const label = entityLabel(entity, input.language);
+  const status = statusLabel(entity.status, input.language);
+  if (input.language === "en") return `${label} is ${status}. Other recorded items remain unchanged.`;
+  if (input.language === "zh-CN") return `${label}${status}；其他已记录项目保持不变。`;
+  return `${label}${status}；其他已記錄項目保持不變。`;
+}
+
+export function buildResolvedAddressCorrectionAnswer(
+  input: CommerceRuntimeInput,
+  previous: ConversationCommerceState,
+  state: ConversationCommerceState,
+): string | null {
+  const correction = parseAddressReplacementCorrection(input.text);
+  if (!correction || input.semantic_frame?.ambiguity.is_ambiguous === true) return null;
+  const address = clean(state.delivery.address, 300);
+  if (!address || state.delivery.provenance?.source_message_id !== input.source_message_id) return null;
+
+  if (correction.operation === "SCOPED_COMPONENT_UPDATE") {
+    const prior = clean(previous.delivery.address, 300);
+    const previousComponent = clean(correction.previous, 180);
+    const currentComponent = clean(correction.current, 180);
+    if (
+      !prior || !previousComponent || !currentComponent ||
+      !prior.toLocaleLowerCase().includes(previousComponent.toLocaleLowerCase()) ||
+      address === currentComponent || address === prior ||
+      !address.toLocaleLowerCase().includes(currentComponent.toLocaleLowerCase())
+    ) return null;
+  } else if (address !== clean(correction.current, 300)) return null;
+
+  if (input.language === "en") return `I've updated the delivery address to ${address}.`;
+  if (input.language === "zh-CN") return `已更新送货地址为${address}。`;
+  return `已更新送貨地址為${address}。`;
+}
+
+/**
+ * Post-commit correction precedence contract.
+ *
+ * A semantic ambiguity bit is pre-commit advisory data. It may not force a
+ * clarification after both canonical stores prove the exact correction was
+ * committed for this source message. Conversely, a reply is only resolved when
+ * memory and commerce independently bind the same complete value/revision and
+ * the previous scoped value is durably superseded.
+ */
+export function resolveCommittedAddressCorrection(
+  input: CommittedAddressCorrectionEvidence,
+): CommittedAddressCorrectionResolution | null {
+  const correction = parseAddressReplacementCorrection(input.text);
+  const memory = input.memory;
+  const commerce = input.commerce;
+  if (!correction || !memory || !commerce) return null;
+  if (
+    memory.source_message_id !== input.source_message_id ||
+    commerce.source_message_id !== input.source_message_id ||
+    memory.commerce_state_revision !== commerce.revision ||
+    memory.open_questions.length > 0 ||
+    commerce.state.unresolved_items.length > 0
+  ) return null;
+
+  const address = clean(commerce.state.delivery.address, 300);
+  if (
+    !address ||
+    commerce.state.delivery.provenance?.source_message_id !==
+      input.source_message_id
+  ) return null;
+  const addressKeys = new Set([
+    "address",
+    "delivery_address",
+    "shipping_address",
+    "corrected_delivery_address",
+  ]);
+  const memoryCurrent = memory.current_customer_facts.find((fact) =>
+    addressKeys.has(clean(fact.key, 120)) &&
+    clean(fact.value, 300) === address &&
+    fact.authority === "canonical_commerce" &&
+    fact.source_message_id === input.source_message_id
+  );
+  if (!memoryCurrent) return null;
+  const correctionLedgerMatches = memory.latest_corrections.some((entry) => {
+    const parsed = parseAddressReplacementCorrection(entry);
+    return Boolean(
+      parsed && parsed.operation === correction.operation &&
+        clean(parsed.previous, 180) === clean(correction.previous, 180) &&
+        clean(parsed.current, 180) === clean(correction.current, 180),
+    );
+  });
+  if (!correctionLedgerMatches) return null;
+
+  const current = clean(correction.current, 180);
+  if (correction.operation === "SCOPED_COMPONENT_UPDATE") {
+    const previous = clean(correction.previous, 180);
+    const superseded = memory.cancelled_or_superseded.some((fact) =>
+      fact.key === "superseded_delivery_address" &&
+      typeof fact.value === "string" &&
+      clean(fact.value, 300).toLocaleLowerCase().includes(
+        previous.toLocaleLowerCase(),
+      ) &&
+      fact.source_message_id !== input.source_message_id
+    );
+    if (
+      !previous || !current || !superseded || address === current ||
+      !address.toLocaleLowerCase().includes(current.toLocaleLowerCase()) ||
+      address.toLocaleLowerCase().includes(previous.toLocaleLowerCase())
+    ) return null;
+  } else if (!current || address !== current) return null;
+
+  const reply = input.language === "en"
+    ? `I've updated the delivery address to ${address}.`
+    : input.language === "zh-CN"
+    ? `已更新送货地址为${address}。`
+    : `已更新送貨地址為${address}。`;
+  return {
+    status: "RESOLVED",
+    operation: correction.operation,
+    address,
+    source_message_id: input.source_message_id,
+    reply,
+    reason: "authoritative_address_correction_resolved",
+  };
 }
 
 function formatCalculationNumber(value: number): string {
@@ -758,12 +5281,12 @@ function buildCalculationAnswer(language: CommerceLanguage, calculation: { expre
   const rendered = renderCalculationExpression(calculation);
   if (language === "en") return `Based only on the figures in this calculation: ${rendered} (${currency}). Latest prices, applicable fees and conditions still need to be confirmed.`;
   if (language === "zh-CN") return `只按你这次提供的数字计算：${rendered}（${currency}）。最新价格、适用费用及相关条件仍需确认。`;
-  return `只按你今次提供嘅數字計：${rendered}（${currency}）。最新價格、適用費用同相關條件仍然要確認。`;
+  return `按你提供嘅歷史報價試算：${rendered}（${currency}）。呢個唔係現行正式報價；最新價格、適用費用同相關條件仍然要確認。`;
 }
 
 function buildProfessionalConfirmationAnswer(language: CommerceLanguage, state: ConversationCommerceState): string {
   const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
-  const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、") : "";
+  const known = active.length ? active.map((e) => `${entityLabel(e, language)} ${customerRequestedQuantity(e)===null ? (language==="en"?"quantity unconfirmed":"數量待確認") : "x"+e.quantity}`).join("、") : "";
   if (language === "en") return `${known ? `I still have your details on record: ${known}. ` : ""}For safety and accuracy, our technician needs to inspect the site in person before we can confirm whether the installation is suitable.`;
   if (language === "zh-CN") return `${known ? `我们已保留您之前提供的资料：${known}。` : ""}为确保安全和准确，需要师傅上门检查窗口尺寸、承托及安装环境后再确认是否适合安装。`;
   return `${known ? `我哋已保留您之前提供嘅資料：${known}。` : ""}為確保安全同準確，需要師傅上門檢查窗口尺寸、承托同安裝環境後先可以確認是否適合安裝。`;
@@ -777,23 +5300,350 @@ export function buildCurrentPriceValidityAnswer(language: CommerceLanguage): str
 
 export function buildPreorderUnpaidAnswer(language: CommerceLanguage, state: ConversationCommerceState): string {
   const active = state.entities.filter((e) => e.status !== "cancelled" && e.status !== "deferred");
-  const known = active.length ? active.map((e) => `${entityLabel(e.entity_id, language)} x${e.quantity}`).join("、") : "";
+  const known = active.length ? active.map((e) => `${entityLabel(e, language)} ${customerRequestedQuantity(e)===null ? (language==="en"?"quantity unconfirmed":"數量待確認") : "x"+e.quantity}`).join("、") : "";
   const nextStep = buildCapabilityAwarePreorderNextStep(state, language);
   if (language === "en") return `${known ? `Got it — you want to reserve ${known}. ` : "Got it — you want to proceed. "}Since payment has not been made yet, this is not a completed or confirmed order. ${nextStep}`;
   if (language === "zh-CN") return `${known ? `好的，我知道你想预订${known}。` : "好的，我知道你想继续预订。"}由于目前还未付款，所以现在还不算已完成或已确认订单。${nextStep}`;
   return `${known ? `好，我知道你想預訂${known}。` : "好，我知道你想繼續預訂。"}因為你仲未付款，所以而家未算完成或已確認訂單。${nextStep}`;
 }
 
+/** Read only the committed, source-attested count observation. The reading
+ * selects a named fact; it never contributes a value or grants a write.
+ * The original visitor clause and exact customer-owned subject/unit must
+ * still be available. A stale/invalid typed fact cannot fall through to a
+ * different entity's quantity. Legacy no-reading compatibility is unchanged. */
+function unsafeCountFactKey(key:unknown):boolean{
+  return typeof key!=="string"||!/^[a-z][a-z0-9_]{0,79}$/i.test(key)||
+    ["__proto__","prototype","constructor"].includes(key)||
+    /(?:^|_)(?:price|stock|inventory|verified|quote|order|payment|paid|refund|entitlement|warranty|policy|sla)(?:_|$)/i.test(key);
+}
+
+function readSourceBoundCountFirst(input:CommerceRuntimeInput,state:ConversationCommerceState,revision:number):{kind:"not_applicable"}|{kind:"unresolved"}|{kind:"resolved";path:string;amount:number;unit:string}{
+  const frame=input.semantic_frame;
+  const facts=state.customer_constraints.customer_reported_facts;
+  if(!isRecord(facts))return {kind:"not_applicable"};
+  const fail={kind:"unresolved"} as const;
+  const typedKey=frame?.operation==="ASK_FACT"&&frame.intent==="customer_fact_recall"&&frame.requested_facts.length===1
+    ?frame.requested_facts[0]:null;
+  const typed=typedKey&&!unsafeCountFactKey(typedKey)&&Object.prototype.hasOwnProperty.call(facts,typedKey)&&
+    isRecord(facts[typedKey])&&facts[typedKey].source_count_order==="count_first"&&
+    facts[typedKey].source_count_origin!=="literal_customer_clause"?[typedKey,facts[typedKey]] as const:null;
+  const literal=Object.entries(facts).filter(([key,row])=>isRecord(row)&&
+    row.source_count_origin==="literal_customer_clause"&&typeof row.source_subject_text==="string"&&
+    typeof row.source_unit_text==="string"&&countObservationQueryMatches(input.text,row.source_subject_text,row.source_unit_text));
+  if(literal.length>1||typed&&literal.length)return fail;
+  const entry=typed??literal[0];
+  if(!entry)return {kind:"not_applicable"};
+  const [key,row]=entry,raw=!typed;
+  if(!isRecord(row)||!(row.source_count_order==="count_first" || raw && row.source_count_order==="subject_first")||
+    !Number.isSafeInteger(revision)||revision<1||!input.company_id||!input.conversation_id||!input.source_message_id)return fail;
+  if(frame&&(frame.operation!=="ASK_FACT"||frame.confidence<0.90||frame.ambiguity.is_ambiguous||
+    frame.customer_correction||frame.additive||frame.explicit_negations.length||frame.entities.length||
+    frame.customer_facts?.length||frame.requested_facts.length!==1||unsafeCountFactKey(frame.requested_facts[0])||
+    (frame.demands??[]).some(d=>d.source_type!=="general"||d.requested_facts.length!==1||
+      d.requested_facts[0]!==frame.requested_facts[0]||d.ambiguity.is_ambiguous||d.customer_correction||d.explicit_negations.length)))return fail;
+  if(!raw&&!frame)return fail;
+  const val=row.value,provenance=row.provenance;
+  if(!isRecord(val)||typeof val.amount!=="number"||typeof val.unit!=="string"||
+     !isRecord(provenance)||provenance.source_type!=="customer"||
+     typeof provenance.source_message_id!=="string"||!provenance.source_message_id||
+     provenance.source_message_id===input.source_message_id||typeof row.source_text!=="string")return fail;
+  const subjectFirst=raw && row.source_count_order==="subject_first";
+  const proof=subjectFirst?literalLengthObservation(row.source_text,val.amount,val.unit):countFirstObservation(row.source_text,val.amount,val.unit);
+  if(!proof||proof.rawSubject!==row.source_subject_text||proof.writtenUnit!==row.source_unit_text||
+     !countObservationQueryMatches(input.text,proof.rawSubject,proof.writtenUnit))return fail;
+  if(raw&&(!subjectFirst && key!==sourceLiteralCountKey(proof.rawSubject,proof.writtenUnit)||
+    provenance.company_id!==input.company_id||provenance.conversation_id!==input.conversation_id||
+    row.source_count_visibility!=="exact_recall_only"||
+    typeof row.source_count_recorded_revision!=="number"||!Number.isSafeInteger(row.source_count_recorded_revision)||
+    typeof row.source_count_expires_after_revision!=="number"||!Number.isSafeInteger(row.source_count_expires_after_revision)||
+    row.source_count_expires_after_revision!==row.source_count_recorded_revision+LITERAL_COUNT_REVISION_TTL||
+    revision<row.source_count_recorded_revision||revision>row.source_count_expires_after_revision||
+    (!subjectFirst && !sourceBoundCustomerDeclarationClauses(row.source_text).includes(row.source_text))))return fail;
+  const subject=proof.rawSubject.toLowerCase(),unit=proof.writtenUnit.toLowerCase();
+  if(!(frame?.demands??[]).every(d=>d.source_quote.normalize("NFKC").trim()===input.text.normalize("NFKC").trim()&&
+     d.subject_refs.every(ref=>ref.normalize("NFKC").toLowerCase()===subject)))return fail;
+  const history=(input.history??[]).filter(h=>["visitor","user","customer"].includes(h.role));
+  // Typed speech-owned facts always require the actual original ID. A raw
+  // CURRENT canonical observation already owns a committed source ID and
+  // tenant/ticket provenance. Only the legacy all-ID-less projection can
+  // corroborate its unique literal source clause without claiming an ID
+  // readback; any supplied IDs keep the exact ID requirement.
+  const allIdless=raw&&!subjectFirst&&history.length>0&&history.every(h=>!h.id);
+  const origins=history.filter(h=>allIdless
+    ?countObservationClauses(h.content).filter(clause=>clause===row.source_text).length===1
+    :h.id===provenance.source_message_id);
+  if(origins.length!==1||countObservationClauses(origins[0].content).filter(clause=>clause===row.source_text).length!==1||
+    (raw&&history.indexOf(origins[0])>LITERAL_COUNT_REVISION_TTL))return fail;
+  const later=history.slice(0,history.indexOf(origins[0])).filter(h=>h.id!==input.source_message_id);
+  if(later.some(h=>countObservationConflict(h.content,proof.rawSubject,proof.writtenUnit,val.amount as number)))return fail;
+  return {kind:"resolved",path:"customer_constraints.customer_reported_facts."+key+".value.amount",amount:val.amount,unit:proof.writtenUnit};
+}
+
 export async function runCommerceStateRuntime(
   db: CommerceStateDbClient,
   input: CommerceRuntimeInput,
 ): Promise<CommerceRuntimeOutcome | null> {
-  const text = clean(input.text);
-  if (!text || !input.conversation_id || !input.company_id || !input.source_message_id) return null;
+  const recapOriginalText = String(input.text);
+  const originalText = clean(input.text);
+  const text = customerBusinessText(requirementMutationText(originalText));
+  if (!originalText || !input.conversation_id || !input.company_id || !input.source_message_id) return null;
 
   const language = input.language;
+
+  // Bind adapter-extracted scopes against committed context before semantic
+  // inference, so ambiguity is read-only and a unique update can win the
+  // shared reply precedence without a phrase-specific generate-reply branch.
+  const contextualBefore = await loadCommerceState(db, input.conversation_id, input.company_id);
+  if (!text) return { authority: "CONVERSATION_STATE", reply: null,
+    revision: contextualBefore.revision, persist_result: "read_only",
+    reason: "read_only_handoff_control", route: "commerce_state_answer" };
+  input = { ...input, text };
+  if (isCurrentRequirementsRecap(recapOriginalText, retainedRecapTargets(contextualBefore.state)) &&
+    resolveEntityLifecyclePlan(text,contextualBefore.state).kind === "none") {
+    return { authority: "CONVERSATION_STATE", reply: null,
+      revision: contextualBefore.revision, persist_result: "read_only",
+      reason: "read_only_current_requirements_recap", route: "commerce_state_answer" };
+  }
+  const sourceMeasurements = sourceAreaFrame(contextualBefore.state, contextualSourceContext(input,contextualBefore.revision),
+    recapOriginalText, input.semantic_frame, input.history??[]);
+  if(sourceMeasurements) input={...input,semantic_frame:sourceMeasurements};
+  if(hasScopedAreaProposal(input.semantic_frame)){
+    const preview=verifiedScopedAreaProposal({state:contextualBefore.state,context:contextualSourceContext(input,contextualBefore.revision),
+      text:recapOriginalText,frame:input.semantic_frame,history:input.history});
+    if(!preview||text!==originalText)return {authority:"INSUFFICIENT_INFORMATION",reply:null,revision:contextualBefore.revision,
+      persist_result:"read_only",reason:"unverified_scoped_area_observation",route:"commerce_state_answer"};
+    const applied=await persistCommerceTurn(db,{...input,text:recapOriginalText},[]);
+    const readback=await loadCommerceState(db,input.conversation_id,input.company_id);
+    const receipt=readScopedAreaReceipt(readback.state,contextualSourceContext(input,readback.revision));
+    if(applied.result==="success"&&receipt&&readback.revision===applied.revision&&applied.revision===applied.previous_revision+1&&
+      JSON.stringify(readback.state)===JSON.stringify(applied.state)&&receipt.recorded_revision===readback.revision&&
+      receipt.source_message_id===input.source_message_id)
+      return {authority:"CONVERSATION_STATE",reply:scopedAreaReply(receipt,language),revision:readback.revision,
+        persist_result:"success",reason:SCOPED_AREA_REASON,state_path:SCOPED_AREA_PATH,route:"commerce_state_answer"};
+    return {authority:"INSUFFICIENT_INFORMATION",reply:null,revision:readback.revision,persist_result:applied.result,
+      reason:"unverified_scoped_area_readback",route:"commerce_state_answer"};
+  }
+  if(hasPairedSiteProposal(input.semantic_frame)){
+    const preview=verifiedPairedSiteProposal({state:contextualBefore.state,context:contextualSourceContext(input,contextualBefore.revision),
+      text:recapOriginalText,frame:input.semantic_frame,history:input.history});
+    if(!preview||text!==originalText)return {authority:"INSUFFICIENT_INFORMATION",reply:null,revision:contextualBefore.revision,
+      persist_result:"read_only",reason:"unverified_paired_site_observation",route:"commerce_state_answer"};
+    const applied=await persistCommerceTurn(db,{...input,text:recapOriginalText},[]);
+    const readback=await loadCommerceState(db,input.conversation_id,input.company_id);
+    const receipt=readPairedSiteReceipt(readback.state,contextualSourceContext(input,readback.revision));
+    if(applied.result==="success"&&receipt&&readback.revision===applied.revision&&applied.revision===applied.previous_revision+1&&
+      JSON.stringify(readback.state)===JSON.stringify(applied.state)&&receipt.recorded_revision===readback.revision&&
+      (receipt.scope_source_message_id??receipt.source_message_id)===input.source_message_id)
+      return {authority:"CONVERSATION_STATE",reply:pairedSiteReply(receipt,language),revision:readback.revision,
+        persist_result:"success",reason:PAIRED_SITE_REASON,state_path:PAIRED_SITE_PATH,route:"commerce_state_answer"};
+    return {authority:"INSUFFICIENT_INFORMATION",reply:null,revision:readback.revision,persist_result:applied.result,
+      reason:"unverified_paired_site_readback",route:"commerce_state_answer"};
+  }
+  // A historical/conditional calculation over values supplied in this turn
+  // is read-only: derive a bounded answer from the source message and return
+  // before any Commerce persistence call.
+  if (isHistoricalOrConditionalCustomerCalculationRequest(text)) {
+    const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
+    const typed = deriveTypedCustomerCalculation({
+      question: text,
+      current_source_message_id: input.source_message_id,
+      recent_messages: input.history,
+    });
+    if (typed.status === "ready" && typed.terms.length) {
+      const quantity = typed.quantity ?? 1;
+      const perUnit = typed.terms.filter((term) => term.charge_basis === "per_unit")
+        .reduce((sum, term) => sum + term.amount, 0);
+      const perOrder = typed.terms.filter((term) => term.charge_basis === "per_order")
+        .reduce((sum, term) => sum + term.amount, 0);
+      const result = Math.round((perUnit * quantity + perOrder) * 100) / 100;
+      return {
+        authority: "CONVERSATION_STATE", reply: null,
+        revision: loaded.revision, persist_result: "read_only",
+        reason: "read_only_customer_calculation",
+        route: "commerce_state_answer",
+        calculation: {
+          expression: `${perUnit} × ${quantity} + ${perOrder}`,
+          result, currency: typed.terms[0].currency,
+        },
+      };
+    }
+    return { authority: "CONVERSATION_STATE", reply: null, revision: loaded.revision,
+      persist_result: "read_only", reason: "read_only_customer_calculation", route: "commerce_state_answer" };
+  }
+
+
+  const goalLifecycle = contextualGoalLifecycle(input, contextualBefore.state,
+    contextualSourceContext(input, contextualBefore.revision));
+  if (goalLifecycle) {
+    const persisted = await persistCommerceTurn(db, input, []);
+    const goal = persisted.state.customer_constraints.contextual_goal as SourceBoundContextualGoal | undefined;
+    const committed = persisted.result === "success" &&
+      persisted.revision === persisted.previous_revision + 1 &&
+      goal?.goal_id === goalLifecycle.goal.goal_id && goal.status === goalLifecycle.status &&
+      goal.status_source_message_id === input.source_message_id &&
+      goal.status_recorded_revision === persisted.revision;
+    return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
+      persist_result: persisted.result, route: "commerce_state_answer",
+      reason: committed ? "contextual_goal_lifecycle_committed" : "contextual_goal_lifecycle_uncommitted" };
+  }
+  const lifecycleIntent = resolveBoundLifecyclePlan(input, contextualBefore.state);
+  const proposedLifecycle=verifiedLifecycleProposal(input,contextualBefore.state);
+  if(proposedLifecycle && !acceptedLifecycleEntityRef(input,contextualBefore.state)){
+    // A confident model interpretation outside the existing lexical safety
+    // gate must not silently disappear, nor may it become a mutation.
+    const item=clean(String(proposedLifecycle.entity.attributes.product_name ??
+      proposedLifecycle.entity.model ?? proposedLifecycle.entity.attributes.name ?? ""),120);
+    if(item){
+      const cancel=proposedLifecycle.action==="cancelled";
+      return {authority:"CONVERSATION_STATE",reply:language==="en"
+        ? `Do you want to ${cancel?"cancel":"pause"} ${item}? Please confirm.`
+        : language==="zh-CN"
+        ? `请确认：你是想${cancel?"取消":"暂缓"}「${item}」吗？`
+        : `請確認：你係想${cancel?"取消":"暫緩"}「${item}」嗎？`,
+        revision:contextualBefore.revision,persist_result:"read_only",
+        reason:"unmatched_semantic_lifecycle_requires_confirmation",
+        route:"commerce_state_answer"};
+    }
+  }
+  if (lifecycleIntent.kind === "ambiguous") {
+    const cancel=lifecycleIntent.action === "cancelled";
+    return { authority: "CONVERSATION_STATE", reply: language === "en"
+      ? (cancel ? "Which product should I cancel? Please name the product." : "Which product should I pause? Please name the product category.")
+      : (cancel ? "想取消邊項產品？請講明產品名稱。" : "想暫緩邊項產品？請講明產品名稱。"),
+      revision: contextualBefore.revision, persist_result: "read_only",
+      reason: "ambiguous_lifecycle_target", route: "commerce_state_answer" };
+  }
+  // Repeating the same final lifecycle instruction is a source-bound read-only
+  // acknowledgement. Preserve the original mutation provenance and revisions.
+  if (lifecycleIntent.kind === "mutation" && !splitCustomerOperationClauses(text).some(clause=>
+    resolveEntityLifecyclePlan(clause,contextualBefore.state).kind === "none" && hasExplicitSupportedMutation(clause)) && lifecycleIntent.plans.every(plan=>
+    contextualBefore.state.entities.some(entity=>(plan.target_entity_id?entity.entity_id===plan.target_entity_id:entity.category===plan.target_category) && entity.status===plan.action)) && !lifecycleIntent.plans.some(plan=>plan.focus_category && plan.focus_category!==contextualBefore.state.current_topic)) {
+    // Preserve the existing exact-source durable reply receipt on replay. A
+    // later customer turn remains a read-only lifecycle acknowledgement.
+    const {data:stored,error:memoryError}=await db.from("conversation_memory_state").select("company_id,memory").eq("conversation_id",input.conversation_id).maybeSingle();
+    const {data:commerce,error:commerceError}=await db.from("conversation_commerce_state").select("company_id,source_message_id,revision,state").eq("conversation_id",input.conversation_id).maybeSingle();
+    if(!memoryError && !commerceError && isRecord(stored) && stored.company_id===input.company_id && isCanonicalConversationMemory(stored.memory) && isRecord(commerce) && typeof commerce.company_id==="string" && isConversationCommerceState(commerce.state)) {
+      const receipt=resumeCommittedLifecycleReply({conversation_id:input.conversation_id,company_id:input.company_id,source_message_id:input.source_message_id,memory:stored.memory,commerce:{company_id:commerce.company_id,source_message_id:typeof commerce.source_message_id==="string"?commerce.source_message_id:null,revision:Number(commerce.revision),state:commerce.state}});
+      if(receipt)return {authority:"CONVERSATION_STATE",reply:receipt.reply,revision:receipt.committed_revision,persist_result:"success",reason:"authoritative_scoped_lifecycle_applied",route:"commerce_state_answer",trusted_lifecycle_commit:receipt};
+    }
+    const names=lifecycleIntent.plans.map(plan=>contextualBefore.state.entities.find(entity=>plan.target_entity_id?entity.entity_id===plan.target_entity_id:entity.category===plan.target_category)!).map(entity=>entityLabel(entity,language));
+    const cancelled=lifecycleIntent.plans.every(plan=>plan.action==="cancelled");
+    return {authority:"CONVERSATION_STATE",reply:language==="en"?names.join("; ")+(cancelled?" has already been cancelled.":" remains paused."):names.join("、")+(cancelled?"已取消。":"仍然暫緩。"),revision:contextualBefore.revision,persist_result:"read_only",reason:"read_only_lifecycle_already_applied",route:"commerce_state_answer"};
+  }
+  // A multi-scope allocation with no interpreted entity and no current
+  // source-attested subject cannot borrow a different product from old raw
+  // history. The original generic count parser only detects the structure;
+  // exact entities come from committed, customer-owned canonical state.
+  // Preserve an explicitly named new item, corrections, read-only questions
+  // and valid additive instructions on their existing guarded paths.
+  // A verified research goal may exist before an item is materialized.
+  // It is not authority to derive a new allocation from an unparsed turn.
+  const activeContextualGoal = readSourceBoundContextualGoal(contextualBefore.state,
+    contextualSourceContext(input, contextualBefore.revision));
+  const unboundAllocation = !input.semantic_frame &&
+    (activeContextualGoal !== null || contextualBefore.state.entities.some(entity=>
+      !["cancelled","deferred","superseded"].includes(entity.status))) &&
+    isAllocationBreakdown(text) &&
+    !isReadOnlyCommerceQuestion(text,input.semantic_frame) &&
+    !detectQuantityCorrectionSignal(text) &&
+    !detectAdditiveEntityCreationSignal(text) &&
+    buildGenericCommerceEntityHints([text]).length===0 &&
+    !contextualBefore.state.entities.some(entity=>
+      entity.provenance.source_type==="customer" &&
+      sourceOwnedSubjectLabels(entity).some(label=>matchesReferenceLabel(text,label)));
+  if(unboundAllocation){
+    const reply=language==="en"
+      ? "Which recorded product or service do these quantities refer to? Please name the item before I update its allocation."
+      : language==="zh-CN"
+      ? "这些数量是指哪件已记录的产品或哪项服务？请先确认项目，我才会更新分配。"
+      : "呢啲數量係指邊件已記錄嘅產品或邊項服務？請先確認項目，我先會更新分配。";
+    const contextual_decision:ContextualDecision={
+      route:"targeted_clarification",reason:"SOURCE_ENTITY_UNBOUND",
+      reply,updates:[],
+    };
+    return {authority:"CONVERSATION_STATE",reply,
+      revision:contextualBefore.revision,persist_result:"read_only",
+      reason:"contextual_targeted_clarification",
+      route:"commerce_state_answer",contextual_decision};
+  }
+  let contextualDecision = resolveContextualTurn(input, contextualBefore.state,
+    contextualSourceContext(input, contextualBefore.revision));
+  const customerJourney = resolveCustomerJourneyTurn(input, contextualBefore.state);
+  if (contextualDecision.route === "targeted_clarification") {
+    return {
+      authority: "CONVERSATION_STATE", reply: contextualDecision.reply,
+      revision: contextualBefore.revision, persist_result: "read_only",
+      reason: "contextual_targeted_clarification",
+      route: "commerce_state_answer", contextual_decision: contextualDecision,
+    };
+  }
+
+  // Resolve known scoped/aggregate facts before generic clarification.
+  if (detectsConstraintRecall(text) || detectsPortfolioRecall(text) || detectsQuoteReadyRecall(text) || detectsQuoteProvenanceRecall(text) || detectsBrandRequirementRecall(text)) {
+    const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
+    if (detectsConstraintRecall(text)) {
+      const resolved = buildScopedConstraintAnswer(input, loaded.state);
+      if (resolved) return { authority: "CONVERSATION_STATE", reply: resolved.reply, revision: loaded.revision, persist_result: "read_only", reason: "read_only_scoped_constraint_recall_resolved", state_path: resolved.path, route: "commerce_state_answer" };
+    }
+    if (detectsPortfolioRecall(text) || detectsQuoteReadyRecall(text)) {
+      const quoteReady = detectsQuoteReadyRecall(text);
+      return { authority: "CONVERSATION_STATE", reply: buildEntityPortfolioAnswer(loaded.state, language, quoteReady), revision: loaded.revision, persist_result: "read_only", reason: quoteReady ? "read_only_quote_ready_entities_resolved" : "read_only_entity_portfolio_resolved", state_path: "commerce.authoritative_projection", route: "commerce_state_answer" };
+    }
+    if (detectsQuoteProvenanceRecall(text)) return { authority: "CONVERSATION_STATE", reply: buildQuoteProvenanceAnswer(loaded.state, language), revision: loaded.revision, persist_result: "read_only", reason: "read_only_quote_provenance_resolved", state_path: "commerce.authoritative_projection", route: "commerce_state_answer" };
+    if (detectsBrandRequirementRecall(text) && typeof loaded.state.customer_constraints.brand_required === "boolean") {
+      const required = loaded.state.customer_constraints.brand_required;
+      const reply = language === "en" ? required ? "Yes. A specific brand is currently required." : "No. You said a specific brand is not mandatory." : language === "zh-CN" ? required ? "是，目前必须指定品牌。" : "不是，你之前说品牌并非必须指定。" : required ? "係，而家必須指定品牌。" : "唔係，你之前講過品牌並非必須指定。";
+      return { authority: "CONVERSATION_STATE", reply, revision: loaded.revision, persist_result: "read_only", reason: "read_only_brand_requirement_resolved", state_path: "customer_constraints.brand_required", route: "commerce_state_answer" };
+    }
+  }
+
+  // Aggregate technician-check questions resolve from the committed snapshot
+  // before generic quantity routing or persistence, so a read cannot create a
+  // semantic event or rebind the pending facts' provenance.
+  if (isReadOnlyCurrentStateAggregateQuery(text, input.semantic_frame) || /(?:有咩|有什么|what).{0,18}(?:仲未|還沒|还没|未|not yet|outstanding|pending).{0,12}(?:confirm|確認|确认)/i.test(text)) {
+    const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
+    const aggregateResolution = resolvePendingCheckAggregateQuery(input, loaded.state, loaded.revision);
+    if (aggregateResolution) {
+      return { ...aggregateResolution, revision: loaded.revision, persist_result: "read_only", route: "commerce_state_answer" };
+    }
+  }
+
+  // A complete source-bound statement plus an independent merchant question
+  // is not a dimension-comparison-only turn. The whole-turn interrogative
+  // classifier must not consume its customer-owned statement before the
+  // existing CAS reducer can validate it. This flag does not grant a write.
+  const mixedDimensionStatement = sourceBoundMixedDimensionStatement(input);
+  // Dimension/attribute questions must be bound before the generic recall
+  // shortcut. Otherwise an article such as "一部598mm" can be mistaken for
+  // a quantity target and inherit the first active entity's known quantity.
+  if (
+    !mixedDimensionStatement &&
+    parseCommerceDimensionMeasurement(text) &&
+    isReadOnlyCommerceQuestion(text, input.semantic_frame) &&
+    !(contextualDecision.route === "product_guidance" && contextualDecision.requires_generated_guidance &&
+      input.semantic_frame?.operation === "ASK_FACT" && input.semantic_frame.entities.some(item =>
+        Object.keys(item.constraints).some(key => dimensionKeyAxis(key)))) &&
+    !establishesDurableProductResearch(text)
+  ) {
+    const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
+    const attributeResolution = resolveReadOnlyAttributeConstraintQuery(
+      input,
+      loaded.state,
+      loaded.revision,
+    );
+    if (attributeResolution) {
+      return {
+        ...attributeResolution,
+        revision: loaded.revision,
+        persist_result: "read_only",
+        route: "commerce_state_answer",
+      };
+    }
+  }
+
   if (detectPreorderUnpaidIntent(text)) {
-    const loaded = await loadCommerceState(db, input.conversation_id);
+    const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
     const hasActiveEntity = loaded.state.entities.some(
       (entity) => entity.status !== "cancelled" && entity.status !== "deferred",
     );
@@ -804,30 +5654,480 @@ export async function runCommerceStateRuntime(
         revision: loaded.revision,
         persist_result: "read_only",
         reason: "preorder_intent_acknowledged_without_order_or_payment_promotion",
+        state_path: "commerce.authoritative_projection",
         route: "commerce_state_answer",
       };
     }
   }
 
+  const sourceCountRead=readSourceBoundCountFirst(input,contextualBefore.state,contextualBefore.revision);
+  if(sourceCountRead.kind!=="not_applicable"){
+    if(sourceCountRead.kind==="unresolved")return {authority:"INSUFFICIENT_INFORMATION",reply:null,
+      state_path:null,revision:contextualBefore.revision,persist_result:"read_only",
+      reason:"read_only_memory_or_current_state_recall_unresolved",route:"commerce_state_answer"};
+    const decision=resolveCommerceAnswerAuthority({question:text,state:contextualBefore.state,
+      requested_state_path:sourceCountRead.path,calculation_terms:[],calculation_currency:null,
+      requires_professional_site_check:false});
+    if(decision.authority!=="CONVERSATION_STATE"||decision.state_path!==sourceCountRead.path||
+       decision.known_value!==sourceCountRead.amount)return {authority:"INSUFFICIENT_INFORMATION",reply:null,
+      state_path:null,revision:contextualBefore.revision,persist_result:"read_only",
+      reason:"read_only_memory_or_current_state_recall_unresolved",route:"commerce_state_answer"};
+    return {authority:"CONVERSATION_STATE",reply:buildKnownStateAnswer(language,sourceCountRead.path,
+      String(sourceCountRead.amount)+" "+sourceCountRead.unit,contextualBefore.state),
+      state_path:sourceCountRead.path,revision:contextualBefore.revision,persist_result:"read_only",
+      reason:"read_only_memory_or_current_state_recall_resolved",route:"commerce_state_answer"};
+  }
+
+  // READ_ONLY_MEMORY_OR_CURRENT_STATE_RECALL is resolved from the already
+  // committed snapshot. Do not call the state RPC: even an identical payload
+  // would create a semantic event/revision and could rebind fact provenance to
+  // this question rather than the customer turn that supplied the fact.
+  const validatedCustomerFactUpdate = Boolean(input.semantic_frame &&
+    input.semantic_frame.confidence >= 0.72 && !input.semantic_frame.ambiguity.is_ambiguous &&
+    ["UPDATE_ITEM", "ADD_ITEM"].includes(input.semantic_frame.operation) &&
+    input.semantic_frame.customer_facts?.length);
+  if (
+    !validatedCustomerFactUpdate && !mixedDimensionStatement &&
+    isReadOnlyMemoryOrCurrentStateRecall(text, input.semantic_frame) &&
+    !input.trusted_product_topic_focus &&
+    !/(?:講返|说回|講回|返去|回到|back to|return to|about that)/i.test(text) &&
+    !detectExplicitCalculationRequest(text) &&
+    contextualDecision.route !== "product_guidance" &&
+    customerJourney.status !== "advance"
+  ) {
+    const loaded = await loadCommerceState(db, input.conversation_id, input.company_id);
+    const quantityRead = canonicalQuantityReferent(input, loaded.state, loaded.revision);
+    if (quantityRead.kind === "unresolved") return {
+      authority: "INSUFFICIENT_INFORMATION", state_path: null, reply: null,
+      revision: loaded.revision, persist_result: "read_only",
+      reason: "read_only_memory_or_current_state_recall_unresolved", route: "commerce_state_answer",
+    };
+    const requestedStatePath = compatibleQuantityStatePath(input, loaded.state,
+      quantityRead.kind === "resolved" ? quantityRead.entity : null);
+    if (requestedStatePath === RETIRED_LEGACY_COUNT_RECALL) return {
+      authority: "INSUFFICIENT_INFORMATION", state_path: null, reply: null,
+      revision: loaded.revision, persist_result: "read_only",
+      reason: "read_only_memory_or_current_state_recall_unresolved", route: "commerce_state_answer",
+    };
+    const decision = resolveCommerceAnswerAuthority({
+      question: text,
+      state: loaded.state,
+      requested_state_path: requestedStatePath,
+      calculation_terms: [],
+      calculation_currency: null,
+      requires_professional_site_check: false,
+    });
+    if (decision.authority === "CONVERSATION_STATE" && decision.state_path) {
+      return {
+        authority: decision.authority,
+        state_path: decision.state_path,
+        reply: buildKnownStateAnswer(
+          language,
+          decision.state_path,
+          decision.known_value,
+          loaded.state,
+        ),
+        revision: loaded.revision,
+        persist_result: "read_only",
+        reason: "read_only_memory_or_current_state_recall_resolved",
+        route: "commerce_state_answer",
+      };
+    }
+    return {
+      authority: decision.authority,
+      state_path: decision.state_path ?? null,
+      reply: null,
+      revision: loaded.revision,
+      persist_result: "read_only",
+      reason: "read_only_memory_or_current_state_recall_unresolved",
+      route: "commerce_state_answer",
+    };
+  }
+
+
   const historyTexts = (input.history ?? []).filter((turn) => turn.role === "visitor" || turn.role === "user" || turn.role === "customer").slice(0, MAX_HISTORY_TURNS).map((turn) => clean(turn.content));
   const conversationTexts = [text, ...historyTexts];
   const deterministicHints = buildCommerceEntityHints(conversationTexts);
   const semanticHints = semanticFrameToEntityHints(input.semantic_frame);
-  const industry = resolveIndustryRuntime({
-    texts: conversationTexts,
-    semantic_frame: input.semantic_frame,
-    industry_identifier: input.industry_identifier,
-  });
-  const hints = mergeCommerceEntityHints(
+  const industry = resolveIndustryRuntime({texts:conversationTexts, semantic_frame:input.semantic_frame});
+  const proposedHints = mergeCommerceEntityHints(
     semanticHints,
     mergeCommerceEntityHints(industry.hints, deterministicHints),
   );
-  const runtimeInput = industry.industry_id && !input.industry_identifier
-    ? { ...input, industry_identifier: industry.industry_id }
-    : input;
+  const canonicalHints: CommerceTurnEntityHint[] = contextualBefore.state.entities.map(entity=>({
+    entity_id:entity.entity_id,category:entity.category,model:entity.model,brand:entity.brand,
+    aliases:[entity.category,entity.model,entity.attributes.sku,entity.attributes.product_name]
+      .filter((v):v is string=>typeof v==="string"&&v.length>=2),
+  }));
+  const mergedHints = mergeCommerceEntityHints(proposedHints.map(hint=>{
+    const identities=[hint.model,hint.attributes?.sku,hint.attributes?.product_name]
+      .filter((v):v is string=>typeof v==="string"&&v.length>=2);
+    // An unknown explicit identity cannot fall back to its category alias.
+    const labels=identities.length ? identities : hint.aliases??[];
+    const targets=canonicalHints.filter(canonical=>canonical.category===hint.category &&
+      labels.some(label=>typeof label==="string" && canonical.aliases?.some(alias=>alias.toLowerCase()===label.toLowerCase())));
+    return targets.length===1 && detectQuantityCorrectionSignal(text)
+      ? {...hint,entity_id:targets[0].entity_id} : hint;
+  }),canonicalHints);
+  // Never materialize the same customer-authored item a second time simply
+  // because a generic fallback parser included a trailing question/purpose
+  // clause in its proposed name. A single interpreted item must independently
+  // match the Visitor's *current* name, exact count and written unit. If it
+  // refers to prior state, only the existing customer-source entity_id is
+  // eligible. This filter can REMOVE a duplicate hint; it grants no mutation,
+  // quantity, transaction, or B2 authority and never scans old raw history.
+  const singleSubject = (() => {
+    const frame=input.semantic_frame;
+    if(!frame || frame.operation!=="ADD_ITEM" || frame.ambiguity.is_ambiguous ||
+       frame.entities.length!==1)return null;
+    const entity=frame.entities[0];
+    if(entity.confidence<0.90 || typeof entity.name!=="string" ||
+       entity.name.trim().length<2 || entity.quantity===null ||
+       !matchesReferenceLabel(text,entity.name) ||
+       attestedItemQuantity(text,entity.name,entity.quantity,entity.unit)!==entity.quantity)return null;
+    const existing=contextualBefore.state.entities.find(candidate=>
+      candidate.entity_id===entity.entity_ref && candidate.provenance.source_type==="customer" &&
+      !!candidate.provenance.source_message_id &&
+      !["cancelled","deferred","superseded"].includes(candidate.status));
+    if(!existing && frame.confidence<0.90)return null;
+    return { name:clean(entity.name,160).toLowerCase(), quantity:entity.quantity,
+      retainedId:existing?.entity_id??null,
+      interpretedId:existing?null:semanticHints.find(hint=>
+        clean(hint.attributes?.product_name,160).toLowerCase()===clean(entity.name,160).toLowerCase())?.entity_id??null };
+  })();
+  const hints = singleSubject ? mergedHints.filter(hint=>{
+    if(contextualBefore.state.entities.some(entity=>entity.entity_id===hint.entity_id) ||
+       hint.entity_id===singleSubject.retainedId ||
+       hint.entity_id===singleSubject.interpretedId ||
+       !hint.entity_id.startsWith("generic:"))return true;
+    const candidate=clean(hint.attributes?.product_name,160).toLowerCase();
+    const normalized=candidate.replace(/[嗎吗呢咩]+$/u,"");
+    const sameCount=hint.quantity===undefined || hint.quantity===singleSubject.quantity;
+    return !(sameCount && normalized.startsWith(singleSubject.name));
+  }) : mergedHints;
+  const runtimeInput = { ...input, industry_identifier: null };
 
   const persisted = await persistCommerceTurn(db, runtimeInput, hints);
+  if (persisted.result === "unverified_customer_requirement") {
+    // A rejected dimension proposal is not a storage outage. It never grants
+    // write authority. An independent current answer request may still use
+    // the ordinary response path, without promoting the rejected proposal.
+    const rejected = runtimeInput.semantic_frame;
+    if (persisted.dimension_rejected && rejected && rejected.confidence >= 0.90 &&
+      !rejected.ambiguity.is_ambiguous && !rejected.additive &&
+      ["ASK_FACT","UPDATE_ITEM"].includes(rejected.operation) &&
+      [rejected.transaction_state,rejected.payment_state,rejected.booking_state,rejected.fulfillment_state]
+        .every(value => ["none","unknown"].includes(value))) {
+      const decision = resolveCustomerRequestDecision(runtimeInput.text, rejected);
+      const normalized = runtimeInput.text.normalize("NFKC").replace(/\s+/gu," ").trim();
+      const independentDemands = (decision.semantic_demands ?? []).filter(demand => {
+        const quote = demand.source_quote.normalize("NFKC").replace(/\s+/gu," ").trim();
+        return Boolean(quote && normalized.includes(quote) && !demand.ambiguity.is_ambiguous &&
+          ["general","product","policy","unknown"].includes(demand.source_type) &&
+          // A mutation cannot become a merchant lookup merely because the
+          // older request classifier normalized an empty update demand.
+          // On UPDATE_ITEM require a distinct actual question, not the update.
+          (rejected.operation === "ASK_FACT" ||
+            (quote !== normalized && looksInterrogative(quote))));
+      });
+      // ASK_FACT can be ordinary advice with no separate demand list. For a
+      // mutation-classified turn, require a source-bound independent demand;
+      // a pure update or withdrawal must never claim it was completed.
+      const guidance = decision.kind === "guidance" &&
+        ((rejected.operation === "ASK_FACT" && !rejected.customer_correction) ||
+          independentDemands.some(demand => demand.source_type === "general" && !demand.customer_correction));
+      const merchant = ["merchant_facts","mixed"].includes(decision.kind) &&
+        independentDemands.some(demand => ["product","policy","unknown"].includes(demand.source_type) &&
+          demand.requested_facts.length > 0 && !demand.customer_correction);
+      if (guidance || merchant) return {
+        authority: merchant ? "CURRENT_KB_REQUIRED" : "CONVERSATION_STATE",
+        reply: null, revision: persisted.previous_revision, persist_result: "read_only",
+        reason: "unverified_dimension_context_answer_only",
+        route: merchant ? "commerce_kb_required" : "product_guidance",
+      };
+    }
+    // No candidate was written; ask only for the missing proof. Preserve
+    // the old exact rejection result consumed by B2 and Memory.
+    const knownDimensionSubject = persisted.dimension_rejected && rejected?.entities.length === 1 &&
+      matchesReferenceLabel(runtimeInput.text, rejected.entities[0].name) &&
+      persisted.previous_state.entities.filter(entity =>
+        entity.provenance.source_type === "customer" &&
+        !["cancelled","deferred","superseded"].includes(entity.status) &&
+        sourceOwnedSubjectLabels(entity).some(label =>
+          label.normalize("NFKC").trim().toLowerCase() === rejected.entities[0].name.normalize("NFKC").trim().toLowerCase()) &&
+        (entity.entity_id === rejected.entities[0].entity_ref ||
+          sourceOwnedSubjectLabels(entity).some(label => label.normalize("NFKC").trim().toLowerCase() === rejected.entities[0].entity_ref.normalize("NFKC").trim().toLowerCase()))).length === 1;
+    const reply = knownDimensionSubject
+      ? language === "en" ? "Please confirm the exact measurement and unit for this requirement."
+        : language === "zh-CN" ? "请确认这项要求的确切尺寸和单位。" : "請確認呢項要求嘅確實尺寸同單位。"
+      : language === "en"
+      ? "Which item do you want to update? Please restate the exact measurement or quantity and its unit."
+      : language === "zh-CN"
+      ? "你想更改哪一项？请重新说明确切的尺寸或数量，以及单位。"
+      : "你想更改邊一項？請重新講清楚確實嘅尺寸或數量，同埋單位。";
+    return { authority: "CONVERSATION_STATE", reply, revision: persisted.previous_revision,
+      persist_result: "read_only", reason: "contextual_targeted_clarification", route: "commerce_state_answer",
+      contextual_decision: { route: "targeted_clarification", reason: "UNVERIFIED_CUSTOMER_REQUIREMENT",
+        reply, updates: [] } };
+  }
+  if (!["success", "no_semantic_change", "source_message_already_applied"].includes(persisted.result)) {
+    // A proposed reducer snapshot is not authority until its CAS commit succeeds.
+    // Preserve the failed receipt without returning an uncommitted acknowledgement.
+    return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.previous_revision,
+      persist_result: persisted.result, reason: "commerce_state_commit_failed", route: "commerce_state_answer" };
+  }
   const state = persisted.state;
+  if (mixedDimensionStatement && persisted.result === "success") {
+    // The dimension mutation is not a merchant answer or a transaction.
+    // Verify the existing CAS receipt against the same scoped stored state
+    // before continuing the independent question on the ordinary KB path.
+    const actual = await loadCommerceState(db, input.conversation_id, input.company_id);
+    if (actual.revision !== persisted.revision ||
+        persisted.revision !== persisted.previous_revision + 1 ||
+        JSON.stringify(actual.state) !== JSON.stringify(state))
+      return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
+        persist_result: "dimension_commit_readback_unverified",
+        reason: "dimension_commit_readback_unverified", route: "commerce_state_answer" };
+    return { authority: "CURRENT_KB_REQUIRED", reply: null, revision: actual.revision,
+      persist_result: "success", reason: "source_bound_dimension_with_merchant_question",
+      route: "commerce_kb_required" };
+  }
+  // A dimension-only update may acknowledge only the committed same-owner
+  // values, never a raw model proposal or a successful-looking RPC alone.
+  const dimensionFrame = runtimeInput.semantic_frame;
+  if (persisted.result === "success" && dimensionFrame?.operation === "UPDATE_ITEM" &&
+      dimensionFrame.entities.length > 0 && !dimensionFrame.customer_facts?.length &&
+      !dimensionFrame.requested_facts.length && (dimensionFrame.demands ?? []).every(demand =>
+        demand.source_type === "general" && !demand.requested_facts.length) &&
+      dimensionFrame.entities.every(item => item.quantity === null &&
+        Object.keys(item.attributes).every(key => key === "dimension_source_proofs") &&
+        Object.keys(item.constraints).length > 0 && Object.keys(item.constraints).every(key => dimensionKeyAxis(key)))) {
+    let actual: LoadedCommerceState | null = null;
+    try { actual = await loadCommerceState(db, input.conversation_id, input.company_id); } catch { /* no unverified acknowledgment */ }
+    const rows: string[] = [];
+    let path: string | null = null;
+    let valid = false;
+    if (actual?.revision === persisted.revision && persisted.revision === persisted.previous_revision + 1 &&
+        JSON.stringify(actual.state) === JSON.stringify(state)) {
+      valid = true;
+      for (const item of dimensionFrame.entities) {
+        const matches = actual.state.entities.filter(entity =>
+          sourceOwnedSubjectLabels(entity).some(label => label.normalize("NFKC").trim().toLowerCase() === item.name.normalize("NFKC").trim().toLowerCase()) &&
+          entity.provenance.source_type === "customer" && entity.provenance.source_message_id === input.source_message_id &&
+          !["cancelled","deferred","superseded"].includes(entity.status));
+        if (matches.length !== 1) { valid = false; break; }
+        const entity = matches[0], label = customerOwnedDisplayLabel(entity);
+        if (!label) { valid = false; break; }
+        for (const [key,value] of Object.entries(item.constraints)) {
+          const axis = dimensionKeyAxis(key)!, bound = dimensionBound(key);
+          const removed = value === null;
+          if (!bound || (removed ? Object.hasOwn(entity.constraints,key) :
+            typeof value !== "number" || entity.constraints[key] !== value)) { valid = false; break; }
+          const dimension = language === "en" ? axis : axis === "width" ? (language === "zh-CN" ? "宽度" : "闊度") : axis === "height" ? "高度" : "深度";
+          const qualifier = bound === "maximum" ? (language === "en" ? "maximum " : "最大") :
+            bound === "excluded" ? (language === "en" ? "excluded " : "排除") : "";
+          rows.push(label + ": " + qualifier + dimension + (removed ?
+            (language === "en" ? " limit removed" : language === "zh-CN" ? "限制已移除" : "限制已移除") :
+            " " + value + " mm"));
+          path = removed ? "commerce.authoritative_projection" :
+            "entities." + actual.state.entities.indexOf(entity) + ".constraints." + key;
+        }
+        if (!valid) break;
+      }
+    }
+    if (!valid || rows.length !== dimensionFrame.entities.reduce((sum,item) => sum + Object.keys(item.constraints).length,0))
+      return { authority:"CONVERSATION_STATE", reply:null, revision:persisted.revision,
+        persist_result:"dimension_commit_readback_unverified", reason:"dimension_commit_readback_unverified", route:"commerce_state_answer" };
+    return { authority:"CONVERSATION_STATE", reply:(language === "en" ? "Recorded your requirement: " :
+      language === "zh-CN" ? "已记录你的要求：" : "已記錄你嘅要求：") + rows.join("; ") + (language === "en" ? "." : "。"),
+      revision:persisted.revision, persist_result:"success", reason:"source_bound_dimension_committed",
+      state_path:rows.length === 1 ? path : "commerce.authoritative_projection", route:"commerce_state_answer" };
+  }
+  const quantityUnit = sourceBoundQuantityUnit(runtimeInput, persisted.previous_state);
+  const pureQuantityTurn = quantityUnit && runtimeInput.semantic_frame?.requested_facts.length === 0 &&
+    (runtimeInput.semantic_frame.demands ?? []).every(demand => demand.source_type === "general" &&
+      demand.requested_facts.length === 0 &&
+      (!Object.prototype.hasOwnProperty.call(demand, "source_quote") ||
+        clean(demand.source_quote) === clean(runtimeInput.text))) &&
+    runtimeInput.semantic_frame.entities.every(entity =>
+      Object.keys(entity.attributes).length === 0 && Object.keys(entity.constraints).length === 0);
+  if (pureQuantityTurn && persisted.result === "success") {
+    // A successful RPC alone is not an acknowledgement: verify the actual
+    // same-owner/source/revision readback before saying the unit was changed.
+    let readback: LoadedCommerceState | null = null;
+    try { readback = await loadCommerceState(db, input.conversation_id, input.company_id); } catch { /* fail closed */ }
+    const entity = readback?.state.entities.find(value => value.entity_id === quantityUnit.entity_id);
+    const verified = persisted.revision === persisted.previous_revision + 1 &&
+      readback?.revision === persisted.revision &&
+      JSON.stringify(readback.state) === JSON.stringify(persisted.state) &&
+      entity?.provenance.source_type === "customer" && entity.provenance.source_message_id === input.source_message_id &&
+      entity.quantity === quantityUnit.quantity && entity.attributes.unit === quantityUnit.unit &&
+      !["cancelled", "deferred", "superseded"].includes(entity.status) &&
+      JSON.stringify(b2JourneyTransactionBoundary(persisted.previous_state)) ===
+        JSON.stringify(b2JourneyTransactionBoundary(readback.state));
+    if (!verified || !readback || !entity) return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
+      persist_result: "quantity_unit_readback_unverified", reason: "quantity_unit_commit_unverified", route: "commerce_state_answer" };
+    const reply = language === "en"
+      ? `Updated ${quantityUnit.name} to ${entity.quantity} ${entity.attributes.unit}.`
+      : language === "zh-CN"
+      ? `已将${quantityUnit.name}数量更新为 ${entity.quantity} ${entity.attributes.unit}。`
+      : `已將${quantityUnit.name}數量更新為 ${entity.quantity} ${entity.attributes.unit}。`;
+    return { authority: "CONVERSATION_STATE", reply, revision: readback.revision,
+      persist_result: "success", reason: "source_bound_quantity_unit_committed",
+      state_path: `entities.${readback.state.entities.indexOf(entity)}.quantity`, route: "commerce_state_answer" };
+  }
+  // A CAS retry may load a newer topic, scope count or lifecycle. Rebind the
+  // reply to the snapshot that actually produced the committed payload.
+  contextualDecision = resolveContextualTurn(runtimeInput, persisted.previous_state,
+    contextualSourceContext(runtimeInput, persisted.previous_revision));
+  if (contextualDecision.route === "targeted_clarification" && hasContextualScopeAllocation(runtimeInput)) {
+    return { authority: "CONVERSATION_STATE", reply: contextualDecision.reply,
+      revision: persisted.revision, persist_result: persisted.result,
+      reason: "contextual_targeted_clarification", route: "commerce_state_answer",
+      contextual_decision: contextualDecision };
+  }
+  const lifecycleVerified = persisted.result === "success"
+    ? verifyEntityLifecycleTransition(text, persisted.previous_state, state, input.source_message_id,
+        acceptedLifecycleEntityRef(input,persisted.previous_state))
+    : { valid: false } as const;
+  if (lifecycleVerified.valid) {
+    const focus = lifecycleVerified.plans[0].focus_category;
+    // Presentation follows the snapshot that passed the lifecycle/CAS check.
+    // A category is not a translated customer name, and an inactive or
+    // unowned entity cannot supply one merely because it shares that category.
+    const focusEntities = focus ? state.entities.filter(entity =>
+      entity.category === focus && !["cancelled", "deferred", "superseded"].includes(entity.status) &&
+      !lifecycleVerified.targetIds.includes(entity.entity_id)) : [];
+    const focusEntity = focusEntities.length === 1 &&
+      focusEntities[0].provenance.source_type === "customer" &&
+      typeof focusEntities[0].provenance.source_message_id === "string" &&
+      focusEntities[0].provenance.source_message_id.trim().length > 0 ? focusEntities[0] : null;
+    const focusLabel = (focusEntity ? customerOwnedDisplayLabel(focusEntity) : null) ??
+      (focus && matchesReferenceLabel(text,focus) ? safeCustomerDisplayText(focus) : null);
+    const target = lifecycleVerified.targetIds.map(id =>
+      entityLabel(state.entities.find(e => e.entity_id === id)!, language)).join("同");
+    const genericEnglish = language === "en" && lifecycleVerified.targetIds.every(id=>state.entities.find(e=>e.entity_id===id)?.entity_id.startsWith("generic:"));
+    const acknowledgement = genericEnglish ? lifecycleVerified.targetIds.map(id=>renderEnglishRequirement(state.entities.find(e=>e.entity_id===id)!,entityLabel(state.entities.find(e=>e.entity_id===id)!,language))).join("; ")+"." : lifecycleVerified.plans[0].action === "cancelled"
+      ? (language === "en" ? `${target} is cancelled.` : `${target}已取消。`)
+      : language === "en"
+      ? `Okay, ${target} is ${lifecycleVerified.plans[0].action === "deferred" ? "paused" : "cancelled"}. ${focusLabel ? `We can continue with ${focusLabel}; its requirements remain in place.` : "The other product requirements remain in place."}`
+      : `好，${target}${lifecycleVerified.plans[0].action === "deferred" ? "先暫停" : "已取消"}；${focusLabel ? `而家繼續處理${focusLabel}，之前嘅要求同數量會保留。` : "其他產品嘅要求同數量會保留。"}`;
+    const targetCategories = new Set(lifecycleVerified.targetIds.map(id =>
+      state.entities.find(entity => entity.entity_id === id)!.category));
+    // This committed lifecycle receipt may also identify retained siblings.
+    // Each count and literal unit must already belong to that customer's
+    // canonical item; unrelated totals and unlike units are never combined.
+    const retained = state.entities.flatMap(entity => {
+      const label = customerOwnedDisplayLabel(entity), unit = entity.attributes.unit;
+      const quantity = customerRequestedQuantity(entity);
+      if (lifecycleVerified.targetIds.includes(entity.entity_id) || !targetCategories.has(entity.category) ||
+        !["researching", "tentative", "confirmed"].includes(entity.status) || !label ||
+        entity.provenance.source_type !== "customer" || !entity.provenance.source_message_id?.trim() ||
+        entity.attributes.quantity_basis !== "customer_explicit" || quantity === null ||
+        !Number.isSafeInteger(quantity) || quantity < 0 ||
+        typeof unit !== "string" || !unit.trim() || unit.length > 64 ||
+        !/^[\p{L}\p{N}\p{M}]+(?:[ ./_-][\p{L}\p{N}\p{M}]+)*$/u.test(unit)) return [];
+      return [`${label}: ${quantity} ${unit}`];
+    });
+    const reply = acknowledgement + (retained.length ? (language === "en"
+      ? " Retained requirements: " + retained.join("; ") + "."
+      : language === "zh-CN" ? " 保留的要求：" + retained.join("；") + "。"
+      : " 保留嘅要求：" + retained.join("；") + "。") : "");
+    return {
+      authority: "CONVERSATION_STATE", reply, revision: persisted.revision,
+      persist_result: "success", reason: "authoritative_scoped_lifecycle_applied", route: "commerce_state_answer",
+      trusted_lifecycle_commit: {
+        contract: "entity-lifecycle-commit-v1", company_id: input.company_id,
+        source_message_id: input.source_message_id, source_text: text,
+        previous_revision: persisted.previous_revision, committed_revision: persisted.revision,
+        plans: lifecycleVerified.plans, target_entity_ids: lifecycleVerified.targetIds,
+        previous_state: structuredClone(persisted.previous_state), committed_state: structuredClone(state),
+        reply, transaction_before: b2JourneyTransactionBoundary(persisted.previous_state),
+        transaction_after: b2JourneyTransactionBoundary(state),
+      },
+    };
+  }
+  if (resolveBoundLifecyclePlan(input, persisted.previous_state).kind === "mutation") {
+    return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
+      persist_result: persisted.result, reason: "unverified_lifecycle_commit", route: "commerce_state_answer" };
+  }
+  if (
+    (contextualDecision.route === "product_guidance" ||
+      contextualDecision.route === "contextual_scoped_update") &&
+    ["success", "no_semantic_change", "source_message_already_applied"].includes(persisted.result)
+  ) {
+    if (contextualDecision.route === "contextual_scoped_update" &&
+      !contextualUpdateCommitted(contextualDecision, persisted.state, input.source_message_id, persisted.revision)) {
+      return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
+        persist_result: persisted.result, reason: "contextual_update_commit_unverified", route: "commerce_state_answer" };
+    }
+    if (contextualDecision.route === "contextual_scoped_update") {
+      // The verifier above checks the proposal against the committed values.
+      // B2 and reply metadata must now share those exact server-bound rows,
+      // including their persisted source ids/revisions, never the raw proposal.
+      const accepted = contextualDecision;
+      const entity = persisted.state.entities.find(value => value.entity_id === accepted.entity_id)!;
+      const rows = entity.attributes.scoped_customer_updates as typeof accepted.updates;
+      contextualDecision = { ...accepted, updates: accepted.updates.map(update =>
+        structuredClone(rows.find(row => row.scope === update.scope && row.attribute === update.attribute)!)) };
+    }
+    // Pure customer guidance needs the existing grounded generation path;
+    // a classification receipt must not become an empty acknowledgement or
+    // a hardcoded request for an unrelated customer measurement.
+    const reply = contextualDecision.route === "product_guidance" &&
+        contextualDecision.requires_generated_guidance
+      ? null : contextualDecision.reply;
+    const trustedJourneyProgress = reply === null ? undefined : buildTrustedJourneyProgress({
+      runtime_input: runtimeInput, persisted, journey: customerJourney,
+      contextual: contextualDecision, reply, route: contextualDecision.route,
+      reason: contextualDecision.reason,
+    });
+    if (contextualDecision.route === "contextual_scoped_update" &&
+      contextualDecision.scoped_correction && !trustedJourneyProgress) {
+      return { authority: "CONVERSATION_STATE", reply: null, revision: persisted.revision,
+        persist_result: persisted.result, reason: "scoped_correction_commit_unverified", route: "commerce_state_answer",
+        contextual_decision: contextualDecision };
+    }
+    return {
+      authority: "CONVERSATION_STATE",
+      reply,
+      revision: persisted.revision,
+      persist_result: persisted.result,
+      reason: contextualDecision.reason,
+      route: contextualDecision.route,
+      contextual_decision: contextualDecision,
+      trusted_journey_progress: trustedJourneyProgress,
+    };
+  }
+  if (
+    contextualDecision.route === "none" &&
+    customerJourney.status === "advance" &&
+    customerJourney.reply &&
+    ["success", "no_semantic_change", "source_message_already_applied"].includes(persisted.result)
+  ) {
+    const reply = customerJourney.reply;
+    return {
+      authority: "CONVERSATION_STATE",
+      reply,
+      revision: persisted.revision,
+      persist_result: persisted.result,
+      reason: customerJourney.reason,
+      route: "product_guidance",
+      trusted_journey_progress: buildTrustedJourneyProgress({
+        runtime_input: runtimeInput,
+        persisted,
+        journey: customerJourney,
+        contextual: contextualDecision,
+        reply,
+        route: "product_guidance",
+        reason: customerJourney.reason,
+      }),
+    };
+  }
+  const readOnlyCurrentStateQuery = isReadOnlyCurrentStateQuery(
+    text,
+    input.semantic_frame,
+  );
 
   const summaryIntent = detectTransactionSummaryIntent(text);
   const wantsCalculation = detectExplicitCalculationRequest(text);
@@ -844,14 +6144,79 @@ export async function runCommerceStateRuntime(
     requires_professional_site_check: requiresProfessionalSiteCheck(text),
   });
 
-  const base = { revision: persisted.revision, persist_result: persisted.result, reason: decision.reason };
+  const base = {
+    revision: persisted.revision,
+    persist_result: persisted.result,
+    reason: decision.authority === "CONVERSATION_STATE" &&
+        readOnlyCurrentStateQuery
+      ? "read_only_current_state_query_resolved"
+      : decision.reason,
+  };
+
+  const currentPartial = state.entities.some(entity =>
+    entity.provenance.source_message_id === input.source_message_id &&
+    (entity.attributes.customer_unit_partition === "source_bound_status" ||
+      entity.constraints.source_bound_partial_unit === true ||
+      Object.prototype.hasOwnProperty.call(entity.attributes,"customer_part_of_entity_id")));
+  const purePartial = currentPartial && runtimeInput.semantic_frame &&
+    runtimeInput.semantic_frame.requested_facts.length === 0 &&
+    (runtimeInput.semantic_frame.demands ?? []).every(d =>
+      d.requested_facts.length === 0 && d.source_type === "general");
+  if (purePartial) {
+    const reply = await buildVerifiedPartialUnitStatusAnswer(db,runtimeInput,persisted);
+    return { ...base, authority:"CONVERSATION_STATE",reply,
+      reason:reply ? "source_bound_partial_unit_status_committed" : "partial_unit_status_commit_unverified",
+      route:"commerce_state_answer" };
+  }
+  const resolvedStatusChangeReply = persisted.result === "success"
+    ? buildResolvedEntityStatusChangeAnswer(runtimeInput, state)
+    : null;
+  if (resolvedStatusChangeReply) {
+    return {
+      ...base,
+      authority: "CONVERSATION_STATE",
+      reason: "explicit_entity_status_change_applied",
+      reply: resolvedStatusChangeReply,
+      route: "commerce_state_answer",
+    };
+  }
+
+  const resolvedAddressCorrectionReply = persisted.result === "success"
+    ? buildResolvedAddressCorrectionAnswer(runtimeInput, persisted.previous_state, state)
+    : null;
+  if (resolvedAddressCorrectionReply) {
+    return {
+      ...base,
+      authority: "CONVERSATION_STATE",
+      reason: "explicit_address_correction_applied",
+      reply: resolvedAddressCorrectionReply,
+      route: "commerce_state_answer",
+    };
+  }
 
   if (decision.authority === "SAFE_PROFESSIONAL_CONFIRMATION") {
     return { ...base, authority: decision.authority, reply: buildProfessionalConfirmationAnswer(language, state), route: "commerce_state_answer" };
   }
 
   if (detectPreorderUnpaidIntent(text)) {
-    return { ...base, authority: "CONVERSATION_STATE", reason: "preorder_intent_acknowledged_without_order_or_payment_promotion", reply: buildPreorderUnpaidAnswer(language, state), route: "commerce_state_answer" };
+    return { ...base, authority: "CONVERSATION_STATE", reason: "preorder_intent_acknowledged_without_order_or_payment_promotion", state_path: "commerce.authoritative_projection", reply: buildPreorderUnpaidAnswer(language, state), route: "commerce_state_answer" };
+  }
+
+  if (explicitQuotationOnlySignal(text)) {
+    const reply = language === "en"
+      ? "Understood. This remains at the quotation stage and is not a confirmed order."
+      : language === "zh-CN"
+      ? "明白，目前只属报价阶段，不是已确认订单。"
+      : "明白，而家只係報價階段，唔係已確認訂單。";
+    return { ...base, authority: "CONVERSATION_STATE", reason: "quotation_only_state_acknowledged", state_path: "commerce.authoritative_projection", reply, route: "commerce_state_answer" };
+  }
+
+  if (historicalPriceExclusionInstruction(text)) {
+    return { ...base, authority: "CONVERSATION_STATE", reason: "historical_price_exclusion_acknowledged", state_path: "commerce.authoritative_projection", reply: buildHistoricalPriceExclusionAnswer(language), route: "commerce_state_answer" };
+  }
+
+  if (paymentChecklistIntent(text)) {
+    return { ...base, authority: "CONVERSATION_STATE", reason: "payment_checklist_from_current_state", state_path: "commerce.authoritative_projection", reply: buildPaymentChecklist(state, language), route: "commerce_transaction_summary" };
   }
 
   if (decision.authority === "CONVERSATION_STATE" && decision.state_path) {
@@ -862,12 +6227,12 @@ export async function runCommerceStateRuntime(
     return { ...base, authority: decision.authority, calculation: decision.calculation, reply: buildCalculationAnswer(language, decision.calculation), route: "commerce_state_answer" };
   }
 
-  if (detectCurrentPriceValidityQuestion(text)) {
-    return { ...base, authority: "CURRENT_KB_REQUIRED", reason: "previous_quote_not_authoritative_for_current_price", reply: buildCurrentPriceValidityAnswer(language), route: "commerce_state_answer" };
+  if (detectCurrentPriceValidityQuestion(text) || asksToReuseRecordedPrice(text, state)) {
+    return { ...base, authority: "CURRENT_KB_REQUIRED", reason: "previous_quote_not_authoritative_for_current_price", state_path: "commerce.authoritative_projection", reply: buildCurrentPriceValidityAnswer(language), route: "commerce_state_answer" };
   }
 
   if (summaryIntent && (state.entities.length > 0 || state.quotes.length > 0)) {
-    return { ...base, authority: "CONVERSATION_STATE", reply: buildTransactionSummary(state, language), route: "commerce_transaction_summary" };
+    return { ...base, authority: "CONVERSATION_STATE", reason: "read_only_transaction_summary_resolved", state_path: "commerce.authoritative_projection", reply: buildTransactionSummary(state, language), route: "commerce_transaction_summary" };
   }
 
   return {

@@ -1,0 +1,1181 @@
+import test from 'node:test';
+import {classifyHandoffIntent} from '../../supabase/functions/_shared/handoff-intent.ts';
+import {transformSync as task1Transpile, buildSync as task3cBuildCanonical} from 'esbuild';
+import {readFileSync as task1SourceRead} from 'node:fs';
+import assert from 'node:assert/strict';
+import {resolveCustomerRequestDecision,isBareCommerceSubjectMention,isSourceOwnedActiveAdviceGoal,hasSourceBoundCurrentAdviceGoal,acceptsInitialAdviceGoalReading,isReadOnlyMemoryOrCurrentStateRecall} from '../../supabase/functions/_shared/commerce-state-authority.ts';
+import {createEmptyConversationCommerceState} from '../../supabase/functions/_shared/commerce-state-contract.ts';
+import {reduceTurn, isReadOnlyCommerceQuestion, runCommerceStateRuntime, persistCommerceTurn} from '../../supabase/functions/_shared/commerce-state-runtime-base.ts';
+import {buildB2AuthoritativeReadbackProof, classifyCommerceStatePersistenceResult, evaluateB2BeforeCommit} from '../../supabase/functions/_shared/pre-send-conversion-supervisor.ts';
+import {sourceBoundMixedCustomerFactEvents, semanticFrameToStateEvents} from '../../supabase/functions/_shared/commerce-semantic-adapter.ts';
+import {buildCanonicalConversationMemory,buildBoundedConversationContext} from '../../supabase/functions/_shared/conversation-long-memory.ts';
+
+const CID='00000000-0000-4000-8000-000000000001';
+const TID='00000000-0000-4000-8000-000000000002';
+const SRC='00000000-0000-4000-8000-000000000003';
+const q='仍然係八個分頁，預算想節省，桌上型、文書同視像通話，不打機。請按呢個用途比較記憶體、處理器同儲存空間，邊啲升級可以暫緩？暫時唔使查店舖售價或庫存。';
+const semantic = ({operation='ASK_FACT',intent='customer_guidance',requested_facts=['selection_tradeoffs'],customer_facts=[],confidence=.98,ambiguity=false,entities=[],additive=false,customer_correction=false}={}) => ({
+  version:'commerce-semantic-1.0.0',language:'zh-TW',operation,intent,topic:null,
+  requested_facts,customer_facts,entities,confidence,additive,customer_correction,
+  ambiguity:{is_ambiguous:ambiguity,reasons:[],clarification_question:null},
+  referents:[],explicit_negations:[],transaction_state:'none',payment_state:'none',booking_state:'none',fulfillment_state:'none'
+});
+const state=()=>{
+  const s=createEmptyConversationCommerceState();
+  s.customer_constraints.customer_reported_facts={usage_scenario:{value:{
+    browser_tabs_open_simultaneously:20,word_processing:true,video_calls:true,gaming:false
+  },provenance:{source_type:'customer',source_message_id:'prior'}}};
+  return s;
+};
+const frame=semantic({customer_facts:[{key:'usage_scenario',value:{browser_tabs_open_simultaneously:8}},{key:'budget_constraint',value:'節省'}]});
+const reducer=(text,frame,prior=state(),sid=SRC)=>reduceTurn(prior,{text,semantic_frame:frame,source_message_id:sid,conversation_id:CID,company_id:TID,language:'zh-TW'},[]);
+
+for(const [industry,question] of [
+ ['computer',q],
+ ['computer simplified','请按办公用途比较内存、处理器和储存，哪些升级可以暂缓？不用查店铺售价。'],
+ ['SaaS','請按小團隊用途比較訂閱功能、服務支援和加購項目，邊啲可以暫緩？'],
+ ['service','請按預約需要比較幾個服務方案，邊啲項目可延後？'],
+ ['rental','請根據租用目的比較日租及月租的取捨，邊啲升級可以暫緩？'],
+ ['B2B','請按採購用途比較批量採購的條件與風險，哪些安排可以暫緩？'],
+ ['English','Please compare the trade-offs of renting versus subscribing based on our needs. Which upgrades could wait?'],
+ ['English without question','Based on our situation, compare the pros and cons of the service plans and prioritize what can wait.'],
+ ['generic equipment','請按我哋需求比較各方案嘅功能取捨，邊啲可暫緩？'],
+]) test('cross-domain advisory decision: '+industry,()=>{
+  const d=resolveCustomerRequestDecision(question,semantic());
+  assert.equal(d.kind,'guidance',JSON.stringify(d));
+  assert.equal(d.merchant_request,null);
+});
+for(const [intent,question,expected] of [
+ ['pricing','請查你哋目前服務方案嘅售價。','merchant_facts'],
+ ['availability','Please check your current inventory for model ABC123.','merchant_facts'],
+ ['model spec','請提供 ABC123 現行產品規格。','merchant_facts'],
+ ['policy','Please check your cancellation policy for my booking.','merchant_facts'],
+ ['mixed','請按我的用途比較方案取捨，但請查你哋新加坡的退款政策。','mixed'],
+ ['no paid false-positive','How should I compare booking options? No need for policy details.','guidance'],
+ ['declined lookup','No need for policy details and check your stock.','merchant_facts'],
+]) test('merchant authority not bypassed: '+intent,()=>{
+  assert.equal(resolveCustomerRequestDecision(question,semantic()).kind,expected);
+});
+
+// Hosted C3-6-TABS-CROSS-TOPIC-REGRESSION: general advisory versus current merchant facts.
+// Root scope is the speech act, never a computer/SKU phrase, a hard-coded
+// recommendation, or provider intent labels. Keep original merchant negatives.
+for (const [name,text,expected] of [
+  ['hosted six-tabs priority','我再補充一下，依家通常只會開大概 6 個網頁分頁，主要仍然係文書、視像會議，唔打機，而且想慳啲。咁 RAM、CPU 同 SSD 應該邊樣優先？邊樣可以暫時唔升級？','guidance'],
+  ['service priority','現有三種上門服務安排，按我時間限制，邊樣應該優先，邊樣可以暫時唔做？','guidance'],
+  ['rental priority','租用工具係短期用途，哪一項升級最重要，哪一項可以延後？','guidance'],
+  ['SaaS priority','我哋預算有限，邊個加購功能優先，邊樣可以暫緩？','guidance'],
+  ['English priority','For a small team, which feature should we prioritize first and which can wait?','guidance'],
+  ['TW priority','目前以基本文書為主，哪一項應先升級，哪一項可以延後？','guidance'],
+  ['must verify current merchant stock','按我的用途邊樣優先？但請查你哋目前實際庫存。','mixed'],
+  ['must verify merchant price','Which upgrade can wait? Please check your current prices.','mixed'],
+  ['must verify exact service policy','按我哋需求邊樣優先？另請查你哋目前退款政策。','mixed'],
+  ['pure actual merchant facts','你哋目前邊款型號有現貨？','merchant_facts'],
+  ['pure merchant policy','請查你哋目前取消服務的政策。','merchant_facts'],
+]) test('hosted C3 generic priority speech act '+name,()=>{
+  const frame=semantic({operation:'ASK_FACT',intent:'customer_guidance',
+    requested_facts:['selection_priorities','upgrade_tradeoffs'],customer_facts:[],confidence:.96});
+  const history=[
+    {role:'assistant',content:'冷氣機窗口尺寸仍需核實',metadata:{response_route:'canonical_memory_clarification'}},
+    {role:'visitor',content:'CW-SUL70BA 功能？'},
+    {role:'assistant',content:'之前按8個分頁比較升級取捨',metadata:{response_route:'customer_guidance'}},
+    {role:'visitor',content:'更正，依家開8個網頁分頁，想慳錢，邊啲升級可以暫緩？'},
+  ];
+  const result=resolveCustomerRequestDecision(text,frame,history);
+  assert.equal(result.kind,expected,JSON.stringify({name,result}));
+  if(expected==='guidance') {
+    assert.equal(result.merchant_request,null,'no paid KB authority for general priorities');
+    assert.notEqual(result.general_request,null,'retain useful general customer question');
+  }
+  if(expected==='mixed') {
+    assert.notEqual(result.merchant_request,null,'explicit merchant facet must stay grounded');
+    assert.notEqual(result.general_request,null,'retain general facet rather than terminal fallback');
+  }
+});
+test('hosted C3 routing preserves guidance through actual generator and planner to bounded no-KB answer',()=>{
+  const generate=task1SourceRead('supabase/functions/generate-reply/index.ts','utf8');
+  const planner=task1SourceRead('supabase/functions/_shared/conversation-service-planner.ts','utf8');
+  assert.match(generate,/_customerGuidance = _customerRequestDecision.kind === "guidance"/);
+  assert.match(generate,/_g1SkipKB = _pr5GreetingOrTrivial \|\| Boolean\(_priorGroundedTransform\) \|\| _customerGuidance/);
+  assert.match(planner,/const resolvedMerchantRead = input\.factual_request\?\.applicable === true &&\s*!input\.factual_request\.needs_subject_clarification;/);
+  assert.match(planner,/const semanticMerchantRead = semanticDemandContract \? resolvedMerchantRead : requestDecision\.kind!=="guidance" &&\s*\(requiresSemanticKnowledge\(input\.semantic_frame\) \|\| resolvedMerchantRead\);/,
+    'canonical demands own merchant scope; the legacy guidance fallback remains outside KB reads');
+});
+
+test('source-bound mixed ASK_FACT commits only current customer numeric and string fields via Commerce reducer',()=>{
+  assert.equal(isReadOnlyCommerceQuestion(q,frame),true,'factual question must not authorize buying items');
+  const events=sourceBoundMixedCustomerFactEvents(frame,state(),q,SRC);
+  assert.equal(events.length,1);
+  assert.equal(events[0].type,'SET_CUSTOMER_CONSTRAINT');
+  const next=reducer(q,frame);
+  const merged=next.customer_constraints.customer_reported_facts;
+  assert.equal(merged.usage_scenario.value.browser_tabs_open_simultaneously,8);
+  assert.equal(merged.usage_scenario.value.word_processing,true);
+  assert.equal(merged.usage_scenario.value.video_calls,true);
+  assert.equal(merged.usage_scenario.value.gaming,false);
+  assert.equal(merged.budget_constraint.value,'節省');
+  assert.equal(merged.usage_scenario.provenance.source_message_id,SRC);
+  assert.equal(next.entities.length,0);
+  assert.equal(next.conversion.order_status,'none');
+  assert.equal(next.conversion.payment_status,'none');
+  assert.equal(next.delivery.confirmed,false);
+  const repeated=reducer(q,frame,next,SRC);
+  assert.deepEqual(repeated,next,'same-source reduction must not alter a committed state projection');
+});
+
+test('direct UPDATE_ITEM also deep-merges typed nested customer facts rather than erasing false/zero',()=>{
+  const p=state();
+  const update=semantic({operation:'UPDATE_ITEM',requested_facts:[],customer_facts:[{key:'usage_scenario',value:{browser_tabs_open_simultaneously:8}}]});
+  const ev=semanticFrameToStateEvents(update,p,[],SRC);
+  const row=ev.find(e=>e.type==='SET_CUSTOMER_CONSTRAINT'&&e.key==='customer_reported_facts');
+  assert(row);
+  assert.equal(row.value.usage_scenario.value.video_calls,true);
+  assert.equal(row.value.usage_scenario.value.gaming,false);
+  assert.equal(row.value.usage_scenario.value.browser_tabs_open_simultaneously,8);
+});
+
+test('new canonical Commerce facts feed the same Memory and active constraints without restoring obsolete values',()=>{
+  const next=reducer(q,frame);
+  const m=buildCanonicalConversationMemory({conversation_id:CID,company_id:TID,source_message_id:SRC,
+    commerce_state_revision:3,commerce_state:next,newest_first:[{id:SRC,role:'visitor',content:q,created_at:'2026-10-25T00:00:00Z'}],
+    visitor_turn_count:3,source_created_at:'2026-10-25T00:00:00Z',next_memory_revision:9,
+    customer_fact_delta:frame.customer_facts.map(f=>({...f,authority:'customer',source_message_id:SRC}))});
+  assert.equal(m.current_customer_facts.find(f=>f.key==='usage_scenario')?.value?.browser_tabs_open_simultaneously,8);
+  assert(!m.active_constraints.some(x=>x.startsWith('customer_reported_facts:')),
+    'typed customer facts must not be JSON-serialized into customer-visible service constraints');
+  assert(m.current_customer_facts.some(f=>f.key==='usage_scenario' && f.value.browser_tabs_open_simultaneously===8));
+  assert(!buildBoundedConversationContext(m,[{id:SRC,role:'visitor',content:q}]).block.includes('customer_reported_facts:{'));
+  assert(buildBoundedConversationContext(m,[{id:SRC,role:'visitor',content:q}]).block.includes('8'));
+});
+
+for(const [name,text,patch] of [
+ ['question-only','目前產品有 8 個處理器嗎？', {customer_facts:[{key:'usage_scenario',value:{browser_tabs_open_simultaneously:8}}]}],
+ ['unobserved number','我而家係桌上型，想比較新服務。',{customer_facts:[{key:'usage_scenario',value:{browser_tabs_open_simultaneously:8}}]}],
+ ['historical','以前有 8 個分頁，但目前仍然係 20 個分頁，我想比較。',{customer_facts:[{key:'usage_scenario',value:{browser_tabs_open_simultaneously:8}}]}],
+ ['false source','請按目前用途比較，但不用查庫存。',{customer_facts:[{key:'payment',value:'paid'}]}],
+ ['ambiguous numeric binding','我目前有 6 位同事和 8 台設備，想比較升級。',{customer_facts:[{key:'staff_count',value:8}]}],
+]) test('missing or unbound literal evidence cannot promote state: '+name,()=>{
+  const f=semantic(patch);
+  const result=sourceBoundMixedCustomerFactEvents(f,state(),text,SRC);
+  assert.equal(result.length,0,JSON.stringify(result));
+});
+for(const [name,patch] of [
+ ['low confidence',{confidence:.60}],['ambiguous',{ambiguity:true}],['transaction intent',{operation:'CONFIRM'}],
+ ['model no-state-change',{operation:'NO_STATE_CHANGE'}],['proposal-only',{customer_facts:[]}]
+]) test('unsafe semantic frame cannot commit customer state: '+name,()=>{
+  const f=semantic({...{customer_facts:frame.customer_facts},...patch});
+  assert.deepEqual(sourceBoundMixedCustomerFactEvents(f,state(),q,SRC),[]);
+});
+test('no merchant price, stock or warranty is created by source-bound customer updates',()=>{
+  const f=semantic({customer_facts:[{key:'customer_budget',value:5000},{key:'merchant_price',value:9000}]});
+  const input='我而家預算 5000，想比較方案，但唔需要查最新售價。';
+  const row=reducer(input,f);
+  assert.equal(row.customer_constraints.customer_reported_facts.customer_budget.value,5000);
+  assert.equal(row.customer_constraints.customer_reported_facts.merchant_price,undefined);
+  assert.equal(row.quotes.length,0);
+  assert.equal(row.conversion.order_status,'none');
+});
+
+test("Task 1 bounded C4 caller and provider retry source contracts",()=>{
+ const kb=task1SourceRead("supabase/functions/kb-search-proxy/index.ts","utf8");
+ const assist=task1SourceRead("supabase/functions/agent-assist/index.ts","utf8");
+ const router=task1SourceRead("supabase/functions/_shared/llm-router.ts","utf8");
+ const crm=task1SourceRead("src/components/console/CRMPanel.tsx","utf8");
+ const panel=task1SourceRead("src/components/console/AgentToolPanel.tsx","utf8");
+ assert.match(kb,/const boundedSinglePass = isBoundedKBRequest\(body\)/);
+ assert.match(crm,/extended_search_confirmed:!boundedKbSearch/,'extension requires UI confirmed opt-in');
+ assert.match(kb,/const expansions = boundedSinglePass \? \[\] : await diagnostic\.run/);
+ assert.match(kb,/deterministicOnly: boundedSinglePass/);
+ assert.match(kb,/bounded_relevance_not_verified/);
+ assert.match(assist,/maxProviderAttempts:boundedModelAttempts/);
+ assert.match(router,/attempt <= allowedAttempts/);
+ assert.doesNotMatch(router,/attempt < MAX_ATTEMPTS/);
+ assert.match(crm,/bounded_single_pass:boundedKbSearch/);
+ assert.match(crm,/const \[boundedKbSearch, setBoundedKbSearch\] = useState\(true\)/,'KB default must not trigger paid expansion');
+ assert.match(crm,/setShowExtendedKbNotice\(true\)/,'expanded search requires explicit operator confirmation');
+ assert.match(crm,/setBoundedKbSearch\(false\);setShowExtendedKbNotice\(false\)/);
+ assert.match(crm,/setBoundedKbSearch\(true\);/,'ticket changes must restore bounded default');
+ assert.match(crm,/draftText,boundedKbSearch\]\);/,'mode change invalidates stale KB results');
+
+ assert.match(panel,/bounded_mode:boundedToolMode/);
+});
+
+test('Task1 Mac UA: legacy and absent confirmation requests remain one verified KB lookup', async () => {
+ const source = task1SourceRead('supabase/functions/kb-search-proxy/index.ts','utf8');
+ const begin=source.indexOf('export function isBoundedKBRequest(');
+ const end=source.indexOf('function isUuid(',begin);
+ assert(begin>=0 && end>begin,'source-backed proxy budget helper must be present');
+ const built=task1Transpile(source.slice(begin,end),{loader:'ts',format:'esm'}).code;
+ const {isBoundedKBRequest}=await import('data:text/javascript;base64,'+Buffer.from(built).toString('base64'));
+ for(const [name,input,expected] of [
+  ['legacy false without confirmation',{bounded_single_pass:false},true],
+  ['old unspecified client',{},true],
+  ['null body',null,true],
+  ['bounded true',{bounded_single_pass:true},true],
+  ['spurious flag without explicit off',{extended_search_confirmed:true},true],
+  ['operator confirms explicit expanded mode',{bounded_single_pass:false,extended_search_confirmed:true},false],
+ ]) assert.equal(isBoundedKBRequest(input),expected,name);
+});
+
+test('Task1 C4: original bounded full-content relevance accepts supported Chinese enumeration, never unrelated refund facts', async () => {
+ const source = task1SourceRead('supabase/functions/kb-search-proxy/index.ts','utf8');
+ const begin = source.indexOf('function normalizeComparable(');
+ const end = source.indexOf('type MembershipRow',begin);
+ assert(begin >= 0 && end > begin,'actual KB runtime scorer must be found');
+ const transpiled = task1Transpile(source.slice(begin,end)+'\nexport {lexicalSupport};',{loader:'ts',format:'esm'}).code;
+ const {lexicalSupport} = await import('data:text/javascript;base64,'+Buffer.from(transpiled).toString('base64'));
+ const evidence='「四電一腦」生產者責任計劃 受管制電器之免費除舊服務須知。適用貨品：空調機、洗衣機、雪櫃、電視機、電腦、列印機、掃描器及顯示器。';
+ assert(lexicalSupport('「四電一腦」包括哪些電器及電腦類別？',evidence)>=0.6,'genuine full-content category match');
+ for(const unsupported of [
+   '「四電一腦」包括哪些退款安排？',
+   '「四電一腦」包括哪些退款及取消政策？',
+   '「四電一腦」包括哪些貨物保養年期？',
+ ]) assert(lexicalSupport(unsupported,evidence)<0.6,'unrelated merchant claims remain excluded: '+unsupported);
+ assert.equal(lexicalSupport('「其他計劃」包括哪些退款安排？',evidence)<0.6,true);
+});
+
+test('Task1 C4 Helper traceability preserves source IDs for every displayed full-content excerpt', () => {
+  const backend=task1SourceRead('supabase/functions/agent-assist/index.ts','utf8');
+  const panel=task1SourceRead('src/components/console/AgentToolPanel.tsx','utf8');
+  assert.match(backend,/document_id:i\.document_id/);
+  assert.match(backend,/chunk_id:i\.chunk_id/);
+  assert.match(panel,/data-document-id=\{e\.document_id \?\? undefined\}/);
+  assert.match(panel,/data-chunk-id=\{e\.chunk_id \?\? undefined\}/);
+  assert.match(panel,/Source identifiers unavailable — verify citation lineage before use/);
+});
+
+test('C3 cross-topic numeric correction: user-owned tab count must not mutate an unrelated active product or leak typed JSON',()=>{
+ const turn='再更正，依家只會開6個分頁，其他文書、視像會議同慳錢要求不變。';
+ const old=createEmptyConversationCommerceState();
+ old.current_topic='air_conditioner';old.current_intent='select_product';
+ old.entities=[{entity_id:'air_conditioner:unscoped',category:'air_conditioner',brand:null,model:'CW-SUL70BA',quantity:1,status:'tentative',
+  attributes:{product_name:'CW-SUL70BA',quantity_basis:'system_default',installation_type:'window_unit'},
+  constraints:{},provenance:{source_type:'customer',source_message_id:'prior-ac'}}];
+ old.customer_constraints.customer_reported_facts={
+  open_web_pages:{value:8,provenance:{source_type:'customer',source_message_id:'old-computer'}},
+  budget_constraint:{value:'想慳啲',provenance:{source_type:'customer',source_message_id:'old-computer'}}
+ };
+ const ambiguousProviderEntity={
+   entity_ref:'air_conditioner:unscoped',name:'CW-SUL70BA',kind:'physical_product',
+   category_hint:'air_conditioner',sku:null,model:'CW-SUL70BA',quantity:6,unit:'部',
+   attributes:{},constraints:{},capabilities:{},confidence:.96
+ };
+ const update=semantic({operation:'UPDATE_ITEM',intent:'other',requested_facts:[],
+  customer_correction:true,entities:[ambiguousProviderEntity],
+  customer_facts:[{key:'open_web_pages',value:6}]});
+ const priorHistory=[
+  {role:'assistant',content:'CW-SUL70BA 有待確認適用資料。',metadata:{response_route:'canonical_kb_direct_answer'}},
+  {role:'visitor',content:'CW-SUL70BA 功能？'},
+  {role:'assistant',content:'以8個分頁比較 RAM、CPU、SSD',metadata:{response_route:'customer_guidance'}},
+  {role:'visitor',content:'更正，實際只係8個分頁，請比較 RAM、CPU、SSD 升級優先次序，邊啲可以暫緩？'},
+ ];
+ const decision=resolveCustomerRequestDecision(turn,update,priorHistory);
+ assert.equal(decision.kind,'guidance','the most recent unrelated product answer must not steal a customer-fact correction');
+ assert.equal(decision.continuation,true);
+ assert.equal(decision.merchant_request,null);
+ const hints=[{entity_id:'air_conditioner:unscoped',category:'air_conditioner',model:'CW-SUL70BA',
+  aliases:['CW-SUL70BA'],attributes:{product_name:'CW-SUL70BA'},constraints:{}}];
+ const reduced=reduceTurn(old,{text:turn,semantic_frame:update,source_message_id:SRC,
+   conversation_id:CID,company_id:TID,language:'zh-TW'},hints);
+ assert.equal(reduced.entities[0].quantity,1,'browser tabs cannot become air conditioner quantity');
+ assert.equal(reduced.entities[0].attributes.quantity_basis,'system_default');
+ assert.equal(reduced.customer_constraints.customer_reported_facts.open_web_pages.value,6);
+ assert.equal(reduced.customer_constraints.customer_reported_facts.open_web_pages.provenance.source_message_id,SRC);
+ const memory=buildCanonicalConversationMemory({conversation_id:CID,company_id:TID,source_message_id:SRC,
+   commerce_state_revision:3,commerce_state:reduced,
+   request_decision:decision,customer_fact_delta:update.customer_facts.map(f=>({...f,authority:'customer',source_message_id:SRC})),
+   newest_first:[{id:SRC,role:'visitor',content:turn,created_at:'2026-10-27T03:41:17Z'},
+      ...priorHistory.map((h,i)=>({id:'prior-'+i,...h}))],
+   visitor_turn_count:13,source_created_at:'2026-10-27T03:41:17Z',next_memory_revision:17});
+ assert.match(memory.current_goal??'',/6個分頁/,'current goal must be source-bound current computer context');
+ assert.doesNotMatch(memory.current_goal??'',/CW-SUL70BA|air conditioner/i);
+ assert.notEqual(memory.current_topic,'air_conditioner','current topic cannot be an unrelated old entity');
+ assert(!memory.active_constraints.some(x=>x.includes('customer_reported_facts')||x.includes('"provenance"')));
+ assert.equal(memory.current_customer_facts.find(f=>f.key==='open_web_pages')?.value,6);
+});
+test('C4 Knowledge Helper action is grounded and human reviewed rather than auto-sent',()=>{
+ const panel=task1SourceRead('src/components/console/AgentToolPanel.tsx','utf8');
+ const inbox=task1SourceRead('src/routes/_authenticated/console.conversations.index.tsx','utf8');
+ assert.match(panel,/helperEvidenceDraft && \(/);
+ assert.match(panel,/visibleResult\.data\.status === "available"/);
+ assert.match(panel,/e\.chunk_type === "full_content"/);
+ assert.match(panel,/e\.document_id/);
+ assert.match(panel,/e\.chunk_id/);
+ assert.match(panel,/onClick=\{\(\) => useResult\(helperEvidenceDraft\)\}/);
+ assert.match(panel,/resultSnapshot\.current\?\.draft===latestInputs\.current\.draft/);
+ assert.match(inbox,/setUseConfirmOpen\(true\)/);
+ assert.match(inbox,/setPendingUseText\(text\)/);
+});
+
+test('Task1: bare commerce subject is never ADD_ITEM with fabricated default quantity',()=>{
+  for(const name of ['轻量冲锋衣','轻量化户外冲锋衣','SaaS 訂閱方案','剪髮服務','CW-SUL70BA']){
+    const entity={entity_ref:name,name,kind:'physical_product',category_hint:null,sku:null,model:null,
+      quantity:1,unit:null,attributes:{},constraints:{},capabilities:{},confidence:0.97};
+    const proposal=semantic({operation:'ADD_ITEM',intent:'explore_options',requested_facts:[],entities:[entity]});
+    assert.equal(isBareCommerceSubjectMention(name,proposal),true,name);
+    const before=createEmptyConversationCommerceState();
+    assert.deepEqual(reducer(name,proposal,before),before,'no default item or quantity: '+name);
+    for(const realAction of ['我要買一件'+name,'请查'+name+'售价','取消'+name,'Buy '+name])
+      assert.equal(isBareCommerceSubjectMention(realAction,proposal),false,'keep legitimate action or fact request');
+  }
+});
+
+test("Task1 source guards: published-reference price cannot become a verified current-price claim",()=>{
+ const source=task1SourceRead("supabase/functions/_shared/canonical-kb-direct-answer.ts","utf8");
+ assert.match(source,/publishedReferenceOnly/);
+ assert.match(source,/selected_authority_class === "PUBLISHED_KB_SERVICE"/);
+ assert.match(source,/priceCandidates/);
+ assert.match(source,/consistentPrice/);
+ assert.match(source,/return evidence\("listed_price_unverified"/);
+ assert.match(source,/if \(publishedReferenceOnly \|\| nameTarget\) \{/);
+ assert.match(source,/const priceFact = currentVerified && !nameTarget && priceEvidence/);
+ assert.match(source,/chunk.status === "published" \|\| publishedReferenceOnly && chunk.status === "unknown"/);
+ const b2=task1SourceRead("supabase/functions/_shared/pre-send-conversion-supervisor.ts","utf8");
+ assert.match(b2,/evaluateCurrentKbSellingPrice\(input, draft\)/);
+ assert.match(b2,/CURRENT_KB_PRICE_PROOF_MISSING/);
+});
+
+// Same Task1C native regression suite, executed by the existing isolated final gate.
+import './event-driven-widget.test.mjs';
+
+
+test('Task1C source-recorded price is resolved before the secondary retrieval-score gate',()=>{
+ const code=task1SourceRead('supabase/functions/generate-reply/index.ts','utf8');
+ const resolve=code.indexOf('_canonicalKbDirectAnswer = resolveCanonicalKbDirectAnswer({');
+ const gate=code.indexOf('if (!_sourceRecordedPriceReady && !hasUsableFullContentEvidence(usableChunks, minScore))');
+ assert(resolve>0 && gate>resolve,'exact named price must not dead-end before renderer');
+ assert.match(code,/const _sourceRecordedPriceReady = !_mixedRequest && !isHighRisk &&/);
+ assert.match(code,/_canonicalKbDirectAnswer\?\.kind === "listed_price_unverified"/);
+ assert.match(code,/!_priorGroundedTransform/);
+});
+
+
+test('Task1C catalogue source answers share safe consumer wiring and real fresh-query followup',()=>{
+ const handler=task1SourceRead('supabase/functions/generate-reply/index.ts','utf8');
+ const assist=task1SourceRead('supabase/functions/agent-assist/index.ts','utf8');
+ assert.match(handler,/resolveCatalogueVariantFollowup\(_h1LastMsg/);
+ assert.match(handler,/_currentFactualRequest = resolveCurrentFactualRequest\(\{\s*question: _semanticRequestQuestion,/,
+   'source-bound catalogue variants enter the same current request resolver');
+ assert.match(handler,/const userQuery = \(_currentFactualRequest\?\.applicable\s*\? _currentFactualRequest\.query\s*: _catalogueFollowup\?\.request \|\| _c3ServicePlan\.kb_query \|\| _productKbContract\?\.query \|\| _semanticRetrieval\.query\) \?\? "";/,
+   'the current resolved question owns retrieval; catalogue and planner remain fallback paths');
+ assert.match(handler,/_catalogueQuestion && !_explicitHandoffRequested && !_deferR1ForE1/);
+ assert.match(handler,/catalogue_requested_facts:_catalogueQuestion\.requested_facts/);
+ assert.match(handler,/commitAiReplyWithControlGate/);
+ assert.match(handler,/recorded_kb_facts:\s*\(_canonicalKbDirectAnswer\.recorded_facts/);
+ assert.match(assist,/toolType==="suggest_reply"/);
+ assert.match(assist,/draft_only:true/);
+ assert.match(assist,/recorded_product_facts: catalogueAnswer\?\.recorded_facts/);
+});
+
+// Task3C same-closure regressions. These are source/native fixtures, not a
+// reconstruction of the withheld production semantic response or Hosted PASS.
+import {applyCustomerRequestDecision} from '../../supabase/functions/_shared/commerce-state-authority.ts';
+import {prepareManagedRagServiceRead,bindManagedRagApiResponse,bindRagServiceDocument,ragServiceDocument} from '../../supabase/functions/_shared/preview-kb-query-embedding.ts';
+const ownershipFrame = (text, overrides={}) => ({...semantic(), requested_facts:[], demands:[{
+  question:text,source_quote:text,subject_refs:[],source_type:'general',requested_facts:[],constraints:{},
+  customer_correction:false,explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+}],...overrides});
+for(const text of ['如何使用LINE快速登入？','介紹一下你公司','How do I configure an unfamiliar feature?','請介紹你哋提供的服務。','How do I use this booking portal?','How do I install this device?'])test('Task3C merchant-owned procedural/company demand cannot escape KB: '+text,()=>{
+  const frame=ownershipFrame(text), decision=resolveCustomerRequestDecision(text,frame);
+  assert.equal(decision.kind,'merchant_facts');
+  const next=applyCustomerRequestDecision(frame,decision);
+  assert.equal(next.demands[0].source_type,'unknown');
+  assert.equal(next.demands[0].source_quote,text);
+  assert.equal(next.demands[0].question,text);
+  assert.deepEqual(next.requested_facts,['published_information']);
+  assert.deepEqual(frame.requested_facts,[], 'never mutate the original provider receipt');
+});
+for(const text of ['How should I compare alternatives for a small team?','請按我需求比較各種選擇的取捨。','Which upgrade should I prioritize and which can wait?','Help me choose which arrangement fits','explain general selection considerations'])test('Task3C independent general decision criteria remain no-KB: '+text,()=>{
+ const frame=ownershipFrame(text);assert.equal(resolveCustomerRequestDecision(text,frame).kind,'guidance');
+});
+test('Task3C ownership guards retain explicit no-lookup, control and source bounds',()=>{
+ const text='不要查外部資料，如何比較選擇？';assert.equal(resolveCustomerRequestDecision(text,ownershipFrame(text)).kind,'guidance');
+ const human='請轉真人客服';assert.equal(resolveCustomerRequestDecision(human,ownershipFrame(human)).kind,'other');
+ const invented=ownershipFrame('介紹公司');invented.demands[0].source_quote='unsaid private company fact';
+ assert.equal(resolveCustomerRequestDecision('介紹公司',invented).kind,'other');
+});
+const managedEndpoint='https://py.ebixmall.com/py-knowledge-base/api/v1/rag/context-search';
+function managedAuthorityFixture(tenant='50') {
+ const company='00000000-0000-4000-8000-000000000751',conversation='00000000-0000-4000-8000-000000000752';
+ const rows={company:{id:company,is_active:true},conversations:{id:conversation,company_id:company},
+  company_kb_tenant_binding:{company_id:company,kb_tenant_id:tenant,is_active:true,revision:2,api_key_secret_ref:'00000000-0000-4000-8000-000000000753'}};
+ const rpcCalls=[];
+ const db={from(table){const predicates=[];return {select(){return this;},eq(k,v){predicates.push([k,v]);return this;},async maybeSingle(){const row=rows[table];return {data:row&&predicates.every(([k,v])=>row[k]===v)?structuredClone(row):null,error:null};}};},
+  async rpc(name,args){rpcCalls.push({name,args});assert.equal(name,'kb_binding_secret_v1');assert.deepEqual(args,{p_company:company,p_tenant:tenant});return {data:'fixture-only-not-a-real-key',error:null};}};
+ const input={company,tenant,conversation,operation:'fixture-source:kb',endpoint:managedEndpoint,requestBody:JSON.stringify({company_id:Number(tenant),query:'Published service information'})};
+ const data={success:true,context_found:true,selected_documents:[{document_id:'fixture-doc',title:'Published service information',source_type:'Other',document_score:.9,evidence:[{chunk_id:'fixture-chunk',chunk_type:'full_content',content:'Published service information. Plan Alpha is listed as TWD 888 monthly.',score:.9}]}],citations:[{document_id:'fixture-doc',relevance:'low'}]};
+ return {rows,db,input,data,rpcCalls};
+}
+test('Task3C managed service proof is server-only, tenant-bound and never fabricates currentness',async()=>{
+ const f=managedAuthorityFixture(), read=await prepareManagedRagServiceRead(f.db,f.input);
+ assert.equal(f.rpcCalls.length,1);assert.equal(JSON.stringify(read.authority),'{}');
+ const response=await bindManagedRagApiResponse(Response.json(f.data),read.authority,f.input.requestBody,f.input.endpoint);
+ const parsed=await response.json(),doc=parsed.selected_documents[0];assert.deepEqual(doc,f.data.selected_documents[0]);
+ assert.equal(ragServiceDocument(doc),undefined);bindRagServiceDocument(response,doc);
+ assert.deepEqual(ragServiceDocument(doc),{tenant:'50',relevance:'low'});
+ assert.equal(ragServiceDocument(structuredClone(doc)),undefined);
+ assert.equal(doc.authority,undefined);assert.equal(doc.version,undefined);
+ await assert.rejects(()=>bindManagedRagApiResponse(Response.json(f.data),read.authority,f.input.requestBody,f.input.endpoint));
+});
+for(const [name,alter] of [
+ ['inactive company',f=>f.rows.company.is_active=false],
+ ['wrong conversation owner',f=>f.rows.conversations.company_id='00000000-0000-4000-8000-000000000999'],
+ ['revoked mapping',f=>f.rows.company_kb_tenant_binding.is_active=false],
+ ['wrong tenant',f=>f.rows.company_kb_tenant_binding.kb_tenant_id='51'],
+ ['missing credential reference',f=>f.rows.company_kb_tenant_binding.api_key_secret_ref=null],
+ ['invalid revision',f=>f.rows.company_kb_tenant_binding.revision=0],
+])test('Task3C managed authority rejects '+name+' before credential/network',async()=>{
+ const f=managedAuthorityFixture();alter(f);await assert.rejects(()=>prepareManagedRagServiceRead(f.db,f.input));assert.equal(f.rpcCalls.length,0);
+});
+for(const [name,alter] of [
+ ['revoked in flight',f=>f.rows.company_kb_tenant_binding.is_active=false],
+ ['revision changed in flight',f=>f.rows.company_kb_tenant_binding.revision++],
+ ['secret rotated in flight',f=>f.rows.company_kb_tenant_binding.api_key_secret_ref='00000000-0000-4000-8000-000000000999'],
+ ['company disabled in flight',f=>f.rows.company.is_active=false],
+])test('Task3C managed authority rejects '+name+' after HTTP success',async()=>{
+ const f=managedAuthorityFixture(),read=await prepareManagedRagServiceRead(f.db,f.input);alter(f);
+ await assert.rejects(()=>bindManagedRagApiResponse(Response.json(f.data),read.authority,f.input.requestBody,f.input.endpoint));
+});
+for(const [name,alter] of [
+ ['explicit foreign tenant',d=>d.selected_documents[0].tenant_id='34'],
+ ['draft',d=>d.selected_documents[0].status='draft'],
+ ['staging',d=>d.selected_documents[0].environment='staging'],
+ ['historical',d=>d.selected_documents[0].currentness='historical'],
+ ['wrong document lineage',d=>d.selected_documents[0].evidence[0].document_id='foreign-doc'],
+ ['substituted hash',d=>d.selected_documents[0].evidence[0].content_sha256='a'.repeat(64)],
+ ['invalid citation',d=>d.citations[0].document_id='foreign-doc'],
+])test('Task3C managed response provenance rejects '+name,async()=>{
+ const f=managedAuthorityFixture(),read=await prepareManagedRagServiceRead(f.db,f.input);alter(f.data);
+ await assert.rejects(()=>bindManagedRagApiResponse(Response.json(f.data),read.authority,f.input.requestBody,f.input.endpoint));
+});
+test('Task3C no client token, request substitution, alternate endpoint or remote retry',async()=>{
+ const f=managedAuthorityFixture();await assert.rejects(()=>bindManagedRagApiResponse(Response.json(f.data),{},f.input.requestBody,f.input.endpoint));
+ const a=await prepareManagedRagServiceRead(f.db,f.input);
+ await assert.rejects(()=>bindManagedRagApiResponse(Response.json(f.data),a.authority,JSON.stringify({company_id:51,query:'other'}),f.input.endpoint));
+ await assert.rejects(()=>prepareManagedRagServiceRead(f.db,{...f.input,endpoint:'https://example.test/context-search'}));
+ const b=await prepareManagedRagServiceRead(f.db,f.input);
+ await assert.rejects(()=>bindManagedRagApiResponse(Response.json({error:'unavailable'},{status:503}),b.authority,f.input.requestBody,f.input.endpoint));
+});
+
+// Agreed D1-C regression: a provider's general label never overrides explicit
+// merchant facts. These synthetic inputs distinguish the rejected external-OR
+// proposal from the guarded helper; they are not captured Hosted model output.
+// The original C3 runner intentionally uses Node --experimental-strip-types.
+// Bundle the complete canonical TS source and its real imports to in-memory JS;
+// the unchanged source contains a TypeScript parameter property that strip-only
+// cannot load directly. No fixture or normalized output is substituted.
+const task3cCanonicalBundle=task3cBuildCanonical({
+ entryPoints:['supabase/functions/_shared/commerce-semantic-frame.ts'],
+ bundle:true,platform:'node',format:'esm',write:false,logLevel:'silent',
+});
+const {normalizeCommerceSemanticFrame}=await import('data:text/javascript;base64,'+
+ Buffer.from(task3cCanonicalBundle.outputFiles[0].contents).toString('base64'));
+for(const [text,fact] of [
+ ['Help me choose a plan and show the current price.','price'],
+ ['Help me compare plans and confirm availability.','availability'],
+ ['Help me choose a service and explain the cancellation policy.','policy'],
+ ['Help me choose a product and confirm its warranty.','warranty'],
+])test('Task3C D1-C merchant fact veto survives general misclassification: '+fact,()=>{
+ const input=ownershipFrame(text,{language:'en',intent:'explore_options',requested_facts:[fact]});
+ input.demands[0].requested_facts=[fact];
+ const frame=normalizeCommerceSemanticFrame(input);
+ assert(frame,'negative fixture must be canonically valid');
+ const before=structuredClone(frame);
+ const decision=resolveCustomerRequestDecision(text,frame);
+ assert.equal(decision.kind,'merchant_facts');
+ assert.equal(decision.general_request,null);
+ assert.equal(decision.merchant_request,text);
+ const next=applyCustomerRequestDecision(frame,decision);
+ assert.equal(next.demands[0].source_type,'unknown');
+ assert.equal(next.demands[0].source_quote,text);
+ assert.deepEqual(next.demands[0].requested_facts,[fact]);
+ assert.deepEqual(next.requested_facts,[fact]);
+ assert.notEqual(next.intent,'customer_guidance');
+ assert.deepEqual(frame,before,'decision application must not mutate the provider frame');
+});
+
+// Task3C #178 generic source/subject/value/unit regression. Existing handler
+// 580 and Frozen assertions remain unchanged; all inputs are native offline.
+for (const scenario of [
+  {name:"wholesale carton quantity",text:"Our wholesale enquiry needs 120 cartons.",facts:[{key:"wholesale_cartons",value:{amount:120,unit:"cartons"}}],expected:["wholesale_cartons",120,"cartons"]},
+  {name:"service training duration",text:"The course lasts 3 hours.",facts:[{key:"course_duration",value:{amount:3,unit:"hours"}}],expected:["course_duration",3,"hours"]},
+  {name:"rental contract period",text:"The rental period is 24 months.",facts:[{key:"rental_period",value:{amount:24,unit:"months"}}],expected:["rental_period",24,"months"]},
+  {name:"two separately sourced customer facts",text:"Our team has 8 staff; training takes 2 hours.",facts:[{key:"team_size",value:{amount:8,unit:"staff"}},{key:"training_duration",value:{amount:2,unit:"hours"}}],expected:["team_size",8,"staff"],other:["training_duration",2,"hours"]},
+  {name:"source unit retained without industry mapping",text:"細房約80呎，大房100呎，客廳就180呎。",facts:[{key:"small_room_area",value:{amount:80,unit:"呎"}},{key:"large_room_area",value:{amount:100,unit:"呎"}},{key:"living_room_area",value:{amount:180,unit:"呎"}}],expected:["small_room_area",80,"呎"],other:["living_room_area",180,"呎"]},
+]) test("Task3C P1 #178 source-bound generic observation: "+scenario.name,()=>{
+  const next=reduceTurn(createEmptyConversationCommerceState(),{
+    text:scenario.text,semantic_frame:semantic({operation:"NO_STATE_CHANGE",intent:"customer_context_update",requested_facts:[],customer_facts:scenario.facts}),
+    source_message_id:SRC,conversation_id:CID,company_id:TID,language:"zh-TW"
+  },[],{company_id:TID,conversation_id:CID,source_message_id:SRC,state_revision:0});
+  const facts=next.customer_constraints.customer_reported_facts;
+  for(const expected of [scenario.expected,...(scenario.other?[scenario.other]:[])]){
+    const [key,amount,unit]=expected,record=facts[key];
+    assert(record,JSON.stringify({scenario,record,facts}));
+    assert.equal(record.value.amount,amount);
+    assert.equal(record.value.unit,unit);
+    assert.equal(record.source_unit_text,unit);
+    assert.equal(record.provenance.source_message_id,SRC);
+    assert.equal(record.provenance.source_type,"customer");
+  }
+  if(scenario.name==="source unit retained without industry mapping"){
+    assert.equal(next.customer_constraints.scoped_area_observations,undefined);
+    for(const row of Object.values(facts)){
+      assert.equal(row.source_count_visibility,"exact_recall_only");
+      assert.equal(row.source_count_expires_after_revision-row.source_count_recorded_revision,32);
+      assert.equal(row.provenance.company_id,TID);
+      assert.equal(row.provenance.conversation_id,CID);
+    }
+  }
+  assert.equal(next.entities.length,0,"a customer observation must not create a sale item");
+  assert.equal(next.quotes.length,0,"a customer observation is not a quote");
+  assert.equal(next.conversion.order_status,"none");
+});
+for (const scenario of [
+  {name:"unseeded bare unit cannot verify square feet",text:"細房約80呎，大房100呎，客廳就180呎。",facts:[["small_room_area",80],["large_room_area",100],["living_room_area",180]].map(([key,amount])=>({key,value:{amount,unit:"sq_ft"}}))},
+  {name:"question cannot become current",text:"Could the course be 3 hours?",facts:[{key:"course_duration",value:{amount:3,unit:"hours"}}]},
+  {name:"unmatched quantity",text:"Our order needs 4 cartons.",facts:[{key:"wholesale_cartons",value:{amount:8,unit:"cartons"}}]},
+  {name:"ambiguity two numerals one clause",text:"We have 2 staff and 5 seats.",facts:[{key:"seats",value:{amount:5,unit:"seats"}}]},
+  {name:"merchant price authority forbidden",text:"Our budget is 800 HKD.",facts:[{key:"current_price",value:{amount:800,unit:"HKD"}}]},
+]) test("Task3C P1 #178 rejects unproved customer fact: "+scenario.name,()=>{
+  const next=reduceTurn(createEmptyConversationCommerceState(),{
+    text:scenario.text,semantic_frame:semantic({operation:"NO_STATE_CHANGE",intent:"customer_context_update",requested_facts:[],customer_facts:scenario.facts}),
+    source_message_id:SRC,conversation_id:CID,company_id:TID,language:"en"
+  },[]);
+  const record=next.customer_constraints.customer_reported_facts?.[scenario.facts[0].key];
+  assert.equal(record?.source_unit_text,undefined,"no source-verified Commerce proof");
+  assert.equal(next.quotes.length,0,"never write quotation from observation");
+});
+
+test("Task3C #178 generic unit mismatch is rejected",()=>{
+ const text="The course lasts 3 hours.";
+ const state=reduceTurn(createEmptyConversationCommerceState(),{
+  text,semantic_frame:semantic({operation:"NO_STATE_CHANGE",intent:"customer_context_update",requested_facts:[],customer_facts:[{key:"course_duration",value:{amount:3,unit:"USD"}}]}),
+  source_message_id:SRC,conversation_id:CID,company_id:TID,language:"en"
+ },[]);
+ assert.equal(state.customer_constraints.customer_reported_facts?.course_duration,undefined);
+ assert.equal(state.quotes.length,0);
+});
+
+for(const [name,text] of [
+ ["HK room-count initial shopping research","想換冷氣，兩間睡房加個客廳，應該點揀好？"],
+ ["English multi-department rental","We want to choose a rental for 2 departments; which option?"],
+ ["Taiwan subscription shopping","我們想選購 3 個訂閱席位，應該比較哪些？"]
+]) test("Task3C P1 source-attested first advisory intent, no industry default: "+name,()=>{
+ const f=semantic({operation:"ASK_FACT",intent:"customer_guidance",requested_facts:[],entities:[],customer_facts:[]});
+ assert.equal(isSourceOwnedActiveAdviceGoal(text),true);
+ assert.equal(isReadOnlyMemoryOrCurrentStateRecall(text,f),false);
+ const s=reduceTurn(createEmptyConversationCommerceState(),{text,semantic_frame:f,source_message_id:SRC,conversation_id:CID,company_id:TID,language:"zh-TW"},[]);
+ assert.equal(s.current_intent,"customer_guidance");
+ assert.equal(s.entities.length,0);
+ assert.equal(s.quotes.length,0);
+ assert.equal(s.conversion.order_status,"none");
+});
+for(const text of [
+ "Do you remember we wanted to buy 2 chairs?",
+ "以前我想選三個方案，現在還是三個嗎？",
+ "We do not want to buy 3 seats.",
+ "How many units did we select earlier?"
+]) test("Task3C P1 historical or negated sources cannot create new intent: "+text,()=>{
+ const f=semantic({operation:"ASK_FACT",intent:"customer_guidance",requested_facts:[],entities:[],customer_facts:[]});
+ assert.equal(isSourceOwnedActiveAdviceGoal(text),false);
+ const s=reduceTurn(createEmptyConversationCommerceState(),{text,semantic_frame:f,source_message_id:SRC,conversation_id:CID,company_id:TID,language:"en"},[]);
+ assert.notEqual(s.current_intent,"customer_guidance");
+ assert.equal(s.entities.length,0);
+ assert.equal(s.quotes.length,0);
+});
+
+
+// Source-bound advice goal: complete demand evidence, not a sparse intent label.
+// All pre-existing raw-source positive and negative assertions above stay unchanged.
+const sourceAdviceDemand=(text,subject)=>({
+ question:text,source_quote:text,subject_refs:[subject],source_type:"general",
+ requested_facts:[],constraints:{},customer_correction:false,explicit_negations:[],
+ ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}
+});
+const sourceAdviceReading=(text,subject)=>({
+ ...semantic({requested_facts:[]}),demands:[sourceAdviceDemand(text,subject)]
+});
+const sourceAdviceInput=(text,reading)=>({text,semantic_frame:reading,
+ source_message_id:SRC,conversation_id:CID,company_id:TID,language:"en"});
+for(const [text,subject] of [
+ ["How should I choose a training course?","training course"],
+ ["How should I compare rental periods?","rental periods"],
+ ["Please compare the selection criteria for subscription plans.","subscription plans"]
+]) test("Task3C P1 complete Reading establishes source-owned advice goal: "+subject,()=>{
+ const f=sourceAdviceReading(text,subject),input=sourceAdviceInput(text,f);
+ assert.equal(isSourceOwnedActiveAdviceGoal(text),false);
+ assert.equal(hasSourceBoundCurrentAdviceGoal(input,f),true);
+ const s=reduceTurn(createEmptyConversationCommerceState(),input,[]);
+ assert.equal(s.current_intent,"customer_guidance");
+ assert.equal(s.entities.length,0);
+ assert.equal(s.quotes.length,0);
+ assert.equal(s.conversion.order_status,"none");
+});
+test("Task3C P1 complete advice Reading cannot manufacture authority",()=>{
+ const text="How should I choose a training course?";
+ const base=sourceAdviceReading(text,"training course");
+ const source=sourceAdviceInput(text,base);
+ const cases=[
+  [source,null],[source,{...base,demands:[]}],
+  [source,{...base,confidence:0.5}],
+  [source,{...base,customer_correction:true}],
+  [source,{...base,explicit_negations:["training course"]}],
+  [source,{...base,payment_state:"paid"}],
+  [source,{...base,demands:[{...base.demands[0],source_quote:"How should I choose?"}]}],
+  [source,{...base,demands:[{...base.demands[0],subject_refs:["unrelated subject"]}]}],
+  [{...source,company_id:""},base],
+  [{...source,source_message_id:""},base],
+  [{...source,conversation_id:""},base]
+ ];
+ for(const [input,f] of cases)assert.equal(hasSourceBoundCurrentAdviceGoal(input,f),false);
+ for(const text of [
+  "Do you remember we wanted to buy 2 chairs?",
+  "We do not want to buy 3 seats.",
+  "How should I compare your current prices?",
+  "Please connect me to a human agent."
+ ]){
+  const f=sourceAdviceReading(text,text),input=sourceAdviceInput(text,f);
+  assert.equal(hasSourceBoundCurrentAdviceGoal(input,f),false,text);
+  const s=reduceTurn(createEmptyConversationCommerceState(),input,[]);
+  assert.notEqual(s.current_intent,"customer_guidance",text);
+  assert.equal(s.quotes.length,0);
+  assert.equal(s.conversion.order_status,"none");
+ }
+});
+
+test("Task3C P1 rejected structured advice Reading cannot use sparse legacy goal authority",()=>{
+ const text="We want to choose a rental for 2 departments; which option?";
+ const base=sourceAdviceReading(text,"rental");
+ assert.equal(isSourceOwnedActiveAdviceGoal(text),true,"legacy grammar control");
+ const sparse=semantic({operation:"ASK_FACT",intent:"customer_guidance",requested_facts:[],entities:[],customer_facts:[]});
+ assert.equal(acceptsInitialAdviceGoalReading(sourceAdviceInput(text,sparse),sparse),true,"original sparse contract preserved");
+ const variants=[
+  {...base,demands:[{...base.demands[0],source_quote:"An unrelated question"}]},
+  {...base,demands:[{...base.demands[0],subject_refs:["unrelated subject"]}]},
+  {...base,demands:[{...base.demands[0],source_type:"product",requested_facts:["current_price"]}]},
+  {...base,demands:[{...base.demands[0],ambiguity:{is_ambiguous:true,reasons:["unclear scope"],clarification_question:null}}]},
+ ];
+ for(const f of variants){
+  const input=sourceAdviceInput(text,f);
+  assert.equal(hasSourceBoundCurrentAdviceGoal(input,f),false);
+  assert.equal(acceptsInitialAdviceGoalReading(input,f),false);
+  const state=reduceTurn(createEmptyConversationCommerceState(),input,[]);
+  assert.notEqual(state.current_intent,"customer_guidance");
+  assert.equal(state.entities.length,0);
+  assert.equal(state.quotes.length,0);
+  assert.equal(state.conversion.order_status,"none");
+ }
+ const validText="How should I choose a training course?";
+ const valid=sourceAdviceReading(validText,"training course");
+ assert.equal(acceptsInitialAdviceGoalReading(sourceAdviceInput(validText,valid),valid),true);
+});
+
+
+// P1: preserve separate, source-bound customer recall and merchant demands.
+// This exercises the actual routing implementation. It does not attest values.
+test('P1 mixed quantity recall keeps merchant lookup and customer question independent',()=>{
+ const pairs=[
+  ['我之前提過幾張書枱？','另外目前每張官方售價是多少？'],
+  ['我之前提過幾份套餐？','今天每份官方售價是多少？'],
+  ['我之前提過幾課英語課？','現在每課學費是多少？'],
+  ['我之前提過幾堂療程？','現在每堂售價是多少？'],
+  ['How many licenses did I mention earlier','what is their current official price?'],
+  ['How many cartons did I mention','what is the current official wholesale price?'],
+ ];
+ const make=(q,m)=>({...semantic({intent:'mixed_customer_and_merchant_facts',requested_facts:['quantity','price']}),
+ demands:[{...ownershipFrame(q).demands[0],requested_facts:['quantity']},
+ {...ownershipFrame(m).demands[0],source_type:'product',requested_facts:['price']}]});
+ // Literal references identify a candidate read field only, not an entity
+ // or a count. The real Handler independently verifies stored scope/evidence.
+ const literalRefs=['書枱','套餐','英語課','療程','licenses','cartons'];
+ const withRecallRef=(q,m,ref)=>{
+   assert.ok(q.includes(ref),'fixture reference must be literal customer text');
+   const frame=make(q,m);
+   frame.demands[0].subject_refs=[ref];
+   return frame;
+ };
+ for(const [i,[q,m]] of pairs.entries()){
+   const source=q+' '+m,frame=withRecallRef(q,m,literalRefs[i]),copy=structuredClone(frame);
+   const d=resolveCustomerRequestDecision(source,frame);
+   assert.equal(d.kind,'mixed',JSON.stringify(d));
+   assert.equal(d.customer_quantity_recall_request,q);
+   assert.equal(d.merchant_request,m);
+   assert.deepEqual(d.semantic_demands.map(x=>x.source_type),['general','product']);
+   assert.deepEqual(frame,copy);
+ }
+ for(const q of ['How many licenses are in stock?','How many orders did I mention?','How many licenses are available from your store?','我之前提過幾多貨存？','How many payments did I mention?','How many refunds did I mention?','How many bookings did I mention?','How many reservations did I mention?','How many entitlements did I mention?','How many transactions did I mention?','How many invoices did I mention?','How many quotations did I mention?','How many inventories did I mention?','我之前提過幾張發票？','我之前提過幾多宗交易？']){
+   const m='what is the current official price?',d=resolveCustomerRequestDecision(q+' '+m,make(q,m));
+   assert.equal(d.customer_quantity_recall_request,undefined,q);
+   assert.ok(d.merchant_request);
+ }
+ const [q,m]=pairs[0],source=q+' '+m;
+ const invented=resolveCustomerRequestDecision(m,make(q,m));assert.equal(invented.customer_quantity_recall_request,undefined);
+ const ambiguous=make(q,m);ambiguous.demands[0].ambiguity.is_ambiguous=true;
+ assert.equal(resolveCustomerRequestDecision(source,ambiguous).customer_quantity_recall_request,undefined);
+ const correction=make(q,m);correction.demands[0].customer_correction=true;
+ assert.equal(resolveCustomerRequestDecision(source,correction).customer_quantity_recall_request,undefined);
+ const control=resolveCustomerRequestDecision(source+' 請轉真人客服',make(q,m));
+ assert.equal(control.customer_quantity_recall_request,undefined);
+ // Retain every original negative unchanged. Also exercise the same guards
+ // with a present literal reference so an empty input cannot mask a defect.
+ for(const [negative,ref] of [
+   ['How many licenses are in stock?','licenses'],
+   ['How many orders did I mention?','orders'],
+   ['How many licenses are available from your store?','licenses'],
+   ['我之前提過幾多貨存？','貨存'],
+   ['How many payments did I mention?','payments'],
+   ['How many refunds did I mention?','refunds'],
+   ['How many bookings did I mention?','bookings'],
+   ['How many reservations did I mention?','reservations'],
+   ['How many entitlements did I mention?','entitlements'],
+   ['How many transactions did I mention?','transactions'],
+   ['How many invoices did I mention?','invoices'],
+   ['How many quotations did I mention?','quotations'],
+   ['How many inventories did I mention?','inventories'],
+   ['我之前提過幾張發票？','發票'],
+   ['我之前提過幾多宗交易？','交易'],
+ ]){
+   const merchant='what is the current official price?';
+   const result=resolveCustomerRequestDecision(negative+' '+merchant,withRecallRef(negative,merchant,ref));
+   assert.equal(result.customer_quantity_recall_request,undefined,negative);
+   assert.ok(result.merchant_request);
+ }
+ const supplied=()=>withRecallRef(q,m,literalRefs[0]);
+ assert.equal(resolveCustomerRequestDecision(m,supplied()).customer_quantity_recall_request,undefined);
+ const suppliedAmbiguous=supplied();suppliedAmbiguous.demands[0].ambiguity.is_ambiguous=true;
+ assert.equal(resolveCustomerRequestDecision(source,suppliedAmbiguous).customer_quantity_recall_request,undefined);
+ const suppliedCorrection=supplied();suppliedCorrection.demands[0].customer_correction=true;
+ assert.equal(resolveCustomerRequestDecision(source,suppliedCorrection).customer_quantity_recall_request,undefined);
+ assert.equal(resolveCustomerRequestDecision(source+' 請轉真人客服',supplied()).customer_quantity_recall_request,undefined);
+});
+
+// P1 actual control-priority failure: independent business questions must not
+// contaminate the final control speech act. No new handoff authority or RPC.
+test('P1 independent question boundary preserves canonical R1 and non-immediate control',()=>{
+ const positives=["我之前提過幾張書枱？ 另外目前每張官方售價是多少？ 請轉真人客服","How many licenses did I mention earlier? What is the current official price? Please transfer me to a human agent","我之前提过几份套餐？今天每份官方售价是多少？请转人工客服"];
+ const negatives=["我之前提過幾張書枱？ 請不要轉真人客服","How many licenses did I mention earlier? Do not transfer me to a human","我之前提過幾張書枱？ 如果查唔到，請轉真人客服","If the answer is not available? Please transfer me to a human","我之前提過幾張書枱？ 「請轉真人客服」","我之前提過幾張書枱？ 真人客服係咪24小時？","客人話「請轉真人客服？」","What is the price? The customer said: \"Please transfer me to a human\"","What is the price? If it is not available, please transfer me to a human agent"];
+ for(const q of positives)assert.equal(classifyHandoffIntent(q).explicit_request,true,q);
+ for(const q of negatives)assert.equal(classifyHandoffIntent(q).explicit_request,false,q);
+});
+
+// R4(a) staged generic count-first observation equivalence; original 103-turn
+// fixture and its no-reading compatibility are NOT altered by these tests.
+for(const scenario of [
+ {name:"original source shape",text:"其實一部舊機拆，另一間房本身冇機。",key:"removal_observation_count",amount:1,unit:"部",subject:"舊機拆",question:"舊機拆幾部？"},
+ {name:"cross-industry Chinese compound count",text:"十二箱貨品破損，另一間房沒有貨。",key:"damaged_cartons",amount:12,unit:"箱",subject:"貨品破損",question:"貨品破損幾箱？"},
+ {name:"cross-industry fullwidth",text:"２張門票作廢。",key:"void_tickets",amount:2,unit:"張",subject:"門票作廢",question:"門票作廢幾張？"},
+])test("R4(a) source-bound count-first write/read: "+scenario.name,async()=>{
+ const base={conversation_id:CID,company_id:TID,language:"zh-TW"};
+ const next=reduceTurn(createEmptyConversationCommerceState(),{...base,text:scenario.text,
+  source_message_id:SRC,semantic_frame:semantic({operation:"NO_STATE_CHANGE",
+  intent:"customer_context_update",requested_facts:[],customer_facts:[
+    {key:scenario.key,value:{amount:scenario.amount,unit:scenario.unit}}]})},[]);
+ const record=next.customer_constraints.customer_reported_facts?.[scenario.key];
+ assert.equal(record?.source_count_order,"count_first");
+ assert.equal(record.source_subject_text,scenario.subject);
+ assert.equal(record.source_unit_text,scenario.unit);
+ assert.equal(record.provenance.source_message_id,SRC);
+ assert.equal(record.value.amount,scenario.amount);
+ assert.equal(next.conversion.order_status,"none");
+ assert.equal(next.conversion.payment_status,"none");
+ assert.equal(next.quotes.length,0);
+ // Remove the old compatibility scalar in this NEW isolated test only:
+ // success must come from the new canonical record, not the legacy reader.
+ const independent=structuredClone(next);
+ delete independent.installation.site_conditions.old_machine_removal_count;
+ let writes=0;
+ const db={from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{
+  company_id:TID,conversation_id:CID,revision:1,state:independent},error:null})})})}),
+  rpc:async()=>{writes++;throw new Error("read must not write")}};
+ const query={...base,source_message_id:"00000000-0000-4000-8000-000000000004",
+  text:scenario.question,history:[{id:SRC,role:"visitor",content:scenario.text}],
+  semantic_frame:semantic({operation:"ASK_FACT",intent:"customer_fact_recall",requested_facts:[scenario.key]})};
+ const result=await runCommerceStateRuntime(db,query);
+ assert.equal(result?.authority,"CONVERSATION_STATE");
+ assert.equal(result?.state_path,"customer_constraints.customer_reported_facts."+scenario.key+".value.amount");
+ assert.equal(result?.persist_result,"read_only");
+ assert(result?.reply?.includes(String(scenario.amount)+" "+scenario.unit));
+ assert.equal(writes,0);
+ const stale=await runCommerceStateRuntime(db,{...query,history:[
+  {id:"00000000-0000-4000-8000-000000000005",role:"visitor",content:"更正："+scenario.subject+"，兩"+scenario.unit+"。"},
+  ...query.history]});
+ assert.notEqual(stale?.authority,"CONVERSATION_STATE","later correction cannot revive the old count");
+ assert.equal(writes,0);
+ const absent=await runCommerceStateRuntime(db,{...query,history:[]});
+ assert.notEqual(absent?.authority,"CONVERSATION_STATE","original visitor source required");
+ assert.equal(writes,0);
+});
+for(const scenario of [
+ {text:"一部舊機不拆。",amount:1,unit:"部"},
+ {text:"一部舊機拆，兩部舊機暫緩。",amount:1,unit:"部"},
+ {text:"如果一部舊機拆。",amount:1,unit:"部"},
+ {text:"十二箱貨品破損。",amount:2,unit:"箱"},
+ {text:"一部舊機拆。",amount:1,unit:"間"},
+])test("R4(a) count-first proof rejects "+scenario.text,()=>{
+ const next=reduceTurn(createEmptyConversationCommerceState(),{conversation_id:CID,company_id:TID,
+  source_message_id:SRC,language:"zh-TW",text:scenario.text,
+  semantic_frame:semantic({operation:"NO_STATE_CHANGE",intent:"customer_context_update",
+  requested_facts:[],customer_facts:[{key:"observed_count",value:{amount:scenario.amount,unit:scenario.unit}}]})},[]);
+ assert.notEqual(next.customer_constraints.customer_reported_facts?.observed_count?.source_count_order,"count_first");
+ assert.equal(next.quotes.length,0);assert.equal(next.conversion.order_status,"none");
+});
+
+/** R4(a) native independent no-reading equivalence. Original fixture bytes,
+ * inputs, oracle and old compatibility source remain untouched until the
+ * agreed pre-push Supervisor evidence establishes independent equivalence. */
+const r4aOriginal=JSON.parse(task1SourceRead(new URL('../../.github/scripts/c3_canonical_103_turns.json',import.meta.url),'utf8'));
+const r4aBase={conversation_id:CID,company_id:TID,language:"zh-TW"};
+const r4aReadId="00000000-0000-4000-8000-000000000004";
+const r4aCorrectionId="00000000-0000-4000-8000-000000000005";
+function r4aFixtureDb(){
+ let live=createEmptyConversationCommerceState(),revision=0,writes=0,source=null;
+ return {db:{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:revision?{
+  company_id:TID,conversation_id:CID,revision,state:live,source_message_id:source}:null,error:null})})})}),
+  rpc:async(_name,p)=>{writes++;assert.equal(p.p_company_id,TID);assert.equal(p.p_conversation_id,CID);
+   assert.equal(p.p_expected_revision,revision);live=structuredClone(p.p_state);source=p.p_source_message_id;revision++;
+   return {data:{result:"success",applied_revision:revision},error:null};}},
+  snapshot:()=>({state:live,revision,writes,source}),withoutLegacy:()=>{delete live.installation.site_conditions.old_machine_removal_count;}};
+}
+test("Room literal-unit observations answer only exact in-window source and scope reads",async()=>{
+ const store=r4aFixtureDb(),text="細房約80呎，大房100呎，客廳就180呎。";
+ const source={...r4aBase,source_message_id:SRC,text,history:[],semantic_frame:semantic({operation:"NO_STATE_CHANGE",intent:"customer_context_update",requested_facts:[],customer_facts:[
+   {key:"small_room_area",value:{amount:80,unit:"呎"}},{key:"large_room_area",value:{amount:100,unit:"呎"}},{key:"living_room_area",value:{amount:180,unit:"呎"}}]})};
+ await runCommerceStateRuntime(store.db,source);
+ const history=[{id:SRC,role:"visitor",content:text}],before=JSON.stringify(store.snapshot());
+ const read=async(question,rows)=>await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:r4aReadId,text:question,history:rows});
+ const exact=await read("細房幾多呎？",history);
+ assert.equal(exact?.authority,"CONVERSATION_STATE");assert.match(exact.reply,/80/);assert.doesNotMatch(exact.reply,/平方|100|180/);
+ for(const rows of [[{...history[0],id:r4aCorrectionId}],[{...history[0],content:"細房約81呎。"}],
+   [...Array.from({length:33},(_,i)=>({id:"later-"+i,role:"visitor",content:"另有其他事項。"})),...history]]){
+   const result=await read("細房幾多呎？",rows);assert.notEqual(result?.authority,"CONVERSATION_STATE");
+ }
+ assert.equal(JSON.stringify(store.snapshot()),before);
+});
+const r4aOriginalFrame={...semantic({operation:"ASK_FACT",intent:"read authoritative current conversation state",requested_facts:["old_machine_removal_count"],confidence:.94}),topic:"installation"};
+const r4aScenarios=[
+ {name:"frozen T44 to T59 without history IDs",source:r4aOriginal.turns[43],question:r4aOriginal.turns[58],amount:1,unit:"部",subject:"舊機拆",frame:r4aOriginalFrame,
+  history:r4aOriginal.turns.slice(43,58).reverse().map(content=>({role:"visitor",content}))},
+ {name:"wholesale count-first Chinese tens",source:"其實十二箱貨品破損，另一間房沒有貨。",question:"貨品破損幾箱？",amount:12,unit:"箱",subject:"貨品破損",frame:null},
+ {name:"ticketing NFKC fullwidth count",source:"其實２張門票作廢，另一間房沒有票。",question:"門票作廢幾張？",amount:2,unit:"張",subject:"門票作廢",frame:null},
+ {name:"zero is a literal observation",source:"其實0件貨品退回。",question:"貨品退回幾件？",amount:0,unit:"件",subject:"貨品退回",frame:null},
+ {name:"English source unit",source:"Actually 3 boxes damaged.",question:"How many boxes damaged?",amount:3,unit:"boxes",subject:"damaged",frame:null,language:"en"},
+];
+for(const s of r4aScenarios)test("R4(a) independent native CAS and read-only B2: "+s.name,async()=>{
+ const store=r4aFixtureDb();
+ const scenarioBase={...r4aBase,language:s.language??r4aBase.language};
+ const p=await persistCommerceTurn(store.db,{...scenarioBase,source_message_id:SRC,text:s.source,semantic_frame:null},[]);
+ assert.equal(p.result,"success");assert.equal(p.revision,1);assert.equal(store.snapshot().writes,1);
+ const entries=Object.entries(store.snapshot().state.customer_constraints.customer_reported_facts??{}).filter(([,row])=>row.source_count_origin==="literal_customer_clause");
+ assert.equal(entries.length,1);
+ const [key,row]=entries[0];assert.equal(row.value.amount,s.amount);assert.equal(row.value.unit,s.unit);
+ assert.equal(row.source_subject_text,s.subject);assert.equal(row.provenance.source_message_id,SRC);
+ assert.equal(row.provenance.company_id,TID);assert.equal(row.provenance.conversation_id,CID);
+ assert.equal(store.snapshot().state.conversion.order_status,"none");
+ assert.equal(store.snapshot().state.conversion.payment_status,"none");assert.equal(store.snapshot().state.quotes.length,0);
+ // Deliberately remove ONLY the old scalar from this new isolated fixture
+ // after the actual writer and CAS. The canonical proof must stand alone.
+ store.withoutLegacy();
+ const before=JSON.stringify(store.snapshot());
+ const history=s.history??[{id:SRC,role:"visitor",content:s.source}];
+ const input={...scenarioBase,source_message_id:r4aReadId,text:s.question,semantic_frame:s.frame,history};
+ const r=await runCommerceStateRuntime(store.db,input);
+ assert.equal(r?.authority,"CONVERSATION_STATE");assert.equal(r.persist_result,"read_only");
+ assert.equal(r.state_path,"customer_constraints.customer_reported_facts."+key+".value.amount");
+ assert(r.reply.includes(String(s.amount)+" "+s.unit));
+ if(s.language==="en")assert.equal(r.reply,"From what you already told me: 3 boxes.");
+ assert.equal(row.source_count_visibility,"exact_recall_only");
+ assert.equal(row.source_count_expires_after_revision,33);
+ assert.equal(JSON.stringify(store.snapshot()),before,"read cannot mutate state, revision or RPC count");
+ const proof=buildB2AuthoritativeReadbackProof(store.snapshot().state,r.state_path);
+ assert.deepEqual(proof,{state_path:r.state_path,value:String(s.amount)});
+ const selected=selectB2ProtectedCustomerCountRead(r,{company_id:TID,conversation_id:CID,source_message_id:r4aReadId,language:scenarioBase.language});
+ assert(selected);
+ const b2Input={proposed_response:r.reply,persistence_kind:"ai_reply",protected_customer_count_read:selected,snapshot:{
+   conversation_id:CID,company_id:TID,source_message_id:r4aReadId,source_message_content:s.question,
+   commerce_state_revision:store.snapshot().revision,commerce_state_source_message_id:store.snapshot().source,
+   state:store.snapshot().state},metadata:{response_route:r.route,commerce_authority:r.authority,
+   commerce_state_revision:r.revision,commerce_state_persist_result:r.persist_result,
+   commerce_state_persistence_classification:classifyCommerceStatePersistenceResult(r.persist_result),
+   commerce_reason:r.reason,commerce_state_path:r.state_path,commerce_state_readback_proof:proof}};
+ const b2=evaluateB2BeforeCommit(b2Input);assert.equal(b2.decision,"allow",JSON.stringify(b2));
+ assert.equal(b2.code,"B2_ALLOW_PROTECTED_CUSTOMER_COUNT_READ");
+ assert.notEqual(evaluateB2BeforeCommit({...b2Input,metadata:{...b2Input.metadata,
+  commerce_state_readback_proof:{...proof,value:"999999"}}}).decision,"allow","substituted proof cannot authorize readback");
+ assert.equal(JSON.stringify(store.snapshot()),before);
+ for(const bad of [
+  {history:[]},{history:[{id:"wrong",role:"visitor",content:s.source}]},
+  {history:[{role:"assistant",content:s.source}]},
+  {history:[{role:"visitor",content:s.source},{role:"visitor",content:s.source}]},
+  {history:[{id:r4aCorrectionId,role:"visitor",content:"更正："+s.subject+"，兩"+s.unit+"。"},...history]},
+ ]){
+  const denied=await runCommerceStateRuntime(store.db,{...input,...bad});
+  assert.notEqual(denied?.authority,"CONVERSATION_STATE","missing/stale/ambiguous source cannot supply count");
+  assert.equal(JSON.stringify(store.snapshot()),before);
+ }
+});
+for(const [name,text] of [
+ ["negation","其實一部舊機不拆。"],["conditional","如果其實一部舊機拆。"],["question","其實一部舊機拆？"],
+ ["conflicting counts","其實一部舊機拆，兩部舊機暫緩。"],["historical","其實上次一部舊機拆。"],
+ ["merchant","其實一部舊機價錢。"],["signed","其實-3 boxes damaged."],["decimal","其實3.5 boxes damaged."],
+ ["ambiguous written zero","其實零件貨品退回。"],["spaced negative","其實- 3 boxes damaged."],
+])test("R4(a) no-reading source guard: "+name,()=>{
+ const next=reduceTurn(createEmptyConversationCommerceState(),{...r4aBase,source_message_id:SRC,text,semantic_frame:null},[]);
+ assert(!Object.values(next.customer_constraints.customer_reported_facts??{}).some(row=>row?.source_count_origin==="literal_customer_clause"));
+ assert.equal(next.conversion.order_status,"none");assert.equal(next.conversion.payment_status,"none");assert.equal(next.quotes.length,0);
+});
+test("R4(a) no-reading exact correction and same-source idempotency",async()=>{
+ const store=r4aFixtureDb();
+ await persistCommerceTurn(store.db,{...r4aBase,source_message_id:SRC,text:r4aOriginal.turns[43],semantic_frame:null},[]);
+ store.withoutLegacy();
+ const before=store.snapshot();
+ const p=await persistCommerceTurn(store.db,{...r4aBase,source_message_id:r4aCorrectionId,text:"更正兩部舊機拆。",semantic_frame:null},[]);
+ assert.equal(p.result,"success");assert.equal(p.revision,before.revision+1);
+ const fact=Object.values(store.snapshot().state.customer_constraints.customer_reported_facts??{}).find(row=>row.source_count_origin==="literal_customer_clause");
+ assert.equal(fact.value.amount,2);assert.equal(fact.provenance.source_message_id,r4aCorrectionId);
+ const r=await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:r4aReadId,text:r4aOriginal.turns[58],semantic_frame:r4aOriginalFrame,history:[{id:r4aCorrectionId,role:"visitor",content:"更正兩部舊機拆。"}]});
+ assert(r?.reply?.includes("2 部"));
+ assert.equal(r.persist_result,"read_only");
+});
+
+test("R4(a) a later partial literal negation invalidates only the older scoped count",async()=>{
+ const store=r4aFixtureDb();
+ await persistCommerceTurn(store.db,{...r4aBase,source_message_id:SRC,text:r4aOriginal.turns[43],semantic_frame:null},[]);
+ store.withoutLegacy();
+ const old=store.snapshot().state.customer_constraints.customer_reported_facts;
+ const key=Object.keys(old).find(k=>old[k].source_count_origin==="literal_customer_clause");
+ const changed=reduceTurn(store.snapshot().state,{...r4aBase,source_message_id:r4aCorrectionId,text:"更正，舊機唔拆。幾多錢？",semantic_frame:null},[]);
+ const row=changed.customer_constraints.customer_reported_facts[key];
+ assert.equal(row.value,null);assert.equal(row.source_count_status,"unresolved");
+ assert.equal(row.provenance.source_message_id,SRC);assert.equal(row.provenance.invalidated_by_source_message_id,r4aCorrectionId);
+ assert.equal(buildB2AuthoritativeReadbackProof(changed,"customer_constraints.customer_reported_facts."+key+".value.amount"),null);
+ assert.equal(changed.conversion.order_status,"none");assert.equal(changed.conversion.payment_status,"none");
+ const input={...r4aBase,source_message_id:r4aReadId,text:r4aOriginal.turns[58],semantic_frame:r4aOriginalFrame,
+ history:[{id:r4aCorrectionId,role:"visitor",content:"更正，舊機唔拆。幾多錢？"},{id:SRC,role:"visitor",content:r4aOriginal.turns[43]}]};
+ const result=await runCommerceStateRuntime(store.db,input);
+ assert.notEqual(result?.authority,"CONVERSATION_STATE");
+});
+
+/** Scoped B2 prerequisite, separate from R4(a) writer changes. Actual
+ * persistence gate with a disposable DB adapter; not Hosted/RLS evidence. */
+import {selectB2ProtectedCustomerCountRead,deliverProtectedCustomerCountReply,executeB2PersistenceGate,buildB2AuthoritativeReadbackProof as b2CountReadback} from '../../supabase/functions/_shared/pre-send-conversion-supervisor.ts';
+const b2CountPrior="00000000-0000-4000-8000-000000000011";
+const b2CountPath="customer_constraints.customer_reported_facts.damaged_boxes.value.amount";
+function b2CountFixture(){
+ const state=createEmptyConversationCommerceState();
+ state.customer_constraints.customer_reported_facts={damaged_boxes:{
+  value:{amount:3,unit:"boxes"},source_count_order:"count_first",source_count_origin:"literal_customer_clause",
+  source_count_visibility:"exact_recall_only",source_count_expires_after_revision:39,
+  source_text:"Actually 3 boxes damaged.",source_subject_text:"damaged",source_unit_text:"boxes",
+  provenance:{source_type:"customer",source_message_id:b2CountPrior,company_id:TID,conversation_id:CID}}};
+ const question="How many boxes damaged?",reply="From what you already told me: 3 boxes.";
+ const selected=selectB2ProtectedCustomerCountRead({route:"commerce_state_answer",state_path:b2CountPath,revision:7},
+   {company_id:TID,conversation_id:CID,source_message_id:SRC,language:"en"});
+ const metadata={response_route:"commerce_state_answer",commerce_authority:"CONVERSATION_STATE",
+   commerce_state_revision:7,commerce_state_persist_result:"read_only",commerce_state_persistence_classification:"NO_SEMANTIC_CHANGE",
+   commerce_state_path:b2CountPath,commerce_state_readback_proof:b2CountReadback(state,b2CountPath)};
+ return {state,question,reply,selected,metadata};
+}
+function b2CountDb(f,{wrongOriginal=false,stale=false,changedSource=false}={}){
+ let reads=0;const client={from(table){
+ const filters={};return {select(){return this},eq(k,v){filters[k]=v;return this},async maybeSingle(){
+ if(table==="conversations")return {data:{id:CID,company_id:TID},error:null};
+ if(table==="messages"){
+ const prior=filters.id===b2CountPrior;
+ return {data:{id:filters.id,conversation_id:CID,role:prior&&wrongOriginal?"assistant":"visitor",
+ content:prior?(changedSource?"Actually 8 boxes damaged.":"Actually 3 boxes damaged."):f.question},error:null};}
+ if(table==="conversation_commerce_state")return {data:{company_id:TID,revision:stale&&++reads>1?8:7,source_message_id:b2CountPrior,state:structuredClone(f.state)},error:null};
+ return {data:null,error:{message:"unexpected table"}}}}}};return client;
+}
+test("scoped B2 prerequisite validates actual persistence path and denies proof/reply substitution",async()=>{
+ const f=b2CountFixture();assert(f.selected);
+ let committed=0;
+ const invoke=(changes={},dbOptions={})=>executeB2PersistenceGate({client:b2CountDb(f,dbOptions),
+ conversation_id:CID,source_message_id:SRC,proposed_response:f.reply,persistence_kind:"ai_reply",
+ metadata:f.metadata,protected_customer_count_read:f.selected,expected_commerce_state_revision:7,
+ commit:async()=>{committed++;return "committed"},...changes});
+ const ok=await invoke();assert.equal(ok.committed,true);assert.equal(ok.decision.code,"B2_ALLOW_PROTECTED_CUSTOMER_COUNT_READ");
+ const wrongProof={...f.metadata,commerce_state_readback_proof:{state_path:b2CountPath,value:"999999"}};
+ for(const changes of [{metadata:wrongProof},{metadata:null},{metadata:{...f.metadata,commerce_state_path:null,commerce_state_readback_proof:null}},
+  {proposed_response:f.reply.replace("3","999999")},{metadata:wrongProof,proposed_response:f.reply.replace("3","999999")},
+  {proposed_response:f.reply.replace("boxes","items")},{protected_customer_count_read:null},
+  {protected_customer_count_read:{...f.selected,company_id:"wrong"}},{protected_customer_count_read:{...f.selected,source_message_id:"wrong"}},
+  {protected_customer_count_read:{...f.selected,revision:6}}]){
+  const result=await invoke(changes);assert.equal(result.committed,false,JSON.stringify(changes));
+ }
+ for(const options of [{wrongOriginal:true},{changedSource:true},{stale:true}])assert.equal((await invoke({},options)).committed,false);
+ assert.equal(committed,1);
+});
+test("scoped B2 blocked count uses one safe clarification via existing gate without state mutation",async()=>{
+ const f=b2CountFixture(),before=JSON.stringify(f.state),sent=[];
+ const commit=async(reply,metadata,selection)=>{const r=await executeB2PersistenceGate({client:b2CountDb(f),
+ conversation_id:CID,source_message_id:SRC,proposed_response:reply,persistence_kind:"ai_reply",metadata,
+ protected_customer_count_read:selection,commit:async()=>{sent.push(reply);return "committed"}});
+ return r.committed?{ok:true}:{ok:false,result:r.decision.decision==="block"?"b2_block":"b2_indeterminate"}};
+ const delivery=await deliverProtectedCustomerCountReply(f.selected,
+ ()=>commit(f.reply.replace("3","999999"),f.metadata,f.selected),
+ reply=>commit(reply,{response_route:"commerce_count_safe_clarification",transaction_mutation:"NONE"},null));
+ assert.equal(delivery.result.ok,true);assert.equal(sent.length,1);assert.equal(sent[0],delivery.clarification);
+ assert(!sent[0].includes("999999"));assert.equal(JSON.stringify(f.state),before);
+ let attempted=0;const unknown=await deliverProtectedCustomerCountReply(f.selected,async()=>({ok:false,result:"rpc_error"}),async()=>{attempted++;return {ok:true}});
+ assert.equal(unknown.result.ok,false);assert.equal(attempted,0);
+});
+test("scoped B2 server selected outcome is wired to final commit before metadata projection",()=>{
+ const code=task1SourceRead("supabase/functions/generate-reply/index.ts","utf8");
+ assert.match(code,/selectB2ProtectedCustomerCountRead\(_c3ResolvedAddressCorrection\?null:_a3Commerce/);
+ assert.match(code,/deliverProtectedCustomerCountReply\(protectedCountRead,/);
+ assert.match(code,/null,null,null,protectedCountRead,/);
+ assert.match(code,/protected_customer_count_read: protectedCustomerCountRead/);
+ assert.match(code,/safeReply=>commitAiReplyWithControlGate/);
+});
+
+import {renderCanonicalCustomerFactRecap as r4aGeneralRecap} from '../../supabase/functions/_shared/conversation-recall.ts';
+test("R4(a) literal observations are bounded, expire and stay out of general recap",async()=>{
+ const base={...r4aBase,language:"en"};
+ let state=createEmptyConversationCommerceState();
+ const names=["damaged","missing","returned","marked","packed","sealed","sorted","opened","printed"];
+ for(const [i,name] of names.entries()){
+  const id="count-bounded-"+i,ctx={company_id:TID,conversation_id:CID,source_message_id:id,state_revision:i};
+  state=reduceTurn(state,{...base,source_message_id:id,text:"Actually 3 boxes "+name+".",semantic_frame:null},[],ctx);
+ }
+ const literalRows=s=>Object.entries(s.customer_constraints.customer_reported_facts??{}).filter(([,r])=>r.source_count_origin==="literal_customer_clause");
+ assert.equal(literalRows(state).length,8);assert.equal(r4aGeneralRecap(state,"en"),null);
+ const nextId="count-bounded-overflow";
+ const overflow=reduceTurn(state,{...base,source_message_id:nextId,text:"Actually 3 boxes labelled.",semantic_frame:null},[],
+ {company_id:TID,conversation_id:CID,source_message_id:nextId,state_revision:8});
+ assert.equal(literalRows(overflow).length,8);
+ const row=literalRows(state).find(([,r])=>r.source_subject_text==="damaged")[1];
+ const db={from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{company_id:TID,conversation_id:CID,revision:34,state},error:null})})})}),
+ rpc:async()=>{throw new Error("expired read cannot write")}};
+ const r=await runCommerceStateRuntime(db,{...base,source_message_id:r4aReadId,text:"How many boxes damaged?",semantic_frame:null,
+ history:[{id:row.provenance.source_message_id,role:"visitor",content:"Actually 3 boxes damaged."}]});
+ assert.notEqual(r?.authority,"CONVERSATION_STATE");
+});
+test("R4(a) raw count without authoritative CAS context cannot become durable fact",()=>{
+ const state=reduceTurn(createEmptyConversationCommerceState(),{...r4aBase,source_message_id:SRC,text:"我有 2 個問題想問。",semantic_frame:null},[]);
+ assert(!Object.values(state.customer_constraints.customer_reported_facts??{}).some(r=>r?.source_count_origin==="literal_customer_clause"));
+});
+
+
+/** R4(a) paired-site first-equivalence tests; prior 150 untouched. */
+const psPath="customer_constraints.paired_site_observation",psOwner="00000000-0000-4000-8000-000000000091",
+ psMeasure="00000000-0000-4000-8000-000000000092",psScope="00000000-0000-4000-8000-000000000093",psRef="entity:paired-site-owner";
+function psFrame(action,text,scope=null,ref=psRef){
+ return {...semantic({operation:"UPDATE_ITEM",intent:"customer_context_update",requested_facts:[],
+  customer_facts:[{key:"paired_site_observation",value:{action,subject_ref:ref,source_text:text,scope}}]}),
+  referents:[{ref,source:"persistent_state",confidence:.99}]};
+}
+function psDb(category,label){
+ let live=createEmptyConversationCommerceState(),revision=1,source=psOwner,writes=0;
+ live.entities=[{entity_id:psRef,category,quantity:0,status:"researching",attributes:{product_name:label},
+  constraints:{},provenance:{source_type:"customer",source_message_id:psOwner,recorded_at:null}}];
+ return {db:{from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{company_id:TID,conversation_id:CID,
+  revision,state:structuredClone(live),source_message_id:source},error:null})})})}),
+  rpc:async(_n,p)=>{assert.equal(p.p_company_id,TID);assert.equal(p.p_conversation_id,CID);
+   assert.equal(p.p_expected_revision,revision);live=structuredClone(p.p_state);source=p.p_source_message_id;
+   writes++;revision++;return {data:{result:"success",applied_revision:revision},error:null}}},
+  snapshot:()=>({state:structuredClone(live),revision,source,writes})};
+}
+for(const [category,label,scope] of [["air_conditioner","冷氣","細房"],["custom_furniture","訂製櫃","玄關"],["warehouse_fixture","展示架","Bay A"]]){
+ test("R4A source-owned pair and scope: "+category,async()=>{
+  const store=psDb(category,label),text="70 (W) x 55 (H) cm",owner={id:psOwner,role:"visitor",content:label};
+  const a=await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psMeasure,text,
+   history:[owner],semantic_frame:psFrame("observe",text)});
+  assert.equal(a?.state_path,psPath);assert.equal(a.persist_result,"success");assert.match(a.reply,/700 × 550 mm/);
+  const before=store.snapshot();assert.equal(before.writes,1);assert.equal(before.state.customer_constraints.paired_site_observation.scope,null);
+  assert.equal(before.state.entities[0].quantity,0);assert.equal(before.state.entities[0].attributes.window_opening_observation,undefined);
+  const b=await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psScope,text:scope,
+   history:[owner,{id:psMeasure,role:"visitor",content:text}],semantic_frame:psFrame("bind_scope",scope,scope)});
+  const after=store.snapshot(),r=after.state.customer_constraints.paired_site_observation;
+  assert.equal(b?.state_path,psPath);assert.equal(b.persist_result,"success");assert.ok(b.reply.includes(scope));
+  assert.equal(r.scope,scope);assert.equal(r.source_message_id,psMeasure);assert.equal(r.scope_source_message_id,psScope);
+  assert.equal(after.writes,2);assert.deepEqual(after.state.entities,before.state.entities);assert.deepEqual(after.state.conversion,before.state.conversion);
+  const proof=buildB2AuthoritativeReadbackProof(after.state,b.state_path),selected=selectB2ProtectedCustomerCountRead(b,
+   {company_id:TID,conversation_id:CID,source_message_id:psScope,language:r4aBase.language});
+  const gate={proposed_response:b.reply,persistence_kind:"ai_reply",protected_customer_count_read:selected,
+   snapshot:{conversation_id:CID,company_id:TID,source_message_id:psScope,source_message_content:scope,
+    commerce_state_revision:after.revision,commerce_state_source_message_id:after.source,state:after.state},
+   metadata:{response_route:b.route,commerce_authority:b.authority,commerce_reason:b.reason,commerce_state_revision:b.revision,
+    commerce_state_persist_result:b.persist_result,commerce_state_persistence_classification:"COMMITTED",
+    commerce_state_path:b.state_path,commerce_state_readback_proof:proof}};
+  assert.equal(evaluateB2BeforeCommit(gate).decision,"allow");
+  for(const bad of [{...gate,proposed_response:b.reply.replace("700","999")},{...gate,metadata:{...gate.metadata,commerce_state_path:undefined}},
+   {...gate,protected_customer_count_read:null},{...gate,snapshot:{...gate.snapshot,company_id:"wrong"}},
+   {...gate,metadata:{...gate.metadata,commerce_state_readback_proof:{state_path:psPath,value:{}}}}])
+   assert.notEqual(evaluateB2BeforeCommit(bad).decision,"allow");
+ });
+}
+test("R4A paired observation refuses missing prior, wrong subject, conditional, ambiguous Reading and invented scope",async()=>{
+ const store=psDb("custom_furniture","訂製櫃"),text="70 (W) x 55 (H) cm",owner={id:psOwner,role:"visitor",content:"訂製櫃"};
+ for(const bad of [{history:[]},{text:"如果 "+text},{semantic_frame:psFrame("observe",text,null,"wrong")},
+  {semantic_frame:{...psFrame("observe",text),ambiguity:{is_ambiguous:true,reasons:["owner"],clarification_question:null}}}]){
+  await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psMeasure,text,history:[owner],semantic_frame:psFrame("observe",text),...bad});
+  assert.equal(store.snapshot().writes,0);
+ }
+ await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psMeasure,text,history:[owner],semantic_frame:psFrame("observe",text)});
+ assert.equal(store.snapshot().writes,1);
+ const h=[owner,{id:psMeasure,role:"visitor",content:text}];
+ for(const bad of [{history:[owner]},{semantic_frame:psFrame("bind_scope","玄關","客廳")},{history:[...h,{id:"other",role:"visitor",content:"other subject"}]}]){
+  await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psScope,text:"玄關",history:h,semantic_frame:psFrame("bind_scope","玄關","玄關"),...bad});
+  assert.equal(store.snapshot().writes,1);
+ }
+});
+
+
+/** Window continuation: literal original 4123, no legacy category producer. */
+test("R4A paired 4123 approximation and conversational scope, prior customer goal only",async()=>{
+ // Test the separate no-entity goal path with a real reducer/CAS adapter.
+ const empty=r4aFixtureDb(),owner={id:psOwner,role:"visitor",content:"想換冷氣，兩間睡房加個客廳，應該點揀好？"};
+ const site={id:"00000000-0000-4000-8000-000000000094",role:"visitor",content:"三個位都係窗口位，而家原本用緊嘅都係窗口機。"};
+ const size="大約 70 (W) x 55 (H) cm",scope="係細房嗰個窗口。";
+ const proposal=(action,text,loc=null,siteLabel=undefined)=>({...semantic({operation:"UPDATE_ITEM",intent:"customer_context_update",requested_facts:[],
+  customer_facts:[{key:"paired_site_observation",value:{action,source_text:text,scope:loc,...(siteLabel===undefined?{}:{site_label:siteLabel})}}]}),
+  referents:[{ref:"冷氣",source:"prior_turn",confidence:.99}]});
+ const a=await runCommerceStateRuntime(empty.db,{...r4aBase,source_message_id:psMeasure,text:size,
+  history:[owner,site],semantic_frame:proposal("observe",size)});
+ assert.equal(a?.state_path,psPath);assert.equal(a.persist_result,"success");assert.match(a.reply,/約.*700 × 550 mm/);
+ assert.equal(empty.snapshot().state.entities.length,0);
+ const b=await runCommerceStateRuntime(empty.db,{...r4aBase,source_message_id:psScope,text:scope,
+  history:[owner,site,{id:psMeasure,role:"visitor",content:size}],semantic_frame:proposal("bind_scope",scope,"細房","窗口")});
+ assert.equal(b?.state_path,psPath);assert.equal(b.persist_result,"success");assert.match(b.reply,/細房.*約.*700 × 550 mm/);
+ const final=empty.snapshot();assert.equal(final.state.entities.length,0);assert.equal(final.writes,2);
+ const r=final.state.customer_constraints.paired_site_observation;
+ assert.equal(r.approximate,true);assert.equal(r.scope,"細房");assert.equal(r.scope_site_label,"窗口");
+ assert.equal(r.scope_site_source_message_id,site.id);assert.equal(r.source_message_id,psMeasure);
+ assert.equal(r.scope_source_message_id,psScope);assert.equal(final.state.conversion.order_status,"none");
+ const again=await runCommerceStateRuntime(empty.db,{...r4aBase,source_message_id:psScope,text:scope,
+  history:[owner,site,{id:psMeasure,role:"visitor",content:size}],semantic_frame:proposal("bind_scope",scope,"細房","窗口")});
+ assert.equal(empty.snapshot().writes,2);assert.notEqual(again?.persist_result,"success");
+});
+
+test("R4A paired stale prior subject and malformed scope fail closed",async()=>{
+ const empty=r4aFixtureDb(),text="大約 70 (W) x 55 (H) cm";
+ const owner={id:psOwner,role:"visitor",content:"想換冷氣，應該點揀好？"};
+ const other={id:"other",role:"visitor",content:"我想買書架"};
+ const reading={...semantic({operation:"UPDATE_ITEM",intent:"customer_context_update",requested_facts:[],
+  customer_facts:[{key:"paired_site_observation",value:{action:"observe",source_text:text,scope:null}}]}),
+  referents:[{ref:"冷氣",source:"prior_turn",confidence:.99}]};
+ await runCommerceStateRuntime(empty.db,{...r4aBase,source_message_id:psMeasure,text,history:[owner,other],semantic_frame:reading});
+ assert.equal(empty.snapshot().writes,0);
+ const store=psDb("custom_furniture","訂製櫃"),original={id:psOwner,role:"visitor",content:"訂製櫃"};
+ const a=await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psMeasure,text,history:[original],semantic_frame:psFrame("observe",text)});
+ assert.equal(a?.persist_result,"success");
+ const bad={...psFrame("bind_scope","玄關","玄關"),customer_facts:[{key:"paired_site_observation",value:{action:"bind_scope",subject_ref:psRef,source_text:"玄關",scope:"玄關",site_label:{bad:true}}}]};
+ await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psScope,text:"玄關",history:[original,{id:psMeasure,role:"visitor",content:text}],semantic_frame:bad});
+ assert.equal(store.snapshot().writes,1);
+});
+test("R4A raw paired Reading cannot become Memory authority; exact committed sources can",async()=>{
+ const text="70 (W) x 55 (H) cm",owner={id:psOwner,role:"visitor",content:"訂製櫃"};
+ const store=psDb("custom_furniture","訂製櫃"),proposal=psFrame("observe",text);
+ const a=await runCommerceStateRuntime(store.db,{...r4aBase,source_message_id:psMeasure,text,history:[owner],semantic_frame:proposal});
+ assert.equal(a?.persist_result,"success");
+ const saved=store.snapshot(),current={id:psMeasure,role:"visitor",content:text};
+ const args={company_id:TID,conversation_id:CID,source_message_id:psMeasure,commerce_state_revision:saved.revision,
+  commerce_state:saved.state,newest_first:[current,owner],visitor_turn_count:2,source_created_at:"2026-10-14T01:00:00Z",
+  next_memory_revision:1,customer_fact_delta:proposal.customer_facts.map(f=>({...f,authority:"customer",source_message_id:psMeasure}))};
+ const m=buildCanonicalConversationMemory(args),fact=m.current_customer_facts.find(f=>f.key==="paired_site_observation");
+ assert.equal(fact?.authority,"canonical_commerce");assert.match(fact.value,/700 × 550 mm/);assert.equal(fact.source_message_id,psMeasure);
+ for(const invalid of [{...args,commerce_state:createEmptyConversationCommerceState()},{...args,newest_first:[current]}]){
+  const rejected=buildCanonicalConversationMemory(invalid);
+  assert(!rejected.current_customer_facts.some(f=>f.key==="paired_site_observation"));
+ }
+});

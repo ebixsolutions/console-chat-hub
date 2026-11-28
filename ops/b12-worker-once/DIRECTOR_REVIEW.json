@@ -1,0 +1,110 @@
+{
+  "status": "REVIEWED_SOURCE_ONLY_ACTIVATION_PENDING_DIRECTOR_AUTHORIZATION",
+  "basis": "Full physical sources and payload sections reconstructed from the attached exact activation TXT; ORIGINAL ZIP BYTES NOT PRESENT",
+  "original_embedded_manifest_files_verified": 26,
+  "original_manifest_sha256": "2d5ff0f1f09e60eb49b31bab4ab0bd64f2b10f9999d6025f248e17d8f220f6e2",
+  "original_mock_tests": {
+    "command": "node --test executor.test.mjs",
+    "exit_code": 0,
+    "tests": 17,
+    "pass": 17
+  },
+  "confirmed_finding": {
+    "id": "OPS-PRIVILEGE-ANY-VS-ALL",
+    "source": "runtime.mjs capability query",
+    "original": "has_table_privilege(current_user,'c3_b12_once.ledger','SELECT,UPDATE')",
+    "meaning": "PostgreSQL evaluates a comma-separated list as ANY privilege, not ALL.",
+    "correction": "Separate SELECT and UPDATE booleans and require each capability to be literal true. No GRANT or role change.",
+    "reference": "https://www.postgresql.org/docs/current/functions-info.html"
+  },
+  "reviewed_tests": {
+    "command": "node --test executor.test.mjs",
+    "exit_code": 0,
+    "tests": 20,
+    "pass": 20,
+    "fail": 0,
+    "real_credentials": false,
+    "production_network": "DENIED_MOCK_ONLY",
+    "not_native_PostgreSQL_or_production_RLS": true
+  },
+  "syntax_checks": [
+    {
+      "command": [
+        "node",
+        "--check",
+        "index.mjs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "node",
+        "--check",
+        "runtime.mjs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "node",
+        "--check",
+        "executor.mjs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "node",
+        "--check",
+        "snapshot.mjs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "node",
+        "--check",
+        "validate.mjs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "node",
+        "--check",
+        "executor.test.mjs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "node",
+        "--check",
+        "tombstone.mjs"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "Deno_check_reviewed_bytes": "NOT_RUN_IN_THIS_REVIEW_RUNTIME; Work must check exact corrected runtime bytes with its existing pinned validation setup before activation",
+  "platform_bundle_TLS_DB_privileges_management_caller": "UNVERIFIED_UNTIL_AUTHORIZED_ACTIVATION_AND_DRY_RUN",
+  "worker_posts": 0,
+  "production_writes": 0,
+  "application_source_changes": 0,
+  "original_worker_control_manual_source_changes": 0,
+  "original_sql_activation_disable_unchanged": true,
+  "original_receipts_not_upgraded": true,
+  "new_files": [
+    "DIRECTOR_REVIEW.json",
+    "reviewed-mock-tests.log"
+  ],
+  "changed_runtime_files": [
+    "runtime.mjs"
+  ],
+  "changed_test_files": [
+    "executor.test.mjs"
+  ],
+  "changed_derived_files": [
+    "deploy-payload.json",
+    "MANIFEST.json"
+  ]
+}

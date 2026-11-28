@@ -1,0 +1,20 @@
+{
+  "$schema": "./c3_real_customer_heldout_dataset_v1.schema.json",
+  "schema_version": "c3-real-customer-heldout-dataset-1.0.0",
+  "status": "BLOCKED",
+  "quality_score": "NOT_MEASURED",
+  "held_out_real_customer": true,
+  "block_reason": "No source in the reviewed registry has complete legal, download, real-dialogue and PII approval; no dialogue was imported.",
+  "target": {
+    "case_count": 100,
+    "minimum_corpora": 3,
+    "maximum_cases_per_corpus": 50,
+    "minimum_ecommerce_cases": 60,
+    "families": ["shipping", "returns", "warranty", "calculation", "context", "knowledge", "emotion", "clarification", "handoff", "entitlement"],
+    "cases_per_family": 10,
+    "languages": ["zh-Hant-HK", "yue-Hant-HK", "en", "mixed-zh-en"],
+    "lengths": ["short", "medium", "long"]
+  },
+  "actual_case_count": 0,
+  "cases": []
+}

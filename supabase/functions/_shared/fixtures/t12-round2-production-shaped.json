@@ -1,0 +1,623 @@
+{
+  "conversation_id": "23ce38c7-d608-4b35-8693-7d5b3137ee05",
+  "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+  "source_message_id": "ceedcedf-2ef2-421a-90bf-bc2ed75c3709",
+  "source_message_content": "而家我冷氣要求係點？",
+  "commerce": {
+    "revision": 9,
+    "source_message_id": "608608d4-e457-429e-baa2-12926bcbf605",
+    "state": {
+      "quotes": [],
+      "version": "commerce-state-1.0.0",
+      "delivery": {
+        "confirmed": false
+      },
+      "entities": [
+        {
+          "status": "researching",
+          "category": "air_conditioner",
+          "quantity": 3,
+          "entity_id": "air_conditioner:unscoped",
+          "attributes": {
+            "room_sizes": {
+              "living_room": "180平方呎",
+              "large_bedroom": "110平方呎",
+              "small_bedroom": "80平方呎"
+            },
+            "customer_goal": {
+              "missing": [
+                "sizing_decision",
+                "suitable_models"
+              ],
+              "category": "air_conditioner",
+              "collected": [
+                "space_plan",
+                "room_sizes",
+                "installation_type",
+                "sunlight"
+              ],
+              "objective": "select_product",
+              "updated_at": "2026-09-25T14:14:59.77854+00:00",
+              "journey_stage": "sizing_guidance",
+              "response_intent": "request_highest_value_missing_information",
+              "source_message_id": "72ef4ec8-805e-41c6-b895-35929c9588cf"
+            },
+            "scoped_customer_updates": [
+              {
+                "scope": "living_room",
+                "value": 1,
+                "action": "set",
+                "attribute": "quantity"
+              },
+              {
+                "scope": "bedroom_1",
+                "value": 1,
+                "action": "set",
+                "attribute": "quantity"
+              },
+              {
+                "scope": "bedroom_2",
+                "value": 1,
+                "action": "set",
+                "attribute": "quantity"
+              }
+            ]
+          },
+          "provenance": {
+            "recorded_at": "2026-09-25T14:14:59.77854+00:00",
+            "source_type": "customer",
+            "source_message_id": "72ef4ec8-805e-41c6-b895-35929c9588cf"
+          },
+          "constraints": {}
+        },
+        {
+          "status": "deferred",
+          "category": "refrigerator",
+          "quantity": 1,
+          "entity_id": "refrigerator:unscoped",
+          "attributes": {
+            "customer_goal": {
+              "missing": [
+                "capacity",
+                "suitable_models"
+              ],
+              "category": "refrigerator",
+              "collected": [
+                "dimensions"
+              ],
+              "objective": "replace_existing_appliance",
+              "updated_at": "2026-09-25T14:13:53.569706+00:00",
+              "journey_stage": "requirements_discovery",
+              "response_intent": "request_highest_value_missing_information",
+              "source_message_id": "3381b448-5256-4d37-93f9-5ac484c3ff08"
+            }
+          },
+          "provenance": {
+            "recorded_at": "2026-09-25T14:15:31.980525+00:00",
+            "source_type": "customer",
+            "source_message_id": "608608d4-e457-429e-baa2-12926bcbf605"
+          },
+          "constraints": {
+            "max_width_mm": 595
+          }
+        }
+      ],
+      "language": "zh-TW",
+      "metadata": {},
+      "conversion": {
+        "funnel_stage": "discovery",
+        "order_status": "none",
+        "payment_status": "none",
+        "next_best_action": null,
+        "quotation_status": "none",
+        "cancelled_entity_ids": [],
+        "confirmed_entity_ids": [],
+        "tentative_entity_ids": []
+      },
+      "installation": {
+        "items": [],
+        "pending_checks": [
+          "window_opening_check"
+        ],
+        "site_conditions": {}
+      },
+      "current_topic": "air_conditioner",
+      "current_intent": "select_product",
+      "current_industry": "home_appliance",
+      "unresolved_items": [],
+      "latest_corrections": [
+        "大房唔係100呎,應該係110呎。"
+      ],
+      "customer_constraints": {}
+    },
+    "state_hash": "fb6cb1a10553980ce8b9cec4f088aa5b714367966a3e23844bc07492b4234eb4"
+  },
+  "memory": {
+    "revision": 11,
+    "source_message_id": "608608d4-e457-429e-baa2-12926bcbf605",
+    "commerce_state_revision": 9,
+    "memory": {
+      "version": "conversation-memory-1.0.0",
+      "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+      "updated_at": "2026-09-25T14:15:31.980525+00:00",
+      "current_goal": "select_product",
+      "prior_topics": [
+        "Hello 屋企想換冷氣 兩間睡房加個客廳 應該點揀好",
+        "細房大概80呎 大房100呎 個廳就180呎",
+        "三個位都有窗口位 而家裝緊嘅都係窗口機",
+        "個廳下晝西斜幾勁 揀機時要點考慮",
+        "數量先記低:客廳一部 兩間房每間各一部",
+        "細房我見到 CW-SUL70BA 佢有咩功能、係幾多匹 80呎用落夠唔夠",
+        "呢部而家賣幾錢",
+        "雪櫃都想換 擺位闊度最多595mm 想搵雙門款",
+        "講返頭先嗰部冷氣 細房研究緊邊個型號同幾多匹",
+        "大房唔係100呎 應該係110呎"
+      ],
+      "current_topic": "air_conditioner",
+      "open_questions": [
+        "講返頭先嗰部冷氣,細房研究緊邊個型號同幾多匹?",
+        "咁呢部而家賣幾錢?",
+        "細房我見到 CW-SUL70BA,佢有咩功能、係幾多匹?80呎用落夠唔夠?",
+        "另外個廳下晝西斜幾勁,揀機時要點考慮?",
+        "Hello,屋企想換冷氣,兩間睡房加個客廳,應該點揀好?"
+      ],
+      "active_entities": [
+        {
+          "type": "air_conditioner",
+          "brand": null,
+          "model": null,
+          "region": null,
+          "status": "active",
+          "quantity": 3,
+          "entity_id": "air_conditioner:unscoped",
+          "transaction_state": {
+            "confirmed": false,
+            "tentative": false
+          },
+          "current_requirements": {
+            "room_sizes": {
+              "living_room": "180平方呎",
+              "large_bedroom": "110平方呎",
+              "small_bedroom": "80平方呎"
+            },
+            "customer_goal": {
+              "missing": [
+                "sizing_decision",
+                "suitable_models"
+              ],
+              "category": "air_conditioner",
+              "collected": [
+                "space_plan",
+                "room_sizes",
+                "installation_type",
+                "sunlight"
+              ],
+              "objective": "select_product",
+              "updated_at": "2026-09-25T14:14:59.77854+00:00",
+              "journey_stage": "sizing_guidance",
+              "response_intent": "request_highest_value_missing_information",
+              "source_message_id": "72ef4ec8-805e-41c6-b895-35929c9588cf"
+            },
+            "scoped_customer_updates": [
+              {
+                "scope": "living_room",
+                "value": 1,
+                "action": "set",
+                "attribute": "quantity"
+              },
+              {
+                "scope": "bedroom_1",
+                "value": 1,
+                "action": "set",
+                "attribute": "quantity"
+              },
+              {
+                "scope": "bedroom_2",
+                "value": 1,
+                "action": "set",
+                "attribute": "quantity"
+              }
+            ]
+          }
+        }
+      ],
+      "conversation_id": "23ce38c7-d608-4b35-8693-7d5b3137ee05",
+      "current_regions": [],
+      "memory_revision": 11,
+      "pending_actions": [
+        "window_opening_check"
+      ],
+      "historical_facts": [],
+      "source_message_id": "608608d4-e457-429e-baa2-12926bcbf605",
+      "updated_from_turn": 11,
+      "active_constraints": [],
+      "latest_corrections": [
+        "大房唔係100呎,應該係110呎。"
+      ],
+      "transaction_summary": {
+        "order": "none",
+        "payment": "none",
+        "delivery": "not_confirmed",
+        "quotation": "none",
+        "installation": "unknown"
+      },
+      "customer_preferences": [],
+      "current_customer_facts": [
+        {
+          "key": "room_size",
+          "value": [
+            {
+              "group": "room",
+              "label": "細房",
+              "value": "80平方呎",
+              "member_id": "room:1"
+            },
+            {
+              "group": "room",
+              "label": "大房",
+              "value": "110平方呎",
+              "member_id": "room:2"
+            },
+            {
+              "group": "living_room",
+              "label": "個廳",
+              "value": "180平方呎",
+              "member_id": "living_room:1"
+            }
+          ],
+          "region": null,
+          "authority": "customer",
+          "entity_id": null,
+          "source_message_id": "72ef4ec8-805e-41c6-b895-35929c9588cf"
+        }
+      ],
+      "handoff_relevant_state": {
+        "current_goal": "select_product",
+        "open_questions": [
+          "講返頭先嗰部冷氣,細房研究緊邊個型號同幾多匹?",
+          "咁呢部而家賣幾錢?",
+          "細房我見到 CW-SUL70BA,佢有咩功能、係幾多匹?80呎用落夠唔夠?",
+          "另外個廳下晝西斜幾勁,揀機時要點考慮?",
+          "Hello,屋企想換冷氣,兩間睡房加個客廳,應該點揀好?"
+        ],
+        "pending_actions": [
+          "window_opening_check"
+        ],
+        "active_entity_ids": [
+          "air_conditioner:unscoped"
+        ]
+      },
+      "cancelled_or_superseded": [
+        {
+          "key": "superseded_room_size",
+          "value": {
+            "label": "大房",
+            "value": "100平方呎"
+          },
+          "region": null,
+          "authority": "customer",
+          "entity_id": null,
+          "source_message_id": "72ef4ec8-805e-41c6-b895-35929c9588cf"
+        },
+        {
+          "key": "entity:refrigerator:unscoped",
+          "value": "deferred",
+          "region": null,
+          "authority": "canonical_commerce",
+          "entity_id": "refrigerator:unscoped",
+          "source_message_id": "608608d4-e457-429e-baa2-12926bcbf605"
+        }
+      ],
+      "commerce_state_revision": 9,
+      "pending_lifecycle_reply": {
+        "plans": [
+          {
+            "action": "deferred",
+            "focus_category": "air_conditioner",
+            "target_category": "refrigerator"
+          }
+        ],
+        "reply": "好，雪櫃先暫停；而家繼續處理冷氣，之前嘅要求同數量會保留。",
+        "contract": "entity-lifecycle-commit-v1",
+        "company_id": "3d6e17b5-ec79-4f75-aa7f-eaa824ff8493",
+        "source_text": "雪櫃暫時唔換住,先搞冷氣。",
+        "previous_state": {
+          "quotes": [],
+          "version": "commerce-state-1.0.0",
+          "delivery": {
+            "confirmed": false
+          },
+          "entities": [
+            {
+              "status": "researching",
+              "category": "air_conditioner",
+              "quantity": 3,
+              "entity_id": "air_conditioner:unscoped",
+              "attributes": {
+                "room_sizes": {
+                  "living_room": "180平方呎",
+                  "large_bedroom": "110平方呎",
+                  "small_bedroom": "80平方呎"
+                },
+                "customer_goal": {
+                  "missing": [
+                    "sizing_decision",
+                    "suitable_models"
+                  ],
+                  "category": "air_conditioner",
+                  "collected": [
+                    "space_plan",
+                    "room_sizes",
+                    "installation_type",
+                    "sunlight"
+                  ],
+                  "objective": "select_product",
+                  "updated_at": "2026-09-25T14:14:59.77854+00:00",
+                  "journey_stage": "sizing_guidance",
+                  "response_intent": "request_highest_value_missing_information",
+                  "source_message_id": "72ef4ec8-805e-41c6-b895-35929c9588cf"
+                },
+                "scoped_customer_updates": [
+                  {
+                    "scope": "living_room",
+                    "value": 1,
+                    "action": "set",
+                    "attribute": "quantity"
+                  },
+                  {
+                    "scope": "bedroom_1",
+                    "value": 1,
+                    "action": "set",
+                    "attribute": "quantity"
+                  },
+                  {
+                    "scope": "bedroom_2",
+                    "value": 1,
+                    "action": "set",
+                    "attribute": "quantity"
+                  }
+                ]
+              },
+              "provenance": {
+                "recorded_at": "2026-09-25T14:14:59.77854+00:00",
+                "source_type": "customer",
+                "source_message_id": "72ef4ec8-805e-41c6-b895-35929c9588cf"
+              },
+              "constraints": {}
+            },
+            {
+              "status": "tentative",
+              "category": "refrigerator",
+              "quantity": 1,
+              "entity_id": "refrigerator:unscoped",
+              "attributes": {
+                "customer_goal": {
+                  "missing": [
+                    "capacity",
+                    "suitable_models"
+                  ],
+                  "category": "refrigerator",
+                  "collected": [
+                    "dimensions"
+                  ],
+                  "objective": "replace_existing_appliance",
+                  "updated_at": "2026-09-25T14:13:53.569706+00:00",
+                  "journey_stage": "requirements_discovery",
+                  "response_intent": "request_highest_value_missing_information",
+                  "source_message_id": "3381b448-5256-4d37-93f9-5ac484c3ff08"
+                }
+              },
+              "provenance": {
+                "recorded_at": "2026-09-25T14:13:53.569706+00:00",
+                "source_type": "customer",
+                "source_message_id": "3381b448-5256-4d37-93f9-5ac484c3ff08"
+              },
+              "constraints": {
+                "max_width_mm": 595
+              }
+            }
+          ],
+          "language": "zh-TW",
+          "metadata": {},
+          "conversion": {
+            "funnel_stage": "discovery",
+            "order_status": "none",
+            "payment_status": "none",
+            "next_best_action": null,
+            "quotation_status": "none",
+            "cancelled_entity_ids": [],
+            "confirmed_entity_ids": [],
+            "tentative_entity_ids": [
+              "refrigerator:unscoped"
+            ]
+          },
+          "installation": {
+            "items": [],
+            "pending_checks": [
+              "window_opening_check"
+            ],
+            "site_conditions": {}
+          },
+          "current_topic": "air_conditioner",
+          "current_intent": "select_product",
+          "current_industry": "home_appliance",
+          "unresolved_items": [],
+          "latest_corrections": [
+            "大房唔係100呎,應該係110呎。"
+          ],
+          "customer_constraints": {}
+        },
+        "committed_state": {
+          "quotes": [],
+          "version": "commerce-state-1.0.0",
+          "delivery": {
+            "confirmed": false
+          },
+          "entities": [
+            {
+              "status": "researching",
+              "category": "air_conditioner",
+              "quantity": 3,
+              "entity_id": "air_conditioner:unscoped",
+              "attributes": {
+                "room_sizes": {
+                  "living_room": "180平方呎",
+                  "large_bedroom": "110平方呎",
+                  "small_bedroom": "80平方呎"
+                },
+                "customer_goal": {
+                  "missing": [
+                    "sizing_decision",
+                    "suitable_models"
+                  ],
+                  "category": "air_conditioner",
+                  "collected": [
+                    "space_plan",
+                    "room_sizes",
+                    "installation_type",
+                    "sunlight"
+                  ],
+                  "objective": "select_product",
+                  "updated_at": "2026-09-25T14:14:59.77854+00:00",
+                  "journey_stage": "sizing_guidance",
+                  "response_intent": "request_highest_value_missing_information",
+                  "source_message_id": "72ef4ec8-805e-41c6-b895-35929c9588cf"
+                },
+                "scoped_customer_updates": [
+                  {
+                    "scope": "living_room",
+                    "value": 1,
+                    "action": "set",
+                    "attribute": "quantity"
+                  },
+                  {
+                    "scope": "bedroom_1",
+                    "value": 1,
+                    "action": "set",
+                    "attribute": "quantity"
+                  },
+                  {
+                    "scope": "bedroom_2",
+                    "value": 1,
+                    "action": "set",
+                    "attribute": "quantity"
+                  }
+                ]
+              },
+              "provenance": {
+                "recorded_at": "2026-09-25T14:14:59.77854+00:00",
+                "source_type": "customer",
+                "source_message_id": "72ef4ec8-805e-41c6-b895-35929c9588cf"
+              },
+              "constraints": {}
+            },
+            {
+              "status": "deferred",
+              "category": "refrigerator",
+              "quantity": 1,
+              "entity_id": "refrigerator:unscoped",
+              "attributes": {
+                "customer_goal": {
+                  "missing": [
+                    "capacity",
+                    "suitable_models"
+                  ],
+                  "category": "refrigerator",
+                  "collected": [
+                    "dimensions"
+                  ],
+                  "objective": "replace_existing_appliance",
+                  "updated_at": "2026-09-25T14:13:53.569706+00:00",
+                  "journey_stage": "requirements_discovery",
+                  "response_intent": "request_highest_value_missing_information",
+                  "source_message_id": "3381b448-5256-4d37-93f9-5ac484c3ff08"
+                }
+              },
+              "provenance": {
+                "recorded_at": "2026-09-25T14:15:31.980525+00:00",
+                "source_type": "customer",
+                "source_message_id": "608608d4-e457-429e-baa2-12926bcbf605"
+              },
+              "constraints": {
+                "max_width_mm": 595
+              }
+            }
+          ],
+          "language": "zh-TW",
+          "metadata": {},
+          "conversion": {
+            "funnel_stage": "discovery",
+            "order_status": "none",
+            "payment_status": "none",
+            "next_best_action": null,
+            "quotation_status": "none",
+            "cancelled_entity_ids": [],
+            "confirmed_entity_ids": [],
+            "tentative_entity_ids": []
+          },
+          "installation": {
+            "items": [],
+            "pending_checks": [
+              "window_opening_check"
+            ],
+            "site_conditions": {}
+          },
+          "current_topic": "air_conditioner",
+          "current_intent": "select_product",
+          "current_industry": "home_appliance",
+          "unresolved_items": [],
+          "latest_corrections": [
+            "大房唔係100呎,應該係110呎。"
+          ],
+          "customer_constraints": {}
+        },
+        "previous_revision": 8,
+        "source_message_id": "608608d4-e457-429e-baa2-12926bcbf605",
+        "target_entity_ids": [
+          "refrigerator:unscoped"
+        ],
+        "transaction_after": {
+          "quotes": [],
+          "order_status": "none",
+          "payment_status": "none",
+          "quotation_status": "none",
+          "delivery_confirmed": false,
+          "confirmed_installation_items": []
+        },
+        "committed_revision": 9,
+        "transaction_before": {
+          "quotes": [],
+          "order_status": "none",
+          "payment_status": "none",
+          "quotation_status": "none",
+          "delivery_confirmed": false,
+          "confirmed_installation_items": []
+        }
+      },
+      "grounded_reference_lineage": [
+        {
+          "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+          "source_message_id": "b648489a-9e4a-48ae-bd51-273aab10b3de",
+          "evidence_chunk_ids": [
+            "21fd757daf0d45dd8726b05a22c5ce32"
+          ]
+        },
+        {
+          "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+          "source_message_id": "101c73f3-5f34-44cb-9fff-0ac19441f9d4",
+          "evidence_chunk_ids": [
+            "21fd757daf0d45dd8726b05a22c5ce32"
+          ]
+        },
+        {
+          "document_id": "cac65f77a60f43a8bbade929c48e0ef4",
+          "source_message_id": "29d976e1-6e0f-4a59-9724-5b75479dd126",
+          "evidence_chunk_ids": [
+            "21fd757daf0d45dd8726b05a22c5ce32"
+          ]
+        }
+      ]
+    },
+    "memory_hash": "712fb239d9fe835cf42cb75df23236cc69c665f1aac54320328cc8546a1cc2ee"
+  }
+}

@@ -1,0 +1,3288 @@
+import { resolveIndustryProfile } from "./industry-runtime-adapter.ts";
+import { normalizeCommerceSemanticFrame, type CommerceSemanticFrame } from "./commerce-semantic-frame.ts";
+import {
+  type ContextualCandidate,
+  contextualUpdateEvents,
+  resolveContextualCustomerUpdate,
+  resolveSemanticContextualCandidate,
+  type ScopedCustomerValue,
+  type ContextualSourceContext,
+  type SourceBoundContextualGoal,
+  type SourceBoundScopeFact,
+  readSourceBoundContextualGoal,
+  verifiedCurrentScopeFacts,
+  SCOPED_AREA_KEY,mixedScopedAreaReceipt,verifiedScopedAreaProposal,readScopedAreaReceipt,parseScopedAreaClause,scopedAreaMemoryValue,
+} from "./contextual-customer-update.ts";
+import type { DecisionValue } from "./bounded-decision-context.ts";
+import {
+  type ConversationCommerceState,
+  createEmptyConversationCommerceState,
+} from "./commerce-state-contract.ts";
+import { reduceCommerceState } from "./commerce-state-reducer.ts";
+import {
+  type CommerceStateDbClient,
+  buildTransactionSummary,
+  runCommerceStateRuntime,
+  validateTrustedProductTopicFocus,
+} from "./commerce-state-runtime.ts";
+import { resolveCanonicalCommerceResolution } from "./conversation-resolution-contract.ts";
+import { activeCustomerGoal } from "./customer-journey-orchestration.ts";
+import { prepareConversationRecall } from "./conversation-recall.ts";
+import { buildCanonicalConversationMemory, verifyCommittedRoomCorrectionMemory, verifyCommittedLifecycleMemory, verifyCommittedScopedAreaMemory, type CanonicalConversationMemory } from "./conversation-long-memory.ts";
+import {
+  arbitrateAnaphoricProductFollowUp,
+  arbitrateCanonicalProductFollowUp,
+  classifyNaturalCustomerIntent,
+  requiresCurrentMerchantEvidence,
+} from "./natural-customer-response.ts";
+import { evaluateB2BeforeCommit } from "./pre-send-conversion-supervisor.ts";
+import { planConversationService, renderServicePlanReply } from "./conversation-service-planner.ts";
+import { renderNaturalNoCurrentEvidence } from "./natural-customer-response.ts";
+import { productKbSemanticContract } from "./product-kb-semantic-contract.ts";
+import { deriveCurrentGroundingTarget, selectCanonicalGrounding } from "./canonical-grounding.ts";
+import { resolveCanonicalKbDirectAnswer } from "./canonical-kb-direct-answer.ts";
+import { deriveTypedCustomerCalculation } from "./conversation-service-runtime.ts";
+import type { KBDocumentCandidate } from "./deterministic-kb-client.ts";
+import { classifyHandoffIntent } from "./handoff-intent.ts";
+
+function assert(value: unknown, message: string): asserts value {
+  if (!value) throw new Error(message);
+}
+function stateWith(topics: string[]): ConversationCommerceState {
+  const state = createEmptyConversationCommerceState();
+  state.current_topic = topics[0] ?? null;
+  state.entities = topics.map((category, index) => ({
+    entity_id: category + ":unscoped:" + index,
+    category,
+    quantity: 3,
+    status: "tentative" as const,
+    attributes: {},
+    constraints: {},
+    provenance: { source_type: "customer" as const },
+  }));
+  return state;
+}
+const values = [
+  {
+    scope: "living_room",
+    attribute: "quantity",
+    action: "set" as const,
+    value: 1,
+  },
+  {
+    scope: "bedroom_1",
+    attribute: "quantity",
+    action: "set" as const,
+    value: 1,
+  },
+  {
+    scope: "bedroom_2",
+    attribute: "quantity",
+    action: "set" as const,
+    value: 1,
+  },
+];
+function candidate(topic: string): ContextualCandidate {
+  return {
+    topic,
+    topic_source: "profile",
+    action: "scoped_update",
+    context_sufficient: true,
+    values,
+    aggregate_quantity: 3,
+    reply: "Scoped update acknowledged.",
+    clarification: "Which item and scope do you mean?",
+  };
+}
+
+Deno.test("universal context: unique compatible update, latest correction wins", () => {
+  const previous = stateWith(["domain_a"]);
+  const first = resolveContextualCustomerUpdate({
+    state: previous,
+    candidate: candidate("domain_a"),
+  });
+  assert(first.route === "contextual_scoped_update", JSON.stringify(first));
+  const next = reduceCommerceState(
+    previous,
+    contextualUpdateEvents(first, previous, "source-1"),
+  );
+  assert(next.entities[0].quantity === 3, "aggregate_three");
+  const correction = candidate("domain_a");
+  correction.values = [{
+    scope: "bedroom_2",
+    attribute: "quantity",
+    action: "set",
+    value: 2,
+  }];
+  correction.aggregate_quantity = 4;
+  const second = resolveContextualCustomerUpdate({
+    state: next,
+    candidate: correction,
+  });
+  assert(second.route === "contextual_scoped_update", JSON.stringify(second));
+  const corrected = reduceCommerceState(
+    next,
+    contextualUpdateEvents(second, next, "source-2"),
+  );
+  assert(corrected.entities[0].quantity === 4, "latest_total_four");
+  assert(
+    (corrected.entities[0].attributes.scoped_customer_updates as typeof values)
+      .find((v) => v.scope === "bedroom_2")?.value === 2,
+    "latest_scope_wins",
+  );
+  console.log("UNIVERSAL|unique_update=PASS|correction_latest_wins=PASS");
+});
+
+Deno.test("universal context: partial allocation and preference update retain aggregate", () => {
+  const previous = stateWith(["domain_a"]);
+  const preference = candidate("domain_a");
+  preference.values = [{
+    scope: "whole_item",
+    attribute: "preference",
+    action: "set",
+    value: "weekend",
+  }];
+  preference.aggregate_quantity = undefined;
+  const decided = resolveContextualCustomerUpdate({
+    state: previous,
+    candidate: preference,
+  });
+  const next = reduceCommerceState(
+    previous,
+    contextualUpdateEvents(decided, previous, "preference"),
+  );
+  assert(next.entities[0].quantity === 3, "preference_changed_quantity");
+  const partial = candidate("domain_a");
+  partial.values = [{
+    scope: "zone_1",
+    attribute: "quantity",
+    action: "set",
+    value: 1,
+  }];
+  partial.aggregate_quantity = undefined;
+  const after = reduceCommerceState(
+    next,
+    contextualUpdateEvents(
+      resolveContextualCustomerUpdate({ state: next, candidate: partial }),
+      next,
+      "partial",
+    ),
+  );
+  assert(after.entities[0].quantity === 3, "partial_scope_changed_aggregate");
+  assert(
+    (after.entities[0].attributes
+      .scoped_customer_updates as ScopedCustomerValue[]).length === 2,
+    "preference_lost",
+  );
+  console.log(
+    "UNIVERSAL|preference_attribute=PASS|partial_allocation_no_inferred_total=PASS",
+  );
+});
+
+Deno.test("universal context: ambiguity, cross-domain and read-only never mutate", () => {
+  const multiple = stateWith(["domain_a", "domain_b"]);
+  const implicit = resolveContextualCustomerUpdate({
+    state: multiple,
+    candidate: candidate("domain_a"),
+  });
+  assert(
+    implicit.route === "targeted_clarification" &&
+      implicit.updates.length === 0,
+    JSON.stringify(implicit),
+  );
+  const explicit = candidate("domain_a");
+  explicit.topic_source = "explicit";
+  const selected = resolveContextualCustomerUpdate({
+    state: multiple,
+    candidate: explicit,
+  });
+  assert(
+    selected.route === "contextual_scoped_update" &&
+      selected.entity_id === multiple.entities[0].entity_id,
+    "explicit_scope",
+  );
+  const incompatible = resolveContextualCustomerUpdate({
+    state: stateWith(["domain_b"]),
+    candidate: explicit,
+  });
+  assert(
+    incompatible.route === "targeted_clarification",
+    "incompatible_domain",
+  );
+  const readOnly = resolveContextualCustomerUpdate({
+    state: stateWith(["domain_a"]),
+    candidate: candidate("domain_a"),
+    read_only: true,
+  });
+  assert(
+    readOnly.route === "none" &&
+      contextualUpdateEvents(readOnly, stateWith(["domain_a"]), "read")
+          .length === 0,
+    "read_only",
+  );
+  const sameCategory = stateWith(["domain_a", "domain_a"]);
+  assert(
+    resolveContextualCustomerUpdate({
+      state: sameCategory,
+      candidate: explicit,
+    }).route === "targeted_clarification",
+    "multiple_compatible",
+  );
+  console.log("UNIVERSAL|ambiguous=PASS|cross_domain=PASS|read_only=PASS");
+});
+
+// OWNER 2a: exact eight frame slots from memory 4de4c26c (blob 736b7599),
+// explicitly approved in memory 82467101. No production semantic overrides.
+const ownerApproved2aFrames: Record<"B" | "C" | "E" | "live-recall", CommerceSemanticFrame[]> = {
+  "B": [
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "customer_guidance",
+      "customer_facts": [
+        {
+          "key": "contextual_scope_counts",
+          "value": [
+            {
+              "count": 2,
+              "scope": "房",
+              "source_text": "兩間房",
+              "subject_label": "冷氣"
+            }
+          ]
+        }
+      ],
+      "topic": "冷氣",
+      "entities": [],
+      "referents": [],
+      "demands": [
+        {
+          "question": "我想問冷氣匹數,兩間房加個廳。",
+          "source_quote": "我想問冷氣匹數,兩間房加個廳。",
+          "subject_refs": [
+            "冷氣"
+          ],
+          "source_type": "general",
+          "requested_facts": [],
+          "constraints": {},
+          "customer_correction": false,
+          "explicit_negations": [],
+          "ambiguity": {
+            "is_ambiguous": false,
+            "reasons": [],
+            "clarification_question": null
+          }
+        }
+      ],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    },
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "scoped allocation",
+      "customer_facts": [],
+      "topic": "冷氣",
+      "entities": [
+        {
+          "entity_ref": "contextual-goal:source-1",
+          "name": "冷氣",
+          "kind": "unknown",
+          "category_hint": null,
+          "sku": null,
+          "model": null,
+          "quantity": null,
+          "unit": "部",
+          "attributes": {
+            "scoped_customer_updates": [
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "scope": "廳",
+                "source_text": "廳一部",
+                "unit": "部",
+                "value": 1
+              },
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "per_scope_quantity": 1,
+                "scope": "房",
+                "scope_count": null,
+                "source_text": "房各一部",
+                "unit": "部",
+                "value": 1
+              }
+            ]
+          },
+          "constraints": {},
+          "capabilities": {
+            "requires_delivery": false,
+            "supports_pickup": false,
+            "requires_installation": false,
+            "requires_booking": false,
+            "requires_quote": false,
+            "requires_site_check": false,
+            "digital_fulfilment": false,
+            "recurring_billing": false,
+            "rental_return": false,
+            "customization": false
+          },
+          "confidence": 0.99
+        }
+      ],
+      "referents": [
+        {
+          "ref": "contextual-goal:source-1",
+          "source": "persistent_state",
+          "confidence": 0.99
+        }
+      ],
+      "demands": [],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    }
+  ],
+  "C": [
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "customer_guidance",
+      "customer_facts": [
+        {
+          "key": "contextual_scope_counts",
+          "value": [
+            {
+              "count": 2,
+              "scope": "房",
+              "source_text": "兩間房",
+              "subject_label": "冷氣"
+            }
+          ]
+        }
+      ],
+      "topic": "冷氣",
+      "entities": [],
+      "referents": [],
+      "demands": [
+        {
+          "question": "我想問冷氣匹數,兩間房加個廳。",
+          "source_quote": "我想問冷氣匹數,兩間房加個廳。",
+          "subject_refs": [
+            "冷氣"
+          ],
+          "source_type": "general",
+          "requested_facts": [],
+          "constraints": {},
+          "customer_correction": false,
+          "explicit_negations": [],
+          "ambiguity": {
+            "is_ambiguous": false,
+            "reasons": [],
+            "clarification_question": null
+          }
+        }
+      ],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    },
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "scoped allocation",
+      "customer_facts": [],
+      "topic": "冷氣",
+      "entities": [
+        {
+          "entity_ref": "contextual-goal:source-1",
+          "name": "冷氣",
+          "kind": "unknown",
+          "category_hint": null,
+          "sku": null,
+          "model": null,
+          "quantity": null,
+          "unit": "部",
+          "attributes": {
+            "scoped_customer_updates": [
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "scope": "客廳",
+                "source_text": "客廳一部",
+                "unit": "部",
+                "value": 1
+              },
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "per_scope_quantity": 1,
+                "scope": "房",
+                "scope_count": 2,
+                "source_text": "兩間房各一部",
+                "unit": "部",
+                "value": 1
+              }
+            ]
+          },
+          "constraints": {},
+          "capabilities": {
+            "requires_delivery": false,
+            "supports_pickup": false,
+            "requires_installation": false,
+            "requires_booking": false,
+            "requires_quote": false,
+            "requires_site_check": false,
+            "digital_fulfilment": false,
+            "recurring_billing": false,
+            "rental_return": false,
+            "customization": false
+          },
+          "confidence": 0.99
+        }
+      ],
+      "referents": [
+        {
+          "ref": "contextual-goal:source-1",
+          "source": "persistent_state",
+          "confidence": 0.99
+        }
+      ],
+      "demands": [],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    }
+  ],
+  "E": [
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "customer_guidance",
+      "customer_facts": [
+        {
+          "key": "contextual_scope_counts",
+          "value": [
+            {
+              "count": 2,
+              "scope": "房",
+              "source_text": "兩間房",
+              "subject_label": "冷氣"
+            }
+          ]
+        }
+      ],
+      "topic": "冷氣",
+      "entities": [],
+      "referents": [],
+      "demands": [
+        {
+          "question": "我想問冷氣匹數,兩間房加個廳。",
+          "source_quote": "我想問冷氣匹數,兩間房加個廳。",
+          "subject_refs": [
+            "冷氣"
+          ],
+          "source_type": "general",
+          "requested_facts": [],
+          "constraints": {},
+          "customer_correction": false,
+          "explicit_negations": [],
+          "ambiguity": {
+            "is_ambiguous": false,
+            "reasons": [],
+            "clarification_question": null
+          }
+        }
+      ],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    },
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "scoped allocation",
+      "customer_facts": [],
+      "topic": "冷氣",
+      "entities": [
+        {
+          "entity_ref": "contextual-goal:source-1",
+          "name": "冷氣",
+          "kind": "unknown",
+          "category_hint": null,
+          "sku": null,
+          "model": null,
+          "quantity": null,
+          "unit": "部",
+          "attributes": {
+            "scoped_customer_updates": [
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "scope": "廤",
+                "source_text": "廤一部",
+                "unit": "部",
+                "value": 1
+              },
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "per_scope_quantity": 1,
+                "scope": "房",
+                "scope_count": 2,
+                "source_text": "兩間房各一部",
+                "unit": "部",
+                "value": 1
+              }
+            ]
+          },
+          "constraints": {},
+          "capabilities": {
+            "requires_delivery": false,
+            "supports_pickup": false,
+            "requires_installation": false,
+            "requires_booking": false,
+            "requires_quote": false,
+            "requires_site_check": false,
+            "digital_fulfilment": false,
+            "recurring_billing": false,
+            "rental_return": false,
+            "customization": false
+          },
+          "confidence": 0.99
+        }
+      ],
+      "referents": [
+        {
+          "ref": "contextual-goal:source-1",
+          "source": "persistent_state",
+          "confidence": 0.99
+        }
+      ],
+      "demands": [],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    }
+  ],
+  "live-recall": [
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "customer_guidance",
+      "customer_facts": [
+        {
+          "key": "contextual_scope_counts",
+          "value": [
+            {
+              "count": 2,
+              "scope": "房",
+              "source_text": "兩間房",
+              "subject_label": "冷氣"
+            }
+          ]
+        }
+      ],
+      "topic": "冷氣",
+      "entities": [],
+      "referents": [],
+      "demands": [
+        {
+          "question": "我想問冷氣匹數,兩間房加個廳。",
+          "source_quote": "我想問冷氣匹數,兩間房加個廳。",
+          "subject_refs": [
+            "冷氣"
+          ],
+          "source_type": "general",
+          "requested_facts": [],
+          "constraints": {},
+          "customer_correction": false,
+          "explicit_negations": [],
+          "ambiguity": {
+            "is_ambiguous": false,
+            "reasons": [],
+            "clarification_question": null
+          }
+        }
+      ],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    },
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "scoped allocation",
+      "customer_facts": [],
+      "topic": "冷氣",
+      "entities": [
+        {
+          "entity_ref": "contextual-goal:source-1",
+          "name": "冷氣",
+          "kind": "unknown",
+          "category_hint": null,
+          "sku": null,
+          "model": null,
+          "quantity": null,
+          "unit": "部",
+          "attributes": {
+            "scoped_customer_updates": [
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "scope": "廳",
+                "source_text": "廳一部",
+                "unit": "部",
+                "value": 1
+              },
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "per_scope_quantity": 1,
+                "scope": "房",
+                "scope_count": null,
+                "source_text": "房各一部",
+                "unit": "部",
+                "value": 1
+              }
+            ]
+          },
+          "constraints": {},
+          "capabilities": {
+            "requires_delivery": false,
+            "supports_pickup": false,
+            "requires_installation": false,
+            "requires_booking": false,
+            "requires_quote": false,
+            "requires_site_check": false,
+            "digital_fulfilment": false,
+            "recurring_billing": false,
+            "rental_return": false,
+            "customization": false
+          },
+          "confidence": 0.99
+        }
+      ],
+      "referents": [
+        {
+          "ref": "contextual-goal:source-1",
+          "source": "persistent_state",
+          "confidence": 0.99
+        }
+      ],
+      "demands": [],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    }
+  ]
+};
+// Owner 2026-11-25 conditional execution instruction: these three named originals only.
+// Exact archived draft inputs; W9 T2-T4 remain unframed. No industry aliases are supplied.
+const ownerApprovedW9Frames: Record<"W9-1" | "W9-2" | "W9", Array<CommerceSemanticFrame | null>> = {
+  "W9-1": [
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "customer_guidance",
+      "customer_facts": [
+        {
+          "key": "contextual_scope_counts",
+          "value": [
+            {
+              "count": 2,
+              "scope": "房",
+              "source_text": "兩間房",
+              "subject_label": "冷氣"
+            }
+          ]
+        }
+      ],
+      "topic": "冷氣",
+      "entities": [],
+      "referents": [],
+      "demands": [
+        {
+          "question": "我想問冷氣匹數,兩間房加個廳。",
+          "source_quote": "我想問冷氣匹數,兩間房加個廳。",
+          "subject_refs": [
+            "冷氣"
+          ],
+          "source_type": "general",
+          "requested_facts": [],
+          "constraints": {},
+          "customer_correction": false,
+          "explicit_negations": [],
+          "ambiguity": {
+            "is_ambiguous": false,
+            "reasons": [],
+            "clarification_question": null
+          }
+        }
+      ],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    },
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "scoped allocation",
+      "customer_facts": [],
+      "topic": "冷氣",
+      "entities": [
+        {
+          "entity_ref": "contextual-goal:source-1",
+          "name": "冷氣",
+          "kind": "unknown",
+          "category_hint": null,
+          "sku": null,
+          "model": null,
+          "quantity": null,
+          "unit": "部",
+          "attributes": {
+            "scoped_customer_updates": [
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "scope": "個廳",
+                "source_text": "個廳要1部",
+                "unit": "部",
+                "value": 1
+              },
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "per_scope_quantity": 1,
+                "scope": "睡房",
+                "scope_count": 2,
+                "source_text": "兩個睡房每間1部",
+                "unit": "部",
+                "value": 1
+              }
+            ]
+          },
+          "constraints": {},
+          "capabilities": {
+            "requires_delivery": false,
+            "supports_pickup": false,
+            "requires_installation": false,
+            "requires_booking": false,
+            "requires_quote": false,
+            "requires_site_check": false,
+            "digital_fulfilment": false,
+            "recurring_billing": false,
+            "rental_return": false,
+            "customization": false
+          },
+          "confidence": 0.99
+        }
+      ],
+      "referents": [
+        {
+          "ref": "contextual-goal:source-1",
+          "source": "persistent_state",
+          "confidence": 0.99
+        }
+      ],
+      "demands": [],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    }
+  ],
+  "W9-2": [
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "customer_guidance",
+      "customer_facts": [
+        {
+          "key": "contextual_scope_counts",
+          "value": [
+            {
+              "count": 2,
+              "scope": "房",
+              "source_text": "兩間房",
+              "subject_label": "冷氣"
+            }
+          ]
+        }
+      ],
+      "topic": "冷氣",
+      "entities": [],
+      "referents": [],
+      "demands": [
+        {
+          "question": "我想問冷氣匹數,兩間房加個廳。",
+          "source_quote": "我想問冷氣匹數,兩間房加個廳。",
+          "subject_refs": [
+            "冷氣"
+          ],
+          "source_type": "general",
+          "requested_facts": [],
+          "constraints": {},
+          "customer_correction": false,
+          "explicit_negations": [],
+          "ambiguity": {
+            "is_ambiguous": false,
+            "reasons": [],
+            "clarification_question": null
+          }
+        }
+      ],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    },
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "scoped allocation",
+      "customer_facts": [],
+      "topic": "冷氣",
+      "entities": [
+        {
+          "entity_ref": "contextual-goal:source-1",
+          "name": "冷氣",
+          "kind": "unknown",
+          "category_hint": null,
+          "sku": null,
+          "model": null,
+          "quantity": null,
+          "unit": "台",
+          "attributes": {
+            "scoped_customer_updates": [
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "scope": "客厅",
+                "source_text": "客厅放一台",
+                "unit": "台",
+                "value": 1
+              },
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "per_scope_quantity": 1,
+                "scope": "卧室",
+                "scope_count": 2,
+                "source_text": "两间卧室每间各一台",
+                "unit": "台",
+                "value": 1
+              }
+            ]
+          },
+          "constraints": {},
+          "capabilities": {
+            "requires_delivery": false,
+            "supports_pickup": false,
+            "requires_installation": false,
+            "requires_booking": false,
+            "requires_quote": false,
+            "requires_site_check": false,
+            "digital_fulfilment": false,
+            "recurring_billing": false,
+            "rental_return": false,
+            "customization": false
+          },
+          "confidence": 0.99
+        }
+      ],
+      "referents": [
+        {
+          "ref": "contextual-goal:source-1",
+          "source": "persistent_state",
+          "confidence": 0.99
+        }
+      ],
+      "demands": [],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    }
+  ],
+  "W9": [
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "customer_guidance",
+      "customer_facts": [
+        {
+          "key": "contextual_scope_counts",
+          "value": [
+            {
+              "count": 2,
+              "scope": "房",
+              "source_text": "兩間房",
+              "subject_label": "冷氣"
+            }
+          ]
+        }
+      ],
+      "topic": "冷氣",
+      "entities": [],
+      "referents": [],
+      "demands": [
+        {
+          "question": "我想問冷氣匹數,兩間房加個廳。",
+          "source_quote": "我想問冷氣匹數,兩間房加個廳。",
+          "subject_refs": [
+            "冷氣"
+          ],
+          "source_type": "general",
+          "requested_facts": [],
+          "constraints": {},
+          "customer_correction": false,
+          "explicit_negations": [],
+          "ambiguity": {
+            "is_ambiguous": false,
+            "reasons": [],
+            "clarification_question": null
+          }
+        }
+      ],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    },
+    null,
+    null,
+    null,
+    {
+      "version": "commerce-semantic-1.0.0",
+      "language": "zh-TW",
+      "operation": "UPDATE_ITEM",
+      "intent": "scoped allocation",
+      "customer_facts": [],
+      "topic": "冷氣",
+      "entities": [
+        {
+          "entity_ref": "contextual-goal:source-1",
+          "name": "冷氣",
+          "kind": "unknown",
+          "category_hint": null,
+          "sku": null,
+          "model": null,
+          "quantity": null,
+          "unit": "部",
+          "attributes": {
+            "scoped_customer_updates": [
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "scope": "客廳",
+                "source_text": "客廳一部",
+                "unit": "部",
+                "value": 1
+              },
+              {
+                "action": "set",
+                "attribute": "quantity",
+                "per_scope_quantity": 1,
+                "scope": "房",
+                "scope_count": 2,
+                "source_text": "兩間房每間各一部",
+                "unit": "部",
+                "value": 1
+              }
+            ]
+          },
+          "constraints": {},
+          "capabilities": {
+            "requires_delivery": false,
+            "supports_pickup": false,
+            "requires_installation": false,
+            "requires_booking": false,
+            "requires_quote": false,
+            "requires_site_check": false,
+            "digital_fulfilment": false,
+            "recurring_billing": false,
+            "rental_return": false,
+            "customization": false
+          },
+          "confidence": 0.99
+        }
+      ],
+      "referents": [
+        {
+          "ref": "contextual-goal:source-1",
+          "source": "persistent_state",
+          "confidence": 0.99
+        }
+      ],
+      "demands": [],
+      "customer_correction": false,
+      "additive": false,
+      "explicit_negations": [],
+      "requested_facts": [],
+      "transaction_state": "none",
+      "payment_state": "none",
+      "booking_state": "none",
+      "fulfillment_state": "none",
+      "ambiguity": {
+        "is_ambiguous": false,
+        "reasons": [],
+        "clarification_question": null
+      },
+      "confidence": 0.99
+    }
+  ]
+};
+
+function ownerApprovedReading(name: string, turn: 1 | 2 | 5): CommerceSemanticFrame | undefined {
+  if (Object.hasOwn(ownerApprovedW9Frames, name)) {
+    const frame = ownerApprovedW9Frames[name as keyof typeof ownerApprovedW9Frames][turn - 1];
+    return frame ? structuredClone(frame) : undefined;
+  }
+  if (!Object.hasOwn(ownerApproved2aFrames, name)) return undefined;
+  return structuredClone(ownerApproved2aFrames[name as keyof typeof ownerApproved2aFrames][turn - 1]);
+}
+
+function fixture(initial = createEmptyConversationCommerceState()) {
+  let state = initial;
+  let revision = initial.entities.length ? 1 : 0;
+  const db: CommerceStateDbClient = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          maybeSingle: async () => ({
+            data: revision ? { revision, state } : null,
+            error: null,
+          }),
+        }),
+      }),
+    }),
+    rpc: async (_fn, params) => {
+      state = params.p_state as ConversationCommerceState;
+      revision += 1;
+      return {
+        data: { result: "success", applied_revision: revision },
+        error: null,
+      };
+    },
+  };
+  let turn = 0;
+  const ask = async (text: string, history: string[] = [], trusted_product_topic_focus?: { topic: string; product: string; resolution_strategy: "PER_TOPIC_REFERENT_HISTORY" }, semantic_frame?: CommerceSemanticFrame) => {
+    turn += 1;
+    const result = await runCommerceStateRuntime(db, {
+      company_id: "company",
+      conversation_id: "conversation",
+      source_message_id: "source-" + turn,
+      text,
+      language: "zh-TW",
+      history: history.map((content) => ({ role: "visitor", content })),
+      trusted_product_topic_focus,
+      ...(semantic_frame === undefined ? {} : { semantic_frame }),
+    });
+    assert(result, "runtime_empty");
+    return result;
+  };
+  return { ask, snapshot: () => ({ state, revision }) };
+}
+
+Deno.test("Director failed natural dialogue: consecutive source runtime and CAS boundary", async () => {
+  const f = fixture(); // The database RPC is a deterministic CAS stand-in.
+  const turns = [
+    "早晨，我間書房大約95呎，想揀部窗口冷氣。見到樂聲 CW-SUL70BA，呢款係幾多匹，同埋有咩主要功能？",
+    "咁嗰部擺喺95呎書房夠唔夠？個窗下午幾曬。",
+    "另外想順便睇雪櫃，廚房個位最多610mm闊，雙門款有冇啲方向？",
+    "雪櫃先擺低啦。講返書房嗰部先，我頭先量錯，書房其實係105呎；咁要點評估佢夠唔夠？",
+    "就係 CW-SUL70BA，你頭先講過嗰部。書房改咗105呎；please explain briefly in English how I should assess it.",
+    "OK，先唔揀型號住。可唔可以用廣東話兩句講返我而家嘅冷氣同雪櫃要求？",
+    "總結先放埋一邊。如果純粹用我假設嘅舊價，每部 HK$4,750，三部再加 HK$960 送貨費，試算係幾多？呢個唔係現行報價。",
+    "朋友又傳咗個「MOONCOOL-XYZ77」型號，話佢有自動清洗。你查到可靠資料確認到嗎？",
+    "我想轉真人客服接手。主要係你剛才冇總結到已講嘅要求，亦未能幫我判斷 CW-SUL70BA 放喺更正後105呎、下午曬嘅書房是否合適；請同事睇返呢段對話，雪櫃暫時唔跟。",
+    "雪櫃暫緩，冷氣唔暫緩。我而家係明確要求真人客服接手，原因係前面回指同總結答錯；請幫我轉交，唔好再由 AI 問我型號。",
+  ];
+  const history: string[] = [];
+  let underHumanControl = false;
+  for (const [index, input] of turns.entries()) {
+    if (underHumanControl) {
+      assert(index === 9 && classifyHandoffIntent(input).explicit_request, "human control lost on T10");
+      continue;
+    }
+    if (classifyHandoffIntent(input).explicit_request) {
+      assert(index === 8, "handoff before explicit T9 request");
+      underHumanControl = true;
+      continue;
+    }
+    const before = f.snapshot();
+    const result = await f.ask(input, history, index === 3
+      ? { topic: "air_conditioner", product: "CW-SUL70BA", resolution_strategy: "PER_TOPIC_REFERENT_HISTORY" }
+      : undefined);
+    history.unshift(input);
+    const after = f.snapshot();
+    if (index === 6) {
+      assert(result.calculation?.result === 15210 && result.persist_result === "read_only",
+        `T7 historical-only calculation: ${JSON.stringify(result)}`);
+      assert(JSON.stringify(before) === JSON.stringify(after), "T7 changed commerce semantic state");
+    }
+    if (index === 2) {
+      assert(after.state.entities.some((e) => e.category === "refrigerator" && e.constraints.max_width_mm === 610),
+        "T3 fridge width lost when question needed KB evidence");
+    }
+    if (index === 3) {
+      const air = after.state.entities.find((e) => e.category === "air_conditioner");
+      const fridge = after.state.entities.find((e) => e.category === "refrigerator");
+      assert(air?.attributes.room_sizes && (air.attributes.room_sizes as Record<string, string>).study === "105平方呎",
+        "T4 scoped room correction lost");
+      assert(fridge?.status === "deferred" && fridge.constraints.max_width_mm === 610,
+        "T4 defer discarded prior fridge constraint");
+    }
+  }
+  assert(underHumanControl && f.snapshot().state.conversion.order_status === "none",
+    "R1 missing or unrequested order created");
+});
+
+const introduction = "我想問冷氣匹數，兩間房加個廳。";
+const variants = [
+  ["B", "係廳一部，房各一部"],
+  ["C", "客廳一部，兩間房各一部"],
+  ["E", "廤一部，兩間房各一部"],
+  ["W9-1", "數量記住：個廳要1部，兩個睡房每間1部"],
+  ["W9-2", "客厅放一台，两间卧室每间各一台"],
+] as const;
+
+Deno.test("home appliance A: useful guidance rather than generic clarification", async () => {
+  const f = fixture();
+  const reply = await f.ask(introduction);
+  assert(reply.route === "product_guidance", JSON.stringify(reply));
+  assert(
+    /兩間房|客廳/.test(reply.reply ?? "") && /面積/.test(reply.reply ?? ""),
+    String(reply.reply),
+  );
+  assert(
+    !/收到，你提到|customer_goal|已落單/.test(reply.reply ?? ""),
+    "generic_or_claim",
+  );
+  assert(
+    f.snapshot().state.current_topic === "air_conditioner",
+    "context_not_durable",
+  );
+  assert(
+    resolveCanonicalCommerceResolution({
+      outcome: reply,
+      authoritative_address_correction: false,
+    }).bypass_service_plan,
+    "precedence",
+  );
+  console.log("A|" + reply.route + "|" + reply.reply);
+});
+
+for (const [label, text] of variants) {
+  Deno.test(`home appliance ${label}: scoped allocation from established context`, async () => {
+    const f = fixture();
+    await f.ask(introduction, [], undefined, ownerApprovedReading(label, 1));
+    const reply = await f.ask(text, [introduction], undefined, ownerApprovedReading(label, 2));
+    const s = f.snapshot().state;
+    assert(reply.route === "contextual_scoped_update", JSON.stringify(reply));
+    assert(
+      s.entities.filter((e) =>
+        e.status !== "cancelled" && e.status !== "deferred"
+      ).reduce((n, e) => n + e.quantity, 0) === 3,
+      "aggregate_three",
+    );
+    const updates = s.entities[0]?.attributes
+      .scoped_customer_updates as typeof values;
+    assert(
+      Array.isArray(updates) && updates.length === 3 &&
+        updates.every((v) => v.value === 1),
+      "one_each",
+    );
+    // Named W9-1/W9-2 approval accepts the customer's literal scope and unit.
+    // Original B/C/E oracle, state, safety and precedence assertions remain intact.
+    if (label === "W9-1" || label === "W9-2") {
+      const literal = label === "W9-1"
+        ? { scopes: ["個廳要1部", "兩個睡房每間1部"], unit: "部" }
+        : { scopes: ["客厅放一台", "两间卧室每间各一台"], unit: "台" };
+      assert(literal.scopes.every(scope => reply.reply?.includes(scope)) &&
+        (label === "W9-1" ? /(?:三部|(?<![0-9])3 ?部)/ : /(?:三台|(?<![0-9])3 ?台)/).test(reply.reply ?? ""),
+        String(reply.reply));
+      const sourced = updates as ScopedCustomerValue[];
+      assert(new Set(sourced.map(value => value.scope)).size === 3 &&
+        sourced.every(value => value.source_message_id === "source-2" &&
+          value.source_revision === f.snapshot().revision) &&
+        s.entities[0].attributes.unit === literal.unit, "source_scope_or_unit_drift");
+    } else {
+      assert(
+        /客廳|兩間房/.test(reply.reply ?? "") &&
+          (label === "B" || label === "C" || label === "E" ? /(?:三部|(?<![0-9])3 ?部)/ : /三部/).test(reply.reply ?? ""),
+        String(reply.reply),
+      );
+    }
+    assert(
+      !/customer_goal|已落單|已確認|收到，你提到/.test(reply.reply ?? ""),
+      "false_action_or_internal",
+    );
+    assert(
+      resolveCanonicalCommerceResolution({
+        outcome: reply,
+        authoritative_address_correction: false,
+      }).bypass_service_plan,
+      "precedence",
+    );
+    console.log(
+      label + "|" + reply.route + "|" + reply.reply + "|revision=" +
+        f.snapshot().revision,
+    );
+  });
+}
+
+Deno.test("home appliance D: room-only allocation without room context asks target", async () => {
+  const f = fixture();
+  const before = JSON.stringify(f.snapshot().state);
+  const reply = await f.ask("房各一部");
+  assert(
+    reply.reason === "contextual_targeted_clarification" &&
+      reply.persist_result === "read_only",
+    JSON.stringify(reply),
+  );
+  assert(reply.reply?.includes("幾間房"), String(reply.reply));
+  assert(
+    JSON.stringify(f.snapshot().state) === before &&
+      f.snapshot().revision === 0,
+    "clarification_mutated",
+  );
+  console.log("D|targeted_clarification|" + reply.reply);
+});
+
+Deno.test("home appliance typo without unique context stays read-only", async () => {
+  const f = fixture();
+  const reply = await f.ask("廤一部，兩間房各一部");
+  assert(
+    reply.reason === "contextual_targeted_clarification",
+    JSON.stringify(reply),
+  );
+  assert(
+    f.snapshot().revision === 0 && f.snapshot().state.entities.length === 0,
+    "typo_guessed_without_context",
+  );
+});
+
+Deno.test("W9 established AC context survives intervening service and memory turns", async () => {
+  const f = fixture();
+  const opening = introduction;
+  await f.ask(opening, [], undefined, ownerApprovedReading("W9", 1));
+  await f.ask("細房80呎，大房100呎，客廳180呎。", [opening]);
+  await f.ask("三個位都有窗口，而家都用窗口機。", [
+    "細房80呎，大房100呎，客廳180呎。",
+    opening,
+  ]);
+  await f.ask("客廳下晝西斜。", [
+    "三個位都有窗口，而家都用窗口機。",
+    "細房80呎，大房100呎，客廳180呎。",
+    opening,
+  ]);
+  const text = "數量先記低：客廳一部，兩間房每間各一部。";
+  const reply = await f.ask(text, [
+    "客廳下晝西斜。",
+    "三個位都有窗口，而家都用窗口機。",
+    "細房80呎，大房100呎，客廳180呎。",
+    opening,
+  ], undefined, ownerApprovedReading("W9", 5));
+  const snapshot = f.snapshot();
+  assert(
+    reply.route === "contextual_scoped_update" &&
+      reply.reason === "UNIQUE_COMPATIBLE_CONTEXT",
+    JSON.stringify(reply),
+  );
+  const goal = snapshot.state.customer_constraints.contextual_goal as SourceBoundContextualGoal;
+  assert(goal?.subject_label === "冷氣" && goal.source_message_id === "source-1" &&
+    goal.company_id === "company" && goal.conversation_id === "conversation" &&
+    goal.recorded_revision === 1 && goal.status === "active", "source_owned_goal_lost");
+  assert(snapshot.state.current_topic === goal.subject_label, "topic_lost");
+  const active = snapshot.state.entities.filter((entity) =>
+    entity.status !== "cancelled" && entity.status !== "deferred"
+  );
+  assert(
+    active.length === 1 && active[0].category === goal.subject_label &&
+      active[0].quantity === 3,
+    JSON.stringify(active),
+  );
+  const scoped = active[0].attributes
+    .scoped_customer_updates as ScopedCustomerValue[];
+  assert(
+    scoped.length === 3 &&
+      scoped.every((value) =>
+        value.attribute === "quantity" && value.value === 1
+      ),
+    JSON.stringify(scoped),
+  );
+  assert(new Set(scoped.map(value => value.scope)).size === 3 &&
+    scoped.every(value => value.source_message_id === "source-5" &&
+      value.source_revision === snapshot.revision) &&
+    active[0].attributes.contextual_goal_id === goal.goal_id && active[0].attributes.unit === "部",
+    "source_owned_allocation_lost");
+  assert(
+    snapshot.state.conversion.order_status === "none" &&
+      snapshot.state.conversion.payment_status === "none" &&
+      snapshot.state.conversion.quotation_status === "none" &&
+      snapshot.state.quotes.length === 0,
+    "transaction_promoted",
+  );
+});
+
+Deno.test("W11 production-shaped T1-T5 advances one durable AC purchase journey", async () => {
+  const f = fixture();
+  const turns = [
+    "Hello，屋企想換冷氣，兩間睡房加個客廳，應該點揀好？",
+    "細房大概80呎，大房100呎，個廳就180呎。",
+    "三個位都有窗口位，而家裝緊嘅都係窗口機。",
+    "另外個廳下晝西斜幾勁，揀機時要點考慮？",
+  ];
+  const replies = [];
+  for (let i = 0; i < turns.length; i++) {
+    const reply = await f.ask(turns[i], turns.slice(0, i).reverse());
+    replies.push(reply);
+    assert(
+      reply.route === "product_guidance",
+      `T${i + 1}:${JSON.stringify(reply)}`,
+    );
+    assert(
+      !/收到，你提到|未確定嘅細節會再核實|提供相關項目、適用範圍同日期/.test(
+        reply.reply ?? "",
+      ),
+      `passive:T${i + 1}:${reply.reply}`,
+    );
+  }
+  assert(/平方呎/.test(replies[0].reply ?? ""), String(replies[0].reply));
+  assert(
+    /窗口位|安裝方式/.test(replies[1].reply ?? ""),
+    String(replies[1].reply),
+  );
+  assert(
+    /下午日照|西斜/.test(replies[2].reply ?? ""),
+    String(replies[2].reply),
+  );
+  assert(
+    /西斜會增加.*負荷/.test(replies[3].reply ?? "") &&
+      /唔會.*保證匹數/.test(replies[3].reply ?? ""),
+    String(replies[3].reply),
+  );
+
+  const beforeQuantity = f.snapshot();
+  const activeBefore = beforeQuantity.state.entities.filter((entity) =>
+    entity.status !== "cancelled" && entity.status !== "deferred"
+  );
+  assert(
+    activeBefore.length === 1 &&
+      activeBefore[0].entity_id === "air_conditioner:unscoped",
+    JSON.stringify(activeBefore),
+  );
+  const goal = activeCustomerGoal(beforeQuantity.state, "air_conditioner")
+    ?.goal;
+  assert(
+    goal?.objective === "replace_existing_appliance" &&
+      goal.journey_stage === "sizing_guidance",
+    JSON.stringify(goal),
+  );
+  assert(
+    ["room_sizes", "installation_type", "sunlight"].every((item) =>
+      goal.collected.includes(item)
+    ),
+    JSON.stringify(goal),
+  );
+  assert(
+    goal.missing.join(",") === "sizing_decision,suitable_models",
+    JSON.stringify(goal),
+  );
+
+  const t5 = "數量先記低：客廳一部，兩間房每間各一部。";
+  const update = await f.ask(t5, turns.slice().reverse());
+  assert(
+    update.route === "contextual_scoped_update" &&
+      update.reason === "UNIQUE_COMPATIBLE_CONTEXT",
+    JSON.stringify(update),
+  );
+  assert(
+    update.reply ===
+      "記低客廳一部、兩間房各一部，共三部；呢個係選購要求，未落單。",
+    String(update.reply),
+  );
+  const state = f.snapshot().state;
+  assert(
+    state.entities.length === 1 && state.entities[0].quantity === 3,
+    JSON.stringify(state.entities),
+  );
+  assert(
+    state.conversion.order_status === "none" &&
+      state.conversion.payment_status === "none" &&
+      state.conversion.quotation_status === "none" && state.quotes.length === 0,
+    "transaction_promoted",
+  );
+  console.log(`W11-T1|${replies[0].route}|${replies[0].reply}`);
+  console.log(`W11-T2|${replies[1].route}|${replies[1].reply}`);
+  console.log(`W11-T3|${replies[2].route}|${replies[2].reply}`);
+  console.log(`W11-T4|${replies[3].route}|${replies[3].reply}`);
+  console.log(`W11-T5|${update.route}|${update.reply}`);
+});
+
+Deno.test("W13 T1-T5 committed journey progress carries bounded B2 authorization", async () => {
+  const f = fixture();
+  const turns = [
+    "Hello，屋企想換冷氣，兩間睡房加個客廳，應該點揀好？",
+    "細房大概80呎，大房100呎，個廳就180呎。",
+    "三個位都有窗口位，而家裝緊嘅都係窗口機。",
+    "另外個廳下晝西斜幾勁，揀機時要點考慮？",
+    "數量先記低：客廳一部，兩間房每間各一部。",
+  ];
+  for (let i = 0; i < turns.length; i++) {
+    const outcome = await f.ask(turns[i], turns.slice(0, i).reverse());
+    const current = f.snapshot();
+    const proof = outcome.trusted_journey_progress;
+    assert(proof, `T${i + 1}:missing_private_proof:${JSON.stringify(outcome)}`);
+    const verdict = evaluateB2BeforeCommit({
+      proposed_response: outcome.reply ?? "",
+      persistence_kind: "ai_reply",
+      snapshot: {
+        conversation_id: "conversation",
+        company_id: "company",
+        source_message_id: `source-${i + 1}`,
+        source_message_content: turns[i],
+        commerce_state_revision: current.revision,
+        commerce_state_source_message_id: `source-${i + 1}`,
+        state: current.state,
+      },
+      metadata: {
+        response_route: outcome.route,
+        commerce_reason: outcome.reason,
+        commerce_authority: outcome.authority,
+        commerce_state_revision: outcome.revision,
+        commerce_state_persist_result: outcome.persist_result,
+        commerce_state_persistence_classification: "COMMITTED",
+        contextual_decision: outcome.contextual_decision ?? null,
+      },
+      trusted_journey_progress: proof,
+    });
+    const expectedCode = i >= 1
+      ? "B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE"
+      : "B2_ALLOW";
+    assert(
+      verdict.decision === "allow" && verdict.code === expectedCode,
+      `T${i + 1}:B2:${JSON.stringify(verdict)}`,
+    );
+    if (i < 4) {
+      assert(outcome.route === "product_guidance", `T${i + 1}:route`);
+    } else {
+      assert(
+        outcome.route === "contextual_scoped_update" &&
+          outcome.reason === "UNIQUE_COMPATIBLE_CONTEXT",
+        `T5:${JSON.stringify(outcome)}`,
+      );
+    }
+    console.log(
+      `W13-T${
+        i + 1
+      }|${outcome.route}|${outcome.reply}|revision=${current.revision}|${verdict.code}`,
+    );
+  }
+  const state = f.snapshot().state;
+  const entity = state.entities.find((candidate) =>
+    candidate.entity_id === "air_conditioner:unscoped"
+  );
+  assert(entity?.quantity === 3, JSON.stringify(entity));
+  const scoped = entity.attributes
+    .scoped_customer_updates as ScopedCustomerValue[];
+  assert(
+    scoped.length === 3 && scoped.every((item) => item.value === 1),
+    JSON.stringify(scoped),
+  );
+  assert(
+    state.conversion.order_status === "none" &&
+      state.conversion.payment_status === "none" &&
+      state.conversion.quotation_status === "none" && state.quotes.length === 0,
+    "W13 transaction boundary",
+  );
+});
+
+Deno.test("W15 sequential T1-T8 preserves journey then prioritizes factual follow-up", async () => {
+  const f = fixture();
+  const turns = [
+    "Hello，屋企想換冷氣，兩間睡房加個客廳，應該點揀好？",
+    "細房大概80呎，大房100呎，個廳就180呎。",
+    "三個位都有窗口位，而家裝緊嘅都係窗口機。",
+    "另外個廳下晝西斜幾勁，揀機時要點考慮？",
+    "數量先記低：客廳一部，兩間房每間各一部。",
+  ];
+  for (let i = 0; i < turns.length; i++) {
+    const outcome = await f.ask(turns[i], turns.slice(0, i).reverse());
+    assert(
+      i < 4
+        ? outcome.route === "product_guidance"
+        : outcome.route === "contextual_scoped_update" &&
+          outcome.reason === "UNIQUE_COMPATIBLE_CONTEXT",
+      `T${i + 1}:${JSON.stringify(outcome)}`,
+    );
+  }
+  const t6 = "細房我見到 CW-SUL70BA，佢有咩功能、係幾多匹？80呎用落夠唔夠？";
+  const t6Intent = classifyNaturalCustomerIntent(t6);
+  assert(
+    t6Intent.kind === "product_factual_query" &&
+      t6Intent.facts.join(",") === "features,horsepower,suitability" &&
+      requiresCurrentMerchantEvidence(t6Intent),
+    JSON.stringify(t6Intent),
+  );
+  const t7 = arbitrateAnaphoricProductFollowUp("咁呢部而家賣幾錢？", [
+    {
+      role: "visitor",
+      content: t6,
+    },
+    ...turns.slice().reverse().map((content) => ({ role: "visitor", content })),
+  ]);
+  assert(
+    t7.kind === "resolved" && t7.intent.product === "CW-SUL70BA" &&
+      t7.intent.fact === "price" && requiresCurrentMerchantEvidence(t7.intent),
+    JSON.stringify(t7),
+  );
+
+  const beforeSwitch = structuredClone(f.snapshot().state);
+  const t8 = await f.ask(
+    "另外雪櫃都想換，擺位闊度最多595mm，想搵雙門款。",
+    ["咁呢部而家賣幾錢？", t6, ...turns.slice().reverse()],
+  );
+  const afterSwitch = f.snapshot().state;
+  const ac = afterSwitch.entities.find((entity) =>
+    entity.category === "air_conditioner"
+  );
+  const fridge = afterSwitch.entities.find((entity) =>
+    entity.category === "refrigerator"
+  );
+  assert(t8.route === "product_guidance", JSON.stringify(t8));
+  assert(
+    ac?.quantity === 3 && fridge?.quantity === 1 &&
+      !JSON.stringify(fridge).includes("180") &&
+      !JSON.stringify(fridge).includes("sunlight"),
+    JSON.stringify(afterSwitch.entities),
+  );
+  assert(
+    beforeSwitch.conversion.order_status === "none" &&
+      afterSwitch.conversion.order_status === "none" &&
+      afterSwitch.conversion.payment_status === "none" &&
+      afterSwitch.quotes.length === 0,
+    "transaction_boundary_changed",
+  );
+  console.log(
+    "W15-SEQUENTIAL|T1-T5=PASS|T6=features+horsepower+suitability|T7=CURRENT_KB_REQUIRED:price:CW-SUL70BA|T8=refrigerator_isolated",
+  );
+  console.log(`W15-T8|${t8.route}|${t8.reply}`);
+});
+
+Deno.test("W19 sequential T1-T16 source replay preserves customer journey, KB and transaction boundaries", async () => {
+  const f = fixture();
+  const turns: string[] = [];
+  const ask = async (text: string) => { const outcome = await f.ask(text, turns.slice().reverse()); turns.push(text); return outcome; };
+  const t1 = await ask("Hello，屋企想換冷氣，兩間睡房加個客廳，應該點揀好？");
+  const t2 = await ask("細房大概80呎，大房100呎，個廳就180呎。");
+  const t3 = await ask("三個位都有窗口位，而家裝緊嘅都係窗口機。");
+  const t4 = await ask("另外個廳下晝西斜幾勁，揀機時要點考慮？");
+  const t5 = await ask("數量先記低：客廳一部，兩間房每間各一部。");
+  assert([t1, t2, t3, t4].every((turn) => turn.route === "product_guidance") && t5.route === "contextual_scoped_update" && t5.reason === "UNIQUE_COMPATIBLE_CONTEXT", JSON.stringify({ t1, t2, t3, t4, t5 }));
+
+  const t6 = "細房我見到 CW-SUL70BA，佢有咩功能、係幾多匹？80呎用落夠唔夠？";
+  const t6Intent = classifyNaturalCustomerIntent(t6); turns.push(t6);
+  assert(t6Intent.kind === "product_factual_query" && t6Intent.facts.join(",") === "features,horsepower,suitability", JSON.stringify(t6Intent));
+  const t7 = "咁呢部而家賣幾錢？";
+  const t7Result = arbitrateAnaphoricProductFollowUp(t7, turns.slice().reverse().map((content) => ({ role: "visitor", content }))); turns.push(t7);
+  assert(t7Result.kind === "resolved" && t7Result.intent.product === "CW-SUL70BA" && t7Result.intent.fact === "price", JSON.stringify(t7Result));
+
+  const t8 = await ask("另外雪櫃都想換，擺位闊度最多595mm，想搵雙門款。");
+  const switched = f.snapshot().state;
+  const acAfterSwitch = switched.entities.find((entity) => entity.category === "air_conditioner");
+  const fridgeAfterSwitch = switched.entities.find((entity) => entity.category === "refrigerator");
+  assert(t8.route === "product_guidance" && acAfterSwitch?.quantity === 3 && fridgeAfterSwitch?.quantity === 1 && !JSON.stringify(fridgeAfterSwitch).includes("180") && !JSON.stringify(fridgeAfterSwitch).includes("sunlight"), JSON.stringify({ t8, entities: switched.entities }));
+
+  const t9 = "講返頭先嗰部冷氣，細房研究緊邊個型號同幾多匹？";
+  const t9Focus = { topic: "air_conditioner", product: "CW-SUL70BA", resolution_strategy: "PER_TOPIC_REFERENT_HISTORY" as const };
+  const focusValidation = validateTrustedProductTopicFocus({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t9", text: t9, language: "zh-TW", history: turns.slice().reverse().map((content) => ({ role: "visitor", content })), trusted_product_topic_focus: t9Focus }, f.snapshot().state);
+  assert(focusValidation.valid, JSON.stringify(focusValidation));
+  const t9State = await f.ask(t9, turns.slice().reverse(), t9Focus);
+  // Mirror the real generation call chain: verified focus -> canonical commit
+  // -> scoped readback -> factual query binding. Do not infer a category from HP.
+  const t9Readback = {...f.snapshot(),conversation_id:"conversation",company_id:"company"};
+  const t9Result = arbitrateCanonicalProductFollowUp(t9,
+    turns.slice().reverse().map(content=>({role:"visitor",content,conversation_id:"conversation",company_id:"company"})),
+    {conversation_id:"conversation",company_id:"company"},t9Readback,
+    resolveIndustryProfile(t9Readback.state.current_industry)?.category_bindings
+      ? [...resolveIndustryProfile(t9Readback.state.current_industry)!.category_bindings!] : undefined);
+  turns.push(t9);
+  assert(t9Result.kind === "resolved" && t9Result.intent.product === "CW-SUL70BA" && t9Result.intent.facts.includes("model_info") && t9Result.intent.facts.includes("horsepower") && t9Result.resolved_topic === "air_conditioner" && f.snapshot().state.current_topic === "air_conditioner", JSON.stringify({ t9Result, t9State }));
+
+  const t10 = await ask("大房唔係100呎，應該係110呎。");
+  assert(t10.persist_result === "success" && t10.trusted_correction_commit?.previous_value === "100平方呎" && t10.trusted_correction_commit?.current_value === "110平方呎" && f.snapshot().state.current_topic === "air_conditioner" && f.snapshot().state.latest_corrections.some((value) => value.includes("110呎") && value.includes("100呎")), JSON.stringify({ t10, state: f.snapshot().state }));
+  const t10Proof = t10.trusted_correction_commit!;
+  const t10State = f.snapshot();
+  assert(t10Proof.category === "air_conditioner" && t10Proof.scope === "large_bedroom" &&
+    t10Proof.field === "room_size" && t10Proof.previous_values.large_bedroom === "100平方呎" &&
+    t10Proof.committed_values.large_bedroom === "110平方呎" &&
+    t10State.state.entities.find((entity) => entity.entity_id === t10Proof.entity_id)?.attributes.room_sizes &&
+    t10State.revision === t10Proof.previous_revision + 1, "t10_scoped_commit");
+  const t10Memory = buildCanonicalConversationMemory({
+    conversation_id: "conversation", company_id: "company",
+    source_message_id: t10Proof.source_message_id,
+    commerce_state_revision: t10State.revision,
+    commerce_state: t10State.state,
+    newest_first: turns.slice().reverse().map((content, index) => ({
+      id: index === 0 ? t10Proof.source_message_id : `source-${turns.length - index}`, role: "visitor", content,
+    })),
+    visitor_turn_count: turns.length,
+    source_created_at: "2026-09-25T00:00:00.000Z",
+    next_memory_revision: turns.length,
+  });
+  const t10Current = t10Memory.current_customer_facts.find((fact) => fact.key === "room_size");
+  assert(Array.isArray(t10Current?.value) &&
+    t10Current.value.some((item) => item.label === "大房" && item.value === "110平方呎") &&
+    t10Memory.cancelled_or_superseded.some((fact) =>
+      fact.key === "superseded_room_size" &&
+      (fact.value as { value?: string }).value === "100平方呎"
+    ) && t10Memory.commerce_state_revision === t10State.revision, "t10_memory_commerce_disagree");
+  const exactReadback = {
+    memory: t10Memory, receipt: t10Proof,
+    commerce: { company_id: "company", source_message_id: t10Proof.source_message_id, revision: t10State.revision },
+  };
+  assert(verifyCommittedRoomCorrectionMemory(exactReadback), "t10_memory_receipt_rejected");
+  for (const [label, readback] of ([
+    ["missing_memory", { ...exactReadback, memory: null }],
+    ["wrong_tenant", { ...exactReadback, commerce: { ...exactReadback.commerce, company_id: "other" } }],
+    ["wrong_turn", { ...exactReadback, commerce: { ...exactReadback.commerce, source_message_id: "other" } }],
+    ["stale_memory", { ...exactReadback, memory: { ...t10Memory, commerce_state_revision: t10State.revision - 1 } }],
+    ["missing_superseded", { ...exactReadback, memory: { ...t10Memory, cancelled_or_superseded: [] } }],
+    ["missing_current", { ...exactReadback, memory: { ...t10Memory, current_customer_facts: [] } }],
+  ] as Array<[string, Parameters<typeof verifyCommittedRoomCorrectionMemory>[0]]>)) assert(!verifyCommittedRoomCorrectionMemory(readback), `memory_${label}_accepted`);
+  const t10Metadata = {
+    response_route: t10.route, commerce_reason: t10.reason,
+    commerce_authority: t10.authority,
+    commerce_state_revision: t10.revision,
+    commerce_state_persist_result: t10.persist_result,
+    commerce_state_persistence_classification: "COMMITTED",
+  };
+  const t10Snapshot = {
+    conversation_id: "conversation", company_id: "company",
+    source_message_id: t10Proof.source_message_id,
+    source_message_content: t10Proof.source_text,
+    commerce_state_revision: t10State.revision,
+    commerce_state_source_message_id: t10Proof.source_message_id,
+    state: t10State.state,
+  };
+  const t10B2 = (overrides: Record<string, unknown> = {}) =>
+    evaluateB2BeforeCommit({
+      proposed_response: t10.reply ?? "",
+      persistence_kind: "ai_reply",
+      snapshot: t10Snapshot, metadata: t10Metadata,
+      trusted_correction_commit: t10Proof,
+      ...overrides,
+    });
+  assert(t10B2().code === "B2_ALLOW_COMMITTED_SCOPED_CORRECTION", JSON.stringify(t10B2()));
+  for (const [label, overrides] of [
+    ["no_receipt", { trusted_correction_commit: null }],
+    ["failed_commit", { metadata: { ...t10Metadata, commerce_state_persist_result: "rpc_transport_error" } }],
+    ["stale_revision", { trusted_correction_commit: { ...t10Proof, committed_revision: t10Proof.previous_revision } }],
+    ["replay", { trusted_correction_commit: { ...t10Proof, source_message_id: "another-turn" } }],
+    ["tenant", { trusted_correction_commit: { ...t10Proof, company_id: "other-company" } }],
+    ["scope", { trusted_correction_commit: { ...t10Proof, scope: "small_bedroom" } }],
+    ["entity", { trusted_correction_commit: { ...t10Proof, entity_id: "refrigerator:unscoped" } }],
+    ["text_only", { proposed_response: t10.reply ?? "", trusted_correction_commit: null }],
+    ["order", { proposed_response: `${t10.reply} 訂單已確認。` }],
+  ] as const) {
+    const decision = t10B2(overrides);
+    assert(decision.decision !== "allow", `${label}:${JSON.stringify(decision)}`);
+  }
+  const cancelledCorrectionState = structuredClone(t10State.state);
+  cancelledCorrectionState.entities.find((entity) => entity.entity_id === t10Proof.entity_id)!.status = "cancelled";
+  assert(t10B2({ snapshot: { ...t10Snapshot, state: cancelledCorrectionState } }).decision !== "allow", "cancelled_correction_accepted");
+  const ambiguousCorrectionState = structuredClone(t10State.state);
+  ambiguousCorrectionState.entities.push({
+    ...structuredClone(ambiguousCorrectionState.entities.find((entity) => entity.entity_id === t10Proof.entity_id)!),
+    entity_id: "air_conditioner:other",
+  });
+  assert(t10B2({ snapshot: { ...t10Snapshot, state: ambiguousCorrectionState } }).decision !== "allow", "ambiguous_correction_accepted");
+  const failedCommit = await runCommerceStateRuntime({
+    from: () => ({
+      select: () => ({ eq: () => ({ maybeSingle: async () =>
+        ({ data: { revision: t10State.revision, state: t10State.state }, error: null })
+      }) }),
+    }),
+    rpc: async () => ({ data: null, error: { message: "simulated CAS failure" } }),
+  }, {
+    company_id: "company", conversation_id: "conversation",
+    source_message_id: "failed-source", text: "大房唔係110呎，應該係120呎。",
+    language: "zh-TW",
+  });
+  assert(failedCommit?.persist_result === "rpc_transport_error" &&
+    !failedCommit.trusted_correction_commit &&
+    t10State.state.entities.find((entity) => entity.entity_id === t10Proof.entity_id)
+      ?.attributes.room_sizes &&
+    !JSON.stringify(t10State.state).includes("120平方呎"), "failed_commit_created_proof");
+  const staleOld = await runCommerceStateRuntime({
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () =>
+      ({ data: { revision: t10State.revision, state: t10State.state }, error: null })
+    }) }) }),
+    rpc: async (_fn, params) => ({ data: { result: "success", applied_revision: t10State.revision + 1 }, error: null }),
+  }, {
+    company_id: "company", conversation_id: "conversation",
+    source_message_id: "wrong-old", text: "大房唔係99呎，應該係120呎。",
+    language: "zh-TW",
+  });
+  assert(staleOld && !staleOld.trusted_correction_commit &&
+    (t10State.state.entities.find((entity) => entity.entity_id === t10Proof.entity_id)
+      ?.attributes.room_sizes as Record<string, string>).large_bedroom === "110平方呎",
+    "wrong_old_value_promoted");
+  console.log(`W20-T10|${t10.route}|${t10.reply}|revision=${t10State.revision}|B2=${t10B2().code}|negative=PASS`);
+  const beforeDeferral = structuredClone(f.snapshot().state);
+  const beforeDeferralRevision = f.snapshot().revision;
+  const t11 = await ask("雪櫃暫時唔換住，先搞冷氣。");
+  const afterCancellation = f.snapshot().state;
+  const refrigerator = afterCancellation.entities.find((entity) => entity.category === "refrigerator");
+  const ac = afterCancellation.entities.find((entity) => entity.category === "air_conditioner");
+  assert(t11.reason === "authoritative_scoped_lifecycle_applied" && t11.persist_result === "success" &&
+    t11.trusted_lifecycle_commit && f.snapshot().revision === beforeDeferralRevision + 1 &&
+    refrigerator?.status === "deferred" && ac?.quantity === 3 && ac.status === "researching" &&
+    afterCancellation.entities.length === beforeDeferral.entities.length &&
+    JSON.stringify(ac) === JSON.stringify(beforeDeferral.entities.find((entity) => entity.category === "air_conditioner")) &&
+    afterCancellation.current_topic === "air_conditioner" &&
+    JSON.stringify(ac.attributes.scoped_customer_updates).includes("living_room") &&
+    !afterCancellation.entities.some((entity) => /air_conditioner:(?:living_room|bedroom)$/.test(entity.entity_id)) &&
+    t11.reply?.includes("雪櫃先暫停") && t11.reply.includes("冷氣"), JSON.stringify({ t11, refrigerator, ac }));
+  const t11Proof = t11.trusted_lifecycle_commit!;
+  const t11Memory = buildCanonicalConversationMemory({
+    conversation_id: "conversation", company_id: "company", source_message_id: t11Proof.source_message_id,
+    commerce_state_revision: f.snapshot().revision, commerce_state: afterCancellation,
+    newest_first: turns.slice().reverse().map((content, index) => ({ id: index === 0 ? t11Proof.source_message_id : `history-${index}`, role: "visitor", content })),
+    visitor_turn_count: turns.length, source_created_at: "2026-09-25T00:00:00.000Z", next_memory_revision: turns.length,
+  });
+  assert(verifyCommittedLifecycleMemory({ memory: t11Memory, receipt: t11Proof,
+    commerce: { company_id: "company", source_message_id: t11Proof.source_message_id, revision: f.snapshot().revision, state: afterCancellation } }), "t11_memory_parity");
+  for (const [name, memory] of [
+    ["missing_active_ac", { ...t11Memory, active_entities: [] }],
+    ["missing_deferred_fridge", { ...t11Memory, cancelled_or_superseded: [] }],
+    ["wrong_revision", { ...t11Memory, commerce_state_revision: f.snapshot().revision - 1 }],
+  ] as Array<[string, CanonicalConversationMemory]>) assert(!verifyCommittedLifecycleMemory({ memory, receipt: t11Proof,
+    commerce: { company_id: "company", source_message_id: t11Proof.source_message_id, revision: f.snapshot().revision, state: afterCancellation } }), `t11_memory_${name}_accepted`);
+  const t11Snapshot = { conversation_id: "conversation", company_id: "company", source_message_id: t11Proof.source_message_id,
+    source_message_content: t11Proof.source_text, commerce_state_revision: f.snapshot().revision,
+    commerce_state_source_message_id: t11Proof.source_message_id, state: afterCancellation };
+  const t11Metadata = { response_route: t11.route, commerce_reason: t11.reason, commerce_authority: t11.authority,
+    commerce_state_revision: t11.revision, commerce_state_persist_result: t11.persist_result,
+    commerce_state_persistence_classification: "COMMITTED" };
+  const t11B2 = (overrides: Record<string, unknown> = {}) => evaluateB2BeforeCommit({
+    proposed_response: t11.reply ?? "", persistence_kind: "ai_reply", snapshot: t11Snapshot,
+    metadata: t11Metadata, trusted_lifecycle_commit: t11Proof, ...overrides,
+  });
+  assert(t11B2().code === "B2_ALLOW_COMMITTED_SCOPED_LIFECYCLE", JSON.stringify(t11B2()));
+  for (const [name, overrides] of [
+    ["no_proof", { trusted_lifecycle_commit: null }],
+    ["failed_commit", { metadata: { ...t11Metadata, commerce_state_persist_result: "rpc_transport_error" } }],
+    ["stale", { trusted_lifecycle_commit: { ...t11Proof, committed_revision: t11Proof.previous_revision } }],
+    ["replay", { trusted_lifecycle_commit: { ...t11Proof, source_message_id: "other-turn" } }],
+    ["tenant", { trusted_lifecycle_commit: { ...t11Proof, company_id: "other" } }],
+    ["scope", { trusted_lifecycle_commit: { ...t11Proof, target_entity_ids: ["air_conditioner:unscoped"] } }],
+    ["quantity", { snapshot: { ...t11Snapshot, state: { ...afterCancellation, entities: afterCancellation.entities.map((entity) => entity.category === "air_conditioner" ? { ...entity, quantity: 2 } : entity) } } }],
+    ["ghost", { snapshot: { ...t11Snapshot, state: { ...afterCancellation, entities: [...afterCancellation.entities, { ...ac!, entity_id: "air_conditioner:bedroom" }] } } }],
+    ["order", { proposed_response: `${t11.reply} 訂單已確認。` }],
+  ] as const) assert(t11B2(overrides).decision !== "allow", `t11_${name}_accepted`);
+  console.log(`W21-T11|${t11.route}|${t11.reply}|revision=${f.snapshot().revision}|entities=${afterCancellation.entities.length}|quantity=${ac.quantity}|B2=${t11B2().code}`);
+
+  const t12 = "而家我冷氣要求係點？";
+  const revisionBeforeRecap = f.snapshot().revision;
+  const stateBeforeRecap = structuredClone(f.snapshot().state);
+  const recapOutcome = await ask(t12);
+  assert(recapOutcome.reason === "read_only_current_requirements_recap" &&
+    recapOutcome.persist_result === "read_only" &&
+    f.snapshot().revision === revisionBeforeRecap &&
+    JSON.stringify(f.snapshot().state) === JSON.stringify(stateBeforeRecap),
+    `T12_FALSE_MUTATION:${JSON.stringify(recapOutcome)}`);
+  const memory = t11Memory;
+  const recall = prepareConversationRecall({ conversation_id: "conversation", company_id: "company", source_message_id: "source-t12", question: t12, memory, commerce: { conversation_id: "conversation", company_id: "company", source_message_id: t11Proof.source_message_id, revision: f.snapshot().revision, state: afterCancellation }, recent_questions: turns.slice(0,-1).reverse() }, "zh-TW");
+  assert(recall.decision.handled && recall.reply && ["80平方呎", "110平方呎", "180平方呎", "窗口", "CW-SUL70BA"].every((item) => recall.reply!.includes(item)) &&
+    (() => { const details = (recall.decision.handled ? recall.decision.value as { entity_details: Array<{ quantity: number; attributes: Record<string, unknown> }> } : null)?.entity_details;
+      return details?.length === 1 && details[0].quantity === 3 && (details[0].attributes.room_sunlight as Record<string,string>)?.living_room === "strong_afternoon_sun"; })() && !recall.reply.includes("100平方呎") && !recall.reply.includes("雪櫃") && !recall.reply.includes("refrigerator:unscoped"), JSON.stringify(recall));
+  assert(afterCancellation.conversion.order_status === "none" && afterCancellation.conversion.payment_status === "none" && afterCancellation.conversion.quotation_status === "none" && afterCancellation.quotes.length === 0, "transaction_promoted");
+  const kbContent = "工作表：商品設定_20260813 162932 ID: 7944 狀態: 開啟 商品型號: CW-SUL70BA 商品圖片: 39 成本: 3750 銷售價: 5680 特價: 4038 匹數 (多聯分體式): 29 品牌: PANASONIC 樂聲牌 附加項目: 否 新增日期: 46247 標籤: 32 描述: PANASONIC 樂聲 CW-SUL70BA 3/4匹Inverter LITE變頻式淨冷窗口機，採用香港專利左出風設計、R32製冷劑及四合一抗菌過濾網，製冷能力7,400BTU/h，設左右自動送風、睡眠模式及獨立抽濕，獲香港1級能源標籤，提供3年全機及5年壓縮機保用。 功能: 變頻 淨冷 匹數: 3/4匹 氣體: 36 風數: 42";
+  const kbDoc: KBDocumentCandidate = {
+    document_id: "fixture-cw", title: "PANASONIC 樂聲牌 CW-SUL70BA", source_type: "Product", document_score: 0.99,
+    // This positive fixture represents an explicitly current tenant-owned
+    // source. Published chunk status alone does not establish currentness.
+    authority: { tenant_id: "34", publication_state: "published", currentness: "current", entity_ids: [], regions: ["hong_kong"], language: "zh-TW", version: null, version_rank: null, updated_at: null, source_priority: null, claims: [] },
+    chunks: [{ document_id: "fixture-cw", chunk_id: "fixture-chunk", title: "CW-SUL70BA", content: kbContent, score: 0.99, chunk_type: "full_content", source_type: "Product", status: "published" }],
+    citations: [], meta: { document_score: 0.99, highest_chunk_score: 0.99, second_highest_chunk_score: 0, returned_summary_count: 0, returned_full_content_count: 1, dropped_without_document_id: 0, dropped_without_content: 0 },
+    llm_context: { selected_document_id: "fixture-cw", orientation_summary: null, full_content_evidence: [{ document_id: "fixture-cw", chunk_id: "fixture-chunk", content: kbContent, score: 0.99, source_type: "Product" }] },
+  };
+  const factualAnswer = (request: string, intent: ReturnType<typeof classifyNaturalCustomerIntent>, category: string | null, language: "zh-TW" | "en", documents: KBDocumentCandidate[]) => {
+    const contract = productKbSemanticContract(intent, category, request);
+    assert(contract, `missing_product_contract:${request}`);
+    const target = deriveCurrentGroundingTarget(request, contract.query, contract.entity_ids, contract.topic_ids, true);
+    const selection = selectCanonicalGrounding(documents, { requestText: contract.query, currentTurnText: request, minScore: 0.45, requirePublished: true, expectedTenantId: "34", expectedEntityIds: target.entity_ids, expectedTopicIds: target.topic_ids, requiresCurrentKb: true, targetChanged: true });
+    return resolveCanonicalKbDirectAnswer({ request, selection, language });
+  };
+  assert(t9Result.kind === "resolved", "T9 referent missing");
+  for (const [name, authority] of [
+    ["missing_authority", undefined],
+    ["unknown_currentness", { ...kbDoc.authority!, currentness: "unknown" as const }],
+    ["historical", { ...kbDoc.authority!, currentness: "historical" as const }],
+    ["wrong_tenant", { ...kbDoc.authority!, tenant_id: "other-tenant" }],
+  ] as const) {
+    assert(factualAnswer(t9Result.grounded_question, t9Result.intent, t9Result.resolved_topic, "zh-TW", [{ ...kbDoc, authority }]) === null, `T9_${name}_must_not_grant_current_authority`);
+  }
+  const t9Answer = factualAnswer(t9Result.grounded_question, t9Result.intent, t9Result.resolved_topic, "zh-TW", [kbDoc]);
+  assert(t9Answer?.reply.includes("CW-SUL70BA") && t9Answer.reply.includes("3/4匹"), JSON.stringify(t9Answer));
+  const t13 = "如果用返之前每部 HK$5,680 嗰個歷史價，兩部再加 HK$1,490，合共幾多？";
+  const t13Typed = deriveTypedCustomerCalculation({ question: t13, current_source_message_id: "source-t13" });
+  const t13Plan = planConversationService({ question: t13, language: "zh-TW", recall: { handled: false, reason: "CURRENT_KB_REQUIRED" }, memory: null, commerce: afterCancellation, calculation_quantity: t13Typed.quantity, calculation_terms: t13Typed.terms });
+  const t13Reply = renderServicePlanReply(t13Plan, null) ?? "";
+  assert(t13Typed.status === "ready" && t13Typed.terms.length === 2 && t13Typed.terms.every((term) => term.source_message_id === "source-t13") && t13Plan.action === "historical_calculation" && t13Plan.calculation?.total === 12850 && t13Plan.calculation.historical_only && /HK\$ 12,850/.test(t13Reply) && /歷史條件試算/.test(t13Reply), JSON.stringify({t13Typed,t13Plan,t13Reply})); turns.push(t13);
+  const t14 = "CW-SUL70BA 開唔到機，點處理？";
+  const t14Plan = planConversationService({ question: t14, language: "zh-TW", recall: { handled: false, reason: "NOT_A_RECALL_QUERY" }, memory: null, commerce: afterCancellation });
+  const t14Reply = renderServicePlanReply(t14Plan, null) ?? "";
+  assert(t14Plan.issue_kind === "product_operation_failure" && /燈號|錯誤提示/.test(t14Reply) && productKbSemanticContract(classifyNaturalCustomerIntent(t14), null, t14) === null, JSON.stringify(t14Plan)); turns.push(t14);
+  const t15 = "NONEXISTENT-999999 有咩功能？";
+  const t15Intent = classifyNaturalCustomerIntent(t15);
+  const t15Reply = renderNaturalNoCurrentEvidence(t15Intent, "zh-TW") ?? "";
+  assert(factualAnswer(t15, t15Intent, null, "zh-TW", []) === null && t15Reply.includes("NONEXISTENT-999999") && !/請提供型號/.test(t15Reply), t15Reply); turns.push(t15);
+  const t16 = "For the CW-SUL70BA we discussed, what horsepower is it, and can you confirm whether it is suitable for an 80 sq ft bedroom?";
+  const t16Answer = factualAnswer(t16, classifyNaturalCustomerIntent(t16), null, "en", [kbDoc]);
+  assert(t16Answer?.reply.includes("PANASONIC CW-SUL70BA") && t16Answer.reply.includes("3/4 HP") && /does not directly state a suitable room area/.test(t16Answer.reply) && !t16Answer.reply.includes("樂聲"), JSON.stringify(t16Answer)); turns.push(t16);
+  assert(f.snapshot().state.conversion.order_status === "none" && f.snapshot().state.conversion.payment_status === "none" && f.snapshot().state.conversion.quotation_status === "none", "false_transaction");
+  console.log(`W19-T9|canonical_kb_direct_answer|${t9Answer?.reply}`);
+  console.log(`W19-T13|${t13Plan.action}|${t13Plan.calculation?.total}|historical_only|${t13Reply}`);
+  console.log(`W19-T14|${t14Plan.issue_kind}|${t14Reply}`);
+  console.log(`W19-T15|kb_no_current_evidence|${t15Reply}`);
+  console.log(`W19-T16|canonical_kb_direct_answer|${t16Answer?.reply}`);
+  console.log(`W17-T1|${t1.route}|${t1.reply}`); console.log(`W17-T2|${t2.route}|${t2.reply}`); console.log(`W17-T3|${t3.route}|${t3.reply}`); console.log(`W17-T4|${t4.route}|${t4.reply}`); console.log(`W17-T5|${t5.route}|${t5.reply}`); console.log("W17-T6|CURRENT_KB_REQUIRED|features+horsepower+suitability"); console.log("W17-T7|CURRENT_KB_REQUIRED|price:CW-SUL70BA"); console.log(`W17-T8|${t8.route}|${t8.reply}`); console.log("W17-T9|CURRENT_KB_REQUIRED|CW-SUL70BA|horsepower+model_info"); console.log(`W17-T10|${t10.route}|${t10.reply}`); console.log(`W17-T11|${t11.route}|${t11.reply}`); console.log(`W17-T12|${recall.metadata.response_route}|${recall.reply}`);
+});
+
+Deno.test("W21 entity lifecycle scope, ambiguous target, reversal, cancellation and no silent reactivation", async () => {
+  const initial = stateWith(["air_conditioner", "refrigerator"]);
+  initial.entities[0].entity_id = "air_conditioner:unscoped";
+  initial.entities[1].entity_id = "refrigerator:unscoped";
+  initial.entities[0].status = "researching";
+  initial.entities[0].attributes = { room_sizes: { small_bedroom: "80平方呎", large_bedroom: "110平方呎", living_room: "180平方呎" }, scoped_customer_updates: values };
+  initial.entities[1].constraints = { max_width_mm: 595 };
+  const ask = async (question: string) => {
+    const f = fixture(structuredClone(initial));
+    const before = structuredClone(f.snapshot());
+    const result = await f.ask(question);
+    return { before, after: f.snapshot(), result, f };
+  };
+  const forward = await ask("雪櫃暫時唔換住，先搞冷氣。");
+  assert(forward.after.state.entities[0].status === "researching" &&
+    JSON.stringify(forward.after.state.entities[0]) === JSON.stringify(initial.entities[0]) &&
+    forward.after.state.entities[1].status === "deferred" &&
+    forward.after.state.entities.length === 2 &&
+    forward.after.state.entities[0].quantity === 3 &&
+    forward.result.trusted_lifecycle_commit?.target_entity_ids[0] === "refrigerator:unscoped", "forward_scope");
+  const reverse = await ask("冷氣暫時唔換住，先搞雪櫃。");
+  assert(reverse.after.state.entities[0].status === "deferred" &&
+    JSON.stringify(reverse.after.state.entities[1]) === JSON.stringify(initial.entities[1]) &&
+    reverse.after.state.current_topic === "refrigerator" &&
+    reverse.after.state.entities.length === 2, "reverse_scope");
+  const both = await ask("兩樣都暫時唔換。");
+  assert(both.after.state.entities.every((entity) => entity.status === "deferred") &&
+    both.result.trusted_lifecycle_commit?.target_entity_ids.length === 2, "both_explicit");
+  const ambiguous = await ask("暫時唔換住。");
+  assert(ambiguous.result.reason === "ambiguous_lifecycle_target" &&
+    ambiguous.after.revision === ambiguous.before.revision &&
+    JSON.stringify(ambiguous.after.state) === JSON.stringify(ambiguous.before.state), "ambiguous_mutated");
+  const cancelled = await ask("雪櫃取消。");
+  assert(cancelled.after.state.entities[1].status === "cancelled" &&
+    JSON.stringify(cancelled.after.state.entities[0]) === JSON.stringify(initial.entities[0]) &&
+    cancelled.result.trusted_lifecycle_commit?.plans[0].action === "cancelled", JSON.stringify(cancelled));
+  const deferred = await forward.f.ask("講返雪櫃。", ["雪櫃暫時唔換住，先搞冷氣。"]);
+  assert(forward.f.snapshot().state.entities[1].status === "deferred" &&
+    forward.f.snapshot().state.entities.length === 2 && !deferred.trusted_lifecycle_commit,
+    JSON.stringify({ deferred, state: forward.f.snapshot() }));
+  const failedCommit = await runCommerceStateRuntime({
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({
+      data: { revision: 1, state: initial }, error: null,
+    }) }) }) }),
+    rpc: async () => ({ data: null, error: { message: "failed CAS" } }),
+  }, { company_id: "company", conversation_id: "conversation", source_message_id: "failed-lifecycle",
+    text: "雪櫃暫時唔換住，先搞冷氣。", language: "zh-TW" });
+  assert(failedCommit?.persist_result === "rpc_transport_error" &&
+    !failedCommit.trusted_lifecycle_commit && failedCommit.reply === null,
+    "failed_commit_authorized_reply");
+  for (const outcome of [forward, reverse, both, cancelled]) {
+    assert(outcome.after.state.quotes.length === 0 &&
+      outcome.after.state.conversion.order_status === "none" &&
+      outcome.after.state.conversion.payment_status === "none" &&
+      outcome.after.state.conversion.quotation_status === "none" &&
+      outcome.after.state.entities.length === 2, "lifecycle_transaction_or_ghost");
+  }
+  console.log("W21-LIFECYCLE|forward=PASS|reverse=PASS|both=PASS|ambiguous=PASS|cancel=PASS|deferred_return=PASS|ghost=0|transaction=none");
+});
+
+Deno.test("W17 trusted topic restoration fails closed on entity, topic, history, and activity drift", () => {
+  const base = createEmptyConversationCommerceState();
+  base.entities.push({ entity_id: "air_conditioner:unscoped", category: "air_conditioner", quantity: 3, status: "researching", attributes: {}, constraints: {}, provenance: { source_type: "customer" } });
+  const input = { conversation_id: "conversation", company_id: "company", source_message_id: "source", text: "講返頭先嗰部冷氣，佢係幾多匹？", language: "zh-TW" as const, history: [{ role: "visitor", content: "我研究緊 CW-SUL70BA 冷氣。" }], trusted_product_topic_focus: { topic: "air_conditioner", product: "CW-SUL70BA", resolution_strategy: "PER_TOPIC_REFERENT_HISTORY" as const } };
+  assert(validateTrustedProductTopicFocus(input, base).valid, "valid_focus_rejected");
+  assert(!validateTrustedProductTopicFocus({ ...input, text: "講返雪櫃，佢幾多匹？" }, base).valid, "cross_entity_topic_accepted");
+  assert(!validateTrustedProductTopicFocus({ ...input, history: [] }, base).valid, "missing_history_accepted");
+  const competing = structuredClone(base); competing.entities.push({ ...competing.entities[0], entity_id: "air_conditioner:bedroom_1" });
+  assert(!validateTrustedProductTopicFocus(input, competing).valid, "competing_active_entity_accepted");
+  const cancelled = structuredClone(base); cancelled.entities[0].status = "cancelled";
+  assert(!validateTrustedProductTopicFocus(input, cancelled).valid, "cancelled_entity_revived");
+});
+
+Deno.test("W13 journey authorization fails closed across tenant, revision, entity, replay and transaction drift", async () => {
+  const f = fixture();
+  const t1 = "Hello，屋企想換冷氣，兩間睡房加個客廳，應該點揀好？";
+  const t2 = "細房大概80呎，大房100呎，個廳就180呎。";
+  await f.ask(t1);
+  const outcome = await f.ask(t2, [t1]);
+  const current = f.snapshot();
+  const proof = outcome.trusted_journey_progress;
+  assert(proof?.update_kind === "customer_goal", JSON.stringify(proof));
+  const metadata = {
+    response_route: outcome.route,
+    commerce_reason: outcome.reason,
+    commerce_authority: outcome.authority,
+    commerce_state_revision: outcome.revision,
+    commerce_state_persist_result: outcome.persist_result,
+    commerce_state_persistence_classification: "COMMITTED",
+    contextual_decision: null,
+  };
+  const snapshot = {
+    conversation_id: "conversation",
+    company_id: "company",
+    source_message_id: "source-2",
+    source_message_content: t2,
+    commerce_state_revision: current.revision,
+    commerce_state_source_message_id: "source-2",
+    state: current.state,
+  };
+  const evaluate = (overrides: Record<string, unknown> = {}) =>
+    evaluateB2BeforeCommit({
+      proposed_response: outcome.reply ?? "",
+      persistence_kind: "ai_reply",
+      snapshot,
+      metadata,
+      trusted_journey_progress: proof,
+      ...overrides,
+    });
+
+  assert(
+    evaluate().code === "B2_ALLOW_JOURNEY_PROGRESS_AFTER_ACCEPTED_UPDATE",
+    "valid_proof_rejected",
+  );
+  const blockedWithoutReceipt = evaluate({ trusted_journey_progress: null });
+  assert(
+    blockedWithoutReceipt.decision === "block" &&
+      blockedWithoutReceipt.code === "KNOWN_CONTEXT_RECONFIRMATION",
+    JSON.stringify(blockedWithoutReceipt),
+  );
+  const repeatedSizes = evaluate({
+    proposed_response: "請再確認細房、大房同客廳嘅房間面積？",
+    trusted_journey_progress: null,
+  });
+  assert(
+    repeatedSizes.code === "KNOWN_CONTEXT_RECONFIRMATION",
+    JSON.stringify(repeatedSizes),
+  );
+  const repeatedProduct = evaluate({
+    proposed_response: "你講緊邊種產品類型？",
+    trusted_journey_progress: null,
+  });
+  assert(
+    repeatedProduct.code === "KNOWN_CONTEXT_RECONFIRMATION",
+    JSON.stringify(repeatedProduct),
+  );
+
+  for (
+    const [label, tampered] of [
+      ["tenant", { ...proof, company_id: "another-company" }],
+      ["revision", {
+        ...proof,
+        committed_revision: proof.committed_revision + 1,
+      }],
+      ["entity", {
+        ...proof,
+        entity_id: "refrigerator:unscoped",
+        category: "refrigerator",
+      }],
+      ["replay", { ...proof, source_message_id: "source-from-another-turn" }],
+      ["source_text", { ...proof, source_text: "another customer turn" }],
+    ] as const
+  ) {
+    const verdict = evaluate({ trusted_journey_progress: tampered });
+    assert(verdict.decision !== "allow", `${label}:${JSON.stringify(verdict)}`);
+  }
+
+  const staleState = structuredClone(current.state);
+  staleState.latest_corrections = ["大房唔係100呎而係110呎"];
+  const stale = evaluate({
+    proposed_response: "大房而家係100呎。",
+    snapshot: { ...snapshot, state: staleState },
+    trusted_journey_progress: null,
+  });
+  assert(stale.code === "SUPERSEDED_VALUE_REUSED", JSON.stringify(stale));
+
+  const cancelledState = structuredClone(current.state);
+  cancelledState.entities[0].status = "cancelled";
+  const cancelled = evaluate({
+    snapshot: { ...snapshot, state: cancelledState },
+  });
+  assert(cancelled.decision !== "allow", JSON.stringify(cancelled));
+
+  const fakeNextStep = evaluate({
+    proposed_response: "下一步請再確認房間面積？",
+    trusted_journey_progress: null,
+  });
+  assert(
+    fakeNextStep.code === "KNOWN_CONTEXT_RECONFIRMATION",
+    JSON.stringify(fakeNextStep),
+  );
+  const falseTransaction = evaluate({
+    proposed_response: "資料已記低，訂單已確認。下一步請確認安裝方式？",
+  });
+  assert(
+    falseTransaction.code === "ORDER_CONFIRMATION_NOT_PROVEN",
+    JSON.stringify(falseTransaction),
+  );
+  console.log(
+    "W13-NEGATIVE|known_reask=BLOCK|product_reask=BLOCK|commit_failure=BLOCK|stale=BLOCK|cancelled=BLOCK|cross_entity=BLOCK|tenant_revision_replay=BLOCK|transaction=BLOCK",
+  );
+});
+
+Deno.test("W11 entity switch, room correction and cancellation stay scoped", async () => {
+  const f = fixture();
+  const ac = "屋企想換冷氣，兩間睡房加個客廳，應該點揀？";
+  await f.ask(ac);
+  await f.ask("細房80呎，大房100呎，客廳180呎。", [ac]);
+  await f.ask("全部都有窗口位，而家都係窗口機。", [
+    "細房80呎，大房100呎，客廳180呎。",
+    ac,
+  ]);
+  await f.ask("客廳下晝西斜。", [
+    "全部都有窗口位，而家都係窗口機。",
+    "細房80呎，大房100呎，客廳180呎。",
+    ac,
+  ]);
+
+  const fridge = await f.ask("另外雪櫃我想睇下，擺位闊度唔超過595mm。", [
+    "客廳下晝西斜。",
+    ac,
+  ]);
+  assert(fridge.route === "product_guidance", JSON.stringify(fridge));
+  const switched = f.snapshot().state;
+  assert(
+    switched.current_topic === "refrigerator" &&
+      switched.entities.filter((entity) =>
+          entity.status !== "cancelled" && entity.status !== "deferred"
+        ).length === 2,
+    JSON.stringify(switched.entities),
+  );
+
+  const beforeAmbiguous = JSON.stringify(f.snapshot());
+  const ambiguous = await f.ask("房各一部", [
+    "另外雪櫃我想睇下，擺位闊度唔超過595mm。",
+    ac,
+  ]);
+  assert(
+    ambiguous.reason === "contextual_targeted_clarification" &&
+      ambiguous.persist_result === "read_only",
+    JSON.stringify(ambiguous),
+  );
+  assert(
+    JSON.stringify(f.snapshot()) === beforeAmbiguous,
+    "fridge_inherited_ac_quantity",
+  );
+
+  const corrected = await f.ask("返返冷氣，更正大房係110呎，唔係100呎。", [
+    "另外雪櫃我想睇下，擺位闊度唔超過595mm。",
+    ac,
+  ]);
+  assert(corrected.route === "product_guidance", JSON.stringify(corrected));
+  assert(
+    (f.snapshot().state.entities.find(e => e.category === "air_conditioner")?.attributes.room_sizes as Record<string, string>)?.large_bedroom === "110平方呎" &&
+      f.snapshot().state.latest_corrections.at(-1) === "large_bedroom area: change from 100平方呎 to 110平方呎",
+    JSON.stringify(f.snapshot().state.latest_corrections),
+  );
+
+  await f.ask("雪櫃暫時唔買，先取消。", [
+    "返返冷氣，更正大房係110呎，唔係100呎。",
+    ac,
+  ]);
+  const cancelled = f.snapshot().state.entities.find((entity) =>
+    entity.category === "refrigerator"
+  );
+  assert(
+    cancelled?.status === "cancelled" || cancelled?.status === "deferred",
+    JSON.stringify(cancelled),
+  );
+  await f.ask("冷氣繼續按頭先要求處理。", ["雪櫃暫時唔買，先取消。", ac]);
+  const after = f.snapshot().state.entities.find((entity) =>
+    entity.category === "refrigerator"
+  );
+  assert(after?.status === cancelled.status, "cancelled_entity_revived");
+});
+
+Deno.test("W9 fresh and incompatible quantity references remain targeted and read-only", async () => {
+  const fresh = fixture();
+  const freshBefore = JSON.stringify(fresh.snapshot());
+  const freshReply = await fresh.ask("客廳一部，兩間房每間各一部");
+  assert(
+    freshReply.reason === "contextual_targeted_clarification" &&
+      freshReply.persist_result === "read_only",
+    JSON.stringify(freshReply),
+  );
+  assert(
+    JSON.stringify(fresh.snapshot()) === freshBefore,
+    "fresh_context_mutated",
+  );
+
+  const refrigerator = fixture(stateWith(["refrigerator"]));
+  const fridgeBefore = JSON.stringify(refrigerator.snapshot());
+  const incompatible = await refrigerator.ask("客廳一部，兩間房每間各一部", [
+    introduction,
+  ]);
+  assert(
+    incompatible.reason === "contextual_targeted_clarification",
+    JSON.stringify(incompatible),
+  );
+  assert(
+    JSON.stringify(refrigerator.snapshot()) === fridgeBefore,
+    "incompatible_context_inherited",
+  );
+});
+
+Deno.test("live runtime read-only recall preserves state and source provenance", async () => {
+  const f = fixture();
+  await f.ask(introduction, [], undefined, ownerApprovedReading("live-recall", 1));
+  await f.ask("係廳一部，房各一部", [introduction], undefined, ownerApprovedReading("live-recall", 2));
+  const before = JSON.stringify(f.snapshot());
+  const reply = await f.ask("我而家要幾多部冷氣？", [
+    introduction,
+    "係廳一部，房各一部",
+  ]);
+  assert(/3|三/.test(reply.reply ?? ""), JSON.stringify(reply));
+  assert(JSON.stringify(f.snapshot()) === before, "read_only_mutated_state");
+});
+
+Deno.test("live runtime cannot inherit AC allocation into refrigerator context", async () => {
+  const f = fixture(stateWith(["refrigerator"]));
+  const before = JSON.stringify(f.snapshot());
+  const reply = await f.ask("係廳一部，房各一部", [introduction]);
+  assert(
+    reply.reason === "contextual_targeted_clarification",
+    JSON.stringify(reply),
+  );
+  assert(JSON.stringify(f.snapshot()) === before, "cross_entity_mutation");
+});
+
+Deno.test("validated topic research model survives structured Memory and scoped recall", async () => {
+  const initial = createEmptyConversationCommerceState();
+  initial.entities = [{ entity_id: "air_conditioner:unscoped", category: "air_conditioner", quantity: 2, status: "researching", attributes: {}, constraints: {}, provenance: { source_type: "customer", source_message_id: "initial" } }];
+  const f = fixture(initial);
+  const text = "Back to that AC, what model was I researching?";
+  const focus = { topic: "air_conditioner", product: "ZX-731", resolution_strategy: "PER_TOPIC_REFERENT_HISTORY" as const };
+  await f.ask(text, ["Tell me about ZX-731 air conditioner."], focus);
+  const state = f.snapshot().state;
+  assert(state.entities.length === 1 && state.entities[0].model === "ZX-731" && state.entities[0].provenance.source_message_id === "source-1", JSON.stringify(state));
+  assert(state.conversion.order_status === "none" && state.conversion.payment_status === "none", "research promoted transaction");
+  const memory = buildCanonicalConversationMemory({ conversation_id: "conversation", company_id: "company", source_message_id: "source-1", commerce_state_revision: f.snapshot().revision, commerce_state: state, newest_first: [], visitor_turn_count: 1, source_created_at: "2026-10-01T00:00:00Z", next_memory_revision: 1 });
+  assert(memory.active_entities[0].model === "ZX-731", "research model lost before Memory");
+  const before = JSON.stringify(f.snapshot());
+  const recall = prepareConversationRecall({ conversation_id: "conversation", company_id: "company", source_message_id: "recap", question: "What are my AC requirements?", memory, commerce: { conversation_id: "conversation", company_id: "company", source_message_id: "source-1", revision: f.snapshot().revision, state } }, "en");
+  assert(recall.decision.handled && recall.reply?.includes("ZX-731") && JSON.stringify(f.snapshot()) === before, JSON.stringify(recall));
+  const unknown = fixture(initial);
+  await unknown.ask(text, [], focus);
+  assert(!unknown.snapshot().state.entities[0].model, "unvalidated history focus accepted");
+});
+
+Deno.test("hosted compound shopping start retains enumerated room areas and skips known questions", async () => {
+  const f = fixture();
+  const text = "我想換冷氣，兩間房同客廳，細房80呎、大房100呎、客廳180呎，全部窗口位，大房下午曬，原本都有窗口機。想先睇合適款式，未落單。";
+  const reply = await f.ask(text);
+  const state = f.snapshot().state;
+  assert(state.entities.length === 1, "compound start created ambiguous entities");
+  const ac = state.entities[0];
+  assert(JSON.stringify(ac.attributes.room_sizes) === JSON.stringify({ small_bedroom: "80平方呎", large_bedroom: "100平方呎", living_room: "180平方呎" }), JSON.stringify(state));
+  assert(ac.attributes.installation_type === "window_unit" && (ac.attributes.room_sunlight as Record<string,string>)?.large_bedroom === "strong_afternoon_sun" && ac.attributes.sunlight === undefined, "compatible conditions dropped");
+  assert(reply.reply?.includes("西斜") && !/需要.*平方呎|各自.*面積/.test(reply.reply), JSON.stringify(reply));
+  assert(state.conversion.order_status === "none" && state.conversion.payment_status === "none", "shopping start promoted transaction");
+  const partial = fixture();
+  const next = await partial.ask("我想換冷氣，兩間房同客廳，細房80呎、大房100呎、客廳180呎。");
+  assert(/窗口|安裝/.test(next.reply ?? "") && !/需要.*平方呎/.test(next.reply ?? ""), JSON.stringify(next));
+});
+
+Deno.test("hosted Cantonese historical calculation never rebinds canonical Commerce", async () => {
+  const f = fixture(stateWith(["air_conditioner"]));
+  const before = JSON.stringify(f.snapshot());
+  const result = await f.ask("我以前買冷氣每部係5680蚊，純粹按以前個價計，兩部合共幾多錢？");
+  assert(result.reason === "read_only_customer_calculation" && result.persist_result === "read_only", JSON.stringify(result));
+  assert(JSON.stringify(f.snapshot()) === before, "historical arithmetic mutated Commerce");
+});
+
+
+Deno.test("Task3C source-attested generic contextual Reading: positive, missing and invalid negatives", async () => {
+  const state = createEmptyConversationCommerceState();
+  state.entities = [{
+    entity_id: "subscription:membership", category: "subscription", model: null,
+    quantity: 2, status: "researching",
+    attributes: { product_name: "會員方案", unit: "席" }, constraints: {},
+    provenance: { source_type: "customer", source_message_id: "original-visitor" },
+  }];
+  const frame: CommerceSemanticFrame = {
+    version: "commerce-semantic-1.0.0", language: "zh-TW",
+    operation: "UPDATE_ITEM", intent: "scoped allocation", topic: "subscription",
+    entities: [{
+      entity_ref: "subscription:membership", name: "會員方案",
+      kind: "subscription", category_hint: "subscription", sku: null, model: null,
+      quantity: 3, unit: "席",
+      attributes: { scoped_customer_updates: [
+        { scope: "甲組", source_text: "甲組2席", unit: "席", value: 2, attribute: "quantity", action: "set" },
+        { scope: "乙組", source_text: "乙組1席", unit: "席", value: 1, attribute: "quantity", action: "set" },
+      ] }, constraints: {},
+      capabilities: { requires_delivery: false, supports_pickup: false,
+        requires_installation: false, requires_booking: false,
+        requires_quote: false, requires_site_check: false,
+        digital_fulfilment: false, recurring_billing: true,
+        rental_return: false, customization: false }, confidence: 0.99,
+    }],
+    referents: [{ ref: "subscription:membership", source: "persistent_state", confidence: 0.99 }],
+    customer_correction: false, additive: false, explicit_negations: [],
+    requested_facts: [], transaction_state: "none", payment_state: "none",
+    booking_state: "none", fulfillment_state: "none",
+    ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
+    confidence: 0.99,
+  };
+  const text = "甲組2席，乙組1席";
+  const candidate = resolveSemanticContextualCandidate({ text, language: "zh-TW", state, semantic_frame: frame });
+  assert(candidate?.entity_id === "subscription:membership" &&
+    candidate.values.length === 2 && candidate.aggregate_quantity === 3, JSON.stringify(candidate));
+  const decision = resolveContextualCustomerUpdate({ state, candidate });
+  assert(decision.route === "contextual_scoped_update", JSON.stringify(decision));
+  const reduced = reduceCommerceState(state, contextualUpdateEvents(decision, state, "new-customer-source"));
+  assert(reduced.entities.length === 1 && reduced.entities[0].quantity === 3 &&
+    reduced.conversion.order_status === "none" && reduced.conversion.payment_status === "none", JSON.stringify(reduced));
+  assert(resolveSemanticContextualCandidate({ text, language: "zh-TW", state, semantic_frame: null }) === null,
+    "missing Reading created authority");
+  const wrong = structuredClone(frame);
+  (wrong.entities[0].attributes.scoped_customer_updates as unknown as Array<Record<string, unknown>>)[0].value = 4;
+  const refused = resolveSemanticContextualCandidate({ text, language: "zh-TW", state, semantic_frame: wrong });
+  assert(refused?.context_sufficient === false &&
+    resolveContextualCustomerUpdate({ state, candidate: refused }).route === "targeted_clarification",
+    "unsupported count accepted");
+  const competing = structuredClone(state);
+  competing.entities.push({ ...structuredClone(state.entities[0]), entity_id: "subscription:other",
+    attributes: { product_name: "其他計劃", unit: "席" } });
+  assert(resolveSemanticContextualCandidate({ text, language: "zh-TW", state: competing, semantic_frame: frame })?.context_sufficient === false,
+    "model-only referent crossed active entities");
+
+  let persisted = structuredClone(state);
+  let writes = 0;
+  const db: CommerceStateDbClient = {
+    from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({
+      data: { revision: 1, state: persisted }, error: null,
+    }) }) }) }),
+    rpc: async (_fn, args) => {
+      writes++;
+      persisted = args.p_state as ConversationCommerceState;
+      return { data: { result: "success", applied_revision: 2 }, error: null };
+    },
+  };
+  const outcome = await runCommerceStateRuntime(db, {
+    company_id: "company", conversation_id: "conversation",
+    source_message_id: "new-customer-source", text, language: "zh-TW",
+    semantic_frame: frame, history: [],
+  });
+  assert(outcome?.route === "contextual_scoped_update" && writes === 1 &&
+    persisted.entities[0].quantity === 3, JSON.stringify({outcome,writes}));
+});
+
+Deno.test("Task3C English generic scoped reading is source-backed and refuses duplicates", () => {
+  const state = createEmptyConversationCommerceState();
+  state.entities = [{
+    entity_id: "service:training", category: "service", model: null,
+    quantity: 2, status: "researching",
+    attributes: { product_name: "Training programme", unit: "slots" }, constraints: {},
+    provenance: { source_type: "customer", source_message_id: "original-visitor" },
+  }];
+  const frame: CommerceSemanticFrame = {
+    version: "commerce-semantic-1.0.0", language: "en",
+    operation: "SET_QUANTITY", intent: "scoped service allocation", topic: "service",
+    entities: [{
+      entity_ref: "service:training", name: "Training programme", kind: "service",
+      category_hint: "service", sku: null, model: null, quantity: 3, unit: "slots",
+      attributes: { scoped_customer_updates: [
+        { scope: "Team Cedar", source_text: "Team Cedar 2 slots", unit: "slots", value: 2, attribute: "quantity", action: "set" },
+        { scope: "Team Birch", source_text: "Team Birch 1 slots", unit: "slots", value: 1, attribute: "quantity", action: "set" },
+      ] }, constraints: {},
+      capabilities: { requires_delivery: false, supports_pickup: false,
+        requires_installation: false, requires_booking: false, requires_quote: false,
+        requires_site_check: false, digital_fulfilment: false, recurring_billing: false,
+        rental_return: false, customization: false }, confidence: 0.99,
+    }],
+    referents: [{ ref: "service:training", source: "persistent_state", confidence: 0.99 }],
+    customer_correction: false, additive: false, explicit_negations: [],
+    requested_facts: [], transaction_state: "none", payment_state: "none",
+    booking_state: "none", fulfillment_state: "none",
+    ambiguity: { is_ambiguous: false, reasons: [], clarification_question: null },
+    confidence: 0.99,
+  };
+  const text = "Team Cedar 2 slots; Team Birch 1 slots";
+  const accepted = resolveSemanticContextualCandidate({ text, state, language: "en", semantic_frame: frame });
+  assert(accepted?.aggregate_quantity === 3 && accepted.values.length === 2, JSON.stringify(accepted));
+  const duplicate = structuredClone(frame);
+  (duplicate.entities[0].attributes.scoped_customer_updates as unknown as Array<Record<string, unknown>>)[1].scope = "Team Cedar";
+  assert(resolveSemanticContextualCandidate({ text, state, language: "en", semantic_frame: duplicate })?.context_sufficient === false,
+    "duplicate scope accepted");
+});
+
+
+/** Independent G2 regression, not a change to the original A/B/C/2a inputs. */
+Deno.test("Task3C G2 source-quoted distributive groups expand without trade vocab", () => {
+  const state = createEmptyConversationCommerceState();
+  state.entities = [{
+    entity_id:"training:cohorts",category:"service",quantity:2,status:"researching",
+    model:null,attributes:{product_name:"Training slots",unit:"席"},constraints:{},
+    provenance:{source_type:"customer",source_message_id:"visitor-prior"},
+  }];
+  const make = (): CommerceSemanticFrame => ({
+    version:"commerce-semantic-1.0.0",language:"zh-TW",
+    operation:"UPDATE_ITEM",intent:"scoped allocation",topic:"service",
+    entities:[{
+      entity_ref:"training:cohorts",name:"Training slots",kind:"service",
+      category_hint:"service",sku:null,model:null,quantity:3,unit:"席",
+      attributes:{scoped_customer_updates:[
+        {scope:"主隊",source_text:"主隊1席",unit:"席",value:1,attribute:"quantity",action:"set"},
+        {scope:"支隊",source_text:"兩個支隊各1席",unit:"席",value:1,scope_count:2,per_scope_quantity:1,attribute:"quantity",action:"set"},
+      ]},constraints:{},capabilities:{
+        requires_delivery:false,supports_pickup:false,requires_installation:false,
+        requires_booking:false,requires_quote:false,requires_site_check:false,
+        digital_fulfilment:false,recurring_billing:false,
+        rental_return:false,customization:false,
+      },confidence:0.99,
+    }],
+    referents:[{ref:"training:cohorts",source:"persistent_state",confidence:0.99}],
+    customer_correction:false,additive:false,explicit_negations:[],requested_facts:[],
+    transaction_state:"none",payment_state:"none",booking_state:"none",
+    fulfillment_state:"none",
+    ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+    confidence:0.99,
+  });
+  const text="主隊1席，兩個支隊各1席";
+  const proposed=resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:make()});
+  assert(proposed?.values.length===3&&proposed.aggregate_quantity===3 &&
+    proposed.values.every(v=>v.value===1) &&
+    proposed.values.some(v=>v.scope==="支隊#1") &&
+    proposed.values.some(v=>v.scope==="支隊#2"),JSON.stringify(proposed));
+  const decision=resolveContextualCustomerUpdate({candidate:proposed,state});
+  assert(decision.route==="contextual_scoped_update",JSON.stringify(decision));
+  const next=reduceCommerceState(state,contextualUpdateEvents(decision,state,"visitor-latest"));
+  assert(next.entities[0].quantity===3 &&
+    (next.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[]).length===3 &&
+    next.conversion.order_status==="none" && next.conversion.payment_status==="none",
+    JSON.stringify(next));
+  const badCount=make();
+  (badCount.entities[0].attributes.scoped_customer_updates as unknown as Record<string,unknown>[])[1].scope_count=3;
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:badCount})?.context_sufficient===false,
+    "invented group count");
+  const badEach=make();
+  (badEach.entities[0].attributes.scoped_customer_updates as unknown as Record<string,unknown>[])[1].per_scope_quantity=2;
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:badEach})?.context_sufficient===false,
+    "invented per-scope quantity");
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:null})===null,
+    "no-reading group must not mutate");
+  const missingGroup="主隊1席，支隊各1席";
+  assert(resolveSemanticContextualCandidate({text:missingGroup,language:"zh-TW",state,semantic_frame:make()})?.context_sufficient===false,
+    "missing source scope count must not inherit model count");
+  const duplicate=make();
+  (duplicate.entities[0].attributes.scoped_customer_updates as unknown as Record<string,unknown>[])[1].scope="主隊";
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:duplicate})?.context_sufficient===false,
+    "ambiguous overlapping group");
+});
+
+
+Deno.test("Task3C G1 first enquiry uses current source quote without KB or order claims", async () => {
+  const text="想問 Training sessions 給三個小組怎樣安排，先提供指引。";
+  const frame: CommerceSemanticFrame = {
+    version:"commerce-semantic-1.0.0",language:"zh-TW",
+    operation:"ASK_FACT",intent:"customer_guidance",topic:"training",
+    entities:[{
+      entity_ref:"",name:"Training sessions",kind:"service",
+      category_hint:null,sku:null,model:null,quantity:null,unit:null,
+      attributes:{},constraints:{},capabilities:{
+        requires_delivery:false,supports_pickup:false,requires_installation:false,
+        requires_booking:false,requires_quote:false,requires_site_check:false,
+        digital_fulfilment:false,recurring_billing:false,
+        rental_return:false,customization:false,
+      },confidence:0.99,
+    }],
+    referents:[],
+    demands:[{
+      question:text,source_quote:text,subject_refs:["Training sessions"],
+      source_type:"general",requested_facts:[],constraints:{},
+      customer_correction:false,explicit_negations:[],
+      ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+    }],
+    customer_correction:false,additive:false,explicit_negations:[],
+    requested_facts:[],
+    transaction_state:"none",payment_state:"none",booking_state:"none",
+    fulfillment_state:"none",
+    ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},
+    confidence:0.99,
+  };
+  const state=createEmptyConversationCommerceState();
+  const candidate=resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:frame});
+  assert(candidate?.action==="enquiry" && candidate.context_sufficient &&
+    candidate.requires_generated_guidance === true && candidate.reply === "",
+    JSON.stringify(candidate));
+  const decision=resolveContextualCustomerUpdate({candidate,state});
+  assert(decision.route==="product_guidance" && decision.requires_generated_guidance===true,
+    JSON.stringify(decision));
+  // The producer's complete sourced demand needs no fabricated item. The
+  // existing answer-generation path, not this verifier, supplies advice.
+  const demandOnly=normalizeCommerceSemanticFrame({...frame,entities:[]});
+  assert(demandOnly && demandOnly.entities.length===0 && demandOnly.requested_facts.length===0,
+    "producer contract did not retain the general demand");
+  const fromDemand=resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:demandOnly});
+  assert(fromDemand?.requires_generated_guidance===true && fromDemand.reply==="",
+    JSON.stringify(fromDemand));
+  const invented=structuredClone(frame);
+  invented.demands![0].source_quote="I want a discount that was never requested";
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:invented})===null,
+    "invented quote accepted");
+  const transaction=structuredClone(frame);
+  transaction.demands![0].source_type="transaction";
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:transaction})===null,
+    "transaction disguised as guidance");
+  for (const source_type of ["product","policy","unknown"] as const) {
+    const merchant=structuredClone(frame);
+    merchant.demands![0].source_type=source_type;
+    merchant.demands![0].requested_facts=["price"];
+    merchant.requested_facts=["price"];
+    assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:merchant})===null,
+      "merchant facts bypassed KB: "+source_type);
+  }
+  const incorrectFact=structuredClone(frame);
+  incorrectFact.demands![0].requested_facts=["selection advice"];
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:incorrectFact})===null,
+    "requested_facts repurposed as customer clarification");
+  const model=structuredClone(frame);
+  model.entities[0].model="TRAINING-M100";
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:model})===null,
+    "model-specific source bypassed merchant evidence");
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state,semantic_frame:null})===null,
+    "no Reading must not invent guidance");
+  const prior=structuredClone(state);
+  prior.entities=[{entity_id:"prior",category:"service",quantity:1,status:"researching",
+    attributes:{product_name:"Other sessions"},constraints:{},
+    provenance:{source_type:"customer",source_message_id:"prior-visitor"}}];
+  assert(resolveSemanticContextualCandidate({text,language:"zh-TW",state:prior,semantic_frame:frame})===null,
+    "factual follow-up incorrectly bypassed previous state");
+  let writes=0,latest=state;
+  const db: CommerceStateDbClient = {
+    from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:null,error:null})})})}),
+    rpc:async(_f,args)=>{
+      writes++;latest=args.p_state as ConversationCommerceState;
+      return {data:{result:"success",applied_revision:1},error:null};
+    },
+  };
+  const actual=await runCommerceStateRuntime(db,{
+    company_id:"company",conversation_id:"conv",source_message_id:"first-source",
+    text,language:"zh-TW",history:[],semantic_frame:demandOnly,
+  });
+  assert(actual !== null && actual.route==="product_guidance" &&
+    actual.reply===null && latest.entities.length===0 &&
+    latest.conversion.order_status==="none" &&
+    latest.conversion.payment_status==="none",
+    JSON.stringify({actual,writes}));
+});
+
+/** Independent generic verifier controls; original A/B/C/2a inputs stay intact. */
+function genericAllocationInput(text: string, rows: Record<string, DecisionValue>[], unit: string, language: "zh-TW" | "zh-CN" | "en" = "zh-TW") {
+  const state = createEmptyConversationCommerceState();
+  state.entities = [{entity_id:"service:membership",category:"service",quantity:0,
+    status:"researching",attributes:{product_name:"Membership",unit},constraints:{},
+    provenance:{source_type:"customer",source_message_id:"membership-source"}}];
+  const frame: CommerceSemanticFrame = {
+    version:"commerce-semantic-1.0.0",language,operation:"UPDATE_ITEM",
+    intent:"scoped allocation",topic:"service",entities:[{
+      entity_ref:"service:membership",name:"Membership",kind:"service",category_hint:null,
+      sku:null,model:null,quantity:null,unit,attributes:{scoped_customer_updates:rows},constraints:{},
+      capabilities:{requires_delivery:false,supports_pickup:false,requires_installation:false,
+        requires_booking:false,requires_quote:false,requires_site_check:false,digital_fulfilment:false,
+        recurring_billing:false,rental_return:false,customization:false},confidence:0.99,
+    }],referents:[{ref:"service:membership",source:"persistent_state",confidence:0.99}],
+    customer_correction:false,additive:false,explicit_negations:[],requested_facts:[],
+    transaction_state:"none",payment_state:"none",booking_state:"none",fulfillment_state:"none",
+    ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null},confidence:0.99,
+  };
+  return {text,state,language,semantic_frame:frame};
+}
+
+Deno.test("Task3C source-bound single-character scopes do not widen entity matching", () => {
+  const input=genericAllocationInput("門2席，兩個支隊各3席",[
+    {scope:"門",source_text:"門2席",unit:"席",value:2,attribute:"quantity",action:"set"},
+    {scope:"支隊",source_text:"兩個支隊各3席",unit:"席",value:3,scope_count:2,per_scope_quantity:3,attribute:"quantity",action:"set"},
+  ],"席");
+  const good=resolveSemanticContextualCandidate(input);
+  assert(good?.context_sufficient && good.aggregate_quantity===8 && good.values.length===3,JSON.stringify(good));
+  for(const bad of [
+    {...input,text:"門門2席，兩個支隊各3席",semantic_frame:structuredClone(input.semantic_frame)},
+    {...input,semantic_frame:null},
+  ]){
+    if(bad.semantic_frame) (bad.semantic_frame.entities[0].attributes.scoped_customer_updates as Record<string,unknown>[])[0].source_text="門門2席";
+    const result=resolveSemanticContextualCandidate(bad);
+    assert(result===null || !result.context_sufficient,"ambiguous or missing reading accepted");
+  }
+  const unrelated=structuredClone(input);
+  unrelated.semantic_frame.entities[0].entity_ref="service:other";
+  unrelated.semantic_frame.referents=[{ref:"service:other",source:"persistent_state",confidence:0.99}];
+  assert(resolveSemanticContextualCandidate(unrelated)?.context_sufficient===false,"one-character scope granted entity authority");
+});
+
+Deno.test("Task3C English distributive each may follow the unit in its own source clause", () => {
+  const make=()=>genericAllocationInput("lobby 2 slots, 2 teams with 3 slots each",[
+    {scope:"lobby",source_text:"lobby 2 slots",unit:"slots",value:2,attribute:"quantity",action:"set"},
+    {scope:"teams",source_text:"2 teams with 3 slots each",unit:"slots",value:3,scope_count:2,per_scope_quantity:3,attribute:"quantity",action:"set"},
+  ],"slots","en");
+  const input=make(), good=resolveSemanticContextualCandidate(input);
+  assert(good?.context_sufficient && good.aggregate_quantity===8 && good.values.length===3,JSON.stringify(good));
+  assert(good.reply.includes("2 teams with 3 slots each") && !good.reply.includes("teams#"),good.reply);
+  for(const quote of ["2 teams with 3 slots; each", "2 teams with 3 slots, another service each", "2 teams with 3 slots"]){
+    const bad=make();bad.text="lobby 2 slots, "+quote;
+    (bad.semantic_frame.entities[0].attributes.scoped_customer_updates as Record<string,unknown>[])[1].source_text=quote;
+    assert(resolveSemanticContextualCandidate(bad)?.context_sufficient===false,"unbound distributive accepted: "+quote);
+  }
+  const invented=make();
+  (invented.semantic_frame.entities[0].attributes.scoped_customer_updates as Record<string,unknown>[])[1].scope_count=3;
+  assert(resolveSemanticContextualCandidate(invented)?.context_sufficient===false,"invented group count");
+});
+
+Deno.test("Task3C scoped confirmation preserves customer phrases and individual source provenance", () => {
+  const input=genericAllocationInput("門2台，兩個支隊各3台",[
+    {scope:"門",source_text:"門2台",unit:"台",value:2,attribute:"quantity",action:"set"},
+    {scope:"支隊",source_text:"兩個支隊各3台",unit:"台",value:3,scope_count:2,per_scope_quantity:3,attribute:"quantity",action:"set"},
+  ],"台");
+  const candidate=resolveSemanticContextualCandidate(input);
+  assert(candidate?.context_sufficient && candidate.reply.includes("門2台") &&
+    candidate.reply.includes("兩個支隊各3台") && !candidate.reply.includes("#") && !candidate.reply.includes("部"),JSON.stringify(candidate));
+  const decision=resolveContextualCustomerUpdate({state:input.state,candidate});
+  const next=reduceCommerceState(input.state,contextualUpdateEvents(decision,input.state,"allocation-source"));
+  const records=next.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+  assert(records.every(r=>r.source_message_id==="allocation-source" && !!r.source_text),JSON.stringify(records));
+  assert(records.some(r=>r.scope==="支隊#1") && records.some(r=>r.scope==="支隊#2"),"stable internal group members lost");
+  const partial=genericAllocationInput("門4台",[{scope:"門",source_text:"門4台",unit:"台",value:4,attribute:"quantity",action:"set"}],"台");
+  partial.state=next;
+  const changed=resolveSemanticContextualCandidate(partial);
+  assert(changed?.aggregate_quantity===undefined,"partial change fabricated aggregate");
+  const latest=reduceCommerceState(next,contextualUpdateEvents(resolveContextualCustomerUpdate({state:next,candidate:changed}),next,"correction-source"));
+  const latestRows=latest.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+  assert(latest.entities[0].quantity===8 && latestRows.find(r=>r.scope==="門")?.source_message_id==="correction-source" &&
+    latestRows.filter(r=>r.scope.startsWith("支隊#")).every(r=>r.source_message_id==="allocation-source"),"old scopes were reattributed or partial aggregate overwritten");
+});
+
+function genericScopeFactInput() {
+  const text="Training sessions for 2 teams and 1 lobby. Please offer general planning advice.";
+  const state=createEmptyConversationCommerceState();
+  const frame=genericAllocationInput(text,[],"slots","en").semantic_frame;
+  frame.operation="UPDATE_ITEM";frame.intent="customer_guidance";frame.topic="Training sessions";
+  frame.entities=[];frame.referents=[];
+  frame.customer_facts=[{key:"contextual_scope_counts",value:[
+    {scope:"teams",count:2,source_text:"2 teams",subject_label:"Training sessions"},
+    {scope:"lobby",count:1,source_text:"1 lobby",subject_label:"Training sessions"},
+  ]}];
+  frame.demands=[{question:text,source_quote:text,subject_refs:["Training sessions"],
+    source_type:"general",requested_facts:[],constraints:{},customer_correction:false,
+    explicit_negations:[],ambiguity:{is_ambiguous:false,reasons:[],clarification_question:null}}];
+  const context:ContextualSourceContext={company_id:"company",conversation_id:"conversation",
+    source_message_id:"source-t1",state_revision:0};
+  return {text,state,semantic_frame:frame,context,language:"en" as const};
+}
+
+function committedGenericScopeState() {
+  const input=genericScopeFactInput(), verified=verifiedCurrentScopeFacts(input);
+  assert(verified,"source fixture must verify independently");
+  // Unit-level snapshot: runtime tests exercise the actual CAS and readback.
+  const state=createEmptyConversationCommerceState();
+  state.current_topic=verified.goal.subject_label;
+  state.customer_constraints.contextual_goal={...verified.goal,recorded_revision:1};
+  state.customer_constraints.contextual_scope_facts=verified.facts.map(fact=>({...fact,recorded_revision:1}));
+  return {state,goal:state.customer_constraints.contextual_goal as SourceBoundContextualGoal};
+}
+
+function genericInheritedAllocationInput() {
+  const {state,goal}=committedGenericScopeState();
+  const input=genericAllocationInput("lobby 1 slots, teams 2 slots each",[
+    {scope:"lobby",source_text:"lobby 1 slots",unit:"slots",value:1,attribute:"quantity",action:"set"},
+    {scope:"teams",source_text:"teams 2 slots each",unit:"slots",value:2,scope_count:null,per_scope_quantity:2,attribute:"quantity",action:"set"},
+  ],"slots","en");
+  input.state=state;
+  input.semantic_frame.entities[0].name=goal.subject_label;
+  input.semantic_frame.entities[0].entity_ref=goal.goal_id;
+  input.semantic_frame.topic=goal.subject_label;
+  input.semantic_frame.referents=[{ref:goal.goal_id,source:"persistent_state",confidence:0.99}];
+  return {...input,context:{company_id:"company",conversation_id:"conversation",
+    source_message_id:"source-t2",state_revision:1} as ContextualSourceContext};
+}
+
+Deno.test("Task3C scope-count producer facts retain only literal customer context and no product quantity", () => {
+  const input=genericScopeFactInput();
+  const decoded=normalizeCommerceSemanticFrame(input.semantic_frame);
+  assert(decoded,"typed customer-fact producer rejected valid payload");
+  const verified=verifiedCurrentScopeFacts({...input,semantic_frame:decoded});
+  assert(verified && verified.goal.subject_label==="Training sessions" &&
+    verified.facts.length===2 && verified.facts[0].count===2 &&
+    verified.facts.every(fact=>fact.source_message_id==="source-t1" && fact.recorded_revision===0),
+    JSON.stringify(verified));
+  const guidance=resolveSemanticContextualCandidate({...input,semantic_frame:decoded});
+  assert(guidance?.requires_generated_guidance && guidance.action==="enquiry" &&
+    !guidance.new_entity && guidance.aggregate_quantity===undefined && input.state.entities.length===0,
+    "scope count manufactured an item or item quantity");
+  const chinese=genericScopeFactInput();
+  chinese.text="Training sessions，兩間房，先講一般安排原則。";
+  chinese.semantic_frame.demands![0].source_quote=chinese.text;
+  chinese.semantic_frame.customer_facts![0].value=[{scope:"房",count:2,source_text:"兩間房",subject_label:"Training sessions"}];
+  assert(verifiedCurrentScopeFacts(chinese)?.facts[0].scope==="房","literal one-character scope count was lost");
+  const bads:Array<ReturnType<typeof genericScopeFactInput>>=[];
+  const invented=genericScopeFactInput();
+  (invented.semantic_frame.customer_facts![0].value as Record<string,DecisionValue>[])[0].count=3;bads.push(invented);
+  const rewritten=genericScopeFactInput();
+  (rewritten.semantic_frame.customer_facts![0].value as Record<string,DecisionValue>[])[0].source_text="two teams";bads.push(rewritten);
+  const transaction=genericScopeFactInput();transaction.semantic_frame.demands![0].source_type="transaction";bads.push(transaction);
+  const merchant=genericScopeFactInput();merchant.semantic_frame.demands![0].requested_facts=["price"];bads.push(merchant);
+  const duplicate=genericScopeFactInput();
+  (duplicate.semantic_frame.customer_facts![0].value as DecisionValue[]).push(
+    structuredClone((duplicate.semantic_frame.customer_facts![0].value as DecisionValue[])[0]));bads.push(duplicate);
+  const injected=genericScopeFactInput();
+  (injected.semantic_frame.customer_facts![0].value as Record<string,DecisionValue>[])[0].recorded_revision=55;bads.push(injected);
+  const wrongSubject=genericScopeFactInput();
+  (wrongSubject.semantic_frame.customer_facts![0].value as Record<string,DecisionValue>[])[0].subject_label="Other product";bads.push(wrongSubject);
+  const outsideDemand=genericScopeFactInput();
+  outsideDemand.semantic_frame.demands![0].source_quote="Training sessions for 2 teams";bads.push(outsideDemand);
+  assert(bads.every(bad=>verifiedCurrentScopeFacts(bad)===null),"unverified customer scope fact admitted");
+  assert(verifiedCurrentScopeFacts({...input,semantic_frame:null})===null &&
+    verifiedCurrentScopeFacts({...input,context:undefined})===null,"missing Reading/server binding admitted");
+});
+
+Deno.test("Task3C cross-turn scope counts require committed tenant ticket goal and revision evidence", () => {
+  const input=genericInheritedAllocationInput();
+  const candidate=resolveSemanticContextualCandidate(input);
+  assert(candidate?.context_sufficient && candidate.aggregate_quantity===5 &&
+    candidate.new_entity?.category==="Training sessions" && candidate.new_entity.quantity===5 &&
+    candidate.values.filter(value=>value.scope.startsWith("teams#")).every(value=>
+      value.scope_count_source?.source_message_id==="source-t1" && value.scope_count_source.source_revision===1),
+    JSON.stringify(candidate));
+  assert(candidate.reply.includes("teams 2 slots each") && !candidate.reply.includes("teams#"),candidate.reply);
+  const decision=resolveContextualCustomerUpdate({state:input.state,candidate});
+  const events=contextualUpdateEvents(decision,input.state,"source-t2",null,2);
+  const next=reduceCommerceState(input.state,events);
+  assert(next.entities.length===1 && next.entities[0].quantity===5 && next.entities[0].status==="researching" &&
+    next.entities[0].attributes.subject_source_message_id==="source-t1" &&
+    next.entities[0].provenance.source_message_id==="source-t2" &&
+    next.conversion.order_status==="none" && next.conversion.payment_status==="none",JSON.stringify(next));
+  const saved=next.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+  assert(saved.every(value=>value.source_message_id==="source-t2" && value.source_revision===2),JSON.stringify(saved));
+  const repeated=reduceCommerceState(next,contextualUpdateEvents(decision,next,"source-t2",null,3));
+  assert(JSON.stringify(repeated)===JSON.stringify(next),"replay changed row source revision");
+  const replayCandidate=resolveSemanticContextualCandidate({...input,state:next,context:{...input.context,state_revision:2}});
+  assert(replayCandidate?.context_sufficient && !replayCandidate.new_entity,"same-source goal referent could not replay");
+  const unrelatedSource=resolveSemanticContextualCandidate({...input,state:next,
+    context:{...input.context,source_message_id:"source-t3",state_revision:2}});
+  assert(unrelatedSource?.context_sufficient===false,"goal referent granted authority on a different source");
+  const cases:Array<ReturnType<typeof genericInheritedAllocationInput>>=[];
+  for(const key of ["company_id","conversation_id"] as const){const bad=genericInheritedAllocationInput();bad.context[key]="wrong";cases.push(bad);}
+  const stale=genericInheritedAllocationInput();stale.context.state_revision=0;cases.push(stale);
+  const future=genericInheritedAllocationInput();
+  (future.state.customer_constraints.contextual_scope_facts as SourceBoundScopeFact[])[0].recorded_revision=5;cases.push(future);
+  const oldTopic=genericInheritedAllocationInput();oldTopic.state.current_topic="Other topic";cases.push(oldTopic);
+  const missingFact=genericInheritedAllocationInput();missingFact.state.customer_constraints.contextual_scope_facts=[];cases.push(missingFact);
+  const modelCount=genericInheritedAllocationInput();
+  (modelCount.semantic_frame.entities[0].attributes.scoped_customer_updates as Record<string,DecisionValue>[])[1].scope_count=2;cases.push(modelCount);
+  for(const status of ["cancelled","deferred","superseded"] as const){
+    const bad=genericInheritedAllocationInput();(bad.state.customer_constraints.contextual_goal as SourceBoundContextualGoal).status=status;cases.push(bad);
+  }
+  const forgedQuote=genericInheritedAllocationInput();
+  (forgedQuote.state.customer_constraints.contextual_scope_facts as SourceBoundScopeFact[])[0].source_text="3 teams";cases.push(forgedQuote);
+  const rewrittenQuote=genericInheritedAllocationInput();
+  (rewrittenQuote.state.customer_constraints.contextual_scope_facts as SourceBoundScopeFact[])[0].source_text="two teams";cases.push(rewrittenQuote);
+  const rewrittenSource=genericInheritedAllocationInput();
+  const changedFact=(rewrittenSource.state.customer_constraints.contextual_scope_facts as SourceBoundScopeFact[])[0];
+  changedFact.source_text="two teams";
+  changedFact.source_message_text=changedFact.source_message_text.replace("2 teams","two teams");cases.push(rewrittenSource);
+  const priorRevision=genericInheritedAllocationInput();priorRevision.context.state_revision=2;
+  (priorRevision.state.customer_constraints.contextual_goal as SourceBoundContextualGoal).recorded_revision=2;cases.push(priorRevision);
+  const changedGoalId=genericInheritedAllocationInput();
+  (changedGoalId.state.customer_constraints.contextual_goal as SourceBoundContextualGoal).goal_id="contextual-goal:invented";cases.push(changedGoalId);
+  const wrongGoal=genericInheritedAllocationInput();
+  (wrongGoal.state.customer_constraints.contextual_scope_facts as SourceBoundScopeFact[])[0].goal_id="contextual-goal:elsewhere";cases.push(wrongGoal);
+  const wrongRef=genericInheritedAllocationInput();wrongRef.semantic_frame.entities[0].entity_ref="unrelated";cases.push(wrongRef);
+  for(const bad of cases){
+    const result=resolveSemanticContextualCandidate(bad);
+    assert(result===null || !result.context_sufficient,JSON.stringify({bad,result}));
+  }
+  assert(resolveSemanticContextualCandidate({...input,context:undefined})?.context_sufficient===false,
+    "unbound canonical state used a prior count");
+});
+
+Deno.test("Task3C changed scope facts require an explicit correction and keep item quantities separate", () => {
+  const {state,goal}=committedGenericScopeState();
+  const input=genericScopeFactInput();input.state=state;
+  input.context.source_message_id="source-correction";input.context.state_revision=1;
+  input.text="Training sessions for 3 teams. Please update my planning context.";
+  input.semantic_frame.demands![0].source_quote=input.text;
+  input.semantic_frame.customer_facts![0].value=[
+    {scope:"teams",count:3,source_text:"3 teams",subject_label:"Training sessions"},
+  ];
+  assert(verifiedCurrentScopeFacts(input)===null,"scope count silently overwritten");
+  input.semantic_frame.customer_correction=true;
+  const verified=verifiedCurrentScopeFacts(input);
+  assert(verified?.goal.goal_id===goal.goal_id && verified.facts.length===1 && verified.facts[0].count===3 &&
+    verified.facts[0].source_message_id==="source-correction" && state.entities.length===0,
+    JSON.stringify(verified));
+  assert(readSourceBoundContextualGoal(state,input.context)?.goal_id===goal.goal_id,"current receipt was not readable");
+  const wrong=structuredClone(state);
+  (wrong.customer_constraints.contextual_goal as SourceBoundContextualGoal).subject_label="Invented subject";
+  assert(readSourceBoundContextualGoal(wrong,input.context)===null,"model-only goal subject accepted");
+});
+
+Deno.test("Task3C scope numeral multipliers cannot be read as grammatical classifiers", () => {
+  for(const operator of ["百","佰","千","仟","萬","万","億","亿","兆","拾","廿","卅","卌"]){
+    const facts=genericScopeFactInput();
+    const quote="兩"+operator+"房";
+    facts.text="Training sessions，"+quote+"，先談一般安排。";
+    facts.semantic_frame.demands![0].source_quote=facts.text;
+    facts.semantic_frame.customer_facts![0].value=[{scope:"房",count:2,source_text:quote,subject_label:"Training sessions"}];
+    assert(verifiedCurrentScopeFacts(facts)===null,"numeral multiplier stored as count=2: "+operator);
+    const allocation=genericAllocationInput(quote+"各一台",[
+      {scope:"房",source_text:quote+"各一台",unit:"台",value:1,
+        scope_count:2,per_scope_quantity:1,attribute:"quantity",action:"set"},
+    ],"台");
+    assert(resolveSemanticContextualCandidate(allocation)?.context_sufficient===false,
+      "numeral multiplier allocated as 2 items: "+operator);
+  }
+});
+
+Deno.test("Task3C whole-group correction retires only superseded members and preserves replay provenance", () => {
+  for(const count of [1,3]){
+    const initial=genericInheritedAllocationInput();
+    const initialCandidate=resolveSemanticContextualCandidate(initial);
+    const initialDecision=resolveContextualCustomerUpdate({state:initial.state,candidate:initialCandidate});
+    const before=reduceCommerceState(initial.state,contextualUpdateEvents(initialDecision,initial.state,"source-t2",null,2));
+    const facts=before.customer_constraints.contextual_scope_facts as SourceBoundScopeFact[];
+    facts[0]={...facts[0],count,source_text:count+" teams",
+      source_message_text:"Training sessions for "+count+" teams. Please correct the scope count.",
+      source_message_id:"source-count-correction",recorded_revision:3};
+    const input={...initial,state:before,semantic_frame:structuredClone(initial.semantic_frame),
+      context:{...initial.context,source_message_id:"source-reallocation",state_revision:3}};
+    input.semantic_frame.entities[0].entity_ref=before.entities[0].entity_id;
+    input.semantic_frame.referents=[{ref:before.entities[0].entity_id,source:"persistent_state",confidence:0.99}];
+    const candidate=resolveSemanticContextualCandidate(input);
+    assert(candidate?.aggregate_quantity===1+count*2 && candidate.values.length===1+count,JSON.stringify(candidate));
+    const decision=resolveContextualCustomerUpdate({state:before,candidate});
+    const next=reduceCommerceState(before,contextualUpdateEvents(decision,before,"source-reallocation",null,4));
+    const rows=next.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+    assert(next.entities[0].quantity===1+count*2 && rows.filter(row=>row.group_scope==="teams").length===count &&
+      rows.filter(row=>row.group_scope==="teams").every(row=>row.group_goal_id==="contextual-goal:source-t1" &&
+        row.scope_count_source?.source_message_id==="source-count-correction"),JSON.stringify(next));
+    const replayCandidate=resolveSemanticContextualCandidate({...input,state:next,context:{...input.context,state_revision:4}});
+    const repeated=reduceCommerceState(next,contextualUpdateEvents(resolveContextualCustomerUpdate({state:next,candidate:replayCandidate}),
+      next,"source-reallocation",null,5));
+    assert(JSON.stringify(repeated)===JSON.stringify(next),"whole-group replay changed provenance or member order");
+    const partial={...input,text:"teams 2 slots each",semantic_frame:structuredClone(input.semantic_frame)};
+    partial.semantic_frame.entities[0].attributes.scoped_customer_updates=[
+      {scope:"teams",source_text:partial.text,unit:"slots",value:2,scope_count:null,per_scope_quantity:2,attribute:"quantity",action:"set"},
+    ];
+    const partialCandidate=resolveSemanticContextualCandidate(partial);
+    assert(partialCandidate?.context_sufficient && partialCandidate.aggregate_quantity===undefined &&
+      partialCandidate.reply.includes("total has not been reconfirmed"),JSON.stringify(partialCandidate));
+    const partialState=reduceCommerceState(before,contextualUpdateEvents(resolveContextualCustomerUpdate({state:before,candidate:partialCandidate}),
+      before,"source-partial",null,4));
+    const partialRows=partialState.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+    assert(partialState.entities[0].quantity===5 && partialRows.filter(row=>row.group_scope==="teams").length===count &&
+      partialRows.find(row=>row.scope==="lobby")?.source_message_id==="source-t2",
+      "partial group overwrote unrelated scope or invented a new total");
+    const newGroup={...input,text:"2 offices with 1 slots each",semantic_frame:structuredClone(input.semantic_frame)};
+    newGroup.semantic_frame.entities[0].attributes.scoped_customer_updates=[
+      {scope:"offices",source_text:newGroup.text,unit:"slots",value:1,scope_count:2,per_scope_quantity:1,attribute:"quantity",action:"set"},
+    ];
+    const addition=resolveSemanticContextualCandidate(newGroup);
+    assert(addition?.context_sufficient && addition.aggregate_quantity===undefined,"one new scope replaced the aggregate");
+    const added=reduceCommerceState(before,contextualUpdateEvents(resolveContextualCustomerUpdate({state:before,candidate:addition}),before,"source-extra",null,4));
+    const addedRows=added.entities[0].attributes.scoped_customer_updates as ScopedCustomerValue[];
+    assert(added.entities[0].quantity===5 && addedRows.filter(row=>row.group_scope!=="offices").every(row=>row.source_message_id==="source-t2"),
+      "new group overwrote existing scope provenance");
+  }
+});
+
+
+import "./commerce-state-canonical-dimension.test.ts";
+
+import "./commerce-state-contextual-scope-runtime.test.ts";
+import "./contextual-semantic-reference.test.ts";
+import "./conversation-recall-source-proof.test.ts";
+import "./source-bound-lifecycle-guard.test.ts";
+import "./pre-send-field-scope.test.ts";
+import "./commerce-state-canonical-quantity.test.ts";
+import "./commerce-state-canonical-fractional.test.ts";
+import "./commerce-state-scoped-pending.test.ts";
+
+import "./contextual-prior-scope-display.test.ts";
+
+import "./commerce-source-unit.test.ts";
+
+// Independent negative controls for each authorized input pair, not extra original passes.
+for (const name of ["B", "C", "E", "live-recall"] as const) {
+  const allocation = name === "live-recall" ? variants[0][1] : variants.find(([label]) => label === name)![1];
+  Deno.test("Owner 2a " + name + ": missing and invalid allocation reading cannot commit", async () => {
+    for (const mode of ["missing", "wrong-scope-count", "wrong-per-scope", "wrong-quote", "wrong-goal", "wrong-unit", "injected-total"] as const) {
+      const f = fixture();
+      await f.ask(introduction, [], undefined, ownerApprovedReading(name, 1));
+      const before = JSON.stringify(f.snapshot());
+      const frame = ownerApprovedReading(name, 2)!;
+      const e = frame.entities[0];
+      const updates = e.attributes.scoped_customer_updates as Record<string, DecisionValue>[];
+      if (mode === "wrong-scope-count") updates[1].scope_count = 9;
+      if (mode === "wrong-per-scope") { updates[1].value = 5; updates[1].per_scope_quantity = 5; }
+      if (mode === "wrong-quote") updates[1].source_text = "unsupported quotation";
+      if (mode === "wrong-goal") { e.entity_ref = "unrelated-goal"; frame.referents[0].ref = "unrelated-goal"; }
+      if (mode === "wrong-unit") { e.unit = "kg"; for (const u of updates) u.unit = "kg"; }
+      if (mode === "injected-total") e.quantity = 5;
+      const result = await f.ask(allocation, [introduction], undefined, mode === "missing" ? undefined : frame);
+      assert(result.route !== "contextual_scoped_update" && JSON.stringify(f.snapshot()) === before,
+        name + ":" + mode + ":" + JSON.stringify(result));
+    }
+  });
+}
+
+Deno.test("R8 customer-visible quantity uses the committed source subject not contextual-item ID", async () => {
+  const f = fixture();
+  await f.ask(introduction, [], undefined, ownerApprovedReading("live-recall", 1));
+  await f.ask("係廳一部，房各一部", [introduction], undefined, ownerApprovedReading("live-recall", 2));
+  const before = JSON.stringify(f.snapshot());
+  const result = await f.ask("我而家要幾多部冷氣？", [introduction, "係廳一部，房各一部"]);
+  assert(result.reply?.includes("冷氣") && /3|三/.test(result.reply) &&
+    !/contextual-(?:item|goal)|source-1|scope#/.test(result.reply), JSON.stringify(result));
+  assert(JSON.stringify(f.snapshot()) === before, "display mutated state");
+  const recap = buildTransactionSummary(f.snapshot().state, "zh-TW");
+  assert(recap.includes("冷氣") && !/contextual-(?:item|goal)|source-1|scope#/.test(recap), recap);
+});
+
+Deno.test("R8 summary and recall show literal labels or neutral wording, never internal identifiers", () => {
+  for (const label of ["Studio Lighting Rental", "冷凍食品批發", "contextual-item:source-1", undefined]) {
+    const s = createEmptyConversationCommerceState();
+    s.entities = [{ entity_id: "contextual-item:source-1", category: "contextual-item", quantity: 3,
+      status: "tentative", attributes: label === undefined ? { unit: "cartons" } : { product_name: label, unit: "cartons" },
+      constraints: {}, provenance: { source_type: "customer", source_message_id: "source-1" } }];
+    const before = JSON.stringify(s);
+    for (const language of ["zh-TW", "zh-CN", "en"] as const) {
+      const reply = buildTransactionSummary(s, language);
+      assert(!/contextual-item|source-1/.test(reply), reply);
+      if (label && !label.startsWith("contextual-item:")) assert(reply.includes(label), reply);
+      const read = prepareConversationRecall({ company_id:"company", conversation_id:"conversation",
+        source_message_id:"read-source", question:"What is my current quantity?", memory:null,
+        commerce:{company_id:"company",conversation_id:"conversation",source_message_id:"source-1",revision:1,state:s} }, language);
+      assert(!read.reply || !/contextual-item|source-1/.test(read.reply), JSON.stringify(read));
+    }
+    assert(JSON.stringify(s) === before, "presentation changed persisted data");
+  }
+});
+
+// Same Closure Contract: independently registered generic twins.
+// Every original callback above remains intact, executed and blocking.
+import "../../../tests/task1-director/phase1-safety-twins.test.ts";
+import "../../../tests/task1-director/phase1-recall-twins.test.ts";
+import "../../../tests/task1-director/phase1-journey-twins.test.ts";
+import "../../../tests/task1-director/phase1-journey-integrity-twins.test.ts";
+import "../../../tests/task1-director/phase1-correction-integrity-twins.test.ts";
+
+// Separate negatives for the exact newly approved Reading inputs, never injected into an original callback.
+for (const label of ["W9-1", "W9-2", "W9"] as const) {
+  for (const fault of ["missing-reading", "weak-reading", "wrong-ref", "wrong-value", "wrong-unit", "forged-source", "extra-entity"] as const) {
+    Deno.test(`P1 named W9 source negative ${label}: ${fault}`, async () => {
+      const live = { state: createEmptyConversationCommerceState(), revision: 0, writes: 0 };
+      const db: CommerceStateDbClient = {
+        from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({
+          data: live.revision ? { state: live.state, revision: live.revision } : null, error: null,
+        }) }) }) }),
+        rpc: async (_fn, params) => {
+          assert(params.p_company_id === "company" && params.p_conversation_id === "conversation" &&
+            params.p_expected_revision === live.revision, "negative_harness_owner_or_cas");
+          live.state = structuredClone(params.p_state as ConversationCommerceState);
+          live.revision += 1; live.writes += 1;
+          return { data: { result: "success", applied_revision: live.revision }, error: null };
+        },
+      };
+      let source = 0;
+      const history: string[] = [];
+      const ask = async (text: string, reading?: CommerceSemanticFrame) => {
+        const result = await runCommerceStateRuntime(db, { company_id: "company", conversation_id: "conversation",
+          source_message_id: `source-${++source}`, text, language: "zh-TW",
+          history: history.slice().reverse().map(content => ({ role: "visitor" as const, content })),
+          ...(reading ? { semantic_frame: reading } : {}),
+        });
+        history.push(text);
+        return result;
+      };
+      await ask(introduction, ownerApprovedReading(label, 1));
+      assert(live.revision === 1 && live.state.entities.length === 0, "valid_scope_setup_missing");
+      if (label === "W9") {
+        await ask("細房80呎，大房100呎，客廳180呎。");
+        await ask("三個位都有窗口，而家都用窗口機。");
+        await ask("客廳下晝西斜。");
+      }
+      const text = label === "W9-1" ? "數量記住：個廳要1部，兩個睡房每間1部"
+        : label === "W9-2" ? "客厅放一台，两间卧室每间各一台"
+        : "數量先記低：客廳一部，兩間房每間各一部。";
+      const reading = ownerApprovedReading(label, label === "W9" ? 5 : 2)!;
+      if (fault === "weak-reading") reading.confidence = 0.2;
+      if (fault === "wrong-ref") { reading.entities[0].entity_ref = "contextual-goal:another-source"; reading.referents[0].ref = "contextual-goal:another-source"; }
+      const updates = reading.entities[0].attributes.scoped_customer_updates as Array<Record<string, unknown>>;
+      if (fault === "wrong-value") updates[0].value = 9;
+      if (fault === "wrong-unit") { reading.entities[0].unit = "licences"; updates.forEach(row => { row.unit = "licences"; }); }
+      if (fault === "forged-source") updates[0].source_text = "unwritten scope one item";
+      if (fault === "extra-entity") reading.entities.push({ ...structuredClone(reading.entities[0]), entity_ref: "fabricated", name: "未提及項目" });
+      const before = JSON.stringify(live.state), revision = live.revision, writes = live.writes;
+      const result = await ask(text, fault === "missing-reading" ? undefined : reading);
+      assert(result?.route !== "contextual_scoped_update" && !result?.trusted_journey_progress,
+        "invalid_reading_authorized_update: " + JSON.stringify(result));
+      assert(JSON.stringify(live.state) === before && live.revision === revision && live.writes === writes,
+        "invalid_reading_changed_state_or_revision: " + JSON.stringify({ result, before: JSON.parse(before), state: live.state }));
+      assert(live.state.conversion.order_status === "none" && live.state.conversion.payment_status === "none" &&
+        live.state.quotes.length === 0, "invalid_reading_created_transaction");
+    });
+  }
+}
+
+import "../../../tests/task1-director/phase1-business-context-twins.test.ts";
+import "../../../tests/task1-director/phase1-dimension-source-twins.test.ts";
+import "../../../tests/task1-director/phase1-full-journey-twins.test.ts";
+
+import "../../../tests/task1-director/phase1-lifecycle-storage-twins.test.ts";
+
+import "../../../tests/task1-director/phase1-bounded-json-storage.test.ts";
+import "../../../tests/task1-director/phase1-recap-clause-twins.test.ts";
+
+
+// Independent scoped-area evidence. Existing quantity and legacy oracles above are unchanged.
+Deno.test("R4A generic area preserves separate literal scopes and correction lineage without item quantity",()=>{
+ const state=createEmptyConversationCommerceState();
+ const c={company_id:"tenant-area",conversation_id:"ticket-area",source_message_id:"area-observe",state_revision:1};
+ const ownerText="I need exhibition planning for two zones";
+ const goal={version:"contextual-scope-1",goal_id:"contextual-goal:area-goal",subject_label:"exhibition planning",source_text:ownerText,
+  company_id:c.company_id,conversation_id:c.conversation_id,source_message_id:"area-goal",recorded_revision:1,status:"active"};
+ state.current_topic=goal.subject_label;state.customer_constraints.contextual_goal=goal;
+ const history=[{id:"area-goal",role:"visitor",content:ownerText}];
+ const flatFrame=(action:"observe"|"correct",text:string,scopes:string[],row_texts:string[])=>normalizeCommerceSemanticFrame({
+  operation:"UPDATE_ITEM",intent:"customer_context_update",confidence:.99,customer_correction:action==="correct",
+  customer_facts:[{key:SCOPED_AREA_KEY,value:{action,source_text:text,scopes,row_texts}}],
+  referents:[{ref:goal.goal_id,source:"persistent_state",confidence:.99}]
+ });
+ const frame=(action:"observe"|"correct",text:string,rows:{scope:string;source_text:string}[])=>flatFrame(action,text,rows.map(row=>row.scope),rows.map(row=>row.source_text));
+ const text="North zone about 20 sq m, South zone 30 sq m";
+ const rows=[{scope:"North zone",source_text:"North zone about 20 sq m"},{scope:"South zone",source_text:"South zone 30 sq m"}];
+ const f=frame("observe",text,rows);assert(f,"valid flat area envelope rejected");
+ const mismatch=flatFrame("observe",text,["North zone"],rows.map(row=>row.source_text));
+ assert(mismatch&&verifiedScopedAreaProposal({state,context:c,text,frame:mismatch,history})===null,"unequal flat arrays accepted");
+ const reordered=flatFrame("observe",text,rows.map(row=>row.scope),rows.map(row=>row.source_text).reverse());
+ assert(reordered&&verifiedScopedAreaProposal({state,context:c,text,frame:reordered,history})===null,"reordered flat source clauses accepted");
+ const forgedText=flatFrame("observe",text,rows.map(row=>row.scope),["North zone about 21 sq m",rows[1].source_text]);
+ assert(forgedText&&verifiedScopedAreaProposal({state,context:c,text,frame:forgedText,history})===null,"nonliteral flat source clause accepted");
+ const first=verifiedScopedAreaProposal({state,context:c,text,frame:f,history});
+ assert(first&&first.current.length===2&&first.current[0].approximate&&first.current[0].amount===20&&first.current[1].amount===30,"observe evidence invalid");
+ const committed=reduceCommerceState(state,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:first}]);
+ assert(committed.entities.length===0,"area created item quantity");
+ const correction="Correction: North zone changed to 25 sq m, others unchanged";
+ const cf=frame("correct",correction,[{scope:"North zone",source_text:"North zone changed to 25 sq m"}]);assert(cf,"correction envelope rejected");
+ const h=[...history,{id:c.source_message_id,role:"visitor",content:text}],cc={...c,source_message_id:"area-correct",state_revision:2};
+ const next=verifiedScopedAreaProposal({state:committed,context:cc,text:correction,frame:cf,history:h});
+ assert(next&&next.current[0].amount===25&&next.current[1].amount===30&&next.superseded.length===1&&next.superseded[0].amount===20,"correction did not preserve independent scope and old lineage");
+ const after=reduceCommerceState(committed,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:next}]);
+ const final={...cc,state_revision:3};
+ assert(readScopedAreaReceipt(after,final)?.recorded_revision===3,"canonical readback failed");
+ const rejected=(receipt:typeof next)=>readScopedAreaReceipt(reduceCommerceState(after,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:receipt}]),final)===null;
+ assert(rejected({...next,current:next.current.filter(v=>v.scope!=="South zone")}),"unaffected scope loss passed canonical readback");
+ assert(rejected({...next,superseded:[]}),"missing correction predecessor passed canonical readback");
+ assert(rejected({...next,superseded:[...next.superseded,next.superseded[0]]}),"duplicate historical row passed canonical readback");
+ assert(rejected({...next,superseded:[{...next.superseded[0],recorded_revision:1}]}),"one source split across revisions passed canonical readback");
+ assert(parseScopedAreaClause("North zone 120 sq m","North zone 1","observe")===null,"leading digit consumed as scope");
+ assert(parseScopedAreaClause("北區250平方米","北區2","observe")===null,"leading digit consumed as CJK scope");
+ assert(parseScopedAreaClause("Zone 1 120 sq m","Zone 1","observe")?.amount===120,"genuine numbered scope rejected");
+ assert(readScopedAreaReceipt(after,{...final,company_id:"other-tenant"})===null,"cross tenant receipt accepted");
+ assert(verifiedScopedAreaProposal({state:committed,context:cc,text:correction,frame:cf,history})===null,"missing original source accepted");
+ assert(verifiedScopedAreaProposal({state:committed,context:{...cc,company_id:"other-tenant"},text:correction,frame:cf,history:h})===null,"foreign correction accepted");
+ const forged=frame("correct",correction,[{scope:"South zone",source_text:"North zone changed to 25 sq m"}]);
+ assert(verifiedScopedAreaProposal({state:committed,context:cc,text:correction,frame:forged,history:h})===null,"wrong literal scope accepted");
+ assert(parseScopedAreaClause("North zone 25 ft","North zone","observe")===null,"ambiguous length became area");
+ assert(parseScopedAreaClause("北區約80平方呎","北區","observe")?.approximate===true,"approximate literal Chinese area lost");
+ const recalled=scopedAreaMemoryValue(next,[...h,{id:cc.source_message_id,role:"visitor",content:correction}],"en");
+ assert(recalled==="North zone: 25 sq m; South zone: 30 sq m","superseded area leaked to current memory");
+ // Same prior-turn boundary as paired-site, without a fabricated goal.
+ const priorState=createEmptyConversationCommerceState(),priorText="I need to begin exhibition planning for two zones. How should I approach the layout?";
+ const priorHistory=[{id:"prior-owner",role:"visitor",content:priorText}];
+ const priorFrame=(action:"observe"|"correct",sourceText:string,scopes:string[],row_texts:string[],label="exhibition planning")=>normalizeCommerceSemanticFrame({
+  operation:"UPDATE_ITEM",intent:"customer_context_update",confidence:.99,customer_correction:action==="correct",
+  customer_facts:[{key:SCOPED_AREA_KEY,value:{action,source_text:sourceText,scopes,row_texts}}],
+  referents:[{ref:label,source:"prior_turn",confidence:.99}]
+ });
+ const pf=priorFrame("observe",text,rows.map(x=>x.scope),rows.map(x=>x.source_text));assert(pf,"valid prior area proposal rejected by normalizer");
+ const p=verifiedScopedAreaProposal({state:priorState,context:c,text,frame:pf,history:priorHistory});
+ assert(p&&p.owner_kind==="prior_turn"&&p.subject_ref==="exhibition planning"&&p.owner_source_message_id==="prior-owner"&&p.current[0].amount===20,"literal prior owner not bound");
+ const badPrior=(history:typeof priorHistory)=>verifiedScopedAreaProposal({state:priorState,context:c,text,frame:pf,history})===null;
+ assert(badPrior([])&&badPrior([{...priorHistory[0],role:"assistant"}]),"missing or assistant-authored owner accepted");
+ assert(badPrior([{...priorHistory[0],content:"Previously I needed to begin exhibition planning"}]),"historical owner accepted");
+ assert(badPrior([...priorHistory,{id:"other-owner",role:"visitor",content:"I need to plan a different event"}]),"competing current owner accepted");
+ assert(badPrior([...priorHistory,priorHistory[0]]),"duplicate owner source accepted");
+ assert(verifiedScopedAreaProposal({state,context:c,text,frame:pf,history:priorHistory})===null,"prior owner bypassed retained goal");
+ assert(verifiedScopedAreaProposal({state:{...priorState,current_topic:"different subject"},context:c,text,frame:pf,history:priorHistory})===null,"prior owner crossed current topic");
+ const pc=reduceCommerceState(priorState,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:p}]);
+ const ph=[...priorHistory,{id:c.source_message_id,role:"visitor",content:text}];
+ const pcf=priorFrame("correct",correction,["North zone"],["North zone changed to 25 sq m"]);assert(pcf,"valid prior correction rejected");
+ const pn=verifiedScopedAreaProposal({state:pc,context:cc,text:correction,frame:pcf,history:ph});
+ assert(pn&&pn.owner_kind==="prior_turn"&&pn.owner_source_message_id==="prior-owner"&&pn.current[0].amount===25&&pn.current[1].amount===30&&pn.superseded[0].amount===20,"prior owner correction lineage lost");
+ assert(verifiedScopedAreaProposal({state:pc,context:cc,text:correction,frame:pcf,history:[{...priorHistory[0],id:"forged-owner"},ph[1]]})===null,"prior owner identity changed");
+ const pa=reduceCommerceState(pc,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:pn}]);
+ assert(readScopedAreaReceipt(pa,final)?.owner_kind==="prior_turn","prior owner readback failed");
+ assert(readScopedAreaReceipt(pa,{...final,company_id:"other-tenant"})===null,"prior receipt crossed tenant");
+ assert(readScopedAreaReceipt({...pa,current_topic:"different subject"},final)===null,"prior receipt crossed topic");
+ assert(scopedAreaMemoryValue(pn,[...ph,{id:cc.source_message_id,role:"visitor",content:correction}],"en")==="North zone: 25 sq m; South zone: 30 sq m","prior correction current memory mismatch");
+});
+
+Deno.test("R4A retirement planner projects only source-verified current typed area",()=>{
+ const initial=createEmptyConversationCommerceState();
+ const c={company_id:"tenant-area",conversation_id:"ticket-area",source_message_id:"area-observe",state_revision:1};
+ const ownerText="I need exhibition planning for two zones";
+ const goal={version:"contextual-scope-1",goal_id:"contextual-goal:area-goal",subject_label:"exhibition planning",source_text:ownerText,
+  company_id:c.company_id,conversation_id:c.conversation_id,source_message_id:"area-goal",recorded_revision:1,status:"active"};
+ initial.current_topic=goal.subject_label;initial.customer_constraints.contextual_goal=goal;
+ const history=[{id:"area-goal",role:"visitor",content:ownerText}];
+ const frame=(action:"observe"|"correct",text:string,scopes:string[],row_texts:string[])=>normalizeCommerceSemanticFrame({
+  operation:"UPDATE_ITEM",intent:"customer_context_update",confidence:.99,customer_correction:action==="correct",
+  customer_facts:[{key:SCOPED_AREA_KEY,value:{action,source_text:text,scopes,row_texts}}],
+  referents:[{ref:goal.goal_id,source:"persistent_state",confidence:.99}]
+ });
+ const text="North zone about 20 sq m, South zone 30 sq m";
+ const first=verifiedScopedAreaProposal({state:initial,context:c,text,frame:frame("observe",text,["North zone","South zone"],
+  ["North zone about 20 sq m","South zone 30 sq m"]),history});
+ assert(first,"original area source rejected");
+ const committed=reduceCommerceState(initial,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:first}]);
+ const correction="Correction: North zone changed to 25 sq m, others unchanged";
+ const h=[...history,{id:c.source_message_id,role:"visitor",content:text}];
+ const cc={...c,source_message_id:"area-correct",state_revision:2};
+ const corrected=verifiedScopedAreaProposal({state:committed,context:cc,text:correction,
+  frame:frame("correct",correction,["North zone"],["North zone changed to 25 sq m"]),history:h});
+ assert(corrected,"correction receipt rejected");
+ const after=reduceCommerceState(committed,[{type:"SET_CUSTOMER_CONSTRAINT",key:SCOPED_AREA_KEY,value:corrected}]);
+ const replaceText = "更正一下:North zone其實是25平方米";
+ const replace = verifiedScopedAreaProposal({ state: committed, context: cc, text: replaceText,
+   frame: frame("correct", replaceText, ["North zone"], ["North zone其實是25平方米"]), history: h });
+ assert(replace && replace.superseded[0].amount === 20 && replace.current[0].amount === 25 &&
+   replace.current[1].amount === 30, "replacement-only correction lost source or unaffected scope");
+ assert(!parseScopedAreaClause("North zone其實是25呎", "North zone", "correct"),
+   "correction grammar converted a bare length into area");
+ const rows=[...h,{id:cc.source_message_id,role:"visitor",content:correction}];
+ const snapshot={company_id:c.company_id,conversation_id:c.conversation_id,source_message_id:cc.source_message_id,revision:3};
+ const before=JSON.stringify(after);
+ const plan=(scope:typeof snapshot|null,sourceRows:typeof rows,state=after)=>planConversationService({
+  question:"Please summarize the current requirements.",language:"en",memory:null,commerce:state,
+  commerce_snapshot:scope,recent_messages:sourceRows,recall:{handled:false,reason:"NOT_A_RECALL_QUERY"}
+ }).known_facts.filter(f=>f.name===SCOPED_AREA_KEY);
+ const good=plan(snapshot,rows);
+ assert(good.length===1&&good[0].authority==="CANONICAL_COMMERCE_STATE"&&good[0].value.includes("25 sq m")&&
+  good[0].value.includes("30 sq m")&&!good[0].value.includes("20 sq m"),"stale/missing typed area");
+ assert(plan({...snapshot,company_id:"other"},rows).length===0,"cross-tenant area accepted");
+ assert(plan({...snapshot,conversation_id:"other"},rows).length===0,"cross-ticket area accepted");
+ assert(plan({...snapshot,revision:2},rows).length===0,"stale revision accepted");
+ assert(plan(snapshot,rows.slice(1)).length===0,"missing owner source accepted");
+ assert(plan(snapshot,rows.filter(x=>x.id!==c.source_message_id)).length===0,"missing original observation accepted");
+ assert(plan(snapshot,rows.map(x=>x.id===c.source_message_id?{...x,content:"North zone 99 sq m, South zone 30 sq m"}:x)).length===0,"forged source accepted");
+ assert(plan(snapshot,[...rows,rows[1]]).length===0,"duplicate source ID accepted");
+ assert(plan(null,rows).length===0,"unverified snapshot accepted");
+ assert(JSON.stringify(after)===before&&after.entities.length===0,"planning changed canonical state or invented quantity");
+ const memory=buildCanonicalConversationMemory({
+  company_id:c.company_id,conversation_id:c.conversation_id,source_message_id:cc.source_message_id,
+  commerce_state_revision:3,commerce_state:after,newest_first:rows.slice().reverse(),
+  source_created_at:"2026-11-27T00:00:00Z",visitor_turn_count:rows.length,next_memory_revision:3
+ });
+ const proof={memory,commerce:{...snapshot,state:after},history:rows};
+ assert(verifyCommittedScopedAreaMemory(proof),"typed correction Memory/Commerce mismatch");
+ const old=memory.cancelled_or_superseded.filter(f=>f.key==="superseded_"+SCOPED_AREA_KEY);
+ assert(old.length===1&&JSON.stringify(old[0].value).includes('"amount":20'),"old typed area lineage missing");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:null}),"missing Memory accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:{...memory,company_id:"other"}}),"wrong Memory tenant accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:{...memory,conversation_id:"other"}}),"wrong Memory ticket accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:{...memory,commerce_state_revision:2}}),"stale Memory revision accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:{...memory,cancelled_or_superseded:[]}}),"missing old lineage accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:{...memory,latest_corrections:[]}}),"missing correction source accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,history:rows.slice(1)}),"missing owner source accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,history:rows.filter(x=>x.id!==c.source_message_id)}),"missing prior measurement accepted");
+ assert(!verifyCommittedScopedAreaMemory({...proof,memory:{...memory,current_customer_facts:memory.current_customer_facts.map(f=>f.key===SCOPED_AREA_KEY?{...f,value:"North zone: 20 sq m; South zone: 30 sq m"}:f)}}),"superseded value revived");
+});
+
+Deno.test("Room mixed statements bind explicit measures to the active source owner and preserve other claims",()=>{
+ const initial=createEmptyConversationCommerceState(),source="I need the exhibit stand. Bay A 25 sq m; budget 600.";
+ const c={company_id:"mixed-company",conversation_id:"mixed-ticket",source_message_id:"mixed-source",state_revision:0};
+ const state=structuredClone(initial);
+ state.entities=[{entity_id:"stand",category:"generic",quantity:0,status:"tentative",attributes:{product_name:"exhibit stand"},constraints:{},model:null,brand:null,provenance:{source_type:"customer",source_message_id:c.source_message_id}}];
+ const frame=normalizeCommerceSemanticFrame({version:"commerce-semantic-1.0.0",operation:"ASK_FACT",intent:"customer_guidance",confidence:.98,
+   customer_facts:[{key:"measure",value:{amount:25,unit:"sq_m"}},{key:"budget",value:{amount:600,unit:"USD"}}]});
+ const read=(text:string,proposal=frame,candidate=state)=>mixedScopedAreaReceipt(initial,candidate,c,text,proposal,[]);
+ const receipt=read(source);
+ assert(receipt?.current.length===1 && receipt.current[0].scope==="Bay A" && receipt.current[0].amount===25 && receipt.current[0].unit==="sq_m","explicit mixed observation unproved");
+ assert(scopedAreaMemoryValue(receipt!,[{id:c.source_message_id,role:"visitor",content:source}],"en")==="Bay A: 25 sq m","mixed readback differs");
+ for(const text of [source.replace("25 sq m","25 m"),source.replace("25 sq m","24 sq m"),source.replace("Bay A","If Bay A"),source.replace("25 sq m","25 sq m?"),source.replace("exhibit stand","another service")])
+   assert(!read(text),"unproved mixed area admitted: "+text);
+ const cancelled=structuredClone(state);cancelled.entities[0].status="cancelled";
+ assert(!read(source,frame,cancelled),"cancelled owner admitted");
+ assert(!read(source,{...frame!,operation:"CANCEL_ITEM"} as CommerceSemanticFrame),"transactional reading admitted");
+});

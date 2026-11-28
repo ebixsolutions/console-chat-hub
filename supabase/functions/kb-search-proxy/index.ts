@@ -1,7 +1,14 @@
+import { safeExecutionCode, executionFailure, type ExecutionFailure } from "../_shared/execution-failure.ts";
+import { selectCanonicalGrounding } from "../_shared/canonical-grounding.ts";
+import { factualSubject } from "../_shared/conversation-semantic-contract.ts";
+import { kbErrorFamily, createKBRequestBudget, KB_PROXY_EXECUTION_BUDGET_MS } from "../_shared/kb-error-contract.ts";
+import { authenticatedInboxAuthority, legacyPreactivationAuthority } from "../_shared/uat-execution-contract.ts";
+import { uatMap } from "../_shared/uat-execution-contract.ts";
 import {
   resolveKBEndpoint,
   resolveTenantScope,
   fetchKBRag,
+  createKBStageDiagnostics,
   type KBDocumentCandidate,
   type KBResolvedScope,
 } from "../_shared/kb-client.ts";
@@ -60,10 +67,18 @@ function getCorsHeaders(req: Request): Record<string, string> {
   );
 }
 function jsonResponse(body: unknown, status: number, req: Request): Response {
-  return new Response(JSON.stringify(body), {
+  const result = status >= 400 && body && typeof body === "object"
+    ? {...body,knowledge_state:kbErrorFamily(body,status)} : body;
+  return new Response(JSON.stringify(result), {
     status,
     headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
   });
+}
+/** Cost-safe backward-compatible default. Unconfirmed/legacy callers may not fan out. */
+export function isBoundedKBRequest(body: unknown): boolean {
+  if (!body || typeof body !== "object") return true;
+  const request = body as { bounded_single_pass?: unknown; extended_search_confirmed?: unknown };
+  return request.bounded_single_pass !== false || request.extended_search_confirmed !== true;
 }
 function isUuid(v: unknown): v is string {
   return typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
@@ -86,17 +101,32 @@ function lexicalSupport(query: string, evidence: string): number {
   const e = normalizeComparable(evidence);
   if (!q || !e) return 0;
   if (e.includes(q)) return 1;
-  const qTokens = lexicalTokens(q);
-  if (qTokens.size === 0) return 0;
-  const eTokens = lexicalTokens(e);
-  let matched = 0;
-  for (const token of qTokens) if (eTokens.has(token)) matched++;
-  return matched / qTokens.size;
+  const overlap = (value: string): number => {
+    const tokens = lexicalTokens(value);
+    if (tokens.size === 0) return 0;
+    const evidenceTokens = lexicalTokens(e);
+    let matched = 0;
+    for (const token of tokens) if (evidenceTokens.has(token)) matched++;
+    return matched / tokens.size;
+  };
+  const raw = overlap(q);
+  // Interrogatives are not merchant facts. For a bounded, single-call Chinese
+  // enumeration, exclude only question-function words before judging the SAME
+  // authorized full-content evidence. Do not lower the 0.60/0.75 floors or
+  // relax tenant, publication, subject, chunk, and canonical source checks.
+  if (!/(?:包括|包含|涵蓋|涵盖)(?:哪些|哪啲|邊啲|哪幾|什麼|甚麼|什么)|(?:列出|列舉|列举).*(?:類別|类别|種類|种类)/u.test(q))
+    return raw;
+  const essential = q.replace(
+    /(?:包括|包含|涵蓋|涵盖)(?:哪些|哪啲|邊啲|哪幾(?:類)?|什麼|甚麼|什么)?|(?:哪些|哪啲|邊啲|類別|类别|種類|种类)/gu,
+    " ",
+  );
+  return Math.max(raw, overlap(essential));
 }
 
 type MembershipRow = { company_id: string; role: string };
 type VisitorTurn = { content: string; created_at: string | null };
 type RankedDocument = {
+  failure?: ExecutionFailure;
   document: KBDocumentCandidate;
   results: Array<Record<string, unknown>>;
   method: string;
@@ -220,7 +250,7 @@ async function resolveStandaloneScope(
   if (!tenant) return { ok: false, status: 503, error: "kb_preactivation_config_missing" };
   return {
     ok: true,
-    scope: { mode: "pre_activation", aiCompanyId: null, singaporeTenantId: tenant },
+    scope: { mode: "pre_activation", aiCompanyId: null, singaporeTenantId: tenant, legacyAuthority: await legacyPreactivationAuthority(admin, userId, tenant, null) },
   };
 }
 
@@ -229,14 +259,17 @@ async function deriveRetrievalExpansions(params: {
   retrievalQuery: string;
   scope: KBResolvedScope;
   conversationId: string | null;
+  signal?: AbortSignal;
 }): Promise<string[]> {
   const llm = await callModel({
     purpose: "assist",
+    signal: params.signal,
     system: "You expand a customer-service knowledge-base search query. Return JSON only. Produce up to two short alternative search queries that preserve exactly the same customer intent, use likely knowledge-base terminology, and may use another relevant language. Do not answer the customer. Do not add unrelated topics, products, promises, or policies.",
     user: `ORIGINAL SEARCH QUERY:\n${params.retrievalQuery.slice(0, 1200)}\n\nCURRENT REQUEST:\n${params.currentRequest.slice(0, 800)}`,
     maxTokens: RETRIEVAL_EXPANSION_MAX_TOKENS,
     operationId: crypto.randomUUID(),
     companyId: params.scope.aiCompanyId,
+    legacyAuthority: params.scope.legacyAuthority,
     conversationId: params.conversationId,
     tag: "kb-query-expansion",
     responseFormat: "json",
@@ -298,7 +331,10 @@ async function rerankForDisplay(params: {
   citations: Array<Record<string, unknown>>;
   scope: KBResolvedScope;
   conversationId: string | null;
-}): Promise<{ results: Array<Record<string, unknown>>; method: string; confidence: number | null }> {
+  fullEvidence: string;
+  deterministicOnly?: boolean;
+  signal?: AbortSignal;
+}): Promise<{ results: Array<Record<string, unknown>>; method: string; confidence: number | null; failure?:ExecutionFailure }> {
   const { currentRequest, retrievalQuery, citations, scope, conversationId } = params;
   if (citations.length === 0) return { results: [], method: "no_hit", confidence: null };
 
@@ -306,10 +342,7 @@ async function rerankForDisplay(params: {
     ...citations.map((c) => Number(c.score ?? 0)).filter(Number.isFinite),
     0,
   );
-  const evidence = citations
-    .map((c) => `${String(c.display_label ?? "")}\n${String(c.content ?? "")}`)
-    .join("\n---\n")
-    .slice(0, 5000);
+  const evidence = params.fullEvidence.slice(0, 5000);
   const lexical = lexicalSupport(currentRequest, evidence);
 
   if (lexical >= DIRECT_LEXICAL_FLOOR) {
@@ -337,13 +370,17 @@ async function rerankForDisplay(params: {
     };
   }
 
+  // No model attempt is started if direct source/subject evidence is too weak.
+  if (params.deterministicOnly) return {results:[],method:"bounded_relevance_not_verified",confidence:null};
   const llm = await callModel({
     purpose: "assist",
+    signal: params.signal,
     system: "You are a multilingual relevance judge for a customer-service knowledge base. Decide only whether the retrieved evidence directly helps answer the CURRENT customer request. Use semantic meaning across languages, not exact wording. Reject same-domain but unrelated documents. Return exactly one JSON object matching the supplied schema. Confidence must be between 0 and 1.",
     user: `CURRENT REQUEST:\n${currentRequest.slice(0, 1000)}\n\nRETRIEVAL CONTEXT:\n${retrievalQuery.slice(0, 1200)}\n\nCANDIDATE KNOWLEDGE:\n${evidence}`,
     maxTokens: RERANK_MAX_TOKENS,
     operationId: crypto.randomUUID(),
     companyId: scope.aiCompanyId,
+    legacyAuthority: scope.legacyAuthority,
     conversationId,
     tag: "kb-relevance-rerank",
     responseFormat: "json",
@@ -355,18 +392,19 @@ async function rerankForDisplay(params: {
       results: [],
       method: classifyRerankFailure(llm.code, llm.usage.output_tokens),
       confidence: null,
+      failure: llm.failure ?? executionFailure(llm.code),
     };
   }
 
   const parsed = parseJsonObject(llm.text);
   if (!parsed || typeof parsed.relevant !== "boolean") {
-    return { results: [], method: "rerank_schema_invalid", confidence: null };
+    return { results: [], method: "rerank_schema_invalid", confidence: null, failure:executionFailure("LLM_INVALID_OUTPUT") };
   }
   const confidence = typeof parsed.confidence === "number"
     ? parsed.confidence
     : Number.NaN;
   if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
-    return { results: [], method: "rerank_schema_invalid", confidence: null };
+    return { results: [], method: "rerank_schema_invalid", confidence: null, failure:executionFailure("LLM_INVALID_OUTPUT") };
   }
   if (parsed.relevant !== true || confidence < LLM_RELEVANCE_FLOOR) {
     return { results: [], method: "llm_rejected", confidence };
@@ -386,21 +424,44 @@ async function rerankForDisplay(params: {
 }
 
 async function rankDocumentCandidates(params: {
+  deterministicOnly?: boolean;
   currentRequest: string;
   retrievalQuery: string;
   documents: KBDocumentCandidate[];
   scope: KBResolvedScope;
   conversationId: string | null;
+  signal?: AbortSignal;
 }): Promise<{ winner: RankedDocument | null; evaluated: RankedDocument[] }> {
   const evaluated: RankedDocument[] = [];
   for (const document of params.documents) {
     if (document.citations.some((c) => c.document_id !== document.document_id)) {
       throw new Error("KB_DOCUMENT_EVIDENCE_MISMATCH");
     }
+    // Orientation summaries remain candidates, never displayed answer authority.
+    // Relevance is still adjudicated by the existing bounded ranker and 0.75 UI
+    // threshold; authority/currentness and full-content lineage come first.
+    const selected = selectCanonicalGrounding([document], {
+      requestText: params.currentRequest,
+      currentTurnText: params.currentRequest,
+      expectedTenantId: params.scope.singaporeTenantId,
+      minScore: 0,
+      requireSubjectSupport: Boolean(factualSubject(params.currentRequest)),
+      deferRelevanceToCaller: true,
+    });
+    if (!selected.ok) throw new Error("KB_DOCUMENT_EVIDENCE_MISMATCH");
+    if (!selected.document || !selected.evidence.length) {
+      evaluated.push({document,results:[],method:"no_full_content_authority",confidence:null,displayScore:0,retrievalScore:document.document_score});
+      continue;
+    }
+    const chunkIds = new Set(selected.evidence.map(e => e.chunk_id));
+    const citations = document.citations.filter(c => c.chunk_type === "full_content" && typeof c.chunk_id === "string" && c.chunk_id.length > 0 && chunkIds.has(c.chunk_id));
     const ranked = await rerankForDisplay({
       currentRequest: params.currentRequest,
       retrievalQuery: params.retrievalQuery,
-      citations: document.citations as unknown as Array<Record<string, unknown>>,
+      citations: citations as unknown as Array<Record<string, unknown>>,
+      fullEvidence: selected.evidence.map(e => e.content).join("\n\n"),
+      deterministicOnly: params.deterministicOnly,
+      signal: params.signal,
       scope: params.scope,
       conversationId: params.conversationId,
     });
@@ -417,6 +478,7 @@ async function rankDocumentCandidates(params: {
       results: ranked.results,
       method: ranked.method,
       confidence: ranked.confidence,
+      ...(ranked.failure ? {failure:ranked.failure} : {}),
       displayScore,
       retrievalScore,
     });
@@ -448,6 +510,10 @@ Deno.serve(async (req) => {
     });
   }
 
+  const diagnosticId = crypto.randomUUID();
+  const budget = createKBRequestBudget(KB_PROXY_EXECUTION_BUDGET_MS,req.signal);
+  const diagnostic = createKBStageDiagnostics(diagnosticId);
+  const execute = async ():Promise<Response> => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
@@ -460,21 +526,28 @@ Deno.serve(async (req) => {
     const auth = createClient(supabaseUrl, anonKey, {
       global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } },
     });
-    const { data: { user }, error: authErr } = await auth.auth.getUser();
+    const { data: { user }, error: authErr } = await diagnostic.run("auth", () => auth.auth.getUser());
     if (authErr || !user) return jsonResponse({ error: "unauthorized" }, 401, req);
 
     const admin = createClient(supabaseUrl, adminKey);
-    const roles = await loadGlobalRoles(admin, user.id);
+    const [roles,membershipResult] = await Promise.all([
+      diagnostic.run("membership", () => loadGlobalRoles(admin, user.id)),
+      diagnostic.run("membership", () => loadEligibleMemberships(admin, user.id)),
+    ]);
     if (!roles) return jsonResponse({ error: "role_lookup_failed" }, 500, req);
     if (!roles.some((r) => ALLOWED_ROLES.has(r))) {
       return jsonResponse({ error: "forbidden" }, 403, req);
     }
-    const membershipResult = await loadEligibleMemberships(admin, user.id);
     if (!membershipResult.ok) {
       return jsonResponse({ error: "tenant_authorization_failed" }, 500, req);
     }
 
     const body = await req.json().catch(() => ({}));
+    if(body?.bounded_single_pass !== undefined && typeof body.bounded_single_pass !== "boolean")
+      return jsonResponse({error:"invalid_request",detail:"bounded_single_pass must be boolean"},400,req);
+    if(body?.extended_search_confirmed !== undefined && typeof body.extended_search_confirmed !== "boolean")
+      return jsonResponse({error:"invalid_request",detail:"extended_search_confirmed must be boolean"},400,req);
+    const boundedSinglePass = isBoundedKBRequest(body);
     for (const forbidden of ["company_id", "industry", "language", "tenant_id", "workspace_id"]) {
       if (body?.[forbidden] !== undefined) {
         return jsonResponse({
@@ -505,15 +578,15 @@ Deno.serve(async (req) => {
         return jsonResponse({ error: "invalid_request", detail: "invalid conversation_id" }, 400, req);
       }
       conversationId = rawConversationId;
-      const { data: conversation, error: convErr } = await admin.from("conversations")
-        .select("id").eq("id", conversationId).maybeSingle();
+      const { data: conversation, error: convErr } = await diagnostic.run("tenant_scope", async () => await admin.from("conversations")
+        .select("id").eq("id", conversationId).maybeSingle());
       if (convErr) return jsonResponse({ error: "conversation_lookup_failed" }, 500, req);
       if (!conversation) return jsonResponse({ error: "conversation_not_found" }, 404, req);
 
-      const resolved = await resolveTenantScope(conversationId, {
+      const resolved = await diagnostic.run("tenant_scope", () => resolveTenantScope(conversationId!, {
         userId: user.id,
         allowPreActivation: true,
-      });
+      }));
       if (!resolved.resolved) {
         return jsonResponse({ error: "kb_tenant_unresolved", detail: resolved.reason }, 503, req);
       }
@@ -525,21 +598,28 @@ Deno.serve(async (req) => {
         if (!membershipResult.rows.some((r) => r.company_id === scope.aiCompanyId)) {
           return jsonResponse({ error: "forbidden_tenant_role" }, 403, req);
         }
-        const active = await requireActiveCompany(admin, scope.aiCompanyId);
+        const active = await diagnostic.run("tenant_scope", () => requireActiveCompany(admin, scope.aiCompanyId!));
         if (active === null) return jsonResponse({ error: "tenant_authorization_failed" }, 500, req);
         if (!active) return jsonResponse({ error: "forbidden_tenant" }, 403, req);
       }
-      const loaded = await loadRecentVisitorTurns(admin, conversationId);
+      const loaded = await diagnostic.run("tenant_scope", () => loadRecentVisitorTurns(admin, conversationId!));
       if (loaded === null) {
         return jsonResponse({ error: "conversation_context_lookup_failed" }, 500, req);
       }
       recentTurns = loaded;
     } else {
-      const standalone = await resolveStandaloneScope(admin, user.id, membershipResult.rows);
+      const standalone = await diagnostic.run("tenant_scope", () => resolveStandaloneScope(admin, user.id, membershipResult.rows));
       if (!standalone.ok) {
         return jsonResponse({ error: standalone.error }, standalone.status, req);
       }
       scope = standalone.scope;
+    }
+
+    budget.check();
+    if(scope.aiCompanyId && !conversationId)throw Object.assign(new Error("INBOX_CONVERSATION_REQUIRED"),{code:"INBOX_CONVERSATION_REQUIRED"});
+    if(scope.aiCompanyId && conversationId) {
+      const companyId = scope.aiCompanyId;
+      scope={...scope,legacyAuthority:await diagnostic.run("inbox_admission", () => authenticatedInboxAuthority(admin,user.id,companyId,conversationId!,"knowledge"))};
     }
 
     const queryMode = body?.query_mode === "auto_context" ? "auto_context" : "manual";
@@ -547,27 +627,34 @@ Deno.serve(async (req) => {
     const endpoint = resolveKBEndpoint();
     if (!endpoint) return jsonResponse({ error: "kb_config_missing" }, 500, req);
 
-    const result = await fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint);
+    const result = await diagnostic.run("retrieval_execution", () => fetchKBRag({ query: derived.query, top_k: topK }, scope, endpoint, {signal:budget.signal,uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${diagnosticId}`}}));
     if (!result.success) {
       if (result.error_code === "KB_TIMEOUT") {
-        return jsonResponse({ error: "kb_api_timeout" }, 504, req);
+        return jsonResponse({ error: "kb_api_timeout", failure:result.failure }, 504, req);
       }
       console.error("[kb-search-proxy] KB API error", {
         code: result.error_code,
         scope_mode: scope.mode,
+        stage: result.failure?.stage,
+        diagnostic_code: result.diagnostic_code,
       });
-      return jsonResponse({ error: "kb_api_error", detail: result.error_code }, 502, req);
+      const body = {error:"kb_api_error",detail:result.error_code,failure:result.failure,diagnostic_code:result.diagnostic_code};
+      const family=kbErrorFamily(body);
+      return jsonResponse(body,family==="denied" ? 403 : family==="not_configured" ? 503 : 502,req);
     }
 
-    const expansions = await deriveRetrievalExpansions({
+    budget.check();
+    const expansions = boundedSinglePass ? [] : await diagnostic.run("expansion", () => deriveRetrievalExpansions({
+      signal:budget.signal,
       currentRequest: derived.currentRequest,
       retrievalQuery: derived.query,
       scope,
       conversationId,
-    });
-    const expandedResults = await Promise.all(
-      expansions.map((expandedQuery) =>
-        fetchKBRag({ query: expandedQuery, top_k: topK }, scope, endpoint)
+    }));
+    budget.check();
+    const expandedResults = await uatMap(scope.aiCompanyId,
+      expansions.map((expandedQuery) => () =>
+        fetchKBRag({ query: expandedQuery, top_k: topK }, scope, endpoint, {signal:budget.signal,uatContext:{conversationId:conversationId ?? "",operationId:`kb:kb-search-proxy:${conversationId}:${crypto.randomUUID()}`}})
       ),
     );
     const successfulExpanded = expandedResults.filter((r) => r.success);
@@ -578,14 +665,23 @@ Deno.serve(async (req) => {
     const rawResultCount = result.citations.length +
       successfulExpanded.reduce((total, r) => total + r.citations.length, 0);
 
-    const ranked = await rankDocumentCandidates({
+    budget.check();
+    const ranked = await diagnostic.run("rerank", () => rankDocumentCandidates({
+      signal:budget.signal,
       currentRequest: derived.currentRequest,
       retrievalQuery: derived.query,
       documents: mergedDocuments,
       scope,
       conversationId,
-    });
+      deterministicOnly: boundedSinglePass,
+    }));
     const winner = ranked.winner;
+    const failed = ranked.evaluated.find(r => r.failure);
+    if (!winner && failed?.failure) {
+      const body={success:false,error:"kb_rerank_failed",failure:failed.failure,diagnostic_code:failed.method};
+      const family=kbErrorFamily(body);
+      return jsonResponse(body,family==="denied" ? 403 : family==="not_configured" ? 503 : 502,req);
+    }
     const winnerDocumentId = winner?.document.document_id ?? null;
 
     const policyEvidence = winner
@@ -620,6 +716,7 @@ Deno.serve(async (req) => {
         accepted_result_count: winner?.results.length ?? 0,
         candidate_document_count: mergedDocuments.length,
         retrieval_query_count: 1 + expansions.length,
+        bounded_single_pass: boundedSinglePass,
         expanded_retrieval_used: expansions.length > 0,
         evaluated_document_count: ranked.evaluated.length,
         accepted_document_count: ranked.evaluated.filter((r) => r.results.length > 0).length,
@@ -639,6 +736,9 @@ Deno.serve(async (req) => {
       policy_evidence: policyEvidence,
     }, 200, req);
   } catch (e) {
+    if(budget.signal.aborted)return jsonResponse({error:"kb_api_timeout",failure:executionFailure("LLM_TIMEOUT",{stage:"timeout"})},504,req);
+    const code=e && typeof e==="object" && "code" in e ? safeExecutionCode(e.code) : null;
+    if(code)return jsonResponse({success:false,error:"execution_denied",failure:executionFailure(code)},403,req);
     const name = (e as Error).message === "KB_DOCUMENT_EVIDENCE_MISMATCH"
       ? "KB_DOCUMENT_EVIDENCE_MISMATCH"
       : (e as Error).name;
@@ -649,4 +749,9 @@ Deno.serve(async (req) => {
       req,
     );
   }
+  };
+  try { return await budget.run(execute); }
+  catch(error) { if(!budget.signal.aborted)throw error; return jsonResponse({error:"kb_api_timeout",failure:executionFailure("LLM_TIMEOUT",{stage:"timeout"})},504,req); }
+  finally { budget.dispose(); }
+
 });
